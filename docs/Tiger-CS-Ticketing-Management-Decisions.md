@@ -491,32 +491,32 @@ Four items that concern features not present in MVP (auto-ticket channels, the G
 
 ## Final Decision Sign-Off
 
-To be completed by the named decision owner (or delegate) for each item. "Approved option/decision" should record the option letter selected, or the specific policy agreed if different from the options presented above.
+Group A (MVP-development) and the Group C go-live item were approved as recommended via project session sign-off on 2026-08-17 — see "Status: Approved for Architecture Design." This is a blanket approval of the recommended options as written; it is **not** a substitute for the named per-role signatures (CS Manager, GM, IT/Solution Architect, Legal/Compliance) in the Executive Decisions document's Approval section, which should still be collected, and it does **not** close ISSUE-016's underlying requirement for a genuine Legal/Compliance regulatory confirmation before production go-live. Group B and Group D items remain open — they are not due until Phase 2/Phase 3 and were not part of this approval.
 
 | Issue ID | Approved option/decision | Approved by | Department | Approval date | Comments |
 |---|---|---|---|---|---|
-| ISSUE-019 | | | | | |
-| ISSUE-001 | | | | | |
-| ISSUE-021 | | | | | |
-| ISSUE-022 | | | | | |
-| ISSUE-023 | | | | | |
-| ISSUE-004 | | | | | |
-| ISSUE-006 | | | | | |
-| ISSUE-007 | | | | | |
-| ISSUE-018 | | | | | |
-| ISSUE-008 | | | | | |
-| ISSUE-020 | | | | | |
-| ISSUE-010 | | | | | |
-| ISSUE-011 | | | | | |
-| ISSUE-012 | | | | | |
-| ISSUE-013 | | | | | |
-| ISSUE-017 | | | | | |
-| ISSUE-003 | | | | | |
-| ISSUE-002 | | | | | |
-| ISSUE-015 | | | | | |
-| ISSUE-009 | | | | | |
-| ISSUE-016 | | | | | |
-| ISSUE-014 | | | | | |
+| ISSUE-019 | B — first human response only, defined per channel (phone: call-answer/live-handling; digital: first substantive reply); automated ack never counts | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-001 | C — SLA clock starts at creation; time-to-assignment tracked separately | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-021 | A — no customer self-service portal, in any phase | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-022 | B — Department Employee/Head Resolves; Geyness Agent/Supervisor/CS Manager Closes | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-023 | Upgrade: B (earlier of existing/new due date). Downgrade: B (Dept. Head approval required; prior breach never removed) | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-004 | B — Dept. Head and GM notified simultaneously on Critical breach (notification only; does not itself trigger Level 3 — see ISSUE-013) | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-006 | B — Intake Record for every interaction during CRM downtime; Critical/High proceed immediately as provisional tickets; Medium/Low queue for verification | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-007 | B — disclosure limited to the CRM-verified requester or an explicitly authorized representative; no owner/tenant/joint-owner cross-sharing by default; exception process for joint owners | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-018 | (a) Fixed: Critical SLA never pauses. (b) B: non-Critical Resolution SLA pauses on Pending Customer. (c) B: pauses on Pending Third-Party. (d) Fixed: First Response SLA cannot pause after contact received | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-008 | B — required behavior approved (escalation independently reportable from status, etc.); the five-field implementation model is delegated to IT/Solution Architect | Nidaa Basem | Project Sponsor | 2026-08-17 | Behavior approved by Management; implementation model owned by IT/Solution Architect |
+| ISSUE-020 | B — ticket ID immutable; `[DEPT]` reflects only the originating department | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-010 | B — Department Head approval required for transfer; SLA clock continues (no reset) | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-011 | B — 7-day reopen window, configurable | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-012 | B — Customer Service/HR own calendar content; System Administrator maintains it in the system | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
+| ISSUE-013 | B — proposed per-tier defaults accepted as-is: Critical 50%/30min, High 75%/2h, Medium 75%/1 business day, Low 75%/2 business days | Nidaa Basem | Project Sponsor | 2026-08-17 | Defaults accepted without modification; revisit if operational data suggests otherwise |
+| ISSUE-017 | A — Saturday–Thursday working days, Friday off, as documented | Nidaa Basem | Project Sponsor | 2026-08-17 | Confirmed as the stated policy; calendar still built as configurable data |
+| ISSUE-003 | *(not yet due — Phase 2 gate)* | | | | Open |
+| ISSUE-002 | *(not yet due — Phase 2 gate)* | | | | Open |
+| ISSUE-015 | *(not yet due — Phase 2 gate)* | | | | Open |
+| ISSUE-009 | *(not yet due — Phase 2 gate)* | | | | Open |
+| ISSUE-016 | A (interim) — apply 7-year retention uniformly now; exact regulation and per-record-type periods to be confirmed by Legal/Compliance before production go-live | Nidaa Basem | Project Sponsor | 2026-08-17 | Interim configuration approved; **Legal/Compliance confirmation still required before go-live — not yet closed** |
+| ISSUE-014 | *(not yet due — Phase 3 gate)* | | | | Open |
 
 ---
 

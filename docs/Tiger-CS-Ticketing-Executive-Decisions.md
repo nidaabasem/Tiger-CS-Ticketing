@@ -17,26 +17,26 @@
 
 | # | Issue | Decision | Option A | Option B | Option C | Recommended | Decision (A/B/C/Modified) |
 |---|---|---|---|---|---|---|---|
-| 1 | ISSUE-019 | What event counts as "First Human Response" for SLA? | Automated acknowledgement counts | Phone: call answer/accept timestamp, or agent-confirmed live handling in manual MVP. Digital channels: first substantive human-authored reply. Automated acknowledgement never counts, on any channel. | — | **✓ B** | |
-| 2 | ISSUE-001 | When does the SLA clock start? | At ticket creation | At owner assignment | At creation, track assignment lag separately | **✓ C** | |
-| 3 | ISSUE-021 | Is a customer self-service portal in scope? | No portal, any phase | Approve for a later phase | — | **✓ A** | |
-| 4 | ISSUE-022 | Who Resolves vs. Closes a ticket? | Same role does both | Dept. resolves; CS closes after notifying customer | — | **✓ B** | |
-| 5 | ISSUE-023 (upgrade) | SLA effect of a priority **upgrade**? | Full reset to new tier | Earlier of old/new due date | — | **✓ B** | |
-| 6 | ISSUE-023 (downgrade) | SLA effect of an approved priority **downgrade**? | Takes effect immediately | Requires Dept. Head approval; prior breach stays on record | — | **✓ B** | |
-| 7 | ISSUE-004 | Who is notified on a Critical breach? | GM only | Dept. Head + GM together | — | **✓ B** | |
-| 8 | ISSUE-006 | How is a customer interaction handled during a CRM outage? | Block ticket creation entirely until CRM restored | Every interaction creates an Intake Record regardless of CRM status. Critical/High proceed immediately as provisional tickets. Medium/Low remain queued for CRM verification once restored. No interaction is silently lost. | — | **✓ B** | |
-| 9 | ISSUE-007 | Who may be told ticket details on a multi-contact unit (no portal)? | Any linked contact told anything about the unit | Disclosure only to the CRM-verified ticket requester or an explicitly authorized representative. No owner/tenant/joint-owner cross-sharing by default. Exceptions require a defined verification/authorization process. | — | **✓ B** | |
-| 10 | ISSUE-018a | Does the **Critical** SLA clock ever pause? | *Fixed rule:* never pauses — runs 24/7 regardless of status | — | — | *Confirm only* | |
-| 11 | ISSUE-018b | Does the non-Critical **Resolution** SLA pause during Pending Customer? | Clock keeps running | Clock pauses, resumes when work restarts | — | **✓ B** | |
-| 12 | ISSUE-018c | Does the non-Critical **Resolution** SLA pause during Pending Third-Party? | Clock keeps running | Clock pauses, resumes when work restarts | — | **✓ B** | |
-| 13 | ISSUE-018d | Can the **First Response** SLA be paused after customer contact has already been received? | *Fixed rule:* no — once contact is received, there is nothing left to pause for this metric | — | — | *Confirm only* | |
-| 14 | ISSUE-008 *(see note)* | Confirm the required behavior: must a ticket be escalatable while still actively being worked, and must verification, escalation, SLA state, and resolution outcome be reportable independently of each other? | No — track a single combined status only | Yes — all of the above must be true and independently reportable | — | **✓ B** | |
-| 15 | ISSUE-020 | Does the ticket ID change on department transfer? | ID's department code updates | ID is permanent; current owner tracked separately | — | **✓ B** | |
-| 16 | ISSUE-010 | Who approves a department transfer? | Any employee; SLA resets | Dept. Head approval; SLA continues | — | **✓ B** | |
-| 17 | ISSUE-011 | How long can a closed ticket be reopened? | No fixed window | Fixed 7-day window | — | **✓ B** | |
-| 18 | ISSUE-012 | Who owns the holiday calendar? | One role decides and enters dates | CS/HR decide dates; System Admin enters them | — | **✓ B** | |
-| 19 | ISSUE-013 | What triggers automatic escalation from Dept. Head (Level 2) to GM (Level 3), and what early-warning threshold precedes a breach? | No defined window; alert only at breach | Configurable early-warning threshold and Level 2→GM window, set per priority tier (see table below) | — | **✓ B** | |
-| 20 | ISSUE-017 | Confirm the operating work week for SLA business-hours calculation. | Working days Saturday–Thursday; Friday off | Working days Monday–Friday; Saturday–Sunday off | Another configurable company calendar | *Confirm which is correct* | |
+| 1 | ISSUE-019 | What event counts as "First Human Response" for SLA? | Automated acknowledgement counts | Phone: call answer/accept timestamp, or agent-confirmed live handling in manual MVP. Digital channels: first substantive human-authored reply. Automated acknowledgement never counts, on any channel. | — | **✓ B** | B |
+| 2 | ISSUE-001 | When does the SLA clock start? | At ticket creation | At owner assignment | At creation, track assignment lag separately | **✓ C** | C |
+| 3 | ISSUE-021 | Is a customer self-service portal in scope? | No portal, any phase | Approve for a later phase | — | **✓ A** | A |
+| 4 | ISSUE-022 | Who Resolves vs. Closes a ticket? | Same role does both | Dept. resolves; CS closes after notifying customer | — | **✓ B** | B |
+| 5 | ISSUE-023 (upgrade) | SLA effect of a priority **upgrade**? | Full reset to new tier | Earlier of old/new due date | — | **✓ B** | B |
+| 6 | ISSUE-023 (downgrade) | SLA effect of an approved priority **downgrade**? | Takes effect immediately | Requires Dept. Head approval; prior breach stays on record | — | **✓ B** | B |
+| 7 | ISSUE-004 | Who is notified on a Critical breach? | GM only | Dept. Head + GM together | — | **✓ B** | B |
+| 8 | ISSUE-006 | How is a customer interaction handled during a CRM outage? | Block ticket creation entirely until CRM restored | Every interaction creates an Intake Record regardless of CRM status. Critical/High proceed immediately as provisional tickets. Medium/Low remain queued for CRM verification once restored. No interaction is silently lost. | — | **✓ B** | B |
+| 9 | ISSUE-007 | Who may be told ticket details on a multi-contact unit (no portal)? | Any linked contact told anything about the unit | Disclosure only to the CRM-verified ticket requester or an explicitly authorized representative. No owner/tenant/joint-owner cross-sharing by default. Exceptions require a defined verification/authorization process. | — | **✓ B** | B |
+| 10 | ISSUE-018a | Does the **Critical** SLA clock ever pause? | *Fixed rule:* never pauses — runs 24/7 regardless of status | — | — | *Confirm only* | A (confirmed) |
+| 11 | ISSUE-018b | Does the non-Critical **Resolution** SLA pause during Pending Customer? | Clock keeps running | Clock pauses, resumes when work restarts | — | **✓ B** | B |
+| 12 | ISSUE-018c | Does the non-Critical **Resolution** SLA pause during Pending Third-Party? | Clock keeps running | Clock pauses, resumes when work restarts | — | **✓ B** | B |
+| 13 | ISSUE-018d | Can the **First Response** SLA be paused after customer contact has already been received? | *Fixed rule:* no — once contact is received, there is nothing left to pause for this metric | — | — | *Confirm only* | A (confirmed) |
+| 14 | ISSUE-008 *(see note)* | Confirm the required behavior: must a ticket be escalatable while still actively being worked, and must verification, escalation, SLA state, and resolution outcome be reportable independently of each other? | No — track a single combined status only | Yes — all of the above must be true and independently reportable | — | **✓ B** | B |
+| 15 | ISSUE-020 | Does the ticket ID change on department transfer? | ID's department code updates | ID is permanent; current owner tracked separately | — | **✓ B** | B |
+| 16 | ISSUE-010 | Who approves a department transfer? | Any employee; SLA resets | Dept. Head approval; SLA continues | — | **✓ B** | B |
+| 17 | ISSUE-011 | How long can a closed ticket be reopened? | No fixed window | Fixed 7-day window | — | **✓ B** | B |
+| 18 | ISSUE-012 | Who owns the holiday calendar? | One role decides and enters dates | CS/HR decide dates; System Admin enters them | — | **✓ B** | B |
+| 19 | ISSUE-013 | What triggers automatic escalation from Dept. Head (Level 2) to GM (Level 3), and what early-warning threshold precedes a breach? | No defined window; alert only at breach | Configurable early-warning threshold and Level 2→GM window, set per priority tier (see table below) | — | **✓ B** | B (defaults accepted as proposed) |
+| 20 | ISSUE-017 | Confirm the operating work week for SLA business-hours calculation. | Working days Saturday–Thursday; Friday off | Working days Monday–Friday; Saturday–Sunday off | Another configurable company calendar | *Confirm which is correct* | A (Sat–Thu, Fri off, as documented) |
 
 **Note on row 14 (ISSUE-008):** Management approves the required behavior and reporting outcomes above. The specific implementation — five independent tracking fields (`TicketStatus` / `VerificationStatus` / `EscalationLevel` / `SlaState` / `ResolutionOutcome`) — is an architecture decision owned by **IT / Solution Architect**, not a management decision point. This row exists so management confirms *what the system must be able to do*, not *how it is built*.
 
@@ -61,7 +61,7 @@ This item does not block starting MVP development. It blocks **deploying MVP to 
 
 | # | Issue | Decision | Option A | Option B | Recommended | Decision (A/B/C/Modified) |
 |---|---|---|---|---|---|---|
-| 21 | ISSUE-016 | Data retention regulation — must be confirmed before go-live, not after. | Apply 7 years as an interim configuration now; Legal confirms the exact regulation before go-live | Confirm the exact regulation with Legal first, before proceeding | **✓ A now, completed before go-live** | |
+| 21 | ISSUE-016 | Data retention regulation — must be confirmed before go-live, not after. | Apply 7 years as an interim configuration now; Legal confirms the exact regulation before go-live | Confirm the exact regulation with Legal first, before proceeding | **✓ A now, completed before go-live** | A (interim) — **Legal/Compliance confirmation still outstanding, required before go-live** |
 
 ---
 
@@ -74,7 +74,9 @@ This item does not block starting MVP development. It blocks **deploying MVP to 
 | IT / Solution Architect | | | |
 | Legal/Compliance (row 21 only) | | | |
 
-**Overall meeting outcome:** ☐ All items approved as recommended  ☐ Approved with noted exceptions (see table)  ☐ Follow-up required on: _______________
+**Overall meeting outcome:** ☑ All items approved as recommended — recorded via project session sign-off (Nidaa Basem, Project Sponsor) on 2026-08-17.  ☐ Approved with noted exceptions (see table)  ☐ Follow-up required on: _______________
+
+**Note:** The above is a session-level blanket approval, not a substitute for the named per-role signatures in the table (CS Manager, GM, IT/Solution Architect). Row 21 (ISSUE-016) is accepted only as an interim configuration — a genuine Legal/Compliance regulatory confirmation is still required before production go-live and is not satisfied by this sign-off.
 
 ---
 
