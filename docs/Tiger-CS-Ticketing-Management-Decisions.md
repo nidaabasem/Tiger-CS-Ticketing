@@ -170,6 +170,8 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 
 **Recommended option:** B.
 
+**Note — notification is distinct from formal escalation:** Notifying the GM on a Critical (or High) breach is a visibility action; it does not by itself change the ticket's `EscalationLevel` to Level 3. Formal Level 3 escalation is governed separately by ISSUE-013's configured Level 2→GM window, which management may set to expire immediately for Critical tickets if an instant formal escalation is preferred over the proposed 30-minute default.
+
 **Impact if no decision is made:** Notification routing is implemented on an assumption that may leave either the GM or the Department Head uninformed.
 
 **Priority:** High
@@ -341,6 +343,8 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 - **B — Warning at a percentage of the resolution target elapsed (e.g., 75%); a configurable Level 2→3 window set per priority tier.** *Pros:* Reflects each tier's actual urgency; gives staff a chance to act before a breach; guarantees automatic advancement without depending on a retry count. *Cons:* Requires setting and periodically reviewing a window value for each priority tier.
 
 **Recommended option:** B, with proposed starting defaults for each priority tier (early-warning threshold and Level 2→GM window) provided as a fill-in table in the companion Executive Decisions document, for management to accept or change value-by-value.
+
+**Note — GM notification is distinct from formal Level 3 escalation:** An immediate GM notification on a Critical or High breach (ISSUE-004) is a visibility action and does not by itself set `EscalationLevel = Level3`. The formal transition to Level 3 occurs only when this issue's configured Level 2→GM window expires without resolution. For Critical tickets specifically, management may approve an immediate Level 3 transition (i.e., a window of zero) instead of the proposed 30-minute default, if notification and formal escalation should be simultaneous for that tier.
 
 **Impact if no decision is made:** The escalation engine cannot be finalized, and a ticket could remain at Level 2 indefinitely regardless of its priority.
 

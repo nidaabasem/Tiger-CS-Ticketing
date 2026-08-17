@@ -5,7 +5,7 @@
 |---|---|
 | **Purpose** | Decisions required before MVP development can proceed with confidence |
 | **Audience** | Management sign-off meeting (30–45 minutes) |
-| **Scope** | **17 MVP-development decisions plus 1 production go-live decision.** Phase 2 and Phase 3 decisions exist but do not block MVP — see the one-line appendix. |
+| **Scope** | **16 MVP-development issues represented by 20 decision rows, plus 1 production go-live issue.** Phase 2 and Phase 3 decisions exist but do not block MVP — see the one-line appendix. |
 | **Detail** | Full rationale, trade-offs, and worked examples for every item below are in the companion Technical Decision Register: `docs/Tiger-CS-Ticketing-Management-Decisions.md` |
 | **Date** | 2026-08-17 |
 
@@ -50,6 +50,8 @@ Proposed defaults below; management may change any value before approval.
 | High | 75% of resolution target elapsed | 2 hours |
 | Medium | 75% of resolution target elapsed | 1 business day |
 | Low | 75% of resolution target elapsed | 2 business days |
+
+**Clarification:** Immediate GM notification on a Critical or High breach does not by itself change the ticket's EscalationLevel to Level 3. Notification provides visibility; formal Level 3 escalation occurs only when the configured Level 2-to-GM window expires without resolution. For Critical tickets, management may approve an immediate Level 3 transition instead of the proposed 30-minute window.
 
 ---
 
