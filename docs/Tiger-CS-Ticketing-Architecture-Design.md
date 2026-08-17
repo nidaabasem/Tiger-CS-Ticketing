@@ -4,7 +4,7 @@
 | | |
 |---|---|
 | **Purpose** | Phase 2 deliverable per the Solution Analysis's implementation plan — ERD, module dependency diagram, database schema design, API contract sketch, and ADRs — produced now that Section 13 Group A (MVP-development) and Group C (go-live) decisions are approved |
-| **Status** | Design for review — **no EF Core code, migrations, or a runnable database have been created.** This document is design documentation only. Project scaffolding and actual migrations are Phase 3 ("Project Foundation") and remain out of scope here. |
+| **Status** | **Approved for Architecture Design.** A formal Architecture Decision Record log (`docs/architecture/adr/`) has since been prepared alongside this document — see `docs/architecture/README.md`. **No EF Core code, migrations, or a runnable database have been created.** This document is design documentation only. Project scaffolding and actual migrations are Phase 3 ("Project Foundation") and remain out of scope here. |
 | **Authorization** | Produced following project session sign-off ("Status: Approved for Architecture Design," 2026-08-17) — see the Final Decision Sign-Off in `Tiger-CS-Ticketing-Management-Decisions.md` |
 | **Related documents** | `Tiger-CS-Ticketing-Solution-Analysis.md` · `Tiger-CS-Ticketing-Management-Decisions.md` · `Tiger-CS-Ticketing-Executive-Decisions.md` |
 | **Stack** | ASP.NET Core 8 (Web API + Razor Pages), SQL Server, EF Core, ASP.NET Core Identity, Hangfire, SignalR, xUnit |
