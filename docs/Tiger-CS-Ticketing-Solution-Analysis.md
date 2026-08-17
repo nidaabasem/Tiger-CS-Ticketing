@@ -6,7 +6,7 @@
 | **Prepared for** | Tiger Group — Transformation, Marketing & Growth Directorate |
 | **Prepared by** | Solution Architecture Review (AI-assisted, human-reviewed) |
 | **Status** | Draft for management review — **no implementation authorized** |
-| **Version** | 2.0 — revised following senior architecture review |
+| **Version** | 2.1 — final correction pass following management review of the decision documents |
 | **Date** | 2026-08-17 |
 | **Primary source** | `Tiger_CS_Ticketing_System_Requirements.pdf` (Tiger Group, v1.0, June 2026) — "Powered by Geyness Call Center" |
 | **Secondary source** | `tiger_cs_ticketing_workflow.png` — visual workflow reference |
@@ -35,6 +35,21 @@ A senior architecture review of v1.0 raised 13 points. Every point is addressed 
 | 11 | Split scope into MVP / Phase 2 / Phase 3 | Every FR, integration, and phase re-tagged; Section 15 rewritten to the prescribed three-tier scope | §2, §8, §11, §15 |
 | 12 | Update estimates/dependencies for the reduced MVP | Section 11 rewritten around the smaller MVP, with two new release phases for Phase 2 and Phase 3 scope | §11 |
 | 13 | Update decisions list and assumptions register | Section 13 and 14 rewritten; 5 new decisions added, all 18 original items re-bucketed against the new MVP boundary | §13, §14 |
+
+### Version 2.1 — Final Correction Pass
+
+A further management review of the decision documents raised 11 corrections, applied throughout this version:
+
+| # | Correction | What changed | Where |
+|---|---|---|---|
+| 1 | Remove ISSUE-005 as a separate retry-count decision | Merged into ISSUE-013; escalation progression is now time-based and priority-based, never a count of retry cycles | §2 (FR-ESC-07), §9, §13, §14 |
+| 2 | ISSUE-018 priority Low → High | SLA pause behavior directly affects contractual SLA compliance | §9, §13 |
+| 3 | Revise ISSUE-023 | Never erases elapsed time/breach/history; explicit upgrade rule (earlier-of-due-dates) and downgrade rule (Department Head approval, breach preserved) | §2 (FR-SLA-09), §6 (BR-019), §7.5, §7.9, §9 |
+| 4 | Rewrite ISSUE-007 for a system without a Customer Portal | New questions on contact authorization, notification recipients, tenant/owner cross-visibility, representative verification; portal visibility kept as a separate concern (ISSUE-021) | §6 (BR-030), §9, §13 |
+| 5 | ISSUE-016 ownership and timing | Owner: Legal/Compliance; required before production go-live, not described as safe to defer | §9, §13, §14 |
+| 6 | ISSUE-012 ownership split | Business owner: Customer Service or HR; technical administrator: System Administrator | §9, §13, §14 |
+| 7–9 | Companion documents | The Management Decisions document is retitled the Technical Decision Register with neutral language and a sign-off table; a new, MVP-only Executive Decisions document is added | `Tiger-CS-Ticketing-Management-Decisions.md`, `Tiger-CS-Ticketing-Executive-Decisions.md` |
+| 11 | Update counts | 22 total items (17 original + 5 new), 16 in Group A | §9, §11, §13 |
 
 ---
 
@@ -142,7 +157,7 @@ Tier values are now **MVP**, **Phase 2**, or **Phase 3**, replacing v1.0's MVP/F
 | FR-SLA-06 | System raises a warning before SLA breach. | • Warning fires at [ASSUMPTION] 75% of resolution-target elapsed time • Visually distinct from breach | [ASSUMPTION] | **MVP** |
 | FR-SLA-07 | SLA breach triggers the priority-specific alert defined in Section 7. | • Alert recipients match Section 7 exactly • Logged as a notification event via the Outbox (§10.7), retryable | §6, §7 | **MVP** |
 | FR-SLA-08 | Reassignment or department transfer does not, by itself, reset or pause the SLA clock unless explicitly configured per priority tier. | • Config flag per tier controls reset-on-transfer behavior; default = no reset | [ASSUMPTION] | **MVP** |
-| FR-SLA-09 | **[Revised — review point 7]** A priority change does **not** use an undefined proportional carry-forward calculation. Instead: (a) the applicable SLA policy for recalculating `Due*At` is an explicit, configurable rule (options in **ISSUE-023**); (b) the **complete prior SLA history** (previous tier, previous due timestamps, who changed it, when, why) is retained, never overwritten; (c) lowering priority *from* Critical or High requires approval from a Department Head or above before the change takes effect. | • `SlaHistory` table never deletes/overwrites a prior period • A pending downgrade from Critical/High is blocked until an approval record exists • See **ISSUE-023** | [ASSUMPTION] replacing v1.0's undefined algorithm | **MVP** |
+| FR-SLA-09 | **[Revised — final correction pass]** A priority change never erases elapsed time, an existing breach, or the original SLA history. **Upgrade:** the new `Due*At` is the earlier of (a) the due date already in effect and (b) the due date freshly computed under the higher tier from the change moment. **Downgrade:** requires Department-Head-or-above approval before it takes effect; any breach already recorded under the prior tier is never removed or reversed; recalculated due dates apply only from the approval moment forward. In both cases the prior SLA period is closed and archived in `SlaHistory`, never overwritten, and management reporting shows both the original and the changed period. | • `SlaHistory` never deletes/overwrites a prior period, including recorded breaches • A pending downgrade from Critical/High is blocked until an approval record exists • Upgrade due date is provably the minimum of the two candidate dates • See **ISSUE-023** | [ASSUMPTION] | **MVP** |
 
 ### 2.7 Module: Notifications — `FR-NOT-##`
 
@@ -164,7 +179,7 @@ Tier values are now **MVP**, **Phase 2**, or **Phase 3**, replacing v1.0's MVP/F
 | FR-ESC-04 | Level 4 (Chairman/CEO) is manual-only, never system-triggered. | • Only specific roles can invoke it | §7 | **MVP** |
 | FR-ESC-05 | Every `EscalationLevel` change is logged with full audit trail. | • Escalation history queryable per ticket/unit | §7 | **MVP** |
 | FR-ESC-06 | `EscalationLevel` is fully independent of `TicketStatus`: an escalated ticket continues to be actively worked (`TicketStatus = In Progress`) rather than parked in a separate "Escalated" status. | • A ticket can simultaneously show `In Progress` + `Level2` | Diagram + Section 5 redesign | **MVP** |
-| FR-ESC-07 | A capped number of re-assign-and-retry cycles is enforced before `EscalationLevel` auto-advances. | • Default 2 cycles, configurable | Diagram + [ASSUMPTION] resolving **ISSUE-005** | **MVP** |
+| FR-ESC-07 | **[Revised — final correction pass]** Escalation progression from Level 2 to Level 3 is time-based and priority-based, not based on a count of re-assign-and-retry cycles: a configurable window per priority tier determines how long Level 2 has before `EscalationLevel` auto-advances. | • Window is configurable per priority tier, not a fixed retry count • See **ISSUE-013** | Diagram + [ASSUMPTION] resolving **ISSUE-013** (merged former ISSUE-005) | **MVP** |
 
 ### 2.9 Module: Resolution & Closure — `FR-RES-##`
 
@@ -414,8 +429,9 @@ Deterministic system rules are numbered `BR-###`. Rules flagged **(AI-assisted)*
 | BR-015 | Every change to any of the five lifecycle dimensions is attributed and timestamped. | §4 |
 | BR-016 | Escalation levels 1–4 follow the fixed hierarchy in §7; Level 4 is manual-only. | §7 |
 | BR-017 | SLA timer's start event (creation vs. assignment) must be a single, explicitly configured point (**ISSUE-001**). | [ASSUMPTION] |
-| BR-018 | Department transfer/reassignment SLA impact is configurable per priority tier; default = continue (no reset), to prevent SLA gaming. | [ASSUMPTION] |
-| BR-019 | **[Revised — review point 7]** A priority change never uses an undefined proportional carry-forward calculation. Instead: the new `Due*At` timestamps are computed under an explicit, configurable policy (see **ISSUE-023**); the complete prior SLA period is retained in `SlaHistory`, never overwritten; and a downgrade **from** Critical or High priority requires Department-Head-or-above approval before it takes effect. | [ASSUMPTION] replacing v1.0's undefined rule |
+| BR-018 | Department transfer/reassignment SLA impact is configurable per priority tier; default = continue (no reset), so a transfer does not reset a ticket's SLA clock. | [ASSUMPTION] |
+| BR-019 | **[Revised — final correction pass]** A priority change never erases elapsed time, an existing breach, or the original SLA history. On an **upgrade**, the new due date is the earlier of the date already in effect and the date freshly computed under the higher tier. On a **downgrade**, Department-Head-or-above approval is required before it takes effect, and any breach already recorded under the prior tier is never removed or reversed. Every prior SLA period is retained in `SlaHistory`, never overwritten, and management reporting shows both the original and changed periods (see **ISSUE-023**). | [ASSUMPTION] |
+| BR-030 | **[New — final correction pass]** For a unit with multiple linked contacts, ticket notifications and disclosures are sent only to the contact who raised (or is directly named on) that specific ticket; other linked contacts are not notified or told about it unless separately authorized. Tenant and owner histories are never disclosed to each other through this system. A caller not personally listed on the unit record (e.g., a representative) may only be given information once a CRM-recorded authorization exists for them — a verbal claim of authority is not sufficient. This governs live agent-mediated disclosure only; it does not imply or require a customer self-service portal (see **ISSUE-021**). | [ASSUMPTION], resolving **ISSUE-007** |
 | BR-020 | A closed ticket may be reopened within the confirmed window (**ISSUE-011**); beyond that, a new linked ticket is created instead. | [ASSUMPTION] |
 | BR-021 | Two tickets are treated as possible duplicates when they share the same unit and category within a rolling window; the system flags for agent confirmation only — never auto-merges. Confirmed duplicates require `DuplicateOfTicketId` (BR-022). | [ASSUMPTION] |
 | BR-022 | `ResolutionOutcome = Duplicate` requires a valid `DuplicateOfTicketId`; the referenced original ticket's lifecycle is not altered by the link. | Section 5 redesign |
@@ -454,13 +470,24 @@ Non-Critical timers pause during: non-business hours, Fridays (pending **ISSUE-0
 
 Recommended default: warn at 75% of resolution-target elapsed time, escalating the warning to the ticket owner + Supervisor.
 
-### 7.5 Priority-Change SLA Policy — *(revised, review point 7)*
+### 7.5 Priority-Change SLA Policy — *(revised — final correction pass)*
 
-v1.0 proposed an undefined "proportional carry-forward" calculation for what happens to the SLA clock when a ticket's priority changes mid-flight. The review correctly rejected this as unimplementable without a precise algorithm. This revision replaces it with:
+A priority change must never erase elapsed time, an existing breach, or the original SLA history. An earlier draft referenced an undefined "proportional carry-forward" calculation for what happens to the SLA clock when a ticket's priority changes mid-flight; that is a description of a desired outcome, not an algorithm, and has been replaced. The policy below (see **ISSUE-023** for the options considered) separates the rule for an **upgrade** from the rule for an **approved downgrade**.
 
-1. **Explicit, configurable policy** (this is **ISSUE-023** — management chooses one of the options there; the system does not silently invent a formula).
-2. **Complete SLA history retained.** Every priority period a ticket passes through is stored as its own row in `SlaHistory` (tier, `Due*At` values at the time, who set it, when, why) — nothing is overwritten or deleted. This means the original SLA obligation is always reconstructable even after several priority changes.
-3. **Approval gate on downgrade.** Changing a ticket's priority **down** from Critical or High requires a recorded approval from a Department Head (or above) before the change takes effect. This exists specifically to prevent a ticket that is at risk of breaching from being quietly downgraded to make the breach disappear.
+**Upgrade to a higher priority:**
+- The prior SLA period is closed and archived in `SlaHistory` exactly as it stood, including any breach already recorded within it.
+- A new due date is computed under the new, higher tier from the moment of change.
+- The ticket's operative `Due*At` becomes the **earlier of** (a) the due date already in effect before the change, and (b) the due date freshly computed under the higher tier — an upgrade can only tighten a deadline, never loosen it.
+
+**Downgrade to a lower priority:**
+- Requires a recorded approval from a Department Head (or above) before it takes effect.
+- Any breach already recorded under the prior (higher) tier is never removed or reversed by the downgrade.
+- Recalculated due dates under the lower tier apply only from the approval moment forward.
+
+**In all cases:**
+- Every previous SLA period — and every breach within it — is preserved permanently in `SlaHistory`, never overwritten or deleted.
+- A new operational SLA period begins at the moment of the priority change (or, for a downgrade, at the moment of approval).
+- Management reporting displays both the original and the changed SLA period for any ticket that had a priority change.
 
 ### 7.6 Escalation Levels (source: §7)
 
@@ -496,9 +523,9 @@ Reassignment does not reset the SLA clock by default (BR-018). Priority changes 
 
 **Example B — High-priority ticket outside business hours:** Created Thursday 17:30 (business hours 08:00–18:00, Sat–Thu). 30 min elapsed Thursday; Friday excluded; clock resumes Saturday 08:00. First response (1h) due Saturday 08:30. Resolution (24h) due Sunday 13:30.
 
-**Example C — Priority upgrade mid-flight (illustrating the new §7.5 policy):** A Medium ticket (4h response target) is created Monday 09:00; by 10:00, the situation is found to involve a safety risk and is upgraded to Critical. Under the revised policy: the Medium-tier SLA period (09:00–10:00 Monday, still `Running`, not yet breached) is closed off and archived in `SlaHistory` exactly as it stood; a **new** Critical-tier period begins at 10:00 with `FirstResponseDueAt = 10:15` (15 min from the upgrade moment, 24/7 clock) — the system does **not** attempt to prorate the one hour already spent under the Medium tier into the new Critical target. No approval is required for an *upgrade* (only downgrades from Critical/High require approval per §7.5).
+**Example C — Priority upgrade mid-flight (illustrating the revised §7.5 policy):** A Medium ticket (4h resolution target, business hours) is created Monday 09:00, giving an original `ResolutionDueAt` later that week. By 10:00 Monday, the situation is found to involve a safety risk and is upgraded to Critical. The Medium-tier period (09:00–10:00 Monday, not yet breached) is closed and archived in `SlaHistory` exactly as it stood. A fresh Critical-tier due date is computed from 10:00 Monday: `ResolutionDueAt = 14:00 Monday` (4h, 24/7). Because 14:00 Monday is earlier than the original Medium-tier due date, the earlier-of-the-two rule selects 14:00 Monday as the ticket's operative deadline (`FirstResponseDueAt` is recalculated the same way: 10:15 Monday, 15 min, 24/7). No approval is required for an upgrade.
 
-**Example D — Priority downgrade requiring approval:** A Critical ticket is reassessed at 11:00 as actually Medium severity. The downgrade is proposed but held in a pending state; it only takes effect once a Department Head approves it (recorded with approver, timestamp, reason). Until approved, the ticket continues to be measured against the original Critical `Due*At` values.
+**Example D — Priority downgrade requiring approval:** A Critical ticket created Tuesday 09:00 (`ResolutionDueAt = 13:00`, 4h, 24/7) breaches at 13:00 without resolution — the breach is recorded in `SlaHistory`. At 14:00, the ticket is reassessed as Medium severity. The downgrade is proposed but held pending; it only takes effect once a Department Head approves it — recorded with approver, timestamp, and reason — say at 14:30. From 14:30 onward, the ticket is measured against a fresh Medium-tier due date computed from the approval moment. The 13:00 Critical breach remains permanently on the ticket's record and is not removed or reversed by the later downgrade; management reporting shows both the original Critical period (with its breach) and the new Medium period.
 
 ---
 
@@ -523,7 +550,7 @@ Tier reflects review point 11's phase split. **Reliability pattern** column refl
 
 ## 9. Missing Requirements, Ambiguities and Contradictions
 
-Original 18 items retained with severities unchanged; **five new items (ISSUE-019 through ISSUE-023) added per the architecture review**. Full options/pros/cons/recommendations for every item — old and new — are maintained in the companion **`Tiger-CS-Ticketing-Management-Decisions.md`**, which is the presentation-ready version of this list. This section keeps the compact summary form for traceability inside the analysis document.
+**Final correction pass:** ISSUE-005 has been removed as a standalone item — its underlying concern (no defined exit from the escalation retry loop) is now addressed as part of ISSUE-013, which defines configurable, priority-based Level 2→3 escalation windows instead of a retry count. This leaves **22 items total** (17 original + 5 new from the architecture review). Full options/pros/cons/recommendations for every item are maintained in the companion **`Tiger-CS-Ticketing-Management-Decisions.md`** (the Technical Decision Register), which is the presentation-ready version of this list; a shorter **`Tiger-CS-Ticketing-Executive-Decisions.md`** covers only the items that block MVP.
 
 | ID | Severity | Issue | Recommended Decision | Question for Management |
 |---|---|---|---|---|
@@ -531,25 +558,24 @@ Original 18 items retained with severities unchanged; **five new items (ISSUE-01
 | **ISSUE-020** *(new)* | Medium | Does the ticket-ID `[DEPT]` segment change when a ticket transfers departments? | ID is immutable; `[DEPT]` always reflects the *originating* department; current ownership is a separate mutable field. | "Please confirm the ticket ID should never change after creation, even when the owning department changes." |
 | **ISSUE-021** *(new)* | **High** | Is an authenticated customer self-service portal (login, ticket history, self-service reopen) in scope at all? v1.0 implicitly assumed one existed. | No — remove all portal capability from MVP; customer interacts only via phone/email until explicitly approved. | "Do we want customers to have a login-based self-service portal at any point, and if so, in which phase — or should all customer interaction remain agent-mediated?" |
 | **ISSUE-022** *(new)* | High | Who may Resolve vs. Close a ticket, and who may Reopen/Cancel/Reject? | Department Employee/Head resolves (marks work done); Geyness Agent/Supervisor/CS Manager closes (confirms customer notified) and reopens. | "Do you agree that closing a ticket — the final, customer-facing action — should be a CS-side responsibility distinct from a department marking its own work done?" |
-| **ISSUE-023** *(new)* | High | What SLA policy applies when a ticket's priority changes mid-flight? v1.0's "proportional carry-forward" was never defined. | Explicit configurable policy (not proration); full SLA history retained; downgrade from Critical/High requires Department Head approval. | "Please approve the priority-change SLA policy in Section 7.5, including the approval requirement for downgrading Critical/High tickets." |
+| **ISSUE-023** *(new)* | High | What SLA policy applies when a ticket's priority changes mid-flight, without erasing elapsed time, a breach, or history? An earlier draft's "proportional carry-forward" was never defined. | Upgrade: new due date is the earlier of the existing due date and the fresh higher-tier due date. Downgrade: requires Department Head approval and never removes a recorded breach. All prior periods retained in full; both shown in reporting. | "Please approve the upgrade and downgrade SLA rules in Section 7.5, including the approval requirement and breach-preservation guarantee for downgrades." |
 | ISSUE-001 | Critical | SLA timer start point (creation vs. assignment) contradicts between diagram and §4. | Default to creation; track time-to-assignment separately. | "Does the SLA clock start at ticket creation or at owner assignment?" |
 | ISSUE-002 | Critical | Core Rule vs. §2's auto-ticket channels — **now applies from Phase 2 onward only**, since MVP has no auto-ticket channel. | `PendingCrmVerification` sub-state (FR-VER-06). | "For auto-ticket channels (Phase 2), is the ticket number issued before or after CRM verification completes?" |
 | ISSUE-003 | High | Geyness vs. Genesys vendor/platform identity — **gates Phase 2's INT-02**, not MVP. | Do not assume Genesys; confirm before Phase 2 design starts. | "Is 'Geyness' the final vendor name, and what CCaaS platform does it run on?" |
 | ISSUE-004 | High | §6 "Immediate GM notification" for Critical vs. §7's Dept-Head-first model. | Notify both simultaneously on Critical breach. | "Should the Department Head still be notified alongside the GM on a Critical breach?" |
-| ISSUE-005 | Medium | No exit condition on the escalation retry loop. | Cap at 2 retry cycles, then force level-up. | "How many re-assign-and-retry cycles are allowed before automatic level-up?" |
 | ISSUE-006 | High | CRM downtime fallback for ticket creation — **applies to MVP**, since INT-01 (CRM) ships in MVP. | Provisional ticket creation for Critical/High during outage. | "During a CRM outage, can agents open provisional tickets for safety-critical issues?" |
-| ISSUE-007 | High | Multi-party unit access scoping. | Contact-level visibility by default (FR-VER-04, BR-024). | "Should each linked contact see only their own tickets for a unit, or all tickets for that unit?" |
+| **ISSUE-007** *(rewritten — no Customer Portal assumed)* | High | With no customer portal, how is unit/contact information disclosed by phone/notification? Specifically: which linked contact may receive ticket details; who receives notifications; whether a tenant may receive an owner's ticket history (or vice versa); and how joint owners/authorized representatives are verified. | Notifications and disclosure go only to the contact who raised or is named on the ticket; tenant/owner histories are never cross-disclosed; a representative not personally listed requires a CRM-recorded authorization before anything is disclosed. Self-service portal visibility remains a separate question (**ISSUE-021**). | "Which linked contact is authorized to receive ticket details and notifications for a unit with multiple contacts, may tenants see owner history (or vice versa), and how should agents verify a caller claiming to represent an owner or tenant?" |
 | ISSUE-008 | Medium | Confirm the redesigned five-dimension lifecycle model (Section 5) and its value sets. | Adopt as specified. | "Please confirm the TicketStatus/VerificationStatus/EscalationLevel/SlaState/ResolutionOutcome model in Section 5." |
 | ISSUE-009 | Medium | CSAT resend on reopen — **now a Phase 2 question**, since CSAT itself is Phase 2. | Resend, tagged "post-reopen" in reporting. | "Should a reopened-then-reclosed ticket trigger a second CSAT survey?" |
 | ISSUE-010 | Medium | Department transfer approval authority and SLA impact. | Department Head approval required; SLA clock continues (no reset). | "Who approves a cross-department transfer, and does the SLA clock reset?" |
 | ISSUE-011 | Medium | Reopen window duration. | 7 days, configurable. | "What is the allowed window to reopen a closed ticket?" |
-| ISSUE-012 | Medium | UAE holiday calendar ownership. | Editable reference table, owned by CS Manager, reviewed annually. | "Who maintains the holiday calendar, and how often?" |
-| ISSUE-013 | Medium | Level 2→3 escalation window and SLA warning threshold undefined. | 75% warning threshold; escalation window configurable per tier. | "How long before an escalated ticket auto-advances Dept Head → GM?" |
+| **ISSUE-012** *(ownership revised)* | Medium | UAE holiday calendar ownership and maintenance. | Business owner: Customer Service or HR (decides the actual dates). Technical administrator: System Administrator (enters them into the configurable reference table). | "Should Customer Service or HR own confirming each year's UAE public holidays, with the System Administrator responsible for entering them into the system?" |
+| **ISSUE-013** *(expanded — absorbs former ISSUE-005)* | Medium | Level 2→3 escalation window and SLA warning threshold undefined; escalation progression must be time-based and priority-based, not a count of re-assign-and-retry cycles. | 75% warning threshold; Level 2→3 window configurable per priority tier, replacing any retry-count mechanism. | "How long should Level 2 have before an escalated ticket auto-advances to the GM, and should that window differ by priority tier?" |
 | ISSUE-014 | Low | Repeat Contact Rate definition — **now a Phase 3 question**, since Advanced KPI is Phase 3. | Ship as provisional heuristic when built. | "What counts as a 'repeat contact for the same issue'?" |
 | ISSUE-015 | Low | No volume/scale figures given — **gates Phase 2 capacity planning**, when real customer-facing load appears. | Proceed on scalable defaults; revisit before Phase 2. | "Approximate unit/tower count and concurrent-agent count expected?" |
-| ISSUE-016 | Low | Exact UAE retention regulation uncited — can be confirmed any time before go-live. | 7 years uniformly as interim default; Legal confirms before go-live. | "Which UAE regulation sets the 7-year retention period?" |
+| **ISSUE-016** *(reclassified)* | Low | Exact UAE retention regulation uncited. **Required before production go-live — not safe to defer beyond launch**, since retained records begin accumulating from MVP's first day of use. | Legal/Compliance confirms the specific regulation and per-record-type periods before go-live; 7 years uniformly is only an interim placeholder, not a final answer. | "Which UAE regulation sets the 7-year retention period, and must this be confirmed with Legal before MVP goes live, or can go-live proceed on the interim 7-year default?" |
 | ISSUE-017 | Low | Business week Sat–Thu vs. Sat–Sun. | Confirm; build calendar as configurable data regardless. | "Please confirm the actual operating week." |
-| ISSUE-018 | Low | Does the SLA clock pause on Pending Customer/Third-Party? | Pause, with monitoring for misuse. | "Should the SLA clock pause while waiting on the customer or a third party?" |
+| **ISSUE-018** *(severity raised Low → High)* | **High** | Does the SLA clock pause on Pending Customer/Third-Party? SLA pause behavior directly affects contractual SLA compliance figures, not just an internal convenience. | Pause, with monitoring for misuse. | "Should the SLA clock pause while waiting on the customer or a third party?" |
 
 ---
 
@@ -659,7 +685,7 @@ Phases 1–10 below are scoped to **MVP only**, per the smaller boundary in Sect
 
 | Phase | Scope | Deliverables | Dependencies | Acceptance Criteria | Est. Effort | Key Risks |
 |---|---|---|---|---|---|---|
-| **1. Discovery & Requirement Approval** | Resolve the 23 items in Section 9/13 that gate MVP and Phase 2; confirm CRM technical details. | Signed-off decisions for all MVP-gating items (Section 13, Group A). | None | Management sign-off document exists | 1–2 weeks | Delayed decisions on the five new Critical/High items (ISSUE-019/021/022/023, plus 001) block Phase 4 directly |
+| **1. Discovery & Requirement Approval** | Resolve the 22 items in Section 9/13 that gate MVP, go-live, and Phase 2; confirm CRM technical details. | Signed-off decisions for all MVP-gating items (Section 13, Group A). | None | Management sign-off document exists | 1–2 weeks | Delayed decisions on the five new Critical/High items (ISSUE-019/021/022/023, plus 001) block Phase 4 directly |
 | **2. Architecture & Database Design** | Finalize module boundaries, the five-dimension lifecycle ERD, `SlaHistory`/`Outbox` schema, holiday calendar schema. | ERD, module dependency diagram, API contract sketch, ADRs | Phase 1 | Design reviewed and approved before any code | 2 weeks | Designing around unresolved decisions locks in wrong assumptions |
 | **3. Project Foundation** | Solution scaffolding, CI/CD, Identity setup, base EF Core migrations, Outbox infrastructure, logging/monitoring baseline. | Buildable solution skeleton per §10.1, empty but wired-up modules | Phase 2 | `dotnet build`/`dotnet test` green in CI | 1–2 weeks | Under-investing in Outbox/idempotency scaffolding here causes painful retrofits in Phase 5 |
 | **4. Core Ticketing MVP** | Manual phone-only intake (FR-CH-01), verification with CRM snapshot (FR-VER-*), five-dimension ticketing engine, classification/routing, Resolve/Close split. | Working agent-desktop flow: create → verify → classify → route → resolve → close, for phone only | Phase 3 | End-to-end manual test with the correct Resolve/Close role separation enforced; audit trail present across all 5 dimensions | **3–4 weeks** *(reduced from v1.0's 4–6 weeks — no auto-ticket channel complexity)* | Any of ISSUE-001/007/019/021/022 still open at this point directly re-shapes the data model |
@@ -687,7 +713,7 @@ Phases 1–10 below are scoped to **MVP only**, per the smaller boundary in Sect
 | CRM downtime blocks ticket creation, including safety-critical Emergency FM requests — relevant from MVP, since CRM integration is MVP-scoped. | Low–Medium | Critical | Provisional-record fallback (ISSUE-006) implemented and tested before go-live | Solution Architect + Tiger IT |
 | Geyness/Genesys naming confusion (ISSUE-003) leads to building the wrong CCaaS integration in Phase 11. | Low | Medium | Confirm vendor/platform identity before Phase 11 design starts | Tiger Transformation Directorate |
 | Multi-party unit contacts (ISSUE-007) not modeled correctly, causing a tenant to see an owner's (or vice versa) ticket history. | Low–Medium | High | Contact-level modeling and permission scoping (FR-VER-04, BR-024) built into MVP, not deferred | Solution Architect |
-| Priority-change approval gate (ISSUE-023) is bypassed or misconfigured, allowing a Critical ticket to be quietly downgraded to hide an impending breach. | Low | High | Dedicated test coverage for the approval gate; audit trail on every priority change is reviewable | Solution Architect / CS Manager |
+| Priority-change approval gate (ISSUE-023) is bypassed or misconfigured, allowing a downgrade to take effect without Department Head approval and without the prior breach remaining visible in reporting. | Low | High | Dedicated test coverage for the approval gate and for breach-history preservation; audit trail on every priority change is reviewable | Solution Architect / CS Manager |
 | Outbox/idempotency architecture (§10.7) is under-built in Phase 3 (Project Foundation), causing duplicate notifications or lost events discovered only in Phase 5. | Medium | Medium | Explicitly scope Outbox infrastructure into Phase 3's deliverables, not left implicit | Solution Architect |
 | Scope creep — Customer Portal capability (ISSUE-021) gets built into MVP anyway because "it seemed easy," reintroducing the exact over-scoping the review flagged. | Medium | Medium | FR-ADM-07 explicitly excludes it; UAT checklist verifies no customer-facing login endpoint exists in the MVP build | Solution Architect / Project Sponsor |
 | Kiosk hardware/network readiness at physical sites delays Phase 12 independent of software readiness. | Medium | Medium | Track kiosk rollout as a parallel workstream from Phase 11 onward | Tiger IT |
@@ -697,39 +723,41 @@ Phases 1–10 below are scoped to **MVP only**, per the smaller boundary in Sect
 
 ## 13. Management Decisions Required
 
-Re-bucketed against the **reduced MVP boundary** (review points 11–13). Full detail (options, pros/cons, recommendation, impact, priority, owner) for every item is in `Tiger-CS-Ticketing-Management-Decisions.md`.
+Re-bucketed against the **reduced MVP boundary** and the final correction pass. Full detail (options, pros/cons, recommendation, impact, priority, owner) for every item is in `Tiger-CS-Ticketing-Management-Decisions.md` (the Technical Decision Register); a shorter `Tiger-CS-Ticketing-Executive-Decisions.md` covers only Group A below for a management meeting. **ISSUE-005 has been removed** — its concern is now covered by ISSUE-013. This leaves **22 items** across four groups.
 
-### Group A — Required Before MVP Development (blocks Phase 4)
+### Group A — Required Before MVP Development (blocks Phase 4) — 16 items
 
 1. **(New, Critical)** What event satisfies First Response SLA? *(ISSUE-019)*
 2. Does the SLA clock start at ticket creation or at owner assignment? *(ISSUE-001)*
 3. **(New, High)** Is a customer self-service portal in scope at all — for any phase? *(ISSUE-021)*
 4. **(New, High)** Who may Resolve vs. Close a ticket, and who may Reopen/Cancel/Reject? *(ISSUE-022)*
-5. **(New, High)** What SLA policy governs a priority change, and does downgrading Critical/High require approval? *(ISSUE-023)*
+5. **(New, High)** What SLA policy governs a priority change — separately for an upgrade and an approved downgrade — without erasing elapsed time, a breach, or history? *(ISSUE-023)*
 6. Does a Critical SLA breach still notify the Department Head, or the GM only? *(ISSUE-004)*
 7. During a CRM outage, can agents open provisional tickets — for which priority tiers? *(ISSUE-006)*
-8. When a unit has multiple owners/tenants, who sees which tickets? *(ISSUE-007)*
+8. **(Rewritten — no Customer Portal assumed)** Which linked contact may receive ticket details and notifications for a multi-contact unit; may tenants and owners see each other's history; how are joint owners/representatives verified? *(ISSUE-007)*
 9. Please confirm the five-dimension lifecycle model in Section 5. *(ISSUE-008)*
 10. Who approves a cross-department transfer, and does the SLA clock reset? *(ISSUE-010)*
 11. What is the acceptable reopen window? *(ISSUE-011)*
-12. Who maintains the UAE holiday calendar, and how often? *(ISSUE-012)*
-13. How long before an escalated ticket auto-advances Dept Head → GM? *(ISSUE-013)*
+12. **(Ownership revised)** Should Customer Service or HR own the UAE holiday calendar's business content, with the System Administrator responsible for entering it into the system? *(ISSUE-012)*
+13. **(Expanded — absorbs former ISSUE-005)** What configurable, priority-based time window governs Level 2→3 escalation, replacing any retry-count mechanism? *(ISSUE-013)*
 14. Confirm the actual operating business week (Sat–Thu vs. Sat–Sun). *(ISSUE-017)*
-15. Should the SLA clock pause on Pending Customer/Third-Party? *(ISSUE-018)*
+15. **(Severity raised Low → High)** Should the SLA clock pause on Pending Customer/Third-Party? This directly affects contractual SLA compliance figures. *(ISSUE-018)*
 16. **(New, Medium)** Confirm the ticket ID is immutable and `[DEPT]` reflects only the originating department. *(ISSUE-020)*
-17. How many re-assign-and-retry cycles before forced escalation level-up? *(ISSUE-005)*
 
-### Group B — Required Before Phase 2
+### Group B — Required Before Phase 2 — 4 items
 
-18. Is "Geyness" the final vendor name, and what platform does it run on? *(ISSUE-003)*
-19. For auto-ticket channels, is the ticket number issued before or after CRM verification? *(ISSUE-002)*
-20. Approximate unit/tower and concurrent-agent counts expected at Phase 2 launch? *(ISSUE-015)*
-21. Should a reopened-then-reclosed ticket trigger a second CSAT survey? *(ISSUE-009)*
+17. Is "Geyness" the final vendor name, and what platform does it run on? *(ISSUE-003)*
+18. For auto-ticket channels, is the ticket number issued before or after CRM verification? *(ISSUE-002)*
+19. Approximate unit/tower and concurrent-agent counts expected at Phase 2 launch? *(ISSUE-015)*
+20. Should a reopened-then-reclosed ticket trigger a second CSAT survey? *(ISSUE-009)*
 
-### Group C — Can Be Deferred Until Phase 3 / Production Go-Live
+### Group C — Required Before Production Go-Live — 1 item
+
+21. **(Reclassified — not deferrable past launch)** Which specific UAE regulation sets the retention period, confirmed by Legal/Compliance before the MVP goes live? *(ISSUE-016)*
+
+### Group D — Can Be Deferred Until Phase 3 — 1 item
 
 22. What is the operational definition of a "repeat contact" for the KPI? *(ISSUE-014)*
-23. Which specific UAE regulation sets the 7-year retention period? *(ISSUE-016)*
 
 ---
 
@@ -745,22 +773,24 @@ Updated per review points 3, 5, 6, 7, 11, 13. Nothing below is a confirmed decis
 6. Cancelled/Rejected are `ResolutionOutcome` values (not statuses), CSAT-suppressing, distinct from Resolved.
 7. Pending Third-Party is a distinct `TicketStatus` from Pending Customer.
 8. Reassignment/transfer does not reset the SLA clock by default (configurable per tier).
-9. **[Revised]** A priority change never uses a proportional carry-forward calculation; it follows the explicit, configurable policy in §7.5, retains full SLA history, and requires approval to downgrade from Critical/High.
+9. **[Revised]** A priority change never erases elapsed time, a breach, or SLA history: an upgrade takes the earlier of the existing and freshly-computed due dates; a downgrade requires Department Head approval and never removes a recorded breach; both are shown in reporting (§7.5).
 10. SLA warning fires at 75% of resolution-target elapsed time.
-11. Level 2→3 escalation window and the re-assign-and-retry cap (2 cycles) are provisional defaults pending confirmation.
+11. **[Revised]** Level 2→3 escalation advances on a configurable, priority-based time window (not a retry-cycle count) — a provisional default pending confirmation (**ISSUE-013**, which now also covers what was previously ISSUE-005).
 12. Critical-breach notification includes both Dept Head and GM.
 13. Non-Critical SLA clocks pause during Pending Customer / Pending Third-Party status.
 14. WCAG 2.1 AA targeted for the MVP agent UI, extended to customer-facing surfaces once built (Phase 2/3).
 15. Data residency/PDPL considerations favor a UAE (or otherwise compliant) SQL Server hosting region.
 16. File attachment cap assumed at 25MB/file (count of 10/ticket is source-confirmed; size is not).
 17. Notification channel-per-alert-type matrix (§7.8) is a proposed default; MVP uses email/in-app only, SMS added Phase 2.
-18. 7-year retention applied uniformly across tickets, attachments, CSAT (Phase 2+), and audit logs, pending Legal confirmation.
+18. **[Revised — reclassified, not deferrable]** 7-year retention applied uniformly across tickets, attachments, CSAT (Phase 2+), and audit logs as an interim default only; Legal/Compliance must confirm the exact regulation and per-record-type periods **before MVP goes live**, not at some unspecified later time (**ISSUE-016**).
 19. System Administrator, Reporting User, Department Employee are treated as first-class roles even though only some are explicitly named in the PDF.
 20. **[New]** `FirstResponseDueAt` is satisfied only by `FirstHumanResponseAt`, never the automated acknowledgement.
 21. **[New]** Ticket ID is immutable; `[DEPT]` reflects only the originating department, never current ownership.
 22. **[New]** No customer self-service portal exists unless ISSUE-021 is explicitly approved; MVP customer interaction is agent-mediated (phone) and email-notified only.
 23. **[New]** Department Employee/Head Resolve; Geyness Agent/Supervisor/CS Manager Close — enforced as a hard permission split, not a convention.
 24. **[New]** The CRM is the sole master of unit/contact data; the ticketing system stores CRM identifiers plus an immutable ticket-time snapshot only (BR-027).
+25. **[New]** With no customer portal, ticket notifications/disclosure go only to the contact who raised or is named on a ticket; tenant and owner histories are never cross-disclosed; an unlisted representative requires a CRM-recorded authorization before anything is disclosed (BR-030, resolving **ISSUE-007**).
+26. **[New]** The UAE holiday calendar's business content (which dates) is owned by Customer Service or HR; entering it into the system is a System Administrator task (**ISSUE-012**).
 
 ---
 
@@ -797,3 +827,5 @@ Updated per review points 3, 5, 6, 7, 11, 13. Nothing below is a confirmed decis
 - Advanced KPI and root-cause analytics (FR-KPI-03…04) — including the Repeat Contact Rate definition once **ISSUE-014** is resolved
 
 **Gate before starting Phase 4 (Core Ticketing MVP):** answers to Section 13 Group A's items #1–5 at minimum (ISSUE-019, ISSUE-001, ISSUE-021, ISSUE-022, ISSUE-023) — these five directly shape the ticket/SLA/permission data model and are the most expensive to retrofit after code exists. The remaining Group A items can be answered in parallel with early Phase 4 work without blocking its start, but must close before Phase 5 (SLA & Escalation) begins.
+
+**Gate before Phase 10 go-live:** Section 13 Group C's single item (ISSUE-016, retention regulation) must be confirmed with Legal/Compliance before the MVP is deployed to production — it is explicitly not safe to leave for after launch, since retained records begin accumulating from the first day of live use.
