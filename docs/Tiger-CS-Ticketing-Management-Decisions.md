@@ -36,16 +36,16 @@ This leaves **22 items** (17 original + 5 added in the prior architecture review
 | ISSUE-022 | Who may Resolve vs. Close a ticket, and who may Reopen/Cancel/Reject? | High | Management | Before MVP development |
 | ISSUE-023 | What SLA policy applies to a priority upgrade, and to an approved downgrade? | High | Management | Before MVP development |
 | ISSUE-004 | Does a Critical breach still notify the Department Head, or GM only? | High | Management | Before MVP development |
-| ISSUE-006 | Can agents create provisional tickets during a CRM outage? | High | IT | Before MVP development |
-| ISSUE-007 | With no customer portal, who is authorized to receive ticket details and notifications for a multi-contact unit? | High | CRM Team | Before MVP development |
-| ISSUE-018 | Does the SLA clock pause while waiting on the customer or a third party? | **High** *(raised from Low)* | Management | Before MVP development |
-| ISSUE-008 | Confirm the five-dimension lifecycle model. | Medium | Customer Service | Before MVP development |
+| ISSUE-006 | During a CRM outage, does every interaction get an Intake Record, with Critical/High proceeding immediately as provisional tickets? | High | IT | Before MVP development |
+| ISSUE-007 | With no customer portal, disclosure limited to the CRM-verified requester or an authorized representative — confirm, plus the exception process. | High | CRM Team | Before MVP development |
+| ISSUE-018 | SLA pause behavior, split into four parts: Critical (fixed: never pauses), Pending Customer, Pending Third-Party, and First Response after contact (fixed: cannot pause). | **High** *(raised from Low)* | Management | Before MVP development |
+| ISSUE-008 | Confirm required ticket-state behavior (escalation independent of status, etc.); implementation model is IT's call. | Medium | Management (behavior); IT/Solution Architect (model) | Before MVP development |
 | ISSUE-020 | Should the ticket-ID `[DEPT]` segment change on department transfer? | Medium | IT | Before MVP development |
 | ISSUE-010 | Who approves cross-department transfers, and does the SLA clock reset? | Medium | Department Head | Before MVP development |
 | ISSUE-011 | What is the allowed window to reopen a closed ticket? | Medium | Customer Service | Before MVP development |
 | ISSUE-012 | Who owns the UAE public holiday calendar's content, and who administers it in the system? | Medium | Customer Service/HR (business); System Administrator (technical) | Before MVP development |
-| ISSUE-013 | What configurable, priority-based time window governs Level 2→3 escalation? *(absorbs former ISSUE-005)* | Medium | Management | Before MVP development |
-| ISSUE-017 | Confirm the actual operating week (Sat–Thu vs. Sat–Sun). | Low | Management | Before MVP development |
+| ISSUE-013 | What configurable, priority-based time window governs Level 2→3 escalation, and what early-warning threshold precedes a breach? Proposed per-tier defaults are in the Executive Decisions document, for management to accept or change. *(absorbs former ISSUE-005)* | Medium | Management | Before MVP development |
+| ISSUE-017 | Confirm the actual operating work week: Sat–Thu (Fri off), Mon–Fri (Sat–Sun off), or another configurable calendar. | Low | Management | Before MVP development |
 | ISSUE-003 | Is "Geyness" the final vendor name, and what platform does it run on? | High | Geyness/Genesys | Before Phase 2 |
 | ISSUE-002 | For auto-ticket channels, is the ticket number issued before or after CRM verification? | Critical (for Phase 2) | Management | Before Phase 2 |
 | ISSUE-015 | Expected unit/tower count and concurrent-agent count for Phase 2? | Low | IT | Before Phase 2 |
@@ -66,7 +66,7 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 
 **Options:**
 - **A — The automated acknowledgement counts as first response.** *Pros:* Simplest rule; the target is always met. *Cons:* The metric no longer reflects actual response time, since it is satisfied identically on every ticket regardless of how quickly a person engaged.
-- **B — Only the first human-authored response counts.** *Pros:* Measures the interval that actually matters to the customer's experience and to SLA-compliance reporting. *Cons:* Requires capturing a distinct "first human response" event, separate from the automated send.
+- **B — Only the first human-authored response counts, defined per channel:** on inbound phone contact, the call-answer/accept timestamp (or, in the manual MVP, the moment an agent confirms live handling of the call) serves as the event; on digital channels, the event is the first substantive human-authored reply addressing the request. The automated acknowledgement never counts, on any channel. *Pros:* Measures the interval that actually matters to the customer's experience and to SLA-compliance reporting, with an unambiguous event for both a live call and an asynchronous message. *Cons:* Requires capturing a distinct "first human response" event per channel, separate from the automated send.
 
 **Recommended option:** B.
 
@@ -177,14 +177,14 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 
 ---
 
-### ISSUE-006 — CRM outage fallback for ticket creation
-**Decision required:** During a CRM outage, should agents be able to open a provisional ticket without a live, verified unit match — and if so, for which priority levels?
+### ISSUE-006 — CRM outage fallback for ticket creation *(revised)*
+**Decision required:** During a CRM outage, how is a customer interaction handled — should every interaction still create a record, and should any priority level be allowed to proceed immediately without a live, verified unit match?
 
-**Why this decision is needed:** The requirements state CRM downtime must be escalated within 15 minutes, but do not address what happens to new contacts arriving during the outage. MVP's entire intake model depends on a real-time CRM lookup during the call.
+**Why this decision is needed:** The requirements state CRM downtime must be escalated within 15 minutes, but do not address what happens to new contacts arriving during the outage. MVP's entire intake model depends on a real-time CRM lookup during the call, and no interaction may be silently lost simply because CRM is unavailable.
 
 **Options:**
-- **A — No ticket creation during CRM downtime; contacts are logged manually and entered once CRM is restored.** *Pros:* No change to core ticket-creation logic. *Cons:* A safety-related contact during the outage may not be logged in the system meant to track it.
-- **B — Provisional ticket creation (unverified unit reference) for Critical/High priority during downtime, reconciled once CRM returns.** *Pros:* Safety-critical issues are not blocked by an outage. *Cons:* Requires logic to support and later reconcile provisional records.
+- **A — No ticket creation during CRM downtime; contacts are logged manually and entered once CRM is restored.** *Pros:* No change to core ticket-creation logic. *Cons:* A safety-related contact during the outage may not be logged in the system meant to track it, and depends entirely on manual diligence to avoid being lost.
+- **B — Every interaction creates an Intake Record regardless of CRM status. Critical/High proceed immediately as provisional tickets (unverified unit reference), reconciled once CRM returns. Medium/Low remain queued in the Intake Record for CRM verification once restored, rather than becoming a ticket immediately.** *Pros:* Safety-critical issues are not blocked by an outage, and no interaction — at any priority — is silently lost, since even a queued Medium/Low contact has an Intake Record from the moment it occurred. *Cons:* Requires logic to support the Intake Record, the provisional-ticket path, and later reconciliation for both paths.
 
 **Recommended option:** B.
 
@@ -217,39 +217,45 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 
 ---
 
-### ISSUE-018 — SLA pause during Pending Customer / Pending Third-Party *(priority raised: Low → High)*
-**Decision required:** Should the SLA clock pause while a ticket is waiting on the customer or on an external third party, or does the department's SLA obligation continue regardless?
+### ISSUE-018 — SLA pause behavior, split by SLA type and pending reason *(priority raised: Low → High; split into four sub-decisions)*
+**Decision required:** SLA pause behavior does not reduce to one blanket question — it is four separate decisions:
+- **(a) Critical SLA:** Does it ever pause? *Fixed rule, not an open choice:* the Critical SLA never pauses — it runs 24/7 regardless of ticket status, consistent with Section 7.1's 24/7 clock basis for Critical.
+- **(b) Non-Critical Resolution SLA — Pending Customer:** Does the clock pause while waiting on the customer?
+- **(c) Non-Critical Resolution SLA — Pending Third-Party:** Does the clock pause while waiting on an external party (contractor, DEWA, etc.)? Decided separately from (b), since management may reasonably want different treatment for a customer-caused delay versus a third-party-caused one.
+- **(d) First Response SLA:** Can it be paused after customer contact has already been received? *Fixed rule, not an open choice:* no — once contact has been received, the First Response event has either already occurred or the metric is no longer meaningful to pause.
 
-**Why this decision is needed:** SLA pause behavior directly determines what the contractual SLA-compliance percentage measures. Without pausing, a department's compliance figure includes time it had no ability to act on; the requirements do not state which behavior applies.
+**Why this decision is needed:** SLA pause behavior directly determines what the contractual SLA-compliance percentage measures. Without pausing, a department's compliance figure includes time it had no ability to act on; the requirements do not state which behavior applies, and treating "SLA pause" as a single undifferentiated question obscures that Critical, First Response, and the two Pending reasons are genuinely different cases.
 
-**Options:**
+**Options (for (b) and (c) only — (a) and (d) are fixed rules for confirmation):**
 - **A — Clock keeps running regardless.** *Pros:* Simple. *Cons:* Attributes customer- or third-party-caused delay to the department's compliance figure.
-- **B — Clock pauses on Pending Customer / Pending Third-Party, resumes when work restarts.** *Pros:* Attributes delay to its actual cause. *Cons:* Requires disciplined use of Pending statuses; a status left Pending incorrectly would pause a clock that should be running.
+- **B — Clock pauses, resumes when work restarts.** *Pros:* Attributes delay to its actual cause. *Cons:* Requires disciplined use of Pending statuses; a status left Pending incorrectly would pause a clock that should be running.
 
-**Recommended option:** B, with monitoring for tickets left in a Pending status for an unusual duration.
+**Recommended option:** B for both (b) and (c), with monitoring for tickets left in a Pending status for an unusual duration.
 
-**Impact if no decision is made:** SLA-compliance reporting either includes delay outside the department's control, or is effectively paused without that behavior having been decided deliberately.
+**Impact if no decision is made:** SLA-compliance reporting either includes delay outside the department's control, or is effectively paused without that behavior having been decided deliberately — and without treating Pending Customer and Pending Third-Party as potentially distinct policies, one may be set incorrectly to match the other by default.
 
 **Priority:** High
 **Decision owner:** Management
 
 ---
 
-### ISSUE-008 — Confirm the five-dimension lifecycle model
-**Decision required:** Confirm the ticket-state model — `TicketStatus`, `VerificationStatus`, `EscalationLevel`, `SlaState`, and `ResolutionOutcome`, tracked as five independent dimensions — and each dimension's value set.
+### ISSUE-008 — Confirm required ticket-state behavior *(decision split — see note)*
+**Decision required, split into two parts:**
+- **Management approves** the required behavior and reporting outcomes: a ticket must be capable of being escalated while still actively being worked, and verification status, escalation level, SLA state, and resolution outcome must each be reportable independently of one another.
+- **IT / Solution Architect decides** the implementation used to satisfy that required behavior — specifically, whether it is modeled as five independent dimensions (`TicketStatus` / `VerificationStatus` / `EscalationLevel` / `SlaState` / `ResolutionOutcome`) or some other internal representation. This half is an architecture decision, not a management decision point.
 
-**Why this decision is needed:** A single combined status field cannot represent a ticket that is both "escalated" and "still being worked" without losing one of those two facts. The revised model tracks these as independent attributes of the same ticket, and represents Reopen as an event and Duplicate as an outcome rather than as status values.
+**Why this decision is needed:** A single combined status field cannot represent a ticket that is both "escalated" and "still being worked" without losing one of those two facts. Management's role is to confirm this behavior is actually required; the specific field design that satisfies it is an implementation choice.
 
-**Options:**
-- **A — Single combined status field with additional values added as needed.** *Pros:* One field to look at. *Cons:* Cannot represent combinations that occur in practice (escalated while in progress); represents an event (Reopen) and an outcome (Duplicate) as if they were workflow stages.
-- **B — Five independent dimensions, as specified.** *Pros:* Represents real combinations correctly; each dimension has its own transition rules and audit trail. *Cons:* Slightly more to document up front, though the user-facing view can still present a single summary.
+**Options (for the management-approved behavior only):**
+- **A — No: track a single combined status only.** *Pros:* Simplest to describe. *Cons:* Cannot represent combinations that occur in practice (escalated while in progress); an event (Reopen) and an outcome (Duplicate) would be represented as if they were workflow stages.
+- **B — Yes: escalation, verification, SLA state, and resolution outcome must all be independently reportable.** *Pros:* Represents real combinations correctly; each dimension has its own transition rules and audit trail. *Cons:* Slightly more to document up front, though the user-facing view can still present a single summary.
 
-**Recommended option:** B.
+**Recommended option:** B for the required behavior; the five-dimension model is IT/Solution Architect's recommended way to satisfy it, subject to their own design review.
 
 **Impact if no decision is made:** Development proceeds on the single-field model, which would need to be reworked once an escalated-while-in-progress case is encountered.
 
 **Priority:** Medium
-**Decision owner:** Customer Service
+**Decision owner:** Management (required behavior) — IT / Solution Architect (implementation model)
 
 ---
 
@@ -334,7 +340,7 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 - **A — No proactive warning; alert only at breach; no defined window for automatic level-up.** *Pros:* Simplest. *Cons:* No opportunity to act before a breach; no guarantee an unresolved escalation ever reaches Level 3.
 - **B — Warning at a percentage of the resolution target elapsed (e.g., 75%); a configurable Level 2→3 window set per priority tier.** *Pros:* Reflects each tier's actual urgency; gives staff a chance to act before a breach; guarantees automatic advancement without depending on a retry count. *Cons:* Requires setting and periodically reviewing a window value for each priority tier.
 
-**Recommended option:** B.
+**Recommended option:** B, with proposed starting defaults for each priority tier (early-warning threshold and Level 2→GM window) provided as a fill-in table in the companion Executive Decisions document, for management to accept or change value-by-value.
 
 **Impact if no decision is made:** The escalation engine cannot be finalized, and a ticket could remain at Level 2 indefinitely regardless of its priority.
 
@@ -343,16 +349,17 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 
 ---
 
-### ISSUE-017 — Confirm the actual operating business week
-**Decision required:** Confirm the operating week for SLA business-hours purposes is Saturday–Thursday, as stated, rather than the Saturday–Sunday weekend used by the UAE federal government since 2022.
+### ISSUE-017 — Confirm the actual operating business week *(options clarified — "Sat–Sun" alone is ambiguous)*
+**Decision required:** Confirm the operating week for SLA business-hours purposes. Stating this as "Sat–Thu" versus "Sat–Sun" alone is ambiguous about which days are actually worked, so the options below spell out the full working-day range for each.
 
-**Why this decision is needed:** If the stated week is a drafting error, every business-hours SLA calculation would be incorrect by one working day per week.
+**Why this decision is needed:** If the stated week is a drafting error, every business-hours SLA calculation would be incorrect by one or two working days per week.
 
 **Options:**
-- **A — Confirm Saturday–Thursday as stated.** *Pros:* No change needed. *Cons:* None, if correct.
-- **B — Correct to Saturday–Sunday.** *Pros:* Aligns with the current UAE federal convention. *Cons:* Changes every SLA calculation and reporting cadence built around the stated week.
+- **A — Working days Saturday–Thursday; Friday off.** As currently stated in the requirements. *Pros:* No change needed, if correct. *Cons:* None, if correct.
+- **B — Working days Monday–Friday; Saturday–Sunday off.** Aligns with the UAE federal government's convention since 2022. *Pros:* Matches current common practice. *Cons:* Changes every SLA calculation and reporting cadence built around the originally stated week.
+- **C — Another configurable company calendar**, if Tiger Group/Geyness's actual working days differ from both A and B (e.g., a hybrid arrangement).
 
-**Recommended option:** Confirm the correct week before building the calendar logic; the work week will be stored as configurable data regardless, so it can be corrected without a code change if needed.
+**Recommended option:** Confirm the correct week before building the calendar logic; the work week will be stored as configurable data regardless (supporting A, B, or C without a code change), so this decision only needs to select the correct starting configuration.
 
 **Impact if no decision is made:** Development proceeds on configurable data either way, but any SLA figure reported before confirmation carries a risk of being off by a working day.
 
