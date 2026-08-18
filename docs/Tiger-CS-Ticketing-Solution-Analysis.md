@@ -5,7 +5,7 @@
 |---|---|
 | **Prepared for** | Tiger Group — Transformation, Marketing & Growth Directorate |
 | **Prepared by** | Solution Architecture Review (AI-assisted, human-reviewed) |
-| **Status** | Draft for management review — **no implementation authorized** |
+| **Status** | **Approved for Architecture Design** — management has reviewed and approved the MVP decisions (Section 13 Group A + Group C); ADRs are being prepared per that approval. Application code, ERD, SQL schema, EF migrations, and API implementation remain unauthorized until a further, explicit go-ahead. |
 | **Version** | 2.1 — final correction pass following management review of the decision documents |
 | **Date** | 2026-08-17 |
 | **Primary source** | `Tiger_CS_Ticketing_System_Requirements.pdf` (Tiger Group, v1.0, June 2026) — "Powered by Geyness Call Center" |

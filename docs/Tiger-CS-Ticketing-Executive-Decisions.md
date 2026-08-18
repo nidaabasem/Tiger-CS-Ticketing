@@ -4,6 +4,7 @@
 | | |
 |---|---|
 | **Purpose** | Decisions required before MVP development can proceed with confidence |
+| **Status** | **Approved for Architecture Design** — management has reviewed and approved all items below as recommended (see the Approval section and the Final Decision Sign-Off in the Technical Decision Register) |
 | **Audience** | Management sign-off meeting (30–45 minutes) |
 | **Scope** | **16 MVP-development issues represented by 20 decision rows, plus 1 production go-live issue.** Phase 2 and Phase 3 decisions exist but do not block MVP — see the one-line appendix. |
 | **Detail** | Full rationale, trade-offs, and worked examples for every item below are in the companion Technical Decision Register: `docs/Tiger-CS-Ticketing-Management-Decisions.md` |
