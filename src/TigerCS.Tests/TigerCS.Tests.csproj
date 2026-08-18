@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TargetFramework, Nullable, ImplicitUsings inherited from Directory.Build.props -->
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TigerCS.Domain\TigerCS.Domain.csproj" />
+    <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
+    <ProjectReference Include="..\TigerCS.Infrastructure\TigerCS.Infrastructure.csproj" />
+    <ProjectReference Include="..\TigerCS.Integrations\TigerCS.Integrations.csproj" />
+    <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
+  </ItemGroup>
+
+</Project>
