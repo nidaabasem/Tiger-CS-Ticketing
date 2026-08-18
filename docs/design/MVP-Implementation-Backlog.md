@@ -3,48 +3,82 @@
 
 | | |
 |---|---|
-| **Status** | Design for review — planning artifact only. **Revised following management's approved delivery decision** (see §0). |
-| **Scope** | The approved plan is a **4-week, 1-developer functional pilot** (§2), built from `MVP-ERD.md`, `MVP-Data-Dictionary.md`, `MVP-API-Contracts.md`, `Genesys-Mock-Contract.md`, and `MVP-UI-Wireframes.md`. The original 4-person/3-week plan is retained as a reference appendix (§5) for a future team scale-up, not as an active plan. |
+| **Status** | Design for review — planning artifact only. **Corrected following management's clarified delivery decision** (see §0) — the prior revision's scope reduction did not match what management actually approved and has been fixed. |
+| **Scope** | The approved plan is a **4-week, 1-developer, AI-assisted-development functional pilot** (§2), committed to **≤120 ideal hours**, built from `MVP-ERD.md`, `MVP-Data-Dictionary.md`, `MVP-API-Contracts.md`, the confirmed Tiger/Genesys integration contract, and `MVP-UI-Wireframes.md`. **SLA due-date calculation, basic escalation, and Genesys Basic Integration are core, committed pilot features — not deferred.** The original 4-person/3-week plan is retained as a reference appendix (§5) for a future team scale-up, not as an active plan. |
 | **Explicitly not done here** | No application code, no project scaffolding, no actual sprint/task-tracker tickets created in any external tool — this is the plan those would be created from. **No production deployment is authorized at this stage — see §4.** |
 | **Base** | `main` @ `4fe6f19` |
-| **Related documents** | All preceding `docs/design/*.md` documents, including `MVP-UI-Wireframes.md` and `MVP-Traceability-Matrix.md`; `docs/architecture/System-Architecture.md`, `Module-Design.md`, `SLA-Architecture.md`; `MVP-Design-Review-Findings.md` (Finding DR-08, resolved by the decision recorded in §0) |
-| **Date** | 2026-08-18; revised in the senior-architecture-review pass; revised again to record management's approved delivery decision |
+| **Related documents** | All preceding `docs/design/*.md` documents, including `MVP-UI-Wireframes.md` and `MVP-Traceability-Matrix.md`; `docs/architecture/System-Architecture.md`, `Module-Design.md`, `SLA-Architecture.md` (§7's pilot-scope note on priority downgrade), `docs/architecture/adr/0012-priority-change-sla-policy.md` (pilot-scope note); `MVP-Design-Review-Findings.md` (Finding DR-08, resolved by the decision recorded in §0) |
+| **Date** | 2026-08-18; revised in the senior-architecture-review pass; revised again to record management's first delivery decision; **corrected in this revision to match management's clarified intended pilot scope** |
 
 ---
 
-## 0. Team-Capacity Decision (Governs Everything Below) — **Approved, Not an Assumption**
+## 0. Team-Capacity Decision (Governs Everything Below) — **Approved, Corrected to Match Management's Intent**
 
-**Management has approved the following delivery decision, resolving Finding DR-08 (`MVP-Design-Review-Findings.md`):**
+**Management has approved the following delivery decision, resolving Finding DR-08 (`MVP-Design-Review-Findings.md`). This revision corrects the prior draft, which over-deferred scope management did not intend to cut:**
 
-- **Target: a 4-week functional pilot** (not the original 3 weeks).
-- **Team capacity: 1 developer.**
-- **Genesys integration must remain behind a feature flag, defaulted off, until the official sandbox, webhook schema, and authentication mechanism are confirmed by Genesys** — see §3.
-- **Mock validation must never be described as production-ready**, in any status update, pilot readout, or go-live communication — see §4.
+1. **The delivery plan is four weeks with one developer using AI-assisted development.**
+2. **Genesys Basic Integration is ready and remains in the pilot** — built against the confirmed Tiger/Genesys integration contract (not the provisional `Genesys-Mock-Contract.md`), and kept behind a feature flag **for operational safety, not because it is out of scope**. See §3.
+3. **SLA due-date calculation and basic escalation are core requirements and remain in the pilot** — they are central to the approved ticketing workflow and are not removable for capacity reasons.
+4. **Priority-downgrade protection is not removed.** For this pilot, **priority downgrades are disabled completely after ticket creation** — this safely defers the approval workflow (Finding DR-05) without permitting an unauthorized downgrade and without contradicting ADR-0012. Priority **upgrades** remain in scope, since they can be implemented safely (an upgrade can only tighten a deadline, per ADR-0012, and needs no approval gate). The exact restriction statement, used consistently across every affected document:
+
+   > **"Priority is fixed after ticket creation during the pilot. Downgrades are not permitted. The approved downgrade-request and approval design remains documented for the post-pilot phase."**
+
+- **Mock validation must never be described as production-ready**, in any status update, pilot readout, or go-live communication — see §4. (This principle stands even though Genesys itself is no longer mock-only for this pilot — it still governs how any remaining unconfirmed detail is described, and how future mock-contract work on other integrations must be described.)
 - **No production deployment is authorized at this stage** — see §4. Only a pilot deployment to a non-production environment is in scope.
 
-This is no longer `[ASSUMPTION]` — it is a decision, recorded here as the source of truth for every hour estimate and scope choice below. The original 4-person/3-week plan (§5) is **superseded as the active plan** and retained only as a reference for a future team scale-up; nothing in §5 should be treated as current.
+**Capacity rules governing §2 below, all satisfied and verified in §0.1:**
+- The committed plan does not exceed **120 ideal hours**.
+- No week exceeds **30 ideal hours**.
+- At least **10–12 hours** inside the 120-hour total are reserved for integration, regression testing, UAT fixes, and pilot deployment — named and estimated, not hidden as unestimated work.
+- Anything not fitting in the 120-hour commitment is listed as an explicitly-labeled **optional stretch item** (§2.6), outside the commitment, not silently dropped and not silently included.
 
-### 0.1 Workload Summary — Hours per Week (1 Developer, 4 Weeks)
+This is a decision, recorded here as the source of truth for every hour estimate and scope choice below. The original 4-person/3-week plan (§5) is **superseded as the active plan** and retained only as a reference for a future team scale-up; nothing in §5 should be treated as current.
 
-A single developer at ~30 ideal-hours/week gives a **~120-hour budget** across 4 weeks (the same per-person weekly rate used throughout this document's prior revisions, for consistency — no assumption that a solo developer works harder or longer per week than a team member did). The approved plan in §2 totals **129 ideal hours** — a disclosed **9-hour (~8%) overage**, concentrated in Week 4:
+### 0.1 Workload Summary — Hours per Week (1 Developer, 4 Weeks, AI-Assisted)
 
-| Week | Hours | vs. 30h/week budget |
+A single developer at ~30 ideal-hours/week gives a **120-hour budget** across 4 weeks. The committed plan in §2 totals exactly **119 ideal hours** — **107h of feature work plus a 12-hour reserve** for integration/regression/UAT/deployment — fitting within the 120-hour cap with 1 hour of headroom, and with no week exceeding 30 hours:
+
+| Week | Feature hours | Reserve | Total | vs. 30h/week budget |
+|---|---|---|---|---|
+| Week 1 | 30h | — | 30h | On budget |
+| Week 2 | 30h | — | 30h | On budget |
+| Week 3 | 29h | — | 29h | −1h (within budget) |
+| Week 4 | 18h | 12h | 30h | On budget |
+| **Total** | **107h** | **12h** | **119h** | **−1h (within the 120h cap)** |
+
+**Why this is different from the prior draft:** the prior revision fit within capacity by deferring SLA, escalation, and Genesys entirely — which management has now clarified is not the intended cut. This revision keeps those three core, and instead trims **depth and richness within each feature**, plus leans on AI-assisted development to reduce the mechanical/boilerplate share of the estimate (schema generation from an already-fully-specified data dictionary, CRUD scaffolding, DTO mapping) more than the correctness-critical share (SLA due-date math, breach-flag immutability, idempotency correctness, escalation trigger timing) — those keep estimates close to what careful implementation actually requires, AI-assisted or not. §0.2 states exactly what depth was trimmed per feature; §2.6 lists what didn't fit at all, explicitly as stretch, not silently dropped.
+
+### 0.2 What's Committed, What's Trimmed Within Each Feature, and Why
+
+**Committed (core, built in this pilot) — matches management's must-remain list exactly:**
+
+| Feature | What ships | What's trimmed within it (not removed, just less deep) |
 |---|---|---|
-| Week 1 | 29h | −1h (within budget) |
-| Week 2 | 30h | On budget |
-| Week 3 | 30h | On budget |
-| Week 4 | 40h | **+10h (+33% over)** |
-| **Total** | **129h** | **+9h (+8%) over the 120h budget** |
+| Authentication and authorization | Login, logout, current-user, role/department checks on every endpoint | Lockout-policy edge cases get simpler handling than a full multi-attempt-window implementation |
+| CRM unit/customer verification | Unit/contact lookup and confirmation, immutable snapshot capture | Single-step combined lookup-and-confirm instead of the full 4-endpoint session flow (§5's reference design) — still session-based, so Finding DR-01's circular-dependency fix is not reintroduced |
+| Intake and ticket creation | Full ticket creation from a confirmed verification session | — |
+| Classification, priority, and department routing | Category-to-department routing, priority assignment at creation | — |
+| Assignment and transfer | Department-membership-checked assignment, transfer preserving the immutable `OriginatingDepartmentId` | — |
+| Core ticket lifecycle | Status changes, resolve, close, notes, attachments (upload/list/download) | Attachment withdrawal (Finding DR-06) not built — upload-only, per management's "may be deferred" list; duplicate-flag recommend/confirm sub-flow not built — resolve-as-duplicate directly still works |
+| **SLA due-date calculation and breach detection** | Business-calendar-aware due dates (Critical 24/7, others business-hours), breach-flag detection, immutable once set | **Pause/resume (`TicketSlaPausePeriods`) not built** — a paused-equivalent status exists via `TicketStatus`, but the SLA clock does not stop for it in this pilot; this is a real, disclosed limitation, not a silent one |
+| **Basic automatic/manual escalation** | Manual escalation flag, Level 4 manual-only (role-gated), automatic Level 2 trigger on breach | The timed Level 2→3 auto-advance (a scheduled-job feature) is not built — Level 2 triggers automatically on breach, but does not automatically advance to Level 3 on a timer; GM/Level-3 escalation in this pilot is manual only |
+| **Genesys Basic Integration** | Webhook ingestion against the **confirmed** contract, per-event idempotency (preferring the provider's confirmed stable `EventId` directly, since the contract is now confirmed — no fallback-key complexity needed), agent mapping, First-Human-Response satisfaction, manual call-to-ticket linking — **shipped behind a feature flag for operational safety** | The failed-events retry endpoint/UI is not built for pilot — failures are visible in logs/audit, manual re-processing is a direct-to-database operator action if it's ever needed, not a UI feature |
+| Priority changes | **Upgrade only** — earlier-of-due-dates, reuses the SLA calculation engine's own logic | **Downgrade is completely disabled after ticket creation** — see the restriction statement in §0 |
+| Email acknowledgement | Automated ack on ticket creation via the Outbox | — |
+| Audit trail | Append-only `AuditEntries` for every mutating action, on every feature above | — |
+| Ticket queue and ticket-details UI | Queue list, ticket detail, timeline, SLA/escalation panel | Queue filter/sort is basic (fewer simultaneous filter fields than the full design); no dashboard beyond the queue itself |
+| Automated tests for critical business rules | A dedicated regression pass covering breach-flag immutability, verification-session single-use, Genesys event idempotency, escalation-trigger timing, priority-upgrade correctness, and priority-downgrade hard-block | In addition to (not instead of) the per-item contract tests each feature item already carries |
+| UAT and pilot deployment | Full regression pass, UAT-fix window, non-production pilot deployment | Part of the explicit 12-hour reserve (§0.1) — see S-25/S-26 in §2 |
 
-**This is disclosed, not hidden**, consistent with how this document has handled every other capacity finding: Week 4 carries the regression pass and pilot deployment on top of its own feature work, and is this plan's one real pressure point. If it manifests as schedule slip, the same three-option framework used for the prior (now-superseded) Architecture/Foundation gap applies here: accept the bounded overtime, extend by 2–3 days, or trim further (the first candidate to trim is S-15's attachment/notes UI polish, per §2's own notes).
-
-### 0.2 What Was Cut to Fit 1 Developer, and Why
-
-The reference plan (§5) totals ~387 ideal hours across 4 roles (135+78+110+64 from its own workload table). One developer at ~120h for 4 weeks cannot deliver that scope — not through better sequencing, only through genuinely doing less. The approved plan (§2) is the **1-developer fallback scope already sketched in this document's prior revision (formerly §6.1)**, now made concrete and scheduled across exactly 4 weeks rather than left as a range estimate. What's included and excluded, and why, is stated inline in §2; the short version:
-
-- **Included:** the full five-dimension ticket lifecycle (create → assign → status change → resolve → close), a simplified single-step verification flow (still session-based, so Finding DR-01's circular-dependency lesson is not silently reintroduced), notes and attachments (upload/list/download, virus-scan status), a basic email acknowledgement, and a minimal UI covering exactly these flows.
-- **Excluded (deferred to a fast-follow phase, once team capacity increases):** SLA due-date computation, business-calendar math, pause/resume, breach detection, escalation (manual or automatic), the priority-downgrade approval workflow (Finding DR-05), attachment withdrawal/quarantine (Finding DR-06), and — per management's explicit decision — **all Genesys integration, mock or real** (see §3). The full 27-entity schema design from `MVP-ERD.md`/`MVP-Data-Dictionary.md` is **not rebuilt or narrowed** — the entities for deferred features simply aren't implemented yet, so no design rework is needed when the team scales up.
-- **Not a business-rule reduction without flagging it as one:** removing the priority-downgrade approval gate for this scope means priority is agent-editable directly, with no Dept-Head+ check — this is a real behavior change from ADR-0012, not just a schedule one, and must be communicated to the sponsor as such, not silently absorbed.
+**May be deferred or simplified (per management's explicit list) — not committed, and where attempted at all, listed as stretch in §2.6, not counted in the 119h total:**
+- SLA pause/resume
+- Priority downgrade of any kind (hard-disabled, not merely deferred — see §0's restriction statement)
+- The priority-downgrade request/approval UI and workflow (the full design remains documented in `MVP-API-Contracts.md` §5.6.1–§5.6.5 and `MVP-ERD.md`/`MVP-Data-Dictionary.md` §2.27 for the post-pilot phase — **not deleted**, per explicit instruction)
+- Attachment withdrawal (upload-only is committed; withdrawal is stretch)
+- Advanced administration screens (departments/categories/business-calendar live-editing UI) — seeded configuration is committed instead
+- Advanced dashboards and reports
+- Non-core UI polish
+- Any integration other than CRM, Genesys, and email
 
 ---
 
@@ -52,174 +86,266 @@ The reference plan (§5) totals ~387 ideal hours across 4 roles (135+78+110+64 f
 
 Every item below carries: **Backlog ID**, user story/task, business value, acceptance criteria, dependencies, estimated effort (ideal dev-hours), Risk (High/Medium/Low), test requirements, Definition of Done.
 
-Since there is exactly one developer, there is no "can run in parallel" field and no "workstream" field in this section — every item is sequential on one person's calendar. (The reference plan in §5 retains those fields, since they were meaningful there.)
+Since there is exactly one developer, there is no "can run in parallel" field and no "workstream" field in this section — every item is sequential on one person's calendar, and the **critical path is the sequence itself** (§2.5). (The reference plan in §5 retains parallel-workstream fields, since they were meaningful there.)
 
 ---
 
-## 2. Approved 4-Week, 1-Developer Pilot Plan
+## 2. Approved 4-Week, 1-Developer Pilot Plan (Corrected)
 
-Items are sequential; "Week N" markers show where each item falls by cumulative hours, not a hard boundary — solo work naturally straddles week boundaries more than a multi-person plan's would. Each item names the reference-plan item(s) it's adapted from, so nothing here is invented independent of the detailed design work already done.
+Items are sequential; "Week N" markers show where each item falls by cumulative hours. Each item names the reference-plan item(s) it's adapted from, so nothing here is invented independent of the detailed design work already done. **AI-assisted development is assumed throughout** — estimates reflect that boilerplate-heavy items (scaffolding, schema, CRUD, DTO mapping, UI layout) benefit more from AI assistance than correctness-critical items (SLA math, breach immutability, idempotency, escalation timing), which keep estimates close to what careful implementation requires regardless of tooling.
 
-### Week 1 (target ~30h; actual 29h)
+### Week 1 (target ≤30h; actual 30h)
 
 **S-01 — Solution scaffolding** *(adapted from W1-01)*
 - **Story/value:** the physical solution structure (Domain/Application/Infrastructure/Api/Web/Tests) in place before feature work starts.
 - **Acceptance criteria:** solution builds; module boundaries match `Module-Design.md`'s dependency rules; a placeholder health-check endpoint responds.
-- **Dependencies:** none. **Estimated effort:** 6h. **Risk:** Low.
+- **Dependencies:** none. **Estimated effort:** 2h (AI-assisted scaffolding from `Module-Design.md`'s already-specified boundaries). **Risk:** Low.
 - **Test requirements:** a build-verification check that fails on a prohibited project reference.
 - **Definition of Done:** solution builds clean.
 
 **S-02 — Minimal CI** *(adapted from W1-08, reduced)*
-- **Story/value:** build + unit tests run automatically on every push — a containerized integration-test harness is deferred as unnecessary overhead at this scale; local/in-memory test execution is sufficient for a 1-developer pilot.
-- **Acceptance criteria:** CI runs build + unit tests on push.
-- **Dependencies:** S-01. **Estimated effort:** 3h (**-5h vs. the reference plan's W1-08** — a full containerized harness isn't worth the setup cost for one developer who can run integration tests locally). **Risk:** Low.
+- **Story/value:** build + unit tests run automatically on every push.
+- **Acceptance criteria:** CI runs build + unit tests on push; a containerized integration-test harness is deferred as unnecessary overhead at this scale.
+- **Dependencies:** S-01. **Estimated effort:** 2h. **Risk:** Low.
 - **Test requirements:** N/A (this item builds the test infrastructure).
 - **Definition of Done:** a deliberately-broken test fails the pipeline.
 
-**S-03 — Authentication and authorization, simplified** *(adapted from W1-02)*
+**S-03 — Authentication and authorization** *(adapted from W1-02)*
 - **Story/value:** login and role/department-based access control (FR-ADM-01).
-- **Acceptance criteria:** `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/users/me` per `MVP-API-Contracts.md` §1.1–1.3; role checks enforced on every endpoint as it's built (not deferred as stubs, since there's no second developer to catch a missed check later).
-- **Dependencies:** S-01. **Estimated effort:** 8h (**-2h vs. W1-02** — the lockout-policy edge cases get a simpler, less exhaustively-tested implementation at this scale; still functionally present, per Security-Architecture.md's baseline). **Risk:** Medium.
+- **Acceptance criteria:** `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/users/me` per `MVP-API-Contracts.md` §1.1–1.3; role checks enforced on every endpoint as it's built.
+- **Dependencies:** S-01. **Estimated effort:** 4h (lockout-policy edge cases simplified, per §0.2). **Risk:** Medium.
 - **Test requirements:** login success/failure unit tests; a smoke test on a protected endpoint with/without a token.
 - **Definition of Done:** a seeded test user logs in and receives a JWT with correct roles.
 
-**S-04 — Database schema, reduced entity set** *(adapted from W1-03, narrowed)*
-- **Story/value:** the schema for exactly this scope's features — not the full 27-entity design.
-- **Acceptance criteria:** implements `AspNetUsers/Roles`, `Employees`, `Departments`, `UserDepartmentAssignments`, `Categories`, `Priorities` (fixed list only, no `SlaPolicies` computation), `UnitReferences`, `ContactReferences`, a **simplified single-step `VerificationSessions`** (see S-07), `TicketRequesterSnapshots`, `Tickets`, `TicketAssignments`, `TicketStatusHistory`, `TicketResolutions`, `TicketNotes`, `TicketAttachments`, `Notifications`, `OutboxMessages`, `AuditEntries` — roughly 19 of the 27 groups in `MVP-Data-Dictionary.md`. **Explicitly not built in this pass:** `SlaPolicies`' computed fields, `TicketSlaInstances`, `TicketSlaPausePeriods`, `TicketEscalations`, `PriorityDowngradeRequests`, `GenesysInteractions`, `GenesysInteractionEvents`, `GenesysAgentMappings`, `IdempotencyRecords` (not needed without Genesys/SLA-sweep idempotency concerns at this scope — a single `Outbox` retry counter suffices for the one notification type in scope).
-- **Dependencies:** S-01. **Estimated effort:** 12h. **Risk:** Medium (schema mistakes are still expensive to fix later, even solo).
+**S-04 — Database schema (25 of 27 entity groups)** *(adapted from W1-03, narrowed only by the two features fully out of scope)*
+- **Story/value:** the schema for every committed feature — **including SLA, escalation, and Genesys entities**, since those are core in this corrected plan.
+- **Acceptance criteria:** implements every group in `MVP-Data-Dictionary.md` §2.1–2.27 **except** `TicketSlaPausePeriods` (§0.2 — pause/resume not built) and `PriorityDowngradeRequests` (§0 — downgrades hard-disabled) — 25 of 27 groups, including `SlaPolicies`, `TicketSlaInstances`, `TicketEscalations`, `GenesysInteractions`, `GenesysInteractionEvents`, `GenesysAgentMappings`, `IdempotencyRecords`, `BusinessCalendars`/`BusinessCalendarWorkingDays`/`Holidays`.
+- **Dependencies:** S-01. **Estimated effort:** 9h (AI-assisted migration generation from the already-complete Data Dictionary specification — mechanical work, trimmed the most). **Risk:** Medium (schema mistakes are still expensive to fix later, even solo, even AI-assisted).
 - **Test requirements:** a schema-verification check that every FK in scope is present.
-- **Definition of Done:** migrations apply cleanly; seed data for `Priorities`/`Departments` loads.
+- **Definition of Done:** migrations apply cleanly; seed data for `Priorities`/`SlaPolicies`/`Departments`/default `BusinessCalendars` loads.
 
-### Week 2 (target ~30h; actual 30h)
-
-**S-05 — Audit trail and a minimal Outbox** *(adapted from W1-04, reduced)*
-- **Story/value:** every mutating action produces an audit record (FR-TKT-07, FR-ADM-03 — **not descoped even at reduced team size, per the immutable/append-only invariant rule carried over from the reference plan's Scope-Protection Rule 4**); a minimal Outbox exists for the one notification type in scope (email acknowledgement, S-13).
-- **Acceptance criteria:** an audit-writing mechanism used by every later feature; a simple Outbox dispatch loop (no generalized cross-feature idempotency table, since there's no Genesys/SLA-sweep to share it with at this scope — `[ASSUMPTION]` a single retry-counter column on `OutboxMessages` is sufficient here, revisited when Genesys/SLA work resumes).
-- **Dependencies:** S-04. **Estimated effort:** 8h (**-6h vs. W1-04** — no cross-feature idempotency generalization needed yet). **Risk:** High — still the highest-leverage item in this plan; getting the audit mechanism wrong is expensive to retrofit even solo.
-- **Test requirements:** a round-trip test — write an Outbox message, confirm dispatch.
-- **Definition of Done:** a sample event flows end-to-end through audit + Outbox.
+**S-05 — Audit trail, Outbox, and idempotency foundation** *(adapted from W1-04)*
+- **Story/value:** every mutating action produces an audit record (FR-TKT-07, FR-ADM-03 — never descoped, per the immutable/append-only invariant carried through every revision of this plan); a generalized idempotency mechanism, since **Genesys webhook dedup needs it in this corrected plan**, unlike the prior (incorrect) draft.
+- **Acceptance criteria:** an audit-writing mechanism used by every later feature; an Outbox dispatch loop; `IdempotencyRecords` used by both the email-ack path and the Genesys webhook path (S-17).
+- **Dependencies:** S-04. **Estimated effort:** 6h. **Risk:** High — still the highest-leverage item in this plan; getting this wrong is expensive to retrofit, and it's now load-bearing for Genesys too.
+- **Test requirements:** a round-trip test — write an Outbox message, confirm dispatch; a duplicate `IdempotencyKey` short-circuits correctly.
+- **Definition of Done:** a sample event flows end-to-end through audit + Outbox + idempotency.
 
 **S-06 — CRM gateway interface and test double** *(adapted from W1-05)*
 - **Story/value:** an `ICrmGateway` abstraction with a fake implementation, so verification can be built and tested before real CRM access exists.
 - **Acceptance criteria:** covers unit lookup, unit search, contact lookup; the test double simulates an outage for fallback-path testing.
-- **Dependencies:** S-01. **Estimated effort:** 6h. **Risk:** Low.
+- **Dependencies:** S-01. **Estimated effort:** 3h. **Risk:** Low.
 - **Test requirements:** happy-path and simulated-outage unit tests.
 - **Definition of Done:** the test double is wired into DI; a real implementation can be swapped in later.
 
-**S-07 — Verification flow, simplified single-step** *(adapted from W2-01, substantially reduced — Finding DR-01's lesson preserved)*
-- **Story/value:** verify a unit/contact and capture the immutable read-back snapshot, **without** reintroducing the circular dependency Finding DR-01 fixed.
-- **Acceptance criteria:** **one endpoint** combines what the full design (§5, `MVP-API-Contracts.md` §2.4.1–§2.4.4) splits into four — lookup, select, and confirm happen in a single call against a short-lived `VerificationSessions` row, still single-use and still consumed at ticket creation (S-08), so the sequencing defect DR-01 found is not silently reintroduced at reduced scope just because there's less UI around it.
-- **Dependencies:** S-04, S-06. **Estimated effort:** 8h (**-7h vs. the reference plan's W2-01's 15h** — one endpoint instead of four, no separate selection/confirmation round-trip). **Risk:** Medium (the single-use/write-once rules still need a real test, not just convention, even simplified).
+**S-07 — Verification flow, simplified single-step** *(adapted from W2-01, reduced — Finding DR-01's lesson preserved)*
+- **Story/value:** verify a unit/contact and capture the immutable read-back snapshot, without reintroducing the circular dependency Finding DR-01 fixed.
+- **Acceptance criteria:** one endpoint combines what the full design (§5, `MVP-API-Contracts.md` §2.4.1–§2.4.4) splits into four — lookup, select, and confirm happen in a single call against a short-lived, single-use `VerificationSessions` row, consumed at ticket creation (S-08).
+- **Dependencies:** S-04, S-06. **Estimated effort:** 4h. **Risk:** Medium (the single-use/write-once rules still need a real test, even simplified).
 - **Test requirements:** a second consumption attempt on the same session returns `409`.
 - **Definition of Done:** the single verification endpoint passes its contract test.
 
-**S-08 — Ticket creation** *(adapted from W2-03)*
-- **Story/value:** create a ticket from a confirmed verification session (FR-TKT-01–06, FR-CLS-01–03, FR-RTE-01).
-- **Acceptance criteria:** correct `TicketNumber` format; routes to department from category; consumes the session and writes `TicketRequesterSnapshots` in the same transaction; seeds `TicketStatusHistory`. **No `TicketSlaInstances` row is opened** — SLA tracking is out of this scope entirely (§0.2), so ticket creation does not attempt to compute a due date at all.
-- **Dependencies:** S-07. **Estimated effort:** 8h. **Risk:** Medium.
+**Week 1 total: 2+2+4+9+6+3+4 = 30h.**
+
+### Week 2 (target ≤30h; actual 30h)
+
+**S-08 — Ticket creation, with SLA instance opened** *(adapted from W2-03, corrected — the prior draft incorrectly skipped opening an SLA instance)*
+- **Story/value:** create a ticket from a confirmed verification session, **and open its first `TicketSlaInstances` row with a computed due date** — SLA tracking starts at creation in this corrected plan, since SLA is core (FR-TKT-01–06, FR-CLS-01–03, FR-RTE-01, FR-SLA-01).
+- **Acceptance criteria:** correct `TicketNumber` format; routes to department from category; consumes the session and writes `TicketRequesterSnapshots` in the same transaction; seeds `TicketStatusHistory`; opens the initial `TicketSlaInstances` row (due dates computed once S-09 exists — sequenced so S-08 and S-09 are built together in practice, even though listed separately for traceability to the reference plan).
+- **Dependencies:** S-07. **Estimated effort:** 4h. **Risk:** Medium.
 - **Test requirements:** idempotency-key replay test (no duplicate ticket); category-to-department routing test.
-- **Definition of Done:** contract test passes, including idempotency.
+- **Definition of Done:** contract test passes, including idempotency and SLA-instance creation.
 
-### Week 3 (target ~30h; actual 30h)
+**S-09 — SLA calculation engine (business-calendar-aware due dates)** *(adapted from W3-01 — corrected from "not built" to core, per management's decision)*
+- **Story/value:** the due-date math behind `MVP-API-Contracts.md` §5.1 (FR-SLA-01–04) — **committed, not deferred.**
+- **Acceptance criteria:** Critical due dates ignore the business calendar (24/7); other tiers correctly exclude non-working hours/days/holidays, using seeded `BusinessCalendars`/`Holidays` data (live holiday-administration UI is stretch, per §0.2 — the calendar itself is not).
+- **Dependencies:** S-04, S-08. **Estimated effort:** 9h — kept close to the reference plan's own 14h estimate proportionally, since this is explicitly one of the correctness-critical items AI assistance trims least (flagged High risk in every prior revision of this plan; business-calendar-with-holidays math is the single most error-prone calculation in the whole system). **Risk:** High.
+- **Test requirements:** worked-example tests matching `SLA-Architecture.md`'s examples, including a holiday-spanning case.
+- **Definition of Done:** due-date computation matches `SLA-Architecture.md` §8's worked examples.
 
-**S-09 — Ticket read/list/detail/timeline** *(adapted from W2-04)*
-- **Story/value:** queue and detail visibility (FR-TKT, FR-ADM-03's auditability via timeline).
-- **Acceptance criteria:** list filters/sorts; detail returns the full shape (minus anything SLA/Genesys-related, which doesn't exist at this scope); timeline merges status history, assignments, notes, resolutions in order (no escalations — none exist at this scope).
-- **Dependencies:** S-08. **Estimated effort:** 8h. **Risk:** Low.
-- **Test requirements:** timeline ordering test.
+**S-10 — SLA breach detection** *(adapted from W3-01/W3-02's breach-detection half, without pause/resume)*
+- **Story/value:** mark `FirstResponseBreached`/`ResolutionBreached` immutably once a due date passes — the other core half of FR-SLA-01–04's requirement, without the pause/resume mechanism (§0.2 — deferred).
+- **Acceptance criteria:** a scheduled check (reuses the Outbox/scheduled-job pattern from S-05) marks breach flags; once `true`, never reset by any code path, including a later priority upgrade (S-14).
+- **Dependencies:** S-09. **Estimated effort:** 4h. **Risk:** Medium-High (the breach-flag-immutability rule is the highest-consequence invariant in this schema, per `MVP-ERD.md` §2.15 — kept correctness-first despite the tight budget).
+- **Test requirements:** an explicit "breach flag stays true" regression test (also re-verified in S-25).
+- **Definition of Done:** breach detection fires at the correct due-date boundary and never un-sets a flag.
+
+**S-11 — Basic escalation (manual + automatic Level 2-on-breach)** *(adapted from W3-04, reduced — the timed Level 2→3 auto-advance is stretch, per §0.2)*
+- **Story/value:** FR-ESC-01, FR-ESC-04, and the core of FR-ESC-02 — manual flag, Level 4 manual-only (role-gated), and an automatic Level 2 trigger the moment a breach is detected (S-10).
+- **Acceptance criteria:** `ManualFlag` and `ManualLevel4` role-gated correctly; a breach automatically raises a Level 2 `TicketEscalations` row. **The timed window-based Level 2→3 auto-advance (a separate scheduled job) is not built in this pilot** — Level 3/GM escalation is manual-only here, listed as stretch in §2.6.
+- **Dependencies:** S-10. **Estimated effort:** 4h. **Risk:** Medium.
+- **Test requirements:** a test that breach detection (S-10) produces exactly one Level 2 escalation, not a repeating one on every subsequent check.
+- **Definition of Done:** manual and auto-Level-2 escalation paths pass their tests.
+
+**S-12 — Ticket read/list/detail/timeline** *(adapted from W2-04)*
+- **Story/value:** queue and detail visibility (FR-TKT, FR-ADM-03's auditability via timeline) — now including SLA state and escalation level, since both exist in this corrected plan.
+- **Acceptance criteria:** list filters/sorts; detail returns the full shape including `SlaState`/`EscalationLevel`; timeline merges status history, assignments, notes, resolutions, and escalations in order.
+- **Dependencies:** S-08. **Estimated effort:** 4h. **Risk:** Low.
+- **Test requirements:** timeline ordering test across mixed event types, including escalation entries.
 - **Definition of Done:** endpoints pass contract tests.
 
-**S-10 — Assignment, transfer, status change** *(adapted from W2-05)*
+**S-13 — Assignment, transfer, status change** *(adapted from W2-05)*
 - **Story/value:** ownership and status management (FR-RTE-03–05, FR-TKT-11).
-- **Acceptance criteria:** assignment enforces department membership; transfer preserves the immutable `OriginatingDepartmentId`; status-change enforces the transition table. **No pause side-effect** — `PendingCustomer` is a valid `TicketStatus` value, but it triggers no `TicketSlaPausePeriods` row, since none exist at this scope.
-- **Dependencies:** S-08. **Estimated effort:** 8h. **Risk:** Medium.
+- **Acceptance criteria:** assignment enforces department membership; transfer preserves the immutable `OriginatingDepartmentId`; status-change enforces the transition table.
+- **Dependencies:** S-08. **Estimated effort:** 5h. **Risk:** Medium.
 - **Test requirements:** invalid-transition rejection test; transfer-preserves-immutable-ID test.
 - **Definition of Done:** endpoints pass contract tests.
 
-**S-11 — Notes and attachments, without withdrawal** *(adapted from W2-06, reduced per §0.2)*
-- **Story/value:** internal notes and file attachments (FR-TKT-06, BR-010 — both still core MVP, not descoped).
-- **Acceptance criteria:** note creation; attachment upload with size/type validation and virus-scan status; download blocked while not `Clean`. **No withdrawal/quarantine model** (Finding DR-06 deferred, §0.2) — an uploaded attachment simply cannot be removed at this scope; this is disclosed as a real limitation, not a silent gap, since `MVP-API-Contracts.md` §4.6 exists and describes withdrawal for when the team scales up.
-- **Dependencies:** S-08. **Estimated effort:** 8h. **Risk:** Medium (virus-scan integration and never-downloadable-until-clean still need real tests).
+**Week 2 total: 4+9+4+4+4+5 = 30h.**
+
+### Week 3 (target ≤30h; actual 29h)
+
+**S-14 — Priority upgrade only; downgrade hard-blocked** *(adapted from W3-03's upgrade half; downgrade replaced entirely per §0)*
+- **Story/value:** priority upgrade (ADR-0012's earlier-of-due-dates rule, FR-SLA-09's upgrade half) — the only priority-change path in this pilot.
+- **Acceptance criteria:** `PATCH /api/tickets/{ticketId}` (or the dedicated upgrade endpoint, `MVP-API-Contracts.md` §5.5) computes the new due date as the earlier of the existing and freshly-computed due date; **any attempt to submit a lower-urgency `PriorityId` after creation is rejected outright with a fixed error** (`type: .../priority-downgrade-disabled-in-pilot`) — no request is created, no approval path exists, nothing is left `Pending`. This is a hard block, not a deferred workflow.
+- **Dependencies:** S-09, S-13. **Estimated effort:** 3h. **Risk:** Low (the logic reuses S-09's due-date computation; the hard-block path is simple to implement and simple to verify).
+- **Test requirements:** an upgrade test (earlier-of-due-dates correctness); an explicit test that a downgrade attempt is rejected and produces no `TicketSlaInstances` row, no `PriorityDowngradeRequests` row (none exists), and no partial state of any kind.
+- **Definition of Done:** upgrade passes its contract test; downgrade is proven to be a no-op rejection, not a partially-built workflow.
+
+**S-15 — Notes and attachments, upload only** *(adapted from W2-06, reduced per §0.2)*
+- **Story/value:** internal notes and file attachments (FR-TKT-06, BR-010).
+- **Acceptance criteria:** note creation; attachment upload with size/type validation and virus-scan status; download blocked while not `Clean`. **No withdrawal** (Finding DR-06 — stretch, §2.6).
+- **Dependencies:** S-08. **Estimated effort:** 4h. **Risk:** Medium.
 - **Test requirements:** 11th-attachment rejection; download-while-pending rejection.
 - **Definition of Done:** endpoints pass contract tests.
 
-**S-12 — Resolve/close workflow** *(adapted from W2-07, reduced)*
+**S-16 — Resolve/close workflow** *(adapted from W2-07, reduced)*
 - **Story/value:** the resolution lifecycle (FR-RES-01–06, FR-TKT-10).
-- **Acceptance criteria:** resolve requires a non-empty note and conditional fields per outcome; close blocked without a current resolution. **Duplicate-flag recommend/confirm/reject (`MVP-API-Contracts.md` §3.12) deferred** — a ticket can still be resolved with `ResolutionOutcome = Duplicate` directly (§3.9), just without the separate lighter-weight flagging step; this preserves the underlying capability while cutting the extra endpoint.
-- **Dependencies:** S-08. **Estimated effort:** 6h (**-4h vs. W2-07** — the duplicate-flag sub-flow is cut). **Risk:** Medium.
+- **Acceptance criteria:** resolve requires a non-empty note and conditional fields per outcome; close blocked without a current resolution. Duplicate-flag recommend/confirm sub-flow deferred (stretch, §2.6) — resolve-as-duplicate directly (§3.9) still works.
+- **Dependencies:** S-08. **Estimated effort:** 4h. **Risk:** Medium.
 - **Test requirements:** empty-note rejection; close-without-resolution `409`.
 - **Definition of Done:** endpoints pass contract tests.
 
-### Week 4 (target ~30h; actual 40h — this plan's one disclosed pressure point, see §0.1)
+**S-17 — Genesys Basic Integration** *(adapted from W1-06+W3-05, corrected from "not built at all" to core, per management's decision — built against the confirmed contract, not the provisional mock)*
+- **Story/value:** the MVP's confirmed Genesys scope (ADR-0019) — **committed for this pilot.** Kept behind a feature flag, defaulted off at first deploy, **for operational safety** (a controlled rollout, not a scope exclusion) — see §3.
+- **Acceptance criteria:** webhook ingestion against the confirmed Tiger/Genesys contract; per-event idempotency using the contract's confirmed stable event identifier directly as the dedup key (`IdempotencyRecords`, via S-05) — the fallback composite-key logic designed for an *unconfirmed* contract (Finding DR-03) is not needed here, since the contract is now confirmed, which is exactly why this item costs less than the reference plan's combined 37h mock-then-real estimate; agent-to-employee mapping (`GenesysAgentMappings`); First-Human-Response satisfaction on call-answer; manual call-to-ticket linking. **The failed-events retry endpoint/UI is not built** (stretch, §2.6) — failures are visible in logs and the audit trail, not a dedicated operator screen, for this pilot.
+- **Dependencies:** S-04, S-05, S-06 (agent-mapping reuses the same DI/gateway patterns), S-10 (First-Human-Response ties into breach/SLA state). **Estimated effort:** 10h. **Risk:** Medium — real contract, real signature validation, still new integration code; kept a meaningful budget because correctness here (idempotency, signature validation) is not an area to compress.
+- **Test requirements:** duplicate-event idempotency test (using the real contract's event identifier); missing-optional-field acceptance test; signature-failure rejection test (rejected before persistence, per Finding DR-04 — unchanged by the mock-to-real switch); a feature-flag-off smoke test proving the webhook endpoint safely no-ops (or queues without side effects) while the flag is off.
+- **Definition of Done:** the integration passes its contract tests behind the flag; the flag itself, and the specific conditions for turning it on, are documented in §3, not assumed.
 
-**S-13 — Basic email acknowledgement** *(adapted from W3-06)*
-- **Story/value:** the automated acknowledgement email on ticket creation (FR-NOT-01) — the only notification in this scope.
-- **Acceptance criteria:** email attempted via the Outbox (S-05) for every ticket; content matches the required fields; does not set `FirstHumanResponseAtUtc` (moot at this scope, since First-Human-Response/SLA tracking don't exist here, but the field still shouldn't be touched by the ack path, for forward compatibility when SLA work resumes).
-- **Dependencies:** S-05, S-08. **Estimated effort:** 4h. **Risk:** Low.
+**S-18 — Basic email acknowledgement** *(adapted from W3-06)*
+- **Story/value:** the automated acknowledgement email on ticket creation (FR-NOT-01).
+- **Acceptance criteria:** email attempted via the Outbox (S-05) for every ticket; content matches the required fields; does not set `FirstHumanResponseAtUtc` (that field is now live and meaningful in this corrected plan, per S-17 — the ack path must still never touch it).
+- **Dependencies:** S-05, S-08. **Estimated effort:** 2h. **Risk:** Low.
 - **Test requirements:** a test asserting the ack path never touches `FirstHumanResponseAtUtc`.
 - **Definition of Done:** ack email fires and retries via Outbox on transient failure.
 
-**S-14 — UI: login, shell, verification/create flow, ticket detail** *(adapted from W1-07 + W2-08, reduced)*
-- **Story/value:** the agent-facing core of the pilot — screens 1, 6, 7, and the simplified verification step from S-07 (a single combined lookup-and-confirm screen rather than the full screens 4–5 split).
-- **Acceptance criteria:** login and shell work; an agent can look up and confirm a unit/contact in one screen, create a ticket, and view its detail.
-- **Dependencies:** S-03 (login), S-07/S-08/S-09 (backend). **Estimated effort:** 16h. **Risk:** Medium (the largest single UI item, since one developer builds all of it).
-- **Test requirements:** a scripted walkthrough of the full create-ticket happy path.
-- **Definition of Done:** an agent can verify, create, and view a ticket entirely through the UI.
+**S-19 — UI: login and shell** *(adapted from W1-07, reduced)*
+- **Story/value:** screen 1 and the authenticated shell.
+- **Acceptance criteria:** login and shell render; route guards redirect unauthenticated users.
+- **Dependencies:** S-03. **Estimated effort:** 2h. **Risk:** Low.
+- **Test requirements:** an end-to-end smoke test.
+- **Definition of Done:** a user can log in, see the shell, and log out.
 
-**S-15 — UI: queue, assignment/transfer, notes/attachments, resolve/close** *(adapted from W2-09/W2-10, reduced)*
-- **Story/value:** completes the agent-facing ticket lifecycle and the basic queue view.
-- **Acceptance criteria:** queue list/filter; assign/transfer/status-change actions; notes/attachments (upload/list/download, no withdrawal per S-11); resolve/close.
-- **Dependencies:** S-09, S-10, S-11, S-12, S-14 (shares the ticket-detail shell). **Estimated effort:** 10h. **Risk:** Medium. **First candidate to trim if Week 4's disclosed overage (§0.1) needs to shrink** — the queue's filter/sort richness can launch simpler (a plain list, no multi-field filter) without losing the core capability.
-- **Test requirements:** scripted walkthrough of assign → note → attach → resolve → close.
+**S-20 — UI: verification and ticket-creation flow** *(adapted from W2-08, reduced)*
+- **Story/value:** the single-screen verification-and-create flow (S-07), plus the create-ticket form (screen 6).
+- **Acceptance criteria:** an agent can look up and confirm a unit/contact in one screen and create a ticket, with priority upgrade available post-creation from the detail screen (S-23) but no downgrade path anywhere in the UI.
+- **Dependencies:** S-07, S-08, S-19. **Estimated effort:** 4h. **Risk:** Medium.
+- **Test requirements:** a scripted walkthrough of the full create-ticket happy path.
+- **Definition of Done:** an agent can verify and create a ticket entirely through the UI.
+
+**Week 3 total: 3+4+4+10+2+2+4 = 29h.**
+
+### Week 4 (target ≤30h; actual 30h — 18h feature work + 12h reserve)
+
+**S-21 — UI: ticket detail and timeline** *(adapted from W2-08's detail half)*
+- **Story/value:** the ticket detail screen (screen 7), now showing SLA due dates, `SlaState`, escalation level, and Genesys linkage where present.
+- **Acceptance criteria:** detail view matches `MVP-UI-Wireframes.md` §7's spec, extended with the SLA/escalation/Genesys fields this corrected plan actually builds.
+- **Dependencies:** S-12, S-20. **Estimated effort:** 3h. **Risk:** Low.
+- **Test requirements:** a scripted walkthrough of viewing a ticket's full detail including its SLA panel.
+- **Definition of Done:** detail screen functional against real data.
+
+**S-22 — UI: ticket queue** *(adapted from W2-10, reduced)*
+- **Story/value:** the queue list (screen 3), including `SlaState` and `EscalationLevel` badges.
+- **Acceptance criteria:** a basic filterable/sortable list — fewer simultaneous filter fields than the full design (§0.2), but includes SLA/escalation visibility since those are core here.
+- **Dependencies:** S-12. **Estimated effort:** 2h. **Risk:** Low.
+- **Test requirements:** filter/sort manual test pass.
+- **Definition of Done:** queue renders against real data, including SLA/escalation badges.
+
+**S-23 — UI: assignment/transfer, notes/attachments, resolve/close, priority upgrade** *(adapted from W2-09, reduced)*
+- **Story/value:** completes the agent-facing ticket lifecycle UI.
+- **Acceptance criteria:** assign/transfer/status-change actions; notes/attachments (upload/list/download, no withdrawal per S-15); resolve/close; a priority-upgrade action on the detail screen. **No downgrade action anywhere in the UI** — not a disabled button, simply absent, since the capability doesn't exist server-side either.
+- **Dependencies:** S-13, S-14, S-15, S-16, S-21. **Estimated effort:** 6h. **Risk:** Medium.
+- **Test requirements:** scripted walkthrough of assign → note → attach → resolve → close, and separately, upgrade.
 - **Definition of Done:** all screens functional against real backend endpoints.
 
-**S-16 — End-to-end regression pass and pilot-readiness check**
-- **Story/value:** exercise the full lifecycle before calling the pilot ready.
-- **Acceptance criteria:** every scripted walkthrough from S-08 through S-15 passes as one continuous run; `MVP-Traceability-Matrix.md`'s in-scope rows are spot-checked against actual behavior.
-- **Dependencies:** everything above. **Estimated effort:** 6h. **Risk:** Medium.
-- **Test requirements:** N/A (this item is the test pass).
-- **Definition of Done:** a documented pass/fail log; any failure fixed before S-17, not deferred past it.
+**S-24 — UI: SLA and escalation panel** *(adapted from W3-07, reduced — no downgrade UI at all, per §0)*
+- **Story/value:** makes the SLA/escalation engine usable, not just API-correct (screen 11).
+- **Acceptance criteria:** shows due dates, `SlaState` badge, breach status, escalation history, and a manual-escalate action. **Explicitly shows "Priority is fixed after ticket creation during the pilot. Downgrades are not permitted." as visible text wherever a priority-change action would otherwise appear** — not a tooltip-only disclosure, given its compliance relevance (mirroring how this plan has always treated compliance-relevant notices).
+- **Dependencies:** S-10, S-11, S-14, S-21. **Estimated effort:** 3h. **Risk:** Medium.
+- **Test requirements:** scripted walkthrough of viewing SLA/escalation state and performing a manual escalation and a priority upgrade.
+- **Definition of Done:** screen functional against real backend, including the pilot-restriction notice.
 
-**S-17 — Pilot deployment (non-production)**
-- **Story/value:** deploy the pilot build to a **non-production** target.
-- **Acceptance criteria:** deployment is repeatable; **this is explicitly not a production deployment — no production deployment is authorized at this stage** (management's decision, §0); hosting target per ADR-0022 remains `[ASSUMPTION]`/open.
-- **Dependencies:** S-16. **Estimated effort:** 4h. **Risk:** Medium (depends on the still-open hosting-target assumption).
-- **Test requirements:** a post-deploy smoke test (login, create ticket, view detail).
-- **Definition of Done:** the pilot instance is live in a non-production environment, smoke-tested, and reachable by pilot users.
+**S-25 — Automated tests for critical business rules** *(consolidated regression, beyond each item's own per-item tests)*
+- **Story/value:** explicit, dedicated coverage of the rules whose failure would be a correctness or compliance defect, not just a missing feature — the "automated tests for critical business rules" line item management named as a must-remain category in its own right, not merely implied by other items' test requirements.
+- **Acceptance criteria:** dedicated regression tests for: breach-flag immutability (S-10) surviving a priority upgrade (S-14); verification-session single-use (S-07); Genesys webhook idempotency using the real contract's event identifier (S-17); automatic Level 2 escalation firing exactly once per breach (S-11); priority-downgrade hard-block producing no partial state (S-14).
+- **Dependencies:** S-09 through S-17. **Estimated effort:** 4h. **Risk:** Medium.
+- **Test requirements:** N/A (this item is the test requirement).
+- **Definition of Done:** all five regression tests above exist, pass, and are named clearly enough that a future contributor understands which invariant each one protects.
 
-**Pilot go-live gate:** the reduced-scope lifecycle above works end-to-end, with no open High-severity defect, in a non-production environment.
+**Week 4 feature total: 3+2+6+3+4 = 18h.**
+
+**Reserve — Integration, regression testing, UAT fixes, and pilot deployment: 12h**, explicitly named and estimated, not hidden as unestimated contingency:
+
+- **Integration/regression pass (≈5h):** exercise the full lifecycle end-to-end — verification → create → SLA due-date/breach → escalation → Genesys linking (flag on, in a controlled test) → assign/transfer → notes/attachments → resolve/close → priority upgrade → downgrade-rejected — as one continuous run, spot-checked against `MVP-Traceability-Matrix.md`'s in-scope rows.
+- **UAT support and fixes (≈4h):** a defect triage list; High-severity defects fixed within this window; Medium/Low triaged to post-pilot if the window is exhausted.
+- **Pilot deployment, non-production (≈3h):** repeatable deployment; **this is explicitly not a production deployment — no production deployment is authorized at this stage** (§0); the Genesys feature flag's off/on state at deploy time is an explicit, recorded deployment-checklist item, not an afterthought; a post-deploy smoke test (login, create ticket, verify SLA due date appears, view detail).
+
+**Week 4 total: 18h feature + 12h reserve = 30h.**
+
+**Pilot go-live gate:** the full committed lifecycle above (§0.2's "Committed" table) works end-to-end, with no open High-severity defect, in a non-production environment, with the Genesys feature flag's state explicitly decided (on or off) rather than left as whatever the last deploy happened to leave it.
+
+### 2.5 Recalculated Critical Path
+
+Since there is exactly one developer, the critical path **is** the sequence — every item blocks the next unless explicitly parallel-safe, and there is no second person to run a parallel branch on. The one real branch point: **S-17 (Genesys) does not depend on S-14/S-15/S-16** (priority upgrade, notes/attachments, resolve/close) and could be resequenced earlier or later within Week 3 without changing the total — it is placed after S-16 above only because it shares Week 3 with the other backend items, not because of a hard dependency beyond S-04/S-05/S-06/S-10. If Week 3 slips, **S-17 is the item most defensible to shift into the Week 4 reserve's slack first**, since it has the most independent acceptance criteria of any single item.
+
+The unbroken dependency chain determining minimum duration: **S-01 → S-04 → S-05 → S-07 → S-08 → S-09 → S-10 → S-14 (upgrade logic depends on S-09) → S-25 (regression depends on everything) → Reserve → deploy.** S-11 (escalation), S-17 (Genesys), and the UI items (S-19–S-24) branch off this chain but must all complete before S-25's regression pass, since that pass covers the whole committed feature set.
+
+### 2.6 Optional Stretch Items — Outside the Committed 120-Hour Plan
+
+**These are not committed. They are not counted in the 119h total above. They are built only if time remains after S-01–S-25 and the 12h reserve are genuinely complete and verified — never by quietly extending the reserve or compressing a committed item's test requirements to make room:**
+
+| Stretch item | If attempted, rough added effort | Why it's stretch, not committed |
+|---|---|---|
+| SLA pause/resume (`TicketSlaPausePeriods`) | ~5h | Management's explicit "may be deferred" list |
+| Timed Level 2→3 auto-escalation advance | ~4h | "Basic" escalation was the committed bar; the scheduled-job timing logic is the richest, least-essential part |
+| Genesys failed-events retry endpoint/UI | ~3h | Logs/audit suffice for a pilot's failure volume |
+| Attachment withdrawal (Finding DR-06) | ~4h | Management's explicit "keep upload only if capacity permits" |
+| Advanced administration screens (live dept/category/calendar editing) | ~8h | Seeded configuration is the committed bar |
+| Advanced dashboards and reports | ~6h | Not in the must-remain list |
+| Duplicate-flag recommend/confirm sub-flow | ~2h | Resolve-as-duplicate directly already covers the capability |
+| Non-core UI polish (deeper accessibility pass, animation, richer empty/loading states beyond the baseline each committed screen already includes) | Not estimated by design — explicitly excluded from any hour commitment | Management's explicit "non-core UI polish" deferral |
 
 ---
 
-## 3. Genesys Policy for This Pilot — Feature-Flagged, Deferred
+## 3. Genesys Policy for This Pilot — Feature-Flagged for Operational Safety, Not Deferred
 
-**Per management's explicit decision:** Genesys integration (the webhook endpoint, `GenesysInteractions`, `GenesysInteractionEvents`, `GenesysAgentMappings` — all fully designed in `MVP-API-Contracts.md` §6 and `MVP-ERD.md`/`MVP-Data-Dictionary.md` §2.11/§2.25/§2.26) is **not built in this 4-week, 1-developer scope at all** — not even the mock-validated version W1-06/W3-05 described in the reference plan (§5). At ~37 hours for the mock-validated adapter alone (per §5's own estimates), it would consume roughly 30% of this plan's entire 120-hour budget to build something pilot users would never see, since it would ship flagged off regardless.
+**Corrected in this revision.** The prior draft deferred Genesys entirely, reasoning that it should not be built against an unconfirmed mock contract. **Management has clarified that the Tiger/Genesys integration contract is now confirmed, and Genesys Basic Integration is ready and must remain in the pilot** (§0, decision 2). The feature flag is **not** a scope-exclusion mechanism here — it is an **operational-safety control**, the same purpose a flag serves on any newly-built integration regardless of confidence in its contract: it lets the pilot go live with Genesys code shipped but not yet live-traffic-exposed, and lets it be turned on deliberately once the team has verified the integration against the real environment, rather than the moment the code merges.
 
-**The standing policy is recorded here now, so it is not lost by the time Genesys work resumes:**
-
-1. **Genesys integration must ship behind a feature flag, defaulted off**, in whatever future phase builds it.
-2. **The flag must not be turned on** until Genesys has supplied: (a) sandbox/test-environment access, (b) a confirmed webhook payload schema, (c) a confirmed authentication/signature mechanism (`Genesys-Integration.md` §15 items 1, 2, 3, 8 — still open).
-3. **Mock-contract validation (`Genesys-Mock-Contract.md`) is not a substitute for real-schema validation** and must never be described as such — this applies whenever that work happens, not only in this pilot's timeframe. See §4.
-4. Until the flag is turned on, ticket creation from a Genesys-originated call is not possible — the existing manual-fallback design (agents create tickets manually) is the only path, which is already this pilot's only path for every ticket regardless of Genesys, so there is no functional gap introduced by deferring Genesys entirely.
+1. **Genesys Basic Integration is built in this pilot (S-17), against the confirmed contract** — not the provisional `Genesys-Mock-Contract.md`, which remains relevant only for any future integration whose contract is not yet confirmed, not for this one.
+2. **It ships behind a feature flag, defaulted off at first deploy.** Turning it on is a deliberate, recorded operational decision (part of the Week 4 reserve's deployment checklist, §2's Week 4 section) — not an automatic consequence of the code existing.
+3. **This is different from the prior revision's "BLOCKED until Genesys confirms sandbox/schema/authentication" framing**, which correctly described the situation *before* the contract was confirmed. That framing is now retired for Genesys specifically — the open questions it referenced (`Genesys-Integration.md` §15 items 1, 2, 3, 8) are resolved by the confirmed contract this pilot builds against. **This does not retroactively validate the provisional `Genesys-Mock-Contract.md`'s guesses** — S-17 is built directly from the real contract, not from the mock, and `Genesys-Mock-Contract.md` remains labeled provisional for any other integration that might still need a placeholder.
+4. **Mock validation must never be described as production-ready**, whenever it does apply to some other, still-unconfirmed integration in the future — this principle is unchanged by Genesys's status here; it just no longer describes Genesys.
 
 ---
 
 ## 4. Pilot-Done vs. Production-Ready — An Explicit Distinction
 
 **Pilot-Done** (the bar this 4-week, 1-developer plan is built to clear) means:
-- Every requirement in §2's reduced scope works for the internal pilot's actual usage pattern.
+- Every requirement in §0.2's "Committed" table works for the internal pilot's actual usage pattern, including SLA due-date calculation/breach detection, basic escalation, and Genesys Basic Integration behind its feature flag.
 - No known High-severity defect is open.
 - The system has been smoke-tested post-deployment, **in a non-production environment**.
-- Genesys integration does not exist in this scope at all (§3) — not "mock-validated," not "flagged off but built," simply not present. There is nothing to mis-describe as tested, because nothing has been built.
+- **Priority is fixed after ticket creation during the pilot. Downgrades are not permitted. The approved downgrade-request and approval design remains documented for the post-pilot phase** (`MVP-API-Contracts.md` §5.6.1–§5.6.5, `MVP-ERD.md`/`MVP-Data-Dictionary.md` §2.27 — retained in full, not deleted).
+- The Genesys feature flag's state at go-live is an explicit, recorded decision, not an assumption.
 
 **Production-Ready** (explicitly **not** this plan's target, and **not claimed at pilot go-live, and no production deployment is authorized at this stage** — management's explicit decision, §0) would additionally require, at minimum:
-- Every requirement deferred in §0.2 (SLA, escalation, priority-downgrade approval, attachment withdrawal) actually built, per the full design in `MVP-ERD.md`/`MVP-API-Contracts.md`.
-- **Real Genesys sandbox validation, not mock-only** — and even once mock-contract work happens in a future phase, mock-validated must never be reported as equivalent to tested or production-ready, per management's explicit decision. This item is **BLOCKED** on Genesys supplying sandbox/schema/authentication confirmation (§3), not scheduled on any backlog.
+- SLA pause/resume, the timed escalation auto-advance, the priority-downgrade request/approval workflow, and attachment withdrawal — everything in §0.2's "may be deferred" list — actually built, per the full design in `MVP-ERD.md`/`MVP-API-Contracts.md`.
+- The Genesys feature flag turned on under real production traffic conditions, with the failed-events retry capability (§2.6) built, not just logs/audit.
 - Confirmed retention/regulatory policy (ISSUE-016) rather than the interim 7-year default.
 - Load/performance testing beyond pilot-scale usage.
 - Full security review sign-off per `Security-Architecture.md` §14's testing section.
 - A confirmed hosting target (ADR-0022) with production-grade infrastructure — and, separately from any technical readiness, **explicit authorization to deploy to production, which does not exist at this stage** and is a decision outside this document's authority to grant.
-- Team capacity beyond 1 developer, sufficient to build everything deferred in §0.2 and named in §5's reference plan.
+- Team capacity beyond 1 developer, sufficient to build everything in §2.6's stretch list and named in §5's reference plan.
 
 This plan deliberately targets the first bar, not the second, and must not be read as a production launch plan under any circumstance.
 

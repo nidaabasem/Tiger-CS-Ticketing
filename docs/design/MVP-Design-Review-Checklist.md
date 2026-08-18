@@ -64,15 +64,20 @@
 
 ## 9. SLA Correctness
 
-- [ ] The breach-flag immutability rule (`FirstResponseBreached`/`ResolutionBreached` never reset once true) is stated in `MVP-ERD.md` §2.15, enforced in the API contract's design note (`MVP-API-Contracts.md` §5.6), and has a dedicated regression-test line item in the backlog (`MVP-Implementation-Backlog.md` W3-03) — traced consistently across all three documents, not asserted in only one.
-- [ ] Critical-never-pauses is enforced identically in the API (`MVP-API-Contracts.md` §5.3, `422`), the UI (`MVP-UI-Wireframes.md` screen 11, disabled control with tooltip — never a silent no-op), and the backlog's test requirement (`MVP-Implementation-Backlog.md` W3-02).
-- [ ] The upgrade/downgrade policy (ADR-0012) — earlier-of-due-dates on upgrade, Dept-Head-approval-gated on downgrade — is identical across `MVP-API-Contracts.md` §5.5/§5.6, `MVP-UI-Wireframes.md` screen 10, and `MVP-Traceability-Matrix.md`'s FR-SLA-09 row.
+**SLA due-date calculation and breach detection are core, committed pilot features** (`MVP-Implementation-Backlog.md` §0.2), not deferred — these checks apply directly to the pilot plan (S-09/S-10/S-14), not only the reference plan.
+
+- [ ] The breach-flag immutability rule (`FirstResponseBreached`/`ResolutionBreached` never reset once true) is stated in `MVP-ERD.md` §2.15, enforced in the API contract's design note (`MVP-API-Contracts.md` §5.6), and has a dedicated regression-test line item in **both** the committed pilot plan (`MVP-Implementation-Backlog.md` S-10, S-25) **and** the reference plan (W3-03) — traced consistently, not asserted in only one.
+- [ ] Priority-downgrade is **hard-disabled** for the pilot (S-14), not merely deferred to an unbuilt approval workflow — verified that no path (API, UI, or otherwise) in the committed plan can produce a `PriorityId` decrease after creation, consistent with "does not remove ADR-0012's protection" rather than silently bypassing it.
+- [ ] Priority upgrade (earlier-of-due-dates, ADR-0012) is identical across `MVP-API-Contracts.md` §5.5, `MVP-UI-Wireframes.md` screen 10a, `MVP-Implementation-Backlog.md` S-14, and `MVP-Traceability-Matrix.md`'s FR-SLA-09 row. **SLA pause/resume is the one deferred piece of this area** (`TicketSlaPausePeriods`, §0.2/§2.6) — the Critical-never-pauses rule from the full design is therefore moot for this pilot (nothing pauses at all yet), not silently violated.
 
 ## 10. Genesys Idempotency
 
-- [ ] The webhook dedup key is explicitly `ConversationId + EventType` (not the mock's `eventId`) in both `MVP-API-Contracts.md` §6.1 and `Genesys-Mock-Contract.md` §4 — consistent between the two documents, with the mock document explicitly explaining *why* the more conservative composite key is used instead of the payload's own `eventId`.
-- [ ] Out-of-order and duplicate-event handling are both explicitly documented (`Genesys-Mock-Contract.md` §4) and have dedicated test requirements in the backlog (`MVP-Implementation-Backlog.md` W3-05).
-- [ ] The dead-letter path (`MVP-API-Contracts.md` §6.1's 5-attempt threshold) is surfaced to an operational screen (`MVP-UI-Wireframes.md` screen 20), not a silent internal-only state.
+**Genesys Basic Integration is a core, committed pilot feature, built against the confirmed Tiger/Genesys contract** (`MVP-Implementation-Backlog.md` §0/§3/S-17) — not the provisional mock, and not deferred.
+
+- [ ] The webhook dedup key uses the confirmed contract's own stable event identifier directly (`MVP-Implementation-Backlog.md` S-17's note on why this costs less than the reference plan's fallback-key design, Finding DR-03) — the composite fallback key `Genesys-Mock-Contract.md` §4 describes remains documented for any *other* integration whose contract is still unconfirmed, but is not what S-17 actually builds against, since Genesys's contract is now confirmed.
+- [ ] Out-of-order and duplicate-event handling are both explicitly documented (`Genesys-Mock-Contract.md` §4, for the underlying design principle) and have a dedicated test requirement in the committed pilot plan (`MVP-Implementation-Backlog.md` S-17, S-25).
+- [ ] The feature flag controlling Genesys is confirmed to default off at first deploy and is an explicit, recorded item in the Week 4 deployment checklist (`MVP-Implementation-Backlog.md` §2's Week 4 reserve) — not an assumption about what state it's left in.
+- [ ] The Genesys failed-events retry endpoint/UI is explicitly listed as a stretch item outside the pilot commitment (`MVP-Implementation-Backlog.md` §2.6) — failures are visible via logs/audit for this pilot, a real and disclosed limitation, not a silent gap.
 
 ## 11. Auditability
 
@@ -99,12 +104,14 @@
 
 ## 15. Four-Week, 1-Developer Scope Feasibility
 
-**Updated following management's approved delivery decision** (4-week, 1-developer pilot — `MVP-Implementation-Backlog.md` §0; supersedes the original 3-week/4-person feasibility check, now a reference-only concern for §5 of that document).
+**Updated a second time following management's clarified delivery decision** (`MVP-Implementation-Backlog.md` §0). The first correction over-deferred scope (it dropped SLA, escalation, and all Genesys work) that management did not intend to cut; this checklist entry now verifies the corrected plan, which keeps SLA due-date calculation, basic escalation, and Genesys Basic Integration (against the confirmed contract) core and committed.
 
-- [x] The approved plan's sequence (`MVP-Implementation-Backlog.md` §2, items S-01–S-17) fits within the stated 1-developer, 4-week capacity (§0.1) with a disclosed, bounded overage (129h against a 120h budget, concentrated in Week 4) rather than an unexamined claim — verified by independently recomputing the per-week totals from the source items and confirming they match the stated workload table.
-- [x] §0.2 names specific, ordered items cut to fit 1 developer (SLA computation, escalation, priority-downgrade approval, attachment withdrawal, all Genesys work) rather than leaving "what's out of scope" ambiguous, and flags the priority-downgrade removal as a real business-rule change (loses ADR-0012's protection), not merely a schedule trim.
-- [x] The Genesys integration risk is resolved for this pilot, not merely mitigated: Genesys is excluded from this scope entirely (§3 of that document) and, per management's explicit decision, must ship behind a feature flag defaulted off whenever it is later attempted, with mock-validated never described as production-ready.
-- [ ] The Week 4 overage (129h vs. a 120h budget, +33% in that week specifically) is disclosed but not yet resolved by a further decision — if it manifests as schedule slip, the same three-option framework (accept overtime, extend by days, trim S-15 further) applies, per `MVP-Implementation-Backlog.md` §0.1.
+- [x] The corrected plan's sequence (`MVP-Implementation-Backlog.md` §2, items S-01–S-25 plus a named 12h reserve) fits within the 120-hour cap with 1 hour of headroom (119h total: 107h feature work + 12h reserve) — verified by independently recomputing every item's hours from the source text and confirming they match the stated workload table exactly (30h/30h/29h/30h across the four weeks, no week exceeding 30h).
+- [x] The 10–12 hour integration/regression/UAT/deployment reserve is explicitly named and broken down (§2's Week 4 section: ~5h regression, ~4h UAT, ~3h deployment) — not hidden as unestimated contingency.
+- [x] §0.2 names, feature by feature, exactly what stayed core (matching management's must-remain list item-for-item: auth, CRM verification, intake/creation, classification/routing, assignment/transfer, core lifecycle, SLA due-date calc + breach detection, basic escalation, Genesys Basic Integration, email ack, audit trail, queue/detail UI, critical-rule tests, UAT/deployment) and what was trimmed *within* each feature (not removed) to fit — pause/resume, the timed Level 2→3 auto-advance, the Genesys failed-events retry UI, attachment withdrawal, and live admin screens are each named against management's own "may be deferred" list, not invented independently.
+- [x] Priority downgrade is **hard-disabled** for the pilot (S-14, `MVP-Implementation-Backlog.md` §0), not merely a deferred, half-built workflow — verified that S-14's acceptance criteria and test requirements describe a rejection producing no partial state (no `PriorityDowngradeRequests` row exists at all in the pilot schema), consistent with "does not contradict ADR-0012" rather than removing its protection.
+- [x] The Genesys feature flag is confirmed to be an operational-safety control, not a scope-exclusion mechanism (§3 of that document) — the integration is built against the confirmed contract in this pilot, and the flag's on/off state at deploy time is an explicit, recorded checklist item in the Week 4 reserve, not an assumption.
+- [x] Optional stretch items (`MVP-Implementation-Backlog.md` §2.6) are listed with rough hour estimates, explicitly outside the 119h commitment — so nothing is silently included in the committed total, and nothing management asked to defer is silently promised either.
 
 ## 16. Testing Readiness
 
@@ -114,8 +121,9 @@
 
 ## 17. Deployment Readiness
 
-- [x] The hosting-target open question (ADR-0022) is explicitly re-flagged in the approved plan's deployment item (`MVP-Implementation-Backlog.md` S-17, and its reference-plan counterpart W3-11) rather than assumed resolved by the time deployment work starts.
-- [x] A post-deploy smoke test is a named requirement for the deployment item; a full rollback path is not yet specified for the reduced 1-developer scope — flagged as an open item to define before S-17 is actually executed, not assumed away.
+- [x] The hosting-target open question (ADR-0022) is explicitly re-flagged in the approved plan's Week 4 reserve (`MVP-Implementation-Backlog.md` §2's Week 4 deployment line, and its reference-plan counterpart W3-11) rather than assumed resolved by the time deployment work starts.
+- [x] A post-deploy smoke test is a named requirement for the deployment reserve item; a full rollback path is not yet specified for the reduced 1-developer scope — flagged as an open item to define before deployment is actually executed, not assumed away.
+- [x] The Genesys feature flag's on/off state at deploy time is an explicit, named checklist item within the Week 4 deployment reserve (`MVP-Implementation-Backlog.md` §2's Week 4 section) — not left to whatever the last build happened to default to.
 - [x] The Pilot-Done vs. Production-Ready distinction (`MVP-Implementation-Backlog.md` §4) is explicit enough that go-live sign-off cannot be mistaken for a production-readiness sign-off, and now additionally states — per management's explicit decision — that **no production deployment is authorized at this stage**; only a non-production pilot deployment is in scope. This checklist itself only certifies the design package, not a go-live or production-deployment decision, either of which remains separate and, for production, currently unauthorized.
 
 ---

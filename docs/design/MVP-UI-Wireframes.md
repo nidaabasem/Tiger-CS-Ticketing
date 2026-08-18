@@ -4,7 +4,7 @@
 | | |
 |---|---|
 | **Status** | Design for review — low-fidelity structural specs only |
-| **Scope** | 20 screens needed for the 3-week internal pilot MVP. Every screen is described structurally (layout regions, fields, actions, states) plus a Mermaid diagram where a flow or layout benefits from one. **No ASCII-art wireframes are used anywhere in this document.** |
+| **Scope** | 20 screens needed for the full approved MVP design. Every screen is described structurally (layout regions, fields, actions, states) plus a Mermaid diagram where a flow or layout benefits from one. **No ASCII-art wireframes are used anywhere in this document.** This document describes the complete approved UI design; `MVP-Implementation-Backlog.md` decides which parts of it are built within the current 4-week, 1-developer pilot — see the pilot-scope notes on screens 10a/10b. |
 | **Explicitly not done here** | No high-fidelity visual design, no color/typography/branding decisions, no actual HTML/CSS/component code, no design-tool files. |
 | **Base** | `main` @ `4fe6f19`; refines `docs/design/MVP-API-Contracts.md` and `docs/design/MVP-ERD.md` |
 | **Related documents** | `docs/design/MVP-API-Contracts.md` (every screen's actions map to an endpoint there) · `docs/architecture/Security-Architecture.md` §3 (roles) · `docs/architecture/SLA-Architecture.md` |
@@ -16,7 +16,7 @@
 
 - **Roles** referenced below use the same names as `MVP-API-Contracts.md` §0: Agent, Supervisor, Department Head (Dept Head), CS Manager, GM, System Administrator.
 - Every screen lists: Purpose, Allowed Roles, Main Layout Regions, Fields/Data Displayed, Primary Actions, Secondary Actions, Validation Rules, Loading State, Empty State, Error State, Permission-Dependent Behavior, Confirmation Dialogs, Responsive Behavior, Accessibility Considerations.
-- "Practical for a 3-week pilot" governs every choice here: no decorative elements, no animation specs, no screens for Phase 2/3 features (WhatsApp, Kiosk, Social Media, Customer Portal, CSAT, advanced AI, SMS, advanced reports/KPI dashboards).
+- "Practical for a pilot" governs every choice here: no decorative elements, no animation specs, no screens for Phase 2/3 features (WhatsApp, Kiosk, Social Media, Customer Portal, CSAT, advanced AI, SMS, advanced reports/KPI dashboards).
 - SLA countdown displays follow ADR-0016: **state/deadline-change events only**, never a live per-second ticking countdown — the UI shows a due date/time and a coarse `SlaState` badge (`OnTrack`/`Warning`/`Breached`), refreshed on SignalR state-change events or on manual refresh, not via a client-side timer re-rendering every second.
 
 ### Screen-Flow Overview
@@ -219,13 +219,15 @@ flowchart LR
 
 **Redesigned in the senior-architecture-review pass (Finding DR-05).** The original design let the requesting Agent's own form pick the approver (a self-authorization defect) via a "co-sign" field. This is now two distinct screens/states for two distinct actors — an Agent never sees or fills in any field naming who approves; a Dept Head+ acts only from their own authenticated inbox.
 
+**Pilot-scope restriction:** "Priority is fixed after ticket creation during the pilot. Downgrades are not permitted. The approved downgrade-request and approval design remains documented for the post-pilot phase." Screens 10a and 10b below are the **complete, approved post-pilot design** and are retained in full, not deleted. For the current 4-week/1-developer pilot (`MVP-Implementation-Backlog.md` S-14, S-24), only 10a's **upgrade** action is built; 10a's downgrade-request action and the entirety of screen 10b **do not exist in the pilot build** — not as a disabled button, simply absent, since no server-side capability backs them during the pilot. The SLA/Escalation Panel (screen 11) displays the pilot-restriction notice verbatim wherever a priority-change action would otherwise appear.
+
 ### 10a. Priority Upgrade (immediate) / Downgrade Request (Agent-facing)
 
-- **Purpose:** Change ticket priority upward immediately, or submit a downgrade request for a Dept Head+ to decide (`MVP-API-Contracts.md` §5.5, §5.6.1).
+- **Purpose:** Change ticket priority upward immediately, or (post-pilot design only) submit a downgrade request for a Dept Head+ to decide (`MVP-API-Contracts.md` §5.5, §5.6.1). **In the current pilot build, only the upgrade path exists** — see the pilot-scope restriction above screen 10a.
 - **Allowed roles:** Agent and above.
-- **Main layout regions:** modal/panel — current-priority display, new-priority picker, reason field (required for decrease, optional for increase). **No approver field of any kind** — this is the specific element removed by this redesign.
+- **Main layout regions:** modal/panel — current-priority display, new-priority picker, reason field (required for decrease, optional for increase — **pilot build: the picker only offers higher-urgency values; a decrease is not a selectable option at all**). **No approver field of any kind** — this is the specific element removed by this redesign.
 - **Fields/data displayed:** current `PriorityId`, current SLA due dates (context for why this matters), new priority selection.
-- **Primary actions:** "Upgrade" (immediate, §5.5) or "Submit Downgrade Request" (creates a `Pending` request, §5.6.1 — never applies immediately, regardless of the acting user's own role, since approval is now always a separate action performed from screen 10b).
+- **Primary actions:** "Upgrade" (immediate, §5.5) — built in the pilot. "Submit Downgrade Request" (post-pilot design only: creates a `Pending` request, §5.6.1 — never applies immediately, regardless of the acting user's own role, since approval is always a separate action performed from screen 10b) — **not present in the pilot build**.
 - **Secondary actions:** "Cancel"; "View request status" (if a request is already pending for this ticket, links to a read-only status view instead of allowing a second submission).
 - **Validation:** decrease requires a reason; submitting a second downgrade request while one is already `Pending` is blocked client-side (mirroring the API's `409`) with a link to the existing request's status, not a duplicate submission.
 - **Loading state:** submit spinner.
@@ -255,13 +257,14 @@ flowchart LR
 
 ## 11. SLA and Escalation Panel
 
-- **Purpose:** Detailed SLA status and escalation history/actions for a ticket (`MVP-API-Contracts.md` §5.1–5.9).
-- **Allowed roles:** view — Agent and above; pause/resume/manual-escalate — Agent and above (owner or Supervisor+); `ManualLevel4` — CS Manager/GM only.
-- **Main layout regions:** SLA summary region (First Response / Resolution due dates, `SlaState` badges, pause status), pause history region, escalation history region, action bar.
-- **Fields/data displayed:** `FirstResponseDueAtUtc`/`Breached`, `ResolutionDueAtUtc`/`Breached`, `IsCurrentlyPaused`, `TotalPausedMinutesThisPeriod`, escalation list (`Level`, `TriggerType`, `RaisedAtUtc`, response status).
-- **Primary actions:** "Record First Response" (if not yet recorded), "Pause"/"Resume," "Escalate."
+- **Purpose:** Detailed SLA status and escalation history/actions for a ticket (`MVP-API-Contracts.md` §5.1–5.9) — core, committed pilot functionality (`MVP-Implementation-Backlog.md` §0.2, S-24), not deferred.
+- **Allowed roles:** view — Agent and above; manual-escalate — Agent and above (owner or Supervisor+); `ManualLevel4` — CS Manager/GM only. Pause/resume is a **stretch item** (`MVP-Implementation-Backlog.md` §2.6) — not present in the pilot build.
+- **Main layout regions:** SLA summary region (First Response / Resolution due dates, `SlaState` badges), escalation history region, action bar. **Pause history region is a post-pilot design element, not built in the pilot** (SLA pause/resume is stretch).
+- **Fields/data displayed:** `FirstResponseDueAtUtc`/`Breached`, `ResolutionDueAtUtc`/`Breached`, escalation list (`Level`, `TriggerType`, `RaisedAtUtc`, response status). `IsCurrentlyPaused`/`TotalPausedMinutesThisPeriod` are post-pilot fields, not populated in the pilot build.
+- **Primary actions:** "Record First Response" (if not yet recorded), "Escalate" (manual flag, or Level 4 for CS Manager/GM), "Upgrade Priority" (screen 10a). **"Pause"/"Resume" are not present in the pilot build** (stretch item).
+- **Priority-downgrade notice:** this panel displays, as visible text (not a tooltip), wherever a priority-change action appears: **"Priority is fixed after ticket creation during the pilot. Downgrades are not permitted. The approved downgrade-request and approval design remains documented for the post-pilot phase."** No downgrade action or entry point appears anywhere on this screen.
 - **Secondary actions:** "Respond" on an open escalation (for the notified role-holder).
-- **Validation:** "Pause" disabled entirely (not just erroring on submit) when the ticket's priority is Critical, with a tooltip explaining the Critical-never-pauses rule — the UI never lets a user attempt an action the API is guaranteed to reject.
+- **Validation:** the pilot build's automatic escalation is Level 2-on-breach only (`MVP-Implementation-Backlog.md` S-11) — the timed Level 2→3 auto-advance is a stretch item; this panel does not display a "time until auto-advance" countdown for Level 2, since no such job exists in the pilot build. Critical-never-pauses is moot in the pilot build (nothing pauses at all yet, since pause/resume itself is stretch) — not silently violated, simply not applicable.
 - **Loading state:** summary region and history regions load independently with their own skeletons.
 - **Empty state:** "No escalations on this ticket" in the escalation history region — a neutral, expected state.
 - **Error state:** inline banners per action; the summary region shows a "Could not load SLA status" retry state if that specific fetch fails.
@@ -391,7 +394,7 @@ flowchart LR
 
 ## 19. Genesys Interaction Panel
 
-- **Purpose:** Operational view of incoming/recent Genesys interactions and manual linking to tickets (`MVP-API-Contracts.md` §6.2/§6.3).
+- **Purpose:** Operational view of incoming/recent Genesys interactions and manual linking to tickets (`MVP-API-Contracts.md` §6.2/§6.3) — **core, committed pilot functionality** (`MVP-Implementation-Backlog.md` §0/§3/S-17), built against the confirmed Tiger/Genesys contract and gated by a feature flag for operational safety, not scope exclusion. This screen is inert while the flag is off (no interactions will ever arrive) but is fully built and testable regardless of the flag's state.
 - **Allowed roles:** Agent and above.
 - **Main layout regions:** live/recent interaction list, detail region for a selected interaction, link-to-ticket action region.
 - **Fields/data displayed:** `ConversationId`, masked `CallerNumber`, `GenesysAgentId`/mapped employee (if resolved via `GenesysAgentMappings`, Finding DR-02), `StartedAtUtc`/`AnsweredAtUtc`/`EndedAtUtc`, `LinkedTicketId` (if any), `ProcessingStatus`, and — **corrected in the senior-architecture-review pass (Finding DR-03)** — an expandable events sub-list (`GenesysInteractionEvents`: `EventType`, `ReceivedAtUtc`, per-event `ProcessingStatus`), since one interaction row now represents potentially several received events, not one.
@@ -408,7 +411,7 @@ flowchart LR
 
 ## 20. Failed Integration / Outbox Operations
 
-- **Purpose:** Operational visibility and manual retry for failed **Genesys events** (per-event, not per-conversation — Finding DR-03) and, more broadly, dead-lettered Outbox messages (`MVP-API-Contracts.md` §6.4/§6.5). **This screen never shows signature-rejected requests** (Finding DR-04) — those are never persisted; a run of signature failures is visible only via security-log/ops monitoring outside this application.
+- **Purpose:** Operational visibility and manual retry for failed **Genesys events** (per-event, not per-conversation — Finding DR-03) and, more broadly, dead-lettered Outbox messages (`MVP-API-Contracts.md` §6.4/§6.5). **This screen never shows signature-rejected requests** (Finding DR-04) — those are never persisted; a run of signature failures is visible only via security-log/ops monitoring outside this application. **The retry action itself is a stretch item for the pilot** (`MVP-Implementation-Backlog.md` §2.6) — failed Genesys events are visible in logs/audit for pilot purposes; this screen's read-only visibility of Outbox dead-letters (non-Genesys) is committed, but the Genesys-specific retry button described below is not built unless capacity allows.
 - **Allowed roles:** System Administrator (full access, including retry); Supervisor+ in a Genesys-handling department (view only, per `MVP-API-Contracts.md` §6.4).
 - **Main layout regions:** failed-events table, detail panel (raw error/attempt count), retry action bar.
 - **Fields/data displayed:** `ConversationId` (parent interaction, for context), `EventType`, per-event `ProcessingStatus`, `Attempts`, `LastError`, timestamps.

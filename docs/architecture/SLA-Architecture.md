@@ -74,6 +74,8 @@ Approved per ISSUE-023 (ADR-0012):
 
 **Downgrade:** requires Department Head (or above) approval before the new `TicketSlaInstance` takes effect. The prior period's breach flags are never cleared or reversed. Recalculated due dates apply only from the approval moment forward.
 
+**Pilot-scope note (does not change the approved behavior above):** for the 4-week, 1-developer pilot (`docs/design/MVP-Implementation-Backlog.md` §0), priority downgrades are disabled completely after ticket creation — no downgrade path exists in the pilot build at all, not even as a pending-approval workflow. "Priority is fixed after ticket creation during the pilot. Downgrades are not permitted. The approved downgrade-request and approval design remains documented for the post-pilot phase." See `docs/architecture/adr/0012-priority-change-sla-policy.md`'s own pilot-scope note for the full rationale. Upgrade behavior above is unaffected and is built in the pilot.
+
 ## 8. Due Timestamp Calculation — Summary
 
 | Event | Recomputed? |
