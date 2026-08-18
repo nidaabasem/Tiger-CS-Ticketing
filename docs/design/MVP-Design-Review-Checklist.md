@@ -97,11 +97,14 @@
 - [ ] An attachment with `VirusScanStatus ≠ Clean` is unreachable via both the metadata list (flagged `Downloadable: false`, §4.4) and the direct content endpoint (`403`, §4.5) — the rule is enforced at every read path, not just the obvious one.
 - [ ] Attachment deletion policy (uploader window + Supervisor+ override, `MVP-API-Contracts.md` §4.6) is explicitly flagged `[ASSUMPTION]` in that document since the requirement text didn't define the policy — carried through consistently to `MVP-UI-Wireframes.md` screen 12's confirmation dialog, not silently hardened or loosened between the two documents.
 
-## 15. Three-Week Scope Feasibility
+## 15. Four-Week, 1-Developer Scope Feasibility
 
-- [ ] The backlog's critical path (`MVP-Implementation-Backlog.md` §4) fits within the stated capacity assumption (§0 of that document) without requiring any one person to hold two full-time workstreams concurrently.
-- [ ] Scope-protection rules (`MVP-Implementation-Backlog.md` §5) name specific, ordered items to drop if time runs short, rather than leaving "what gets cut" undecided until the pressure actually hits.
-- [ ] The Genesys integration risk (real-schema dependency) has an explicit, pre-agreed fallback (mock-validated-only, manual-creation fallback) rather than being a silent unknown that could blow up the whole pilot timeline if it surfaces late.
+**Updated following management's approved delivery decision** (4-week, 1-developer pilot — `MVP-Implementation-Backlog.md` §0; supersedes the original 3-week/4-person feasibility check, now a reference-only concern for §5 of that document).
+
+- [x] The approved plan's sequence (`MVP-Implementation-Backlog.md` §2, items S-01–S-17) fits within the stated 1-developer, 4-week capacity (§0.1) with a disclosed, bounded overage (129h against a 120h budget, concentrated in Week 4) rather than an unexamined claim — verified by independently recomputing the per-week totals from the source items and confirming they match the stated workload table.
+- [x] §0.2 names specific, ordered items cut to fit 1 developer (SLA computation, escalation, priority-downgrade approval, attachment withdrawal, all Genesys work) rather than leaving "what's out of scope" ambiguous, and flags the priority-downgrade removal as a real business-rule change (loses ADR-0012's protection), not merely a schedule trim.
+- [x] The Genesys integration risk is resolved for this pilot, not merely mitigated: Genesys is excluded from this scope entirely (§3 of that document) and, per management's explicit decision, must ship behind a feature flag defaulted off whenever it is later attempted, with mock-validated never described as production-ready.
+- [ ] The Week 4 overage (129h vs. a 120h budget, +33% in that week specifically) is disclosed but not yet resolved by a further decision — if it manifests as schedule slip, the same three-option framework (accept overtime, extend by days, trim S-15 further) applies, per `MVP-Implementation-Backlog.md` §0.1.
 
 ## 16. Testing Readiness
 
@@ -111,9 +114,9 @@
 
 ## 17. Deployment Readiness
 
-- [ ] The hosting-target open question (ADR-0022) is explicitly re-flagged in the backlog's deployment item (`MVP-Implementation-Backlog.md` W3-11) rather than assumed resolved by the time deployment work starts.
-- [ ] A rollback path and a post-deploy smoke test are both named requirements for the deployment backlog item, not left implicit.
-- [ ] The Pilot-Done vs. Production-Ready distinction (`MVP-Implementation-Backlog.md` §6) is explicit enough that go-live sign-off cannot be mistaken for a production-readiness sign-off — this checklist itself only certifies the design package, not a go-live decision, which remains separate.
+- [x] The hosting-target open question (ADR-0022) is explicitly re-flagged in the approved plan's deployment item (`MVP-Implementation-Backlog.md` S-17, and its reference-plan counterpart W3-11) rather than assumed resolved by the time deployment work starts.
+- [x] A post-deploy smoke test is a named requirement for the deployment item; a full rollback path is not yet specified for the reduced 1-developer scope — flagged as an open item to define before S-17 is actually executed, not assumed away.
+- [x] The Pilot-Done vs. Production-Ready distinction (`MVP-Implementation-Backlog.md` §4) is explicit enough that go-live sign-off cannot be mistaken for a production-readiness sign-off, and now additionally states — per management's explicit decision — that **no production deployment is authorized at this stage**; only a non-production pilot deployment is in scope. This checklist itself only certifies the design package, not a go-live or production-deployment decision, either of which remains separate and, for production, currently unauthorized.
 
 ---
 

@@ -3,12 +3,12 @@
 
 | | |
 |---|---|
-| **Status** | Design for review — findings and their resolutions, applied directly to the affected documents |
+| **Status** | Design for review — findings and their resolutions, applied directly to the affected documents. **DR-08 (capacity) is now resolved by an approved management decision — see below.** |
 | **Scope** | A senior-.NET-solution-architect review of `MVP-ERD.md`, `MVP-Data-Dictionary.md`, `MVP-API-Contracts.md`, `Genesys-Mock-Contract.md`, and `MVP-Implementation-Backlog.md`, cross-checked against `MVP-UI-Wireframes.md` and `MVP-Traceability-Matrix.md` |
 | **Explicitly not done here** | No application code, SQL DDL, EF Core migrations, or scaffolding — every resolution below is a design-document change only |
 | **Base** | `main` @ `4fe6f19`, reviewing the design package on `design/mvp-erd-api-ui` as of this pass |
 | **Related documents** | Every `docs/design/*.md` document; each finding below names exactly which ones it changed |
-| **Date** | 2026-08-18 |
+| **Date** | 2026-08-18; DR-08 updated following management's approved delivery decision (4-week, 1-developer pilot; Genesys feature-flagged and deferred; mock validation not production-ready; no production deployment authorized) |
 
 ---
 
@@ -76,13 +76,15 @@ Each finding lists: **Finding ID**, **Severity**, **Documents changed**, **Resol
 - **Remaining decision or dependency:** None — this is a documentation-clarity correction; no behavior changed, since every corrected case was already stated as "never happens in practice" before this pass, just worded ambiguously.
 - **Implementation-blocking:** No — nothing here would have caused an implementer to build the wrong thing (the parent rows genuinely are never deleted either way), but the original wording could have led someone to configure a real `ON DELETE` clause for a path that should never exist, or to wonder whether "Cascade" quietly sanctioned a delete this document elsewhere forbids.
 
-### DR-08 — Backlog capacity gap (Architecture/Foundation over capacity even after rebalancing)
+### DR-08 — Backlog capacity gap (Architecture/Foundation over capacity even after rebalancing) — **RESOLVED by management decision**
 
 - **Severity:** High (planning risk, not a design defect).
-- **Documents changed:** `MVP-Implementation-Backlog.md` only.
-- **Resolution:** Added a workload-summary table (`MVP-Implementation-Backlog.md` §0.1) totaling every item's estimated effort per role per week — something the pre-review backlog never actually did despite asserting a 90-hour-per-role capacity. Found: Architecture/Foundation's original 3-week total was already over capacity before this review (Week 1 and Week 3 each independently exceeded 30h/week for that one role), and this review's own findings add a further ~13h to that role. Applied two real capacity moves (W2-04 and W3-06 reassigned to QA/DevOps, which had genuine slack) and one resequencing (15h of frontend screen scaffolding front-loaded from Week 2 into Week 1, fixing a 56h/97%-over single-week spike). These fully resolve Frontend's and Integration's overages but **cannot** close Architecture/Foundation's remaining gap (135h against a 90h budget) without handing SLA/escalation-critical logic to a role this plan deliberately doesn't assign it to. Three options are presented to the sponsor in §0.4 (accept bounded overtime in the two peak weeks; extend the pilot 3–5 days; or trim a named, specific requirement such as FR-ESC-03's automatic escalation advance) — none adopted unilaterally here, since two of the three are schedule/resourcing decisions and the third is a business-requirement decision, not an architecture one. A new §6 defines fallback scope for a 1–2 developer team, and §7 (renumbered from §6) now states explicitly that "mock-validated" must never be reported as equivalent to "tested" or "production-ready," reinforcing the existing Genesys-blocked framing with a Definition-of-Done-level requirement, not just a risk note.
-- **Remaining decision or dependency:** The sponsor must choose among §0.4's three options (or explicitly accept the disclosed overtime risk) before this backlog's 3-week/4-person commitment can be treated as fully credible. This is the single largest open item this review surfaces.
-- **Implementation-blocking:** No for code-level implementation (nothing here prevents writing correct code) — but **Yes for confidently committing to the stated 3-week/4-person timeline** without the sponsor's decision on §0.4.
+- **Status:** **Resolved.** When first raised, this finding presented three options to the sponsor (accept bounded overtime, extend the timeline, or trim scope) without adopting one. **Management has since made that decision** (recorded in `MVP-Implementation-Backlog.md` §0): a **4-week, 1-developer pilot**, with Genesys deferred entirely and kept behind a feature flag whenever it is later attempted, mock validation never described as production-ready, and no production deployment authorized at this stage.
+- **Documents changed:** `MVP-Implementation-Backlog.md` (substantially restructured), this document.
+- **Original finding (retained for the record):** Added a workload-summary table (`MVP-Implementation-Backlog.md`, then §0.1 of the pre-decision version) totaling every item's estimated effort per role per week — something the pre-review backlog never actually did despite asserting a 90-hour-per-role capacity. Found: Architecture/Foundation's original 3-week/4-person total was already over capacity before this review (Week 1 and Week 3 each independently exceeded 30h/week for that one role), and this review's own findings added a further ~13h to that role. Two real capacity moves and one resequencing narrowed but could not close the gap without handing SLA/escalation-critical logic to a role that plan deliberately didn't assign it to.
+- **Decision applied:** The now-approved 1-developer/4-week plan is a **different, smaller scope**, not a compressed version of the 4-person/3-week plan — `MVP-Implementation-Backlog.md` §2 sequences 17 items (S-01–S-17) totaling 129 ideal hours against a ~120-hour (4-week × 30h) budget, itself a disclosed ~8% overage concentrated in Week 4, presented with the same honesty as the original finding rather than force-fit to zero. §0.2 states plainly what was cut to fit (SLA due-date computation, escalation, priority-downgrade approval, attachment withdrawal, and — per management's explicit instruction — all Genesys integration, mock or real) and why each cut is disclosed as a real capability gap, not hidden. The original 4-person/3-week plan is retained in full as §5, explicitly marked superseded/reference-only, so the detailed design and capacity analysis are not lost if the team scales up later.
+- **Remaining decision or dependency:** None on the capacity question itself — it is decided. The scope deferred by that decision (SLA/escalation/Genesys/priority-downgrade/attachment-withdrawal) remains real, undelivered functionality that a future phase must still build once capacity increases; that is a schedule fact, not an open question needing another decision right now.
+- **Implementation-blocking:** No — the approved plan is internally consistent (verified: every `S-##` dependency resolves, and the workload table's hours were independently recomputed from the source items and match exactly) and ready to be worked from once implementation is authorized.
 
 ### DR-09 — Cross-document consistency (`MVP-UI-Wireframes.md`, `MVP-Traceability-Matrix.md`)
 
@@ -96,19 +98,19 @@ Each finding lists: **Finding ID**, **Severity**, **Documents changed**, **Resol
 
 ## Summary Table
 
-| Finding | Severity | Implementation-Blocking (as originally specified) |
-|---|---|---|
-| DR-01 — Circular verification dependency | Critical | Yes |
-| DR-02 — Missing Genesys agent-mapping entity | High | Yes |
-| DR-03 — Genesys event/idempotency wrong grain | Critical | Yes |
-| DR-04 — Signature-failure persistence contradiction | High | Yes |
-| DR-05 — Priority-downgrade self-authorization defect | Critical | Yes |
-| DR-06 — Attachment deletion vs. retention | High | Yes |
-| DR-07 — Delete-behavior wording (DB FK vs. app ops) | Medium | No |
-| DR-08 — Backlog capacity gap | High (planning) | No for code; Yes for the stated timeline without a sponsor decision |
-| DR-09 — Cross-document consistency | Medium | No |
+| Finding | Severity | Status | Implementation-Blocking (as originally specified) |
+|---|---|---|---|
+| DR-01 — Circular verification dependency | Critical | Resolved | Yes |
+| DR-02 — Missing Genesys agent-mapping entity | High | Resolved | Yes |
+| DR-03 — Genesys event/idempotency wrong grain | Critical | Resolved | Yes |
+| DR-04 — Signature-failure persistence contradiction | High | Resolved | Yes |
+| DR-05 — Priority-downgrade self-authorization defect | Critical | Resolved | Yes |
+| DR-06 — Attachment deletion vs. retention | High | Resolved | Yes |
+| DR-07 — Delete-behavior wording (DB FK vs. app ops) | Medium | Resolved | No |
+| DR-08 — Backlog capacity gap | High (planning) | **Resolved by management decision** (4-week, 1-developer pilot) | No for code; the decision removes the "Yes" that previously applied to committing to an undecided timeline |
+| DR-09 — Cross-document consistency | Medium | Resolved | No |
 
-**Every Critical/High finding above has been resolved in the current state of the design package** — the "Implementation-Blocking" column describes what the pre-review documents would have caused, not an open defect. DR-08 is the one finding whose full resolution requires a decision this document cannot make on the sponsor's behalf.
+**Every finding above is now resolved.** The "Implementation-Blocking" column describes what the pre-review (or, for DR-08, pre-decision) documents would have caused, not a currently open defect. DR-08 was the one finding this document could not resolve unilaterally, since it required a decision only the sponsor could make; that decision has now been made and is recorded in `MVP-Implementation-Backlog.md` §0.
 
 ## What This Document Does Not Cover
 
