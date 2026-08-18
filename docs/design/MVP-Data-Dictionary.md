@@ -165,7 +165,7 @@
 | OriginatingDepartmentId | int | No | FK → Departments; write-once |
 | CurrentDepartmentId | int | No | FK → Departments; mutable on transfer |
 | CurrentOwnerEmployeeId | uniqueidentifier | Yes | FK → Employees |
-| UnitReferenceId, ContactReferenceId | int | No | FK → §2.7 |
+| UnitReferenceId, ContactReferenceId | int | No | FK → §2.7. **As of this review pass (Finding DR-01), populated by copying from the consumed `VerificationSessions` row (§2.24) at creation time — the create-ticket request supplies a `VerificationSessionId`, not these fields directly.** |
 | CategoryId | int | No | FK → Categories |
 | PriorityId | tinyint | No | FK → Priorities (current tier) |
 | TicketStatus, VerificationStatus, EscalationLevel, SlaState | tinyint | No | Independent dimensions (ADR-0008) |
@@ -193,10 +193,10 @@
 | AgentEmailOrExtension | nvarchar(200) | Yes | Reliability unconfirmed — open question, `Genesys-Integration.md` §15 item 4 |
 | ChannelMediaType | nvarchar(30) | No | MVP: voice only |
 | StartedAtUtc | datetime2 | No | |
-| AnsweredAtUtc, EndedAtUtc | datetime2 | Yes | Populated as later webhooks arrive |
+| AnsweredAtUtc, EndedAtUtc | datetime2 | Yes | Populated as later webhooks arrive, apply-if-absent (never overwritten once set) — see `MVP-ERD.md` §2.26 |
 | LinkedTicketId | bigint | Yes | FK → Tickets |
 | CorrelationId | uniqueidentifier | No | ADR-0014 |
-| ProcessingStatus | tinyint | No | Received / Validated / Rejected (signature failure) |
+| ProcessingStatus | tinyint | No | **Corrected in this review pass (Finding DR-04):** `Active` / `Completed` — the conversation-level state. **No longer includes a signature-failure value.** A request that fails signature validation is rejected before any row is written to this table at all (see `Genesys-Mock-Contract.md` §3) — it never reaches `ProcessingStatus`, `GenesysInteractions`, or `GenesysInteractionEvents`. Per-event acceptance/failure tracking (including dead-lettering) now lives on `GenesysInteractionEvents.ProcessingStatus` (§2.26), not here. |
 
 *(See `MVP-ERD.md` §2.11 for relationships.)*
 
@@ -263,7 +263,7 @@
 | FirstResponseBreached | bit | No | Immutable once true |
 | ResolutionBreached | bit | No | Immutable once true |
 | ChangeReason | tinyint | No | e.g., InitialCreation/Upgrade/Downgrade |
-| ApprovedByEmployeeId | uniqueidentifier | Yes | Required if `ChangeReason = Downgrade` |
+| ApprovedByEmployeeId | uniqueidentifier | Yes | Required if `ChangeReason = Downgrade`. **As of this review pass (Finding DR-05), always copied from `PriorityDowngradeRequests.DecidedByEmployeeId` (§2.27) — never a directly client-supplied field on any endpoint.** |
 
 *(See `MVP-ERD.md` §2.15 for relationships, including the immutability rule for the breach flags.)*
 
@@ -320,6 +320,11 @@
 | VirusScanStatus | tinyint | No | Pending/Clean/Rejected |
 | UploadedByEmployeeId | uniqueidentifier | Yes | Null only if a future non-agent channel submits one (not applicable at MVP — always populated in this pilot) |
 | UploadedAtUtc | datetime2 | No | |
+| IsWithdrawn | bit | No | **Added in this review pass (Finding DR-06).** Default `false`. Replaces the physical `DELETE` endpoint — see `MVP-ERD.md` §2.19 |
+| WithdrawnAtUtc | datetime2 | Yes | Null unless withdrawn |
+| WithdrawnByEmployeeId | uniqueidentifier | Yes | FK → Employees; null unless withdrawn |
+| WithdrawalReason | nvarchar(500) | Yes | Required (app-level) at the moment of withdrawal; null beforehand |
+| BlobStatus | tinyint | No | **Added in this review pass (Finding DR-06).** `Stored` / `Quarantined` / `Purged` — tracks the underlying binary content's lifecycle independently of this metadata row, which is never deleted regardless of `BlobStatus` |
 
 *(See `MVP-ERD.md` §2.19 for relationships.)*
 
@@ -409,6 +414,90 @@
 | ExpiresAtUtc | datetime2 | Yes | Housekeeping — old records may be purged after a retention window `[ASSUMPTION — window not yet specified]` |
 
 *(See `MVP-ERD.md` §2.23 for relationships, including why idempotency was generalized beyond a bare column on `OutboxMessage`.)*
+
+### 2.24 VerificationSessions
+
+**Added in this review pass (Finding DR-01).** See `MVP-ERD.md` §2.24 for the full rationale.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| VerificationSessionId | uniqueidentifier | No | PK |
+| AgentEmployeeId | uniqueidentifier | No | FK → Employees; the sole owner, per §2.24's single-agent-ownership rule |
+| UnitReferenceId | int | Yes | FK → UnitReferences; null until selected |
+| ContactReferenceId | int | Yes | FK → ContactReferences; null until selected |
+| SnapshotUnitNumber, SnapshotPropertyName, SnapshotTowerName, SnapshotUnitType | nvarchar | Yes | Captured at confirmation time from the cache read-back — copied verbatim into `TicketRequesterSnapshots` on consumption, not re-fetched |
+| SnapshotContactDisplayName, SnapshotContactChannel | nvarchar | Yes | Same as above |
+| ConfirmedVerbally | bit | No | Default `false`; must be `true` before `Status` can advance to `Confirmed` |
+| Status | tinyint | No | 1=InProgress, 2=Confirmed, 3=Consumed, 4=Expired, 5=Abandoned |
+| CreatedAtUtc | datetime2 | No | |
+| ConfirmedAtUtc | datetime2 | Yes | Null until `Status = Confirmed` |
+| ExpiresAtUtc | datetime2 | No | `[ASSUMPTION]` `CreatedAtUtc` + 30 minutes |
+| ConsumedAtUtc | datetime2 | Yes | Null until `Status = Consumed` |
+| ConsumedByTicketId | bigint | Yes | FK → Tickets; set exactly once, at consumption |
+
+*(See `MVP-ERD.md` §2.24 for relationships, including expiry/single-use/ownership/audit/CRM-outage behavior.)*
+
+### 2.25 GenesysAgentMappings
+
+**Added in this review pass (Finding DR-02).** Backs `MVP-API-Contracts.md` §6.6.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| GenesysAgentMappingId | int | No | PK |
+| EmployeeId | uniqueidentifier | No | FK → Employees |
+| GenesysAgentId | nvarchar(100) | Yes | At least one of this and `AgentEmailOrExtension` must be non-null (app-enforced) |
+| AgentEmailOrExtension | nvarchar(200) | Yes | Same identifier format as `GenesysInteractions.AgentEmailOrExtension`, for direct matching |
+| IsActive | bit | No | Default `true`; deactivation, not deletion, is the only "removal" path |
+| CreatedAtUtc | datetime2 | No | |
+| CreatedByEmployeeId | uniqueidentifier | No | System Administrator who created the mapping |
+| DeactivatedAtUtc | datetime2 | Yes | Null while active |
+| DeactivatedByEmployeeId | uniqueidentifier | Yes | Null while active |
+
+*(See `MVP-ERD.md` §2.25 for relationships, including uniqueness rules.)*
+
+### 2.26 GenesysInteractionEvents
+
+**Added in this review pass (Finding DR-03).** See `MVP-ERD.md` §2.26 and `Genesys-Mock-Contract.md` §4 for the full idempotency-key and out-of-order/duplicate/retry behavior this table enables.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| GenesysInteractionEventId | bigint | No | PK |
+| GenesysInteractionId | bigint | No | FK → GenesysInteractions (the conversation this event belongs to) |
+| ProviderEventId | nvarchar(100) | Yes | The provider's own per-event identifier, when present. **Preferred idempotency-key input when confirmed reliable** (`Genesys-Integration.md` §15 item 1, open) |
+| FallbackDedupKey | nvarchar(300) | Yes | Computed as `ConversationId + EventType + RawPayloadHash + time-bucket` when `ProviderEventId` is absent or not yet confirmed reliable — see `MVP-ERD.md` §2.26 |
+| RawPayloadHash | nvarchar(128) | No | SHA-256 (or equivalent) hash of the canonicalized inbound payload. **The raw payload itself is never persisted here or anywhere else** (Finding DR-04) |
+| EventType | nvarchar(100) | No | As received (mock names in `Genesys-Mock-Contract.md` §1; real enum values unconfirmed) |
+| ReceivedAtUtc | datetime2 | No | |
+| ProcessingStatus | tinyint | No | 1=Received, 2=Applied, 3=DeadLettered. **Never a signature-failure value — see §2.11's note and Finding DR-04; a signature failure never produces a row here** |
+| Attempts | int | No | Default 0; mirrors the retry bookkeeping pattern used on `OutboxMessages` (§2.23) |
+| LastError | nvarchar(2000) | Yes | |
+| IdempotencyRecordId | bigint | No | FK → IdempotencyRecords (1:1 — see `MVP-ERD.md` §2.26) |
+| OutboxMessageId | uniqueidentifier | Yes | FK → OutboxMessages; null briefly between acceptance and dispatch |
+| CorrelationId | uniqueidentifier | No | |
+
+*(See `MVP-ERD.md` §2.26 for relationships.)*
+
+### 2.27 PriorityDowngradeRequests
+
+**Added in this review pass (Finding DR-05).** See `MVP-ERD.md` §2.27 for the full rationale and the self-authorization defect this closes.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| PriorityDowngradeRequestId | bigint | No | PK |
+| TicketId | bigint | No | FK → Tickets |
+| CurrentPriorityId | tinyint | No | Snapshot of the ticket's priority at request time |
+| RequestedPriorityId | tinyint | No | FK → Priorities; must be a genuine decrease |
+| Reason | nvarchar(1000) | No | Required |
+| RequestedByEmployeeId | uniqueidentifier | No | FK → Employees; from the authenticated caller, never client-supplied |
+| RequestedAtUtc | datetime2 | No | |
+| Status | tinyint | No | 1=Pending, 2=Approved, 3=Rejected, 4=Expired, 5=Superseded |
+| DecidedByEmployeeId | uniqueidentifier | Yes | FK → Employees; null while `Pending`. **Populated exclusively from the authenticated approver's identity at the moment of approve/reject — never accepted as an input field on any endpoint** |
+| DecidedAtUtc | datetime2 | Yes | Null while `Pending` |
+| DecisionNote | nvarchar(1000) | Yes | Required (app-level) when `Status = Rejected` |
+| ExpiresAtUtc | datetime2 | No | `[ASSUMPTION]` `RequestedAtUtc` + 24 hours |
+| RowVersion | rowversion | No | Optimistic concurrency on the approve/reject action, independent of the ticket's own `RowVersion` |
+
+*(See `MVP-ERD.md` §2.27 for relationships, including the at-most-one-pending-per-ticket rule and expiry behavior.)*
 
 ---
 

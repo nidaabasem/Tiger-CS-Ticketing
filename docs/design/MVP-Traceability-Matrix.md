@@ -20,9 +20,9 @@
 | FR-CH-01 (manual phone intake, verify-then-create) | — | ADR-0019 | `IntakeRecords`, `Tickets` | §2.5, §3.1 (`MVP-API-Contracts.md`) | 4, 5, 6 | Create ticket only succeeds after verification + confirmation steps complete |
 | FR-VER-01 (unit number is sole lookup key) | — | ADR-0006 | `UnitReferences` | §2.1/§2.2 | 4 | Search UI offers no name/phone-only path |
 | FR-VER-02 (confirm CRM match before proceeding) | — | ADR-0006 | `UnitReferences` | §2.1 | 4 | Cannot advance to screen 5 without a selected unit |
-| FR-VER-03 (read back name/property/tower/unit type) | — | ADR-0007 | `TicketRequesterSnapshots` | §2.4 | 5 | Snapshot fields match what was displayed for read-back |
+| FR-VER-03 (read back name/property/tower/unit type) | — | ADR-0007 | `VerificationSessions` (capture), `TicketRequesterSnapshots` (final immutable copy) — `VerificationSessions` added in the senior-architecture-review pass, Finding DR-01 | §2.4 (§2.4.1–§2.4.4) | 5 | Snapshot fields match what was displayed for read-back |
 | FR-VER-04 (identify specific contact, not just unit) | ISSUE-007 | ADR-0006 | `ContactReferences` | §2.3 | 5 | Ticket's `ContactReferenceId` is required, non-null |
-| FR-VER-05 (no local mastering; CRM-issued IDs + immutable snapshot) | — | ADR-0006, ADR-0007 | `UnitReferences`, `ContactReferences`, `TicketRequesterSnapshots` | §2.1–§2.4, §3.1 | 4, 5 | No update path exists for `TicketRequesterSnapshots` after insert (code review check) |
+| FR-VER-05 (no local mastering; CRM-issued IDs + immutable snapshot) | — | ADR-0006, ADR-0007 | `UnitReferences`, `ContactReferences`, `VerificationSessions`, `TicketRequesterSnapshots` | §2.1–§2.4, §3.1 | 4, 5 | No update path exists for `TicketRequesterSnapshots` after insert (code review check); ticket creation now sources the snapshot from a consumed `VerificationSessions` row, not a fresh cache read, per Finding DR-01 |
 | FR-VER-07 (CRM downtime doesn't block Critical/High intake) | ISSUE-006 | ADR-0006 | `IntakeRecords` | §2.5, §2.6 | 4 (outage banner) | Intake Record created and later promoted when CRM returns |
 
 ## 2. Ticketing Core (FR-TKT)
@@ -34,7 +34,7 @@
 | FR-TKT-03 (creation timestamp non-editable) | — | — | `Tickets.CreatedAtUtc` | §3.1, §3.4 (no field for it) | 7 | No PATCH field exists for `CreatedAtUtc` |
 | FR-TKT-04 (channel from fixed enum) | — | — | `IntakeRecords.ChannelId` | §2.5 | 4, 6 | Invalid channel value rejected |
 | FR-TKT-05 (agent ID from auth context) | — | ADR-0004 | `TicketAssignments.AssigningActorEmployeeId` | §3.1 (implicit from JWT) | 6 | Creator/actor fields never accept a client-supplied employee ID different from the authenticated user |
-| FR-TKT-06 (summary + ≤10 attachments, virus-scanned) | BR-010, ISSUE-INT-09 | ADR-0017 | `Tickets.RequestSummary`, `TicketAttachments` | §4.3–§4.6 | 6, 12 | 11th upload rejected `422`; unscanned/rejected file never downloadable |
+| FR-TKT-06 (summary + ≤10 attachments, virus-scanned) | BR-010, ISSUE-INT-09 | ADR-0017 | `Tickets.RequestSummary`, `TicketAttachments` (now with `IsWithdrawn`/`BlobStatus`, per Finding DR-06) | §4.3–§4.6 | 6, 12 | 11th upload rejected `422`; unscanned/rejected/withdrawn file never downloadable; a withdrawn attachment's row is retained (never physically deleted), verified by a regression test per `MVP-Implementation-Backlog.md` W2-06 |
 | FR-TKT-07 (every state change audited across 5 dimensions) | — | ADR-0008, ADR-0018 | `TicketStatusHistory`, `AuditEntries` | all mutating endpoints in §3, §5 | 7 (Timeline tab) | Every mutating call produces a matching history/audit row with actor + before/after |
 | FR-TKT-08 (five independent state dimensions) | — | ADR-0008 | `Tickets.TicketStatus/VerificationStatus/EscalationLevel/SlaState/ResolutionOutcome` | §3.7, §5.x | 7, 11 | A ticket can be `InProgress` + `Level2` simultaneously |
 | FR-TKT-09 (unverified ticket invisible to queues, no SLA start) | ISSUE-002 | ADR-0006, ADR-0008 | `Tickets.VerificationStatus` | §3.2 (filter excludes unverified) | 3 | Unverified ticket excluded from queue results and has no `TicketSlaInstances` row yet |
@@ -66,7 +66,7 @@
 | FR-SLA-06 (warning before breach) | — | ADR-0009 | `SlaPolicies.WarningThresholdPercent` | §5.1 (`SlaState` derivation) | 2, 11 | `SlaState = Warning` fires at the configured threshold, visually distinct from `Breached` |
 | FR-SLA-07 (breach triggers priority-specific alert via Outbox) | — | ADR-0011, ADR-0013 | `Notifications`, `OutboxMessages` | (system-triggered; no client endpoint) | 2 (dashboard reflects it) | Breach produces a `Notifications` row and an `OutboxMessages` entry, retryable |
 | FR-SLA-08 (reassignment/transfer doesn't reset SLA clock by default) | — | ADR-0009 | `TicketSlaInstances` (period unaffected by §3.5/§3.6) | §3.5, §3.6 | 8, 9 | Reassign/transfer leaves the current `TicketSlaInstances` period's due dates unchanged |
-| FR-SLA-09 (priority-change policy: upgrade=earlier-of, downgrade=approval+breach-preserved) | ISSUE-023 | ADR-0012 | `TicketSlaInstances.ChangeReason/ApprovedByEmployeeId` | §5.5, §5.6 | 10 | Upgrade due date = min(old, new); downgrade blocked without Dept-Head+ approval; prior breach flag never clears |
+| FR-SLA-09 (priority-change policy: upgrade=earlier-of, downgrade=approval+breach-preserved) | ISSUE-023 | ADR-0012 | `TicketSlaInstances.ChangeReason/ApprovedByEmployeeId`, `PriorityDowngradeRequests` (added in the senior-architecture-review pass, Finding DR-05 — separates the requesting Agent from the approving Dept Head+, closing a self-authorization defect) | §5.5, §5.6 (§5.6.1–§5.6.5) | 10 (now 10a/10b) | Upgrade due date = min(old, new); downgrade blocked without a separately-authenticated Dept-Head+ approval action; prior breach flag never clears; an explicit test confirms the approver identity is never accepted as a request-body field |
 | FR-ESC-01 (Agent manual flag) | — | ADR-0011 | `TicketEscalations` | §5.7 | 11 | Agent can create a `ManualFlag` escalation with a reason |
 | FR-ESC-02 (Level 2 auto/flag-triggered, 2h response clock) | — | ADR-0011 | `TicketEscalations.Level/NotifiedRoles` | (system-triggered for auto; §5.7 for flag) | 11 | Level 2 escalation carries its own response-window tracking |
 | FR-ESC-03 (Level 3 auto if Level 2 doesn't resolve within window) | ISSUE-013 | ADR-0011 | `TicketEscalations` | (system-triggered, Hangfire job per ADR-0015) | 11 | Level 3 fires automatically after the configured window elapses unresolved |
@@ -114,6 +114,13 @@
 | BR-009 (email ack mandatory; SMS/WhatsApp Phase 2) | `Notifications.Channel` | (system-triggered) | 7 | `Channel` enum has only `Email` populated at MVP |
 | BR-010 (≤10 attachments/ticket) | `TicketAttachments` | §4.3 | 12 | 11th upload rejected |
 | BR-011 (mandatory resolution note) | `TicketResolutions.ResolutionNote` | §3.9 | 13 | Same as FR-TKT-10 |
+
+**Entities added by the senior-architecture-review pass, traced to ADR/Finding rather than an FR ID (structural corrections, not new requirements — consistent with how `MVP-ERD.md` §0.1 already frames refinements of this kind):**
+
+| Entity | Traces to | API Endpoint | UI Screen | Test Scenario |
+|---|---|---|---|---|
+| `GenesysAgentMappings` (Finding DR-02) | ADR-0019 (Genesys Basic Integration), `Genesys-Integration.md` §15 item 4 | §6.6.1/§6.6.2 | 16 | Upserting an already-active identifier for a different employee returns `409` |
+| `GenesysInteractionEvents` (Finding DR-03) | ADR-0014 (idempotency), ADR-0019 | §6.1, §6.2, §6.4, §6.5 | 19, 20 | Two distinct events of the same type on one call are both retained, not collapsed (`MVP-Implementation-Backlog.md` W3-05's test requirements) |
 
 ---
 

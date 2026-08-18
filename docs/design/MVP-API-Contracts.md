@@ -111,16 +111,40 @@
 - **Success `200 OK`:** array of `ContactVerificationResponse`: `ContactReferenceId`, `CrmContactId`, `DisplayName`, `ContactChannel`, `ContactType`, `AuthorizedRepresentativeOfContactId` (nullable).
 - **Errors:** `404`, `502`, `504` as above.
 
-### 2.4 `POST /api/tickets/{ticketId}/requester-confirmation`
-- **Purpose:** Record the agent's read-back confirmation of who they're speaking to, writing the immutable `TicketRequesterSnapshots` row (ADR-0007). Called during/immediately after ticket creation.
-- **Auth:** Agent and above; must be the ticket's current owner or an unassigned-ticket claimant.
-- **Path params:** `ticketId` (bigint).
-- **Request DTO `RequesterConfirmationRequest`:** `ContactReferenceId` (int, required), `ConfirmedVerbally` (bool, required, must be `true` — a confirmation record cannot be created for an unconfirmed contact).
-- **Success `201 Created`:** the created `TicketRequesterSnapshots` row (`SnapshotUnitNumber`, `SnapshotPropertyName`, etc., `CapturedAtUtc`).
-- **Validation:** `409 Conflict` (`type: .../snapshot-already-exists`) if called a second time for the same ticket — this table is write-once (`MVP-ERD.md` §2.8); there is no PATCH/PUT for it, ever.
-- **Concurrency:** `If-Match` on the ticket's `RowVersion`.
-- **Audit:** `AuditEntries` (`Action = "ConfirmRequester"`, `EntityType = "Ticket"`).
+### 2.4 Verification Sessions
+
+**Redesigned in this review pass (Finding DR-01).** The original single endpoint here (`POST /api/tickets/{ticketId}/requester-confirmation`) required a `TicketId` that did not yet exist at the point verification happens — while `POST /api/tickets` (§3.1) required a confirmation to already be on file before a ticket could be created. Neither endpoint could ever be called first. This is replaced by a short-lived `VerificationSessions` resource (`MVP-ERD.md` §2.24) that exists entirely *before* a ticket does; a ticket is then created *from* a confirmed session (§3.1), and the session is consumed at that moment.
+
+#### 2.4.1 `POST /api/verification-sessions`
+- **Purpose:** Start a new verification session, scoped to the calling agent.
+- **Auth:** Agent and above.
+- **Request:** none required (an empty body starts the session; the agent then selects a unit/contact via the CRM Verification endpoints below).
+- **Success `201 Created`, `VerificationSessionResponse`:** `VerificationSessionId`, `AgentEmployeeId` (from the JWT), `Status: "InProgress"`, `ExpiresAtUtc`.
+- **Idempotent (client-supplied key):** yes — a double-submit (e.g., page reload) returns the same session rather than creating a second, orphaned one.
+- **Audit:** `AuditEntries` (`Action = "StartVerificationSession"`, `EntityType = "VerificationSession"`).
+
+#### 2.4.2 `PATCH /api/verification-sessions/{verificationSessionId}/selection`
+- **Purpose:** Record the agent's unit/contact selection (after calling §2.1–§2.3) against the open session, ahead of confirmation.
+- **Auth:** Agent and above; **must be the session's own `AgentEmployeeId`** — no other agent, including a Supervisor, may act on someone else's session (`MVP-ERD.md` §2.24's single-agent-ownership rule; no override exists at MVP).
+- **Path params:** `verificationSessionId` (guid).
+- **Request DTO `SelectVerificationTargetRequest`:** `UnitReferenceId` (int, required), `ContactReferenceId` (int, required).
+- **Success `200 OK`:** the updated session (`UnitReferenceId`, `ContactReferenceId` populated, `Status` unchanged).
+- **Validation:** `403` if the caller isn't the session's owner; `409` (`type: .../verification-session-not-in-progress`) if `Status ≠ InProgress`; `410 Gone` (`type: .../verification-session-expired`) if past `ExpiresAtUtc`.
+
+#### 2.4.3 `POST /api/verification-sessions/{verificationSessionId}/confirm`
+- **Purpose:** Record the agent's verbal read-back confirmation and capture the point-in-time snapshot fields that will later become the ticket's immutable `TicketRequesterSnapshots` row.
+- **Auth:** Agent and above; must be the session's owner (same rule as §2.4.2).
+- **Request DTO `ConfirmVerificationSessionRequest`:** `ConfirmedVerbally` (bool, required, must be `true`).
+- **Success `200 OK`:** the updated session (`Status: "Confirmed"`, `ConfirmedAtUtc` set, snapshot fields populated from the current `UnitReferences`/`ContactReferences` cache read at this exact moment).
+- **Validation:** `422` if `UnitReferenceId`/`ContactReferenceId` haven't been selected yet (§2.4.2 not yet called); `409`/`410` same as §2.4.2 for wrong-state/expired.
+- **Audit:** `AuditEntries` (`Action = "ConfirmVerificationSession"`, `EntityType = "VerificationSession"`).
 - **Domain event:** none beyond the audit entry — this does not itself trigger notifications.
+
+#### 2.4.4 `GET /api/verification-sessions/{verificationSessionId}`
+- **Purpose:** Retrieve session status — used to resume state after a page reload, or to check whether a session is still usable before attempting ticket creation.
+- **Auth:** Agent and above; must be the session's owner.
+- **Success `200 OK`:** the session in its current state, including `Status` (which reflects `Expired` if read past `ExpiresAtUtc`, even if a background sweep hasn't run yet — see `MVP-ERD.md` §2.24).
+- **Errors:** `404` if no such session; `403` if not the owner.
 
 ### 2.5 `POST /api/intake-records`
 - **Purpose:** Create an Intake Record when the CRM is unavailable, so the call isn't lost (fallback path, `Genesys-Integration.md`/CRM outage handling).
@@ -134,9 +158,9 @@
 - **Purpose:** Once the CRM is back and the unit/contact are verified, promote an Intake Record into a full Ticket, linking the two (`MVP-ERD.md` §2.9).
 - **Auth:** Agent and above.
 - **Path params:** `intakeRecordId` (bigint).
-- **Request DTO:** the same fields as ticket creation (§3.1) minus what's already on the Intake Record.
+- **Request DTO:** the same fields as ticket creation (§3.1) — i.e., **a `VerificationSessionId` for a session confirmed against the now-reachable CRM** (`[ASSUMPTION]` this session may be started/confirmed by any agent, not necessarily the one who originally created the Intake Record, since the original caller may no longer be reachable by the time the CRM recovers — flagged for confirmation), plus `CategoryId`/`PriorityId`/`RequestSummary`.
 - **Success `201 Created`:** the created `Ticket` resource (see §3.1's response shape) plus `PromotedFromIntakeRecordId`.
-- **Validation:** `409` if the Intake Record already has a `LinkedTicketId` (already promoted); `422` (`type: .../crm-still-unavailable`) if the CRM lookup this promotion depends on still fails.
+- **Validation:** `409` if the Intake Record already has a `LinkedTicketId` (already promoted); `422` (`type: .../verification-session-not-confirmed`) if the referenced session isn't `Confirmed`; the CRM-availability failure mode this endpoint previously guarded against (`crm-still-unavailable`) now surfaces earlier, at session confirmation (§2.4.3), rather than here.
 - **Domain event:** `OutboxMessages` `EventType = "TicketCreated"` (same as normal creation).
 
 ### 2.7 `GET /api/intake-records`
@@ -150,26 +174,26 @@
 ## 3. Ticketing Module
 
 ### 3.1 `POST /api/tickets`
-- **Purpose:** Create a new ticket (FR-TCK-01). Requires the unit/contact to already be CRM-verified in the current session (typically calling §2.1/§2.3 first) unless created via Intake Record promotion (§2.6).
+- **Purpose:** Create a new ticket (FR-TCK-01) from a confirmed `VerificationSessions` resource (§2.4), or via Intake Record promotion (§2.6).
 - **Auth:** Agent and above.
-- **Request DTO `CreateTicketRequest`:** `UnitReferenceId` (int, required), `ContactReferenceId` (int, required), `CategoryId` (int, required), `PriorityId` (tinyint, required), `RequestSummary` (string, required, ≤2000 chars), `GenesysInteractionId` (bigint, optional — links a Genesys-originated call).
+- **Request DTO `CreateTicketRequest`:** `VerificationSessionId` (guid, required — **redesigned in this review pass, Finding DR-01; replaces the original directly-supplied `UnitReferenceId`/`ContactReferenceId` fields**), `CategoryId` (int, required), `PriorityId` (tinyint, required), `RequestSummary` (string, required, ≤2000 chars), `GenesysInteractionId` (bigint, optional — links a Genesys-originated call).
 - **Request example:**
 ```json
 {
-  "unitReferenceId": 4021,
-  "contactReferenceId": 8890,
+  "verificationSessionId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "categoryId": 12,
   "priorityId": 2,
   "requestSummary": "AC unit in unit 1204 not cooling since yesterday evening.",
   "genesysInteractionId": null
 }
 ```
-- **Success `201 Created`, `TicketResponse`:** `TicketId`, `TicketNumber`, `OriginatingDepartmentId`, `CurrentDepartmentId`, `CurrentOwnerEmployeeId`, `CategoryId`, `PriorityId`, `TicketStatus`, `VerificationStatus`, `EscalationLevel`, `SlaState`, `RequestSummary`, `CreatedAtUtc`, `RowVersion`, plus the nested current `TicketSlaInstances` row (`FirstResponseDueAtUtc`, `ResolutionDueAtUtc`).
-- **Validation:** `CategoryId` must route to a Department (derives `OriginatingDepartmentId`/`CurrentDepartmentId` — not client-supplied, per `MVP-ERD.md` §2.3's write-once rule); `422` if `UnitReferenceId`/`ContactReferenceId` don't have a matching `TicketRequesterSnapshots`-eligible confirmation already on file for this session `[ASSUMPTION — exact session-linkage mechanism between "verified" and "create" is an implementation detail deferred to Phase 3]`.
-- **Errors:** `400` (validation), `404` (unit/contact/category/priority not found).
-- **Concurrency:** N/A (create). **Idempotent (client-supplied key):** yes — prevents duplicate tickets from a double-submit.
+- **Success `201 Created`, `TicketResponse`:** `TicketId`, `TicketNumber`, `OriginatingDepartmentId`, `CurrentDepartmentId`, `CurrentOwnerEmployeeId`, `UnitReferenceId`, `ContactReferenceId` (both copied from the consumed session), `CategoryId`, `PriorityId`, `TicketStatus`, `VerificationStatus`, `EscalationLevel`, `SlaState`, `RequestSummary`, `CreatedAtUtc`, `RowVersion`, plus the nested current `TicketSlaInstances` row (`FirstResponseDueAtUtc`, `ResolutionDueAtUtc`).
+- **Validation:** `CategoryId` must route to a Department (derives `OriginatingDepartmentId`/`CurrentDepartmentId` — not client-supplied, per `MVP-ERD.md` §2.3's write-once rule); `422` (`type: .../verification-session-not-confirmed`) if the session's `Status ≠ Confirmed`; `409` (`type: .../verification-session-already-consumed`) if the session was already used for a different ticket; `410 Gone` (`type: .../verification-session-expired`) if past the session's `ExpiresAtUtc`; `403` if the caller isn't the session's owning agent.
+- **Errors:** `400` (validation), `404` (session/category/priority not found).
+- **Concurrency:** N/A (create). **Idempotent (client-supplied key):** yes — prevents duplicate tickets from a double-submit; note this is a *separate* idempotency key from the one-time-use enforced on `VerificationSessionId` itself — a retried request with the same `Idempotency-Key` and the same (now-consumed) session still succeeds by returning the original result, rather than hitting the already-consumed error.
 - **Domain events / Outbox:** `TicketCreated` (drives the automated acknowledgement notification, §5.1's flow), `TicketSlaInstanceOpened`.
-- **Audit:** `AuditEntries` (`Action = "Create"`, `EntityType = "Ticket"`); `TicketStatusHistory` seed rows for all five dimensions (`OldValue = null`).
+- **Audit:** `AuditEntries` (`Action = "Create"`, `EntityType = "Ticket"`, and a linked `Action = "ConsumeVerificationSession"` entry); `TicketStatusHistory` seed rows for all five dimensions (`OldValue = null`).
+- **Side effect:** in the same transaction, creates the `TicketRequesterSnapshots` row by copying the session's captured snapshot fields (not a fresh CRM/cache read), and marks the session `Status = Consumed`, `ConsumedByTicketId` set.
 
 ### 3.2 `GET /api/tickets`
 - **Purpose:** List/search/filter tickets — the queue view (FR-TCK-06).
@@ -185,13 +209,13 @@
 - **Errors:** `404`.
 
 ### 3.4 `PATCH /api/tickets/{ticketId}`
-- **Purpose:** Update mutable descriptive fields — summary, category, priority (FR-TCK-08/09). Priority changes route through the SLA module's rules (§5.6/§5.7) rather than being a bare field write; this endpoint accepts a priority change request but defers to those rules internally.
+- **Purpose:** Update mutable descriptive fields — summary, category, priority (FR-TCK-08/09). Priority changes route through the SLA module's rules (§5.5 upgrade / §5.6 downgrade) rather than being a bare field write; this endpoint accepts a priority change request but defers to those rules internally.
 - **Auth:** Agent and above (summary/category); priority **increase** allowed for Agent+; priority **decrease** requires Dept Head+ approval (enforced here, not just at the SLA endpoints — see Validation).
 - **Path params:** `ticketId`.
 - **Headers:** `If-Match` required.
 - **Request DTO `UpdateTicketRequest`** (all fields optional, at least one required): `RequestSummary` (string), `CategoryId` (int), `PriorityId` (tinyint).
 - **Success `200 OK`:** updated `TicketResponse`.
-- **Validation:** a `PriorityId` decrease without an already-approved downgrade context returns `403` (`type: .../downgrade-requires-approval`) directing the client to `POST /api/tickets/{ticketId}/sla/priority-downgrade` (§5.7) instead.
+- **Validation:** a `PriorityId` decrease without an already-approved downgrade context returns `403` (`type: .../downgrade-requires-approval`) directing the client to `POST /api/tickets/{ticketId}/sla/priority-downgrade-requests` (§5.6.1) instead.
 - **Errors:** `404`, `409` (concurrency), `403`.
 - **Domain events:** `TicketCategoryChanged` and/or `TicketPriorityChanged` (only the changed ones), each also writing a `TicketStatusHistory` row.
 - **Audit:** `AuditEntries` per changed field.
@@ -305,22 +329,25 @@ See §4.1 (kept together with attachments for module cohesion).
 ### 4.4 `GET /api/tickets/{ticketId}/attachments`
 - **Purpose:** List attachment metadata for a ticket.
 - **Auth:** Agent and above.
-- **Success `200 OK`:** array of `{ TicketAttachmentId, FileName, ContentType, SizeBytes, VirusScanStatus, UploadedByEmployeeId, UploadedAtUtc }`. Entries with `VirusScanStatus ≠ Clean` are included but flagged `Downloadable: false`.
+- **Success `200 OK`:** array of `{ TicketAttachmentId, FileName, ContentType, SizeBytes, VirusScanStatus, UploadedByEmployeeId, UploadedAtUtc }`. Entries with `VirusScanStatus ≠ Clean` are included but flagged `Downloadable: false`. **As of this review pass (Finding DR-06), withdrawn attachments (`IsWithdrawn = true`) are excluded from this list entirely** — their metadata row still exists (§4.6) but is not surfaced through normal listing; a Supervisor+-only audit view of withdrawn attachments is a Phase 3 item, not built here.
 
 ### 4.5 `GET /api/tickets/{ticketId}/attachments/{attachmentId}/content`
 - **Purpose:** Download the actual file bytes.
 - **Auth:** Agent and above.
 - **Success `200 OK`:** binary stream, `Content-Disposition: attachment; filename="..."`.
-- **Errors:** `403` (`type: .../scan-not-clean`) if `VirusScanStatus ≠ Clean` — enforced on every read, not just at upload (`MVP-ERD.md` §2.19); `404` if attachment doesn't exist or belongs to a different ticket than the path implies.
+- **Errors:** `403` (`type: .../scan-not-clean`) if `VirusScanStatus ≠ Clean` — enforced on every read, not just at upload (`MVP-ERD.md` §2.19); `403` (`type: .../attachment-withdrawn`) if `IsWithdrawn = true` (Finding DR-06); `404` if attachment doesn't exist or belongs to a different ticket than the path implies.
 - **Audit:** `AuditEntries` (`Action = "DownloadAttachment"`) — download access is itself audited given these may contain sensitive photos/documents.
 
-### 4.6 `DELETE /api/tickets/{ticketId}/attachments/{attachmentId}`
-- **Purpose:** Remove an attachment, where policy permits (e.g., uploaded in error).
+### 4.6 `POST /api/tickets/{ticketId}/attachments/{attachmentId}/withdraw`
+- **Corrected in this review pass (Finding DR-06):** this was previously a `DELETE` that physically removed the `TicketAttachments` row — the one hard-delete exception in a schema whose every other historical table is append-only/never-deleted, and a direct contradiction of the 7-year retention requirement (ISSUE-016). It is now a soft withdrawal: the metadata row is never deleted, and access/visibility is revoked instead.
+- **Purpose:** Withdraw an attachment, where policy permits (e.g., uploaded in error), without destroying its audit record.
 - **Auth:** The uploader, within a short window (`[ASSUMPTION]` 15 minutes), or Supervisor+ at any time.
-- **Success `204 No Content`.**
-- **Validation:** `403` if requested outside the uploader's removal window by a non-Supervisor.
-- **Note:** this is a genuine delete (unlike notes/status history) because an accidentally-uploaded file is not part of the immutable audit narrative the way a status transition is — flagged `[ASSUMPTION]` since the requirement only says "remove ... where policy permits" without defining the policy; the time-boxed self-service + unrestricted Supervisor+ rule above is this design's proposed policy, not a pre-approved one.
-- **Audit:** `AuditEntries` (`Action = "DeleteAttachment"`, records `FileName` in `BeforeValue` since the row itself is gone).
+- **Request DTO `WithdrawAttachmentRequest`:** `Reason` (string, required — no longer optional, since this is now a permanent, audit-visible action rather than an erasure).
+- **Success `200 OK`:** the updated `TicketAttachments` row (`IsWithdrawn: true`, `WithdrawnAtUtc`, `WithdrawnByEmployeeId`, `WithdrawalReason`, `BlobStatus: "Quarantined"`).
+- **Validation:** `403` if requested outside the uploader's removal window by a non-Supervisor; `409` (`type: .../attachment-already-withdrawn`) if called twice.
+- **Effect:** the attachment metadata row (`MVP-Data-Dictionary.md` §2.19) is retained permanently, exactly like every other historical row in this schema; it is simply excluded from `GET .../attachments` listing and blocked from `GET .../content` (both now also check `IsWithdrawn = false`, alongside the existing `VirusScanStatus = Clean` check) — this is access revocation, not deletion. The underlying blob moves to `Quarantined` (§2.19's blob-lifecycle note); an eventual `Purged` transition, if a retention/legal-hold policy calls for it, is a separately-approved operator action, not part of this endpoint.
+- **Un-withdraw:** **not** provided at MVP — `[ASSUMPTION]`, flagged as an open item if a reversal capability is later needed.
+- **Audit:** `AuditEntries` (`Action = "WithdrawAttachment"`, before/after `IsWithdrawn`) — the row and its full history remain queryable, unlike the original design's delete, which discarded the row and could only record its `FileName` in a before-value.
 
 ---
 
@@ -364,19 +391,56 @@ See §4.1 (kept together with attachments for module cohesion).
 - **Headers:** `If-Match`.
 - **Request DTO `UpgradePriorityRequest`:** `NewPriorityId` (tinyint, required, must be numerically higher urgency than current).
 - **Success `201 Created`:** the new current `TicketSlaInstances` row (`ChangeReason = Upgrade`), prior row's `PeriodEndAtUtc` set.
-- **Validation:** `422` if `NewPriorityId` is not actually an upgrade (use §3.4/§5.7 path instead).
+- **Validation:** `422` if `NewPriorityId` is not actually an upgrade (use §5.6.1 to request a downgrade instead).
 - **Domain events:** `TicketPriorityChanged`, `TicketSlaInstanceReplaced`.
 - **Note:** breach flags already `true` on the prior period carry forward as historical fact — they are not reset (`MVP-ERD.md` §2.15's immutability rule).
 
-### 5.6 `POST /api/tickets/{ticketId}/sla/priority-downgrade`
-- **Purpose:** Request (and, if the caller is authorized, immediately approve) a priority decrease. Per ADR-0012, any existing breach is preserved regardless of the downgrade.
-- **Auth:** Agent and above may **request**; Dept Head+ approval is required for the downgrade to take effect.
-- **Headers:** `If-Match`.
-- **Request DTO `DowngradePriorityRequest`:** `NewPriorityId` (tinyint, required), `Reason` (string, required), `ApprovingEmployeeId` (guid, required — the endpoint validates this employee actually holds Dept Head+ at call time; a request from an Agent without an already-authenticated Dept Head approver present returns `202 Accepted` with `Status: "PendingApproval"` rather than applying immediately — see below).
-- **Success `202 Accepted`** (Agent-initiated, pending) **or `201 Created`** (Dept Head+-initiated or immediately co-signed): the new/pending `TicketSlaInstances` row.
-- **Validation:** `403` if `ApprovingEmployeeId` does not hold Dept Head or above.
-- **Domain events:** `TicketPriorityDowngradeRequested` (pending case) or `TicketPriorityChanged` + `TicketSlaInstanceReplaced` (approved case).
-- **Note:** `TicketSlaInstances.ApprovedByEmployeeId` is required (app-enforced) before a `ChangeReason = Downgrade` row can ever become the current period (`MVP-ERD.md` §2.15) — the pending-approval `202` path exists precisely so this constraint is never bypassed.
+### 5.6 Priority Downgrade Requests
+
+**Redesigned in this review pass (Finding DR-05).** The original single endpoint let the requesting Agent's own request body name `ApprovingEmployeeId` — nothing prevented an Agent from naming themselves (if they happened to hold a dual role) or a compliant colleague as the "approver," which is a self-authorization defect regardless of the server-side role check on that field. Requesting and approving are now two separate actions, each performed by its own authenticated actor; the approver's identity is **always** taken from the caller's own JWT on the approval call, never from any request body, on any endpoint.
+
+#### 5.6.1 `POST /api/tickets/{ticketId}/sla/priority-downgrade-requests`
+- **Purpose:** An Agent (or anyone) requests a priority decrease. Per ADR-0012, any existing breach will be preserved regardless of the eventual decision.
+- **Auth:** Agent and above.
+- **Headers:** `If-Match` (on the ticket's `RowVersion`).
+- **Request DTO `CreateDowngradeRequestRequest`:** `NewPriorityId` (tinyint, required, must be a genuine decrease), `Reason` (string, required). **No approver field of any kind.**
+- **Success `201 Created`:** the created `PriorityDowngradeRequests` row (`MVP-ERD.md` §2.27), `Status: "Pending"`, `ExpiresAtUtc`.
+- **Validation:** `422` if `NewPriorityId` is not actually a decrease (use §5.5 for an upgrade); `409` (`type: .../downgrade-request-already-pending`) if a `Pending` request already exists for this ticket — the response includes the existing request's ID so the caller can view or wait on it rather than retry blindly.
+- **Domain events:** `TicketPriorityDowngradeRequested`.
+- **Audit:** `AuditEntries` (`Action = "RequestPriorityDowngrade"`).
+
+#### 5.6.2 `GET /api/tickets/{ticketId}/sla/priority-downgrade-requests`
+- **Purpose:** History of downgrade requests for a ticket (Pending/Approved/Rejected/Expired).
+- **Auth:** Agent and above.
+- **Success `200 OK`:** array of `PriorityDowngradeRequests` rows, sorted `RequestedAtUtc desc`.
+
+#### 5.6.3 `GET /api/priority-downgrade-requests/pending`
+- **Purpose:** A Dept Head+'s inbox of requests awaiting their decision, scoped to the department(s) they hold authority over.
+- **Auth:** Dept Head and above.
+- **Query params:** `departmentId` (optional, defaults to the caller's own department(s)), `page`, `pageSize`.
+- **Success `200 OK`:** paginated list, each entry including enough ticket context (`TicketNumber`, `CurrentPriorityId`, `RequestedPriorityId`, `Reason`, `RequestedByEmployeeId`) to decide without a separate lookup.
+
+#### 5.6.4 `POST /api/priority-downgrade-requests/{requestId}/approve`
+- **Purpose:** Approve a pending downgrade request. This is the **only** path by which a downgrade takes effect.
+- **Auth:** Dept Head and above, **for the department that owns the ticket the request belongs to** — checked server-side against the caller's own `UserDepartmentAssignments`, never against any field in the request payload.
+- **Headers:** `If-Match` (on the **request's own** `RowVersion` — deliberately not the ticket's, since this action's concurrency concern is "did someone else already decide this request," not general ticket-field contention).
+- **Request:** no body required beyond the `If-Match` header.
+- **Success `200 OK`:** the updated `PriorityDowngradeRequests` row (`Status: "Approved"`, `DecidedByEmployeeId` = the caller, `DecidedAtUtc`) plus the newly-created current `TicketSlaInstances` row (`ChangeReason = Downgrade`, `ApprovedByEmployeeId` = the same caller, copied — never re-entered).
+- **Validation:** `409` (`type: .../downgrade-request-not-pending`) if `Status ≠ Pending` (already decided, expired, or superseded by a newer request) — this is the duplicate/stale-approval case; `410 Gone` if the request's own `ExpiresAtUtc` has passed; `403` if the caller doesn't hold Dept Head+ for the ticket's current department.
+- **Domain events:** `TicketPriorityChanged`, `TicketSlaInstanceReplaced`.
+- **Audit:** `AuditEntries` (`Action = "ApprovePriorityDowngrade"`, actor = the approver, never the original requester).
+- **Invariant preserved unchanged:** breach flags (`FirstResponseBreached`/`ResolutionBreached`) already `true` on the prior `TicketSlaInstances` period are never reset by this action (`MVP-ERD.md` §2.15) — this review pass changes *who may approve and how*, not the breach-preservation rule itself.
+
+#### 5.6.5 `POST /api/priority-downgrade-requests/{requestId}/reject`
+- **Purpose:** Reject a pending downgrade request; the ticket's priority is unchanged.
+- **Auth:** Same as §5.6.4.
+- **Headers:** `If-Match` (on the request's `RowVersion`).
+- **Request DTO `RejectDowngradeRequestRequest`:** `DecisionNote` (string, required).
+- **Success `200 OK`:** the updated `PriorityDowngradeRequests` row (`Status: "Rejected"`, `DecidedByEmployeeId` = the caller).
+- **Validation:** same `409`/`410`/`403` cases as §5.6.4.
+- **Audit:** `AuditEntries` (`Action = "RejectPriorityDowngrade"`).
+
+**Expiry:** a `Pending` request past `ExpiresAtUtc` (`[ASSUMPTION]` 24 hours) is treated as `Status = Expired` on the next read or via a scheduled sweep, and can no longer be approved/rejected — the Agent must submit a new request (§5.6.1) if the downgrade is still wanted.
 
 ### 5.7 `POST /api/tickets/{ticketId}/escalations`
 - **Purpose:** Manually escalate a ticket (FR-ESC-01) — distinct from automatic breach/window-based escalation, which is system-generated (see `SLA-Architecture.md` §9, `ADR-0015`'s Hangfire jobs — not exposed as a client-callable endpoint, since it's system-triggered).
@@ -423,22 +487,25 @@ See §7.3 (kept with the rest of the Dashboard module).
 
 ### 6.1 `POST /api/genesys/webhook`
 - **Purpose:** Receive Genesys conversation/interaction events (`Genesys-Integration.md` — webhook-driven design).
-- **Auth:** **Not** bearer-token auth. Uses a webhook signature header — placeholder name `X-Genesys-Signature` `[ASSUMPTION — exact header name/scheme is one of the 8 open questions to the Genesys team, Genesys-Integration.md §15 item 2; this document uses a placeholder pending that answer]`. Requests failing signature validation are rejected before any processing.
+- **Auth:** **Not** bearer-token auth. Uses a webhook signature header — placeholder name `X-Genesys-Signature` `[ASSUMPTION — exact header name/scheme is one of the 8 open questions to the Genesys team, Genesys-Integration.md §15 item 2; this document uses a placeholder pending that answer]`.
 - **Headers:** `X-Genesys-Signature` (required, placeholder scheme), `Content-Type: application/json`.
 - **Request DTO:** provider-neutral mock shape — see `docs/design/Genesys-Mock-Contract.md` for the full field-by-field contract; this endpoint accepts that shape until the real Genesys payload schema is confirmed.
-- **Success `202 Accepted`:** `{ Received: true, CorrelationId }` — acknowledges receipt; processing (matching to a ticket, updating `GenesysInteractions`) happens asynchronously via the Outbox pattern so a slow downstream step never blocks the webhook response (ADR-0013).
-- **Idempotent (mandatory, not client-optional):** dedup key = `ConversationId + EventType` against `IdempotencyRecords` (Scope = `"GenesysWebhook"`, ADR-0014) — a redelivered event returns the same `202` without reprocessing.
-- **Validation:** `401` (`type: .../invalid-signature`) on signature failure; `400` on malformed JSON; **missing optional fields (e.g., `AgentEmailOrExtension`) are accepted, not rejected** — `GenesysInteractions.AgentEmailOrExtension` is nullable specifically to keep ingestion resilient (`MVP-ERD.md` §2.11).
-- **Errors:** unrecognized `EventType` values are stored with `ProcessingStatus = Received` and logged, not rejected with an error — an unknown future event type must never cause message loss.
+- **Signature failure — resolved in this review pass (Finding DR-04):** a request that fails signature validation is rejected `401` (`type: .../invalid-signature`) **before any parsing or persistence.** No `GenesysInteractions` row, no `GenesysInteractionEvents` row, and no `AuditEntries` row referencing the request body is ever written. The **only** record of the rejection is a security-log line (not the application audit trail) containing: timestamp, source IP if available, payload byte-length, and outcome — **never the raw payload body**, since an unauthenticated request's claimed `ConversationId`/`CallerNumber` cannot be trusted and must not be persisted as if it were real. This resolves the prior contradiction between this section (which already said "rejected before persistence") and `MVP-Data-Dictionary.md` §2.11, which listed `ProcessingStatus = Rejected (signature failure)` as if such an event were stored — that value has been removed; see §2.11's corrected note.
+- **Success `202 Accepted`:** `{ Received: true, CorrelationId }` — acknowledges receipt; processing (matching/creating the `GenesysInteractions` parent row, updating fields) happens asynchronously via the Outbox pattern so a slow downstream step never blocks the webhook response (ADR-0013).
+- **Idempotency — corrected in this review pass (Finding DR-03):** every accepted event is first written as its own `GenesysInteractionEvents` row (`MVP-ERD.md` §2.26), **not** bound 1:1 to the parent `GenesysInteractions` conversation record (the original design's error — one conversation legitimately produces multiple events, and the old model would have silently dropped every event after the first). The dedup key **prefers the provider's own `EventId`** (`IdempotencyKey = "GenesysEvent:" + eventId`) once Genesys confirms it is stable/unique (`Genesys-Integration.md` §15 item 1, open); **until then**, the key falls back to `ConversationId + EventType + RawPayloadHash + a short time-bucket` (`[ASSUMPTION]` 5 seconds) — a composite specifically chosen so that two *genuinely distinct* events of the same type on the same call (e.g., two separate hold events) are **not** suppressed as duplicates, while near-identical redeliveries within the same short window are. A redelivered/duplicate event returns the same `202` without reprocessing.
+- **Validation:** `400` on malformed JSON; **missing optional fields (e.g., `AgentEmailOrExtension`) are accepted, not rejected** — `GenesysInteractions.AgentEmailOrExtension` is nullable specifically to keep ingestion resilient (`MVP-ERD.md` §2.11).
+- **Errors:** unrecognized `EventType` values are stored (as a `GenesysInteractionEvents` row, `ProcessingStatus = Received`) and logged, not rejected with an error — an unknown future event type must never cause message loss.
+- **Out-of-order handling:** each event updates the parent `GenesysInteractions` row on an apply-if-absent basis per field (e.g., `AnsweredAtUtc` is set only if currently null) — an `ended` event processed before an `answered` event (possible under at-least-once, unordered delivery) never overwrites a later-arriving, earlier-timestamped field with a null or stale value.
+- **Security note (Finding DR-04):** only `RawPayloadHash` (a hash) is ever persisted on the event row for dedup/audit purposes — the raw inbound payload itself is never written to any table or long-lived log, since it may contain unmasked caller PII.
 - **Rate limiting:** `[ASSUMPTION]` a higher ceiling than the general default, since Genesys may burst-deliver (e.g., after a Tiger-side outage) — flagged as dependent on open question #5 (delivery guarantees) and #7 (rate limits) in `Genesys-Integration.md` §15.
-- **Domain events / Outbox:** `GenesysInteractionReceived` written to `OutboxMessages`; downstream processing performs the agent-lookup and (if `EventType` = call-answered) internally calls the equivalent of §5.2 to satisfy First Human Response.
-- **Dead-letter handling:** after `[ASSUMPTION]` 5 failed processing attempts, the `OutboxMessages` row moves to `DeadLettered` and surfaces on §6.4 below rather than retrying forever.
+- **Domain events / Outbox:** `GenesysInteractionEventReceived` written to `OutboxMessages` (one per accepted event); downstream processing performs the agent-lookup via `GenesysAgentMappings` (§6.6) and (if `EventType` = call-answered) internally calls the equivalent of §5.2 to satisfy First Human Response.
+- **Dead-letter handling:** after `[ASSUMPTION]` 5 failed processing attempts, the event's `ProcessingStatus` moves to `DeadLettered` and surfaces on §6.4 below rather than retrying forever. **This is unrelated to, and never triggered by, a signature failure** — dead-lettering only applies to events that were accepted and then failed downstream processing.
 
 ### 6.2 `GET /api/genesys/interactions/{conversationId}`
 - **Purpose:** Retrieve a Genesys interaction by its own `ConversationId` — used to check whether/how an inbound call has been processed.
 - **Auth:** Agent and above.
 - **Path params:** `conversationId` (string).
-- **Success `200 OK`:** the `GenesysInteractions` row, including `LinkedTicketId` (nullable) and `ProcessingStatus`.
+- **Success `200 OK`:** the `GenesysInteractions` row, including `LinkedTicketId` (nullable) and `ProcessingStatus`, plus a nested `Events` array of its `GenesysInteractionEvents` (`EventType`, `ReceivedAtUtc`, `ProcessingStatus` — per-event, per Finding DR-03).
 - **Errors:** `404` if no interaction with that `ConversationId` has been received yet.
 
 ### 6.3 `POST /api/genesys/interactions/{conversationId}/link`
@@ -450,24 +517,37 @@ See §7.3 (kept with the rest of the Dashboard module).
 - **Side effect:** if the interaction's `AnsweredAtUtc` is populated and the ticket's `FirstHumanResponseAtUtc` is still null, this call also satisfies First Human Response via the same internal path as §5.2 (`Source: GenesysCallAnswer`).
 
 ### 6.4 `GET /api/genesys/interactions/failed`
-- **Purpose:** Operational visibility into interactions stuck in `Rejected` (signature failure) or dead-lettered processing states — the "failed integration events" queue.
+- **Purpose:** Operational visibility into **events** stuck in dead-lettered processing states — the "failed integration events" queue.
+- **Corrected in this review pass (Finding DR-04):** this queue surfaces application-level processing failures only. It **never** shows signature-rejected requests — those are never persisted at all (§6.1) and are visible only via security logs/ops monitoring outside this data model, not through this endpoint.
 - **Auth:** System Administrator, or Supervisor+ in a department that handles Genesys-originated calls.
-- **Query params:** `processingStatus` (tinyint, optional filter), `page`, `pageSize`.
-- **Success `200 OK`:** paginated list including `LastError`/`Attempts` where available (joined from the underlying `OutboxMessages` row).
+- **Query params:** `processingStatus` (tinyint, optional filter — values from `GenesysInteractionEvents.ProcessingStatus`, per Finding DR-03), `page`, `pageSize`.
+- **Success `200 OK`:** paginated list of `GenesysInteractionEvents` (not `GenesysInteractions`, per the corrected grain) including `LastError`/`Attempts` and the parent `ConversationId` for context.
 
 ### 6.5 `POST /api/genesys/interactions/{conversationId}/retry`
-- **Purpose:** Manually retry processing a failed/dead-lettered interaction, where authorized.
+- **Purpose:** Manually retry processing a failed/dead-lettered **event** (or, if `eventId` is not specified, every dead-lettered event for the conversation), where authorized.
 - **Auth:** System Administrator.
 - **Success `202 Accepted`:** `{ Retrying: true }` — resets `Attempts` handling per the Outbox retry policy (ADR-0013) and re-queues.
-- **Validation:** `409` if the interaction isn't currently in a failed/dead-lettered state (nothing to retry).
-- **Audit:** `AuditEntries` (`Action = "RetryGenesysInteraction"`).
+- **Validation:** `409` if no event for the conversation is currently in a failed/dead-lettered state (nothing to retry).
+- **Audit:** `AuditEntries` (`Action = "RetryGenesysInteractionEvent"`).
 
-### 6.6 `POST /api/genesys/agent-mapping`
-- **Purpose:** Maintain the (soft, non-FK — `MVP-ERD.md` §2.11) mapping table used to resolve `AgentEmailOrExtension` to an `EmployeeId` at processing time, since this mapping is application logic, not a database constraint.
+### 6.6 Genesys Agent Mappings
+
+**Backed by a real entity as of this review pass (Finding DR-02).** The endpoint below existed in the prior design with no corresponding table to persist to; `GenesysAgentMappings` (`MVP-ERD.md` §2.25) now backs it.
+
+#### 6.6.1 `POST /api/genesys/agent-mapping`
+- **Purpose:** Upsert the mapping used to resolve `GenesysAgentId`/`AgentEmailOrExtension` to an `EmployeeId` at event-processing time. Remains a soft, non-FK lookup from `GenesysInteractions`'s own perspective (`MVP-ERD.md` §2.11) — ingestion must never fail because a mapping can't be resolved — but is now a real, auditable, activatable/deactivatable table rather than an unbacked upsert.
 - **Auth:** System Administrator.
 - **Request DTO `UpsertAgentMappingRequest`:** `GenesysAgentId` or `AgentEmailOrExtension` (at least one, required), `EmployeeId` (guid, required).
-- **Success `200 OK`:** the stored mapping entry.
-- **Note:** this is an application-level lookup table, not a new ERD entity — it exists to support the soft-matching behavior already flagged in `MVP-ERD.md` §2.11, not a new business decision.
+- **Success `200 OK`:** the stored `GenesysAgentMappings` row (`IsActive: true`).
+- **Validation:** `409` (`type: .../identifier-already-mapped`) if the supplied `GenesysAgentId`/`AgentEmailOrExtension` is already active on a mapping for a **different** `EmployeeId` — resolve by deactivating the old mapping first (§6.6.2), not by silently reassigning it.
+- **Audit:** `AuditEntries` (`Action = "UpsertGenesysAgentMapping"`).
+
+#### 6.6.2 `PATCH /api/genesys/agent-mapping/{genesysAgentMappingId}/deactivation`
+- **Purpose:** Deactivate a mapping (e.g., employee no longer takes Genesys calls, or an extension is being reassigned) — deactivation, not deletion, is the only removal path, consistent with every other lookup table in this schema.
+- **Auth:** System Administrator.
+- **Request DTO:** none required.
+- **Success `200 OK`:** the updated row (`IsActive: false`, `DeactivatedAtUtc`, `DeactivatedByEmployeeId`).
+- **Audit:** `AuditEntries` (`Action = "DeactivateGenesysAgentMapping"`).
 
 ---
 

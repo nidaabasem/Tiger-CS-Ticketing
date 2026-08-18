@@ -120,40 +120,43 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A[Enter unit number] --> B{CRM reachable?}
+    A[Start verification session] --> A2[Enter unit number]
+    A2 --> B{CRM reachable?}
     B -- Yes --> C[Show matching units]
-    C --> D[Agent selects unit]
+    C --> D[Agent selects unit into session]
     D --> E[Go to Requester Confirmation]
     B -- No / timeout --> F[Show outage banner]
     F --> G[Create Intake Record instead]
 ```
 
+**Corrected in the senior-architecture-review pass (Finding DR-01):** screens 4–6 now drive a `VerificationSessions` resource (`MVP-API-Contracts.md` §2.4.1–§2.4.4) instead of a single implicit "verified in this session" assumption. Entering this flow silently starts a session (§2.4.1) before the unit search box is even shown; the session ID is carried through screens 4–6 as hidden state.
+
 ## 5. Requester/Contact Confirmation
 
-- **Purpose:** Confirm which CRM-recorded contact the agent is speaking to, and capture the immutable snapshot (`MVP-API-Contracts.md` §2.3/§2.4).
+- **Purpose:** Confirm which CRM-recorded contact the agent is speaking to, and capture the immutable snapshot into the open `VerificationSessions` resource (`MVP-API-Contracts.md` §2.4.2/§2.4.3) — **not** a standalone per-ticket confirmation, since no ticket exists yet at this point (the circular dependency this replaces is documented in `MVP-ERD.md` §2.24).
 - **Allowed roles:** Agent and above.
 - **Main layout regions:** selected-unit summary (read-only, from screen 4), contact list region, verbal-confirmation checkbox region.
 - **Fields/data displayed:** unit summary; contact list with `DisplayName`, `ContactType` (Owner/Tenant/Representative), `ContactChannel`.
-- **Primary actions:** select a contact, check "Confirmed verbally," continue to Create Ticket (screen 6).
-- **Secondary actions:** "Back" to unit search (screen 4).
-- **Validation:** cannot continue until a contact is selected **and** the verbal-confirmation checkbox is checked — this is a hard client-side gate mirroring the API's `ConfirmedVerbally: required = true` (`MVP-API-Contracts.md` §2.4).
+- **Primary actions:** select a contact (calls §2.4.2, recording the selection against the session), check "Confirmed verbally" and submit (calls §2.4.3, capturing the snapshot and advancing the session to `Confirmed`), continue to Create Ticket (screen 6).
+- **Secondary actions:** "Back" to unit search (screen 4) — the session's `UnitReferenceId` may be reselected as long as the session hasn't been confirmed/consumed yet.
+- **Validation:** cannot continue until a contact is selected **and** the verbal-confirmation checkbox is checked — this is a hard client-side gate mirroring the API's `ConfirmedVerbally: required = true` (§2.4.3). A session that has expired (`ExpiresAtUtc` passed, `[ASSUMPTION]` 30 minutes from session start) shows a distinct "This verification has timed out — please start again" state rather than a generic error, since restarting is the correct, expected recovery, not a failure.
 - **Loading state:** contact list shows a skeleton while loading.
-- **Error state:** `502`/`504` shows the same outage-banner-with-fallback pattern as screen 4.
-- **Permission-dependent behavior:** a `Representative` contact type shows an additional "Authorized by" sub-line (`AuthorizedRepresentativeOfContactId`) so the agent can visually verify the authorization chain before disclosing details (ISSUE-007).
+- **Error state:** `502`/`504` shows the same outage-banner-with-fallback pattern as screen 4; a `410 Gone` (expired session) shows the timeout state described above, not a generic error banner.
+- **Permission-dependent behavior:** a `Representative` contact type shows an additional "Authorized by" sub-line (`AuthorizedRepresentativeOfContactId`) so the agent can visually verify the authorization chain before disclosing details (ISSUE-007). **The session belongs to exactly the agent who started it** (`MVP-ERD.md` §2.24) — this screen never needs a "whose session is this" check since only the owning agent's client ever holds the session ID.
 - **Confirmation dialogs:** none additional — the checkbox itself is the confirmation gesture.
 - **Responsive behavior:** contact cards stack single-column on narrow viewports.
 - **Accessibility:** the verbal-confirmation checkbox has an explicit, unambiguous label (not just an icon), since it gates a compliance-relevant action.
 
 ## 6. Create Ticket
 
-- **Purpose:** Create a new ticket after unit/contact verification (`MVP-API-Contracts.md` §3.1).
+- **Purpose:** Create a new ticket from a confirmed `VerificationSessions` resource (`MVP-API-Contracts.md` §3.1, redesigned per Finding DR-01).
 - **Allowed roles:** Agent and above.
-- **Main layout regions:** verified-context summary (unit + contact, read-only, carried from screens 4–5), ticket-details form, submit bar.
-- **Fields/data displayed/entered:** Category (dropdown, filtered by active categories), Priority (dropdown: Critical/High/Medium/Low), Request Summary (multi-line text, ≤2000 chars with a live character count), optional Genesys interaction link (auto-populated if arriving from screen 19).
+- **Main layout regions:** verified-context summary (unit + contact, read-only, carried from the confirmed session via screens 4–5), ticket-details form, submit bar.
+- **Fields/data displayed/entered:** Category (dropdown, filtered by active categories), Priority (dropdown: Critical/High/Medium/Low), Request Summary (multi-line text, ≤2000 chars with a live character count), optional Genesys interaction link (auto-populated if arriving from screen 19). **The unit/contact fields are never directly editable here** — they are read-only, sourced from the session, and the request this screen submits carries only `VerificationSessionId`, not `UnitReferenceId`/`ContactReferenceId` directly.
 - **Primary actions:** "Create Ticket."
-- **Secondary actions:** "Cancel" (discards, returns to Queue).
-- **Validation:** Category, Priority, and Request Summary all required; Request Summary length-limited with visible remaining-character count; submit button disabled until valid.
-- **Loading state:** submit button shows spinner and disables during the create call (idempotency key generated client-side per `MVP-API-Contracts.md` §3.1, so a slow response followed by a retry never double-creates).
+- **Secondary actions:** "Cancel" (discards, returns to Queue) — **the session is not consumed if the agent cancels here**, so `[ASSUMPTION]` a cancelled session remains usable (subject to its own expiry) if the agent returns to complete the ticket later, rather than being invalidated by navigating away.
+- **Validation:** Category, Priority, and Request Summary all required; Request Summary length-limited with visible remaining-character count; submit button disabled until valid. A `409`/`410` (session already consumed by another ticket, or expired between confirmation and this screen) shows a clear "This verification is no longer valid — please verify again" state and routes back to screen 4, rather than a generic error.
+- **Loading state:** submit button shows spinner and disables during the create call (idempotency key generated client-side per `MVP-API-Contracts.md` §3.1, so a slow response followed by a retry never double-creates — this is a separate concern from the session's own one-time-use rule).
 - **Empty state:** N/A (a form).
 - **Error state:** `404`/`422` validation errors surface inline next to the relevant field via the ProblemDetails `errors` map.
 - **Permission-dependent behavior:** none beyond base role gate.
@@ -212,22 +215,43 @@ flowchart LR
 - **Responsive behavior:** modal → full-screen sheet on narrow viewports.
 - **Accessibility:** reason field has a visible character-remaining indicator if a max length is enforced; error summary announced via `aria-live`.
 
-## 10. Priority Upgrade / Downgrade Approval
+## 10. Priority Upgrade / Downgrade Request and Approval
 
-- **Purpose:** Change ticket priority, routing decreases through Dept Head+ approval (`MVP-API-Contracts.md` §5.5/§5.6).
-- **Allowed roles:** Agent and above may request either direction; Dept Head+ required to approve a decrease.
-- **Main layout regions:** modal/panel — current-priority display, new-priority picker, reason field (required for decrease, optional for increase), approver field (decrease only).
+**Redesigned in the senior-architecture-review pass (Finding DR-05).** The original design let the requesting Agent's own form pick the approver (a self-authorization defect) via a "co-sign" field. This is now two distinct screens/states for two distinct actors — an Agent never sees or fills in any field naming who approves; a Dept Head+ acts only from their own authenticated inbox.
+
+### 10a. Priority Upgrade (immediate) / Downgrade Request (Agent-facing)
+
+- **Purpose:** Change ticket priority upward immediately, or submit a downgrade request for a Dept Head+ to decide (`MVP-API-Contracts.md` §5.5, §5.6.1).
+- **Allowed roles:** Agent and above.
+- **Main layout regions:** modal/panel — current-priority display, new-priority picker, reason field (required for decrease, optional for increase). **No approver field of any kind** — this is the specific element removed by this redesign.
 - **Fields/data displayed:** current `PriorityId`, current SLA due dates (context for why this matters), new priority selection.
-- **Primary actions:** "Upgrade" (immediate) or "Request Downgrade" (may go to `PendingApproval`).
-- **Secondary actions:** "Cancel."
-- **Validation:** decrease requires a reason; if the acting user isn't Dept Head+, the screen collects an `ApprovingEmployeeId` (a co-sign picker) — if left blank, submission still succeeds but returns `202 Accepted`/`PendingApproval`, and the screen reflects that outcome rather than treating it as an error.
+- **Primary actions:** "Upgrade" (immediate, §5.5) or "Submit Downgrade Request" (creates a `Pending` request, §5.6.1 — never applies immediately, regardless of the acting user's own role, since approval is now always a separate action performed from screen 10b).
+- **Secondary actions:** "Cancel"; "View request status" (if a request is already pending for this ticket, links to a read-only status view instead of allowing a second submission).
+- **Validation:** decrease requires a reason; submitting a second downgrade request while one is already `Pending` is blocked client-side (mirroring the API's `409`) with a link to the existing request's status, not a duplicate submission.
 - **Loading state:** submit spinner.
 - **Empty state:** N/A.
-- **Error state:** `403` (unauthorized approver) surfaces as "This person isn't authorized to approve a downgrade" inline on the approver field.
-- **Permission-dependent behavior:** the approver co-sign field is hidden entirely when the acting user already holds Dept Head+ (no need to name oneself as approver).
-- **Confirmation dialogs:** upgrade shows "New due date will be the earlier of the current and new-priority deadlines" as an informational note, not a blocking confirmation; downgrade shows "Any existing SLA breach on this ticket is preserved and will not be cleared by this change" (reflects ADR-0012) before submit.
+- **Error state:** `409` (already-pending request) shown as above; `422` (not a genuine decrease/increase) as an inline field error.
+- **Permission-dependent behavior:** none — this screen is identical regardless of the acting Agent's role, since it never grants approval itself.
+- **Confirmation dialogs:** upgrade shows "New due date will be the earlier of the current and new-priority deadlines" as an informational note, not a blocking confirmation; downgrade-request submission shows "This request will be sent to a Department Head for approval and will expire in 24 hours if not decided" (reflects the request's `ExpiresAtUtc`, `MVP-ERD.md` §2.27) before submit.
 - **Responsive behavior:** modal → full-screen sheet on narrow viewports.
-- **Accessibility:** the ADR-0012 breach-preservation notice is always visible text, not a tooltip-only disclosure, given its compliance relevance.
+- **Accessibility:** the ADR-0012 breach-preservation notice (see 10b) is always visible text, not a tooltip-only disclosure, given its compliance relevance.
+
+### 10b. Priority Downgrade Approval Inbox (Dept Head+-facing)
+
+- **Purpose:** Let a Dept Head+ review and decide pending downgrade requests for tickets in departments they have authority over (`MVP-API-Contracts.md` §5.6.3–§5.6.5).
+- **Allowed roles:** Dept Head and above.
+- **Main layout regions:** pending-requests list (ticket number, current/requested priority, reason, requester, age), detail panel for the selected request, approve/reject action bar.
+- **Fields/data displayed:** everything needed to decide without a separate ticket lookup — `TicketNumber`, `CurrentPriorityId`, `RequestedPriorityId`, `Reason`, `RequestedByEmployeeId`/name, `RequestedAtUtc`, time remaining until `ExpiresAtUtc`.
+- **Primary actions:** "Approve" (§5.6.4), "Reject" (§5.6.5, requires a `DecisionNote`).
+- **Secondary actions:** none.
+- **Validation:** `409` (already decided/expired by the time this Dept Head acts — a race with another approver, or the request timing out) surfaces as "This request is no longer pending" and removes it from the list, rather than a generic failure.
+- **Loading state:** list skeleton.
+- **Empty state:** "No pending downgrade requests" — a positive, expected state, not an error.
+- **Error state:** inline banner per action; the `409` race case above is the one most worth designing for explicitly, since two Dept Heads viewing the same inbox is a realistic scenario.
+- **Permission-dependent behavior:** the list is scoped to departments the acting Dept Head actually has authority over — never shows another department's pending requests for departments outside their scope.
+- **Confirmation dialogs:** approval shows "Any existing SLA breach on this ticket is preserved and will not be cleared by this approval" (reflects ADR-0012) before submitting — the same invariant the original single-screen design stated, now shown at the point where approval actually happens rather than at request time.
+- **Responsive behavior:** list/detail split collapses to drill-in navigation on narrow viewports, matching screen 16's pattern.
+- **Accessibility:** the breach-preservation notice is always visible text, not a tooltip-only disclosure, given its compliance relevance; the approver's own identity is never a form field anywhere on this screen — it is implicit from being logged in, and the UI does not need to display or confirm it back to the user beyond the normal "logged in as" indicator already in the app shell.
 
 ## 11. SLA and Escalation Panel
 
@@ -249,17 +273,17 @@ flowchart LR
 ## 12. Notes and Attachments
 
 - **Purpose:** Add/view notes and manage attachments (`MVP-API-Contracts.md` §4.1–4.6).
-- **Allowed roles:** view/add note, upload/download attachment — Agent and above; delete attachment — uploader (within window) or Supervisor+.
+- **Allowed roles:** view/add note, upload/download attachment — Agent and above; withdraw attachment — uploader (within window) or Supervisor+.
 - **Main layout regions:** tab or split region within Ticket Details (screen 7) — Notes list + add-note composer; Attachments list + upload control.
-- **Fields/data displayed:** notes (`NoteText`, `AuthorEmployeeId`/name, `CreatedAtUtc`), attachments (`FileName`, `SizeBytes`, `VirusScanStatus`, `UploadedByEmployeeId`/name, `UploadedAtUtc`).
+- **Fields/data displayed:** notes (`NoteText`, `AuthorEmployeeId`/name, `CreatedAtUtc`), attachments (`FileName`, `SizeBytes`, `VirusScanStatus`, `UploadedByEmployeeId`/name, `UploadedAtUtc`). **Withdrawn attachments (`IsWithdrawn = true`) are excluded from this list entirely** (Finding DR-06) — their row is retained for audit purposes but not surfaced here.
 - **Primary actions:** "Add Note," "Upload File."
-- **Secondary actions:** "Download" (attachment, only if `VirusScanStatus = Clean`), "Delete" (attachment, where permitted).
-- **Validation:** note text required, non-empty; file upload enforces size (≤25MB) and type allow-list client-side before submit, mirroring the server's rules (`MVP-API-Contracts.md` §4.3) so the user isn't surprised by a server rejection after a slow upload.
+- **Secondary actions:** "Download" (attachment, only if `VirusScanStatus = Clean` and not withdrawn), "Withdraw" (attachment, where permitted — **corrected in the senior-architecture-review pass, Finding DR-06: this revokes access and reason-tags the file; it does not delete the underlying metadata row**, unlike the original design's physical delete).
+- **Validation:** note text required, non-empty; file upload enforces size (≤25MB) and type allow-list client-side before submit, mirroring the server's rules (`MVP-API-Contracts.md` §4.3) so the user isn't surprised by a server rejection after a slow upload; withdrawal requires a reason (no longer optional, since it's now a permanent, audit-visible action rather than an erasure).
 - **Loading state:** upload shows a progress indicator; note composer disables submit while posting.
 - **Empty state:** "No notes yet" / "No attachments yet," each with the relevant add/upload action inline so the empty state isn't a dead end.
 - **Error state:** `413`/`415`/`422` upload errors show a specific inline message (too large / wrong type / attachment limit reached) rather than a generic failure.
 - **Permission-dependent behavior:** a `Pending`-scan attachment shows a "Scanning..." badge and its Download action is disabled with a tooltip; a `Rejected`-scan attachment shows a clear "Rejected — file could not be verified safe" state and is never downloadable by anyone, including Supervisor+.
-- **Confirmation dialogs:** "Delete attachment" asks for confirmation, naming the file.
+- **Confirmation dialogs:** "Withdraw attachment" asks for confirmation and a reason, naming the file, and states that the file will no longer be accessible to anyone but that its record is retained (sets expectations correctly, since this is no longer a delete).
 - **Responsive behavior:** notes/attachments lists scroll independently within a bounded-height region rather than growing the whole page indefinitely.
 - **Accessibility:** upload control is keyboard-operable (not drag-and-drop-only); scan-status badges include text, not just an icon.
 
@@ -316,11 +340,11 @@ flowchart LR
 
 ## 16. User and Role Administration
 
-- **Purpose:** Manage staff accounts, activation, and department assignments (`MVP-API-Contracts.md` §1.4–1.6, §1.6 activation).
+- **Purpose:** Manage staff accounts, activation, department assignments, and (**added in the senior-architecture-review pass, Finding DR-02**) Genesys agent-identity mappings (`MVP-API-Contracts.md` §1.4–1.6, §6.6.1/§6.6.2).
 - **Allowed roles:** System Administrator.
-- **Main layout regions:** staff list/table (left or top), detail/edit panel (right or below, for the selected employee) — department assignment sub-region, role display sub-region, activation toggle.
-- **Fields/data displayed:** `DisplayName`, `Roles`, `Departments` (with primary flag), `IsActive`/`DeactivatedAtUtc`.
-- **Primary actions:** activate/deactivate a selected employee; edit department assignments (add/remove, change primary).
+- **Main layout regions:** staff list/table (left or top), detail/edit panel (right or below, for the selected employee) — department assignment sub-region, role display sub-region, activation toggle, **Genesys agent-mapping sub-region (`GenesysAgentId`/`AgentEmailOrExtension` fields, `IsActive` toggle)**.
+- **Fields/data displayed:** `DisplayName`, `Roles`, `Departments` (with primary flag), `IsActive`/`DeactivatedAtUtc`, and the selected employee's `GenesysAgentMappings` row if one exists.
+- **Primary actions:** activate/deactivate a selected employee; edit department assignments (add/remove, change primary); upsert or deactivate the employee's Genesys agent mapping (§6.6.1/§6.6.2) — this replaces the original design's implication that agent-mapping administration lived on screen 20 (it did not have a concrete home there; this is that home).
 - **Secondary actions:** search/filter the staff list.
 - **Validation:** cannot deactivate the last active System Administrator (`409`, `MVP-API-Contracts.md` §1.6) — surfaced inline, not silently blocked.
 - **Loading state:** table skeleton; detail panel skeleton independently.
@@ -370,24 +394,24 @@ flowchart LR
 - **Purpose:** Operational view of incoming/recent Genesys interactions and manual linking to tickets (`MVP-API-Contracts.md` §6.2/§6.3).
 - **Allowed roles:** Agent and above.
 - **Main layout regions:** live/recent interaction list, detail region for a selected interaction, link-to-ticket action region.
-- **Fields/data displayed:** `ConversationId`, masked `CallerNumber`, `GenesysAgentId`/mapped employee (if resolved), `StartedAtUtc`/`AnsweredAtUtc`/`EndedAtUtc`, `LinkedTicketId` (if any), `ProcessingStatus`.
+- **Fields/data displayed:** `ConversationId`, masked `CallerNumber`, `GenesysAgentId`/mapped employee (if resolved via `GenesysAgentMappings`, Finding DR-02), `StartedAtUtc`/`AnsweredAtUtc`/`EndedAtUtc`, `LinkedTicketId` (if any), `ProcessingStatus`, and — **corrected in the senior-architecture-review pass (Finding DR-03)** — an expandable events sub-list (`GenesysInteractionEvents`: `EventType`, `ReceivedAtUtc`, per-event `ProcessingStatus`), since one interaction row now represents potentially several received events, not one.
 - **Primary actions:** "Link to Ticket" (opens a ticket picker or "Create New Ticket" which pre-fills the Genesys link on screen 6); "Create New Ticket from this call."
 - **Secondary actions:** refresh; filter by linked/unlinked.
 - **Validation:** linking to a ticket already linked to a different interaction is blocked client-side with an explanatory message before the API's `409` would even be hit.
 - **Loading state:** list skeleton; updates arrive via SignalR state-change events rather than polling (ADR-0016) where the call is actively in progress.
 - **Empty state:** "No recent Genesys interactions."
-- **Error state:** an interaction stuck in `Rejected`/dead-lettered status is shown with a distinct visual state and a link to screen 20, rather than looking identical to a normally-processed one.
-- **Permission-dependent behavior:** none beyond base role gate (retry/agent-mapping admin actions live in screen 20, System-Administrator-only).
+- **Error state:** an interaction with any **dead-lettered** event is shown with a distinct visual state and a link to screen 20. **Corrected in this review pass (Finding DR-04): there is no `Rejected` state to show here** — a signature-failed request is never persisted at all (`Genesys-Mock-Contract.md` §3), so it can never appear in this list; only genuinely-accepted-then-failed-downstream events reach a dead-lettered state.
+- **Permission-dependent behavior:** none beyond base role gate (retry actions live in screen 20; Genesys agent-mapping administration lives in screen 16, per Finding DR-02 — both System-Administrator-only).
 - **Confirmation dialogs:** none beyond the link-conflict block above.
 - **Responsive behavior:** list/detail split collapses to drill-in navigation on narrow viewports, matching screen 16's pattern.
 - **Accessibility:** masked phone numbers are rendered with a visible "masked" indicator so staff understand they're not seeing the full number, not left to guess why it's partial.
 
 ## 20. Failed Integration / Outbox Operations
 
-- **Purpose:** Operational visibility and manual retry for failed Genesys events and, more broadly, dead-lettered Outbox messages (`MVP-API-Contracts.md` §6.4/§6.5).
+- **Purpose:** Operational visibility and manual retry for failed **Genesys events** (per-event, not per-conversation — Finding DR-03) and, more broadly, dead-lettered Outbox messages (`MVP-API-Contracts.md` §6.4/§6.5). **This screen never shows signature-rejected requests** (Finding DR-04) — those are never persisted; a run of signature failures is visible only via security-log/ops monitoring outside this application.
 - **Allowed roles:** System Administrator (full access, including retry); Supervisor+ in a Genesys-handling department (view only, per `MVP-API-Contracts.md` §6.4).
 - **Main layout regions:** failed-events table, detail panel (raw error/attempt count), retry action bar.
-- **Fields/data displayed:** `ConversationId`/event summary, `ProcessingStatus`, `Attempts`, `LastError`, timestamps.
+- **Fields/data displayed:** `ConversationId` (parent interaction, for context), `EventType`, per-event `ProcessingStatus`, `Attempts`, `LastError`, timestamps.
 - **Primary actions:** "Retry" (System Administrator only).
 - **Secondary actions:** filter by status; search by `ConversationId`.
 - **Validation:** "Retry" disabled (not hidden, for Supervisor+ viewers — shown but disabled with a tooltip explaining the role requirement) when the acting user isn't System Administrator; disabled for entries not currently in a failed/dead-lettered state (`409` avoided proactively, mirroring `MVP-API-Contracts.md` §6.5).
