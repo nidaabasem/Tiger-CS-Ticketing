@@ -1,46 +1,81 @@
 # Tiger Group — CS Ticketing System: Architecture Documentation
 
-This directory contains the formal Architecture Decision Record (ADR) log for the Tiger Group Customer Service Ticketing System, produced after management approved the MVP decisions (Status: **Approved for Architecture Design**).
+**Status: Approved for Architecture Design.** This package covers the 3-week internal pilot MVP, following management's review and approval of the MVP direction, including the addition of Genesys Basic Integration within MVP (see "What changed" below).
 
-## How this relates to the other project documents
+**No application code, ERD regeneration, SQL schema, EF Core migrations, API implementation, or project scaffolding has been produced.** This is design documentation only. Phase 3 ("Project Foundation") remains the next, separately-authorized step.
+
+## Required Review Order
+
+1. **[System Architecture](System-Architecture.md)** — start here: system context, modules, flows, deployment
+2. **[Architecture Decision Records](adr/)** — the 22 ADRs behind the technical choices in (1)
+3. **[Domain Model](Domain-Model.md)** — the conceptual entities the architecture operates on
+4. **[SLA Architecture](SLA-Architecture.md)** — the most detailed, highest-stakes subsystem
+5. **[Genesys Integration](Genesys-Integration.md)** — the newly-confirmed MVP scope addition; read its open-questions section carefully
+6. **[Security Architecture](Security-Architecture.md)**
+7. **[Architecture Review Checklist](Architecture-Review-Checklist.md)** — use this to verify everything above before Phase 3 sign-off
+
+`Module-Design.md` is referenced throughout (1) and (3) and can be read alongside either.
+
+## Document Index
 
 | Document | Purpose |
 |---|---|
-| `../Tiger-CS-Ticketing-Solution-Analysis.md` | Full requirements analysis, functional/non-functional requirements, business rules, SLA rules, integrations, gap analysis, phased implementation plan |
-| `../Tiger-CS-Ticketing-Management-Decisions.md` | Technical Decision Register — every open decision with options, trade-offs, recommendations, and the Final Decision Sign-Off |
-| `../Tiger-CS-Ticketing-Executive-Decisions.md` | Meeting-ready, MVP-only decision summary with approval/signature fields |
-| `../Tiger-CS-Ticketing-Architecture-Design.md` | Phase 2 design deliverable — ERD, module dependency diagram, full database schema design, and API contract sketch |
-| **`adr/`** (this directory) | Formal, one-decision-per-file Architecture Decision Records, each tracing back to an approved decision above |
+| `System-Architecture.md` | System context, module boundaries, flows (auth, ticket, CRM, Genesys, SLA/escalation, notification, audit), background jobs, reliability, deployment, security boundaries |
+| `Module-Design.md` | The 12 logical modules — responsibility, interfaces, owned data, events, dependencies, prohibited dependencies |
+| `Domain-Model.md` | 19 conceptual entities — purpose, attributes, relationships, invariants, ownership, lifecycle. No SQL DDL. |
+| `SLA-Architecture.md` | First Response/Resolution SLA, business calendar, pause rules, priority-change policy, escalation windows, worked examples |
+| `Genesys-Integration.md` | Genesys Basic Integration design, webhook contract (conceptual), and open questions for the Genesys team |
+| `Security-Architecture.md` | Authentication, authorization, data protection, webhook/upload security, logging, secrets, testing |
+| `Architecture-Review-Checklist.md` | Pre-Phase-3 sign-off checklist |
+| `adr/0001`–`0022` | Individual Architecture Decision Records |
 
-The ADRs in this log do not introduce new business decisions — each one implements, or formalizes the technical shape of, a decision already approved in the Technical Decision Register or the Executive Decisions document. Where an ADR's Context/Consequences notes a scope question that has not yet been reconciled with an existing document (see ADR-0012), that is flagged explicitly rather than silently resolved.
+### Relationship to the rest of the project documentation
 
-## Scope of this log
+| Document (outside this folder) | Purpose |
+|---|---|
+| `../Tiger-CS-Ticketing-Solution-Analysis.md` | Full requirements analysis; amended (§8, §15) to reflect Genesys Basic Integration moving into MVP |
+| `../Tiger-CS-Ticketing-Management-Decisions.md` | Technical Decision Register — all 22 tracked items, including ISSUE-003's resolution |
+| `../Tiger-CS-Ticketing-Executive-Decisions.md` | Meeting-ready MVP decision summary with sign-off fields |
+| `../Tiger-CS-Ticketing-Architecture-Design.md` | The prior (PR #2) design pass — its 11 inline ADRs are superseded by the formal log in `adr/`; its ERD/schema/API sketch remain a useful reference alongside `Domain-Model.md` and `System-Architecture.md` |
 
-**This is design documentation only.** No application code, ERD regeneration, SQL schema changes, EF Core migrations, API implementation, or project scaffolding has been produced as part of this ADR set. That remains Phase 3 ("Project Foundation") and later phases of the implementation plan.
+## What Changed in This Pass
 
-## ADR Index
+- **Genesys Basic Integration is now confirmed for MVP** by explicit management directive (this pilot's commissioning message specifies "Genesys APIs and webhooks" directly). This resolves **ISSUE-003** (the platform is Genesys) and supersedes the earlier, conditional ADR-0012 from the PR #2 ADR log. `Tiger-CS-Ticketing-Solution-Analysis.md` §8/§15 have been amended to match, so the documented MVP scope no longer contradicts this decision.
+- The prior 14-ADR log (PR #2) has been **replaced** by this 22-ADR log, using an expanded template (adds Alternatives Considered as a distinct section already present, plus **Risks** and **Review Date**) and covering additional topics split out for clarity (Identity vs. authorization policies; four separate SLA/escalation ADRs instead of one combined; Outbox and idempotency split; logging split from audit).
+- A full System Architecture, Module Design, Domain Model, SLA Architecture, Genesys Integration, and Security Architecture document have been added — none of which existed as standalone documents before this pass.
 
-| # | Title | Status |
-|---|---|---|
-| [0001](adr/0001-modular-monolith-architecture.md) | Modular Monolith Architecture | Accepted |
-| [0002](adr/0002-aspnet-core-dotnet-8.md) | ASP.NET Core on .NET 8 | Accepted |
-| [0003](adr/0003-sql-server-and-entity-framework-core.md) | SQL Server and Entity Framework Core | Accepted |
-| [0004](adr/0004-aspnet-core-identity-and-authorization-policies.md) | ASP.NET Core Identity and Policy-Based Authorization | Accepted |
-| [0005](adr/0005-crm-as-source-of-truth.md) | CRM as the Source of Truth | Accepted |
-| [0006](adr/0006-ticket-lifecycle-design.md) | Ticket Lifecycle Design (Five Independent Dimensions) | Accepted |
-| [0007](adr/0007-sla-and-escalation-architecture.md) | SLA and Escalation Architecture | Accepted |
-| [0008](adr/0008-transactional-outbox-and-idempotency.md) | Transactional Outbox and Idempotency | Accepted |
-| [0009](adr/0009-hangfire-background-jobs.md) | Hangfire Background Jobs | Accepted |
-| [0010](adr/0010-signalr-real-time-updates.md) | SignalR Real-Time Updates | Accepted |
-| [0011](adr/0011-attachment-storage.md) | Attachment Storage | Accepted |
-| [0012](adr/0012-genesys-basic-integration-within-mvp.md) | Genesys/Geyness Basic Integration within MVP | **Accepted, conditional** — see scope note in the ADR |
-| [0013](adr/0013-logging-monitoring-and-audit-trail.md) | Logging, Monitoring, and Audit Trail | Accepted |
-| [0014](adr/0014-testing-strategy.md) | Testing Strategy | Accepted |
+## Remaining Open Questions
 
-## A note on ADR-0012
+These are genuinely open — not silently resolved, not silently assumed. Anything not listed here that resembles a decision has already been approved and is traceable to an ISSUE ID.
 
-ADR-0012 records a management-requested addition — a basic Genesys/Geyness call-center integration within MVP — that **changes the MVP scope boundary** previously documented and approved in `Tiger-CS-Ticketing-Solution-Analysis.md` §15 and §8, where this integration was placed in Phase 2, gated on the still-unresolved vendor/platform identity question (ISSUE-003). The ADR flags this explicitly rather than silently overriding the earlier scope decision. A follow-up amendment to the Solution Analysis's MVP scope and integration tier is recommended so the documents no longer disagree with each other; that amendment is not made automatically by this ADR log.
+**From the Genesys team (blocking Phase 3 implementation of the Genesys adapter — see `Genesys-Integration.md` §15 for full detail):**
+1. Exact webhook/notification delivery mechanism.
+2. Signature/authentication scheme for inbound webhooks.
+3. Exact payload schema (field names) for conversation/interaction events.
+4. Reliability of agent email/extension on every interaction-answered event.
+5. Delivery guarantees (at-least-once? redelivery behavior?).
+6. Whether "Genesys Basic Integration" covers voice only, or other channels Genesys might route.
+7. Rate limits/API quotas relevant to capacity planning.
+8. Sandbox/test environment availability within the 3-week pilot window.
 
-## Conventions used in this log
+**Architectural assumptions still pending confirmation (marked `[ASSUMPTION]` throughout this package — not blocking, but should be confirmed before Phase 3 locks them in):**
+9. Hosting target for deployment (on-premises, Azure, or another cloud) — ADR-0022.
+10. 25MB-per-file attachment size cap — ADR-0017.
+11. Password policy / MFA configuration, session timeout duration, rate-limiting thresholds — `Security-Architecture.md`.
+12. Whether a returning Genesys caller can be automatically linked to an existing ticket, versus this pilot's manual-linking-only scope — `Genesys-Integration.md` §6.
+13. The exact holiday-date confirmation workflow between System Administrator and Customer Service/HR — `Domain-Model.md`'s `Holiday` entity.
 
-Each ADR follows the same structure: **Context**, **Decision**, **Alternatives Considered**, **Advantages**, **Disadvantages**, **Consequences**, and a **Status** field (Accepted / Proposed / Deprecated / Superseded). Numbering is sequential and files are never renumbered — a later change to a recorded decision is captured as a new ADR that supersedes the old one, not by editing history in place.
+**Still open per the Technical Decision Register (not new to this pass, listed here for completeness):**
+14. ISSUE-002 (auto-ticket verification timing) — Phase 2 gate, does not affect this MVP since ticket creation stays manual even with Genesys attached.
+15. ISSUE-015 (expected system scale) — Phase 2 gate.
+16. ISSUE-009 (CSAT resend on reopen) — Phase 2 gate.
+17. ISSUE-016 (exact retention regulation) — required before production go-live, owned by Legal/Compliance.
+18. ISSUE-014 (repeat-contact definition) — Phase 3 gate.
+
+## Explicitly Out of Scope for This MVP Architecture
+
+Per direct instruction — none of the following appear anywhere in this package, including as an unlabeled "future-proofing" addition: **WhatsApp, Kiosk, Social Media, Customer Portal, CSAT, advanced AI features.** Extension points (e.g., swappable gateway interfaces for `IEmailGateway`, `ICrmGateway`, `IGenesysWebhookGateway`) exist so these can be added later without a redesign — but none are implemented now.
+
+## Conventions
+
+Each ADR follows: **Context, Decision, Alternatives Considered, Advantages, Disadvantages, Consequences, Risks, Status, Review Date.** Numbering is sequential and files are never renumbered — a later change to a recorded decision is captured as a new ADR that supersedes the old one (see ADR-0019's explicit supersession of the prior log's ADR-0012), not by editing history in place.
