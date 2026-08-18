@@ -16,6 +16,8 @@
 
 Each ADR reflects a decision already approved in the Technical Decision Register or established in the Solution Analysis; the "Traceability" line links back to it so nothing here is invented fresh at this stage.
 
+> **Superseded by a formal ADR log.** The 11 lightweight ADRs below (ADR-001…011, this document's own numbering) have been superseded by a complete, formally numbered ADR log at `docs/architecture/adr/` (ADR-0001…0022), which expands these same decisions with a fuller template (Alternatives Considered, Advantages, Disadvantages, Risks, Review Date) and adds decisions not covered here — including Genesys Basic Integration (ADR-0019), now confirmed for MVP by explicit management directive. Treat `docs/architecture/README.md` as the authoritative index; the ADRs below are retained for historical context only.
+
 ### ADR-001 — Modular Monolith, Not Microservices
 **Status:** Accepted
 **Context:** MVP has one dominant, highly-relational aggregate (the ticket) and only two integrations (CRM, Email/File Storage). Splitting into services now would add distributed-transaction and cross-service-consistency problems (e.g., keeping the SLA clock consistent across service boundaries) without a corresponding scaling need.

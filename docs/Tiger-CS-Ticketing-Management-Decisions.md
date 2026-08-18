@@ -46,7 +46,7 @@ This leaves **22 items** (17 original + 5 added in the prior architecture review
 | ISSUE-012 | Who owns the UAE public holiday calendar's content, and who administers it in the system? | Medium | Customer Service/HR (business); System Administrator (technical) | Before MVP development |
 | ISSUE-013 | What configurable, priority-based time window governs Level 2→3 escalation, and what early-warning threshold precedes a breach? Proposed per-tier defaults are in the Executive Decisions document, for management to accept or change. *(absorbs former ISSUE-005)* | Medium | Management | Before MVP development |
 | ISSUE-017 | Confirm the actual operating work week: Sat–Thu (Fri off), Mon–Fri (Sat–Sun off), or another configurable calendar. | Low | Management | Before MVP development |
-| ISSUE-003 | Is "Geyness" the final vendor name, and what platform does it run on? | High | Geyness/Genesys | Before Phase 2 |
+| **ISSUE-003** | **RESOLVED** — platform confirmed as Genesys; Basic Integration moved into MVP by management directive. Residual open items are Genesys-team technical questions, not a decision. | High (resolved) | Management (resolved 2026-08-17) | N/A — resolved |
 | ISSUE-002 | For auto-ticket channels, is the ticket number issued before or after CRM verification? | Critical (for Phase 2) | Management | Before Phase 2 |
 | ISSUE-015 | Expected unit/tower count and concurrent-agent count for Phase 2? | Low | IT | Before Phase 2 |
 | ISSUE-009 | Does a reopened-then-reclosed ticket trigger a second CSAT survey? | Medium | Customer Service | Before Phase 2 |
@@ -374,23 +374,21 @@ These sixteen items shape the core ticket, permission, and SLA/escalation data m
 
 ## Group B — Required Before Phase 2
 
-Four items that concern features not present in MVP (auto-ticket channels, the Geyness/Genesys platform integration, and CSAT). They do not block the start of MVP development.
+Three items that concern features not present in MVP (auto-ticket channels and CSAT). They do not block the start of MVP development. *(ISSUE-003 — the Geyness/Genesys platform question — has been resolved and moved out of this group; see its entry above, retained for traceability.)*
 
-### ISSUE-003 — Geyness vs. Genesys vendor/platform identity
-**Decision required:** Confirm "Geyness" is the correct, final name of the contracted call-center vendor, and confirm whether its platform is Genesys or another named platform requiring direct integration, or whether Geyness handles telephony internally and only hands off ticket data.
+### ISSUE-003 — Geyness vs. Genesys vendor/platform identity — **RESOLVED**
+**Decision required (as originally posed):** Confirm "Geyness" is the correct, final name of the contracted call-center vendor, and confirm whether its platform is Genesys or another named platform requiring direct integration.
 
-**Why this decision is needed:** The requirements document and its workflow diagram consistently name "Geyness." A separate reference to "Genesys" surfaced when this analysis was commissioned. This integration (INT-02) is Phase 2 scope.
+**Resolution:** An explicit management directive specifies "Genesys APIs and webhooks" directly in the technology stack and authorizes a **Genesys Basic Integration within MVP** (superseding the original Phase 2 placement — see `docs/architecture/adr/0019-genesys-basic-integration.md`). **Option B is the confirmed answer: the platform is Genesys.**
 
-**Options:**
-- **A — Treat "Geyness" as the vendor; design a generic hand-off integration independent of its internal platform.** *Pros:* Works regardless of the internal platform choice. *Cons:* May need revisiting if deeper telephony-level integration with a specific platform is later wanted.
-- **B — Assume Genesys is the underlying platform and design against its APIs.** *Pros:* Potentially richer integration, if accurate. *Cons:* Wasted effort if the assumption is incorrect.
+**What is NOT yet resolved:** the exact webhook/API contract details (signature scheme, payload schema, agent-identity-mapping reliability, delivery guarantees) remain open — tracked as technical questions for the Genesys team in `docs/architecture/Genesys-Integration.md` §15, not as a management decision. Coding against those unconfirmed details is flagged as the highest architectural risk in the current package.
 
-**Recommended option:** A, until vendor confirmation is received in writing, and no later than the start of Phase 2 design.
+**Original options (retained for record):**
+- A — Treat "Geyness" as the vendor; design a generic hand-off integration independent of its internal platform.
+- B — Assume Genesys is the underlying platform and design against its APIs. **← Confirmed.**
 
-**Impact if no decision is made:** Phase 2's call-center integration cannot be scoped accurately.
-
-**Priority:** High
-**Decision owner:** Geyness/Genesys
+**Priority:** High (resolved)
+**Decision owner:** Geyness/Genesys → resolved by Management directive, 2026-08-17
 
 ---
 
@@ -511,7 +509,7 @@ Group A (MVP-development) and the Group C go-live item were approved as recommen
 | ISSUE-012 | B — Customer Service/HR own calendar content; System Administrator maintains it in the system | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
 | ISSUE-013 | B — proposed per-tier defaults accepted as-is: Critical 50%/30min, High 75%/2h, Medium 75%/1 business day, Low 75%/2 business days | Nidaa Basem | Project Sponsor | 2026-08-17 | Defaults accepted without modification; revisit if operational data suggests otherwise |
 | ISSUE-017 | A — Saturday–Thursday working days, Friday off, as documented | Nidaa Basem | Project Sponsor | 2026-08-17 | Confirmed as the stated policy; calendar still built as configurable data |
-| ISSUE-003 | *(not yet due — Phase 2 gate)* | | | | Open |
+| ISSUE-003 | B — Genesys is the confirmed platform; Basic Integration authorized within MVP | Nidaa Basem (via explicit directive) | Management | 2026-08-17 | Resolved. Genesys webhook/API contract *details* remain open — tracked as Genesys-team questions in `docs/architecture/Genesys-Integration.md`, not a management decision |
 | ISSUE-002 | *(not yet due — Phase 2 gate)* | | | | Open |
 | ISSUE-015 | *(not yet due — Phase 2 gate)* | | | | Open |
 | ISSUE-009 | *(not yet due — Phase 2 gate)* | | | | Open |
@@ -525,7 +523,7 @@ Group A (MVP-development) and the Group C go-live item were approved as recommen
 | Group | Item count | Gate |
 |---|---|---|
 | A — Required before MVP development | 16 | Core ticket/permission/SLA/escalation build cannot start with confidence until these are answered |
-| B — Required before Phase 2 | 4 | Auto-ticket channel design, the CRM/Geyness vendor integration, and CSAT policy cannot be scoped accurately until these are answered |
+| B — Required before Phase 2 | 3 *(ISSUE-003 resolved and moved out — now 22 total tracked items, 1 resolved)* | Auto-ticket channel design and CSAT policy cannot be scoped accurately until these are answered |
 | C — Required before production go-live | 1 | Retention regulation must be confirmed with Legal/Compliance before the MVP is deployed to production |
 | D — Can be deferred until Phase 3 | 1 | Advanced KPI refinement |
 
