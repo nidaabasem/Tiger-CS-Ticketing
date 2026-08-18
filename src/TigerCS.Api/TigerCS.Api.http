@@ -1,0 +1,6 @@
+@TigerCS.Api_HostAddress = http://localhost:5179
+
+GET {{TigerCS.Api_HostAddress}}/health
+Accept: application/json
+
+###
