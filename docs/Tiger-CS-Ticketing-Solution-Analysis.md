@@ -10,7 +10,7 @@
 | **Date** | 2026-08-17 |
 | **Primary source** | `Tiger_CS_Ticketing_System_Requirements.pdf` (Tiger Group, v1.0, June 2026) — "Powered by Geyness Call Center" |
 | **Secondary source** | `tiger_cs_ticketing_workflow.png` — visual workflow reference |
-| **Proposed stack** | ASP.NET Core 8 (Web API + MVC/Razor Pages), SQL Server, EF Core, ASP.NET Core Identity, Hangfire, SignalR, xUnit |
+| **Proposed stack** | ASP.NET Core 10 (Web API + MVC/Razor Pages), SQL Server, EF Core 10, ASP.NET Core Identity 10, Hangfire, SignalR, xUnit *(updated from .NET 8 per ADR-0023 — see `docs/architecture/adr/0023-framework-upgrade-dotnet-10.md`)* |
 
 > **Scope reminder:** This document is analysis only. No application code, project scaffolding, database schema, or repository structure has been created. Section 10 describes architecture conceptually, as instructed.
 
@@ -79,7 +79,7 @@ This is a smaller, safer first release: it proves out the hardest, most contract
 
 **Five new Critical/High decisions** are added by this revision (Sections 9/13): what event satisfies First Response SLA; how the ticket-ID format behaves on department transfer; whether a customer portal is in scope at all; who is authorized to Resolve vs. Close vs. Reopen/Cancel/Reject; and the policy governing SLA behavior on a priority change. Combined with the reduced MVP boundary, several of the original 18 open items (notably auto-ticket channel verification timing and the Geyness/Genesys vendor question) no longer block MVP at all — they now gate Phase 2, because the features they concern are no longer in the first release.
 
-**Architecture.** The recommendation remains a **modular monolith** on .NET 8. This revision adds specific reliability engineering the original architecture omitted: SLA due-dates are stored as explicit timestamps and enforced with scheduled deadline jobs (not solely a periodic sweep), all cross-boundary writes use a Transactional Outbox with idempotency keys, and SignalR is used for state-change notification only — never as a per-second countdown broadcast, which the client now computes locally from the due timestamp it already has.
+**Architecture.** The recommendation remains a **modular monolith**, on .NET 10 as of ADR-0023 (originally .NET 8; see that ADR for the upgrade rationale). This revision adds specific reliability engineering the original architecture omitted: SLA due-dates are stored as explicit timestamps and enforced with scheduled deadline jobs (not solely a periodic sweep), all cross-boundary writes use a Transactional Outbox with idempotency keys, and SignalR is used for state-change notification only — never as a per-second countdown broadcast, which the client now computes locally from the due timestamp it already has.
 
 ---
 
