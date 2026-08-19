@@ -84,13 +84,14 @@ must be between 1 and 10, `Identity:Lockout:DefaultLockoutTimeSpan` must be
 at least 1 minute) and refuses to start if a configured value violates
 that floor.
 
-**No production deployment path exists in this increment.** `Program.cs`
-throws at startup if `ASPNETCORE_ENVIRONMENT=Production` — this isn't a
-placeholder to fill in later; it's an explicit refusal to start, since no
-production deployment is authorized at this stage of the pilot (see the
-approved delivery decision recorded in PR #6/#9). Removing that guard is a
-decision for whoever authorizes the pilot's actual deployment, not
-something to route around locally.
+**No production deployment is authorized at this stage of the pilot** — this
+is enforced through release governance and documentation
+([ADR-0022's "Pilot-Stage Production Restriction"](https://github.com/nidaabasem/Tiger-CS-Ticketing/blob/implementation/mvp-identity-access/docs/architecture/adr/0022-deployment-strategy.md),
+`MVP-Implementation-Backlog.md` §0), **not** by the application refusing to
+start under `ASPNETCORE_ENVIRONMENT=Production`. The app runs the same way
+regardless of environment name, given valid configuration — whoever
+controls the deployment pipeline is responsible for not pointing it at a
+production environment until that's actually authorized.
 
 ## 4. Apply the database migration
 

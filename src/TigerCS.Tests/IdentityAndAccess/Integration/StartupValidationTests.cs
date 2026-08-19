@@ -86,13 +86,21 @@ public class StartupValidationTests
         Assert.Contains("Jwt:Issuer", ex.ToString());
     }
 
+    /// <summary>
+    /// Production deployment is blocked through release governance and
+    /// documentation (docs/DEV-SETUP.md, ADR-0022), not by the application
+    /// refusing to start — this proves that's actually true: given valid
+    /// configuration, the app starts under ASPNETCORE_ENVIRONMENT=Production
+    /// exactly as it would under any other environment name.
+    /// </summary>
     [Fact]
-    public void ProductionEnvironment_RefusesToStart()
+    public void ProductionEnvironment_WithValidConfiguration_StartsSuccessfully()
     {
         using var factory = new ConfiguredFactory("Production", ValidConfig());
 
-        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
-        Assert.Contains("Production deployment is not authorized", ex.ToString());
+        var server = factory.Server;
+
+        Assert.NotNull(server);
     }
 
     [Fact]

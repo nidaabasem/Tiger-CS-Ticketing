@@ -54,18 +54,14 @@ builder.Services.AddAuthorization(options => options.AddTigerCsAuthorizationPoli
 
 var app = builder.Build();
 
-// Fail fast rather than lazily on first request: no production deployment is
-// authorized at this stage (management decision, recorded in PR #6/#9), and
-// this is the one place that gets enforced in code rather than only in docs —
-// "no insecure defaults are allowed in Production" then reduces to "Production
-// never starts at all" for this increment, which is the strongest form of that.
-if (app.Environment.IsProduction())
-{
-    throw new InvalidOperationException(
-        "Production deployment is not authorized for this pilot increment. See docs/DEV-SETUP.md and the approved delivery decision.");
-}
+// No production deployment is authorized at this pilot stage — enforced
+// through release governance and documentation (docs/DEV-SETUP.md,
+// docs/architecture/adr/0022-deployment-strategy.md), not by refusing to
+// start here. An unconditional IsProduction() throw would make this
+// application unable to ever run in Production even once that's actually
+// authorized, which isn't this code's decision to make.
 
-// Same fail-fast principle for the JWT signing key specifically: validate it
+// Fail fast for the JWT signing key specifically: validate it
 // exists and meets the minimum length for HS256 (256 bits / 32 bytes) before
 // the app starts accepting traffic, instead of only discovering a missing or
 // weak key on the first authenticated request.

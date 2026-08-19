@@ -37,3 +37,18 @@ Deploy the modular monolith (`TigerCS.Api`/`TigerCS.Web`, sharing the same solut
 
 - **Hosting environment is unconfirmed** — this ADR proceeds on an [ASSUMPTION] of containerized deployment to an internal environment; if Tiger Group's IT mandates a different target (e.g., on-premises IIS, a specific cloud), this ADR needs revisiting before Phase 3 deployment work begins.
 - Given the 3-week timeline, any delay in confirming the hosting target directly threatens the pilot delivery date.
+
+## Pilot-Stage Production Restriction (2026-08-19, Identity and Access increment)
+
+No production deployment is authorized at this stage of the pilot (management
+decision, `MVP-Implementation-Backlog.md` §0). This is enforced through
+**release governance and this documentation, not application startup
+behavior**: the application itself runs identically under any
+`ASPNETCORE_ENVIRONMENT` value, including `Production`, given valid
+configuration — it does not refuse to start based on environment name. The
+reasoning: a hardcoded refusal to run in Production would make the
+application permanently unable to run there even after Production
+deployment is eventually authorized, which is a release/governance decision,
+not something application code should pre-empt. Whoever controls the actual
+deployment pipeline/environment promotion is responsible for not pointing it
+at a production environment until that authorization exists.
