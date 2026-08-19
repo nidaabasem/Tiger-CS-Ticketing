@@ -22,17 +22,15 @@ jobs:
           MSSQL_SA_PASSWORD: "Ci-Validation-Only-Passw0rd!"
         ports:
           - 1433:1433
-        # A TCP-level check rather than an in-container sqlcmd invocation —
-        # the exact path to sqlcmd inside the mssql-server image (mssql-tools
-        # vs mssql-tools18) varies by build and isn't worth depending on here;
-        # this just needs to prove the port is accepting connections before
-        # the job's own steps (which apply the migration) proceed.
-        options: >-
-          --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/1433'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 15
-          --health-start-period 10s
+        # No Docker HEALTHCHECK here (two attempts at one — an in-container
+        # sqlcmd path guess, then a bash /dev/tcp probe — both left the
+        # service stuck "unhealthy" until GitHub Actions gave up and tore
+        # the container down before the job's own steps ever ran, even
+        # though the container logs showed SQL Server had finished starting
+        # each time). Readiness is instead handled by the retry loop in the
+        # "Apply migration" step below — the same pattern commonly used for
+        # this image in GitHub Actions services, since its healthcheck
+        # tooling isn't as predictable across image builds as postgres/mysql's.
 
     env:
       TIGERCS_DESIGN_TIME_CONNECTION: "Server=localhost,1433;Database=TigerCsTicketing_CI;User Id=sa;Password=Ci-Validation-Only-Passw0rd!;TrustServerCertificate=True;"
@@ -57,7 +55,7 @@ jobs:
           # before SQL Server has finished its own internal startup/recovery
           # (msdb/model database upgrade steps) — retry a few times rather
           # than failing on that narrow race.
-          for attempt in 1 2 3 4 5; do
+          for attempt in $(seq 1 15); do
             if dotnet ef database update \
               --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
               --verbose; then
@@ -66,7 +64,7 @@ jobs:
             echo "Migration attempt $attempt failed, retrying in 10s..."
             sleep 10
           done
-          echo "::error::dotnet ef database update did not succeed after 5 attempts."
+          echo "::error::dotnet ef database update did not succeed after 15 attempts (150s)."
           exit 1
 
       - name: Install sqlcmd
