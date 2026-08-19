@@ -5,10 +5,15 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.CrmVerification.Abstractions;
+using TigerCS.Application.Modules.CrmVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
+using TigerCS.Infrastructure.Modules.CrmVerification.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
@@ -100,6 +105,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<RoleCatalogAppService>();
         services.AddScoped<UserActivationAppService>();
         services.AddScoped<DepartmentAssignmentService>();
+
+        services.AddScoped<IAuditEntryWriter, AuditEntryWriter>();
+
+        services.AddScoped<IUnitReferenceRepository, UnitReferenceRepository>();
+        services.AddScoped<IContactReferenceRepository, ContactReferenceRepository>();
+        services.AddScoped<IVerificationSessionRepository, VerificationSessionRepository>();
+        services.AddScoped<ICrmVerificationUnitOfWork, CrmVerificationUnitOfWork>();
+        services.AddScoped<CrmVerificationAppService>();
+        services.AddScoped<VerificationSessionAppService>();
 
         return services;
     }

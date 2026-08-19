@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using TigerCS.Infrastructure;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
+using TigerCS.Integrations.Modules.CrmVerification;
 
 // Never log token/claim contents (review item 4) — IdentityModelEventSource's PII
 // logging defaults to off already, but this makes the choice explicit rather than
@@ -18,6 +19,7 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
 builder.Services.AddTigerCsInfrastructure(builder.Configuration);
+builder.Services.AddTigerCsIntegrations(builder.Configuration);
 
 // Bound lazily from JwtOptions (IOptions<JwtOptions>, resolved at first use) rather
 // than read from builder.Configuration inline here — the latter would run before
