@@ -202,24 +202,24 @@ refresh-token functionality unless already approved"). The one thing that
 ## 7. SQL Server validation checklist
 
 This sandbox has no Docker daemon available to run these steps itself (the
-`docker` CLI is present but `docker info` fails to reach a daemon socket) —
-so the migration was verified as far as `dotnet ef migrations script`
-allows (real generated T-SQL reviewed line-by-line: all 10 tables, every
-FK's delete behavior, the filtered unique index), but **has not been
-applied against a real SQL Server**. Run this checklist in an environment
-with real Docker/SQL Server access and record the result before treating
-this as fully verified:
+`docker` CLI is present but `docker info` fails to reach a daemon socket).
+Since a real SQL Server was needed, `.github/workflows/db-migration-validation.yml`
+runs the migration against an actual SQL Server 2022 service container in
+GitHub Actions instead — automated, not a manual local run, and not merely
+`dotnet ef migrations script` reviewed by eye.
 
-- [ ] `docker run ...` (step 2) starts and stays healthy (`docker ps` shows it running, not restarting).
-- [ ] `dotnet ef database update --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure` (step 4) completes with no error.
-- [ ] `SELECT name FROM sys.tables ORDER BY name;` against `TigerCsTicketing_Dev` returns exactly: `AspNetRoleClaims`, `AspNetRoles`, `AspNetUserClaims`, `AspNetUserLogins`, `AspNetUserRoles`, `AspNetUserTokens`, `AspNetUsers`, `Departments`, `Employees`, `UserDepartmentAssignments`, `__EFMigrationsHistory` — nothing else.
-- [ ] `SELECT name, is_unique, filter_definition FROM sys.indexes WHERE object_id = OBJECT_ID('UserDepartmentAssignments') AND filter_definition IS NOT NULL;` shows `IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly` with `filter_definition = '([IsPrimary]=(1))'`.
-- [ ] Running the app (step 5) against this real database seeds roles/departments without error, and a login round-trip (step 6) succeeds against a seeded dev admin.
-- [ ] `dotnet ef migrations add ProbeNoOp --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure` (against the real, now-migrated database) produces an **empty** migration — confirms the model and the applied schema agree with no drift. Remove the probe migration file afterward (`dotnet ef migrations remove`).
+**Confirmed by that workflow (run #4, commit `88818d2`, [green run](https://github.com/nidaabasem/Tiger-CS-Ticketing/actions/runs/32250361013)):**
 
-**PR status is "Approved with condition" until this checklist is run and
-its result (pass/fail, with specifics on any failure) is supplied back into
-the PR** — this is stated here rather than silently marked as passed.
+- [x] `dotnet ef database update` against a real SQL Server 2022 container completes with no error.
+- [x] `SELECT name FROM sys.tables ORDER BY name;` against the resulting database returns exactly the 11 expected tables (`AspNetRoleClaims`, `AspNetRoles`, `AspNetUserClaims`, `AspNetUserLogins`, `AspNetUserRoles`, `AspNetUserTokens`, `AspNetUsers`, `Departments`, `Employees`, `UserDepartmentAssignments`, `__EFMigrationsHistory`) — nothing else, confirmed by the workflow's own table-list diff, not eyeballed.
+- [x] `IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly`'s `filter_definition` is exactly `([IsPrimary]=(1))`.
+- [x] `dotnet ef migrations has-pending-model-changes` against the live, migrated database reports "No changes have been made to the model since the last migration." — no drift between the model and the applied schema.
+
+**Not covered by that workflow — still only verified via the InMemory-backed integration tests, not against a real SQL Server:**
+
+- [ ] A full application login round-trip (seed → `POST /api/auth/login` → authenticated request) against a real SQL-Server-backed database, run locally per steps 1-6 above. Worth doing before this increment is considered fully production-schema-verified, since InMemory doesn't exercise the same SQL Server-specific behavior (e.g. the filtered index, real transaction/locking semantics) that a login-and-request flow would touch end-to-end.
+
+Re-run the workflow any time via `workflow_dispatch` (Actions tab → "DB Migration Validation" → "Run workflow") to re-verify after a schema change.
 
 ## 8. Running the tests
 
