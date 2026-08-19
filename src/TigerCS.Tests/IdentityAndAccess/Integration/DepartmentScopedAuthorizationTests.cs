@@ -97,6 +97,45 @@ public class DepartmentScopedAuthorizationTests : IClassFixture<TigerCsApiFactor
         Assert.True(result.Succeeded);
     }
 
+    /// <summary>
+    /// Security-Architecture.md §3.1: Reporting User is scoped to
+    /// reports/dashboards (Solution-Analysis.md §4.1), not included in
+    /// DepartmentScoped's cross-department set — and has no department
+    /// membership of its own to fall back on either.
+    /// </summary>
+    [Fact]
+    public async Task ReportingUser_IsNotACrossDepartmentRole_CannotAccessAnyDepartment()
+    {
+        var (_, _, reportingUserId) = await _factory.SeedEmployeeAsync(Roles.ReportingUser);
+        var deptA = await _factory.CreateDepartmentAsync("Dept A " + Guid.NewGuid(), "A" + Guid.NewGuid().ToString("N")[..6]);
+
+        var principal = await BuildTransformedPrincipalAsync(reportingUserId, Roles.ReportingUser);
+
+        using var scope = _factory.Services.CreateScope();
+        var result = await AuthorizeAsync(scope.ServiceProvider, principal, deptA);
+
+        Assert.False(result.Succeeded);
+    }
+
+    /// <summary>
+    /// Security-Architecture.md §3.1: General Manager holds the broader,
+    /// read-level cross-department grant (Solution-Analysis.md §4.1's
+    /// "View: All tickets"), distinct from the CS-layer three's §3 basis.
+    /// </summary>
+    [Fact]
+    public async Task GeneralManager_NoMembershipInTargetDepartment_IsStillAuthorized()
+    {
+        var (_, _, gmId) = await _factory.SeedEmployeeAsync(Roles.GeneralManager);
+        var deptA = await _factory.CreateDepartmentAsync("Dept A " + Guid.NewGuid(), "A" + Guid.NewGuid().ToString("N")[..6]);
+
+        var principal = await BuildTransformedPrincipalAsync(gmId, Roles.GeneralManager);
+
+        using var scope = _factory.Services.CreateScope();
+        var result = await AuthorizeAsync(scope.ServiceProvider, principal, deptA);
+
+        Assert.True(result.Succeeded);
+    }
+
     [Fact]
     public async Task DepartmentHead_IsNotACrossDepartmentRole_CannotAccessOtherDepartment()
     {

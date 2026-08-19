@@ -21,6 +21,18 @@ Policy-based authorization (ADR-0005), one policy per relevant cell of the Solut
 
 A Department Employee/Head's effective access is scoped to `CurrentDepartmentId` matching their own `Employee.DepartmentId` for department-specific actions (Resolve, view own-department queue). CS-layer roles (Geyness Agent, Supervisor, CS Manager) are scoped differently — across all departments for Close/Reopen actions, per the approved ISSUE-022 split. Scoping is enforced in the policy handler, evaluated against the ticket's current data, not cached or assumed from the user's session alone.
 
+### 3.1 Department Visibility Boundaries — as implemented (Identity and Access increment)
+
+The `DepartmentScoped` authorization policy (`TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization.DepartmentScopedRequirement`) is the mechanism enforcing the paragraph above, ahead of any endpoint actually consuming it (no Ticketing endpoint exists yet in this increment). Its boundary, as implemented and tested (`DepartmentScopedAuthorizationTests.cs`):
+
+- **Own-department access:** an employee is authorized for any department they hold a `UserDepartmentAssignments` row for (primary or otherwise) — re-queried from the database on every request via `DepartmentClaimsTransformation`, never taken from a claim baked into the JWT at login. A department transfer with no new login takes effect on the very next request.
+- **Cross-department access, confirmed:** **CS Agent, CS Supervisor, and CS Manager** — this §3's own citation of "CS-layer roles (Geyness Agent, Supervisor, CS Manager) ... scoped across all departments" (role names per ADR-0004's Pilot Role-Naming Decision) — are authorized for *any* department regardless of membership, matching the approved ISSUE-022 split.
+- **Cross-department access, broader read grant:** **General Manager, Chairman/CEO, and System Administrator** are also authorized for any department under this same policy, on the separate basis of Solution-Analysis.md §4.1's permission matrix, which gives each of them "View: All tickets" — a read-level grant that predates and is broader than §3's Close/Reopen-specific carve-out.
+- **Not cross-department:** Department Employee and Department Head are scoped strictly to their own department assignments — confirmed by `DepartmentHead_IsNotACrossDepartmentRole_CannotAccessOtherDepartment`.
+- **Reporting User** is not included in `DepartmentScoped`'s cross-department set; §4.1 scopes that role to reports/dashboards only, not per-ticket/per-department data.
+
+**Approved for this increment; one point still open before a Ticketing endpoint consumes this policy for write actions:** whether General Manager/Chairman-CEO/System Administrator's cross-department reach should extend to *write* actions (assign, close, reopen), or stay read-only as §4.1's citation literally supports. The read-level boundary above is what's implemented and tested today.
+
 ## 4. Protection of Customer and Unit Data
 
 - Unit/contact data is never locally mastered (ADR-0006) — reducing the surface area of data that could be exposed if the ticketing system's database were compromised, since the CRM remains the authoritative record.
