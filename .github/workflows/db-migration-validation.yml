@@ -22,12 +22,17 @@ jobs:
           MSSQL_SA_PASSWORD: "Ci-Validation-Only-Passw0rd!"
         ports:
           - 1433:1433
+        # A TCP-level check rather than an in-container sqlcmd invocation —
+        # the exact path to sqlcmd inside the mssql-server image (mssql-tools
+        # vs mssql-tools18) varies by build and isn't worth depending on here;
+        # this just needs to prove the port is accepting connections before
+        # the job's own steps (which apply the migration) proceed.
         options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Ci-Validation-Only-Passw0rd!' -C -Q 'SELECT 1' -b -o /dev/null"
-          --health-interval 10s
+          --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/1433'"
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 10
-          --health-start-period 20s
+          --health-retries 15
+          --health-start-period 10s
 
     env:
       TIGERCS_DESIGN_TIME_CONNECTION: "Server=localhost,1433;Database=TigerCsTicketing_CI;User Id=sa;Password=Ci-Validation-Only-Passw0rd!;TrustServerCertificate=True;"
@@ -48,14 +53,28 @@ jobs:
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          dotnet ef database update \
-            --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
-            --verbose
+          # The service container's TCP port can accept connections slightly
+          # before SQL Server has finished its own internal startup/recovery
+          # (msdb/model database upgrade steps) — retry a few times rather
+          # than failing on that narrow race.
+          for attempt in 1 2 3 4 5; do
+            if dotnet ef database update \
+              --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
+              --verbose; then
+              exit 0
+            fi
+            echo "Migration attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::dotnet ef database update did not succeed after 5 attempts."
+          exit 1
 
       - name: Install sqlcmd
         run: |
+          ubuntu_release=$(lsb_release -rs)
+          echo "Runner Ubuntu release: $ubuntu_release"
           curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
-          curl -sSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          curl -sSL "https://packages.microsoft.com/config/ubuntu/${ubuntu_release}/prod.list" | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
           sudo apt-get update -y
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
 
