@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
-  <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
-
-  <ItemGroup>
-    <ProjectReference Include="..\TigerCS.Domain\TigerCS.Domain.csproj" />
-  </ItemGroup>
-
-</Project>
