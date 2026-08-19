@@ -1,3 +1,4 @@
+using TigerCS.Application.Modules.CrmVerification.Abstractions;
 using TigerCS.Application.Modules.CrmVerification.Dto;
 using TigerCS.Application.Modules.CrmVerification.Services;
 using TigerCS.Domain.Modules.CrmVerification;
@@ -84,6 +85,49 @@ public class VerificationSessionAppServiceTests
         var second = await fixture.Service.CreateAndConfirmAsync(agentId, request, "double-submit-key-1");
 
         Assert.Equal(first.Response!.VerificationSessionId, second.Response!.VerificationSessionId);
+    }
+
+    [Fact]
+    public async Task CreateAndConfirmAsync_ConcurrentDuplicateWriteRace_RecoversInsteadOfThrowing()
+    {
+        var units = new FakeUnitReferenceRepository();
+        var contacts = new FakeContactReferenceRepository();
+        var sessions = new FakeVerificationSessionRepository();
+        var unitOfWork = new FakeCrmVerificationUnitOfWork { ThrowDuplicateWriteExceptionOnce = true };
+        var audit = new FakeAuditEntryWriter();
+        var service = new VerificationSessionAppService(sessions, units, contacts, unitOfWork, audit, TimeProvider.System);
+        var unit = units.Seed("CRM-1", "1204");
+        var contact = contacts.Seed(unit.UnitReferenceId, "C-1", "Ahmed Al-Farsi");
+
+        var result = await service.CreateAndConfirmAsync(
+            Guid.NewGuid(),
+            new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true),
+            "race-key");
+
+        // The recovery path re-queries by idempotency key rather than
+        // surfacing the DuplicateWriteException to the caller as a 500.
+        Assert.Equal(VerificationSessionOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateAndConfirmAsync_DuplicateWriteWithoutIdempotencyKey_PropagatesException()
+    {
+        var units = new FakeUnitReferenceRepository();
+        var contacts = new FakeContactReferenceRepository();
+        var sessions = new FakeVerificationSessionRepository();
+        var unitOfWork = new FakeCrmVerificationUnitOfWork { ThrowDuplicateWriteExceptionOnce = true };
+        var audit = new FakeAuditEntryWriter();
+        var service = new VerificationSessionAppService(sessions, units, contacts, unitOfWork, audit, TimeProvider.System);
+        var unit = units.Seed("CRM-1", "1204");
+        var contact = contacts.Seed(unit.UnitReferenceId, "C-1", "Ahmed Al-Farsi");
+
+        // No idempotency key means there is no dedup semantic to recover
+        // under — a genuine constraint violation here is a real anomaly and
+        // must not be silently swallowed.
+        await Assert.ThrowsAsync<DuplicateWriteException>(() => service.CreateAndConfirmAsync(
+            Guid.NewGuid(),
+            new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true),
+            idempotencyKey: null));
     }
 
     [Fact]

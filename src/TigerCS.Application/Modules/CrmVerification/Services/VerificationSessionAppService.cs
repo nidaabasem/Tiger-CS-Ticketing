@@ -13,6 +13,28 @@ namespace TigerCS.Application.Modules.CrmVerification.Services;
 /// four-endpoint flow. The confirmed session's snapshot fields are exactly
 /// what a later ticket-creation call (out of scope this phase) would copy
 /// into TicketRequesterSnapshots (ADR-0007).
+///
+/// <para>
+/// <b>Idempotency — scope and upgrade path.</b> <see cref="VerificationSession.IdempotencyKey"/>
+/// plus a filtered unique index on (AgentEmployeeId, IdempotencyKey)
+/// (VerificationSessionConfiguration) is a pilot-scoped, module-local
+/// substitute for the approved generalized <c>IdempotencyRecords</c>
+/// mechanism (ADR-0014, MVP-Data-Dictionary.md §2.23), which has not been
+/// built yet (backlog S-05: "Audit trail, Outbox, and idempotency
+/// foundation"). It cannot conflict with that design: it lives entirely on
+/// <c>VerificationSessions</c>' own column/index, shares no table, no FK,
+/// and no <c>Scope</c>-string namespace with <c>IdempotencyRecords</c> or
+/// <c>OutboxMessages</c>. Its scope is exactly one thing — deduplicating
+/// <see cref="CreateAndConfirmAsync"/>'s create+confirm call on a
+/// double-submit or a genuine concurrent race (handled below via
+/// <see cref="DuplicateWriteException"/>, not a plain check-then-insert,
+/// which would itself be a race). <b>Upgrade path:</b> when S-05 ships, this
+/// column and its check-then-insert/race-recovery logic should be replaced
+/// wholesale by a call through the generalized idempotency service against
+/// <c>IdempotencyRecords</c> (Scope = e.g. "CreateVerificationSession"),
+/// dropping the local column/index in the same migration — not layered
+/// alongside it.
+/// </para>
 /// </summary>
 public sealed class VerificationSessionAppService(
     IVerificationSessionRepository sessionRepository,
@@ -77,7 +99,27 @@ public sealed class VerificationSessionAppService(
             afterValue: $"UnitReferenceId={unit.UnitReferenceId};ContactReferenceId={contact.ContactReferenceId}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException) when (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            // Two concurrent requests with the same Idempotency-Key both
+            // passed the check above before either committed (the race the
+            // check-then-insert above cannot close on its own) — the
+            // (AgentEmployeeId, IdempotencyKey) unique index caught the
+            // second writer here. The loser returns the winner's row rather
+            // than surfacing a 500, which is what idempotency is for.
+            var winner = await sessionRepository.GetByIdempotencyKeyAsync(agentEmployeeId, idempotencyKey, cancellationToken);
+            if (winner is not null)
+            {
+                return VerificationSessionResult.Success(ToDto(winner));
+            }
+
+            throw;
+        }
 
         return VerificationSessionResult.Success(ToDto(session));
     }

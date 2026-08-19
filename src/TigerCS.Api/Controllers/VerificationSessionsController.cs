@@ -1,17 +1,23 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TigerCS.Application.Modules.CrmVerification.Dto;
 using TigerCS.Application.Modules.CrmVerification.Services;
+using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
 /// MVP-API-Contracts.md §2.4, simplified per MVP-Implementation-Backlog.md
 /// §0.2/S-07 into a single combined create+select+confirm call — see
-/// VerificationSessionAppService's remarks for the full rationale.
+/// VerificationSessionAppService's remarks for the full rationale. Scoped to
+/// CS Agent/CS Supervisor only (PolicyNames.CrmVerification) — see
+/// CrmController's remarks for why this is narrower than the contract's
+/// literal "Agent and above" wording.
 /// </summary>
 [ApiController]
 [Route("api/verification-sessions")]
+[Authorize(Policy = PolicyNames.CrmVerification)]
 public class VerificationSessionsController(VerificationSessionAppService verificationSessionAppService) : ControllerBase
 {
     [HttpPost]

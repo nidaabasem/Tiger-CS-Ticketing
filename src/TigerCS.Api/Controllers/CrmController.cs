@@ -1,18 +1,24 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TigerCS.Application.Modules.CrmVerification.Dto;
 using TigerCS.Application.Modules.CrmVerification.Services;
+using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
-/// MVP-API-Contracts.md §2.1-§2.3 — "Agent and above." No dedicated
-/// AgentOrAbove policy exists in this pilot's flat policy catalog
-/// (PolicyNames.cs), so this relies on the global fallback policy (any
-/// authenticated, active staff member — Program.cs), same as
-/// DepartmentsController's own "any authenticated staff" endpoint.
+/// MVP-API-Contracts.md §2.1-§2.3, scoped to CS Agent/CS Supervisor only
+/// (PolicyNames.CrmVerification) — not the contract's literal "Agent and
+/// above" wording, and not the global AuthenticatedStaff fallback. See
+/// PolicyNames.CrmVerification's remarks for why: Solution-Analysis.md
+/// §4.1's Permission Matrix grants ticket-Create to only these two roles,
+/// and CRM verification exists solely to gate ticket creation. Reporting
+/// User, Department Employee, Department Head, CS Manager, GM, Chairman/CEO,
+/// and System Administrator are all denied — confirmed, not guessed.
 /// </summary>
 [ApiController]
 [Route("api/crm")]
+[Authorize(Policy = PolicyNames.CrmVerification)]
 public class CrmController(CrmVerificationAppService crmVerificationAppService) : ControllerBase
 {
     /// <summary>MVP-API-Contracts.md §2.1.</summary>

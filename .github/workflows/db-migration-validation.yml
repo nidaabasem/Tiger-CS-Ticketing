@@ -65,7 +65,7 @@ jobs:
         working-directory: src
         run: dotnet restore TigerCS.slnx
 
-      - name: Apply InitialIdentityAndAccess migration
+      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCrmVerification)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
@@ -104,18 +104,20 @@ jobs:
           expected=$(printf '%s\n' \
             "AspNetRoleClaims" "AspNetRoles" "AspNetUserClaims" "AspNetUserLogins" \
             "AspNetUserRoles" "AspNetUserTokens" "AspNetUsers" "Departments" \
-            "Employees" "UserDepartmentAssignments" "__EFMigrationsHistory" | sort)
+            "Employees" "UserDepartmentAssignments" \
+            "AuditEntries" "ContactReferences" "UnitReferences" "VerificationSessions" \
+            "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
           echo "$actual_sorted"
           echo "--- expected tables ---"
           echo "$expected"
           if [ "$actual_sorted" != "$expected" ]; then
-            echo "::error::Table list does not match the expected Identity and Access schema exactly."
+            echo "::error::Table list does not match the expected Identity and Access + CRM Verification schema exactly."
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 11 tables, no unrelated (ticketing/SLA/Genesys) tables."
+          echo "Table list matches exactly: 15 tables, no unrelated (ticketing/SLA/Genesys) tables."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -126,6 +128,26 @@ jobs:
           echo "filter_definition = '$filter_trimmed'"
           if [ "$filter_trimmed" != "([IsPrimary]=(1))" ]; then
             echo "::error::IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly filter_definition was '$filter_trimmed', expected '([IsPrimary]=(1))'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — filtered unique index (CRM verification-session idempotency)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # This is the real, SQL-Server-only enforcement mechanism behind
+          # VerificationSessionAppService's DuplicateWriteException recovery
+          # path — see VerificationSessionConfiguration's remarks. The EF
+          # Core InMemory provider used by the unit/integration test suite
+          # does not enforce filtered indexes at all, so this CI check
+          # against a real SQL Server is the only place this index's actual
+          # existence and shape are verified.
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'IX_VerificationSessions_AgentEmployeeId_IdempotencyKey';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([IdempotencyKey]ISNOTNULL)" ]; then
+            echo "::error::IX_VerificationSessions_AgentEmployeeId_IdempotencyKey filter_definition was '$filter_trimmed', expected '([IdempotencyKey]ISNOTNULL)'."
             exit 1
           fi
           echo "Filtered unique index present with the expected filter."

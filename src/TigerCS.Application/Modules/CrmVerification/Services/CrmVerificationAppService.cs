@@ -9,6 +9,33 @@ namespace TigerCS.Application.Modules.CrmVerification.Services;
 /// against <see cref="ICrmGateway"/> (ADR-0006): every lookup upserts the
 /// local UnitReferences/ContactReferences display cache from the CRM's
 /// response, never treating the cache itself as authoritative.
+///
+/// <para>
+/// <b>Refresh/staleness.</b> There is no TTL-based expiry — every lookup
+/// through this service (<see cref="GetUnitAsync"/>, <see cref="SearchUnitsAsync"/>,
+/// <see cref="GetContactsAsync"/>) is a synchronous read-through: it always
+/// calls <see cref="ICrmGateway"/> first and overwrites the cache row with
+/// whatever the CRM returns (<c>UnitReference.RefreshFromCrm</c>/
+/// <c>ContactReference.RefreshFromCrm</c>), then serves the caller the
+/// just-refreshed data. The cache therefore can only be as stale as
+/// "however long ago this exact unit/contact was last looked up" —
+/// surfaced to every caller via <c>LastSyncedAtUtc</c> so staleness is never
+/// silent. Nothing in this module reads the cache without going through the
+/// gateway first (no cache-only lookup path exists).
+/// </para>
+/// <para>
+/// <b>Data minimization.</b> Both cache tables and every response DTO in
+/// this module carry only the fields FR-VER-01–04's verify-then-create
+/// workflow actually needs for read-back/identification: unit
+/// number/property/tower/type, and per-contact display name/channel/type/
+/// representative-authorization link. No other CRM field is ever requested,
+/// cached, or returned. <see cref="UnitVerificationResponseDto"/> (unit
+/// lookup/search) deliberately carries no contact-level data at all — only
+/// a <c>ContactCount</c> — so a unit search never leaks a customer's name,
+/// contact channel, or contact type; that PII is returned only from the
+/// dedicated, unit-scoped <see cref="GetContactsAsync"/> call, which FR-VER-04
+/// requires so the agent can identify which specific contact is on the line.
+/// </para>
 /// </summary>
 public sealed class CrmVerificationAppService(
     ICrmGateway crmGateway,

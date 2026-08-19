@@ -168,6 +168,13 @@ public static class InfrastructureServiceCollectionExtensions
             .RequireRole(Roles.SystemAdministrator)
             .Build());
 
+        // CS Agent/CS Supervisor only — see PolicyNames.CrmVerification's own
+        // remarks for the Solution-Analysis.md §4.1 vs. MVP-API-Contracts.md
+        // §0 conflict this resolves, confirmed rather than guessed.
+        options.AddPolicy(PolicyNames.CrmVerification, Base()
+            .RequireRole(Roles.CsAgent, Roles.CsSupervisor)
+            .Build());
+
         return options;
     }
 }

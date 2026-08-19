@@ -88,9 +88,18 @@ public sealed class FakeCrmVerificationUnitOfWork : ICrmVerificationUnitOfWork
 {
     public int SaveChangesCallCount { get; private set; }
 
+    /// <summary>Simulates a concurrent-duplicate-write race (a unique-index violation) on the next SaveChangesAsync call only.</summary>
+    public bool ThrowDuplicateWriteExceptionOnce { get; set; }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveChangesCallCount++;
+        if (ThrowDuplicateWriteExceptionOnce)
+        {
+            ThrowDuplicateWriteExceptionOnce = false;
+            throw new DuplicateWriteException(new InvalidOperationException("Simulated unique-constraint violation."));
+        }
+
         return Task.CompletedTask;
     }
 }

@@ -28,4 +28,18 @@ public static class PolicyNames
 
     /// <summary>System Administrator only.</summary>
     public const string SystemAdministrator = "SystemAdministrator";
+
+    /// <summary>
+    /// CS Agent or CS Supervisor only. Scoped to exactly the two roles
+    /// Solution-Analysis.md §4.1's Permission Matrix grants ticket-Create
+    /// (✔) to — CRM verification exists solely to gate ticket creation
+    /// (FR-CH-01/FR-VER-02's "verify-then-create sequence"), so no role that
+    /// cannot create a ticket has a documented need to perform CRM
+    /// verification. This was a real conflict between that matrix (which
+    /// denies Create to Department Head/CS Manager/GM/Chairman/SysAdmin) and
+    /// MVP-API-Contracts.md §0's broader "Agent and above" role vocabulary —
+    /// resolved by explicit confirmation rather than guessed; see the
+    /// implementation/mvp-crm-verification PR history.
+    /// </summary>
+    public const string CrmVerification = "CrmVerification";
 }
