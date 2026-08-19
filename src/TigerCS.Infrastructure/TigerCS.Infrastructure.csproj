@@ -3,6 +3,23 @@
   <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
 
   <ItemGroup>
+    <!-- For IHttpContextAccessor (CurrentUserContext) — a supported way to
+         reach ASP.NET Core shared-framework types from a plain classlib. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TigerCS.Domain\TigerCS.Domain.csproj" />
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
   </ItemGroup>
