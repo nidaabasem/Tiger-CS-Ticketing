@@ -43,6 +43,9 @@ From `src/TigerCS.Api`:
 dotnet user-secrets init   # only needed once; sets <UserSecretsId> (already set)
 
 dotnet user-secrets set "Jwt:SigningKey" "a-random-string-at-least-32-characters-long"
+# ^ must be at least 32 bytes (256 bits) — the app now validates this at
+#   startup and refuses to run on a missing or too-short key, rather than
+#   accepting a default/fallback signing secret.
 
 # Optional: creates a System Administrator on first run. Omit these two and
 # no development administrator is created — roles/departments still seed.
@@ -63,7 +66,31 @@ The password policy enforced at signup (Security-Architecture.md §1's
 placeholder, made concrete for this increment): minimum 8 characters, at
 least one digit, one lowercase, one uppercase, one non-alphanumeric
 character, and at least 4 unique characters — the same rule applies to the
-`DevAdmin:Password` value above.
+`DevAdmin:Password` value above. Lockout: 5 failed attempts locks the
+account for 15 minutes (Security-Architecture.md §13).
+
+These are **pilot defaults, not hardcoded final values** — override any of
+them via configuration without a code change:
+
+```bash
+dotnet user-secrets set "Identity:Password:RequiredLength" "10"
+dotnet user-secrets set "Identity:Lockout:MaxFailedAccessAttempts" "3"
+```
+
+Only the keys you actually set are overridden; anything you don't set keeps
+the pilot default. The app validates these at startup regardless of source
+(`Identity:Password:RequiredLength` must be ≥ 8, `Identity:Lockout:MaxFailedAccessAttempts`
+must be between 1 and 10, `Identity:Lockout:DefaultLockoutTimeSpan` must be
+at least 1 minute) and refuses to start if a configured value violates
+that floor.
+
+**No production deployment path exists in this increment.** `Program.cs`
+throws at startup if `ASPNETCORE_ENVIRONMENT=Production` — this isn't a
+placeholder to fill in later; it's an explicit refusal to start, since no
+production deployment is authorized at this stage of the pilot (see the
+approved delivery decision recorded in PR #6/#9). Removing that guard is a
+decision for whoever authorizes the pilot's actual deployment, not
+something to route around locally.
 
 ## 4. Apply the database migration
 
@@ -148,7 +175,52 @@ curl -s -X PATCH https://localhost:PORT/api/users/<employeeId>/activation \
   -d '{"isActive": false, "reason": "Left the company"}'
 ```
 
-## 7. Running the tests
+Log out:
+
+```bash
+curl -s -X POST https://localhost:PORT/api/auth/logout \
+  -H "Authorization: Bearer <jwt-from-login>"
+```
+
+**Logout semantics — stated explicitly, not implied.** MVP authentication is
+a stateless JWT (`AuthenticationAppService`'s own doc comment says this
+too): there is no server-side token-revocation list. `POST /api/auth/logout`
+returns `204 No Content` and does nothing else — it does **not** invalidate
+the token. The token the client was holding remains cryptographically valid
+and will keep passing *authentication* until it expires (`Jwt:ExpirationMinutes`,
+60 by default) or the client discards it. What logout does not protect
+against — a stolen still-valid token being replayed after "logout" — is a
+known, accepted limitation of this MVP increment, not an oversight; adding a
+revocation mechanism was explicitly out of scope ("do not invent
+refresh-token functionality unless already approved"). The one thing that
+*does* stop a token from working immediately, regardless of logout, is
+**deactivation** (`PATCH .../activation`) — see
+`Token_ReusedAfterDeactivation_IsRejectedOnEveryProtectedEndpoint` in
+`AuthEndpointsTests.cs`.
+
+## 7. SQL Server validation checklist
+
+This sandbox has no Docker daemon available to run these steps itself (the
+`docker` CLI is present but `docker info` fails to reach a daemon socket) —
+so the migration was verified as far as `dotnet ef migrations script`
+allows (real generated T-SQL reviewed line-by-line: all 10 tables, every
+FK's delete behavior, the filtered unique index), but **has not been
+applied against a real SQL Server**. Run this checklist in an environment
+with real Docker/SQL Server access and record the result before treating
+this as fully verified:
+
+- [ ] `docker run ...` (step 2) starts and stays healthy (`docker ps` shows it running, not restarting).
+- [ ] `dotnet ef database update --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure` (step 4) completes with no error.
+- [ ] `SELECT name FROM sys.tables ORDER BY name;` against `TigerCsTicketing_Dev` returns exactly: `AspNetRoleClaims`, `AspNetRoles`, `AspNetUserClaims`, `AspNetUserLogins`, `AspNetUserRoles`, `AspNetUserTokens`, `AspNetUsers`, `Departments`, `Employees`, `UserDepartmentAssignments`, `__EFMigrationsHistory` — nothing else.
+- [ ] `SELECT name, is_unique, filter_definition FROM sys.indexes WHERE object_id = OBJECT_ID('UserDepartmentAssignments') AND filter_definition IS NOT NULL;` shows `IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly` with `filter_definition = '([IsPrimary]=(1))'`.
+- [ ] Running the app (step 5) against this real database seeds roles/departments without error, and a login round-trip (step 6) succeeds against a seeded dev admin.
+- [ ] `dotnet ef migrations add ProbeNoOp --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure` (against the real, now-migrated database) produces an **empty** migration — confirms the model and the applied schema agree with no drift. Remove the probe migration file afterward (`dotnet ef migrations remove`).
+
+**PR status is "Approved with condition" until this checklist is run and
+its result (pass/fail, with specifics on any failure) is supplied back into
+the PR** — this is stated here rather than silently marked as passed.
+
+## 8. Running the tests
 
 ```bash
 cd src

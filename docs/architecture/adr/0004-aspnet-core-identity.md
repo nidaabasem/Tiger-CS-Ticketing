@@ -36,3 +36,36 @@ Authorization *policies* (which roles can do what) are a separate concern, cover
 ## Risks
 
 - If Tiger Group later mandates SSO via an existing corporate identity provider, this decision would need revisiting — flagged as an open question for a future phase, not a pilot blocker.
+
+## Pilot Role-Naming Decision (2026-08-19, Identity and Access increment)
+
+The nine internal roles in the Context section above are preserved exactly as
+approved — the same nine roles, the same permissions, no role added or
+removed. What changed is **display naming for two of them**, decided when
+the Identity and Access implementation increment was scoped (PR #9):
+
+| Approved-document name | Persisted `AspNetRoles.Name` used instead |
+|---|---|
+| Geyness Agent | **CS Agent** |
+| Supervisor | **CS Supervisor** |
+| Department Employee | Department Employee *(unchanged)* |
+| Department Head | Department Head *(unchanged)* |
+| CS Manager | CS Manager *(unchanged)* |
+| General Manager | General Manager *(unchanged)* |
+| Chairman/CEO | Chairman/CEO *(unchanged)* |
+| System Administrator | System Administrator *(unchanged)* |
+| Reporting User | Reporting User *(unchanged)* |
+
+This is an explicit naming decision, not a silent substitution: when the
+implementation increment's scope was set, the requested role list didn't
+match either of the two names already in use across the approved documents
+(this ADR's nine, or `MVP-API-Contracts.md` §0's separate six-role shorthand)
+— implementation was stopped and the discrepancy was reported before any
+code was written. The confirmed answer was to keep all nine roles and rename
+the two CS-layer front-line roles to "CS Agent"/"CS Supervisor." The name
+`Roles.CsAgent`/`Roles.CsSupervisor` in `TigerCS.Domain.Modules.IdentityAndAccess.Roles`
+is used consistently in `AspNetRoles`, JWT `role` claims, authorization
+policies, seed data, and tests. **Every other document should continue to
+say "Geyness Agent"/"Supervisor" where it already does** — this note records
+the code-level naming decision; it does not retroactively rename those roles
+throughout the design/architecture document set.
