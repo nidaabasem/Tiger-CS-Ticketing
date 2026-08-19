@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="TigerCS.Api/TigerCS.Api.csproj" />
+  <Project Path="TigerCS.Application/TigerCS.Application.csproj" />
+  <Project Path="TigerCS.Domain/TigerCS.Domain.csproj" />
+  <Project Path="TigerCS.Infrastructure/TigerCS.Infrastructure.csproj" />
+  <Project Path="TigerCS.Integrations/TigerCS.Integrations.csproj" />
+  <Project Path="TigerCS.Reporting/TigerCS.Reporting.csproj" />
+  <Project Path="TigerCS.Tests/TigerCS.Tests.csproj" />
+  <Project Path="TigerCS.Web/TigerCS.Web.csproj" />
+</Solution>

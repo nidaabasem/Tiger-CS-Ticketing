@@ -1,0 +1,31 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+coverage*.xml
+coverage*.json
+coverage*.info
+
+# Publish output
+*.pubxml
+*.publish.xml
+PublishProfiles/
+
+# NuGet
+*.nupkg
+.nuget/
+
+# OS files
+.DS_Store
+Thumbs.db
