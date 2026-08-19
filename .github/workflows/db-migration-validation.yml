@@ -47,15 +47,21 @@ jobs:
       - name: Install dotnet-ef
         run: dotnet tool install --global dotnet-ef --version 10.0.11
 
+      - name: Restore
+        working-directory: src
+        run: dotnet restore TigerCS.slnx
+
       - name: Apply InitialIdentityAndAccess migration
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          # The service container's TCP port can accept connections slightly
-          # before SQL Server has finished its own internal startup/recovery
-          # (msdb/model database upgrade steps) — retry a few times rather
-          # than failing on that narrow race.
-          for attempt in $(seq 1 15); do
+          # The retry loop is a safety net for the service container's own
+          # startup time (SQL Server can take a few seconds after the
+          # container is created); it is not a substitute for the Restore
+          # step above — dotnet ef's own msbuild invocation needs
+          # obj/project.assets.json to already exist and does not
+          # implicitly restore it.
+          for attempt in $(seq 1 10); do
             if dotnet ef database update \
               --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
               --verbose; then
@@ -64,7 +70,7 @@ jobs:
             echo "Migration attempt $attempt failed, retrying in 10s..."
             sleep 10
           done
-          echo "::error::dotnet ef database update did not succeed after 15 attempts (150s)."
+          echo "::error::dotnet ef database update did not succeed after 10 attempts (100s)."
           exit 1
 
       - name: Install sqlcmd
