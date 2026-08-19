@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Solution-wide project settings (ADR-0023: .NET 10 framework upgrade).
+    Every project under src/ picks these up automatically via MSBuild's
+    directory-walk convention, so there is no need to repeat them per .csproj.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

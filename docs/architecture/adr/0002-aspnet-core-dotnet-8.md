@@ -1,8 +1,10 @@
 # ADR-0002: ASP.NET Core on .NET 8
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0023 (Framework Upgrade to .NET 10)
 **Date:** 2026-08-17
 **Review date:** 2026-09-07 (3-week pilot retrospective)
+
+**Superseded 2026-08-18:** management approved .NET 10 as the target framework ahead of Phase 1 foundation work. This ADR's text below is left unedited as a historical record, per this project's ADR convention (`docs/architecture/README.md`) — see ADR-0023 for the current decision, the confirmed .NET 10/EF Core 10/Identity 10 package versions, and the rationale for the change.
 
 ## Context
 

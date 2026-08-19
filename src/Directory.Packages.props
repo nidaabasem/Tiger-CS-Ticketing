@@ -1,0 +1,49 @@
+<Project>
+
+  <!--
+    Central Package Management (ADR-0023). Every package version used
+    anywhere in this solution is pinned here, once. A project references a
+    package by name only (<PackageReference Include="..." />, no Version
+    attribute); MSBuild fails the restore if a version isn't listed below,
+    which is exactly what prevents an EF Core 8 package ever being mixed
+    with an EF Core 10 one by accident.
+
+    Every version below was confirmed against a real dotnet restore/build
+    in the build environment as part of ADR-0023; see that ADR for how.
+    Packages not yet consumed by any Phase 1 project are still listed here,
+    so later phases (auth, schema, Genesys, etc.) don't have to re-decide
+    a version; they just add a bare <PackageReference Include="..." />.
+  -->
+  <PropertyGroup>
+    <CentralPackageVersionOverrideEnabled>false</CentralPackageVersionOverrideEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="ASP.NET Core / Web">
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Label="Entity Framework Core">
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Label="Identity">
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup Label="Background jobs (Hangfire, ADR-0015) -- netstandard2.0, runtime-agnostic">
+    <PackageVersion Include="Hangfire.Core" Version="1.8.24" />
+    <PackageVersion Include="Hangfire.SqlServer" Version="1.8.24" />
+    <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.24" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testing (ADR-0021) -- matches the .NET 10 SDK's own project-template defaults">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+</Project>

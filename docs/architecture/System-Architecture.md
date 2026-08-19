@@ -26,7 +26,7 @@ graph TB
     end
 
     subgraph System["Tiger CS Ticketing System (this project)"]
-        App["Modular Monolith<br/>(ASP.NET Core 8)"]
+        App["Modular Monolith<br/>(ASP.NET Core 10)"]
     end
 
     subgraph External["External Systems"]
