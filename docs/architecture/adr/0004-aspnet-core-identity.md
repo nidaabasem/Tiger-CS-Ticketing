@@ -43,7 +43,7 @@ The nine internal roles in the Context section above are preserved exactly as
 approved — the same nine roles, the same permissions, no role added or
 removed. What changed is **display naming for two of them**, decided when
 the Identity and Access implementation increment was scoped
-([`implementation/mvp-identity-access`](https://github.com/nidaabasem/Tiger-CS-Ticketing/tree/implementation/mvp-identity-access)):
+(see [`docs/DEV-SETUP.md`](../../DEV-SETUP.md)):
 
 | Approved-document name | Persisted `AspNetRoles.Name` used instead |
 |---|---|

@@ -86,7 +86,7 @@ that floor.
 
 **No production deployment is authorized at this stage of the pilot** — this
 is enforced through release governance and documentation
-([ADR-0022's "Pilot-Stage Production Restriction"](https://github.com/nidaabasem/Tiger-CS-Ticketing/blob/implementation/mvp-identity-access/docs/architecture/adr/0022-deployment-strategy.md),
+([ADR-0022's "Pilot-Stage Production Restriction"](architecture/adr/0022-deployment-strategy.md),
 `MVP-Implementation-Backlog.md` §0), **not** by the application refusing to
 start under `ASPNETCORE_ENVIRONMENT=Production`. The app runs the same way
 regardless of environment name, given valid configuration — whoever
