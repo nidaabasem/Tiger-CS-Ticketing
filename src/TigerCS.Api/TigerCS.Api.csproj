@@ -2,8 +2,17 @@
 
   <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
 
+  <PropertyGroup>
+    <UserSecretsId>1f365368-5c6c-4763-86d9-d528e53a3a7f</UserSecretsId>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>
@@ -11,6 +20,11 @@
     <ProjectReference Include="..\TigerCS.Infrastructure\TigerCS.Infrastructure.csproj" />
     <ProjectReference Include="..\TigerCS.Integrations\TigerCS.Integrations.csproj" />
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- So TigerCS.Tests can host this Api with WebApplicationFactory<Program> -->
+    <InternalsVisibleTo Include="TigerCS.Tests" />
   </ItemGroup>
 
 </Project>

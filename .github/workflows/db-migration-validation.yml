@@ -1,0 +1,138 @@
+name: DB Migration Validation
+
+# Applies InitialIdentityAndAccess to a real SQL Server (a service container,
+# not InMemory/mocked) and verifies the resulting schema — the one check
+# this sandbox's own dev environment could not run itself (no Docker
+# daemon available there). See docs/DEV-SETUP.md §7 for the equivalent
+# manual checklist.
+#
+# Path-filtered to schema-relevant changes (Infrastructure/Domain code, this
+# workflow file itself) so it doesn't re-run on unrelated documentation-only
+# changes.
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "src/TigerCS.Infrastructure/**"
+      - "src/TigerCS.Domain/**"
+      - ".github/workflows/db-migration-validation.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "src/TigerCS.Infrastructure/**"
+      - "src/TigerCS.Domain/**"
+      - ".github/workflows/db-migration-validation.yml"
+  workflow_dispatch: {}
+
+jobs:
+  validate-migration:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci-Validation-Only-Passw0rd!"
+        ports:
+          - 1433:1433
+        # No Docker HEALTHCHECK here (two attempts at one — an in-container
+        # sqlcmd path guess, then a bash /dev/tcp probe — both left the
+        # service stuck "unhealthy" until GitHub Actions gave up and tore
+        # the container down before the job's own steps ever ran, even
+        # though the container logs showed SQL Server had finished starting
+        # each time). Readiness is instead handled by the retry loop in the
+        # "Apply migration" step below — the same pattern commonly used for
+        # this image in GitHub Actions services, since its healthcheck
+        # tooling isn't as predictable across image builds as postgres/mysql's.
+
+    env:
+      TIGERCS_DESIGN_TIME_CONNECTION: "Server=localhost,1433;Database=TigerCsTicketing_CI;User Id=sa;Password=Ci-Validation-Only-Passw0rd!;TrustServerCertificate=True;"
+      SA_PASSWORD: "Ci-Validation-Only-Passw0rd!"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install dotnet-ef
+        run: dotnet tool install --global dotnet-ef --version 10.0.11
+
+      - name: Restore
+        working-directory: src
+        run: dotnet restore TigerCS.slnx
+
+      - name: Apply InitialIdentityAndAccess migration
+        working-directory: src
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          # The retry loop is a safety net for the service container's own
+          # startup time (SQL Server can take a few seconds after the
+          # container is created); it is not a substitute for the Restore
+          # step above — dotnet ef's own msbuild invocation needs
+          # obj/project.assets.json to already exist and does not
+          # implicitly restore it.
+          for attempt in $(seq 1 10); do
+            if dotnet ef database update \
+              --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
+              --verbose; then
+              exit 0
+            fi
+            echo "Migration attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::dotnet ef database update did not succeed after 10 attempts (100s)."
+          exit 1
+
+      - name: Install sqlcmd
+        run: |
+          ubuntu_release=$(lsb_release -rs)
+          echo "Runner Ubuntu release: $ubuntu_release"
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
+          curl -sSL "https://packages.microsoft.com/config/ubuntu/${ubuntu_release}/prod.list" | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update -y
+          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
+
+      - name: Verify schema — exact table list
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT name FROM sys.tables ORDER BY name;" | sed '/^$/d')
+          expected=$(printf '%s\n' \
+            "AspNetRoleClaims" "AspNetRoles" "AspNetUserClaims" "AspNetUserLogins" \
+            "AspNetUserRoles" "AspNetUserTokens" "AspNetUsers" "Departments" \
+            "Employees" "UserDepartmentAssignments" "__EFMigrationsHistory" | sort)
+          actual_sorted=$(echo "$actual" | sort)
+          echo "--- actual tables ---"
+          echo "$actual_sorted"
+          echo "--- expected tables ---"
+          echo "$expected"
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::Table list does not match the expected Identity and Access schema exactly."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "Table list matches exactly: 11 tables, no unrelated (ticketing/SLA/Genesys) tables."
+
+      - name: Verify schema — filtered unique index (one primary department per employee)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([IsPrimary]=(1))" ]; then
+            echo "::error::IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly filter_definition was '$filter_trimmed', expected '([IsPrimary]=(1))'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify no schema drift (no-op probe migration)
+        working-directory: src
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef migrations has-pending-model-changes \
+            --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure
