@@ -21,6 +21,12 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Explicit, deterministic environment name — distinct from "Development"
+        // (so DevSeedData's own auto-seeding doesn't also run and race with this
+        // factory's manual seeding) and from "Production" (Program.cs now
+        // refuses to start at all in Production, per review item 8).
+        builder.UseEnvironment("Testing");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
@@ -87,5 +93,31 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         await db.SaveChangesAsync();
 
         return (username, password, user.Id);
+    }
+
+    /// <summary>Creates a department directly (bypassing the app services — this is test setup, not the thing under test).</summary>
+    public async Task<int> CreateDepartmentAsync(string name, string code)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var department = new Department(name, code);
+        db.Departments.Add(department);
+        await db.SaveChangesAsync();
+        return department.DepartmentId;
+    }
+
+    /// <summary>Assigns an employee to a department (primary), replacing any existing primary assignment.</summary>
+    public async Task AssignPrimaryDepartmentAsync(Guid employeeId, int departmentId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+
+        var existingPrimary = await db.UserDepartmentAssignments
+            .FirstOrDefaultAsync(a => a.EmployeeId == employeeId && a.IsPrimary);
+        existingPrimary?.ClearPrimary();
+
+        db.UserDepartmentAssignments.Add(new UserDepartmentAssignment(
+            employeeId, departmentId, isPrimary: true, DateTime.UtcNow, assignedByEmployeeId: null));
+        await db.SaveChangesAsync();
     }
 }

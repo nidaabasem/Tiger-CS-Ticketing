@@ -59,8 +59,11 @@ public class PolicyCatalogTests
         Assert.NotNull(policy);
         var requirement = policy!.Requirements.OfType<DepartmentScopedRequirement>().Single();
         Assert.Equal(
-            new[] { Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator }
-                .OrderBy(r => r),
+            new[]
+            {
+                Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager,
+                Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator
+            }.OrderBy(r => r),
             requirement.CrossDepartmentRoles.OrderBy(r => r));
     }
 }
