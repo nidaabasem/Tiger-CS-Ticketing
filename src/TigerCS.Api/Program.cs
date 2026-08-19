@@ -1,10 +1,16 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
 using TigerCS.Infrastructure;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
+
+// Never log token/claim contents (review item 4) — IdentityModelEventSource's PII
+// logging defaults to off already, but this makes the choice explicit rather than
+// relying on the library default silently staying that way across upgrades.
+IdentityModelEventSource.ShowPII = false;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,13 +26,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
 
 builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
-    .Configure<IOptions<JwtOptions>>((bearerOptions, jwtOptions) =>
+    .Configure<IOptions<JwtOptions>, IHostEnvironment>((bearerOptions, jwtOptions, env) =>
     {
         var jwt = jwtOptions.Value;
-        if (string.IsNullOrWhiteSpace(jwt.SigningKey))
-        {
-            throw new InvalidOperationException("Jwt:SigningKey is not configured. See docs/DEV-SETUP.md.");
-        }
+
+        // RequireHttpsMetadata governs fetching OIDC metadata over HTTP vs HTTPS
+        // (moot here — no Authority/metadata address is configured, so no
+        // metadata endpoint is ever fetched) but is set explicitly per
+        // environment anyway, per review item 4, rather than left at whatever
+        // the library's own default happens to be.
+        bearerOptions.RequireHttpsMetadata = !env.IsDevelopment();
 
         bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
@@ -44,6 +53,41 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
 builder.Services.AddAuthorization(options => options.AddTigerCsAuthorizationPolicies());
 
 var app = builder.Build();
+
+// Fail fast rather than lazily on first request: no production deployment is
+// authorized at this stage (management decision, recorded in PR #6/#9), and
+// this is the one place that gets enforced in code rather than only in docs —
+// "no insecure defaults are allowed in Production" then reduces to "Production
+// never starts at all" for this increment, which is the strongest form of that.
+if (app.Environment.IsProduction())
+{
+    throw new InvalidOperationException(
+        "Production deployment is not authorized for this pilot increment. See docs/DEV-SETUP.md and the approved delivery decision.");
+}
+
+// Same fail-fast principle for the JWT signing key specifically: validate it
+// exists and meets the minimum length for HS256 (256 bits / 32 bytes) before
+// the app starts accepting traffic, instead of only discovering a missing or
+// weak key on the first authenticated request.
+using (var startupScope = app.Services.CreateScope())
+{
+    var jwtOptions = startupScope.ServiceProvider.GetRequiredService<IOptions<JwtOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(jwtOptions.SigningKey))
+    {
+        throw new InvalidOperationException("Jwt:SigningKey is not configured. See docs/DEV-SETUP.md.");
+    }
+
+    if (Encoding.UTF8.GetByteCount(jwtOptions.SigningKey) < 32)
+    {
+        throw new InvalidOperationException(
+            "Jwt:SigningKey must be at least 32 bytes (256 bits) for HMAC-SHA256. See docs/DEV-SETUP.md.");
+    }
+
+    if (string.IsNullOrWhiteSpace(jwtOptions.Issuer) || string.IsNullOrWhiteSpace(jwtOptions.Audience))
+    {
+        throw new InvalidOperationException("Jwt:Issuer and Jwt:Audience must both be configured. See docs/DEV-SETUP.md.");
+    }
+}
 
 if (app.Environment.IsDevelopment())
 {

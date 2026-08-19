@@ -20,17 +20,27 @@ public static class InfrastructureServiceCollectionExtensions
 {
     public static IServiceCollection AddTigerCsInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("TigerCsDatabase")
-            ?? throw new InvalidOperationException(
-                "Connection string 'TigerCsDatabase' is not configured. See docs/DEV-SETUP.md.");
-
-        services.AddDbContext<TigerCsDbContext>(options => options.UseSqlServer(connectionString));
+        // Resolved lazily (IConfiguration from DI, at first DbContext creation)
+        // rather than read from the `configuration` parameter eagerly here —
+        // an eager read would run before test-host configuration overrides
+        // (e.g. WebApplicationFactory) are merged in, same reasoning as the
+        // JWT options below.
+        services.AddDbContext<TigerCsDbContext>((serviceProvider, options) =>
+        {
+            var connectionString = serviceProvider.GetRequiredService<IConfiguration>().GetConnectionString("TigerCsDatabase")
+                ?? throw new InvalidOperationException(
+                    "Connection string 'TigerCsDatabase' is not configured. See docs/DEV-SETUP.md.");
+            options.UseSqlServer(connectionString);
+        });
 
         services.AddIdentityCore<ApplicationUser>(options =>
             {
-                // Security-Architecture.md §1: [ASSUMPTION] — exact policy not yet
-                // specified by management; these are the concrete values chosen for
-                // that placeholder, one notch above Identity's own bare defaults.
+                // Security-Architecture.md §1/§13: [ASSUMPTION] — exact policy not
+                // yet specified by management. These are the pilot defaults, one
+                // notch above Identity's own bare defaults — NOT hardcoded final
+                // values: the Configure<IdentityOptions> call below layers any
+                // "Identity:Password:*"/"Identity:Lockout:*" configuration on top,
+                // so a real deployment can override them without a code change.
                 options.Password.RequiredLength = 8;
                 options.Password.RequireDigit = true;
                 options.Password.RequireLowercase = true;
@@ -38,7 +48,6 @@ public static class InfrastructureServiceCollectionExtensions
                 options.Password.RequireNonAlphanumeric = true;
                 options.Password.RequiredUniqueChars = 4;
 
-                // Security-Architecture.md §13.
                 options.Lockout.MaxFailedAccessAttempts = 5;
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
                 options.Lockout.AllowedForNewUsers = true;
@@ -48,6 +57,22 @@ public static class InfrastructureServiceCollectionExtensions
             .AddRoles<ApplicationRole>()
             .AddEntityFrameworkStores<TigerCsDbContext>()
             .AddSignInManager();
+
+        // Optional override of the pilot defaults above via configuration
+        // ("Identity:Password:RequiredLength", "Identity:Lockout:MaxFailedAccessAttempts",
+        // etc.) — only keys actually present in configuration change anything;
+        // this and the validation below run on Configure<IdentityOptions>'s IOptions
+        // pipeline, so it applies to every options access, not only at startup.
+        services.Configure<IdentityOptions>(configuration.GetSection("Identity"));
+
+        services.AddOptions<IdentityOptions>()
+            .Validate(o => o.Password.RequiredLength >= 8,
+                "Identity:Password:RequiredLength must be at least 8 (Security-Architecture.md §1 pilot floor).")
+            .Validate(o => o.Lockout.MaxFailedAccessAttempts is > 0 and <= 10,
+                "Identity:Lockout:MaxFailedAccessAttempts must be between 1 and 10.")
+            .Validate(o => o.Lockout.DefaultLockoutTimeSpan >= TimeSpan.FromMinutes(1),
+                "Identity:Lockout:DefaultLockoutTimeSpan must be at least 1 minute.")
+            .ValidateOnStart();
 
         services.AddHttpContextAccessor();
         services.AddScoped<IClaimsTransformation, DepartmentClaimsTransformation>();
@@ -96,7 +121,20 @@ public static class InfrastructureServiceCollectionExtensions
         options.AddPolicy(PolicyNames.DepartmentScoped, Base()
             .AddRequirements(new DepartmentScopedRequirement(
             [
-                Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator
+                // Security-Architecture.md §3, verbatim: "CS-layer roles (Geyness
+                // Agent, Supervisor, CS Manager) are scoped differently — across
+                // all departments." These three (CS Agent/CS Supervisor/CS
+                // Manager per this increment's role-naming decision) are the only
+                // roles that citation names as cross-department. General
+                // Manager/Chairman-CEO/System Administrator are included too,
+                // on the separate basis of Solution-Analysis.md §4.1's
+                // permission matrix, which gives each of them "View: All
+                // tickets" — a broader read grant than §3's Close/Reopen-
+                // specific carve-out. Flagged for confirmation before a real
+                // ticket endpoint consumes this policy: whether GM/Chairman/
+                // SysAdmin's cross-department reach should extend beyond View.
+                Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager,
+                Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator
             ]))
             .Build());
 

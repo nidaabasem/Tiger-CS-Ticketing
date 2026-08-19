@@ -5,8 +5,8 @@ namespace TigerCS.Domain.Modules.IdentityAndAccess;
 /// exact display strings approved for this pilot's Identity module: "CS Agent"
 /// and "CS Supervisor" (rather than the design documents' "Geyness Agent" and
 /// "Supervisor") per an explicit naming decision made when this increment was
-/// scoped, recorded in the PR description. All other names match the
-/// documents verbatim.
+/// scoped — recorded formally in ADR-0004's "Pilot Role-Naming Decision"
+/// section, not only here. All other names match the documents verbatim.
 /// </summary>
 public static class Roles
 {
