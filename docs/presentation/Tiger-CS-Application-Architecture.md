@@ -104,7 +104,7 @@ Genesys / manual intake → CRM verification → ticket creation → classificat
 Three separate environments — **Development, UAT/Pilot, Production** — each independently deployed to the **Tiger-approved hosting environment** (final hosting provider to be confirmed by Tiger IT; not assumed here).
 
 Each environment contains:
-- Reverse proxy / load balancer
+- Web Server / Secure Gateway (IIS or Nginx)
 - ASP.NET Core Web/API (single deployable unit)
 - Background jobs (SLA checks, notification dispatch)
 - SQL Server
