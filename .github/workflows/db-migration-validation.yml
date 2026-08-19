@@ -5,10 +5,24 @@ name: DB Migration Validation
 # this sandbox's own dev environment could not run itself (no Docker
 # daemon available there). See docs/DEV-SETUP.md §7 for the equivalent
 # manual checklist.
+#
+# Path-filtered to schema-relevant changes (Infrastructure/Domain code, this
+# workflow file itself) so it doesn't re-run on unrelated documentation-only
+# changes.
 
 on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "src/TigerCS.Infrastructure/**"
+      - "src/TigerCS.Domain/**"
+      - ".github/workflows/db-migration-validation.yml"
   push:
-    branches: ["implementation/mvp-identity-access"]
+    branches: ["main"]
+    paths:
+      - "src/TigerCS.Infrastructure/**"
+      - "src/TigerCS.Domain/**"
+      - ".github/workflows/db-migration-validation.yml"
   workflow_dispatch: {}
 
 jobs:
