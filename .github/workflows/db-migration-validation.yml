@@ -1,0 +1,101 @@
+name: DB Migration Validation
+
+# Applies InitialIdentityAndAccess to a real SQL Server (a service container,
+# not InMemory/mocked) and verifies the resulting schema — the one check
+# this sandbox's own dev environment could not run itself (no Docker
+# daemon available there). See docs/DEV-SETUP.md §7 for the equivalent
+# manual checklist.
+
+on:
+  push:
+    branches: ["implementation/mvp-identity-access"]
+  workflow_dispatch: {}
+
+jobs:
+  validate-migration:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci-Validation-Only-Passw0rd!"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Ci-Validation-Only-Passw0rd!' -C -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    env:
+      TIGERCS_DESIGN_TIME_CONNECTION: "Server=localhost,1433;Database=TigerCsTicketing_CI;User Id=sa;Password=Ci-Validation-Only-Passw0rd!;TrustServerCertificate=True;"
+      SA_PASSWORD: "Ci-Validation-Only-Passw0rd!"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install dotnet-ef
+        run: dotnet tool install --global dotnet-ef --version 10.0.11
+
+      - name: Apply InitialIdentityAndAccess migration
+        working-directory: src
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef database update \
+            --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
+            --verbose
+
+      - name: Install sqlcmd
+        run: |
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
+          curl -sSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update -y
+          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
+
+      - name: Verify schema — exact table list
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT name FROM sys.tables ORDER BY name;" | sed '/^$/d')
+          expected=$(printf '%s\n' \
+            "AspNetRoleClaims" "AspNetRoles" "AspNetUserClaims" "AspNetUserLogins" \
+            "AspNetUserRoles" "AspNetUserTokens" "AspNetUsers" "Departments" \
+            "Employees" "UserDepartmentAssignments" "__EFMigrationsHistory" | sort)
+          actual_sorted=$(echo "$actual" | sort)
+          echo "--- actual tables ---"
+          echo "$actual_sorted"
+          echo "--- expected tables ---"
+          echo "$expected"
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::Table list does not match the expected Identity and Access schema exactly."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "Table list matches exactly: 11 tables, no unrelated (ticketing/SLA/Genesys) tables."
+
+      - name: Verify schema — filtered unique index (one primary department per employee)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([IsPrimary]=(1))" ]; then
+            echo "::error::IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly filter_definition was '$filter_trimmed', expected '([IsPrimary]=(1))'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify no schema drift (no-op probe migration)
+        working-directory: src
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef migrations has-pending-model-changes \
+            --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure
