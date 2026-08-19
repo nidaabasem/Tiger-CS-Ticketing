@@ -121,7 +121,9 @@ Each environment contains:
 - **Next:** CRM Verification and Ticket Creation
 - **Then:** Workflow, SLA/Escalation, Genesys Integration, Email, UI, UAT
 
-**Delivery model:** four-week, one-developer, AI-assisted pilot
+**Three-Week Internal Pilot**
+
+A functional version will be delivered for internal testing within three weeks, developed by one developer with AI-assisted development. Following successful testing and management approval, a separate production-readiness phase will prepare the system for official go-live.
 
 > **Pilot** (this delivery) is a functional internal proof of the approved architecture. **Production Ready** is a separate, later milestone requiring its own scope, hardening, and go-live approval.
 
