@@ -36,3 +36,11 @@ Directly implements ISSUE-023 as approved. `SLA-Architecture.md` §"Priority upg
 ## Risks
 
 - The downgrade-approval gate is the single most safety-critical rule in the SLA engine from a compliance-integrity standpoint; it must ship with explicit test coverage before Phase 3 exits, flagged in `Architecture-Review-Checklist.md`.
+
+## Pilot-Scope Note (Added Following the 4-Week, 1-Developer Pilot Decision — Does Not Change This ADR's Decision)
+
+For the 4-week, 1-developer pilot (`docs/design/MVP-Implementation-Backlog.md` §0), management has decided to go further than deferring the downgrade-approval workflow described above: **priority downgrades are disabled completely after ticket creation for the duration of the pilot.** No downgrade path exists anywhere in the pilot build — not a partially-built request queue, not a disabled UI control, simply no server-side capability. This satisfies this ADR's core safeguard (a downgrade can never be used to quietly hide a breach) by the simplest possible means available at reduced capacity: removing the downgrade direction entirely rather than building its approval gate. Priority **upgrades** remain unaffected and are built in the pilot, since an upgrade can only tighten a deadline and needs no approval gate.
+
+This is a **pilot-scope restriction, not a revision of this ADR's decision.** The approved downgrade-request-and-approval design above — including the self-authorization fix in `docs/design/MVP-Design-Review-Findings.md` Finding DR-05, and its full specification in `docs/design/MVP-API-Contracts.md` §5.6.1–§5.6.5 and `docs/design/MVP-ERD.md`/`MVP-Data-Dictionary.md` §2.27 — remains the approved design for the post-pilot phase, unchanged and not deleted. The standard restriction statement used consistently across the design package:
+
+> "Priority is fixed after ticket creation during the pilot. Downgrades are not permitted. The approved downgrade-request and approval design remains documented for the post-pilot phase."

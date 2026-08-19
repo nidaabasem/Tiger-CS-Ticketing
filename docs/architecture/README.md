@@ -7,7 +7,7 @@
 ## Required Review Order
 
 1. **[System Architecture](System-Architecture.md)** — start here: system context, modules, flows, deployment
-2. **[Architecture Decision Records](adr/)** — the 22 ADRs behind the technical choices in (1)
+2. **[Architecture Decision Records](adr/)** — the 23 ADRs behind the technical choices in (1), including ADR-0023's .NET 10 framework upgrade
 3. **[Domain Model](Domain-Model.md)** — the conceptual entities the architecture operates on
 4. **[SLA Architecture](SLA-Architecture.md)** — the most detailed, highest-stakes subsystem
 5. **[Genesys Integration](Genesys-Integration.md)** — the newly-confirmed MVP scope addition; read its open-questions section carefully
@@ -27,7 +27,7 @@
 | `Genesys-Integration.md` | Genesys Basic Integration design, webhook contract (conceptual), and open questions for the Genesys team |
 | `Security-Architecture.md` | Authentication, authorization, data protection, webhook/upload security, logging, secrets, testing |
 | `Architecture-Review-Checklist.md` | Pre-Phase-3 sign-off checklist |
-| `adr/0001`–`0022` | Individual Architecture Decision Records |
+| `adr/0001`–`0023` | Individual Architecture Decision Records. **ADR-0002 (.NET 8) is superseded by ADR-0023 (.NET 10)** — both are kept, per this project's ADR convention below. |
 
 ### Relationship to the rest of the project documentation
 
@@ -43,6 +43,10 @@
 - **Genesys Basic Integration is now confirmed for MVP** by explicit management directive (this pilot's commissioning message specifies "Genesys APIs and webhooks" directly). This resolves **ISSUE-003** (the platform is Genesys) and supersedes the earlier, conditional ADR-0012 from the PR #2 ADR log. `Tiger-CS-Ticketing-Solution-Analysis.md` §8/§15 have been amended to match, so the documented MVP scope no longer contradicts this decision.
 - The prior 14-ADR log (PR #2) has been **replaced** by this 22-ADR log, using an expanded template (adds Alternatives Considered as a distinct section already present, plus **Risks** and **Review Date**) and covering additional topics split out for clarity (Identity vs. authorization policies; four separate SLA/escalation ADRs instead of one combined; Outbox and idempotency split; logging split from audit).
 - A full System Architecture, Module Design, Domain Model, SLA Architecture, Genesys Integration, and Security Architecture document have been added — none of which existed as standalone documents before this pass.
+
+## What Changed Since (Framework Upgrade, Ahead of Phase 1)
+
+- **Management approved .NET 10 as the target framework**, superseding ADR-0002's .NET 8 selection. **ADR-0023** records the upgrade — .NET 10 (LTS), C# 14, ASP.NET Core 10, EF Core 10, ASP.NET Core Identity 10 — with every package version confirmed against a real SDK install, restore, and build in the current build environment, not assumed. `System-Architecture.md`, `Tiger-CS-Ticketing-Architecture-Design.md`, and `Tiger-CS-Ticketing-Solution-Analysis.md` are updated to say .NET 10 wherever they previously said .NET 8. ADR-0002 itself is left unedited and marked Superseded, per this project's ADR convention below.
 
 ## Remaining Open Questions
 

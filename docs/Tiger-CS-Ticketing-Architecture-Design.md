@@ -7,7 +7,7 @@
 | **Status** | **Approved for Architecture Design.** A formal Architecture Decision Record log (`docs/architecture/adr/`) has since been prepared alongside this document — see `docs/architecture/README.md`. **No EF Core code, migrations, or a runnable database have been created.** This document is design documentation only. Project scaffolding and actual migrations are Phase 3 ("Project Foundation") and remain out of scope here. |
 | **Authorization** | Produced following project session sign-off ("Status: Approved for Architecture Design," 2026-08-17) — see the Final Decision Sign-Off in `Tiger-CS-Ticketing-Management-Decisions.md` |
 | **Related documents** | `Tiger-CS-Ticketing-Solution-Analysis.md` · `Tiger-CS-Ticketing-Management-Decisions.md` · `Tiger-CS-Ticketing-Executive-Decisions.md` |
-| **Stack** | ASP.NET Core 8 (Web API + Razor Pages), SQL Server, EF Core, ASP.NET Core Identity, Hangfire, SignalR, xUnit |
+| **Stack** | ASP.NET Core 10 (Web API + Razor Pages), SQL Server, EF Core 10, ASP.NET Core Identity 10, Hangfire, SignalR, xUnit *(updated from .NET 8 per ADR-0023 — see `docs/architecture/adr/0023-framework-upgrade-dotnet-10.md`)* |
 | **Date** | 2026-08-17 |
 
 ---
