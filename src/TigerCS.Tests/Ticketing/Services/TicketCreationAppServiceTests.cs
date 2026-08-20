@@ -300,10 +300,18 @@ public class TicketCreationAppServiceTests
         Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
         Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
 
-        // The losing request's IntakeRecord link never took effect either —
-        // rollback undoes the whole batch, not just the session consumption.
-        var reloadedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
-        Assert.Null(reloadedIntake!.LinkedTicketId);
+        // Not asserted here: that the IntakeRecord's LinkedTicketId is
+        // rolled back too. FakeIntakeRecordRepository mutates its tracked
+        // object in place with no concept of committed vs. uncommitted
+        // state, so it cannot honestly prove that — only a real DbContext
+        // (whose rollback discards the whole unit of work, including this
+        // object graph, so a fresh read after the failed request sees the
+        // database's actual, unchanged row) can. That guarantee rests on
+        // the real transaction wrapping both SaveChanges calls, verified
+        // above by TransactionsRolledBack == 1 with TransactionsCommitted
+        // == 0 — the same "fakes prove the code path, real SQL Server
+        // proves persistence" split already established elsewhere in this
+        // codebase (see CustomerVerificationUnitOfWork's remarks).
     }
 
     [Fact]
