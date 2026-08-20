@@ -72,4 +72,168 @@ public class TicketTests
 
         Assert.Throws<TicketNotPendingCrmVerificationException>(() => ticket.ReconcileVerification(30, 40));
     }
+
+    private static Ticket NewOpenTicket() =>
+        Ticket.CreateVerified(
+            "TG-CS-20260820-0100", departmentId: 2, unitReferenceId: 10, contactReferenceId: 20,
+            categoryId: 5, priorityId: (byte)PriorityLevel.High, "AC not cooling", DateTime.UtcNow);
+
+    [Fact]
+    public void AssignTo_SetsCurrentOwner()
+    {
+        var ticket = NewOpenTicket();
+        var employeeId = Guid.NewGuid();
+
+        ticket.AssignTo(employeeId);
+
+        Assert.Equal(employeeId, ticket.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public void AssignTo_EmptyGuid_Throws()
+    {
+        var ticket = NewOpenTicket();
+
+        Assert.Throws<ArgumentException>(() => ticket.AssignTo(Guid.Empty));
+    }
+
+    [Fact]
+    public void TransferToDepartment_MovesCurrentDepartmentAndClearsOwner_PreservesOriginating()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+
+        ticket.TransferToDepartment(7);
+
+        Assert.Equal(7, ticket.CurrentDepartmentId);
+        Assert.Equal(2, ticket.OriginatingDepartmentId);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public void TransferToDepartment_SameDepartment_Throws()
+    {
+        var ticket = NewOpenTicket();
+
+        Assert.Throws<TicketAlreadyInTargetDepartmentException>(() => ticket.TransferToDepartment(2));
+    }
+
+    [Fact]
+    public void ChangeStatus_OpenToInProgress_RequiresAssignedOwner()
+    {
+        var ticket = NewOpenTicket();
+
+        Assert.Throws<TicketNotAssignedException>(() => ticket.ChangeStatus(TicketStatus.InProgress));
+
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+    }
+
+    [Theory]
+    [InlineData(TicketStatus.PendingCustomer)]
+    [InlineData(TicketStatus.PendingThirdParty)]
+    public void ChangeStatus_InProgressToPendingAndBack_Succeeds(TicketStatus pendingStatus)
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+
+        ticket.ChangeStatus(pendingStatus);
+        Assert.Equal(pendingStatus, ticket.TicketStatus);
+
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public void ChangeStatus_DirectlyBetweenTwoPendingStates_Throws()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.ChangeStatus(TicketStatus.PendingCustomer);
+
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.PendingThirdParty));
+    }
+
+    [Fact]
+    public void ChangeStatus_DirectlyToResolvedOrClosed_Throws()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.Resolved));
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.Closed));
+    }
+
+    [Fact]
+    public void Resolve_FromOpen_Throws_MustBeWorkedFirst()
+    {
+        var ticket = NewOpenTicket();
+
+        Assert.Throws<TicketNotEligibleForResolutionException>(
+            () => ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null));
+    }
+
+    [Fact]
+    public void Resolve_FromInProgress_SetsResolvedStatusAndOutcome()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+
+        Assert.Equal(TicketStatus.Resolved, ticket.TicketStatus);
+        Assert.Equal((byte)ResolutionOutcome.Resolved, ticket.ResolutionOutcome);
+        Assert.Null(ticket.DuplicateOfTicketId);
+    }
+
+    [Fact]
+    public void Resolve_Duplicate_SetsDuplicateOfTicketId()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+
+        ticket.Resolve(ResolutionOutcome.Duplicate, duplicateOfTicketId: 999);
+
+        Assert.Equal((byte)ResolutionOutcome.Duplicate, ticket.ResolutionOutcome);
+        Assert.Equal(999, ticket.DuplicateOfTicketId);
+    }
+
+    [Fact]
+    public void Close_WithoutResolve_Throws()
+    {
+        var ticket = NewOpenTicket();
+
+        Assert.Throws<TicketNotYetResolvedException>(() => ticket.Close());
+    }
+
+    [Fact]
+    public void Close_AfterResolve_SetsClosed()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+
+        ticket.Close();
+
+        Assert.Equal(TicketStatus.Closed, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public void Close_Twice_Throws()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        ticket.Close();
+
+        Assert.Throws<TicketNotYetResolvedException>(() => ticket.Close());
+    }
 }

@@ -36,12 +36,11 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.Property(t => t.ReopenCount).IsRequired();
         builder.Property(t => t.CreatedAtUtc).IsRequired();
 
-        // MVP-Data-Dictionary.md §2.10 lists RowVersion for optimistic
-        // concurrency, but no endpoint in this increment mutates an
-        // existing Ticket (creation only) — nothing yet needs an If-Match
-        // check. Deferred to the increment that adds assignment/transfer/
-        // status-change (MVP-Implementation-Backlog.md S-13), rather than
-        // adding an unused rowversion column now.
+        // MVP-Data-Dictionary.md §2.10 — optimistic concurrency for the
+        // assignment/transfer/status-change/resolve/close/reconciliation
+        // operations this increment adds (S-13). Deferred by the prior
+        // increment, which had nothing yet to guard.
+        builder.Property(t => t.RowVersion).IsRowVersion();
 
         builder.HasOne<Department>()
             .WithMany()

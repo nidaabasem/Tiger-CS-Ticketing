@@ -45,6 +45,9 @@ public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
     public Task<IntakeRecord?> GetByIdAsync(long intakeRecordId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_records.GetValueOrDefault(intakeRecordId));
 
+    public Task<IntakeRecord?> GetByLinkedTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_records.Values.FirstOrDefault(r => r.LinkedTicketId == ticketId));
+
     public Task AddAsync(IntakeRecord intakeRecord, CancellationToken cancellationToken = default)
     {
         typeof(IntakeRecord).GetProperty(nameof(IntakeRecord.IntakeRecordId))!.SetValue(intakeRecord, _nextId++);
@@ -73,6 +76,74 @@ public sealed class FakeTicketRepository : ITicketRepository
 
     public Task<int> CountByTicketNumberPrefixAsync(string ticketNumberPrefix, CancellationToken cancellationToken = default) =>
         Task.FromResult(_tickets.Values.Count(t => t.TicketNumber.StartsWith(ticketNumberPrefix, StringComparison.Ordinal)));
+
+    public Task<TicketQueryResult> SearchAsync(TicketQuery query, CancellationToken cancellationToken = default)
+    {
+        var filtered = _tickets.Values.AsEnumerable();
+
+        if (query.VisibleDepartmentIds is not null)
+        {
+            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
+        }
+
+        if (query.DepartmentId is { } departmentId)
+        {
+            filtered = filtered.Where(t => t.CurrentDepartmentId == departmentId);
+        }
+
+        if (query.CategoryId is { } categoryId)
+        {
+            filtered = filtered.Where(t => t.CategoryId == categoryId);
+        }
+
+        if (query.PriorityId is { } priorityId)
+        {
+            filtered = filtered.Where(t => t.PriorityId == priorityId);
+        }
+
+        if (query.TicketStatus is { } ticketStatus)
+        {
+            filtered = filtered.Where(t => t.TicketStatus == ticketStatus);
+        }
+
+        if (query.VerificationStatus is { } verificationStatus)
+        {
+            filtered = filtered.Where(t => t.VerificationStatus == verificationStatus);
+        }
+
+        if (query.OwnerEmployeeId is { } ownerEmployeeId)
+        {
+            filtered = filtered.Where(t => t.CurrentOwnerEmployeeId == ownerEmployeeId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            filtered = filtered.Where(t =>
+                t.TicketNumber.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
+                || t.RequestSummary.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var all = filtered.ToList();
+        var totalCount = all.Count;
+
+        IEnumerable<Ticket> sorted = query.SortBy switch
+        {
+            TicketSortBy.Priority => query.SortDescending
+                ? all.OrderByDescending(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc)
+                : all.OrderBy(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc),
+            _ => query.SortDescending
+                ? all.OrderByDescending(t => t.CreatedAtUtc)
+                : all.OrderBy(t => t.CreatedAtUtc)
+        };
+
+        var page = sorted.Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).ToList();
+        return Task.FromResult(new TicketQueryResult(page, totalCount));
+    }
+
+    /// <summary>Test double — RowVersion concurrency is simulated by FakeTicketingUnitOfWork.ThrowTicketConcurrencyConflictOnCall instead, since there's no real change tracker here to prime.</summary>
+    public void SetRowVersion(Ticket ticket, byte[] rowVersion)
+    {
+    }
 }
 
 public sealed class FakeTicketRequesterSnapshotRepository : ITicketRequesterSnapshotRepository
@@ -97,6 +168,58 @@ public sealed class FakeTicketStatusHistoryRepository : ITicketStatusHistoryRepo
     }
 }
 
+public sealed class FakeTicketAssignmentRepository : ITicketAssignmentRepository
+{
+    public List<TicketAssignment> Added { get; } = [];
+
+    public Task<TicketAssignment?> GetCurrentAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Added.LastOrDefault(a => a.TicketId == ticketId && a.IsCurrent));
+
+    public Task AddAsync(TicketAssignment assignment, CancellationToken cancellationToken = default)
+    {
+        Added.Add(assignment);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeTicketResolutionRepository : ITicketResolutionRepository
+{
+    public List<TicketResolution> Added { get; } = [];
+
+    public Task<TicketResolution?> GetCurrentAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Added.LastOrDefault(r => r.TicketId == ticketId && r.IsCurrent));
+
+    public Task AddAsync(TicketResolution resolution, CancellationToken cancellationToken = default)
+    {
+        Added.Add(resolution);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeTicketNoteRepository : ITicketNoteRepository
+{
+    public List<TicketNote> Added { get; } = [];
+
+    public Task AddAsync(TicketNote note, CancellationToken cancellationToken = default)
+    {
+        typeof(TicketNote).GetProperty(nameof(TicketNote.TicketNoteId))!.SetValue(note, Added.Count + 1L);
+        Added.Add(note);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<TicketNote>> ListByTicketIdAsync(
+        long ticketId, int page, int pageSize, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketNote>>(
+            Added.Where(n => n.TicketId == ticketId)
+                .OrderByDescending(n => n.CreatedAtUtc)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList());
+
+    public Task<int> CountByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Added.Count(n => n.TicketId == ticketId));
+}
+
 public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
 {
     public int SaveChangesCallCount { get; private set; }
@@ -107,6 +230,9 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
 
     /// <summary>1-based SaveChangesAsync call number on which to throw VerificationSessionConcurrentlyConsumedException — mirrors FakeCustomerVerificationUnitOfWork's ThrowDuplicateWriteExceptionOnCall. Null = never.</summary>
     public int? ThrowConcurrencyConflictOnCall { get; set; }
+
+    /// <summary>1-based SaveChangesAsync call number on which to throw TicketConcurrentlyModifiedException (a lost RowVersion race on assignment/transfer/status/resolve/close/reconciliation). Null = never.</summary>
+    public int? ThrowTicketConcurrencyConflictOnCall { get; set; }
 
     /// <summary>1-based SaveChangesAsync call number on which to throw DuplicateWriteException (a TicketNumber collision). Null = never.</summary>
     public int? ThrowDuplicateWriteExceptionOnCall { get; set; }
@@ -125,6 +251,12 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
         {
             ThrowConcurrencyConflictOnCall = null;
             throw new VerificationSessionConcurrentlyConsumedException(new InvalidOperationException("Simulated concurrency conflict."));
+        }
+
+        if (ThrowTicketConcurrencyConflictOnCall == SaveChangesCallCount)
+        {
+            ThrowTicketConcurrencyConflictOnCall = null;
+            throw new TicketConcurrentlyModifiedException(new InvalidOperationException("Simulated ticket RowVersion conflict."));
         }
 
         if (ThrowDuplicateWriteExceptionOnCall == SaveChangesCallCount)

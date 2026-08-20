@@ -124,9 +124,17 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketRepository, TicketRepository>();
         services.AddScoped<ITicketRequesterSnapshotRepository, TicketRequesterSnapshotRepository>();
         services.AddScoped<ITicketStatusHistoryRepository, TicketStatusHistoryRepository>();
+        services.AddScoped<ITicketAssignmentRepository, TicketAssignmentRepository>();
+        services.AddScoped<ITicketResolutionRepository, TicketResolutionRepository>();
+        services.AddScoped<ITicketNoteRepository, TicketNoteRepository>();
         services.AddScoped<ITicketingUnitOfWork, TicketingUnitOfWork>();
         services.AddScoped<IntakeRecordAppService>();
         services.AddScoped<TicketCreationAppService>();
+        services.AddScoped<TicketQueryAppService>();
+        services.AddScoped<TicketAssignmentAppService>();
+        services.AddScoped<TicketLifecycleAppService>();
+        services.AddScoped<TicketNoteAppService>();
+        services.AddScoped<TicketReconciliationAppService>();
 
         return services;
     }

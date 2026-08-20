@@ -54,6 +54,15 @@ public class Ticket
     public int ReopenCount { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
 
+    /// <summary>
+    /// MVP-Data-Dictionary.md §2.10 — optimistic concurrency token. Deferred
+    /// by the ticket-creation increment ("no endpoint in this increment
+    /// mutates an existing Ticket") to the increment that adds assignment/
+    /// transfer/status-change — this one. EF Core maps this as SQL Server
+    /// `rowversion`; never set from application code.
+    /// </summary>
+    public byte[] RowVersion { get; private set; } = [];
+
     private Ticket() { }
 
     /// <summary>The normal path (FR-CH-01/FR-VER-02): a ticket created from an already-confirmed, just-consumed <c>VerificationSession</c>. Fully verified from the moment it exists.</summary>
@@ -171,5 +180,95 @@ public class Ticket
         ContactReferenceId = contactReferenceId;
         VerificationStatus = CrmVerificationStatus.Verified;
         SlaState = SlaState.Running;
+    }
+
+    /// <summary>MVP-API-Contracts.md §3.5 / §2.12 — sets the current owner and appends a superseding <see cref="TicketAssignment"/> row is the caller's job (this method only updates the ticket's own denormalized pointer).</summary>
+    public void AssignTo(Guid employeeId)
+    {
+        if (employeeId == Guid.Empty)
+        {
+            throw new ArgumentException("AssignedEmployeeId is required.", nameof(employeeId));
+        }
+
+        CurrentOwnerEmployeeId = employeeId;
+    }
+
+    /// <summary>MVP-API-Contracts.md §3.6 — moves CurrentDepartmentId, leaves OriginatingDepartmentId untouched (write-once, MVP-ERD.md §2.3), and clears the current owner: the receiving department must explicitly claim/assign it.</summary>
+    public void TransferToDepartment(int targetDepartmentId)
+    {
+        if (targetDepartmentId == CurrentDepartmentId)
+        {
+            throw new TicketAlreadyInTargetDepartmentException(TicketId, targetDepartmentId);
+        }
+
+        CurrentDepartmentId = targetDepartmentId;
+        CurrentOwnerEmployeeId = null;
+    }
+
+    /// <summary>
+    /// Solution-Analysis.md §5.6's TicketStatus transition table, restricted
+    /// to the "work" sub-machine this method owns: Open→InProgress
+    /// (requires an already-assigned owner) and InProgress↔PendingCustomer/
+    /// PendingThirdParty (pivoting through InProgress, not directly between
+    /// the two Pending states). Resolved/Closed are reached only via
+    /// <see cref="Resolve"/>/<see cref="Close"/> — deliberately distinct
+    /// operations, not reachable through this method (per this increment's
+    /// scope: Resolve/Close stay separate actions).
+    /// </summary>
+    public void ChangeStatus(TicketStatus newStatus)
+    {
+        var isAllowed = (TicketStatus, newStatus) switch
+        {
+            (TicketStatus.Open, TicketStatus.InProgress) => true,
+            (TicketStatus.InProgress, TicketStatus.PendingCustomer) => true,
+            (TicketStatus.InProgress, TicketStatus.PendingThirdParty) => true,
+            (TicketStatus.PendingCustomer, TicketStatus.InProgress) => true,
+            (TicketStatus.PendingThirdParty, TicketStatus.InProgress) => true,
+            _ => false
+        };
+
+        if (!isAllowed)
+        {
+            throw new InvalidTicketStatusTransitionException(TicketId, TicketStatus, newStatus);
+        }
+
+        if (newStatus == TicketStatus.InProgress && TicketStatus == TicketStatus.Open && CurrentOwnerEmployeeId is null)
+        {
+            throw new TicketNotAssignedException(TicketId);
+        }
+
+        TicketStatus = newStatus;
+    }
+
+    /// <summary>
+    /// MVP-API-Contracts.md §3.9 / Solution-Analysis.md §5.6 — marks the
+    /// underlying work done. Valid only from InProgress/PendingCustomer/
+    /// PendingThirdParty (never directly from Open, never twice). Does not
+    /// itself create the <see cref="TicketResolution"/> row or write audit/
+    /// history — mirrors <see cref="CreateVerified"/>'s "bare state
+    /// transition" division of responsibility; the calling application
+    /// service does both in the same transaction.
+    /// </summary>
+    public void Resolve(ResolutionOutcome outcome, long? duplicateOfTicketId)
+    {
+        if (TicketStatus is not (TicketStatus.InProgress or TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty))
+        {
+            throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
+        }
+
+        TicketStatus = TicketStatus.Resolved;
+        ResolutionOutcome = (byte)outcome;
+        DuplicateOfTicketId = outcome == ResolutionOutcome.Duplicate ? duplicateOfTicketId : null;
+    }
+
+    /// <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
+    public void Close()
+    {
+        if (TicketStatus != TicketStatus.Resolved)
+        {
+            throw new TicketNotYetResolvedException(TicketId);
+        }
+
+        TicketStatus = TicketStatus.Closed;
     }
 }

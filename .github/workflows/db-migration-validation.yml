@@ -77,7 +77,7 @@ jobs:
           dotnet ef migrations script --idempotent \
             --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure \
             -o idempotent-migration.sql
-          echo "::group::Idempotent migration script (InitialIdentityAndAccess..AddTicketing)"
+          echo "::group::Idempotent migration script (InitialIdentityAndAccess..AddTicketOperations)"
           cat idempotent-migration.sql
           echo "::endgroup::"
 
@@ -88,7 +88,7 @@ jobs:
           path: src/idempotent-migration.sql
           retention-days: 30
 
-      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing)
+      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing, AddTicketOperations)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
@@ -131,6 +131,7 @@ jobs:
             "AuditEntries" "ContactReferences" "UnitReferences" "VerificationSessions" \
             "Categories" "Priorities" "IntakeRecords" "Tickets" \
             "TicketRequesterSnapshots" "TicketStatusHistory" \
+            "TicketAssignments" "TicketResolutions" "TicketNotes" \
             "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
@@ -142,7 +143,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 21 tables, no unrelated (SLA/Genesys) tables."
+          echo "Table list matches exactly: 24 tables, no unrelated (SLA/Genesys) tables."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -198,6 +199,56 @@ jobs:
           fi
           echo "Unique index present on Tickets.TicketNumber."
 
+      - name: Verify schema — filtered unique index (one current assignment per ticket)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # Backs TicketAssignmentAppService.AssignAsync's history model
+          # (MVP-Data-Dictionary.md §2.12: "exactly one true row per
+          # TicketId") — the real, SQL-Server-only enforcement the InMemory
+          # provider used by the test suite cannot verify.
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'IX_TicketAssignments_TicketId';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([IsCurrent]=(1))" ]; then
+            echo "::error::IX_TicketAssignments_TicketId filter_definition was '$filter_trimmed', expected '([IsCurrent]=(1))'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — filtered unique index (one current resolution per ticket)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # Backs TicketLifecycleAppService.CloseAsync's "cannot close
+          # without a current resolution" gate (MVP-ERD.md §2.14).
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'IX_TicketResolutions_TicketId';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([IsCurrent]=(1))" ]; then
+            echo "::error::IX_TicketResolutions_TicketId filter_definition was '$filter_trimmed', expected '([IsCurrent]=(1))'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — Tickets.RowVersion is a real optimistic-concurrency token
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # Backs every assignment/transfer/status-change/resolve/close/
+          # reconciliation write's lost-update protection
+          # (TicketingUnitOfWork's DbUpdateConcurrencyException translation)
+          # — confirms the column is a real SQL Server rowversion, not just
+          # an EF Core-side annotation with no database backing.
+          data_type=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Tickets' AND COLUMN_NAME = 'RowVersion';")
+          data_type_trimmed=$(echo "$data_type" | tr -d '[:space:]')
+          echo "DATA_TYPE = '$data_type_trimmed'"
+          if [ "$data_type_trimmed" != "timestamp" ]; then
+            echo "::error::Tickets.RowVersion DATA_TYPE was '$data_type_trimmed', expected 'timestamp' (SQL Server's name for rowversion)."
+            exit 1
+          fi
+          echo "Tickets.RowVersion is a real rowversion/timestamp column."
+
       - name: Verify schema — Tickets/IntakeRecords column nullability (senior review item 12)
         run: |
           export PATH="$PATH:/opt/mssql-tools18/bin"
@@ -223,7 +274,7 @@ jobs:
             "Tickets.OriginatingDepartmentId=NO" "Tickets.PriorityId=NO" "Tickets.ReopenCount=NO" \
             "Tickets.RequestSummary=NO" "Tickets.ResolutionOutcome=YES" "Tickets.SlaState=NO" \
             "Tickets.TicketId=NO" "Tickets.TicketNumber=NO" "Tickets.TicketStatus=NO" \
-            "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" | sort)
+            "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" "Tickets.RowVersion=NO" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- expected nullability ---"
           echo "$expected"
@@ -232,7 +283,38 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (28 columns)."
+          echo "Column nullability matches the confirmed design exactly (29 columns)."
+
+      - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # Confirms BR-011 (ResolutionNote mandatory) and the assignment/
+          # note actor fields directly against real SQL Server.
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT TABLE_NAME + '.' + COLUMN_NAME + '=' + IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ('TicketAssignments','TicketResolutions','TicketNotes') ORDER BY TABLE_NAME, COLUMN_NAME;" | sed '/^$/d' | tr -d ' ')
+          echo "--- actual nullability ---"
+          echo "$actual"
+          expected=$(printf '%s\n' \
+            "TicketAssignments.TicketAssignmentId=NO" "TicketAssignments.TicketId=NO" \
+            "TicketAssignments.AssignedEmployeeId=NO" "TicketAssignments.AssignedDepartmentId=NO" \
+            "TicketAssignments.AssignedAtUtc=NO" "TicketAssignments.AssigningActorEmployeeId=YES" \
+            "TicketAssignments.IsCurrent=NO" \
+            "TicketResolutions.TicketResolutionId=NO" "TicketResolutions.TicketId=NO" \
+            "TicketResolutions.ResolutionOutcome=NO" "TicketResolutions.ResolutionNote=NO" \
+            "TicketResolutions.ReasonCode=YES" "TicketResolutions.DuplicateOfTicketId=YES" \
+            "TicketResolutions.ResolvingEmployeeId=NO" "TicketResolutions.ResolvedAtUtc=NO" \
+            "TicketResolutions.IsCurrent=NO" \
+            "TicketNotes.TicketNoteId=NO" "TicketNotes.TicketId=NO" "TicketNotes.NoteText=NO" \
+            "TicketNotes.AuthorEmployeeId=NO" "TicketNotes.CreatedAtUtc=NO" | sort)
+          actual_sorted=$(echo "$actual" | sort)
+          echo "--- expected nullability ---"
+          echo "$expected"
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::TicketAssignments/TicketResolutions/TicketNotes column nullability does not match the confirmed design exactly."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "Column nullability matches the confirmed design exactly (21 columns)."
 
       - name: Verify schema — foreign keys on new Ticketing tables (senior review item 12)
         run: |
@@ -243,7 +325,7 @@ jobs:
           # retention posture carried through every prior architecture
           # document (MVP-ERD.md §3).
           actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
-            -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(parent_object_id) + '->' + OBJECT_NAME(referenced_object_id) + ':' + delete_referential_action_desc FROM sys.foreign_keys WHERE OBJECT_NAME(parent_object_id) IN ('Tickets','IntakeRecords','TicketRequesterSnapshots','TicketStatusHistory','Categories') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
+            -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(parent_object_id) + '->' + OBJECT_NAME(referenced_object_id) + ':' + delete_referential_action_desc FROM sys.foreign_keys WHERE OBJECT_NAME(parent_object_id) IN ('Tickets','IntakeRecords','TicketRequesterSnapshots','TicketStatusHistory','Categories','TicketAssignments','TicketResolutions','TicketNotes') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
           echo "--- foreign keys (child->parent:delete-action) ---"
           echo "$actual"
           fk_count=$(echo "$actual" | grep -c '.' || true)
@@ -254,8 +336,8 @@ jobs:
             echo "$non_no_action"
             exit 1
           fi
-          if [ "$fk_count" -ne 16 ]; then
-            echo "::error::Expected exactly 16 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords, found $fk_count."
+          if [ "$fk_count" -ne 25 ]; then
+            echo "::error::Expected exactly 25 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes, found $fk_count."
             exit 1
           fi
           echo "All foreign keys on the new Ticketing tables are NO_ACTION (Restrict), as required."

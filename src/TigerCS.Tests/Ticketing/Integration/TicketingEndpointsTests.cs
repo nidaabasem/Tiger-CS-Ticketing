@@ -154,4 +154,116 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
 
         Assert.Equal(expectAuthorized ? HttpStatusCode.Created : HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    private async Task<(long TicketId, int DepartmentId, byte[] RowVersion)> CreateVerifiedTicketAsync(HttpClient creatorClient, string departmentPrefix = "Facilities")
+    {
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync(departmentPrefix + " " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
+
+        var intakeResponse = await creatorClient.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var unitResponse = await creatorClient.GetAsync("/api/crm/units/CRM-UNIT-1001");
+        var unit = await unitResponse.Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
+        var contactsResponse = await creatorClient.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts");
+        var contacts = await contactsResponse.Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
+
+        var sessionResponse = await creatorClient.PostAsJsonAsync(
+            "/api/verification-sessions",
+            new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation"));
+        var session = await sessionResponse.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+
+        var ticketResponse = await creatorClient.PostAsJsonAsync(
+            "/api/tickets",
+            new CreateTicketFromVerificationRequestDto(
+                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+        var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+
+        return (ticket!.TicketId, departmentId, Convert.FromBase64String(ticket.RowVersion));
+    }
+
+    [Fact]
+    public async Task FullOperationsLifecycle_AssignWorkResolveClose_Succeeds()
+    {
+        var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, departmentId, initialRowVersion) = await CreateVerifiedTicketAsync(agentClient);
+
+        var (workerUsername, workerPassword, workerId) = await _factory.SeedEmployeeAsync(Roles.DepartmentEmployee);
+        await _factory.AssignPrimaryDepartmentAsync(workerId, departmentId);
+        var workerClient = _factory.CreateClient();
+        var loginResponse = await workerClient.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(workerUsername, workerPassword));
+        var login = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        workerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+
+        // Self-claim.
+        var assignResponse = await workerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(workerId, initialRowVersion));
+        Assert.Equal(HttpStatusCode.OK, assignResponse.StatusCode);
+        var afterAssign = await assignResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        // Start work.
+        var statusResponse = await workerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/status", new ChangeStatusRequestDto("InProgress", Convert.FromBase64String(afterAssign!.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+        var afterStatus = await statusResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        // Resolve as the Department Employee who owns it.
+        var resolveResponse = await workerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/resolution",
+            new ResolveTicketRequestDto("Resolved", "Fixed the AC unit.", null, null, Convert.FromBase64String(afterStatus!.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, resolveResponse.StatusCode);
+        var afterResolve = await resolveResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        // A Department Employee may never close (ISSUE-022).
+        var forbiddenClose = await workerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/close", new CloseTicketRequestDto(Convert.FromBase64String(afterResolve!.RowVersion)));
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenClose.StatusCode);
+
+        // CS Agent closes it.
+        var closeResponse = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/close", new CloseTicketRequestDto(Convert.FromBase64String(afterResolve.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, closeResponse.StatusCode);
+        var closed = await closeResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Closed", closed!.TicketStatus);
+
+        // Notes are visible cross-department to CS.
+        var noteResponse = await agentClient.PostAsJsonAsync($"/api/tickets/{ticketId}/notes", new CreateNoteRequestDto("Customer confirmed resolution."));
+        Assert.Equal(HttpStatusCode.Created, noteResponse.StatusCode);
+
+        var detailResponse = await agentClient.GetAsync($"/api/tickets/{ticketId}");
+        Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Assign_ByEmployeeOfADifferentDepartment_Returns403_PreventsCrossDepartmentAssignment()
+    {
+        var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, _, _) = await CreateVerifiedTicketAsync(agentClient);
+
+        var (outsiderUsername, outsiderPassword, outsiderId) = await _factory.SeedEmployeeAsync(Roles.DepartmentEmployee);
+        var otherDepartmentId = await _factory.CreateDepartmentAsync("Unrelated " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        await _factory.AssignPrimaryDepartmentAsync(outsiderId, otherDepartmentId);
+
+        var outsiderClient = _factory.CreateClient();
+        var loginResponse = await outsiderClient.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(outsiderUsername, outsiderPassword));
+        var login = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        outsiderClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+
+        var response = await outsiderClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(outsiderId, []));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetQueue_WithoutToken_Returns401()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/tickets");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }

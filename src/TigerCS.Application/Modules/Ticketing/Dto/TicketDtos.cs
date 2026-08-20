@@ -29,7 +29,8 @@ public sealed record TicketResponseDto(
     string EscalationLevel,
     string SlaState,
     string RequestSummary,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    string RowVersion);
 
 public enum TicketCreationOutcome
 {
