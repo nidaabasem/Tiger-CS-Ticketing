@@ -107,9 +107,9 @@ public sealed class VerificationSessionAppService(
             now.Add(SessionLifetime),
             string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey);
 
-        // Selection (constructor) and verbal confirmation happen in this one
+        // Selection (constructor) and confirmation happen in this one
         // application-layer call — see the type-level remarks above.
-        session.ConfirmVerbally(now);
+        session.Confirm(now);
 
         await sessionRepository.AddAsync(session, cancellationToken);
         await auditWriter.WriteAsync(
@@ -173,7 +173,10 @@ public sealed class VerificationSessionAppService(
             session.UnitReferenceId,
             session.ContactReferenceId,
             effectiveStatus.ToString(),
-            session.ConfirmedVerbally,
+            // Domain's channel-neutral Confirmed maps onto the DTO's
+            // approved wire field name ConfirmedVerbally (MVP-API-Contracts.md
+            // §2.4.3) — see VerificationSession's type-level remarks.
+            session.Confirmed,
             session.CreatedAtUtc,
             session.ConfirmedAtUtc,
             session.ExpiresAtUtc,

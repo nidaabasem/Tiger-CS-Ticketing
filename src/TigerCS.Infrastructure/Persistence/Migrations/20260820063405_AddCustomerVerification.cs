@@ -94,7 +94,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     SnapshotUnitType = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: true),
                     SnapshotContactDisplayName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
                     SnapshotContactChannel = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
-                    ConfirmedVerbally = table.Column<bool>(type: "bit", nullable: false),
+                    Confirmed = table.Column<bool>(type: "bit", nullable: false),
                     Status = table.Column<int>(type: "int", nullable: false),
                     CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
                     ConfirmedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),

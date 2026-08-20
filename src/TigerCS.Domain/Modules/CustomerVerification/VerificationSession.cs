@@ -1,19 +1,37 @@
 namespace TigerCS.Domain.Modules.CustomerVerification;
 
 /// <summary>
-/// A short-lived, pre-ticket record of an agent's CRM unit/contact lookup and
-/// verbal read-back confirmation (MVP-ERD.md §2.24, Finding DR-01 — resolves
-/// the circular dependency where ticket creation needed a confirmation that
-/// itself needed a ticket to exist). Single-agent-owned, single-use,
-/// write-once snapshot; a ticket is created *from* a confirmed, unconsumed
-/// session in a later phase (Ticketing module, out of scope here).
+/// A short-lived, pre-ticket record of an agent's CRM unit/contact lookup
+/// and the requester's confirmation of that match (MVP-ERD.md §2.24,
+/// Finding DR-01 — resolves the circular dependency where ticket creation
+/// needed a confirmation that itself needed a ticket to exist).
+/// Single-agent-owned, single-use, write-once snapshot; a ticket is
+/// created *from* a confirmed, unconsumed session in a later phase
+/// (Ticketing module, out of scope here).
 ///
+/// <para>
+/// <b>Channel-neutral by design.</b> This entity does not assume Phone or a
+/// verbal confirmation — <see cref="Confirm"/> models "the requester
+/// confirmed this match," regardless of how that confirmation was
+/// obtained. MVP's own approved scope is Phone-only (FR-CH-01/FR-CH-02),
+/// and MVP-API-Contracts.md §2.4.3's wire contract accordingly names its
+/// confirmation field <c>ConfirmedVerbally</c> for a verbal read-back per
+/// FR-VER-03 — <see cref="VerificationSessionAppService"/>'s DTO mapping
+/// preserves that literal, approved field name on the wire even though the
+/// domain method here does not. A future channel (App/Website, WhatsApp,
+/// Social Media, kiosk — Solution-Analysis.md §2.2's FR-CH-02/03, Phase 2+)
+/// can call <see cref="Confirm"/> with its own confirmation mechanism (a
+/// customer's UI click, an authenticated portal action, etc.) without any
+/// change to this entity or its state machine.
+/// </para>
+/// <para>
 /// For this pilot phase (MVP-Implementation-Backlog.md §0.2/S-07), the
-/// application layer combines unit/contact selection and verbal confirmation
-/// into a single call, rather than MVP-API-Contracts.md §2.4's separate
+/// application layer combines unit/contact selection and confirmation into
+/// a single call, rather than MVP-API-Contracts.md §2.4's separate
 /// start/select/confirm endpoints — but this entity still models the full
 /// state machine, so the single-use/expiry/ownership invariants are real,
 /// not simulated, and ready for the Ticketing module to consume unchanged.
+/// </para>
 /// </summary>
 public class VerificationSession
 {
@@ -29,7 +47,8 @@ public class VerificationSession
     public string? SnapshotContactDisplayName { get; private set; }
     public string? SnapshotContactChannel { get; private set; }
 
-    public bool ConfirmedVerbally { get; private set; }
+    /// <summary>Whether the requester confirmed this unit/contact match — channel-neutral (see the type-level remarks).</summary>
+    public bool Confirmed { get; private set; }
     public VerificationSessionStatus Status { get; private set; }
 
     public DateTime CreatedAtUtc { get; private set; }
@@ -108,8 +127,14 @@ public class VerificationSession
             ? VerificationSessionStatus.Expired
             : Status;
 
-    /// <summary>Records the agent's verbal read-back confirmation (MVP-API-Contracts.md §2.4.3, folded into S-07's single call).</summary>
-    public void ConfirmVerbally(DateTime confirmedAtUtc)
+    /// <summary>
+    /// Records the requester's confirmation of the unit/contact match
+    /// (MVP-API-Contracts.md §2.4.3, folded into S-07's single call).
+    /// Channel-neutral — see the type-level remarks for why this is not
+    /// named/scoped to a verbal confirmation specifically, even though
+    /// MVP's own approved channel is Phone-only.
+    /// </summary>
+    public void Confirm(DateTime confirmedAtUtc)
     {
         if (EffectiveStatus(confirmedAtUtc) == VerificationSessionStatus.Expired)
         {
@@ -121,7 +146,7 @@ public class VerificationSession
             throw new VerificationSessionNotInProgressException(VerificationSessionId, Status);
         }
 
-        ConfirmedVerbally = true;
+        Confirmed = true;
         ConfirmedAtUtc = confirmedAtUtc;
         Status = VerificationSessionStatus.Confirmed;
     }

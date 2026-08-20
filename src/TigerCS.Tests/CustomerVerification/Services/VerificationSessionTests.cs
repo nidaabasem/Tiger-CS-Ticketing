@@ -17,35 +17,35 @@ public class VerificationSessionTests
             now, now.Add(lifetime ?? TimeSpan.FromMinutes(30)), idempotencyKey: null);
 
     [Fact]
-    public void ConfirmVerbally_WhileInProgress_TransitionsToConfirmed()
+    public void Confirm_WhileInProgress_TransitionsToConfirmed()
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
 
-        session.ConfirmVerbally(now);
+        session.Confirm(now);
 
         Assert.Equal(VerificationSessionStatus.Confirmed, session.Status);
-        Assert.True(session.ConfirmedVerbally);
+        Assert.True(session.Confirmed);
         Assert.Equal(now, session.ConfirmedAtUtc);
     }
 
     [Fact]
-    public void ConfirmVerbally_AlreadyConfirmed_ThrowsNotInProgress()
+    public void Confirm_AlreadyConfirmed_ThrowsNotInProgress()
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
-        session.ConfirmVerbally(now);
+        session.Confirm(now);
 
-        Assert.Throws<VerificationSessionNotInProgressException>(() => session.ConfirmVerbally(now));
+        Assert.Throws<VerificationSessionNotInProgressException>(() => session.Confirm(now));
     }
 
     [Fact]
-    public void ConfirmVerbally_AfterExpiry_ThrowsExpired()
+    public void Confirm_AfterExpiry_ThrowsExpired()
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now, TimeSpan.FromMinutes(30));
 
-        Assert.Throws<VerificationSessionExpiredException>(() => session.ConfirmVerbally(now.AddMinutes(31)));
+        Assert.Throws<VerificationSessionExpiredException>(() => session.Confirm(now.AddMinutes(31)));
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
-        session.ConfirmVerbally(now);
+        session.Confirm(now);
 
         session.Consume(ticketId: 42, now);
 
@@ -109,7 +109,7 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
-        session.ConfirmVerbally(now);
+        session.Confirm(now);
         session.Consume(1, now);
 
         Assert.Throws<VerificationSessionAlreadyConsumedException>(() => session.Consume(2, now));
@@ -120,7 +120,7 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now, TimeSpan.FromMinutes(30));
-        session.ConfirmVerbally(now);
+        session.Confirm(now);
 
         Assert.Throws<VerificationSessionExpiredException>(() => session.Consume(1, now.AddMinutes(31)));
     }

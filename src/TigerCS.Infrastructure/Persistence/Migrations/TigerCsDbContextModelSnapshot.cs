@@ -261,11 +261,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AgentEmployeeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("Confirmed")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime?>("ConfirmedAtUtc")
                         .HasColumnType("datetime2");
-
-                    b.Property<bool>("ConfirmedVerbally")
-                        .HasColumnType("bit");
 
                     b.Property<DateTime?>("ConsumedAtUtc")
                         .HasColumnType("datetime2");

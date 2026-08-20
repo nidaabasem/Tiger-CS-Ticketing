@@ -25,7 +25,7 @@ public class VerificationSessionConfiguration : IEntityTypeConfiguration<Verific
         builder.Property(s => s.SnapshotContactDisplayName).HasMaxLength(200);
         builder.Property(s => s.SnapshotContactChannel).HasMaxLength(200);
 
-        builder.Property(s => s.ConfirmedVerbally).IsRequired();
+        builder.Property(s => s.Confirmed).IsRequired();
         builder.Property(s => s.Status).IsRequired();
         builder.Property(s => s.CreatedAtUtc).IsRequired();
         builder.Property(s => s.ExpiresAtUtc).IsRequired();

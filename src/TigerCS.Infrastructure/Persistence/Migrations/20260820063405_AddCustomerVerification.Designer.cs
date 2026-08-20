@@ -12,7 +12,7 @@ using TigerCS.Infrastructure.Persistence;
 namespace TigerCS.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TigerCsDbContext))]
-    [Migration("20260820061652_AddCustomerVerification")]
+    [Migration("20260820063405_AddCustomerVerification")]
     partial class AddCustomerVerification
     {
         /// <inheritdoc />
@@ -264,11 +264,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AgentEmployeeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("Confirmed")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime?>("ConfirmedAtUtc")
                         .HasColumnType("datetime2");
-
-                    b.Property<bool>("ConfirmedVerbally")
-                        .HasColumnType("bit");
 
                     b.Property<DateTime?>("ConsumedAtUtc")
                         .HasColumnType("datetime2");

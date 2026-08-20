@@ -87,20 +87,32 @@ public class StartupValidationTests
     }
 
     /// <summary>
-    /// Production deployment is blocked through release governance and
-    /// documentation (docs/DEV-SETUP.md, ADR-0022), not by the application
-    /// refusing to start — this proves that's actually true: given valid
-    /// configuration, the app starts under ASPNETCORE_ENVIRONMENT=Production
-    /// exactly as it would under any other environment name.
+    /// Superseded by the CRM Verification increment. PR #9's original
+    /// version of this test proved Production wasn't unconditionally
+    /// refused at the JWT/security-config level, by ASPNETCORE_ENVIRONMENT
+    /// name alone — that decision (no blanket "if IsProduction() throw")
+    /// still stands and is unchanged. What's new: MockCrmGateway must never
+    /// run in Production (explicit review requirement) — Program.cs now
+    /// fails fast if Crm:Provider resolves to "Mock" outside
+    /// Development/Testing, which is every environment's default today
+    /// (Crm:Provider has no non-Mock value yet — no real ICrmGateway
+    /// implementation exists, per backlog S-06). Given valid JWT config
+    /// (the same config that proves other environments start cleanly, see
+    /// <see cref="ValidConfiguration_StartsSuccessfully"/>), Production
+    /// therefore genuinely cannot start today — a correct outcome, not a
+    /// regression: it is consistent with "no production deployment is
+    /// authorized at this pilot stage" (ADR-0022, docs/DEV-SETUP.md), now
+    /// enforced by a real, narrow, risk-specific code gate rather than
+    /// documentation alone.
     /// </summary>
     [Fact]
-    public void ProductionEnvironment_WithValidConfiguration_StartsSuccessfully()
+    public void ProductionEnvironment_WithMockCrmProvider_FailsAtStartup()
     {
         using var factory = new ConfiguredFactory("Production", ValidConfig());
 
-        var server = factory.Server;
-
-        Assert.NotNull(server);
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("Crm:Provider", ex.ToString());
+        Assert.Contains("Mock", ex.ToString());
     }
 
     [Fact]
