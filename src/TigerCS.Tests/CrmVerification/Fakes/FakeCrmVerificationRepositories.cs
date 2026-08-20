@@ -88,15 +88,35 @@ public sealed class FakeCrmVerificationUnitOfWork : ICrmVerificationUnitOfWork
 {
     public int SaveChangesCallCount { get; private set; }
 
-    /// <summary>Simulates a concurrent-duplicate-write race (a unique-index violation) on the next SaveChangesAsync call only.</summary>
-    public bool ThrowDuplicateWriteExceptionOnce { get; set; }
+    /// <summary>
+    /// Simulates a concurrent-duplicate-write race (a unique-index
+    /// violation) on the next SaveChangesAsync call only — equivalent to
+    /// setting <see cref="ThrowDuplicateWriteExceptionOnCall"/> to
+    /// <see cref="SaveChangesCallCount"/> + 1 at the time it's set.
+    /// </summary>
+    public bool ThrowDuplicateWriteExceptionOnce
+    {
+        set => ThrowDuplicateWriteExceptionOnCall = value ? SaveChangesCallCount + 1 : null;
+    }
+
+    /// <summary>1-based SaveChangesAsync call number on which to throw DuplicateWriteException — lets a test let an earlier call (e.g. an unrelated entity's own upsert) succeed normally before the race hits a later one. Null = never.</summary>
+    public int? ThrowDuplicateWriteExceptionOnCall { get; set; }
+
+    /// <summary>Simulates a genuine, unrelated save failure (never a uniqueness violation) on the next SaveChangesAsync call only — must never be caught/recovered as if it were a duplicate-write race.</summary>
+    public bool ThrowUnrelatedFailureOnce { get; set; }
 
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveChangesCallCount++;
-        if (ThrowDuplicateWriteExceptionOnce)
+        if (ThrowUnrelatedFailureOnce)
         {
-            ThrowDuplicateWriteExceptionOnce = false;
+            ThrowUnrelatedFailureOnce = false;
+            throw new InvalidOperationException("Simulated unrelated save failure (not a uniqueness violation).");
+        }
+
+        if (ThrowDuplicateWriteExceptionOnCall == SaveChangesCallCount)
+        {
+            ThrowDuplicateWriteExceptionOnCall = null;
             throw new DuplicateWriteException(new InvalidOperationException("Simulated unique-constraint violation."));
         }
 

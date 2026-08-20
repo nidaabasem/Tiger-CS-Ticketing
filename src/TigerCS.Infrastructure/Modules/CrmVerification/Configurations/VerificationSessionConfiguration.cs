@@ -40,14 +40,18 @@ public class VerificationSessionConfiguration : IEntityTypeConfiguration<Verific
         // it and raises a constraint-violation error on a concurrent double
         // insert, which CrmVerificationUnitOfWork translates to
         // DuplicateWriteException for the app layer to recover from. The EF
-        // Core InMemory provider used by this project's test suite does
-        // NOT enforce filtered indexes (a documented InMemory limitation,
-        // confirmed empirically — see
-        // CrmVerificationEndpointsTests.CreateVerificationSession_ConcurrentDuplicateRequests_NeitherCallerCrashes's
-        // remarks) — this index's real existence/shape is instead validated
-        // against a real SQL Server by the db-migration-validation.yml CI
-        // workflow, and the recovery logic it triggers is proven
-        // deterministically in VerificationSessionAppServiceTests.
+        // Core InMemory provider used by this project's test suite does NOT
+        // enforce unique indexes at all under genuine concurrent writes from
+        // separate DbContext instances — confirmed empirically for this
+        // filtered index and, separately, for the plain (non-filtered)
+        // unique indexes on UnitReferences.CrmUnitId/ContactReferences.CrmContactId
+        // too (see CrmVerificationUnitOfWork.IsUniqueConstraintViolation's
+        // remarks and CrmVerificationEndpointsTests.CreateVerificationSession_ConcurrentDuplicateRequests_NeitherCallerCrashes's/
+        // CrmVerificationUpsertConcurrencyTests' remarks) — this index's
+        // real existence/shape is instead validated against a real SQL
+        // Server by the db-migration-validation.yml CI workflow, and the
+        // recovery logic it triggers is proven deterministically in
+        // VerificationSessionAppServiceTests.
         builder.Property(s => s.IdempotencyKey).HasMaxLength(300);
         builder.HasIndex(s => new { s.AgentEmployeeId, s.IdempotencyKey })
             .IsUnique()

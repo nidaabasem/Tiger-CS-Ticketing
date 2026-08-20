@@ -263,13 +263,15 @@ public class CrmVerificationEndpointsTests : IClassFixture<TigerCsApiFactory>
     ///
     /// Two genuinely concurrent requests with the same Idempotency-Key are
     /// fired here, but this test class runs against the EF Core
-    /// <b>InMemory</b> provider (TigerCsApiFactory), which does not enforce
-    /// SQL Server's filtered unique index (<c>HasFilter</c> is a
-    /// relational-only concept the InMemory provider silently ignores —
-    /// confirmed empirically: an earlier version of this test asserting
-    /// exactly one row failed, because InMemory let both concurrent inserts
-    /// through). This is a test-infrastructure limitation, not a production
-    /// defect: the real app (Program.cs) always runs against SQL Server,
+    /// <b>InMemory</b> provider (TigerCsApiFactory), which — confirmed
+    /// empirically, not assumed, and re-confirmed separately for
+    /// CrmVerificationAppService's plain (non-filtered) unique indexes in
+    /// CrmVerificationUpsertConcurrencyTests — does not enforce a unique
+    /// index at all under genuine concurrent writes from separate DbContext
+    /// instances: an earlier version of this test asserting exactly one row
+    /// failed, because InMemory let both concurrent inserts through. This is
+    /// a test-infrastructure limitation, not a production defect: the real
+    /// app (Program.cs) always runs against SQL Server,
     /// where the filtered unique index on (AgentEmployeeId, IdempotencyKey)
     /// (VerificationSessionConfiguration) is real and does throw on a race —
     /// its existence is validated by the real-SQL-Server

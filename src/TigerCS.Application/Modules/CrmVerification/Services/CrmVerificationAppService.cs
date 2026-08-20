@@ -62,7 +62,6 @@ public sealed class CrmVerificationAppService(
         }
 
         var unitReference = await UpsertUnitAsync(crmUnit, cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         var contacts = await contactRepository.GetByUnitReferenceIdAsync(unitReference.UnitReferenceId, cancellationToken);
         return CrmUnitLookupResult.Success(ToDto(unitReference, contacts.Count));
@@ -84,10 +83,11 @@ public sealed class CrmVerificationAppService(
         var unitReferences = new List<UnitReference>();
         foreach (var match in matches)
         {
+            // Each unit is upserted (attempt-write, recover-on-race) and
+            // committed individually — see UpsertUnitAsync's remarks — so a
+            // race on one match can never be misattributed to another.
             unitReferences.Add(await UpsertUnitAsync(match, cancellationToken));
         }
-
-        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         var results = new List<UnitVerificationResponseDto>();
         foreach (var unitReference in unitReferences)
@@ -118,21 +118,20 @@ public sealed class CrmVerificationAppService(
             return CrmContactsLookupResult.Unavailable();
         }
 
+        // Committed by UpsertUnitAsync itself, so UnitReferenceId is
+        // assigned before contacts FK it below.
         var unitReference = await UpsertUnitAsync(crmUnit, cancellationToken);
-        // Saved now so UnitReferenceId is assigned before contacts FK it below.
-        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         var contactReferences = new List<ContactReference>();
         foreach (var crmContact in crmContacts)
         {
-            var contactReference = await UpsertContactAsync(unitReference.UnitReferenceId, crmContact, cancellationToken);
-            contactReferences.Add(contactReference);
-
-            // Saved per-contact (not once after the loop) so a later
-            // contact's AuthorizedRepresentativeOfCrmContactId lookup can
-            // resolve an earlier contact in this same batch — a repository
-            // query only sees rows already committed, not pending adds.
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+            // Committed per-contact by UpsertContactAsync itself (not
+            // batched) so a later contact's
+            // AuthorizedRepresentativeOfCrmContactId lookup can resolve an
+            // earlier contact in this same batch — a repository query only
+            // sees rows already committed, not pending adds — and so a race
+            // on one contact can never be misattributed to another.
+            contactReferences.Add(await UpsertContactAsync(unitReference.UnitReferenceId, crmContact, cancellationToken));
         }
 
         var dtos = contactReferences
@@ -148,6 +147,19 @@ public sealed class CrmVerificationAppService(
         return CrmContactsLookupResult.Success(dtos);
     }
 
+    /// <summary>
+    /// Find-or-create against <c>UnitReferences.CrmUnitId</c> (the correct,
+    /// immutable CRM external identifier — MVP-Data-Dictionary.md §2.7 —
+    /// enforced by a real DB-level unique index, UnitReferenceConfiguration).
+    /// The find-then-insert here is still a TOCTOU race on its own (two
+    /// concurrent lookups of the same never-before-cached unit can both find
+    /// nothing and both attempt to insert); the unique index is the actual
+    /// backstop, and this method safely recovers from it: attempt the
+    /// write, and on <see cref="DuplicateWriteException"/> — a genuine
+    /// unique-constraint violation only, never an unrelated database update
+    /// failure, see CrmVerificationUnitOfWork's remarks — reload and return
+    /// the winner's row instead of a second, orphaned local instance.
+    /// </summary>
     private async Task<UnitReference> UpsertUnitAsync(CrmUnitResult crmUnit, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -155,15 +167,37 @@ public sealed class CrmVerificationAppService(
         if (existing is not null)
         {
             existing.RefreshFromCrm(crmUnit.UnitNumber, crmUnit.PropertyName, crmUnit.TowerName, crmUnit.UnitType, now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
             return existing;
         }
 
         var created = new UnitReference(
             crmUnit.CrmUnitId, crmUnit.UnitNumber, crmUnit.PropertyName, crmUnit.TowerName, crmUnit.UnitType, now);
         await unitRepository.AddAsync(created, cancellationToken);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException)
+        {
+            var winner = await unitRepository.GetByCrmUnitIdAsync(crmUnit.CrmUnitId, cancellationToken);
+            if (winner is not null)
+            {
+                return winner;
+            }
+
+            throw;
+        }
+
         return created;
     }
 
+    /// <summary>
+    /// Find-or-create against <c>ContactReferences.CrmContactId</c> (the
+    /// correct, immutable CRM external identifier — same reasoning and the
+    /// same recovery pattern as <see cref="UpsertUnitAsync"/>).
+    /// </summary>
     private async Task<ContactReference> UpsertContactAsync(
         int unitReferenceId, CrmContactResult crmContact, CancellationToken cancellationToken)
     {
@@ -183,6 +217,7 @@ public sealed class CrmVerificationAppService(
             existing.RefreshFromCrm(
                 crmContact.DisplayName, crmContact.ContactChannel, crmContact.ContactType,
                 authorizedRepresentativeOfContactReferenceId, now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
             return existing;
         }
 
@@ -190,6 +225,22 @@ public sealed class CrmVerificationAppService(
             crmContact.CrmContactId, unitReferenceId, crmContact.DisplayName, crmContact.ContactChannel,
             crmContact.ContactType, authorizedRepresentativeOfContactReferenceId, now);
         await contactRepository.AddAsync(created, cancellationToken);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException)
+        {
+            var winner = await contactRepository.GetByCrmContactIdAsync(crmContact.CrmContactId, cancellationToken);
+            if (winner is not null)
+            {
+                return winner;
+            }
+
+            throw;
+        }
+
         return created;
     }
 
