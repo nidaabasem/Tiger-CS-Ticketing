@@ -1,23 +1,37 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using TigerCS.Application.Modules.CrmVerification.Dto;
-using TigerCS.Application.Modules.CrmVerification.Services;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
+/// <b>A Tiger CS Ticketing endpoint — not a CRM endpoint.</b> Customer/
+/// requester verification (selecting the requester, recording the
+/// verification method/result, deciding whether ticket creation is
+/// allowed, the immutable verification-time snapshot, and the audit/
+/// authorization/expiry rules) is Tiger CS Ticketing's own business logic;
+/// Tiger CRM is consulted only as a read-only data source via
+/// <c>CrmUnitLookupAppService</c>/<c>ICrmGateway</c> before this endpoint is
+/// ever called. See <c>VerificationSessionAppService</c>'s remarks for the
+/// full ownership boundary — that is where this controller's logic
+/// actually lives; this class stays a thin HTTP adapter over it, same as
+/// every other controller in this codebase.
+///
+/// <para>
 /// MVP-API-Contracts.md §2.4, simplified per MVP-Implementation-Backlog.md
 /// §0.2/S-07 into a single combined create+select+confirm call — see
 /// VerificationSessionAppService's remarks for the full rationale. Scoped to
-/// CS Agent/CS Supervisor only (PolicyNames.CrmVerification) — see
+/// CS Agent/CS Supervisor only (PolicyNames.CustomerVerification) — see
 /// CrmController's remarks for why this is narrower than the contract's
 /// literal "Agent and above" wording.
+/// </para>
 /// </summary>
 [ApiController]
 [Route("api/verification-sessions")]
-[Authorize(Policy = PolicyNames.CrmVerification)]
+[Authorize(Policy = PolicyNames.CustomerVerification)]
 public class VerificationSessionsController(VerificationSessionAppService verificationSessionAppService) : ControllerBase
 {
     [HttpPost]

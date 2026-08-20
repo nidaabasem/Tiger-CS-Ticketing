@@ -6,7 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using TigerCS.Infrastructure;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
-using TigerCS.Integrations.Modules.CrmVerification;
+using TigerCS.Integrations.Modules.CrmIntegration;
 
 // Never log token/claim contents (review item 4) — IdentityModelEventSource's PII
 // logging defaults to off already, but this makes the choice explicit rather than

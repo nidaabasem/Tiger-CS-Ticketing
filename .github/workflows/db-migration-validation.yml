@@ -65,7 +65,7 @@ jobs:
         working-directory: src
         run: dotnet restore TigerCS.slnx
 
-      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCrmVerification)
+      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"

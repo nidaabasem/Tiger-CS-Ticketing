@@ -6,14 +6,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Application.Abstractions;
-using TigerCS.Application.Modules.CrmVerification.Abstractions;
-using TigerCS.Application.Modules.CrmVerification.Services;
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
-using TigerCS.Infrastructure.Modules.CrmVerification.Repositories;
+using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
@@ -111,8 +111,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IUnitReferenceRepository, UnitReferenceRepository>();
         services.AddScoped<IContactReferenceRepository, ContactReferenceRepository>();
         services.AddScoped<IVerificationSessionRepository, VerificationSessionRepository>();
-        services.AddScoped<ICrmVerificationUnitOfWork, CrmVerificationUnitOfWork>();
-        services.AddScoped<CrmVerificationAppService>();
+        services.AddScoped<ICustomerVerificationUnitOfWork, CustomerVerificationUnitOfWork>();
+        services.AddScoped<CrmUnitLookupAppService>();
         services.AddScoped<VerificationSessionAppService>();
 
         return services;
@@ -168,10 +168,10 @@ public static class InfrastructureServiceCollectionExtensions
             .RequireRole(Roles.SystemAdministrator)
             .Build());
 
-        // CS Agent/CS Supervisor only — see PolicyNames.CrmVerification's own
+        // CS Agent/CS Supervisor only — see PolicyNames.CustomerVerification's own
         // remarks for the Solution-Analysis.md §4.1 vs. MVP-API-Contracts.md
         // §0 conflict this resolves, confirmed rather than guessed.
-        options.AddPolicy(PolicyNames.CrmVerification, Base()
+        options.AddPolicy(PolicyNames.CustomerVerification, Base()
             .RequireRole(Roles.CsAgent, Roles.CsSupervisor)
             .Build());
 
