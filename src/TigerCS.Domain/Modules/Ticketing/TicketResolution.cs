@@ -1,3 +1,8 @@
+// Alias needed because this type's own ResolutionOutcome *property* shadows
+// the ResolutionOutcome *enum* by simple name inside instance methods (see
+// Ticket.cs's identical alias for the same reason).
+using ResolutionOutcomeValue = TigerCS.Domain.Modules.Ticketing.ResolutionOutcome;
+
 namespace TigerCS.Domain.Modules.Ticketing;
 
 /// <summary>
@@ -37,7 +42,7 @@ public class TicketResolution
             throw new ArgumentException("ResolutionNote is required (BR-011).", nameof(resolutionNote));
         }
 
-        if (resolutionOutcome == ResolutionOutcome.Duplicate && duplicateOfTicketId is null)
+        if (resolutionOutcome == ResolutionOutcomeValue.Duplicate && duplicateOfTicketId is null)
         {
             throw new ArgumentException(
                 "DuplicateOfTicketId is required when ResolutionOutcome is Duplicate.", nameof(duplicateOfTicketId));

@@ -1,5 +1,12 @@
 using TigerCS.Domain.Modules.SlaAndEscalation;
 
+// Alias needed because this type's own ResolutionOutcome *property* (byte?)
+// shadows the ResolutionOutcome *enum* by simple name inside instance
+// methods (C# prefers the instance member over the type in that position) —
+// this gives instance methods below an unambiguous way to reference the
+// enum's members.
+using ResolutionOutcomeValue = TigerCS.Domain.Modules.Ticketing.ResolutionOutcome;
+
 namespace TigerCS.Domain.Modules.Ticketing;
 
 /// <summary>
@@ -249,7 +256,7 @@ public class Ticket
     /// transition" division of responsibility; the calling application
     /// service does both in the same transaction.
     /// </summary>
-    public void Resolve(ResolutionOutcome outcome, long? duplicateOfTicketId)
+    public void Resolve(ResolutionOutcomeValue outcome, long? duplicateOfTicketId)
     {
         if (TicketStatus is not (TicketStatus.InProgress or TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty))
         {
@@ -258,7 +265,7 @@ public class Ticket
 
         TicketStatus = TicketStatus.Resolved;
         ResolutionOutcome = (byte)outcome;
-        DuplicateOfTicketId = outcome == ResolutionOutcome.Duplicate ? duplicateOfTicketId : null;
+        DuplicateOfTicketId = outcome == ResolutionOutcomeValue.Duplicate ? duplicateOfTicketId : null;
     }
 
     /// <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
