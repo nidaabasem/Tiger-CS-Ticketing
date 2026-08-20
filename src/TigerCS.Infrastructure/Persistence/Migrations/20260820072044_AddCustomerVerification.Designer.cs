@@ -12,7 +12,7 @@ using TigerCS.Infrastructure.Persistence;
 namespace TigerCS.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TigerCsDbContext))]
-    [Migration("20260820063405_AddCustomerVerification")]
+    [Migration("20260820072044_AddCustomerVerification")]
     partial class AddCustomerVerification
     {
         /// <inheritdoc />
@@ -317,6 +317,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasColumnType("int");
 
                     b.Property<int>("UnitReferenceId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("VerificationMethod")
                         .HasColumnType("int");
 
                     b.HasKey("VerificationSessionId");

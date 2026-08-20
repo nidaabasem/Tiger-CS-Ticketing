@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
+using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
 namespace TigerCS.Api.Controllers;
@@ -40,9 +41,17 @@ public class VerificationSessionsController(VerificationSessionAppService verifi
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken)
     {
-        if (!request.ConfirmedVerbally)
+        if (!request.Confirmed)
         {
-            ModelState.AddModelError(nameof(request.ConfirmedVerbally), "ConfirmedVerbally must be true.");
+            ModelState.AddModelError(nameof(request.Confirmed), "Confirmed must be true.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (!Enum.TryParse<VerificationMethod>(request.VerificationMethod, ignoreCase: false, out _))
+        {
+            ModelState.AddModelError(
+                nameof(request.VerificationMethod),
+                $"VerificationMethod must be one of: {string.Join(", ", Enum.GetNames<VerificationMethod>())}.");
             return ValidationProblem(ModelState);
         }
 

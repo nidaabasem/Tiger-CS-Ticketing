@@ -35,11 +35,12 @@ public class VerificationSessionAppServiceTests
         var agentId = Guid.NewGuid();
 
         var result = await fixture.Service.CreateAndConfirmAsync(
-            agentId, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true), null);
+            agentId, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, "ManualAgentConfirmation"), null);
 
         Assert.Equal(VerificationSessionOutcome.Success, result.Outcome);
         Assert.Equal("Confirmed", result.Response!.Status);
-        Assert.True(result.Response.ConfirmedVerbally);
+        Assert.True(result.Response.Confirmed);
+        Assert.Equal("ManualAgentConfirmation", result.Response.VerificationMethod);
         Assert.Equal("1204", result.Response.SnapshotUnitNumber);
         Assert.Equal("Ahmed Al-Farsi", result.Response.SnapshotContactDisplayName);
         Assert.Equal(agentId, result.Response.AgentEmployeeId);
@@ -53,7 +54,7 @@ public class VerificationSessionAppServiceTests
         var contact = fixture.Contacts.Seed(unitReferenceId: 999, "C-1", "Ahmed Al-Farsi");
 
         var result = await fixture.Service.CreateAndConfirmAsync(
-            Guid.NewGuid(), new CreateVerificationSessionRequestDto(999, contact.ContactReferenceId, true), null);
+            Guid.NewGuid(), new CreateVerificationSessionRequestDto(999, contact.ContactReferenceId, true, "ManualAgentConfirmation"), null);
 
         Assert.Equal(VerificationSessionOutcome.UnitOrContactNotFound, result.Outcome);
     }
@@ -67,7 +68,7 @@ public class VerificationSessionAppServiceTests
         var contactOfB = fixture.Contacts.Seed(unitB.UnitReferenceId, "C-1", "Someone");
 
         var result = await fixture.Service.CreateAndConfirmAsync(
-            Guid.NewGuid(), new CreateVerificationSessionRequestDto(unitA.UnitReferenceId, contactOfB.ContactReferenceId, true), null);
+            Guid.NewGuid(), new CreateVerificationSessionRequestDto(unitA.UnitReferenceId, contactOfB.ContactReferenceId, true, "ManualAgentConfirmation"), null);
 
         Assert.Equal(VerificationSessionOutcome.UnitOrContactNotFound, result.Outcome);
     }
@@ -79,7 +80,7 @@ public class VerificationSessionAppServiceTests
         var unit = fixture.Units.Seed("CRM-1", "1204");
         var contact = fixture.Contacts.Seed(unit.UnitReferenceId, "C-1", "Ahmed Al-Farsi");
         var agentId = Guid.NewGuid();
-        var request = new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true);
+        var request = new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, "ManualAgentConfirmation");
 
         var first = await fixture.Service.CreateAndConfirmAsync(agentId, request, "double-submit-key-1");
         var second = await fixture.Service.CreateAndConfirmAsync(agentId, request, "double-submit-key-1");
@@ -101,7 +102,7 @@ public class VerificationSessionAppServiceTests
 
         var result = await service.CreateAndConfirmAsync(
             Guid.NewGuid(),
-            new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true),
+            new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, "ManualAgentConfirmation"),
             "race-key");
 
         // The recovery path re-queries by idempotency key rather than
@@ -126,7 +127,7 @@ public class VerificationSessionAppServiceTests
         // must not be silently swallowed.
         await Assert.ThrowsAsync<DuplicateWriteException>(() => service.CreateAndConfirmAsync(
             Guid.NewGuid(),
-            new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true),
+            new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, "ManualAgentConfirmation"),
             idempotencyKey: null));
     }
 
@@ -138,7 +139,7 @@ public class VerificationSessionAppServiceTests
         var contact = fixture.Contacts.Seed(unit.UnitReferenceId, "C-1", "Ahmed Al-Farsi");
         var agentId = Guid.NewGuid();
         var created = await fixture.Service.CreateAndConfirmAsync(
-            agentId, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true), null);
+            agentId, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, "ManualAgentConfirmation"), null);
 
         var result = await fixture.Service.GetAsync(created.Response!.VerificationSessionId, agentId);
 
@@ -153,7 +154,7 @@ public class VerificationSessionAppServiceTests
         var contact = fixture.Contacts.Seed(unit.UnitReferenceId, "C-1", "Ahmed Al-Farsi");
         var owningAgent = Guid.NewGuid();
         var created = await fixture.Service.CreateAndConfirmAsync(
-            owningAgent, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true), null);
+            owningAgent, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, "ManualAgentConfirmation"), null);
 
         var result = await fixture.Service.GetAsync(created.Response!.VerificationSessionId, Guid.NewGuid());
 

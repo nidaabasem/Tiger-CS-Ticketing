@@ -94,16 +94,19 @@ public class StartupValidationTests
     /// still stands and is unchanged. What's new: MockCrmGateway must never
     /// run in Production (explicit review requirement) — Program.cs now
     /// fails fast if Crm:Provider resolves to "Mock" outside
-    /// Development/Testing, which is every environment's default today
-    /// (Crm:Provider has no non-Mock value yet — no real ICrmGateway
-    /// implementation exists, per backlog S-06). Given valid JWT config
+    /// Development/Testing, which is <c>CrmGatewayOptions</c>' own default
+    /// and every environment's config today (no real ICrmGateway
+    /// implementation exists yet, per backlog S-06). Given valid JWT config
     /// (the same config that proves other environments start cleanly, see
-    /// <see cref="ValidConfiguration_StartsSuccessfully"/>), Production
-    /// therefore genuinely cannot start today — a correct outcome, not a
-    /// regression: it is consistent with "no production deployment is
-    /// authorized at this pilot stage" (ADR-0022, docs/DEV-SETUP.md), now
-    /// enforced by a real, narrow, risk-specific code gate rather than
-    /// documentation alone.
+    /// <see cref="ValidConfiguration_StartsSuccessfully"/>) and the default
+    /// "Mock" provider, Production therefore genuinely cannot start today —
+    /// a correct outcome, not a regression: it is consistent with "no
+    /// production deployment is authorized at this pilot stage" (ADR-0022,
+    /// docs/DEV-SETUP.md), now enforced by a real, narrow, risk-specific
+    /// code gate rather than documentation alone. This guard is conditional
+    /// on the selected gateway type, not the environment name itself — a
+    /// non-Mock provider starts cleanly in Production, see
+    /// <see cref="ProductionEnvironment_WithNonMockCrmProvider_StartsSuccessfully"/>.
     /// </summary>
     [Fact]
     public void ProductionEnvironment_WithMockCrmProvider_FailsAtStartup()
@@ -113,6 +116,31 @@ public class StartupValidationTests
         var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
         Assert.Contains("Crm:Provider", ex.ToString());
         Assert.Contains("Mock", ex.ToString());
+    }
+
+    /// <summary>
+    /// Final correction: proves the guard is conditional on the selected
+    /// gateway type (Crm:Provider), not simply the environment name — a
+    /// non-Mock provider must be able to start in Production, since a
+    /// future real InternalCrmGateway configuration needs to run there.
+    /// <see cref="TigerCS.Integrations.Modules.CrmIntegration.CrmGatewaySafety.IsUnsafe"/>
+    /// only ever flags "Mock" outside Development/Testing (see its own unit
+    /// tests, CrmGatewaySafetyTests) — a literal, not-yet-implemented
+    /// provider value like this test's is registered lazily
+    /// (IntegrationsServiceCollectionExtensions) and so does not prevent the
+    /// host itself from starting; it would only fail a request that
+    /// actually resolves <c>ICrmGateway</c>, which this test never makes.
+    /// </summary>
+    [Fact]
+    public void ProductionEnvironment_WithNonMockCrmProvider_StartsSuccessfully()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        using var factory = new ConfiguredFactory("Production", config);
+
+        var server = factory.Server;
+
+        Assert.NotNull(server);
     }
 
     [Fact]

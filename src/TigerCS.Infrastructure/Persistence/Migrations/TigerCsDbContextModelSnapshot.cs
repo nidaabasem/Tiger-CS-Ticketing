@@ -316,6 +316,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<int>("UnitReferenceId")
                         .HasColumnType("int");
 
+                    b.Property<int?>("VerificationMethod")
+                        .HasColumnType("int");
+
                     b.HasKey("VerificationSessionId");
 
                     b.HasIndex("ContactReferenceId");

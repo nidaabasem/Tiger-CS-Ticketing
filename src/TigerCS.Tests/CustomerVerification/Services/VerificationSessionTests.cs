@@ -22,11 +22,33 @@ public class VerificationSessionTests
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
 
-        session.Confirm(now);
+        session.Confirm(now, VerificationMethod.ManualAgentConfirmation);
 
         Assert.Equal(VerificationSessionStatus.Confirmed, session.Status);
         Assert.True(session.Confirmed);
         Assert.Equal(now, session.ConfirmedAtUtc);
+        Assert.Equal(VerificationMethod.ManualAgentConfirmation, session.VerificationMethod);
+    }
+
+    /// <summary>
+    /// Channel-neutral proof: Confirm() accepts any VerificationMethod, not
+    /// just this pilot's ManualAgentConfirmation — a future digital channel
+    /// needs no domain change (see VerificationSession's remarks).
+    /// </summary>
+    [Theory]
+    [InlineData(VerificationMethod.ManualAgentConfirmation)]
+    [InlineData(VerificationMethod.AuthenticatedDigitalUser)]
+    [InlineData(VerificationMethod.Otp)]
+    [InlineData(VerificationMethod.FaceToFaceDocumentCheck)]
+    [InlineData(VerificationMethod.Other)]
+    public void Confirm_AnyVerificationMethod_IsRecordedUnchanged(VerificationMethod method)
+    {
+        var now = DateTime.UtcNow;
+        var session = CreateSession(now);
+
+        session.Confirm(now, method);
+
+        Assert.Equal(method, session.VerificationMethod);
     }
 
     [Fact]
@@ -34,9 +56,9 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
-        session.Confirm(now);
+        session.Confirm(now, VerificationMethod.ManualAgentConfirmation);
 
-        Assert.Throws<VerificationSessionNotInProgressException>(() => session.Confirm(now));
+        Assert.Throws<VerificationSessionNotInProgressException>(() => session.Confirm(now, VerificationMethod.ManualAgentConfirmation));
     }
 
     [Fact]
@@ -45,7 +67,7 @@ public class VerificationSessionTests
         var now = DateTime.UtcNow;
         var session = CreateSession(now, TimeSpan.FromMinutes(30));
 
-        Assert.Throws<VerificationSessionExpiredException>(() => session.Confirm(now.AddMinutes(31)));
+        Assert.Throws<VerificationSessionExpiredException>(() => session.Confirm(now.AddMinutes(31), VerificationMethod.ManualAgentConfirmation));
     }
 
     [Fact]
@@ -86,7 +108,7 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
-        session.Confirm(now);
+        session.Confirm(now, VerificationMethod.ManualAgentConfirmation);
 
         session.Consume(ticketId: 42, now);
 
@@ -109,7 +131,7 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now);
-        session.Confirm(now);
+        session.Confirm(now, VerificationMethod.ManualAgentConfirmation);
         session.Consume(1, now);
 
         Assert.Throws<VerificationSessionAlreadyConsumedException>(() => session.Consume(2, now));
@@ -120,7 +142,7 @@ public class VerificationSessionTests
     {
         var now = DateTime.UtcNow;
         var session = CreateSession(now, TimeSpan.FromMinutes(30));
-        session.Confirm(now);
+        session.Confirm(now, VerificationMethod.ManualAgentConfirmation);
 
         Assert.Throws<VerificationSessionExpiredException>(() => session.Consume(1, now.AddMinutes(31)));
     }

@@ -26,6 +26,11 @@ public class VerificationSessionConfiguration : IEntityTypeConfiguration<Verific
         builder.Property(s => s.SnapshotContactChannel).HasMaxLength(200);
 
         builder.Property(s => s.Confirmed).IsRequired();
+
+        // Nullable: only set once Confirm() runs (see VerificationSession's
+        // remarks) — channel-neutral by design, not phone/verbal-specific.
+        builder.Property(s => s.VerificationMethod);
+
         builder.Property(s => s.Status).IsRequired();
         builder.Property(s => s.CreatedAtUtc).IsRequired();
         builder.Property(s => s.ExpiresAtUtc).IsRequired();

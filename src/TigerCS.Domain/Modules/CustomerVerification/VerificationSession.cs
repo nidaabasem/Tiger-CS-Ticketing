@@ -12,17 +12,18 @@ namespace TigerCS.Domain.Modules.CustomerVerification;
 /// <para>
 /// <b>Channel-neutral by design.</b> This entity does not assume Phone or a
 /// verbal confirmation — <see cref="Confirm"/> models "the requester
-/// confirmed this match," regardless of how that confirmation was
-/// obtained. MVP's own approved scope is Phone-only (FR-CH-01/FR-CH-02),
-/// and MVP-API-Contracts.md §2.4.3's wire contract accordingly names its
-/// confirmation field <c>ConfirmedVerbally</c> for a verbal read-back per
-/// FR-VER-03 — <see cref="VerificationSessionAppService"/>'s DTO mapping
-/// preserves that literal, approved field name on the wire even though the
-/// domain method here does not. A future channel (App/Website, WhatsApp,
-/// Social Media, kiosk — Solution-Analysis.md §2.2's FR-CH-02/03, Phase 2+)
-/// can call <see cref="Confirm"/> with its own confirmation mechanism (a
-/// customer's UI click, an authenticated portal action, etc.) without any
-/// change to this entity or its state machine.
+/// confirmed this match, by this <see cref="CustomerVerification.VerificationMethod"/>,"
+/// regardless of which channel obtained it. MVP's own approved scope is
+/// Phone-only (FR-CH-01/FR-CH-02) and this pilot's only caller supplies
+/// <see cref="CustomerVerification.VerificationMethod.ManualAgentConfirmation"/>
+/// (a verbal read-back per FR-VER-03), but both the wire contract
+/// (MVP-API-Contracts.md §2.4.3's <c>Confirmed</c>/<c>VerificationMethod</c>
+/// fields) and this domain method are channel-neutral by construction, not
+/// merely by convention — a future channel (App/Website, WhatsApp, Social
+/// Media, kiosk — Solution-Analysis.md §2.2's FR-CH-02/03, Phase 2+) supplies
+/// its own <see cref="CustomerVerification.VerificationMethod"/> value to the
+/// same <see cref="Confirm"/> call, without any change to this entity, its
+/// state machine, or the API shape.
 /// </para>
 /// <para>
 /// For this pilot phase (MVP-Implementation-Backlog.md §0.2/S-07), the
@@ -49,6 +50,10 @@ public class VerificationSession
 
     /// <summary>Whether the requester confirmed this unit/contact match — channel-neutral (see the type-level remarks).</summary>
     public bool Confirmed { get; private set; }
+
+    /// <summary>How the confirmation above was obtained. Set only at <see cref="Confirm"/> time; null beforehand.</summary>
+    public VerificationMethod? VerificationMethod { get; private set; }
+
     public VerificationSessionStatus Status { get; private set; }
 
     public DateTime CreatedAtUtc { get; private set; }
@@ -128,13 +133,14 @@ public class VerificationSession
             : Status;
 
     /// <summary>
-    /// Records the requester's confirmation of the unit/contact match
-    /// (MVP-API-Contracts.md §2.4.3, folded into S-07's single call).
-    /// Channel-neutral — see the type-level remarks for why this is not
-    /// named/scoped to a verbal confirmation specifically, even though
+    /// Records the requester's confirmation of the unit/contact match and
+    /// the method used to obtain it (MVP-API-Contracts.md §2.4.3, folded
+    /// into S-07's single call). Channel-neutral — see the type-level
+    /// remarks for why neither this method nor <paramref name="verificationMethod"/>
+    /// is scoped to a verbal/phone confirmation specifically, even though
     /// MVP's own approved channel is Phone-only.
     /// </summary>
-    public void Confirm(DateTime confirmedAtUtc)
+    public void Confirm(DateTime confirmedAtUtc, VerificationMethod verificationMethod)
     {
         if (EffectiveStatus(confirmedAtUtc) == VerificationSessionStatus.Expired)
         {
@@ -147,6 +153,7 @@ public class VerificationSession
         }
 
         Confirmed = true;
+        VerificationMethod = verificationMethod;
         ConfirmedAtUtc = confirmedAtUtc;
         Status = VerificationSessionStatus.Confirmed;
     }

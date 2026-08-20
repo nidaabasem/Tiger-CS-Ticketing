@@ -14,8 +14,10 @@ namespace TigerCS.Application.Modules.CustomerVerification.Services;
 /// <see cref="TigerCS.Application.Modules.CustomerVerification.CrmIntegration.ICrmGateway"/>).
 /// Everything else — the <see cref="VerificationSession"/> and its state
 /// machine, <i>selecting</i> which returned contact is the requester,
-/// recording the verification method/result (the verbal read-back
-/// confirmation), deciding whether ticket creation may proceed, capturing
+/// recording the verification method/result (channel-neutral — see
+/// <see cref="VerificationSession"/>'s remarks; this pilot's only caller
+/// uses a verbal read-back, <see cref="VerificationMethod.ManualAgentConfirmation"/>),
+/// deciding whether ticket creation may proceed, capturing
 /// the immutable verification-time snapshot, and the audit/authorization/
 /// expiry rules around all of it — is owned here, by Tiger CS Ticketing.
 /// A future automated intake surface (e.g. Genesys AI voice/chat) that
@@ -91,6 +93,9 @@ public sealed class VerificationSessionAppService(
             return VerificationSessionResult.UnitOrContactNotFound();
         }
 
+        // Controller-validated (VerificationSessionsController.Create) before this call is reached.
+        var verificationMethod = Enum.Parse<VerificationMethod>(request.VerificationMethod);
+
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var session = new VerificationSession(
             Guid.NewGuid(),
@@ -109,7 +114,7 @@ public sealed class VerificationSessionAppService(
 
         // Selection (constructor) and confirmation happen in this one
         // application-layer call — see the type-level remarks above.
-        session.Confirm(now);
+        session.Confirm(now, verificationMethod);
 
         await sessionRepository.AddAsync(session, cancellationToken);
         await auditWriter.WriteAsync(
@@ -118,7 +123,7 @@ public sealed class VerificationSessionAppService(
             "VerificationSession",
             session.VerificationSessionId.ToString(),
             beforeValue: null,
-            afterValue: $"UnitReferenceId={unit.UnitReferenceId};ContactReferenceId={contact.ContactReferenceId}",
+            afterValue: $"UnitReferenceId={unit.UnitReferenceId};ContactReferenceId={contact.ContactReferenceId};VerificationMethod={verificationMethod}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
 
@@ -173,10 +178,8 @@ public sealed class VerificationSessionAppService(
             session.UnitReferenceId,
             session.ContactReferenceId,
             effectiveStatus.ToString(),
-            // Domain's channel-neutral Confirmed maps onto the DTO's
-            // approved wire field name ConfirmedVerbally (MVP-API-Contracts.md
-            // §2.4.3) — see VerificationSession's type-level remarks.
             session.Confirmed,
+            session.VerificationMethod?.ToString(),
             session.CreatedAtUtc,
             session.ConfirmedAtUtc,
             session.ExpiresAtUtc,

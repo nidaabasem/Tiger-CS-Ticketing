@@ -4,8 +4,16 @@ namespace TigerCS.Application.Modules.CustomerVerification.Dto;
 /// S-07's combined create+select+confirm request. Not MVP-API-Contracts.md
 /// §2.4's original shape (that flow is split across four endpoints) — see
 /// MVP-Implementation-Backlog.md §0.2/S-07 for the approved pilot simplification.
+/// Channel-neutral by design: <paramref name="Confirmed"/> and
+/// <paramref name="VerificationMethod"/> replace an earlier phone-specific
+/// <c>ConfirmedVerbally</c> field name — this endpoint is unmerged with no
+/// released consumers, so there is no backward-compatibility reason to keep
+/// a channel assumption on the wire. <paramref name="VerificationMethod"/>
+/// must be the name of a <see cref="TigerCS.Domain.Modules.CustomerVerification.VerificationMethod"/>
+/// value (e.g. "ManualAgentConfirmation" — this pilot's only supported
+/// value today; the others exist so a future channel needs no API change).
 /// </summary>
-public sealed record CreateVerificationSessionRequestDto(int UnitReferenceId, int ContactReferenceId, bool ConfirmedVerbally);
+public sealed record CreateVerificationSessionRequestDto(int UnitReferenceId, int ContactReferenceId, bool Confirmed, string VerificationMethod);
 
 public sealed record VerificationSessionResponseDto(
     Guid VerificationSessionId,
@@ -13,7 +21,8 @@ public sealed record VerificationSessionResponseDto(
     int UnitReferenceId,
     int ContactReferenceId,
     string Status,
-    bool ConfirmedVerbally,
+    bool Confirmed,
+    string? VerificationMethod,
     DateTime CreatedAtUtc,
     DateTime? ConfirmedAtUtc,
     DateTime ExpiresAtUtc,

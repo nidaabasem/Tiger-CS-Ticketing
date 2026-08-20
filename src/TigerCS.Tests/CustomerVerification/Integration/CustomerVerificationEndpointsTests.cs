@@ -138,24 +138,58 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
 
         var response = await client.PostAsJsonAsync(
             "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true));
+            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation"));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var session = await response.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
         Assert.Equal("Confirmed", session!.Status);
-        Assert.True(session.ConfirmedVerbally);
+        Assert.True(session.Confirmed);
+        Assert.Equal("ManualAgentConfirmation", session.VerificationMethod);
         Assert.Equal("1204", session.SnapshotUnitNumber);
     }
 
     [Fact]
-    public async Task CreateVerificationSession_ConfirmedVerballyFalse_ReturnsValidationProblem()
+    public async Task CreateVerificationSession_ConfirmedFalse_ReturnsValidationProblem()
     {
         var client = await CreateAuthenticatedClientAsync();
         var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
 
         var response = await client.PostAsJsonAsync(
             "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, false));
+            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, false, "ManualAgentConfirmation"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Channel-neutral proof at the HTTP boundary: a non-phone
+    /// VerificationMethod (e.g. a future digital-channel value) is accepted
+    /// like any other — the API makes no phone/verbal assumption.
+    /// </summary>
+    [Fact]
+    public async Task CreateVerificationSession_NonPhoneVerificationMethod_Returns201Confirmed()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/verification-sessions",
+            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "AuthenticatedDigitalUser"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var session = await response.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+        Assert.Equal("AuthenticatedDigitalUser", session!.VerificationMethod);
+    }
+
+    [Fact]
+    public async Task CreateVerificationSession_UnknownVerificationMethod_ReturnsValidationProblem()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/verification-sessions",
+            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "PhoneCall"));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -167,7 +201,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
 
         var response = await client.PostAsJsonAsync(
             "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(999_999, 999_999, true));
+            new CreateVerificationSessionRequestDto(999_999, 999_999, true, "ManualAgentConfirmation"));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -177,7 +211,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
     {
         var client = await CreateAuthenticatedClientAsync();
         var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
-        var request = new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true);
+        var request = new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation");
 
         var idempotencyKey = Guid.NewGuid().ToString();
         client.DefaultRequestHeaders.Add("Idempotency-Key", idempotencyKey);
@@ -196,7 +230,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
         var client = await CreateAuthenticatedClientAsync();
         var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
         var created = await client.PostAsJsonAsync(
-            "/api/verification-sessions", new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true));
+            "/api/verification-sessions", new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation"));
         var session = await created.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
 
         var response = await client.GetAsync($"/api/verification-sessions/{session!.VerificationSessionId}");
@@ -210,7 +244,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
         var ownerClient = await CreateAuthenticatedClientAsync();
         var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(ownerClient);
         var created = await ownerClient.PostAsJsonAsync(
-            "/api/verification-sessions", new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true));
+            "/api/verification-sessions", new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation"));
         var session = await created.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
 
         var otherAgentClient = await CreateAuthenticatedClientAsync();
@@ -242,7 +276,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
         var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
 
         var response = await client.PostAsJsonAsync(
-            "/api/verification-sessions", new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true));
+            "/api/verification-sessions", new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation"));
         response.EnsureSuccessStatusCode();
         var session = await response.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
 
@@ -256,6 +290,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
         Assert.NotEqual(Guid.Empty, auditEntry.CorrelationId);
         Assert.Null(auditEntry.BeforeValue);
         Assert.Contains($"UnitReferenceId={unitReferenceId}", auditEntry.AfterValue);
+        Assert.Contains("VerificationMethod=ManualAgentConfirmation", auditEntry.AfterValue);
     }
 
     /// <summary>
@@ -289,7 +324,7 @@ public class CustomerVerificationEndpointsTests : IClassFixture<TigerCsApiFactor
     {
         var client = await CreateAuthenticatedClientAsync();
         var (unitReferenceId, contactReferenceId) = await LookUpUnitAndFirstContactAsync(client);
-        var request = new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true);
+        var request = new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation");
         var idempotencyKey = Guid.NewGuid().ToString();
 
         HttpRequestMessage BuildRequest() => new(HttpMethod.Post, "/api/verification-sessions")

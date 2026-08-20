@@ -90,7 +90,7 @@ public class CustomerVerificationAuthorizationTests : IClassFixture<TigerCsApiFa
 
         var response = await client.PostAsJsonAsync(
             "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true));
+            new CreateVerificationSessionRequestDto(unitReferenceId, contactReferenceId, true, "ManualAgentConfirmation"));
 
         Assert.Equal(expectAuthorized ? HttpStatusCode.Created : HttpStatusCode.Forbidden, response.StatusCode);
     }
