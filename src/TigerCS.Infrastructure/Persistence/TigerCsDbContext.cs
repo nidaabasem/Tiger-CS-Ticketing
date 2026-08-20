@@ -1,22 +1,31 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using TigerCS.Domain.Audit;
+using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
+using TigerCS.Infrastructure.Modules.ClassificationAndRouting.Configurations;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Configurations;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Configurations;
+using TigerCS.Infrastructure.Modules.SlaAndEscalation.Configurations;
+using TigerCS.Infrastructure.Modules.Ticketing.Configurations;
 
 namespace TigerCS.Infrastructure.Persistence;
 
 /// <summary>
-/// This increment adds Customer Verification — Tiger CS Ticketing's own
-/// business logic for verifying a requester against Tiger CRM's read-only
-/// data (ADR-0006/0007, MVP-Data-Dictionary.md §2.7/§2.24) — and a minimal
-/// cross-cutting audit trail (§2.22) on top of Identity and Access
-/// (ADR-0004/0005). Ticketing/SLA/Genesys tables are not mapped here yet —
-/// those arrive with their own modules' increments.
+/// This increment adds Ticket Intake and Ticket Creation — IntakeRecords,
+/// Tickets, TicketRequesterSnapshots, TicketStatusHistory (Ticketing
+/// module), plus the minimal Categories/Priorities reference data Ticketing
+/// needs to classify, prioritize, and route a ticket at creation
+/// (Classification and Routing / SLA and Escalation module ownership per
+/// Module-Design.md — only the reference data those modules own is mapped
+/// here, not their own business logic, which remains out of scope). SLA due-
+/// date computation, escalation, Genesys, notifications, and attachments are
+/// not mapped here yet — those arrive with their own modules' increments.
 /// </summary>
 public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     : IdentityDbContext<ApplicationUser, ApplicationRole, Guid>(options)
@@ -35,6 +44,18 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    public DbSet<Priority> Priorities => Set<Priority>();
+
+    public DbSet<Category> Categories => Set<Category>();
+
+    public DbSet<IntakeRecord> IntakeRecords => Set<IntakeRecord>();
+
+    public DbSet<Ticket> Tickets => Set<Ticket>();
+
+    public DbSet<TicketRequesterSnapshot> TicketRequesterSnapshots => Set<TicketRequesterSnapshot>();
+
+    public DbSet<TicketStatusHistory> TicketStatusHistoryEntries => Set<TicketStatusHistory>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -49,5 +70,17 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new VerificationSessionConfiguration());
 
         builder.ApplyConfiguration(new AuditEntryConfiguration());
+
+        builder.ApplyConfiguration(new PriorityConfiguration());
+        builder.ApplyConfiguration(new CategoryConfiguration());
+        builder.ApplyConfiguration(new IntakeRecordConfiguration());
+        builder.ApplyConfiguration(new TicketConfiguration());
+        builder.ApplyConfiguration(new TicketRequesterSnapshotConfiguration());
+        builder.ApplyConfiguration(new TicketStatusHistoryConfiguration());
+
+        // Supplemental — see this configuration's own remarks for why it is
+        // not folded into VerificationSessionConfiguration (a
+        // CustomerVerification-module file this increment does not modify).
+        builder.ApplyConfiguration(new VerificationSessionConsumptionConcurrencyConfiguration());
     }
 }

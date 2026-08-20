@@ -10,6 +10,8 @@ using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
+using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
@@ -17,6 +19,7 @@ using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
+using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
 using TigerCS.Infrastructure.Persistence;
 
 namespace TigerCS.Infrastructure;
@@ -114,6 +117,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICustomerVerificationUnitOfWork, CustomerVerificationUnitOfWork>();
         services.AddScoped<CrmUnitLookupAppService>();
         services.AddScoped<VerificationSessionAppService>();
+
+        services.AddScoped<ICategoryRepository, CategoryRepository>();
+        services.AddScoped<IPriorityRepository, PriorityRepository>();
+        services.AddScoped<IIntakeRecordRepository, IntakeRecordRepository>();
+        services.AddScoped<ITicketRepository, TicketRepository>();
+        services.AddScoped<ITicketRequesterSnapshotRepository, TicketRequesterSnapshotRepository>();
+        services.AddScoped<ITicketStatusHistoryRepository, TicketStatusHistoryRepository>();
+        services.AddScoped<ITicketingUnitOfWork, TicketingUnitOfWork>();
+        services.AddScoped<IntakeRecordAppService>();
+        services.AddScoped<TicketCreationAppService>();
 
         return services;
     }
