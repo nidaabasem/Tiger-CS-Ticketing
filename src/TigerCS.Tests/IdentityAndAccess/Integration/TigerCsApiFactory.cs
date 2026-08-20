@@ -59,7 +59,20 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 services.Remove(descriptor);
             }
 
-            services.AddDbContext<TigerCsDbContext>(options => options.UseInMemoryDatabase(DatabaseName));
+            services.AddDbContext<TigerCsDbContext>(options => options
+                .UseInMemoryDatabase(DatabaseName)
+                // The InMemory provider does not support real transactions
+                // (TicketingUnitOfWork.BeginTransactionAsync, added by the
+                // senior review's atomicity fix — item 11) and logs
+                // TransactionIgnoredWarning, which EF Core escalates to an
+                // exception by default. Real SQL Server (Program.cs's own
+                // registration, untouched here) does support transactions
+                // and never raises this warning — this suppression is
+                // test-only, matching the same InMemory-vs-real-SQL-Server
+                // testing split already established for unique-index
+                // enforcement elsewhere in this codebase (see
+                // CustomerVerificationUnitOfWork's remarks).
+                .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
         });
     }
 
