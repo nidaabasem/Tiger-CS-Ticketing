@@ -132,9 +132,9 @@
 - **Validation:** `403` if the caller isn't the session's owner; `409` (`type: .../verification-session-not-in-progress`) if `Status ≠ InProgress`; `410 Gone` (`type: .../verification-session-expired`) if past `ExpiresAtUtc`.
 
 #### 2.4.3 `POST /api/verification-sessions/{verificationSessionId}/confirm`
-- **Purpose:** Record the agent's verbal read-back confirmation and capture the point-in-time snapshot fields that will later become the ticket's immutable `TicketRequesterSnapshots` row.
+- **Purpose:** Record the requester's confirmation of the unit/contact match and capture the point-in-time snapshot fields that will later become the ticket's immutable `TicketRequesterSnapshots` row. Channel-neutral: this pilot's only caller is an agent's verbal read-back over the phone (FR-VER-03), but neither this endpoint nor the domain assumes that channel — see `VerificationSession`'s remarks.
 - **Auth:** Agent and above; must be the session's owner (same rule as §2.4.2).
-- **Request DTO `ConfirmVerificationSessionRequest`:** `ConfirmedVerbally` (bool, required, must be `true`).
+- **Request DTO `ConfirmVerificationSessionRequest`:** `Confirmed` (bool, required, must be `true`); `VerificationMethod` (string, required — one of `ManualAgentConfirmation`, `AuthenticatedDigitalUser`, `Otp`, `FaceToFaceDocumentCheck`, `Other`; this pilot only sends `ManualAgentConfirmation`).
 - **Success `200 OK`:** the updated session (`Status: "Confirmed"`, `ConfirmedAtUtc` set, snapshot fields populated from the current `UnitReferences`/`ContactReferences` cache read at this exact moment).
 - **Validation:** `422` if `UnitReferenceId`/`ContactReferenceId` haven't been selected yet (§2.4.2 not yet called); `409`/`410` same as §2.4.2 for wrong-state/expired.
 - **Audit:** `AuditEntries` (`Action = "ConfirmVerificationSession"`, `EntityType = "VerificationSession"`).

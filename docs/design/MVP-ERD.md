@@ -172,7 +172,8 @@ erDiagram
         int UnitReferenceId FK "nullable until selected"
         int ContactReferenceId FK "nullable until selected"
         tinyint Status "InProgress/Confirmed/Consumed/Expired/Abandoned"
-        bit ConfirmedVerbally
+        bit Confirmed
+        tinyint VerificationMethod "nullable; channel-neutral, see Data Dictionary §2.24"
         datetime2 ExpiresAtUtc
         datetime2 ConsumedAtUtc "nullable"
         bigint ConsumedByTicketId FK "nullable, set on consumption"

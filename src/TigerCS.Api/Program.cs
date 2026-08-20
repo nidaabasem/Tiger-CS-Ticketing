@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using TigerCS.Infrastructure;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
+using TigerCS.Integrations.Modules.CrmIntegration;
 
 // Never log token/claim contents (review item 4) — IdentityModelEventSource's PII
 // logging defaults to off already, but this makes the choice explicit rather than
@@ -18,6 +19,7 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
 builder.Services.AddTigerCsInfrastructure(builder.Configuration);
+builder.Services.AddTigerCsIntegrations(builder.Configuration);
 
 // Bound lazily from JwtOptions (IOptions<JwtOptions>, resolved at first use) rather
 // than read from builder.Configuration inline here — the latter would run before
@@ -82,6 +84,26 @@ using (var startupScope = app.Services.CreateScope())
     if (string.IsNullOrWhiteSpace(jwtOptions.Issuer) || string.IsNullOrWhiteSpace(jwtOptions.Audience))
     {
         throw new InvalidOperationException("Jwt:Issuer and Jwt:Audience must both be configured. See docs/DEV-SETUP.md.");
+    }
+}
+
+// Fail fast if the mock CRM adapter would run outside Development/Testing.
+// The actual decision is CrmGatewaySafety.IsUnsafe — conditional on the
+// selected gateway type (Crm:Provider), not on the environment name alone;
+// see that class's own remarks. A real ICrmGateway implementation
+// (Crm:Provider set to anything other than "Mock",
+// IntegrationsServiceCollectionExtensions) is judged safe here in every
+// environment, Production included.
+using (var crmStartupScope = app.Services.CreateScope())
+{
+    var crmOptions = crmStartupScope.ServiceProvider.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+    if (CrmGatewaySafety.IsUnsafe(crmOptions.Provider, app.Environment.EnvironmentName))
+    {
+        throw new InvalidOperationException(
+            $"Crm:Provider is 'Mock' in environment '{app.Environment.EnvironmentName}'. MockCrmGateway is " +
+            "never production-ready (see its own remarks) and may only run in " +
+            $"{string.Join("/", CrmGatewaySafety.MockAllowedEnvironments)}. Configure a real ICrmGateway " +
+            "implementation and set Crm:Provider accordingly before deploying to this environment.");
     }
 }
 

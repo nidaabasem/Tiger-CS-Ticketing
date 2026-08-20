@@ -3,6 +3,13 @@
   <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
 
   <ItemGroup>
+    <!-- For IServiceCollection/IConfiguration (AddTigerCsIntegrations) — same
+         solution used by TigerCS.Infrastructure for its own DI extension
+         method, rather than pinning new standalone package versions. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TigerCS.Domain\TigerCS.Domain.csproj" />
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
   </ItemGroup>

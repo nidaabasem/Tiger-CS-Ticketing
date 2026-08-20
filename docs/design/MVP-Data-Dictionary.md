@@ -427,7 +427,8 @@
 | ContactReferenceId | int | Yes | FK → ContactReferences; null until selected |
 | SnapshotUnitNumber, SnapshotPropertyName, SnapshotTowerName, SnapshotUnitType | nvarchar | Yes | Captured at confirmation time from the cache read-back — copied verbatim into `TicketRequesterSnapshots` on consumption, not re-fetched |
 | SnapshotContactDisplayName, SnapshotContactChannel | nvarchar | Yes | Same as above |
-| ConfirmedVerbally | bit | No | Default `false`; must be `true` before `Status` can advance to `Confirmed` |
+| Confirmed | bit | No | Default `false`; must be `true` before `Status` can advance to `Confirmed`. Channel-neutral name — see `VerificationMethod` below |
+| VerificationMethod | tinyint | Yes | 1=ManualAgentConfirmation, 2=AuthenticatedDigitalUser, 3=Otp, 4=FaceToFaceDocumentCheck, 5=Other. Null until confirmed; this pilot only ever sets `ManualAgentConfirmation` |
 | Status | tinyint | No | 1=InProgress, 2=Confirmed, 3=Consumed, 4=Expired, 5=Abandoned |
 | CreatedAtUtc | datetime2 | No | |
 | ConfirmedAtUtc | datetime2 | Yes | Null until `Status = Confirmed` |

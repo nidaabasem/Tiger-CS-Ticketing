@@ -5,10 +5,15 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
+using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
@@ -101,6 +106,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<UserActivationAppService>();
         services.AddScoped<DepartmentAssignmentService>();
 
+        services.AddScoped<IAuditEntryWriter, AuditEntryWriter>();
+
+        services.AddScoped<IUnitReferenceRepository, UnitReferenceRepository>();
+        services.AddScoped<IContactReferenceRepository, ContactReferenceRepository>();
+        services.AddScoped<IVerificationSessionRepository, VerificationSessionRepository>();
+        services.AddScoped<ICustomerVerificationUnitOfWork, CustomerVerificationUnitOfWork>();
+        services.AddScoped<CrmUnitLookupAppService>();
+        services.AddScoped<VerificationSessionAppService>();
+
         return services;
     }
 
@@ -152,6 +166,13 @@ public static class InfrastructureServiceCollectionExtensions
 
         options.AddPolicy(PolicyNames.SystemAdministrator, Base()
             .RequireRole(Roles.SystemAdministrator)
+            .Build());
+
+        // CS Agent/CS Supervisor only — see PolicyNames.CustomerVerification's own
+        // remarks for the Solution-Analysis.md §4.1 vs. MVP-API-Contracts.md
+        // §0 conflict this resolves, confirmed rather than guessed.
+        options.AddPolicy(PolicyNames.CustomerVerification, Base()
+            .RequireRole(Roles.CsAgent, Roles.CsSupervisor)
             .Build());
 
         return options;
