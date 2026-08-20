@@ -26,19 +26,14 @@ public sealed class IntakeRecordAppService(
         var intakeRecord = new IntakeRecord(
             channel, request.IsUnitRelated, request.RawUnitNumberEntered, request.PriorityHint, createdByEmployeeId, now);
 
-        await intakeRecordRepository.AddAsync(intakeRecord, cancellationToken);
+        // Both SaveChanges calls below share one real transaction (senior
+        // review item 11 — audit entries must be atomic with the business
+        // change they describe) — see TicketCreationAppService's remarks for
+        // why two calls are unavoidable (IntakeRecordId is a database-
+        // generated identity column, not known until the insert commits).
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
-        // Two SaveChanges calls, not one: unlike VerificationSessionId
-        // (a client-generated Guid known before insert), IntakeRecordId is a
-        // database-generated identity column (bigint, MVP-Data-Dictionary.md
-        // §2.9) — its real value isn't known until the insert above actually
-        // runs, and AuditEntry.EntityId needs that real value, not a
-        // placeholder. The first SaveChanges commits the insert (EF Core
-        // populates intakeRecord.IntakeRecordId on the tracked entity
-        // immediately after); the second commits the audit row referencing
-        // it. A disclosed trade-off against ADR-0018's "same transaction" —
-        // two round trips instead of one — that this DB-generated-key shape
-        // makes unavoidable.
+        await intakeRecordRepository.AddAsync(intakeRecord, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         await auditWriter.WriteAsync(
@@ -51,6 +46,8 @@ public sealed class IntakeRecordAppService(
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
 
         return IntakeRecordResult.Success(ToDto(intakeRecord));
     }

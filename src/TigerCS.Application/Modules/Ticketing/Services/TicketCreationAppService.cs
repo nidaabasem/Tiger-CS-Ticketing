@@ -20,20 +20,24 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// (<see cref="TicketCreationOutcome.QueuedPendingVerification"/>).
 ///
 /// <para>
-/// <b>Two SaveChanges calls per path, not one.</b> Both <see cref="Ticket"/>
-/// and <see cref="IntakeRecord"/> use database-generated identity PKs
-/// (bigint), so a <see cref="Ticket"/>'s real <c>TicketId</c> is not known
-/// until its own insert commits — but consuming the session, linking the
-/// IntakeRecord, and writing the requester snapshot/status-history/audit
-/// rows all need that real ID. The ticket is therefore inserted alone
-/// first; everything else commits together in a second call. If the first
-/// insert collides on the TicketNumber unique index (a rare same-department,
-/// same-day race — MVP-Data-Dictionary.md §2.10), nothing else has been
-/// touched yet, so the whole request is safe to retry unchanged
-/// (<see cref="TicketCreationOutcome"/> does not have a dedicated case for
-/// this — the underlying <c>DuplicateWriteException</c> propagates, since a
-/// same-second double insert of the same prefix is exceedingly unlikely at
-/// this pilot's scale and a plain retry is always correct here).
+/// <b>Two SaveChanges calls per path, in one real transaction.</b> Both
+/// <see cref="Ticket"/> and <see cref="IntakeRecord"/> use database-generated
+/// identity PKs (bigint), so a <see cref="Ticket"/>'s real <c>TicketId</c> is
+/// not known until its own insert commits — but consuming the session,
+/// linking the IntakeRecord, and writing the requester snapshot/status-
+/// history/audit rows all need that real ID. The ticket is therefore
+/// inserted alone first; everything else commits in a second call — both
+/// wrapped in one <see cref="ITicketingUnitOfWork.BeginTransactionAsync"/>
+/// scope, so a failure in the second call (a lost optimistic-concurrency
+/// race on session consumption, <see cref="VerificationSessionConcurrentlyConsumedException"/>,
+/// or any other failure) rolls back the first call's ticket insert too,
+/// rather than leaving an orphaned <c>Ticket</c> row with no snapshot/audit
+/// trail behind. A <c>TicketNumber</c> unique-index collision on the first
+/// call (<see cref="DuplicateWriteException"/>) is translated to
+/// <see cref="TicketCreationOutcome.TicketNumberCollision"/> — a clean,
+/// retryable <c>409</c> rather than an unhandled exception; nothing has
+/// been touched yet at that point, so retrying the whole request is always
+/// correct.
 /// </para>
 /// </summary>
 public sealed class TicketCreationAppService(
@@ -94,25 +98,36 @@ public sealed class TicketCreationAppService(
             return TicketCreationResult.Failure(failureOutcome);
         }
 
-        var category = await categoryRepository.GetByIdAsync(request.CategoryId, cancellationToken);
-        if (category is null || !category.IsActive)
+        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
+        if (routing.Failure is { } routingFailure)
         {
-            return TicketCreationResult.Failure(TicketCreationOutcome.CategoryNotFound);
+            return TicketCreationResult.Failure(routingFailure);
         }
 
-        var priority = await priorityRepository.GetByIdAsync(request.PriorityId, cancellationToken);
-        if (priority is null)
+        var category = routing.Category!;
+        var priority = routing.Priority!;
+        var department = routing.Department!;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        Ticket ticket;
+        try
         {
-            return TicketCreationResult.Failure(TicketCreationOutcome.PriorityNotFound);
+            var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
+            ticket = Ticket.CreateVerified(
+                ticketNumber, category.DepartmentId, session.UnitReferenceId, session.ContactReferenceId,
+                category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+
+            await ticketRepository.AddAsync(ticket, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
         }
-
-        var ticketNumber = await GenerateTicketNumberAsync(category.DepartmentId, now, cancellationToken);
-        var ticket = Ticket.CreateVerified(
-            ticketNumber, category.DepartmentId, session.UnitReferenceId, session.ContactReferenceId,
-            category.CategoryId, priority.PriorityId, request.RequestSummary, now);
-
-        await ticketRepository.AddAsync(ticket, cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        catch (DuplicateWriteException)
+        {
+            // Nothing else has been touched yet — the session is still
+            // Confirmed/unconsumed, the IntakeRecord still unlinked. Safe to
+            // retry the whole request unchanged.
+            return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
+        }
 
         session.Consume(ticket.TicketId, now);
         intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Verified);
@@ -141,8 +156,21 @@ public sealed class TicketCreationAppService(
             beforeValue: null, afterValue: $"ConsumedByTicketId={ticket.TicketId}",
             correlationId, cancellationToken);
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (VerificationSessionConcurrentlyConsumedException)
+        {
+            // Another concurrent request already consumed this same session
+            // first (lost the optimistic-concurrency race on
+            // VerificationSessions.Status). The transaction's rollback-on-
+            // dispose below undoes this request's own Ticket insert, so no
+            // orphaned ticket, snapshot, or audit trail is left behind.
+            return TicketCreationResult.Failure(TicketCreationOutcome.VerificationSessionAlreadyConsumed);
+        }
 
+        await transaction.CommitAsync(cancellationToken);
         return TicketCreationResult.Success(ToDto(ticket));
     }
 
@@ -165,18 +193,15 @@ public sealed class TicketCreationAppService(
             return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordNotUnitRelated);
         }
 
-        var category = await categoryRepository.GetByIdAsync(request.CategoryId, cancellationToken);
-        if (category is null || !category.IsActive)
+        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
+        if (routing.Failure is { } routingFailure)
         {
-            return TicketCreationResult.Failure(TicketCreationOutcome.CategoryNotFound);
+            return TicketCreationResult.Failure(routingFailure);
         }
 
-        var priority = await priorityRepository.GetByIdAsync(request.PriorityId, cancellationToken);
-        if (priority is null)
-        {
-            return TicketCreationResult.Failure(TicketCreationOutcome.PriorityNotFound);
-        }
-
+        var category = routing.Category!;
+        var priority = routing.Priority!;
+        var department = routing.Department!;
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
         // ISSUE-006 (approved as recommended, Management-Decisions.md):
@@ -185,24 +210,37 @@ public sealed class TicketCreationAppService(
         // approved outcome for those two priority tiers during an outage.
         if (!Priority.IsCriticalOrHigh(priority.PriorityId))
         {
+            await using var queuedTransaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
             intakeRecord.MarkPendingCrmVerification();
-            await unitOfWork.SaveChangesAsync(cancellationToken);
 
             await auditWriter.WriteAsync(
                 callerEmployeeId, "MarkPendingCrmVerification", "IntakeRecord", intakeRecord.IntakeRecordId.ToString(),
                 beforeValue: "CrmVerificationStatus=Unverified", afterValue: "CrmVerificationStatus=PendingCrmVerification",
                 Guid.NewGuid(), cancellationToken);
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await queuedTransaction.CommitAsync(cancellationToken);
 
             return TicketCreationResult.QueuedPendingVerification(IntakeRecordAppService.ToDto(intakeRecord));
         }
 
-        var ticketNumber = await GenerateTicketNumberAsync(category.DepartmentId, now, cancellationToken);
-        var ticket = Ticket.CreateProvisional(
-            ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
-        await ticketRepository.AddAsync(ticket, cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        Ticket ticket;
+        try
+        {
+            var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
+            ticket = Ticket.CreateProvisional(
+                ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+
+            await ticketRepository.AddAsync(ticket, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
+        }
 
         intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.PendingCrmVerification);
 
@@ -215,8 +253,53 @@ public sealed class TicketCreationAppService(
             Guid.NewGuid(), cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return TicketCreationResult.Success(ToDto(ticket));
+    }
+
+    /// <summary>
+    /// Resolves and validates Category → Department routing (FR-CLS-01/
+    /// FR-RTE-01) and Priority together, since every creation path needs
+    /// both. Rejects a Category that is missing/inactive, a Priority that
+    /// is missing, and — item 9 of this review — a Category whose routed
+    /// Department is itself missing/inactive, so a ticket can never be
+    /// silently routed to a department nobody is staffing.
+    /// </summary>
+    private async Task<RoutingResolution> ResolveRoutingAsync(int categoryId, byte priorityId, CancellationToken cancellationToken)
+    {
+        var category = await categoryRepository.GetByIdAsync(categoryId, cancellationToken);
+        if (category is null || !category.IsActive)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.CategoryNotFound);
+        }
+
+        var priority = await priorityRepository.GetByIdAsync(priorityId, cancellationToken);
+        if (priority is null)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
+        }
+
+        var department = await departmentRepository.GetByIdAsync(category.DepartmentId, cancellationToken);
+        if (department is null || !department.IsActive)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.DepartmentInactive);
+        }
+
+        return RoutingResolution.Succeeded(category, priority, department);
+    }
+
+    private sealed record RoutingResolution(
+        Domain.Modules.ClassificationAndRouting.Category? Category,
+        Priority? Priority,
+        Domain.Modules.IdentityAndAccess.Department? Department,
+        TicketCreationOutcome? Failure)
+    {
+        public static RoutingResolution Succeeded(
+            Domain.Modules.ClassificationAndRouting.Category category, Priority priority, Domain.Modules.IdentityAndAccess.Department department) =>
+            new(category, priority, department, null);
+
+        public static RoutingResolution Failed(TicketCreationOutcome outcome) => new(null, null, null, outcome);
     }
 
     /// <summary>
@@ -249,11 +332,9 @@ public sealed class TicketCreationAppService(
         }
     }
 
-    private async Task<string> GenerateTicketNumberAsync(int departmentId, DateTime nowUtc, CancellationToken cancellationToken)
+    private async Task<string> GenerateTicketNumberAsync(
+        Domain.Modules.IdentityAndAccess.Department department, DateTime nowUtc, CancellationToken cancellationToken)
     {
-        var department = await departmentRepository.GetByIdAsync(departmentId, cancellationToken)
-            ?? throw new InvalidOperationException($"Department {departmentId} referenced by an active Category was not found.");
-
         var prefix = $"TG-{department.Code}-{nowUtc:yyyyMMdd}-";
         var existingCount = await ticketRepository.CountByTicketNumberPrefixAsync(prefix, cancellationToken);
         return $"{prefix}{existingCount + 1:D4}";

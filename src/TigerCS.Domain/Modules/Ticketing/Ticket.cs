@@ -139,6 +139,26 @@ public class Ticket
     /// implemented and unit-tested now so the invariant is real and ready
     /// for the next increment, the same forward-building pattern already
     /// used for <c>VerificationSession.Consume()</c>.
+    ///
+    /// <para>
+    /// <b>Deliberately a bare state transition, not full orchestration —
+    /// same division of responsibility as <see cref="CreateVerified"/>.</b>
+    /// This method does not itself create a <c>TicketRequesterSnapshot</c>,
+    /// and takes raw IDs rather than a <c>VerificationSession</c>, exactly
+    /// as <see cref="CreateVerified"/> also takes raw
+    /// <c>unitReferenceId</c>/<c>contactReferenceId</c> rather than a
+    /// session object — in both cases, sourcing those IDs from a genuinely
+    /// confirmed, single-use, owned <c>VerificationSession</c> (never a
+    /// caller-supplied raw pair) and constructing the resulting
+    /// <c>TicketRequesterSnapshot</c> is the calling application service's
+    /// job, done alongside this call in one transaction — see
+    /// <c>TicketCreationAppService.CreateFromVerificationSessionAsync</c>
+    /// for the pattern this method's future caller must mirror. A caller
+    /// that invokes this with unvalidated IDs, or that skips writing the
+    /// snapshot, produces a <see cref="CrmVerificationStatus.Verified"/>
+    /// ticket that violates ADR-0007 — that correctness is this method's
+    /// caller's responsibility, not something its own signature enforces.
+    /// </para>
     /// </summary>
     public void ReconcileVerification(int unitReferenceId, int contactReferenceId)
     {

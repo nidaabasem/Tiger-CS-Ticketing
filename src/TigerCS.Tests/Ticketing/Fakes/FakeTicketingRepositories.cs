@@ -1,3 +1,4 @@
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -100,9 +101,70 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
 {
     public int SaveChangesCallCount { get; private set; }
 
+    public int TransactionsBegun { get; private set; }
+    public int TransactionsCommitted { get; private set; }
+    public int TransactionsRolledBack { get; private set; }
+
+    /// <summary>1-based SaveChangesAsync call number on which to throw VerificationSessionConcurrentlyConsumedException — mirrors FakeCustomerVerificationUnitOfWork's ThrowDuplicateWriteExceptionOnCall. Null = never.</summary>
+    public int? ThrowConcurrencyConflictOnCall { get; set; }
+
+    /// <summary>1-based SaveChangesAsync call number on which to throw DuplicateWriteException (a TicketNumber collision). Null = never.</summary>
+    public int? ThrowDuplicateWriteExceptionOnCall { get; set; }
+
+    public Task<ITicketingTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+    {
+        TransactionsBegun++;
+        return Task.FromResult<ITicketingTransaction>(new FakeTicketingTransaction(this));
+    }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveChangesCallCount++;
+
+        if (ThrowConcurrencyConflictOnCall == SaveChangesCallCount)
+        {
+            ThrowConcurrencyConflictOnCall = null;
+            throw new VerificationSessionConcurrentlyConsumedException(new InvalidOperationException("Simulated concurrency conflict."));
+        }
+
+        if (ThrowDuplicateWriteExceptionOnCall == SaveChangesCallCount)
+        {
+            ThrowDuplicateWriteExceptionOnCall = null;
+            throw new DuplicateWriteException(new InvalidOperationException("Simulated unique-constraint violation."));
+        }
+
         return Task.CompletedTask;
+    }
+
+    private sealed class FakeTicketingTransaction(FakeTicketingUnitOfWork owner) : ITicketingTransaction
+    {
+        private bool _resolved;
+
+        public Task CommitAsync(CancellationToken cancellationToken = default)
+        {
+            owner.TransactionsCommitted++;
+            _resolved = true;
+            return Task.CompletedTask;
+        }
+
+        public Task RollbackAsync(CancellationToken cancellationToken = default)
+        {
+            owner.TransactionsRolledBack++;
+            _resolved = true;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            // Standard transaction semantics: disposing without an explicit
+            // Commit is a rollback (mirrors IDbContextTransaction).
+            if (!_resolved)
+            {
+                owner.TransactionsRolledBack++;
+                _resolved = true;
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 }

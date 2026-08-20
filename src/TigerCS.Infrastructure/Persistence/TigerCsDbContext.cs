@@ -77,5 +77,10 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketConfiguration());
         builder.ApplyConfiguration(new TicketRequesterSnapshotConfiguration());
         builder.ApplyConfiguration(new TicketStatusHistoryConfiguration());
+
+        // Supplemental — see this configuration's own remarks for why it is
+        // not folded into VerificationSessionConfiguration (a
+        // CustomerVerification-module file this increment does not modify).
+        builder.ApplyConfiguration(new VerificationSessionConsumptionConcurrencyConfiguration());
     }
 }

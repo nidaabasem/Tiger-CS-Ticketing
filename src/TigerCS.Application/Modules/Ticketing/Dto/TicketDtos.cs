@@ -47,7 +47,13 @@ public enum TicketCreationOutcome
     VerificationSessionAlreadyConsumed,
     VerificationSessionExpired,
     CategoryNotFound,
-    PriorityNotFound
+    PriorityNotFound,
+
+    /// <summary>Item 9 (senior review): the Category's routed Department is missing or deactivated — never silently route a ticket to a department nobody is staffing.</summary>
+    DepartmentInactive,
+
+    /// <summary>A same-department, same-day TicketNumber collision (real DB unique-index race) — nothing else was touched; retrying the whole request is always correct.</summary>
+    TicketNumberCollision
 }
 
 public sealed record TicketCreationResult(TicketCreationOutcome Outcome, TicketResponseDto? Response = null, IntakeRecordResponseDto? QueuedIntakeRecord = null)

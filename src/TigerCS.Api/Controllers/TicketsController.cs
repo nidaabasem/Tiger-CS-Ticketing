@@ -113,6 +113,18 @@ public class TicketsController(TicketCreationAppService ticketCreationAppService
             title: "Priority not found",
             statusCode: StatusCodes.Status404NotFound),
 
+        TicketCreationOutcome.DepartmentInactive => Problem(
+            type: "https://tigercs.internal/problems/department-inactive",
+            title: "Routed department is inactive",
+            detail: "This Category routes to a Department that is missing or deactivated.",
+            statusCode: StatusCodes.Status404NotFound),
+
+        TicketCreationOutcome.TicketNumberCollision => Problem(
+            type: "https://tigercs.internal/problems/ticket-number-collision",
+            title: "Ticket number collision",
+            detail: "A concurrent request generated the same ticket number for this department/day — retry the request.",
+            statusCode: StatusCodes.Status409Conflict),
+
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };
 

@@ -21,7 +21,8 @@ public class TicketCreationAppServiceTests
         FakeTicketRepository Tickets,
         FakeTicketRequesterSnapshotRepository Snapshots,
         FakeTicketStatusHistoryRepository StatusHistory,
-        FakeAuditEntryWriter Audit);
+        FakeAuditEntryWriter Audit,
+        FakeTicketingUnitOfWork UnitOfWork);
 
     private static Fixture CreateService()
     {
@@ -34,12 +35,13 @@ public class TicketCreationAppServiceTests
         var snapshots = new FakeTicketRequesterSnapshotRepository();
         var statusHistory = new FakeTicketStatusHistoryRepository();
         var audit = new FakeAuditEntryWriter();
+        var unitOfWork = new FakeTicketingUnitOfWork();
 
         var service = new TicketCreationAppService(
             intakeRecords, sessions, categories, priorities, departments,
-            tickets, snapshots, statusHistory, new FakeTicketingUnitOfWork(), audit, TimeProvider.System);
+            tickets, snapshots, statusHistory, unitOfWork, audit, TimeProvider.System);
 
-        return new Fixture(service, intakeRecords, sessions, categories, priorities, departments, tickets, snapshots, statusHistory, audit);
+        return new Fixture(service, intakeRecords, sessions, categories, priorities, departments, tickets, snapshots, statusHistory, audit, unitOfWork);
     }
 
     private static async Task<(TigerCS.Domain.Modules.Ticketing.IntakeRecord Record, Guid AgentId)> SeedUnitRelatedIntakeAsync(
@@ -271,5 +273,129 @@ public class TicketCreationAppServiceTests
         var reloadedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
         Assert.Null(reloadedIntake!.LinkedTicketId);
         Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateFromVerificationSessionAsync_ConcurrentSessionConsumption_ReturnsAlreadyConsumedAndRollsBackTransaction()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+        var session = ConfirmedSession(agentId, 10, 20);
+        await f.Sessions.AddAsync(session);
+
+        // Call #1 = the ticket insert (succeeds); call #2 = the
+        // snapshot/consume/audit batch — simulates a second, faster
+        // concurrent request winning the race on VerificationSessions.Status.
+        f.UnitOfWork.ThrowConcurrencyConflictOnCall = 2;
+
+        var result = await f.Service.CreateFromVerificationSessionAsync(
+            agentId,
+            new CreateTicketFromVerificationRequestDto(
+                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, (byte)PriorityLevel.High, "AC not cooling"));
+
+        Assert.Equal(TicketCreationOutcome.VerificationSessionAlreadyConsumed, result.Outcome);
+        Assert.Equal(1, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
+        Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
+
+        // The losing request's IntakeRecord link never took effect either —
+        // rollback undoes the whole batch, not just the session consumption.
+        var reloadedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.Null(reloadedIntake!.LinkedTicketId);
+    }
+
+    [Fact]
+    public async Task CreateFromVerificationSessionAsync_TicketNumberCollision_ReturnsTicketNumberCollision()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+        var session = ConfirmedSession(agentId, 10, 20);
+        await f.Sessions.AddAsync(session);
+
+        f.UnitOfWork.ThrowDuplicateWriteExceptionOnCall = 1;
+
+        var result = await f.Service.CreateFromVerificationSessionAsync(
+            agentId,
+            new CreateTicketFromVerificationRequestDto(
+                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, (byte)PriorityLevel.High, "AC not cooling"));
+
+        Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
+        // Session is untouched — a plain retry of the whole request is safe.
+        Assert.Equal(VerificationSessionStatus.Confirmed, session.Status);
+    }
+
+    [Fact]
+    public async Task CreateFromVerificationSessionAsync_CategoryRoutesToInactiveDepartment_ReturnsDepartmentInactive()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Retiring Department", "OLD");
+        var category = f.Categories.Seed(department.DepartmentId);
+        department.Deactivate();
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+        var session = ConfirmedSession(agentId, 10, 20);
+        await f.Sessions.AddAsync(session);
+
+        var result = await f.Service.CreateFromVerificationSessionAsync(
+            agentId,
+            new CreateTicketFromVerificationRequestDto(
+                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, (byte)PriorityLevel.High, "x"));
+
+        Assert.Equal(TicketCreationOutcome.DepartmentInactive, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromVerificationSessionAsync_HappyPath_CommitsExactlyOneTransaction()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+        var session = ConfirmedSession(agentId, 10, 20);
+        await f.Sessions.AddAsync(session);
+
+        var result = await f.Service.CreateFromVerificationSessionAsync(
+            agentId,
+            new CreateTicketFromVerificationRequestDto(
+                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, (byte)PriorityLevel.High, "AC not cooling"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal(1, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+        Assert.Equal(0, f.UnitOfWork.TransactionsRolledBack);
+    }
+
+    [Fact]
+    public async Task CreateProvisionalAsync_CategoryRoutesToInactiveDepartment_ReturnsDepartmentInactive()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Retiring Department", "OLD");
+        var category = f.Categories.Seed(department.DepartmentId);
+        department.Deactivate();
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateProvisionalAsync(
+            agentId, new CreateProvisionalTicketRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Critical, "Flooding"));
+
+        Assert.Equal(TicketCreationOutcome.DepartmentInactive, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateProvisionalAsync_TicketNumberCollision_ReturnsTicketNumberCollision()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        f.UnitOfWork.ThrowDuplicateWriteExceptionOnCall = 1;
+
+        var result = await f.Service.CreateProvisionalAsync(
+            agentId, new CreateProvisionalTicketRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Critical, "Flooding"));
+
+        Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
     }
 }
