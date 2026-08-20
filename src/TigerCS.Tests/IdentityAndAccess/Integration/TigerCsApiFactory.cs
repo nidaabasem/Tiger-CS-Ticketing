@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Persistence;
 
@@ -118,6 +120,35 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
 
         db.UserDepartmentAssignments.Add(new UserDepartmentAssignment(
             employeeId, departmentId, isPrimary: true, DateTime.UtcNow, assignedByEmployeeId: null));
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Creates a category routed to the given department (bypassing the app services — test setup, not the thing under test).</summary>
+    public async Task<int> CreateCategoryAsync(string name, int departmentId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var category = new Category(name, departmentId);
+        db.Categories.Add(category);
+        await db.SaveChangesAsync();
+        return category.CategoryId;
+    }
+
+    /// <summary>Seeds the fixed MVP priority set (idempotent — a no-op if already seeded), needed since this factory does not run DevSeedData.</summary>
+    public async Task SeedPrioritiesAsync()
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        if (await db.Priorities.AnyAsync())
+        {
+            return;
+        }
+
+        foreach (var level in Enum.GetValues<PriorityLevel>())
+        {
+            db.Priorities.Add(new Priority((byte)level, level.ToString(), (byte)level));
+        }
+
         await db.SaveChangesAsync();
     }
 }

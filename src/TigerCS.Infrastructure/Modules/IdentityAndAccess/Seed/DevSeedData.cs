@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Persistence;
 
@@ -30,7 +32,58 @@ public static class DevSeedData
 
         await SeedRolesAsync(roleManager, logger, cancellationToken);
         await SeedDepartmentsAsync(dbContext, logger, cancellationToken);
+        await SeedPrioritiesAsync(dbContext, logger, cancellationToken);
+        await SeedCategoriesAsync(dbContext, logger, cancellationToken);
         await SeedDevAdministratorAsync(dbContext, userManager, configuration, logger, cancellationToken);
+    }
+
+    private static async Task SeedPrioritiesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        if (await dbContext.Priorities.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+
+        // The fixed MVP set (MVP-Data-Dictionary.md §2.6) — see Priority's
+        // own remarks for why only this reference table, not SlaPolicies, is
+        // seeded in this increment.
+        (PriorityLevel Level, string Name)[] priorities =
+        [
+            (PriorityLevel.Critical, "Critical"),
+            (PriorityLevel.High, "High"),
+            (PriorityLevel.Medium, "Medium"),
+            (PriorityLevel.Low, "Low")
+        ];
+
+        foreach (var (level, name) in priorities)
+        {
+            dbContext.Priorities.Add(new Priority((byte)level, name, (byte)level));
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("Seeded {Count} priorities.", priorities.Length);
+    }
+
+    private static async Task SeedCategoriesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        if (await dbContext.Categories.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+
+        var customerService = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "CS", cancellationToken);
+        var facilities = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "FM", cancellationToken);
+        if (customerService is null || facilities is null)
+        {
+            logger.LogWarning("Skipping category seed — expected departments (CS, FM) not found.");
+            return;
+        }
+
+        dbContext.Categories.Add(new Category("General Inquiry", customerService.DepartmentId));
+        dbContext.Categories.Add(new Category("Corrective Maintenance", facilities.DepartmentId));
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("Seeded 2 sample categories.");
     }
 
     private static async Task SeedRolesAsync(

@@ -65,7 +65,7 @@ jobs:
         working-directory: src
         run: dotnet restore TigerCS.slnx
 
-      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification)
+      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
@@ -106,6 +106,8 @@ jobs:
             "AspNetUserRoles" "AspNetUserTokens" "AspNetUsers" "Departments" \
             "Employees" "UserDepartmentAssignments" \
             "AuditEntries" "ContactReferences" "UnitReferences" "VerificationSessions" \
+            "Categories" "Priorities" "IntakeRecords" "Tickets" \
+            "TicketRequesterSnapshots" "TicketStatusHistory" \
             "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
@@ -113,11 +115,11 @@ jobs:
           echo "--- expected tables ---"
           echo "$expected"
           if [ "$actual_sorted" != "$expected" ]; then
-            echo "::error::Table list does not match the expected Identity and Access + CRM Verification schema exactly."
+            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing schema exactly."
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 15 tables, no unrelated (ticketing/SLA/Genesys) tables."
+          echo "Table list matches exactly: 21 tables, no unrelated (SLA/Genesys) tables."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -151,6 +153,27 @@ jobs:
             exit 1
           fi
           echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — unique index (TicketNumber, FR-TKT-01)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # TicketCreationAppService.GenerateTicketNumberAsync computes a
+          # per-department-per-day sequence from a COUNT query, then relies
+          # on this unique index as the real correctness backstop under
+          # concurrency (a collision surfaces as DuplicateWriteException via
+          # TicketingUnitOfWork, same translation pattern as the two checks
+          # above). The EF Core InMemory provider does not enforce unique
+          # indexes under concurrent writes (see CustomerVerificationUnitOfWork's
+          # remarks) — this is the only place its real existence is verified.
+          is_unique=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT is_unique FROM sys.indexes WHERE object_id = OBJECT_ID('Tickets') AND name = 'IX_Tickets_TicketNumber';")
+          is_unique_trimmed=$(echo "$is_unique" | tr -d '[:space:]')
+          echo "is_unique = '$is_unique_trimmed'"
+          if [ "$is_unique_trimmed" != "1" ]; then
+            echo "::error::IX_Tickets_TicketNumber is not a unique index (is_unique='$is_unique_trimmed')."
+            exit 1
+          fi
+          echo "Unique index present on Tickets.TicketNumber."
 
       - name: Verify no schema drift (no-op probe migration)
         working-directory: src
