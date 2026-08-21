@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -451,6 +452,77 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         var listResponse = await adminClient.GetAsync($"/api/tickets/{ticket.TicketId}/notes");
         Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+    }
+
+    // ---------------------------------------------------------------
+    // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9)
+    //
+    // The structural claim ADR-0024 makes is that a policy added later is
+    // covered with no change to the override. This whole module is that
+    // claim's first real test: not one line of SLA or escalation code names
+    // the System Administrator role, and none of the role sets in
+    // SlaRoleSets include it — every endpoint below is reached purely
+    // through the central mechanism.
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task GetTicketSla_Returns200()
+    {
+        var (agentClient, _) = await CreateClientAsync(Roles.CsAgent);
+        var ticket = await CreateVerifiedTicketAsync(agentClient, "Facilities");
+        var (adminClient, _) = await CreateAdministratorAsync();
+
+        var response = await adminClient.GetAsync($"/api/tickets/{ticket.TicketId}/sla");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sla = await response.Content.ReadFromJsonAsync<TicketSlaSummaryResponseDto>();
+
+        // Not merely "not 403": the summary is real, with the due dates
+        // ticket creation computed for it.
+        Assert.NotNull(sla!.FirstResponseDueAtUtc);
+        Assert.NotNull(sla.ResolutionDueAtUtc);
+        Assert.Equal("Running", sla.SlaState);
+    }
+
+    [Fact]
+    public async Task RecordFirstResponse_Returns200()
+    {
+        var (agentClient, _) = await CreateClientAsync(Roles.CsAgent);
+        var ticket = await CreateVerifiedTicketAsync(agentClient, "Facilities");
+        var (adminClient, _) = await CreateAdministratorAsync();
+
+        var response = await adminClient.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/sla/first-response",
+            new RecordFirstResponseRequestDto("Manual", null, RowVersionOf(ticket)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sla = await response.Content.ReadFromJsonAsync<TicketSlaSummaryResponseDto>();
+        Assert.NotNull(sla!.FirstHumanResponseAtUtc);
+    }
+
+    [Fact]
+    public async Task EscalateTicketAndListEscalations_Return201And200()
+    {
+        var (agentClient, _) = await CreateClientAsync(Roles.CsAgent);
+        var ticket = await CreateVerifiedTicketAsync(agentClient, "Facilities");
+        var (adminClient, _) = await CreateAdministratorAsync();
+
+        // Level 4 specifically: MVP-ERD.md §2.17 restricts ManualLevel4 to a
+        // CS Manager or GM actor, and the administrator holds neither role.
+        // Passing here is the override working on the narrowest gate in the
+        // module, not on its most permissive one.
+        var escalateResponse = await adminClient.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/escalations",
+            new ManualEscalationRequestDto(4, "ManualLevel4", "Executive attention requested.", RowVersionOf(ticket)));
+
+        Assert.Equal(HttpStatusCode.Created, escalateResponse.StatusCode);
+        var escalation = await escalateResponse.Content.ReadFromJsonAsync<TicketEscalationResponseDto>();
+        Assert.Equal(4, escalation!.Level);
+
+        var listResponse = await adminClient.GetAsync($"/api/tickets/{ticket.TicketId}/escalations");
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var escalations = await listResponse.Content.ReadFromJsonAsync<List<TicketEscalationResponseDto>>();
+        Assert.Single(escalations!);
     }
 
     // ---------------------------------------------------------------

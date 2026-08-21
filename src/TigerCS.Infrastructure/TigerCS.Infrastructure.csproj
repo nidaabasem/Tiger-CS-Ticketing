@@ -10,6 +10,15 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <!-- ADR-0015: Hangfire is the approved background-job mechanism for SLA
+         deadline checks and the safety sweep. Versions are pinned centrally
+         in Directory.Packages.props, which already reserved them. -->
+    <PackageReference Include="Hangfire.Core" />
+    <PackageReference Include="Hangfire.SqlServer" />
+    <PackageReference Include="Hangfire.AspNetCore" />
+    <!-- Lifts Hangfire.SqlServer's vulnerable transitive Newtonsoft.Json
+         11.0.1 onto the patched 13.0.4 - see Directory.Packages.props. -->
+    <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

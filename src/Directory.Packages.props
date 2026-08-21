@@ -48,6 +48,17 @@
     <PackageVersion Include="Hangfire.Core" Version="1.8.24" />
     <PackageVersion Include="Hangfire.SqlServer" Version="1.8.24" />
     <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.24" />
+    <!--
+      Hangfire.SqlServer declares Newtonsoft.Json >= 11.0.1 for its job
+      serialization, and 11.0.1 carries GHSA-5crp-9r3c-p9vr (high severity).
+      NuGet's audit reports that as NU1903, which TreatWarningsAsErrors turns
+      into a build failure - correctly, since it is a real vulnerability.
+      Referencing the patched 13.0.4 directly lifts the whole graph onto it;
+      Hangfire's own minimum is satisfied by any 13.x, so nothing is pinned
+      below what it needs. Not suppressed: silencing the audit would leave the
+      vulnerable assembly in the build output.
+    -->
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
   <ItemGroup Label="Testing (ADR-0021) -- matches the .NET 10 SDK's own project-template defaults">

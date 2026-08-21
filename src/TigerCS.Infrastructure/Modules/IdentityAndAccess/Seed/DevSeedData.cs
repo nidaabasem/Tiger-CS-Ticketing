@@ -7,6 +7,7 @@ using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Infrastructure.Identity;
+using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
 using TigerCS.Infrastructure.Persistence;
 
 namespace TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
@@ -34,6 +35,7 @@ public static class DevSeedData
         await SeedDepartmentsAsync(dbContext, logger, cancellationToken);
         await SeedPrioritiesAsync(dbContext, logger, cancellationToken);
         await SeedCategoriesAsync(dbContext, logger, cancellationToken);
+        await SeedSlaReferenceDataAsync(dbContext, logger, cancellationToken);
         await SeedDevAdministratorAsync(dbContext, userManager, configuration, logger, cancellationToken);
     }
 
@@ -44,9 +46,10 @@ public static class DevSeedData
             return;
         }
 
-        // The fixed MVP set (MVP-Data-Dictionary.md §2.6) — see Priority's
-        // own remarks for why only this reference table, not SlaPolicies, is
-        // seeded in this increment.
+        // The fixed MVP set (MVP-Data-Dictionary.md §2.6). SlaPolicies, its
+        // identifying 1:1 partner, is seeded by SeedSlaReferenceDataAsync
+        // below — it must exist wherever these rows do, since a ticket
+        // cannot get a due date without it.
         (PriorityLevel Level, string Name)[] priorities =
         [
             (PriorityLevel.Critical, "Critical"),
@@ -62,6 +65,26 @@ public static class DevSeedData
 
         await dbContext.SaveChangesAsync(cancellationToken);
         logger.LogInformation("Seeded {Count} priorities.", priorities.Length);
+    }
+
+    /// <summary>
+    /// The SLA policies and default business calendar (backlog S-04's
+    /// Definition of Done). Delegates to <see cref="SlaReferenceData"/> so
+    /// the approved target values live in exactly one place and cannot drift
+    /// between what a developer runs and what the integration tests assert.
+    /// </summary>
+    private static async Task SeedSlaReferenceDataAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        var alreadySeeded = await dbContext.SlaPolicies.AnyAsync(cancellationToken)
+            && await dbContext.BusinessCalendars.AnyAsync(cancellationToken);
+
+        if (alreadySeeded)
+        {
+            return;
+        }
+
+        await SlaReferenceData.SeedAsync(dbContext, cancellationToken);
+        logger.LogInformation("Seeded SLA policies and the default business calendar (ISSUE-017 Option A: Sat-Thu, 08:00-18:00).");
     }
 
     private static async Task SeedCategoriesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)

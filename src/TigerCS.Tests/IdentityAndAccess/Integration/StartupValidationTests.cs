@@ -21,6 +21,14 @@ public class StartupValidationTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment(environment);
+
+            // ADR-0015's Hangfire server would connect to SQL Server at
+            // startup; these tests assert Program.cs's own startup guards, not
+            // background-job execution. UseSetting rather than the overrides
+            // below because the background-job registration reads this during
+            // service registration — see TigerCsApiFactory for the full note.
+            builder.UseSetting("BackgroundJobs:Enabled", "false");
+
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(overrides));
 
             if (useInMemoryDb)

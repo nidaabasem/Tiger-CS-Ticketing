@@ -88,7 +88,7 @@ jobs:
           path: src/idempotent-migration.sql
           retention-days: 30
 
-      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing, AddTicketOperations)
+      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing, AddTicketOperations, AddSlaAndEscalation)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
@@ -132,6 +132,8 @@ jobs:
             "Categories" "Priorities" "IntakeRecords" "Tickets" \
             "TicketRequesterSnapshots" "TicketStatusHistory" \
             "TicketAssignments" "TicketResolutions" "TicketNotes" \
+            "SlaPolicies" "BusinessCalendars" "BusinessCalendarWorkingDays" "Holidays" \
+            "TicketSlaInstances" "TicketEscalations" "IdempotencyRecords" \
             "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
@@ -139,11 +141,11 @@ jobs:
           echo "--- expected tables ---"
           echo "$expected"
           if [ "$actual_sorted" != "$expected" ]; then
-            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing schema exactly."
+            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing + SLA and Escalation schema exactly."
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 24 tables, no unrelated (SLA/Genesys) tables."
+          echo "Table list matches exactly: 31 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -341,6 +343,149 @@ jobs:
             exit 1
           fi
           echo "All foreign keys on the new Ticketing tables are NO_ACTION (Restrict), as required."
+
+      - name: Verify schema — filtered unique index (one current SLA period per ticket)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # MVP-ERD.md §2.15 describes "exactly one row per TicketId has
+          # PeriodEndAtUtc IS NULL" as app-enforced and recommends this index.
+          # Taking the recommendation makes it unbreakable by any future
+          # writer (backlog S-14's priority upgrade closes a period and opens
+          # a successor), but the EF Core InMemory provider used by the test
+          # suite does not enforce filtered indexes at all — so this is the
+          # only place the index's real existence and shape are verified.
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'UX_TicketSlaInstances_CurrentPeriodPerTicket';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([PeriodEndAtUtc]ISNULL)" ]; then
+            echo "::error::UX_TicketSlaInstances_CurrentPeriodPerTicket filter_definition was '$filter_trimmed', expected '([PeriodEndAtUtc]ISNULL)'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — filtered unique index (one automatic breach escalation per ticket)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # The database backstop behind backlog S-11's "exactly one Level 2
+          # escalation, not a repeating one on every subsequent check". The
+          # application checks first, but the scheduled deadline job
+          # (SLA-Architecture.md §13) and the safety sweep (§14) can both pass
+          # that read before either commits — this index is what makes the
+          # loser fail rather than duplicate. Filtered to TriggerType = 1
+          # (AutoBreach) so a ticket may still carry several manual
+          # escalations as it moves up the Level 1-4 hierarchy.
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'UX_TicketEscalations_OneAutoBreachPerTicket';")
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          echo "filter_definition = '$filter_trimmed'"
+          if [ "$filter_trimmed" != "([TriggerType]=(1))" ]; then
+            echo "::error::UX_TicketEscalations_OneAutoBreachPerTicket filter_definition was '$filter_trimmed', expected '([TriggerType]=(1))'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — unique index (SLA breach idempotency key, ADR-0014)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # SLA-Architecture.md §15's guarantee rests on this index: the
+          # scheduled job, the sweep and the two achievement events all claim
+          # the same TicketId + CheckType + DueTimestamp key, and exactly one
+          # survives the insert. Without it, idempotency would hold only for
+          # sequential retries, not for the concurrent case it exists for.
+          is_unique=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT is_unique FROM sys.indexes WHERE object_id = OBJECT_ID('IdempotencyRecords') AND name = 'UX_IdempotencyRecords_IdempotencyKey';")
+          is_unique_trimmed=$(echo "$is_unique" | tr -d '[:space:]')
+          echo "is_unique = '$is_unique_trimmed'"
+          if [ "$is_unique_trimmed" != "1" ]; then
+            echo "::error::UX_IdempotencyRecords_IdempotencyKey is not a unique index (is_unique='$is_unique_trimmed')."
+            exit 1
+          fi
+          echo "Unique index present on IdempotencyRecords.IdempotencyKey."
+
+      - name: Verify schema — CHECK constraints on the SLA and Escalation tables
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # CHECK constraints are not enforced by the EF Core InMemory
+          # provider either, so this is the only place they are verified.
+          # CK_TicketEscalations_Level4IsManualOnly is the load-bearing one:
+          # Level 4 is manual-only (Solution-Analysis.md §7.6), and because
+          # Level and TriggerType arrive as two independent client-supplied
+          # fields, the rule has to survive any future writer rather than
+          # resting on one application check. The CS-Manager/GM role gate
+          # stays app-level, as MVP-ERD.md §2.17 says, since the database has
+          # no concept of a role.
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT name FROM sys.check_constraints WHERE OBJECT_NAME(parent_object_id) IN ('SlaPolicies','BusinessCalendars','BusinessCalendarWorkingDays','TicketSlaInstances','TicketEscalations') ORDER BY name;" | sed '/^$/d' | tr -d ' ')
+          expected=$(printf '%s\n' \
+            "CK_BusinessCalendarWorkingDays_DayOfWeekRange" \
+            "CK_BusinessCalendars_WindowOrder" \
+            "CK_SlaPolicies_PositiveTargets" \
+            "CK_TicketEscalations_Level4IsManualOnly" \
+            "CK_TicketEscalations_LevelRange" \
+            "CK_TicketSlaInstances_DowngradeRequiresApprover" \
+            "CK_TicketSlaInstances_PeriodOrder" | sort)
+          actual_sorted=$(echo "$actual" | sort)
+          echo "--- actual check constraints ---"
+          echo "$actual_sorted"
+          echo "--- expected check constraints ---"
+          echo "$expected"
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::CHECK constraints on the SLA and Escalation tables do not match the expected set exactly."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "All 7 expected CHECK constraints are present."
+
+      - name: Verify schema — Level 4 escalation is manual-only, enforced by the database
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # Asserts what CK_TicketEscalations_Level4IsManualOnly actually
+          # says, not merely that a constraint by that name exists.
+          #
+          # Deliberately a definition check rather than an attempted INSERT:
+          # TicketEscalations.TicketId is an FK to Tickets, and on this
+          # freshly-migrated database there are no tickets — so a probe row
+          # would be rejected by the foreign key regardless of the CHECK, and
+          # would report a pass for entirely the wrong reason. The same
+          # definition-text approach the filtered-index checks above use.
+          #
+          # Matched on tokens rather than one exact string because SQL Server
+          # re-renders a CHECK expression when it stores it (parenthesisation
+          # and operator spacing are normalised); the tokens below are what
+          # the rule means, and none of them can be present unless Level 4 is
+          # bound to TriggerType 4 in both directions.
+          definition=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT definition FROM sys.check_constraints WHERE name = 'CK_TicketEscalations_Level4IsManualOnly';")
+          normalized=$(echo "$definition" | tr -d '[:space:]')
+          echo "definition = '$normalized'"
+          for token in '[Level]=(4)' '[TriggerType]=(4)' '[Level]<>(4)' '[TriggerType]<>(4)'; do
+            if ! echo "$normalized" | grep -qF "$token"; then
+              echo "::error::CK_TicketEscalations_Level4IsManualOnly does not contain '$token' — Level 4 is no longer bound to the ManualLevel4 trigger in both directions, so the CS-Manager/GM gate on Level 4 is bypassable."
+              exit 1
+            fi
+          done
+          echo "Level 4 is bound to the ManualLevel4 trigger in both directions by the database."
+
+      - name: Verify schema — foreign keys on the SLA and Escalation tables
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # Same Restrict-everywhere posture as the Ticketing check above
+          # (MVP-ERD.md §2.15/§2.17/§2.20: every one of these tables is
+          # "Restrict/never deleted" — SLA periods and escalations are
+          # permanent history, and ISSUE-023 requires every period a ticket
+          # passed through stay reportable).
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(parent_object_id) + '->' + OBJECT_NAME(referenced_object_id) + ':' + delete_referential_action_desc FROM sys.foreign_keys WHERE OBJECT_NAME(parent_object_id) IN ('SlaPolicies','BusinessCalendarWorkingDays','Holidays','TicketSlaInstances','TicketEscalations') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
+          echo "--- foreign keys (child->parent:delete-action) ---"
+          echo "$actual"
+          non_no_action=$(echo "$actual" | grep -v ':NO_ACTION$' || true)
+          if [ -n "$non_no_action" ]; then
+            echo "::error::Found SLA/Escalation FK(s) with a delete behavior other than NO_ACTION/Restrict:"
+            echo "$non_no_action"
+            exit 1
+          fi
+          echo "All foreign keys on the SLA and Escalation tables are NO_ACTION (Restrict), as required."
 
       - name: Verify no schema drift (no-op probe migration)
         working-directory: src
