@@ -354,5 +354,6 @@ public sealed class TicketCreationAppService(
         ticket.EscalationLevel.ToString(),
         ticket.SlaState.ToString(),
         ticket.RequestSummary,
-        ticket.CreatedAtUtc);
+        ticket.CreatedAtUtc,
+        Convert.ToBase64String(ticket.RowVersion));
 }

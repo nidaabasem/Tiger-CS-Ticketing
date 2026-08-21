@@ -1,0 +1,84 @@
+using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Tests.CustomerVerification.Fakes;
+using TigerCS.Tests.IdentityAndAccess.Fakes;
+using TigerCS.Tests.Ticketing.Fakes;
+
+namespace TigerCS.Tests.Ticketing.Services;
+
+public class TicketNoteAppServiceTests
+{
+    private sealed record Fixture(
+        TicketNoteAppService Service, FakeTicketRepository Tickets, FakeTicketNoteRepository Notes,
+        FakeUserDepartmentAssignmentRepository DepartmentAssignments, FakeAuditEntryWriter Audit, FakeTicketingUnitOfWork UnitOfWork);
+
+    private static Fixture CreateService()
+    {
+        var tickets = new FakeTicketRepository();
+        var notes = new FakeTicketNoteRepository();
+        var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
+        var audit = new FakeAuditEntryWriter();
+        var unitOfWork = new FakeTicketingUnitOfWork();
+        var query = new TicketQueryAppService(tickets, departmentAssignments);
+
+        return new Fixture(
+            new TicketNoteAppService(tickets, notes, query, unitOfWork, audit, TimeProvider.System),
+            tickets, notes, departmentAssignments, audit, unitOfWork);
+    }
+
+    private static async Task<Ticket> SeedTicketAsync(FakeTicketRepository repo, int departmentId = 2)
+    {
+        var ticket = Ticket.CreateVerified(
+            "TG-CS-20260821-0030", departmentId, 10, 20, 5, (byte)PriorityLevel.High, "AC not cooling", DateTime.UtcNow);
+        await repo.AddAsync(ticket);
+        return ticket;
+    }
+
+    [Fact]
+    public async Task AddNoteAsync_CallerWithinDepartmentScope_Succeeds()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var employeeId = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(employeeId, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AddNoteAsync(
+            employeeId, [Roles.DepartmentEmployee], ticket.TicketId, new CreateNoteRequestDto("Contacted the tenant."));
+
+        Assert.Equal(NoteOutcome.Success, result.Outcome);
+        Assert.Single(f.Notes.Added);
+        Assert.Contains(f.Audit.Written, w => w.Action == "AddNote");
+        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+    }
+
+    [Fact]
+    public async Task AddNoteAsync_CallerOutsideDepartmentScope_ReturnsForbidden()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var employeeId = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(employeeId, 999, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AddNoteAsync(
+            employeeId, [Roles.DepartmentEmployee], ticket.TicketId, new CreateNoteRequestDto("Should not be allowed."));
+
+        Assert.Equal(NoteOutcome.Forbidden, result.Outcome);
+        Assert.Empty(f.Notes.Added);
+    }
+
+    [Fact]
+    public async Task ListNotesAsync_CsLayerRole_SeesNotesAcrossDepartments()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 7);
+        await f.Service.AddNoteAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId, new CreateNoteRequestDto("First note."));
+
+        var result = await f.Service.ListNotesAsync(Guid.NewGuid(), [Roles.CsSupervisor], ticket.TicketId, 1, 50);
+
+        Assert.Equal(TicketQueryOutcome.Success, result.Outcome);
+        Assert.Single(result.Response!.Items);
+    }
+}

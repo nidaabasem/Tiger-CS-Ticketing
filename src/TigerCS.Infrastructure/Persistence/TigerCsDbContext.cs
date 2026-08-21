@@ -56,6 +56,12 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketStatusHistory> TicketStatusHistoryEntries => Set<TicketStatusHistory>();
 
+    public DbSet<TicketAssignment> TicketAssignments => Set<TicketAssignment>();
+
+    public DbSet<TicketResolution> TicketResolutions => Set<TicketResolution>();
+
+    public DbSet<TicketNote> TicketNotes => Set<TicketNote>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -77,6 +83,9 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketConfiguration());
         builder.ApplyConfiguration(new TicketRequesterSnapshotConfiguration());
         builder.ApplyConfiguration(new TicketStatusHistoryConfiguration());
+        builder.ApplyConfiguration(new TicketAssignmentConfiguration());
+        builder.ApplyConfiguration(new TicketResolutionConfiguration());
+        builder.ApplyConfiguration(new TicketNoteConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a

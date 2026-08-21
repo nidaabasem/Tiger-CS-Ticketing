@@ -1,0 +1,15 @@
+using Microsoft.EntityFrameworkCore;
+using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Infrastructure.Persistence;
+
+namespace TigerCS.Infrastructure.Modules.Ticketing.Repositories;
+
+public sealed class TicketAssignmentRepository(TigerCsDbContext dbContext) : ITicketAssignmentRepository
+{
+    public Task<TicketAssignment?> GetCurrentAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        dbContext.TicketAssignments.FirstOrDefaultAsync(a => a.TicketId == ticketId && a.IsCurrent, cancellationToken);
+
+    public async Task AddAsync(TicketAssignment assignment, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketAssignments.AddAsync(assignment, cancellationToken);
+}
