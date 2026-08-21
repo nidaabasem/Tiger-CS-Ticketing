@@ -297,6 +297,9 @@ Roles are unchanged from v1.0, **except the Customer role**, which is materially
 
 ### 4.1 Permission Matrix (revised)
 
+> **Amended 2026-08-21 — confirmed management decision, superseding this matrix's System Administrator row.**
+> The System Administrator row below granted `View: All (technical)`, `Export: All`, `Admin: Full` and a dash in every operational column. **Management has confirmed that the System Administrator role must have access to every application feature and every API endpoint**, so that exclusion no longer holds. See the **System Administrator** row and the note beneath the table. The mechanism is recorded in **ADR-0024** and `Security-Architecture.md` §2.1; **no other role's row is changed by that decision.**
+
 `V`=View `C`=Create `E`=Edit `A`=Assign `T`=Transfer `Esc`=Escalate `Res`=Resolve `Cl`=Close `Reo`=Reopen `Cn`=Cancel `Rj`=Reject `Ex`=Export `Adm`=Admin
 
 | Role | V | C | E | A | T | Esc | Res | Cl | Reo | Cn | Rj | Ex | Adm |
@@ -308,11 +311,23 @@ Roles are unchanged from v1.0, **except the Customer role**, which is materially
 | CS Manager | All tickets, all depts | — | All tickets | ✔ | ✔ | ✔ | — | **✔** (general/override) | ✔ | ✔ | ✔ | All reports | User/role assignment |
 | General Manager | All tickets | — | — | — | — | ✔ (receive L3, initiate L4) | — | — | — | — | — | All reports/dashboard | — |
 | Chairman/CEO | All tickets (read) | — | — | — | — | ✔ (receive L4 only) | — | — | — | — | — | Executive reports/dashboard | — |
-| System Administrator | All (technical) | — | — | — | — | — | — | — | — | — | — | All | ✔ Full |
+| System Administrator | **✔ All** | **✔** | **✔** | **✔** | **✔** | **✔** | **✔** | **✔** | **✔** | **✔** | **✔** | All | ✔ Full |
 | Reporting User | Reports/dashboard only | — | — | — | — | — | — | — | — | — | — | ✔ | — |
 | Customer | **None (MVP)** | **None (MVP)** | — | — | — | — | — | — | **None (MVP)** | — | — | **None (MVP)** | — |
 
 **Customer row note (review point 4):** In MVP, the Customer has **no direct system access at all** — no login, no self-service ticket creation, no self-service view, no self-service reopen. All customer interaction is via a live agent (phone) or an outbound email notification. This is a deliberate reduction from v1.0, which implicitly assumed a customer portal. See **ISSUE-021** — if management approves authenticated customer self-service, this row (and the corresponding Website/App/Kiosk channel FRs) will need Create/View/Export/Reopen capabilities added, scoped strictly to the authenticated customer's own unit/tickets.
+
+**System Administrator note (amended 2026-08-21 — confirmed management decision):** Every cell in this row was a dash except View/Export/Admin. That has been **superseded**: the role now passes every application authorization policy, including CustomerVerification, intake-record creation, CRM unit/contact lookup, verification-session creation, ticket creation, ticket queries/details, assignment/reassignment, department transfer, status changes, resolution and closure, notes, and CRM reconciliation — **and any policy added in future** (SLA, escalation, reporting, administration), which the mechanism includes automatically rather than by amendment.
+
+Three things this does **not** change, and which a reader of this row should not infer:
+
+1. **It is an authorization override only.** A System Administrator still obeys request validation, the §5.6 ticket status-transition rules, closed-ticket immutability, optimistic-concurrency control, database constraints, required business data, and the audit requirements of §11 — none of which are permissions, and all of which it reaches unchanged. Its actions are audited under its own identity, exactly as any other role's are.
+2. **No role is added to any account.** The nine roles above are unchanged in name, number, and membership; a System Administrator holds only "System Administrator". The override is applied centrally rather than by granting the account a second role such as Geyness Agent, precisely so the audit trail and role-based reporting continue to say who actually did what.
+3. **Every other row stands exactly as written**, including **Reporting User** (reports/dashboards only, no ticket actions) and the ISSUE-022 Resolve/Close split for the department and CS layers. The correction is scoped to one role.
+
+Two carve-outs are deliberate, so "access to everything" does not become "no checks at all": a **deactivated** System Administrator is still refused on every request (FR-ADM-02's 24-hour revocation requirement, `Security-Architecture.md` §14 — full authorization does not make an invalid session valid), and **verification-session single-agent ownership** (MVP-ERD.md §2.24) remains a per-record business rule, so an administrator cannot consume another agent's in-flight verification. Both are recorded in ADR-0024, the second flagged there for management's decision rather than settled unilaterally.
+
+**Separation of duties, flagged:** ISSUE-022's Resolve/Close split is enforced as authorization, so this decision makes it bypassable by a System Administrator. The audit trail still records who performed each step, so the split remains observable where it is no longer enforced for this role. Recommended for review at the pilot retrospective.
 
 **Resolve/Close note (review point 6):** Department Employee and Department Head can `Resolve` (mark the underlying work done) but not `Close` (finalize the ticket) — closure is reserved for the CS layer (Geyness Agent, Supervisor, CS Manager) who confirm the customer has actually been notified, per §8's closure criteria. This enforces separation of duties: the department confirms the work; CS confirms the customer knows. See **ISSUE-022**.
 
