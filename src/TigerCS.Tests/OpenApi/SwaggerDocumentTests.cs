@@ -91,7 +91,16 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/close",
         "POST /api/tickets/{ticketId}/reconciliation",
         "POST /api/tickets/{ticketId}/notes",
-        "GET /api/tickets/{ticketId}/notes"
+        "GET /api/tickets/{ticketId}/notes",
+
+        // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
+        // Automatic Level 2 escalation on breach has no entry here on
+        // purpose: §5.7 makes it system-triggered, so it is raised by the
+        // background-job path and is not a client-callable endpoint.
+        "GET /api/tickets/{ticketId}/sla",
+        "POST /api/tickets/{ticketId}/sla/first-response",
+        "POST /api/tickets/{ticketId}/escalations",
+        "GET /api/tickets/{ticketId}/escalations"
     ];
 
     private IReadOnlyCollection<string> DocumentedEndpoints() =>

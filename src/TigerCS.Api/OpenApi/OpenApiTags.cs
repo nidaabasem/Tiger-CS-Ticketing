@@ -35,6 +35,7 @@ public static class OpenApiTags
     public const string TicketLifecycle = "Ticket Lifecycle";
     public const string Notes = "Notes";
     public const string CrmReconciliation = "CRM Reconciliation";
+    public const string SlaAndEscalation = "SLA and Escalation";
 
     /// <summary>
     /// Every tag, in the order Swagger UI should render them — roughly the
@@ -56,6 +57,10 @@ public static class OpenApiTags
         (Transfer, "Transferring a ticket to another department."),
         (TicketLifecycle, "Status changes, resolution, and closing."),
         (Notes, "Ticket notes."),
-        (CrmReconciliation, "Reconciling a provisional ticket against a confirmed verification session.")
+        (CrmReconciliation, "Reconciling a provisional ticket against a confirmed verification session."),
+        (SlaAndEscalation,
+            "SLA due dates and breach state, recording the First Human Response, and manual escalation. "
+            + "Automatic Level 2 escalation on an SLA breach is system-triggered by a background job and has no endpoint. "
+            + "SLA pause/resume, priority change, and escalation responses are not part of this pilot.")
     ];
 }

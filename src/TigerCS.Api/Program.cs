@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
 using TigerCS.Api.OpenApi;
 using TigerCS.Infrastructure;
+using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
 using TigerCS.Integrations.Modules.CrmIntegration;
@@ -122,6 +123,18 @@ if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();
     await DevSeedData.SeedAsync(scope.ServiceProvider);
+}
+
+// SLA-Architecture.md §14 / ADR-0015 — registers the recurring safety sweep
+// with Hangfire. A no-op when BackgroundJobs:Enabled is false; registered
+// after Build() because the recurring-job manager needs live job storage.
+// The per-deadline scheduled jobs of §13 need no registration here: they are
+// enqueued as each due timestamp is computed.
+using (var backgroundJobScope = app.Services.CreateScope())
+{
+    var backgroundJobOptions = backgroundJobScope.ServiceProvider
+        .GetRequiredService<IOptions<BackgroundJobOptions>>().Value;
+    app.Services.UseTigerCsRecurringSlaSweep(backgroundJobOptions);
 }
 
 app.UseHttpsRedirection();

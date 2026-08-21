@@ -55,7 +55,16 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/tickets/{ticketId:long}/close"] = nameof(SystemAdministratorEndpointAuthorizationTests.ResolveAndCloseTicket_BothReturn200),
         ["POST /api/tickets/{ticketId:long}/reconciliation"] = nameof(SystemAdministratorEndpointAuthorizationTests.ReconcileProvisionalTicket_Returns200),
         ["POST /api/tickets/{ticketId:long}/notes"] = nameof(SystemAdministratorEndpointAuthorizationTests.AddAndListTicketNotes_Return201And200),
-        ["GET /api/tickets/{ticketId:long}/notes"] = nameof(SystemAdministratorEndpointAuthorizationTests.AddAndListTicketNotes_Return201And200)
+        ["GET /api/tickets/{ticketId:long}/notes"] = nameof(SystemAdministratorEndpointAuthorizationTests.AddAndListTicketNotes_Return201And200),
+
+        // SLA and Escalation. Automatic Level 2 escalation on breach has no
+        // row here because it has no endpoint: MVP-API-Contracts.md §5.7
+        // makes it system-triggered, raised inside the background-job
+        // transaction that records the breach.
+        ["GET /api/tickets/{ticketId:long}/sla"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketSla_Returns200),
+        ["POST /api/tickets/{ticketId:long}/sla/first-response"] = nameof(SystemAdministratorEndpointAuthorizationTests.RecordFirstResponse_Returns200),
+        ["POST /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
+        ["GET /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200)
     };
 
     private static IReadOnlyCollection<string> ProtectedEndpointsOf(EndpointDataSource endpoints) =>
