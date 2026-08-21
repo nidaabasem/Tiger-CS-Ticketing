@@ -259,3 +259,61 @@ the real Api in-process against a per-test EF Core InMemory database — no
 SQL Server is needed to run `dotnet test`. Only the migration itself (step 4)
 needs a real SQL Server, since InMemory doesn't exercise the filtered
 unique index or real T-SQL constraints.
+
+## 9. SLA and escalation background jobs (ADR-0015)
+
+The SLA and Escalation increment adds Hangfire, backed by the same SQL Server
+database (ADR-0003). It runs two things:
+
+- a **scheduled (delayed) job per due timestamp**, enqueued the moment the
+  timestamp is computed — the primary breach-detection mechanism
+  (`SLA-Architecture.md` §13);
+- a **recurring safety sweep**, every 1–5 minutes, that re-scans due deadlines
+  solely to catch a scheduled job lost to a deploy or restart (§14). It is
+  never the primary path, and on a healthy system it records nothing.
+
+Neither depends on an open browser or a SignalR client: both are server-side
+background work against the stored `TicketSlaInstances.*DueAtUtc` columns.
+
+### Configuration
+
+```jsonc
+"BackgroundJobs": {
+  "Enabled": true,            // default; set false to run the API with no Hangfire server
+  "SweepIntervalMinutes": 5   // clamped to the approved 1-5 range
+}
+```
+
+Hangfire provisions its own tables in a separate `HangfireSla` schema on first
+start, so they are never confused with — or migrated alongside — the
+application schema EF Core owns. `ConnectionStrings:TigerCsDatabase` is
+required whenever `Enabled` is `true`; the API refuses to start otherwise
+rather than silently running without SLA breach detection.
+
+**`Enabled: false` disables job *execution*, never job *logic*.** Breach
+detection stays fully wired and reachable — the deadline scheduler simply
+becomes a no-op, so a breach is detected on the next sweep instead of at the
+exact due moment, and detected exactly once either way (both paths share one
+idempotency key, `SLA-Architecture.md` §15). The integration-test hosts use
+this, since they have no SQL Server behind them.
+
+### Reference data
+
+`SlaPolicies` and the default `BusinessCalendars`/`BusinessCalendarWorkingDays`
+rows are seeded alongside `Priorities` by `DevSeedData` in Development, from
+`SlaReferenceData` — the same source the integration-test host seeds from, so
+the approved per-tier targets exist in exactly one place. The seeded calendar
+is ISSUE-017's approved Option A: **Saturday–Thursday working, Friday off,
+08:00–18:00, `Asia/Dubai`**.
+
+**No `Holidays` rows are seeded.** ADR-0010 makes holiday entry a manual
+annual process with a named business owner (ISSUE-012), and every row requires
+an `EnteredByEmployeeId` — so holiday dates are entered per year, not shipped.
+A missing holiday entry silently produces an SLA deadline that runs through a
+day the business was closed; that is ADR-0010's own stated operational risk,
+and it is the one piece of this calculation a code change cannot protect.
+
+The host must be able to resolve the calendar's `TimeZone` (`Asia/Dubai`). On
+Linux that needs `tzdata` installed. A zone that cannot be resolved fails
+loudly rather than falling back to UTC, which would silently shift every
+business-hours deadline by four hours.
