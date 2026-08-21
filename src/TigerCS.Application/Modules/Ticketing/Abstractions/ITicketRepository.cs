@@ -54,7 +54,7 @@ public interface ITicketRepository
     /// Primes EF Core's concurrency check: the client-supplied `If-Match`
     /// value becomes the tracked entity's "original" RowVersion, so
     /// SaveChanges' generated UPDATE includes `WHERE RowVersion = @clientValue`
-    /// and fails with <see cref="Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException"/>
+    /// and fails with <c>DbUpdateConcurrencyException</c>
     /// if another request already changed the row. Must be called before any
     /// mutation on a ticket fetched for an assignment/transfer/status/
     /// resolve/close/reconciliation write.

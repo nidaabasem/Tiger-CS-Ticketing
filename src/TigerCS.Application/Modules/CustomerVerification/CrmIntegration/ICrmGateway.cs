@@ -16,7 +16,7 @@ namespace TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 /// authority.</b> It holds no state machine, no session concept, no
 /// eligibility rule, no audit trail, and makes no decision about whether a
 /// ticket may be created — those are all Tiger CS Ticketing's own business
-/// logic (<see cref="VerificationSessionAppService"/>: selecting the
+/// logic (<c>VerificationSessionAppService</c>: selecting the
 /// requester, recording the verification method/result, deciding whether
 /// ticket creation is allowed, capturing the immutable verification-time
 /// snapshot, and the audit/authorization/expiry rules around all of it).

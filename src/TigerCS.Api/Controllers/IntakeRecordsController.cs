@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.Ticketing;
@@ -21,9 +22,24 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/intake-records")]
 [Authorize(Policy = PolicyNames.CustomerVerification)]
+[Tags(OpenApiTags.Intake)]
 public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppService) : ControllerBase
 {
+    /// <summary>Record a customer interaction, before any verification is attempted.</summary>
+    /// <remarks>
+    /// The unconditional first step of intake (MVP-ERD.md §2.9): every
+    /// interaction is captured, unit-related or not, so none is silently lost.
+    /// </remarks>
+    /// <param name="request">The channel, whether the request concerns a unit, and the raw unit number if so.</param>
+    /// <response code="201">The intake record, with its initial crmVerificationStatus.</response>
+    /// <response code="400">
+    /// channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
+    /// SocialMediaDirectMessage, FaceToFaceKiosk; or rawUnitNumberEntered was
+    /// absent while isUnitRelated was true, or present while it was false.
+    /// </response>
     [HttpPost]
+    [ProducesResponseType<IntakeRecordResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create([FromBody] CreateIntakeRecordRequestDto request, CancellationToken cancellationToken)
     {
         if (!Enum.TryParse<Channel>(request.ChannelId, ignoreCase: false, out _))

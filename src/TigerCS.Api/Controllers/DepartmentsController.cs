@@ -1,14 +1,26 @@
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.OpenApi;
+using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 
 namespace TigerCS.Api.Controllers;
 
 [ApiController]
 [Route("api/departments")]
+[Tags(OpenApiTags.Departments)]
 public class DepartmentsController(DepartmentUserAppService departmentUserAppService) : ControllerBase
 {
-    /// <summary>MVP-API-Contracts.md §1.4 — any authenticated staff may view.</summary>
+    /// <summary>List the users assigned to a department. Any authenticated staff member may view.</summary>
+    /// <remarks>MVP-API-Contracts.md §1.4.</remarks>
+    /// <param name="departmentId">The department to list.</param>
+    /// <param name="activeOnly">When true (the default), excludes deactivated users.</param>
+    /// <param name="page">1-based page number. Values below 1 are raised to 1.</param>
+    /// <param name="pageSize">Page size. Clamped to the range 1-100.</param>
+    /// <response code="200">A page of department members, with the total count.</response>
+    /// <response code="404">No such department.</response>
     [HttpGet("{departmentId:int}/users")]
+    [ProducesResponseType<PagedResultDto<DepartmentUserDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetUsers(
         int departmentId,
         [FromQuery] bool activeOnly = true,

@@ -4,10 +4,32 @@
 
   <PropertyGroup>
     <UserSecretsId>1f365368-5c6c-4763-86d9-d528e53a3a7f</UserSecretsId>
+
+    <!--
+      Feeds the /// XML doc comments on controllers and actions into the
+      generated OpenAPI document (.NET 10's Microsoft.AspNetCore.OpenApi reads
+      the XML documentation file produced here, plus those of referenced
+      projects, at build time). Documentation only - no runtime behaviour
+      depends on it.
+      CS1591 ("missing XML comment for publicly visible type or member") is
+      suppressed because TreatWarningsAsErrors is on solution-wide: requiring
+      a doc comment on every public member would turn a documentation feature
+      into a build break. Malformed-XML warnings stay enabled.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!--
+      CS1573 ("parameter has no matching param tag, but other parameters do")
+      is suppressed too: every action takes a CancellationToken that is bound
+      from the request abort token and never appears in the API contract, so
+      documenting it would only add noise - and, because the generator maps
+      the last <param> onto the request body, actively mis-describe it.
+    -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>

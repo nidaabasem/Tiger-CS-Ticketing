@@ -1,6 +1,11 @@
 namespace TigerCS.Application.Modules.Ticketing.Dto;
 
 /// <summary>The normal path (FR-CH-01/FR-VER-02, MVP-API-Contracts.md §3.1): create a ticket from an already-confirmed VerificationSession, and link it back to the IntakeRecord that preceded it (MVP-ERD.md §2.9).</summary>
+/// <param name="IntakeRecordId">Required. The unit-related intake record to promote. It must not already be linked to a ticket.</param>
+/// <param name="VerificationSessionId">Required. A confirmed, unexpired, not-yet-consumed session owned by the caller.</param>
+/// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
+/// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
 public sealed record CreateTicketFromVerificationRequestDto(
     long IntakeRecordId,
     Guid VerificationSessionId,
@@ -9,12 +14,32 @@ public sealed record CreateTicketFromVerificationRequestDto(
     string RequestSummary);
 
 /// <summary>ISSUE-006's approved fallback: Critical/High proceeds immediately as a provisional ticket while the CRM is unreachable; there is no VerificationSession to consume.</summary>
+/// <param name="IntakeRecordId">Required. The unit-related intake record to promote. It must not already be linked to a ticket.</param>
+/// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
+/// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low. Critical/High proceed immediately; Medium/Low are answered with 200 and remain queued.</param>
+/// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
 public sealed record CreateProvisionalTicketRequestDto(
     long IntakeRecordId,
     int CategoryId,
     byte PriorityId,
     string RequestSummary);
 
+/// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
+/// <param name="TicketId">The ticket.</param>
+/// <param name="TicketNumber">The human-facing ticket number.</param>
+/// <param name="OriginatingDepartmentId">The department the ticket was raised in.</param>
+/// <param name="CurrentDepartmentId">The department that currently holds it.</param>
+/// <param name="UnitReferenceId">The verified unit, or null for a provisional ticket.</param>
+/// <param name="ContactReferenceId">The verified contact, or null for a provisional ticket.</param>
+/// <param name="CategoryId">The ticket's category.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
+/// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
+/// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
+/// <param name="SlaState">One of Running, Paused, Met, Breached, NotApplicable.</param>
+/// <param name="RequestSummary">The request, in the agent's words.</param>
+/// <param name="CreatedAtUtc">When the ticket was created, in UTC.</param>
+/// <param name="RowVersion">The concurrency token, Base64-encoded. Send it back on any subsequent write to this ticket.</param>
 public sealed record TicketResponseDto(
     long TicketId,
     string TicketNumber,
