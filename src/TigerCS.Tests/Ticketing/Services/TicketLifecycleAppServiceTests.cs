@@ -5,6 +5,7 @@ using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.IdentityAndAccess.Fakes;
+using TigerCS.Tests.SlaAndEscalation.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
 
 namespace TigerCS.Tests.Ticketing.Services;
@@ -18,7 +19,8 @@ public class TicketLifecycleAppServiceTests
         FakeTicketStatusHistoryRepository StatusHistory,
         FakeUserDepartmentAssignmentRepository DepartmentAssignments,
         FakeAuditEntryWriter Audit,
-        FakeTicketingUnitOfWork UnitOfWork);
+        FakeTicketingUnitOfWork UnitOfWork,
+        SlaServiceFixture Sla);
 
     private static Fixture CreateService()
     {
@@ -29,10 +31,15 @@ public class TicketLifecycleAppServiceTests
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
 
-        var service = new TicketLifecycleAppService(
-            tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, TimeProvider.System);
+        // Resolving is the Resolution SLA's achievement event, so this
+        // service now finalizes the breach flags through the same processor
+        // the background jobs use.
+        var sla = new SlaServiceFixture(tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork);
 
-        return new Fixture(service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork);
+        var service = new TicketLifecycleAppService(
+            tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor, TimeProvider.System);
+
+        return new Fixture(service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla);
     }
 
     private static async Task<Ticket> SeedInProgressTicketAsync(FakeTicketRepository repo, Guid ownerEmployeeId, int departmentId = 2)

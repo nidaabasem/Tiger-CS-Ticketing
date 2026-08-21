@@ -2,8 +2,10 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -27,6 +29,7 @@ public sealed class TicketLifecycleAppService(
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
+    SlaBreachProcessor breachProcessor,
     TimeProvider timeProvider)
 {
     public async Task<TicketMutationResult> ChangeStatusAsync(
@@ -191,6 +194,22 @@ public sealed class TicketLifecycleAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "Resolve", "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(), afterValue: $"ResolutionOutcome={outcome}", correlationId, cancellationToken);
+
+        // Resolution is the Resolution SLA's achievement event
+        // (SLA-Architecture.md §2 — closure deliberately is not), so this is
+        // where a late resolution is finalized as a breach. Both clocks are
+        // evaluated: a ticket resolved without a First Human Response ever
+        // being recorded has missed that target too, and once the ticket
+        // reaches Closed nothing may touch its SLA state again, so this is
+        // the last honest moment to record it.
+        //
+        // Runs through the same processor and the same idempotency key as
+        // the scheduled job and the sweep, so a deadline a job already
+        // flagged is not re-recorded here.
+        foreach (var deadlineType in new[] { SlaDeadlineType.FirstResponse, SlaDeadlineType.Resolution })
+        {
+            await breachProcessor.ProcessDeadlineAsync(ticket, deadlineType, now, correlationId, cancellationToken);
+        }
 
         try
         {

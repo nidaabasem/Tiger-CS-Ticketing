@@ -5,6 +5,7 @@ using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.IdentityAndAccess.Fakes;
+using TigerCS.Tests.SlaAndEscalation.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
 
 namespace TigerCS.Tests.Ticketing.Services;
@@ -22,7 +23,8 @@ public class TicketCreationAppServiceTests
         FakeTicketRequesterSnapshotRepository Snapshots,
         FakeTicketStatusHistoryRepository StatusHistory,
         FakeAuditEntryWriter Audit,
-        FakeTicketingUnitOfWork UnitOfWork);
+        FakeTicketingUnitOfWork UnitOfWork,
+        SlaServiceFixture Sla);
 
     private static Fixture CreateService()
     {
@@ -37,11 +39,16 @@ public class TicketCreationAppServiceTests
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
 
+        // Ticket creation now opens the ticket's initial SLA period
+        // (backlog S-08's corrected acceptance criterion), so the SLA
+        // services are part of this harness rather than a separate concern.
+        var sla = new SlaServiceFixture(tickets, statusHistory: statusHistory, audit: audit, unitOfWork: unitOfWork);
+
         var service = new TicketCreationAppService(
             intakeRecords, sessions, categories, priorities, departments,
-            tickets, snapshots, statusHistory, unitOfWork, audit, TimeProvider.System);
+            tickets, snapshots, statusHistory, unitOfWork, audit, sla.DueDates, TimeProvider.System);
 
-        return new Fixture(service, intakeRecords, sessions, categories, priorities, departments, tickets, snapshots, statusHistory, audit, unitOfWork);
+        return new Fixture(service, intakeRecords, sessions, categories, priorities, departments, tickets, snapshots, statusHistory, audit, unitOfWork, sla);
     }
 
     private static async Task<(TigerCS.Domain.Modules.Ticketing.IntakeRecord Record, Guid AgentId)> SeedUnitRelatedIntakeAsync(

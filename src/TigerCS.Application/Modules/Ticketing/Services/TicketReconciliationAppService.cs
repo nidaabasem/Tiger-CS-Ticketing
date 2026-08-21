@@ -1,6 +1,7 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.Ticketing;
@@ -29,6 +30,7 @@ public sealed class TicketReconciliationAppService(
     ITicketStatusHistoryRepository statusHistoryRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
+    SlaDueDateService slaDueDateService,
     TimeProvider timeProvider)
 {
     public async Task<TicketMutationResult> ReconcileAsync(
@@ -117,6 +119,22 @@ public sealed class TicketReconciliationAppService(
                 (byte)CrmVerificationStatus.PendingCrmVerification, (byte)CrmVerificationStatus.Verified,
                 callerEmployeeId, actorIsSystem: false, note: null, correlationId, now),
             cancellationToken);
+
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.SlaState,
+                (byte)SlaState.Paused, (byte)ticket.SlaState,
+                callerEmployeeId, actorIsSystem: false,
+                note: "SLA clock started at CRM reconciliation (FR-TKT-09).", correlationId, now),
+            cancellationToken);
+
+        // The SLA clock starts here, not at creation, for this one path.
+        // FR-TKT-09 keeps an unverified ticket unclocked, so a provisional
+        // ticket has carried no TicketSlaInstance until now; `now` is the
+        // moment it became Verified and is therefore its clock-start event.
+        // See Ticket.ReconcileVerification's remarks for how this reconciles
+        // with MVP-ERD.md §2.15's "Required (≥1 from creation)".
+        await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "Reconcile", "Ticket", ticketId.ToString(),

@@ -125,15 +125,37 @@ public sealed class FakeCustomerVerificationUnitOfWork : ICustomerVerificationUn
     }
 }
 
+/// <summary>One recorded audit write, with every argument the port carries.</summary>
+public sealed record RecordedAuditEntry(
+    Guid? ActorEmployeeId,
+    string Action,
+    string EntityType,
+    string? EntityId,
+    string? BeforeValue,
+    string? AfterValue,
+    Guid CorrelationId);
+
 public sealed class FakeAuditEntryWriter : IAuditEntryWriter
 {
     public List<(Guid? ActorEmployeeId, string Action, string EntityType, string? EntityId)> Written { get; } = [];
+
+    /// <summary>
+    /// The same writes as <see cref="Written"/>, but complete.
+    /// <see cref="Written"/> is kept as-is because tests written before this
+    /// increment assert against its tuple shape; the SLA and escalation tests
+    /// need the before/after payloads and the correlation id too, since
+    /// NFR-LOG-01 requires an SLA calculation be reconstructable from the
+    /// audit trail rather than merely evidenced by it.
+    /// </summary>
+    public List<RecordedAuditEntry> Entries { get; } = [];
 
     public Task WriteAsync(
         Guid? actorEmployeeId, string action, string entityType, string? entityId, string? beforeValue,
         string? afterValue, Guid correlationId, CancellationToken cancellationToken = default)
     {
         Written.Add((actorEmployeeId, action, entityType, entityId));
+        Entries.Add(new RecordedAuditEntry(
+            actorEmployeeId, action, entityType, entityId, beforeValue, afterValue, correlationId));
         return Task.CompletedTask;
     }
 }

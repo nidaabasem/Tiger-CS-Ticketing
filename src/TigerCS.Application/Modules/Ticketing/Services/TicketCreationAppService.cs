@@ -2,6 +2,7 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -51,6 +52,7 @@ public sealed class TicketCreationAppService(
     ITicketStatusHistoryRepository statusHistoryRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
+    SlaDueDateService slaDueDateService,
     TimeProvider timeProvider)
 {
     public async Task<TicketCreationResult> CreateFromVerificationSessionAsync(
@@ -147,6 +149,15 @@ public sealed class TicketCreationAppService(
         await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
 
         var correlationId = Guid.NewGuid();
+
+        // Backlog S-08's corrected acceptance criterion: ticket creation
+        // opens the ticket's initial TicketSlaInstances row with computed due
+        // dates. `now` is both the ticket's CreatedAtUtc and the approved SLA
+        // clock-start event (ISSUE-001 Option C, SLA-Architecture.md §1/§2),
+        // so the same value drives both — the clock cannot drift from the
+        // creation moment it is defined against.
+        await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+
         await auditWriter.WriteAsync(
             callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
             beforeValue: null, afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus=Verified",
@@ -244,6 +255,12 @@ public sealed class TicketCreationAppService(
 
         intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.PendingCrmVerification);
 
+        // Deliberately no TicketSlaInstance here, unlike the verified path
+        // above. FR-TKT-09: a ticket whose VerificationStatus is not Verified
+        // "does not start its SLA clock", and both due columns are NOT NULL,
+        // so there is no honest value a from-creation row could carry. The
+        // period is opened by TicketReconciliationAppService the moment the
+        // ticket becomes Verified.
         await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
 
         await auditWriter.WriteAsync(

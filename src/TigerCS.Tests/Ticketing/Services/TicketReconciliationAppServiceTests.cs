@@ -4,6 +4,7 @@ using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
+using TigerCS.Tests.SlaAndEscalation.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
 
 namespace TigerCS.Tests.Ticketing.Services;
@@ -18,7 +19,8 @@ public class TicketReconciliationAppServiceTests
         FakeTicketRequesterSnapshotRepository Snapshots,
         FakeTicketStatusHistoryRepository StatusHistory,
         FakeAuditEntryWriter Audit,
-        FakeTicketingUnitOfWork UnitOfWork);
+        FakeTicketingUnitOfWork UnitOfWork,
+        SlaServiceFixture Sla);
 
     private static Fixture CreateService()
     {
@@ -30,10 +32,14 @@ public class TicketReconciliationAppServiceTests
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
 
-        var service = new TicketReconciliationAppService(
-            tickets, intakeRecords, sessions, snapshots, statusHistory, unitOfWork, audit, TimeProvider.System);
+        // Reconciliation is where a provisional ticket's SLA clock starts
+        // (FR-TKT-09), so the due-date service belongs to this harness now.
+        var sla = new SlaServiceFixture(tickets, statusHistory: statusHistory, audit: audit, unitOfWork: unitOfWork);
 
-        return new Fixture(service, tickets, intakeRecords, sessions, snapshots, statusHistory, audit, unitOfWork);
+        var service = new TicketReconciliationAppService(
+            tickets, intakeRecords, sessions, snapshots, statusHistory, unitOfWork, audit, sla.DueDates, TimeProvider.System);
+
+        return new Fixture(service, tickets, intakeRecords, sessions, snapshots, statusHistory, audit, unitOfWork, sla);
     }
 
     private static async Task<(Ticket Ticket, IntakeRecord Intake, Guid AgentId)> SeedProvisionalTicketAsync(
