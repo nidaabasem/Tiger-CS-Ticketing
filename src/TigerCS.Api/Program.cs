@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
+using TigerCS.Api.OpenApi;
 using TigerCS.Infrastructure;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
@@ -16,7 +17,12 @@ IdentityModelEventSource.ShowPII = false;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.AddOpenApi();
+
+// Swagger/OpenAPI document generation (TigerCS.Api/OpenApi). Registering the
+// generator is unconditional; whether /swagger and /swagger/v1/swagger.json
+// are actually reachable is decided by MapTigerCsSwagger below, which maps
+// nothing outside OpenApiDocumentation.EnabledEnvironments.
+builder.Services.AddTigerCsOpenApi();
 
 builder.Services.AddTigerCsInfrastructure(builder.Configuration);
 builder.Services.AddTigerCsIntegrations(builder.Configuration);
@@ -107,10 +113,13 @@ using (var crmStartupScope = app.Services.CreateScope())
     }
 }
 
+// Swagger UI at /swagger and the OpenAPI JSON at /swagger/v1/swagger.json,
+// in Development and Testing only — never mapped in Production (see
+// OpenApiDocumentation.EnabledEnvironments).
+app.MapTigerCsSwagger();
+
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-
     using var scope = app.Services.CreateScope();
     await DevSeedData.SeedAsync(scope.ServiceProvider);
 }
@@ -122,8 +131,28 @@ app.UseAuthorization();
 
 // Phase 1 foundation placeholder (S-01), kept anonymous per
 // Security-Architecture.md §5's explicit health-check exception.
-app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
+app.MapGet("/health", () => Results.Ok(new HealthResponse("healthy")))
+    .AllowAnonymous()
+    .WithTags(OpenApiTags.Health)
+    .WithName("GetHealth")
+    .WithSummary("Liveness probe.")
+    .WithDescription(
+        "Returns 200 with a constant payload while the application is running. The only endpoint "
+        + "that does not require authentication apart from POST /api/auth/login.")
+    .Produces<HealthResponse>(StatusCodes.Status200OK)
+    // Minimal-API endpoints carry no XML doc comments, so the 200's
+    // description would otherwise be the generic reason phrase.
+    .AddOpenApiOperationTransformer((operation, _, _) =>
+    {
+        operation.Responses!["200"].Description = "The application is running.";
+        return Task.CompletedTask;
+    });
 
 app.MapControllers();
 
 app.Run();
+
+/// <summary>The <c>GET /health</c> payload.</summary>
+/// <remarks>A named type rather than an anonymous object purely so the response has a schema in the OpenAPI document; the JSON it serialises to is unchanged.</remarks>
+/// <param name="Status">Constant literal <c>"healthy"</c>.</param>
+public sealed record HealthResponse(string Status);

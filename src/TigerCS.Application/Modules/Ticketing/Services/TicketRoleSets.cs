@@ -7,7 +7,7 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// (Solution-Analysis.md §4.1's permission matrix, ISSUE-022's approved
 /// Resolve/Close split, Security-Architecture.md §3's CS-layer
 /// cross-department scoping). Each action gets its own set rather than
-/// reusing one blanket list — <see cref="TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization.DepartmentScopedRequirement"/>
+/// reusing one blanket list — <c>DepartmentScopedRequirement</c>
 /// was already built constructor-parameterized for exactly this reason, per
 /// its own remarks ("flagged for confirmation before a real ticket endpoint
 /// consumes this policy") — this is that endpoint, and this is the

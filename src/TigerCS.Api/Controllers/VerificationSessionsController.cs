@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Domain.Modules.CustomerVerification;
@@ -33,9 +34,27 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/verification-sessions")]
 [Authorize(Policy = PolicyNames.CustomerVerification)]
+[Tags(OpenApiTags.CustomerVerification)]
 public class VerificationSessionsController(VerificationSessionAppService verificationSessionAppService) : ControllerBase
 {
+    /// <summary>Create and confirm a verification session in one call.</summary>
+    /// <remarks>
+    /// The combined create+select+confirm call described in
+    /// MVP-Implementation-Backlog.md §0.2/S-07. The unit and contact must
+    /// already have been looked up through <c>GET /api/crm/units/...</c>.
+    /// <para>
+    /// Send an optional <c>Idempotency-Key</c> header so a retried request
+    /// does not create a second session.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The unit/contact selection and the confirmation.</param>
+    /// <response code="201">The confirmed session, including the verification-time snapshot of the unit and contact.</response>
+    /// <response code="400">confirmed was not true, or verificationMethod was not one of ManualAgentConfirmation, AuthenticatedDigitalUser, Otp, FaceToFaceDocumentCheck, Other.</response>
+    /// <response code="404">unitReferenceId/contactReferenceId do not reference an already-looked-up unit and one of its contacts.</response>
     [HttpPost]
+    [ProducesResponseType<VerificationSessionResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Create(
         [FromBody] CreateVerificationSessionRequestDto request,
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
@@ -77,8 +96,18 @@ public class VerificationSessionsController(VerificationSessionAppService verifi
         };
     }
 
-    /// <summary>Owner-only (single-agent ownership, MVP-ERD.md §2.24) — used to resume state or hand a confirmed session's data to later ticket creation (out of scope this phase).</summary>
+    /// <summary>Fetch one verification session. Owner-only.</summary>
+    /// <remarks>
+    /// Owner-only (single-agent ownership, MVP-ERD.md §2.24) — used to
+    /// resume state, or to hand a confirmed session's data to ticket creation.
+    /// </remarks>
+    /// <param name="verificationSessionId">The session to fetch.</param>
+    /// <response code="200">The session. status is one of InProgress, Confirmed, Consumed, Expired, Abandoned.</response>
+    /// <response code="403">The session belongs to another agent.</response>
+    /// <response code="404">No such session.</response>
     [HttpGet("{verificationSessionId:guid}")]
+    [ProducesResponseType<VerificationSessionResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(Guid verificationSessionId, CancellationToken cancellationToken)
     {
         var callerEmployeeId = GetEmployeeId();

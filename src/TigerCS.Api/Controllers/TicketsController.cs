@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
@@ -25,6 +26,7 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/tickets")]
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
+[Tags(OpenApiTags.Tickets)]
 public class TicketsController(
     TicketCreationAppService ticketCreationAppService,
     TicketQueryAppService ticketQueryAppService,
@@ -33,9 +35,28 @@ public class TicketsController(
     TicketNoteAppService ticketNoteAppService,
     TicketReconciliationAppService ticketReconciliationAppService) : ControllerBase
 {
-    /// <summary>Scoped to CS Agent/CS Supervisor only (Solution-Analysis.md §4.1's Create column) — layered on top of the class-level AuthenticatedStaff policy, not a replacement for it.</summary>
+    /// <summary>Create a ticket from a confirmed verification session. CS Agent/CS Supervisor only.</summary>
+    /// <remarks>
+    /// The normal path (FR-CH-01/FR-VER-02, MVP-API-Contracts.md §3.1).
+    /// Scoped to CS Agent/CS Supervisor (Solution-Analysis.md §4.1's Create
+    /// column) — layered on top of the class-level AuthenticatedStaff policy,
+    /// not a replacement for it.
+    /// </remarks>
+    /// <param name="request">The intake record and confirmed verification session to promote, plus category, priority, and summary.</param>
+    /// <response code="201">The created ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">The intake record, verification session, category, priority, or the category's routed department was not found (or the department is inactive).</response>
+    /// <response code="409">The intake record was already promoted to a ticket, the verification session was already consumed, or a ticket-number collision occurred — retry.</response>
+    /// <response code="410">The verification session has expired.</response>
+    /// <response code="422">The intake record is not unit-related, or the verification session is not confirmed.</response>
     [HttpPost]
     [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status410Gone)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> Create([FromBody] CreateTicketFromVerificationRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -48,9 +69,29 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>ISSUE-006 (approved as recommended, Management-Decisions.md) — see TicketCreationAppService.CreateProvisionalAsync's remarks.</summary>
+    /// <summary>Create a provisional ticket while the CRM is unreachable. CS Agent/CS Supervisor only.</summary>
+    /// <remarks>
+    /// ISSUE-006's approved fallback (Management-Decisions.md) — see
+    /// TicketCreationAppService.CreateProvisionalAsync's remarks. There is no
+    /// verification session to consume; the resulting ticket carries
+    /// verificationStatus PendingCrmVerification until it is reconciled via
+    /// <c>POST /api/tickets/{ticketId}/reconciliation</c>.
+    /// </remarks>
+    /// <param name="request">The intake record to promote, plus category, priority, and summary.</param>
+    /// <response code="201">The created provisional ticket.</response>
+    /// <response code="200">No ticket was created — the request remains queued for CRM reconciliation. Returns the updated intake record, not a ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">The intake record, category, priority, or the category's routed department was not found (or the department is inactive).</response>
+    /// <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
+    /// <response code="422">The intake record is not unit-related.</response>
     [HttpPost("provisional")]
     [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<IntakeRecordResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> CreateProvisional(
         [FromBody] CreateProvisionalTicketRequestDto request, CancellationToken cancellationToken)
     {
@@ -64,8 +105,24 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §3.2 — the ticket queue. Department visibility is resolved server-side (TicketQueryAppService), never from a client-supplied department filter alone.</summary>
+    /// <summary>The ticket queue — a filtered, sorted, paged list of tickets visible to the caller.</summary>
+    /// <remarks>
+    /// MVP-API-Contracts.md §3.2. Department visibility is resolved
+    /// server-side from the caller's roles and department assignments
+    /// (TicketQueryAppService), never from a client-supplied department
+    /// filter alone: <c>departmentId</c> narrows what the caller may already
+    /// see, it does not widen it.
+    /// </remarks>
+    /// <param name="request">
+    /// Filtering, sorting, and paging. All filters are optional and combine
+    /// with AND. <c>ticketStatus</c> is one of Open, InProgress,
+    /// PendingCustomer, PendingThirdParty, Resolved, Closed;
+    /// <c>verificationStatus</c> one of Unverified, PendingCrmVerification,
+    /// Verified; <c>priorityId</c> 1=Critical, 2=High, 3=Medium, 4=Low.
+    /// </param>
+    /// <response code="200">A page of ticket summaries, with the total matching count.</response>
     [HttpGet]
+    [ProducesResponseType<TicketListResultDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetQueue([FromQuery] TicketListRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -78,8 +135,20 @@ public class TicketsController(
         return Ok(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §3.3 — full ticket detail, including PendingCrmVerification/null Unit-Contact for a not-yet-reconciled provisional ticket (never fabricated as Verified).</summary>
+    /// <summary>Full detail for one ticket.</summary>
+    /// <remarks>
+    /// MVP-API-Contracts.md §3.3. A not-yet-reconciled provisional ticket is
+    /// returned with verificationStatus PendingCrmVerification and a null
+    /// unit/contact — never fabricated as Verified. <c>rowVersion</c> from
+    /// this response is what the assignment, transfer, status, resolution,
+    /// close, and reconciliation calls expect back.
+    /// </remarks>
+    /// <param name="ticketId">The ticket to fetch.</param>
+    /// <response code="200">The ticket.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
     [HttpGet("{ticketId:long}")]
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetDetail(long ticketId, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -97,8 +166,26 @@ public class TicketsController(
         };
     }
 
-    /// <summary>MVP-API-Contracts.md §3.5 — self-claim or reassign; both self-assignment and cross-department reach are validated inside TicketAssignmentAppService, never trusted from the request alone.</summary>
+    /// <summary>Assign a ticket to an employee — self-claim or reassign.</summary>
+    /// <remarks>
+    /// MVP-API-Contracts.md §3.5. Both self-assignment and cross-department
+    /// reach are validated inside TicketAssignmentAppService, never trusted
+    /// from the request alone.
+    /// </remarks>
+    /// <param name="ticketId">The ticket to assign.</param>
+    /// <param name="request">The employee to assign it to, and the ticket's current rowVersion.</param>
+    /// <response code="200">The updated ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The requested change is not valid for this ticket's current state.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/assignment")]
+    [Tags(OpenApiTags.Assignment)]
     public async Task<IActionResult> Assign(long ticketId, [FromBody] AssignTicketRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -111,8 +198,25 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §3.6 — clears the current owner; the receiving department must explicitly claim/assign it.</summary>
+    /// <summary>Transfer a ticket to another department.</summary>
+    /// <remarks>
+    /// MVP-API-Contracts.md §3.6. Clears the current owner — the receiving
+    /// department must explicitly claim or assign it.
+    /// </remarks>
+    /// <param name="ticketId">The ticket to transfer.</param>
+    /// <param name="request">The target department, the reason, and the ticket's current rowVersion.</param>
+    /// <response code="200">The updated ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The requested change is not valid for this ticket's current state.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/transfer")]
+    [Tags(OpenApiTags.Transfer)]
     public async Task<IActionResult> Transfer(long ticketId, [FromBody] TransferTicketRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -125,8 +229,27 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §3.7 — the "work" sub-machine only (Open→InProgress, InProgress↔Pending*); Resolved/Closed are reached only via <see cref="Resolve"/>/<see cref="Close"/>.</summary>
+    /// <summary>Change a ticket's working status.</summary>
+    /// <remarks>
+    /// MVP-API-Contracts.md §3.7 — the "work" sub-machine only
+    /// (Open to InProgress, InProgress to and from PendingCustomer/
+    /// PendingThirdParty). Resolved and Closed are reached only via
+    /// <see cref="Resolve"/> and <see cref="Close"/>.
+    /// </remarks>
+    /// <param name="ticketId">The ticket to update.</param>
+    /// <param name="request">The new status (Open, InProgress, PendingCustomer, or PendingThirdParty) and the ticket's current rowVersion.</param>
+    /// <response code="200">The updated ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The requested change is not valid for this ticket's current state.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/status")]
+    [Tags(OpenApiTags.TicketLifecycle)]
     public async Task<IActionResult> ChangeStatus(long ticketId, [FromBody] ChangeStatusRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -139,8 +262,26 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §3.9 — ISSUE-022: Department Employee/Head only.</summary>
+    /// <summary>Resolve a ticket. Department Employee/Department Head only.</summary>
+    /// <remarks>MVP-API-Contracts.md §3.9, ISSUE-022's approved Resolve/Close split.</remarks>
+    /// <param name="ticketId">The ticket to resolve.</param>
+    /// <param name="request">
+    /// The outcome — one of Resolved, Cancelled, Rejected, Duplicate — the
+    /// resolution note, an optional reason code, the duplicate target when
+    /// the outcome is Duplicate, and the ticket's current rowVersion.
+    /// </param>
+    /// <response code="200">The resolved ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The requested change is not valid for this ticket's current state.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/resolution")]
+    [Tags(OpenApiTags.TicketLifecycle)]
     public async Task<IActionResult> Resolve(long ticketId, [FromBody] ResolveTicketRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -153,8 +294,22 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §3.10 — ISSUE-022: CS Agent/CS Supervisor/CS Manager only.</summary>
+    /// <summary>Close a resolved ticket. CS Agent/CS Supervisor/CS Manager only.</summary>
+    /// <remarks>MVP-API-Contracts.md §3.10, ISSUE-022's approved Resolve/Close split.</remarks>
+    /// <param name="ticketId">The ticket to close.</param>
+    /// <param name="request">The ticket's current rowVersion.</param>
+    /// <response code="200">The closed ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The requested change is not valid for this ticket's current state.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/close")]
+    [Tags(OpenApiTags.TicketLifecycle)]
     public async Task<IActionResult> Close(long ticketId, [FromBody] CloseTicketRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -167,9 +322,26 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>This increment's item 6 — see TicketReconciliationAppService's remarks; scoped to CS Agent/CS Supervisor, the same actors who own verification-session creation.</summary>
+    /// <summary>Reconcile a provisional ticket against a confirmed verification session. CS Agent/CS Supervisor only.</summary>
+    /// <remarks>
+    /// See TicketReconciliationAppService's remarks. Scoped to CS Agent/CS
+    /// Supervisor — the same actors who own verification-session creation.
+    /// </remarks>
+    /// <param name="ticketId">The provisional ticket to reconcile.</param>
+    /// <param name="request">The confirmed verification session to consume, and the ticket's current rowVersion.</param>
+    /// <response code="200">The reconciled ticket, now verificationStatus Verified.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The requested change is not valid for this ticket's current state.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/reconciliation")]
     [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [Tags(OpenApiTags.CrmReconciliation)]
     public async Task<IActionResult> Reconcile(long ticketId, [FromBody] ReconcileTicketRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -182,8 +354,18 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>MVP-API-Contracts.md §4.1.</summary>
+    /// <summary>Add a note to a ticket.</summary>
+    /// <remarks>MVP-API-Contracts.md §4.1.</remarks>
+    /// <param name="ticketId">The ticket to annotate.</param>
+    /// <param name="request">The note text.</param>
+    /// <response code="201">The created note.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
     [HttpPost("{ticketId:long}/notes")]
+    [Tags(OpenApiTags.Notes)]
+    [ProducesResponseType<TicketNoteResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> AddNote(long ticketId, [FromBody] CreateNoteRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -201,8 +383,17 @@ public class TicketsController(
         };
     }
 
-    /// <summary>MVP-API-Contracts.md §4.2.</summary>
+    /// <summary>List a ticket's notes, newest page first.</summary>
+    /// <remarks>MVP-API-Contracts.md §4.2.</remarks>
+    /// <param name="ticketId">The ticket whose notes to list.</param>
+    /// <param name="page">1-based page number. 0 is treated as 1.</param>
+    /// <param name="pageSize">Page size. 0 is treated as 50.</param>
+    /// <response code="200">A page of notes, with the total count.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
     [HttpGet("{ticketId:long}/notes")]
+    [Tags(OpenApiTags.Notes)]
+    [ProducesResponseType<TicketNoteListResultDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ListNotes(long ticketId, [FromQuery] int page, [FromQuery] int pageSize, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();

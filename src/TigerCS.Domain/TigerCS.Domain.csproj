@@ -2,4 +2,19 @@
 
   <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
 
+  <PropertyGroup>
+    <!--
+      Emits the XML documentation file, so the doc comments on this project's
+      domain types reach the API's generated OpenAPI document
+      (see TigerCS.Api/OpenApi/OpenApiDocumentation.cs) as schema and property
+      descriptions. Documentation only - no runtime behaviour depends on it.
+      CS1591 ("missing XML comment for publicly visible type or member") is
+      suppressed for the same reason as in TigerCS.Api.csproj: TreatWarningsAsErrors
+      is on solution-wide, and requiring a doc comment on every public member
+      would turn a documentation feature into a build break.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
 </Project>

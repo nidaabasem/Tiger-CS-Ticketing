@@ -132,6 +132,32 @@ are set per step 3 — one System Administrator account. Nothing here ever
 runs against a non-development database; there's no production deployment
 path in this increment.
 
+### Swagger UI
+
+With the API running, browse to:
+
+```
+https://localhost:PORT/swagger
+```
+
+The generated OpenAPI document itself is at
+`/swagger/v1/swagger.json` (and, unchanged from before Swagger UI was added,
+at `/openapi/v1.json`).
+
+To call an authenticated endpoint from the UI:
+
+1. Expand **Authentication → POST /api/auth/login** and execute it with a
+   seeded account (step 3).
+2. Copy the `accessToken` value out of the response.
+3. Press **Authorize** at the top right and paste **only the token** — no
+   `Bearer ` prefix. Swagger UI sends `Authorization: Bearer {token}` on
+   every request from then on.
+
+Swagger is served in the `Development` and `Testing` environments only
+(`OpenApiDocumentation.EnabledEnvironments`). In any other environment —
+Production included — neither the UI nor the JSON document is mapped, so
+both paths behave exactly like a route this application does not have.
+
 ## 6. API examples (no real credentials)
 
 Log in (replace with your own dev admin or a seeded test account):

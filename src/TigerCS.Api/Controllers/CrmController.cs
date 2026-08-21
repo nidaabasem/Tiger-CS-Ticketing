@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
@@ -32,10 +33,19 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/crm")]
 [Authorize(Policy = PolicyNames.CustomerVerification)]
+[Tags(OpenApiTags.CrmLookup)]
 public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService) : ControllerBase
 {
-    /// <summary>MVP-API-Contracts.md §2.1.</summary>
+    /// <summary>Look a single CRM unit up by its CRM identifier.</summary>
+    /// <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.1.</remarks>
+    /// <param name="crmUnitId">The unit's Tiger CRM identifier.</param>
+    /// <response code="200">The unit, with the number of contacts linked to it.</response>
+    /// <response code="404">No unit with that CRM identifier.</response>
+    /// <response code="502">Tiger CRM could not be reached.</response>
     [HttpGet("units/{crmUnitId}")]
+    [ProducesResponseType<UnitVerificationResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
     public async Task<IActionResult> GetUnit(string crmUnitId, CancellationToken cancellationToken)
     {
         var result = await crmUnitLookupAppService.GetUnitAsync(crmUnitId, cancellationToken);
@@ -54,8 +64,17 @@ public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService) : Co
         };
     }
 
-    /// <summary>MVP-API-Contracts.md §2.2.</summary>
+    /// <summary>Search CRM units by unit number, optionally narrowed by property name.</summary>
+    /// <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.2.</remarks>
+    /// <param name="unitNumber">Required. The unit number to search for.</param>
+    /// <param name="propertyName">Optional. Narrows the search to one property.</param>
+    /// <response code="200">The matching units — an empty array when nothing matched.</response>
+    /// <response code="400">unitNumber was missing or blank.</response>
+    /// <response code="502">Tiger CRM could not be reached.</response>
     [HttpGet("units/search")]
+    [ProducesResponseType<IReadOnlyList<UnitVerificationResponseDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
     public async Task<IActionResult> SearchUnits(
         [FromQuery] string unitNumber, [FromQuery] string? propertyName, CancellationToken cancellationToken)
     {
@@ -76,8 +95,16 @@ public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService) : Co
         };
     }
 
-    /// <summary>MVP-API-Contracts.md §2.3.</summary>
+    /// <summary>The contacts linked to a CRM unit — owners, tenants, and authorized representatives.</summary>
+    /// <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.3.</remarks>
+    /// <param name="crmUnitId">The unit's Tiger CRM identifier.</param>
+    /// <response code="200">The unit's contacts. contactType is one of Owner, Tenant, Representative.</response>
+    /// <response code="404">No unit with that CRM identifier.</response>
+    /// <response code="502">Tiger CRM could not be reached.</response>
     [HttpGet("units/{crmUnitId}/contacts")]
+    [ProducesResponseType<IReadOnlyList<ContactVerificationResponseDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
     public async Task<IActionResult> GetContacts(string crmUnitId, CancellationToken cancellationToken)
     {
         var result = await crmUnitLookupAppService.GetContactsAsync(crmUnitId, cancellationToken);
