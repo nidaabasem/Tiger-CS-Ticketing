@@ -8,6 +8,16 @@ namespace TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 /// flagged here, and in the PR description, as an assumption to confirm
 /// before ticket-level endpoints (which will consume these same policies)
 /// are built in the next increment.
+///
+/// <para>
+/// <b>Every policy below also admits System Administrator</b>, without any
+/// of them naming the role: <see cref="SystemAdministratorOverrideHandler"/>
+/// satisfies their requirements centrally (ADR-0024 — confirmed management
+/// decision superseding Solution-Analysis.md §4.1's previous exclusion). The
+/// role lists below therefore continue to state what the permission matrix
+/// grants each role; they are not the whole authorization answer, and a
+/// policy added here needs no change to include the override.
+/// </para>
 /// </summary>
 public static class PolicyNames
 {
@@ -43,6 +53,13 @@ public static class PolicyNames
     /// broader "Agent and above" role vocabulary — resolved by explicit
     /// confirmation rather than guessed; see the
     /// implementation/mvp-crm-verification PR history.
+    ///
+    /// <para>
+    /// System Administrator now also passes this policy, via the central
+    /// override rather than by being added to the role list above — the
+    /// confirmed management decision in ADR-0024 supersedes the exclusion
+    /// this remark records.
+    /// </para>
     /// </summary>
     public const string CustomerVerification = "CustomerVerification";
 }

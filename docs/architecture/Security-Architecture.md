@@ -4,8 +4,8 @@
 | | |
 |---|---|
 | **Status** | Approved for Architecture Design |
-| **Related ADRs** | 0004 (Identity), 0005 (authorization policies), 0013/0014 (Outbox/idempotency), 0017 (attachments), 0019 (Genesys), 0020 (logging/monitoring) |
-| **Date** | 2026-08-17 |
+| **Related ADRs** | 0004 (Identity), 0005 (authorization policies), 0013/0014 (Outbox/idempotency), 0017 (attachments), 0019 (Genesys), 0020 (logging/monitoring), **0024 (System Administrator authorization override)** |
+| **Date** | 2026-08-17 (amended 2026-08-21 — §2.1 added, §3.1 updated) |
 
 ---
 
@@ -16,6 +16,29 @@ Internal staff only, via ASP.NET Core Identity (ADR-0004). No customer-facing au
 ## 2. Authorization Policies
 
 Policy-based authorization (ADR-0005), one policy per relevant cell of the Solution Analysis §4 permission matrix. Every API endpoint declares its required policy explicitly; there is no "authenticated user can do anything" default. Policies are evaluated server-side on every request — never trusted from client-side UI state alone.
+
+### 2.1 System Administrator Authorization Override — confirmed management decision (2026-08-21)
+
+**Management has confirmed that the System Administrator role must have access to every application feature and every API endpoint.** This supersedes Solution-Analysis.md §4.1's permission matrix, which excluded the role from every operational column (Create, Edit, Assign, Transfer, Escalate, Resolve, Close, Reopen, Cancel, Reject) and which the implementation had followed literally — producing `403 Forbidden` on, among others, `POST /api/intake-records`. Recorded formally in **ADR-0024**, which amends ADR-0005.
+
+**Implemented as one central mechanism per authorization layer, not per endpoint.** The overridden role is defined once (`AuthorizationOverride`); no policy, controller, role set, or application service names it inline:
+
+- **Policy layer.** `SystemAdministratorOverrideHandler` is a bare `IAuthorizationHandler`, registered once. ASP.NET Core runs it against every authorization evaluation and hands it the whole handler context, so it satisfies every policy in the catalog — including requirement types and policies that do not exist yet. **A future SLA, escalation, reporting or administration policy includes the role automatically**, with no change to the override, the policy catalog, or any controller. Resource-based requirements (`DepartmentScopedRequirement`) are covered by the same evaluation.
+- **Application-service layer.** The resource-scoped decisions a policy cannot see — whether this caller may act on *this* ticket, given its current department and owner (§3) — run through `AuthorizationGate`, the single point at which the override is applied to them. A service passes its own rule to the gate and uses the answer; it never branches on the override itself.
+
+**This is an authorization override and nothing else.** A System Administrator still obeys, unchanged: request validation, ticket status-transition rules, closed-ticket immutability, optimistic-concurrency control, database constraints, required business data, and the audit requirements of §8/ADR-0018 — every action it takes writes an `AuditEntry` attributed to its own employee id. All of these are enforced downstream of every authorization decision and are reached, not bypassed.
+
+**Three deliberate carve-outs.** Full authorization does not mean an invalid session becomes valid, and it does not dissolve per-record business invariants:
+
+1. **Session validity is never overridden.** `IIdentityGateRequirement` marks requirements that establish *who the caller is* rather than *what they may do*; the override never satisfies them. `ActiveEmployeeRequirement` implements it, so **a deactivated System Administrator holding an unexpired token is still refused** — §14 and FR-ADM-02's 24-hour revocation requirement would otherwise be defeated by this decision. The identity module already refuses to deactivate the last active System Administrator, so this cannot lock the organization out. Future identity gates opt out the same way.
+2. **The framework's authenticated-user gate is never overridden.** An anonymous caller is rejected before any of this runs; §5 is unaffected.
+3. **Verification-session single-agent ownership (MVP-ERD.md §2.24) is not overridden.** See ADR-0024's "Business rules the override does not reach" — the administrator reaches all three affected endpoints, but cannot consume another agent's in-flight verification session, because doing so would attribute a `TicketRequesterSnapshot` to a verification it never performed. Flagged for management rather than decided unilaterally.
+
+**No role is added to any account.** A System Administrator remains only "System Administrator" — the nine approved roles (ADR-0004) are unchanged in name, number, and membership, and the role lists inside the policies still record what the permission matrix grants each role, as distinct from what the override grants on top of it.
+
+**Tested** (ADR-0021, and §15 below): a System Administrator JWT is proven authorized for every currently protected API endpoint/action, with `ProtectedEndpointInventoryTests` reading the host's real endpoint table so a newly-added protected endpoint fails the suite rather than going untested. The corresponding negative tests prove Reporting User and the other unauthorized roles still receive `403` across the same surface, and that department scoping and the ISSUE-022 Resolve/Close split are otherwise unchanged.
+
+**Residual risk, flagged for the pilot retrospective.** ISSUE-022's separation of duties (the department confirms the work; CS confirms the customer knows) is enforced as authorization, so it is bypassable by a System Administrator. The audit trail records who performed each step, so the split remains *observable* where it is no longer *enforced* for this role. The number of accounts holding the role is the practical control.
 
 ## 3. Department Data Scoping
 
@@ -32,6 +55,8 @@ The `DepartmentScoped` authorization policy (`TigerCS.Infrastructure.Modules.Ide
 - **Reporting User** is not included in `DepartmentScoped`'s cross-department set; §4.1 scopes that role to reports/dashboards only, not per-ticket/per-department data.
 
 **Approved for this increment; one point still open before a Ticketing endpoint consumes this policy for write actions:** whether General Manager/Chairman-CEO/System Administrator's cross-department reach should extend to *write* actions (assign, close, reopen), or stay read-only as §4.1's citation literally supports. The read-level boundary above is what's implemented and tested today.
+
+**Resolved for System Administrator only (2026-08-21, §2.1/ADR-0024):** that role's cross-department reach now extends to every action, read and write, via the central override rather than through this policy's role list — which is unchanged. The question stays open for **General Manager** and **Chairman/CEO**, whose §4.1 rows this decision does not touch: both remain read-level cross-department here. Department Employee and Department Head remain scoped strictly to their own department assignments, and Reporting User remains outside the cross-department set entirely.
 
 ## 4. Protection of Customer and Unit Data
 
@@ -83,4 +108,4 @@ Staff sessions/tokens expire after a configurable inactivity period [ASSUMPTION 
 
 ## 15. Security Testing
 
-Per the automated testing strategy (ADR-0021), security-relevant logic — authorization policy handlers, Genesys webhook signature validation, department data scoping — must have dedicated unit-test coverage, not rely solely on manual QA. A focused security review (not a full penetration test, given the 3-week pilot timeline) should occur before pilot go-live, covering at minimum: authorization bypass attempts, webhook signature bypass attempts, and confirmation that no customer-facing endpoint exists anywhere in the deployed surface.
+Per the automated testing strategy (ADR-0021), security-relevant logic — authorization policy handlers, the §2.1 authorization override and its carve-outs, Genesys webhook signature validation, department data scoping — must have dedicated unit-test coverage, not rely solely on manual QA. A focused security review (not a full penetration test, given the 3-week pilot timeline) should occur before pilot go-live, covering at minimum: authorization bypass attempts, webhook signature bypass attempts, and confirmation that no customer-facing endpoint exists anywhere in the deployed surface.

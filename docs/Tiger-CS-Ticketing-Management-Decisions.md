@@ -47,6 +47,7 @@ This leaves **22 items** (17 original + 5 added in the prior architecture review
 | ISSUE-013 | What configurable, priority-based time window governs Level 2→3 escalation, and what early-warning threshold precedes a breach? Proposed per-tier defaults are in the Executive Decisions document, for management to accept or change. *(absorbs former ISSUE-005)* | Medium | Management | Before MVP development |
 | ISSUE-017 | Confirm the actual operating work week: Sat–Thu (Fri off), Mon–Fri (Sat–Sun off), or another configurable calendar. | Low | Management | Before MVP development |
 | **ISSUE-003** | **RESOLVED** — platform confirmed as Genesys; Basic Integration moved into MVP by management directive. Residual open items are Genesys-team technical questions, not a decision. | High (resolved) | Management (resolved 2026-08-17) | N/A — resolved |
+| **ISSUE-024** | **RESOLVED** — must the System Administrator role have access to every application feature and API endpoint, superseding §4.1's exclusion of it from every operational column? **Confirmed: yes.** | High (resolved) | Management (confirmed 2026-08-21) | N/A — resolved |
 | ISSUE-002 | For auto-ticket channels, is the ticket number issued before or after CRM verification? | Critical (for Phase 2) | Management | Before Phase 2 |
 | ISSUE-015 | Expected unit/tower count and concurrent-agent count for Phase 2? | Low | IT | Before Phase 2 |
 | ISSUE-009 | Does a reopened-then-reclosed ticket trigger a second CSAT survey? | Medium | Customer Service | Before Phase 2 |
@@ -392,6 +393,22 @@ Three items that concern features not present in MVP (auto-ticket channels and C
 
 ---
 
+### ISSUE-024 — System Administrator access scope — **RESOLVED**
+**Decision required (as posed by the correction):** `Tiger-CS-Ticketing-Solution-Analysis.md` §4.1's permission matrix gives the System Administrator role `View: All (technical)`, `Export: All`, `Admin: Full`, and a dash in every operational column. Implementation followed that matrix literally, so a System Administrator received `403 Forbidden` from the CRM verification surface, intake-record creation, ticket creation, and every ticket operation. Confirm whether that exclusion is the intended access model.
+
+**Resolution — confirmed management decision, 2026-08-21:** It is not. **The System Administrator role must have access to every application feature and every API endpoint.** §4.1's System Administrator row is superseded accordingly; **no other role's row changes**, and no account is granted an additional role — a System Administrator remains only "System Administrator". Recorded in `docs/architecture/adr/0024-system-administrator-authorization-override.md` and `docs/architecture/Security-Architecture.md` §2.1.
+
+**Scope of the grant:** an authorization override, applied in one central mechanism per authorization layer so that future SLA, escalation, reporting and administration policies include the role automatically rather than by amendment. It does **not** suspend request validation, ticket status-transition rules, closed-ticket immutability, concurrency control, database constraints, required business data, or audit requirements — all of which a System Administrator continues to obey, with its actions audited under its own identity.
+
+**Two carve-outs, deliberate:** a **deactivated** System Administrator is still refused on every request (FR-ADM-02's 24-hour revocation requirement — full authorization does not make an invalid session valid), and **verification-session single-agent ownership** (MVP-ERD.md §2.24) remains a per-record business rule rather than a permission, so an administrator cannot consume another agent's in-flight verification session. The second is flagged in ADR-0024 for management to confirm or reverse, not settled unilaterally.
+
+**Open point carried forward:** ISSUE-022's Resolve/Close separation of duties is enforced as authorization and is therefore bypassable by a System Administrator. The audit trail still records who performed each step. Recommended for review at the 2026-09-07 pilot retrospective.
+
+**Priority:** High (resolved)
+**Decision owner:** Management — confirmed 2026-08-21
+
+---
+
 ### ISSUE-002 — Ticket creation before unit verification (auto-ticket channels)
 **Decision required:** For auto-ticket channels (App/Website, WhatsApp — Phase 2), should the customer receive a ticket number immediately, or only after CRM verification completes?
 
@@ -493,6 +510,7 @@ Group A (MVP-development) and the Group C go-live item were approved as recommen
 
 | Issue ID | Approved option/decision | Approved by | Department | Approval date | Comments |
 |---|---|---|---|---|---|
+| ISSUE-024 | System Administrator has access to every application feature and API endpoint; §4.1's exclusion superseded. Authorization override only — validation, lifecycle rules, concurrency and audit unchanged; deactivation still revokes access | Nidaa Basem | Project Sponsor | 2026-08-21 | Confirmed management decision; correction to a shipped implementation, see ADR-0024 |
 | ISSUE-019 | B — first human response only, defined per channel (phone: call-answer/live-handling; digital: first substantive reply); automated ack never counts | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
 | ISSUE-001 | C — SLA clock starts at creation; time-to-assignment tracked separately | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |
 | ISSUE-021 | A — no customer self-service portal, in any phase | Nidaa Basem | Project Sponsor | 2026-08-17 | Approved as recommended |

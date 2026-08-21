@@ -1,4 +1,5 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -38,9 +39,10 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        var authorized = callerRoles.Any(TicketRoleSets.AssignCrossDepartment.Contains)
+        var authorized = await AuthorizationGate.EvaluateAsync(callerRoles, async () =>
+            callerRoles.Any(TicketRoleSets.AssignCrossDepartment.Contains)
             || (callerRoles.Any(TicketRoleSets.AssignWithinOwnDepartment.Contains)
-                && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken));
+                && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken)));
 
         if (!authorized)
         {
@@ -114,7 +116,7 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        if (!callerRoles.Any(TicketRoleSets.Transfer.Contains))
+        if (!AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.Transfer.Contains)))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }

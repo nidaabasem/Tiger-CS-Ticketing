@@ -140,8 +140,14 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Null(queued.LinkedTicketId);
     }
 
+    // CS Agent/CS Supervisor by the CustomerVerification policy's own role
+    // list; System Administrator by the ADR-0024 central override.
     public static IEnumerable<object[]> AllRolesWithExpectedAccess() =>
-        Roles.All.Select(role => new object[] { role, role is Roles.CsAgent or Roles.CsSupervisor });
+        Roles.All.Select(role => new object[]
+        {
+            role,
+            role is Roles.CsAgent or Roles.CsSupervisor or Roles.SystemAdministrator
+        });
 
     [Theory]
     [MemberData(nameof(AllRolesWithExpectedAccess))]

@@ -1,3 +1,4 @@
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -66,11 +67,11 @@ public sealed class TicketQueryAppService(
         return TicketQueryResultDto<TicketDetailDto>.Success(ToDetailDto(ticket));
     }
 
-    /// <summary>Null means "no restriction" (cross-department view role) — never client-supplied, always resolved from the caller's own roles/department membership.</summary>
+    /// <summary>Null means "no restriction" (cross-department view role, or the ADR-0024 override) — never client-supplied, always resolved from the caller's own roles/department membership.</summary>
     internal async Task<IReadOnlyCollection<int>?> ResolveVisibleDepartmentIdsAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, CancellationToken cancellationToken)
     {
-        if (callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains))
+        if (AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains)))
         {
             return null;
         }
@@ -79,16 +80,11 @@ public sealed class TicketQueryAppService(
         return assignments.Select(a => a.DepartmentId).ToList();
     }
 
-    internal async Task<bool> CanViewDepartmentAsync(
-        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, int departmentId, CancellationToken cancellationToken)
-    {
-        if (callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains))
-        {
-            return true;
-        }
-
-        return await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, departmentId, cancellationToken);
-    }
+    internal Task<bool> CanViewDepartmentAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, int departmentId, CancellationToken cancellationToken) =>
+        AuthorizationGate.EvaluateAsync(callerRoles, async () =>
+            callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains)
+            || await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, departmentId, cancellationToken));
 
     private static TEnum? ParseEnum<TEnum>(string? value) where TEnum : struct, Enum =>
         value is not null && Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : null;

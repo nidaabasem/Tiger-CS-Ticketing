@@ -10,8 +10,18 @@ namespace TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 /// checked on every request, not only at login." Added to every policy
 /// (see Program.cs) so a still-valid token from a now-deactivated employee
 /// is rejected.
+///
+/// <para>
+/// An <see cref="IIdentityGateRequirement"/>, and the only one today: it
+/// establishes that the caller still has a live session at all, not what
+/// they are permitted to do with it. That is why the System Administrator
+/// authorization override (<see cref="SystemAdministratorOverrideHandler"/>,
+/// ADR-0024) deliberately does not satisfy it — a deactivated administrator
+/// holding an unexpired token is refused exactly as any other deactivated
+/// employee is.
+/// </para>
 /// </summary>
-public sealed class ActiveEmployeeRequirement : IAuthorizationRequirement;
+public sealed class ActiveEmployeeRequirement : IIdentityGateRequirement;
 
 public sealed class ActiveEmployeeHandler(IEmployeeDirectory employeeDirectory)
     : AuthorizationHandler<ActiveEmployeeRequirement>

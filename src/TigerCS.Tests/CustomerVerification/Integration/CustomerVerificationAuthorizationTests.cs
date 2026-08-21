@@ -11,11 +11,20 @@ namespace TigerCS.Tests.CustomerVerification.Integration;
 /// <summary>
 /// Proves the CustomerVerification policy (PolicyNames.CustomerVerification) against
 /// all 9 approved MVP roles (Roles.All) for the three CRM Verification
-/// actions — CS Agent and CS Supervisor allowed, every other role denied,
-/// including Reporting User and the two roles this review's security pass
-/// flagged as an open Solution-Analysis.md-vs-MVP-API-Contracts.md conflict
-/// (Department Head, CS Manager) — resolved by explicit confirmation before
-/// coding, not guessed. See PolicyNames.CustomerVerification's own remarks.
+/// actions — CS Agent and CS Supervisor allowed by the policy's own role
+/// list, System Administrator allowed by the ADR-0024 central override, and
+/// every other role denied, including Reporting User and the two roles this
+/// review's security pass flagged as an open
+/// Solution-Analysis.md-vs-MVP-API-Contracts.md conflict (Department Head,
+/// CS Manager) — resolved by explicit confirmation before coding, not
+/// guessed. See PolicyNames.CustomerVerification's own remarks.
+///
+/// <para>
+/// The System Administrator rows are the confirmed management decision
+/// recorded in ADR-0024 superseding this policy's previous exclusion of the
+/// role; the six denied roles are unchanged by it, which is what makes the
+/// override an override rather than an open door.
+/// </para>
 /// </summary>
 public class CustomerVerificationAuthorizationTests : IClassFixture<TigerCsApiFactory>
 {
@@ -24,7 +33,11 @@ public class CustomerVerificationAuthorizationTests : IClassFixture<TigerCsApiFa
     public CustomerVerificationAuthorizationTests(TigerCsApiFactory factory) => _factory = factory;
 
     public static IEnumerable<object[]> AllRolesWithExpectedAccess() =>
-        Roles.All.Select(role => new object[] { role, role is Roles.CsAgent or Roles.CsSupervisor });
+        Roles.All.Select(role => new object[]
+        {
+            role,
+            role is Roles.CsAgent or Roles.CsSupervisor or Roles.SystemAdministrator
+        });
 
     private async Task<HttpClient> CreateAuthenticatedClientAsync(string role)
     {

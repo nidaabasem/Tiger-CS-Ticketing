@@ -7,7 +7,7 @@
 ## Required Review Order
 
 1. **[System Architecture](System-Architecture.md)** — start here: system context, modules, flows, deployment
-2. **[Architecture Decision Records](adr/)** — the 23 ADRs behind the technical choices in (1), including ADR-0023's .NET 10 framework upgrade
+2. **[Architecture Decision Records](adr/)** — the 24 ADRs behind the technical choices in (1), including ADR-0023's .NET 10 framework upgrade and ADR-0024's System Administrator authorization override
 3. **[Domain Model](Domain-Model.md)** — the conceptual entities the architecture operates on
 4. **[SLA Architecture](SLA-Architecture.md)** — the most detailed, highest-stakes subsystem
 5. **[Genesys Integration](Genesys-Integration.md)** — the newly-confirmed MVP scope addition; read its open-questions section carefully
@@ -27,14 +27,14 @@
 | `Genesys-Integration.md` | Genesys Basic Integration design, webhook contract (conceptual), and open questions for the Genesys team |
 | `Security-Architecture.md` | Authentication, authorization, data protection, webhook/upload security, logging, secrets, testing |
 | `Architecture-Review-Checklist.md` | Pre-Phase-3 sign-off checklist |
-| `adr/0001`–`0023` | Individual Architecture Decision Records. **ADR-0002 (.NET 8) is superseded by ADR-0023 (.NET 10)** — both are kept, per this project's ADR convention below. |
+| `adr/0001`–`0024` | Individual Architecture Decision Records. **ADR-0002 (.NET 8) is superseded by ADR-0023 (.NET 10)** and **ADR-0005 (authorization policies) is amended by ADR-0024 (System Administrator authorization override)** — all are kept, per this project's ADR convention below. |
 
 ### Relationship to the rest of the project documentation
 
 | Document (outside this folder) | Purpose |
 |---|---|
-| `../Tiger-CS-Ticketing-Solution-Analysis.md` | Full requirements analysis; amended (§8, §15) to reflect Genesys Basic Integration moving into MVP |
-| `../Tiger-CS-Ticketing-Management-Decisions.md` | Technical Decision Register — all 22 tracked items, including ISSUE-003's resolution |
+| `../Tiger-CS-Ticketing-Solution-Analysis.md` | Full requirements analysis; amended (§8, §15) to reflect Genesys Basic Integration moving into MVP, and (§4.1) to reflect ISSUE-024's confirmed System Administrator access decision |
+| `../Tiger-CS-Ticketing-Management-Decisions.md` | Technical Decision Register — all 23 tracked items, including ISSUE-003's and ISSUE-024's resolutions |
 | `../Tiger-CS-Ticketing-Executive-Decisions.md` | Meeting-ready MVP decision summary with sign-off fields |
 | `../Tiger-CS-Ticketing-Architecture-Design.md` | The prior (PR #2) design pass — its 11 inline ADRs are superseded by the formal log in `adr/`; its ERD/schema/API sketch remain a useful reference alongside `Domain-Model.md` and `System-Architecture.md` |
 
@@ -43,6 +43,10 @@
 - **Genesys Basic Integration is now confirmed for MVP** by explicit management directive (this pilot's commissioning message specifies "Genesys APIs and webhooks" directly). This resolves **ISSUE-003** (the platform is Genesys) and supersedes the earlier, conditional ADR-0012 from the PR #2 ADR log. `Tiger-CS-Ticketing-Solution-Analysis.md` §8/§15 have been amended to match, so the documented MVP scope no longer contradicts this decision.
 - The prior 14-ADR log (PR #2) has been **replaced** by this 22-ADR log, using an expanded template (adds Alternatives Considered as a distinct section already present, plus **Risks** and **Review Date**) and covering additional topics split out for clarity (Identity vs. authorization policies; four separate SLA/escalation ADRs instead of one combined; Outbox and idempotency split; logging split from audit).
 - A full System Architecture, Module Design, Domain Model, SLA Architecture, Genesys Integration, and Security Architecture document have been added — none of which existed as standalone documents before this pass.
+
+## What Changed Since (System Administrator Authorization Correction, 2026-08-21)
+
+- **Management confirmed that the System Administrator role must have access to every application feature and every API endpoint**, superseding `Tiger-CS-Ticketing-Solution-Analysis.md` §4.1's exclusion of that role from every operational permission column — an exclusion the implementation had followed literally, producing `403 Forbidden` on endpoints including `POST /api/intake-records`. **ADR-0024** records the decision and the mechanism: a single central authorization override per authorization layer, so future SLA, escalation, reporting and administration policies include the role automatically rather than by amendment. It is an **authorization** override only — validation, ticket status-transition rules, closed-ticket immutability, concurrency control, database constraints, required business data and audit requirements are unchanged, and a **deactivated** administrator is still refused on every request. `Security-Architecture.md` (§2.1, §3.1), `Solution-Analysis.md` §4.1, `Tiger-CS-Ticketing-Management-Decisions.md` (ISSUE-024) and ADR-0005 (amendment note) are updated to match. No other role's permissions change, and no account gains an additional role.
 
 ## What Changed Since (Framework Upgrade, Ahead of Phase 1)
 
