@@ -1,5 +1,6 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Authorization;
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
@@ -217,6 +218,16 @@ public sealed class TicketLifecycleAppService(
         }
         catch (TicketConcurrentlyModifiedException)
         {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
+        catch (DuplicateWriteException)
+        {
+            // Reachable only since this method began finalizing breach flags:
+            // a scheduled deadline job can claim the same breach idempotency
+            // key (or the one-auto-escalation-per-ticket index) between this
+            // request's read and its commit. The whole transaction rolls
+            // back, so the resolution is not half-applied — the caller
+            // re-reads and retries, exactly as for a lost RowVersion race.
             return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
         }
 

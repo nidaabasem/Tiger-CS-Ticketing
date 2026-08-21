@@ -200,6 +200,30 @@ public class SlaResolutionBreachTests
         Assert.Single(h.Sla.Escalations.All);
     }
 
+    /// <summary>
+    /// The race this method's breach finalization introduced: a scheduled
+    /// deadline job can claim the same idempotency key between this request's
+    /// read and its commit, so the unique index rejects the write. The
+    /// resolution must answer as a conflict and roll back whole, never leak a
+    /// 500 or half-apply.
+    /// </summary>
+    [Fact]
+    public async Task LosingTheBreachKeyRaceToAConcurrentJob_IsReportedAsAConflict()
+    {
+        var h = await CreateAsync(
+            nowUtc: CreatedAt.AddHours(8),
+            firstResponseDue: CreatedAt.AddHours(1),
+            resolutionDue: CreatedAt.AddHours(6));
+
+        h.Sla.UnitOfWork.ThrowDuplicateWriteExceptionOnCall = 1;
+
+        var result = await h.Service.ResolveAsync(
+            h.OwnerId, [Roles.DepartmentEmployee], h.Ticket.TicketId, ResolveRequest());
+
+        Assert.Equal(TicketMutationOutcome.ConcurrencyConflict, result.Outcome);
+        Assert.Equal(0, h.Sla.UnitOfWork.TransactionsCommitted);
+    }
+
     /// <summary>Closure is not the achievement event (SLA-Architecture.md §2) — the breach recorded at resolution stands unchanged through it.</summary>
     [Fact]
     public async Task ClosingAfterALateResolution_LeavesTheRecordedBreachIntact()

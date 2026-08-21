@@ -156,6 +156,14 @@ public sealed class TicketReconciliationAppService(
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
         }
+        catch (DuplicateWriteException)
+        {
+            // Reachable only since this method began opening the ticket's SLA
+            // period: two concurrent reconciliations both past the
+            // PendingCrmVerification check would race the one-current-period
+            // -per-ticket index. The loser rolls back whole.
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
 
         await transaction.CommitAsync(cancellationToken);
         return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));

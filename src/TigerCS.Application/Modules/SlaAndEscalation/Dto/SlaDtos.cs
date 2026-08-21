@@ -88,9 +88,6 @@ public enum SlaOperationOutcome
     /// <summary>MVP-API-Contracts.md §5.2: `409 first-response-already-recorded` — the field is write-once.</summary>
     FirstResponseAlreadyRecorded,
 
-    /// <summary>The ticket has no current SLA period yet — a provisional ticket still awaiting CRM reconciliation (FR-TKT-09).</summary>
-    SlaClockNotStarted,
-
     /// <summary>The request body could not be interpreted (unparseable source, trigger type, or level).</summary>
     InvalidRequest,
 

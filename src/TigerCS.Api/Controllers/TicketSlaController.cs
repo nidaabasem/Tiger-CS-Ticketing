@@ -245,12 +245,6 @@ public class TicketSlaController(
             detail: "FirstHumanResponseAtUtc is write-once at the ticket level.",
             statusCode: StatusCodes.Status409Conflict),
 
-        SlaOperationOutcome.SlaClockNotStarted => Problem(
-            type: "https://tigercs.internal/problems/sla-clock-not-started",
-            title: "SLA clock has not started",
-            detail: "This ticket is still awaiting CRM verification, so it has no SLA period yet.",
-            statusCode: StatusCodes.Status422UnprocessableEntity),
-
         SlaOperationOutcome.InvalidRequest => Problem(
             type: "https://tigercs.internal/problems/invalid-request",
             title: "Invalid request",
