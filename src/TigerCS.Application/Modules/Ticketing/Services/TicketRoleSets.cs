@@ -30,15 +30,43 @@ public static class TicketRoleSets
     ];
 
     /// <summary>
-    /// Assign-someone-else / Transfer: cross-department for Supervisor+
-    /// (Solution-Analysis.md §4.1's A/T columns). Department Head is
-    /// department-scoped instead (checked separately, against the specific
-    /// department), not cross-department.
+    /// Status change ("work" sub-machine — Open→InProgress, InProgress↔Pending*):
+    /// cross-department authority for Supervisor+, on top of the ticket's
+    /// current owner (checked separately in TicketLifecycleAppService).
+    /// Department Head is department-scoped instead (checked separately,
+    /// against the specific department), not cross-department. Unaffected
+    /// by the Assign/Transfer correction below — status-change authority was
+    /// not part of that correction.
     /// </summary>
     public static readonly IReadOnlyCollection<string> CrossDepartmentSupervisory =
     [
         Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator
     ];
+
+    /// <summary>
+    /// Assign/reassign, department-scoped (PR correction — explicit task
+    /// instruction, superseding this file's original Assign design):
+    /// CS Supervisor and Department Head may assign/reassign only within a
+    /// department they themselves belong to (checked separately against the
+    /// ticket's current department). CS Agent and Department Employee hold
+    /// no assignment capability at all — not even self-claim.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> AssignWithinOwnDepartment = [Roles.CsSupervisor, Roles.DepartmentHead];
+
+    /// <summary>
+    /// Assign/reassign, cross-department (PR correction): CS Manager only.
+    /// General Manager, Chairman/CEO, and System Administrator explicitly
+    /// hold no operational assignment capability, despite being
+    /// cross-department for View/status-change elsewhere in this class.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> AssignCrossDepartment = [Roles.CsManager];
+
+    /// <summary>
+    /// Transfer (PR correction): CS Manager only. Every other role —
+    /// including Department Head and CS Supervisor, who retain Assign
+    /// authority above — is forbidden and must receive 403.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> Transfer = [Roles.CsManager];
 
     /// <summary>Resolve: Department Employee/Head only (ISSUE-022, Management-Decisions.md — ticket task's explicit instruction). Never CS-layer, never cross-department — the resolving actor must also be department-scoped to the ticket's current department.</summary>
     public static readonly IReadOnlyCollection<string> Resolve = [Roles.DepartmentEmployee, Roles.DepartmentHead];

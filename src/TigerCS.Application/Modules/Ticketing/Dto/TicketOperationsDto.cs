@@ -78,6 +78,9 @@ public enum TicketMutationOutcome
     Forbidden,
     ConcurrencyConflict,
 
+    /// <summary>Closed-ticket immutability (PR correction): Assign/Transfer/ChangeStatus/Resolve/Close all reject once TicketStatus is Closed — no database changes are made.</summary>
+    TicketClosed,
+
     /// <summary>MVP-API-Contracts.md §3.5: AssignedEmployeeId is not an active member of the ticket's CurrentDepartmentId.</summary>
     EmployeeNotInDepartment,
 

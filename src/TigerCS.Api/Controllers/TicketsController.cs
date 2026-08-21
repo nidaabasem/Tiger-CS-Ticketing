@@ -308,6 +308,15 @@ public class TicketsController(
             detail: "Another request already modified this ticket — reload it and retry.",
             statusCode: StatusCodes.Status409Conflict),
 
+        // Closed-ticket immutability (PR correction): Assign/Transfer/
+        // ChangeStatus/Resolve/Close all reject once TicketStatus is
+        // Closed — no database changes are made for this outcome.
+        TicketMutationOutcome.TicketClosed => Problem(
+            type: "https://tigercs.internal/problems/ticket-closed",
+            title: "Ticket is closed",
+            detail: "This ticket is Closed and no longer accepts assignment, transfer, status changes, resolution, or closing.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketMutationOutcome.EmployeeNotInDepartment => Problem(
             type: "https://tigercs.internal/problems/employee-not-in-department",
             title: "Employee not in department",

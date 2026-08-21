@@ -226,7 +226,7 @@ public class TicketTests
     }
 
     [Fact]
-    public void Close_Twice_Throws()
+    public void Close_Twice_Throws_ClosedTicketImmutability()
     {
         var ticket = NewOpenTicket();
         ticket.AssignTo(Guid.NewGuid());
@@ -234,6 +234,51 @@ public class TicketTests
         ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
         ticket.Close();
 
-        Assert.Throws<TicketNotYetResolvedException>(() => ticket.Close());
+        // Closing an already-Closed ticket is closed-ticket immutability
+        // (PR correction), a distinct condition from "not yet resolved"
+        // (Close_WithoutResolve_Throws, above).
+        Assert.Throws<TicketClosedException>(() => ticket.Close());
+    }
+
+    private static Ticket NewClosedTicket()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        ticket.Close();
+        return ticket;
+    }
+
+    [Fact]
+    public void AssignTo_OnClosedTicket_Throws_ClosedTicketImmutability()
+    {
+        var ticket = NewClosedTicket();
+
+        Assert.Throws<TicketClosedException>(() => ticket.AssignTo(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void TransferToDepartment_OnClosedTicket_Throws_ClosedTicketImmutability()
+    {
+        var ticket = NewClosedTicket();
+
+        Assert.Throws<TicketClosedException>(() => ticket.TransferToDepartment(999));
+    }
+
+    [Fact]
+    public void ChangeStatus_OnClosedTicket_Throws_ClosedTicketImmutability()
+    {
+        var ticket = NewClosedTicket();
+
+        Assert.Throws<TicketClosedException>(() => ticket.ChangeStatus(TicketStatus.InProgress));
+    }
+
+    [Fact]
+    public void Resolve_OnClosedTicket_Throws_ClosedTicketImmutability()
+    {
+        var ticket = NewClosedTicket();
+
+        Assert.Throws<TicketClosedException>(() => ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null));
     }
 }

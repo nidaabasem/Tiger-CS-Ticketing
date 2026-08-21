@@ -2,7 +2,6 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
-using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -21,6 +20,11 @@ public sealed class TicketAssignmentAppService(
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider)
 {
+    /// <summary>
+    /// PR correction — the caller's role alone decides Assign authority now;
+    /// there is no more self-claim path. CS Agent and Department Employee
+    /// hold no assignment capability at all (see TicketRoleSets' remarks).
+    /// </summary>
     public async Task<TicketMutationResult> AssignAsync(
         Guid callerEmployeeId,
         IReadOnlyCollection<string> callerRoles,
@@ -34,18 +38,23 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        var isSelfClaim = ticket.CurrentOwnerEmployeeId is null && request.AssignedEmployeeId == callerEmployeeId;
-
-        var authorized = isSelfClaim
-            ? await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken)
-                || callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains)
-            : callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains)
-                || (callerRoles.Contains(Roles.DepartmentHead)
-                    && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken));
+        var authorized = callerRoles.Any(TicketRoleSets.AssignCrossDepartment.Contains)
+            || (callerRoles.Any(TicketRoleSets.AssignWithinOwnDepartment.Contains)
+                && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken));
 
         if (!authorized)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
+        }
+
+        // Closed-ticket immutability (PR correction): rejected before the
+        // transaction is even opened, so no database round-trip of any kind
+        // occurs for this outcome — the domain layer's own EnsureNotClosed()
+        // guard (Ticket.AssignTo) is a defense-in-depth backstop, not the
+        // only line of defense.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
 
         // MVP-API-Contracts.md §3.5's own validation: AssignedEmployeeId
@@ -91,6 +100,7 @@ public sealed class TicketAssignmentAppService(
         return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
     }
 
+    /// <summary>PR correction: transfer authority is CS Manager only — every other role (including Department Head and CS Supervisor, who retain Assign authority) is forbidden.</summary>
     public async Task<TicketMutationResult> TransferAsync(
         Guid callerEmployeeId,
         IReadOnlyCollection<string> callerRoles,
@@ -104,16 +114,16 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        // MVP-API-Contracts.md §3.6: "Supervisor+ in the current department"
-        // — Department Head is scoped to their own department; Supervisor/
-        // CS Manager/GM/Chairman/SysAdmin act cross-department.
-        var authorized = callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains)
-            || (callerRoles.Contains(Roles.DepartmentHead)
-                && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken));
-
-        if (!authorized)
+        if (!callerRoles.Any(TicketRoleSets.Transfer.Contains))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
+        }
+
+        // Closed-ticket immutability (PR correction) — see AssignAsync's
+        // identical remark; rejected before any transaction or write.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
 
         if (request.TargetDepartmentId == ticket.CurrentDepartmentId)
@@ -130,9 +140,10 @@ public sealed class TicketAssignmentAppService(
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var previousDepartmentId = ticket.CurrentDepartmentId;
-        ticket.TransferToDepartment(request.TargetDepartmentId);
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        ticket.TransferToDepartment(request.TargetDepartmentId);
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "Transfer", "Ticket", ticketId.ToString(),

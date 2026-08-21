@@ -59,3 +59,17 @@ public sealed class TicketAlreadyInTargetDepartmentException(long ticketId, int 
     public long TicketId { get; } = ticketId;
     public int DepartmentId { get; } = departmentId;
 }
+
+/// <summary>
+/// Closed-ticket immutability (PR correction): a Closed ticket accepts no
+/// further mutation of any kind — Assign, Transfer, ChangeStatus, Resolve,
+/// and Close-again all reject with this exception before any state changes
+/// or writes occur. Reading a Closed ticket's detail, history, and notes
+/// remains unaffected — this exception is only ever thrown from a mutating
+/// domain method.
+/// </summary>
+public sealed class TicketClosedException(long ticketId)
+    : TicketException($"Ticket {ticketId} is Closed and no longer accepts mutations.")
+{
+    public long TicketId { get; } = ticketId;
+}

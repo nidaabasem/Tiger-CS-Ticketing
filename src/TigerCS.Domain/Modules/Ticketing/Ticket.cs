@@ -192,6 +192,8 @@ public class Ticket
     /// <summary>MVP-API-Contracts.md §3.5 / §2.12 — sets the current owner and appends a superseding <see cref="TicketAssignment"/> row is the caller's job (this method only updates the ticket's own denormalized pointer).</summary>
     public void AssignTo(Guid employeeId)
     {
+        EnsureNotClosed();
+
         if (employeeId == Guid.Empty)
         {
             throw new ArgumentException("AssignedEmployeeId is required.", nameof(employeeId));
@@ -203,6 +205,8 @@ public class Ticket
     /// <summary>MVP-API-Contracts.md §3.6 — moves CurrentDepartmentId, leaves OriginatingDepartmentId untouched (write-once, MVP-ERD.md §2.3), and clears the current owner: the receiving department must explicitly claim/assign it.</summary>
     public void TransferToDepartment(int targetDepartmentId)
     {
+        EnsureNotClosed();
+
         if (targetDepartmentId == CurrentDepartmentId)
         {
             throw new TicketAlreadyInTargetDepartmentException(TicketId, targetDepartmentId);
@@ -224,6 +228,8 @@ public class Ticket
     /// </summary>
     public void ChangeStatus(TicketStatus newStatus)
     {
+        EnsureNotClosed();
+
         var isAllowed = (TicketStatus, newStatus) switch
         {
             (TicketStatus.Open, TicketStatus.InProgress) => true,
@@ -258,6 +264,8 @@ public class Ticket
     /// </summary>
     public void Resolve(ResolutionOutcomeValue outcome, long? duplicateOfTicketId)
     {
+        EnsureNotClosed();
+
         if (TicketStatus is not (TicketStatus.InProgress or TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty))
         {
             throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
@@ -271,11 +279,27 @@ public class Ticket
     /// <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
     public void Close()
     {
+        // Closing an already-Closed ticket is closed-ticket immutability
+        // (PR correction), not "not yet resolved" — a genuinely different
+        // condition from the check below, which is why this method checks
+        // EnsureNotClosed() explicitly first rather than letting the
+        // `!= Resolved` branch (also true for Closed) catch it implicitly.
+        EnsureNotClosed();
+
         if (TicketStatus != TicketStatus.Resolved)
         {
             throw new TicketNotYetResolvedException(TicketId);
         }
 
         TicketStatus = TicketStatus.Closed;
+    }
+
+    /// <summary>Closed-ticket immutability (PR correction): every mutating method above calls this first — a Closed ticket accepts no further Assign/Transfer/ChangeStatus/Resolve/Close.</summary>
+    private void EnsureNotClosed()
+    {
+        if (TicketStatus == TicketStatus.Closed)
+        {
+            throw new TicketClosedException(TicketId);
+        }
     }
 }

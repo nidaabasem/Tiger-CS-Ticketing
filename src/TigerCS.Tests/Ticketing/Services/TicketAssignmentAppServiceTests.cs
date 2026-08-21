@@ -44,71 +44,77 @@ public class TicketAssignmentAppServiceTests
         return ticket;
     }
 
-    [Fact]
-    public async Task AssignAsync_SelfClaimByDepartmentMember_Succeeds()
+    private static async Task<Ticket> SeedClosedTicketAsync(FakeTicketRepository repo, int departmentId = 2)
     {
-        var f = CreateService();
-        var ticket = await SeedTicketAsync(f.Tickets);
-        var employeeId = Guid.NewGuid();
-        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(employeeId, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
-
-        var result = await f.Service.AssignAsync(
-            employeeId, [Roles.DepartmentEmployee], ticket.TicketId,
-            new AssignTicketRequestDto(employeeId, []));
-
-        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
-        Assert.Equal(employeeId, ticket.CurrentOwnerEmployeeId);
-        Assert.Single(f.Assignments.Added);
-        Assert.Contains(f.Audit.Written, w => w.Action == "Assign");
-        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+        var ticket = await SeedTicketAsync(repo, departmentId);
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        ticket.Close();
+        return ticket;
     }
 
-    [Fact]
-    public async Task AssignAsync_SelfClaimByNonMemberOfDepartment_ReturnsForbidden_PreventsUnauthorizedSelfAssignment()
-    {
-        var f = CreateService();
-        var ticket = await SeedTicketAsync(f.Tickets);
-        var employeeId = Guid.NewGuid();
-        // Not added to any department assignment, and holds no cross-department role.
+    // ---- Assignment authorization matrix (PR correction) — all 9 roles ----
+    // CS Agent and Department Employee: no assignment capability at all
+    // (not even self-claim, which this correction removes entirely).
+    // CS Supervisor / Department Head: assign/reassign within their own
+    // department only. CS Manager: cross-department. GM/Chairman/SysAdmin/
+    // Reporting User: no operational assignment.
+    public static IEnumerable<object[]> AssignRoleMatrix() =>
+    [
+        [Roles.CsAgent, false],
+        [Roles.DepartmentEmployee, false],
+        [Roles.CsSupervisor, true],
+        [Roles.DepartmentHead, true],
+        [Roles.CsManager, true],
+        [Roles.GeneralManager, false],
+        [Roles.ChairmanCeo, false],
+        [Roles.SystemAdministrator, false],
+        [Roles.ReportingUser, false]
+    ];
 
-        var result = await f.Service.AssignAsync(
-            employeeId, [Roles.DepartmentEmployee], ticket.TicketId,
-            new AssignTicketRequestDto(employeeId, []));
-
-        Assert.Equal(TicketMutationOutcome.Forbidden, result.Outcome);
-        Assert.Null(ticket.CurrentOwnerEmployeeId);
-    }
-
-    [Fact]
-    public async Task AssignAsync_AssignedEmployeeNotInTicketDepartment_ReturnsEmployeeNotInDepartment()
+    [Theory]
+    [MemberData(nameof(AssignRoleMatrix))]
+    public async Task AssignAsync_AllNineRoles_MatchesCorrectedAuthorizationMatrix(string role, bool expectSuccess)
     {
         var f = CreateService();
         var ticket = await SeedTicketAsync(f.Tickets);
         var caller = Guid.NewGuid();
         var target = Guid.NewGuid();
-        // Caller is Supervisor (cross-department), but target employee is a member of a DIFFERENT department.
-        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, 999, true, DateTime.UtcNow, null));
-
-        var result = await f.Service.AssignAsync(
-            caller, [Roles.CsSupervisor], ticket.TicketId,
-            new AssignTicketRequestDto(target, []));
-
-        Assert.Equal(TicketMutationOutcome.EmployeeNotInDepartment, result.Outcome);
-    }
-
-    [Fact]
-    public async Task AssignAsync_ReassignByPlainDepartmentEmployeeToSomeoneElse_ReturnsForbidden()
-    {
-        var f = CreateService();
-        var ticket = await SeedTicketAsync(f.Tickets);
-        var caller = Guid.NewGuid();
-        var target = Guid.NewGuid();
+        // Caller and target both belong to the ticket's department — isolates
+        // the role check itself from department-scoping (covered separately
+        // below), except for CS Manager, whose authority doesn't depend on it.
         f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
         f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
 
         var result = await f.Service.AssignAsync(
-            caller, [Roles.DepartmentEmployee], ticket.TicketId,
-            new AssignTicketRequestDto(target, []));
+            caller, [role], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(expectSuccess ? TicketMutationOutcome.Success : TicketMutationOutcome.Forbidden, result.Outcome);
+        if (expectSuccess)
+        {
+            Assert.Equal(target, ticket.CurrentOwnerEmployeeId);
+        }
+        else
+        {
+            Assert.Null(ticket.CurrentOwnerEmployeeId);
+            Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        }
+    }
+
+    [Fact]
+    public async Task AssignAsync_SupervisorOfDifferentDepartment_ReturnsForbidden_DepartmentScoped()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        var caller = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        // Supervisor, but for department 999, not the ticket's department 2.
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, 999, true, DateTime.UtcNow, null));
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, 2, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(target, []));
 
         Assert.Equal(TicketMutationOutcome.Forbidden, result.Outcome);
     }
@@ -120,15 +126,63 @@ public class TicketAssignmentAppServiceTests
         var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
         var caller = Guid.NewGuid();
         var target = Guid.NewGuid();
-        // Department Head, but for department 999, not the ticket's department 2.
         f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, 999, true, DateTime.UtcNow, null));
         f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, 2, true, DateTime.UtcNow, null));
 
         var result = await f.Service.AssignAsync(
-            caller, [Roles.DepartmentHead], ticket.TicketId,
-            new AssignTicketRequestDto(target, []));
+            caller, [Roles.DepartmentHead], ticket.TicketId, new AssignTicketRequestDto(target, []));
 
         Assert.Equal(TicketMutationOutcome.Forbidden, result.Outcome);
+    }
+
+    [Fact]
+    public async Task AssignAsync_CsManagerAcrossDepartments_Succeeds_NoOwnDepartmentMembershipRequired()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        var caller = Guid.NewGuid(); // CS Manager, member of no department at all.
+        var target = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, 2, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.CsManager], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task AssignAsync_AssignedEmployeeNotInTicketDepartment_ReturnsEmployeeNotInDepartment()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var caller = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        // CS Manager (cross-department authority, isolates this check from the caller's own department scoping).
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, 999, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.CsManager], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.EmployeeNotInDepartment, result.Outcome);
+    }
+
+    [Fact]
+    public async Task AssignAsync_OnClosedTicket_ReturnsTicketClosed_NoDatabaseWrites()
+    {
+        var f = CreateService();
+        var ticket = await SeedClosedTicketAsync(f.Tickets);
+        var caller = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.CsManager], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        Assert.Empty(f.Assignments.Added);
+        Assert.DoesNotContain(f.Audit.Written, w => w.Action == "Assign");
     }
 
     [Fact]
@@ -136,13 +190,12 @@ public class TicketAssignmentAppServiceTests
     {
         var f = CreateService();
         var ticket = await SeedTicketAsync(f.Tickets);
-        var employeeId = Guid.NewGuid();
-        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(employeeId, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        var caller = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
         f.UnitOfWork.ThrowTicketConcurrencyConflictOnCall = 1;
 
         var result = await f.Service.AssignAsync(
-            employeeId, [Roles.DepartmentEmployee], ticket.TicketId,
-            new AssignTicketRequestDto(employeeId, []));
+            caller, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(caller, []));
 
         Assert.Equal(TicketMutationOutcome.ConcurrencyConflict, result.Outcome);
         Assert.Equal(1, f.UnitOfWork.TransactionsBegun);
@@ -150,39 +203,66 @@ public class TicketAssignmentAppServiceTests
         Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
     }
 
+    // ---- Transfer authorization matrix (PR correction): CS Manager only ----
+    public static IEnumerable<object[]> TransferRoleMatrix() =>
+    [
+        [Roles.CsAgent, false],
+        [Roles.DepartmentEmployee, false],
+        [Roles.CsSupervisor, false],
+        [Roles.DepartmentHead, false],
+        [Roles.CsManager, true],
+        [Roles.GeneralManager, false],
+        [Roles.ChairmanCeo, false],
+        [Roles.SystemAdministrator, false],
+        [Roles.ReportingUser, false]
+    ];
+
+    [Theory]
+    [MemberData(nameof(TransferRoleMatrix))]
+    public async Task TransferAsync_AllNineRoles_MatchesCorrectedAuthorizationMatrix(string role, bool expectSuccess)
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.AssignTo(Guid.NewGuid());
+        var targetDepartment = f.Departments.AddDepartment("Facility Management " + role, "FM-" + role[..Math.Min(3, role.Length)]);
+        var caller = Guid.NewGuid();
+        // Even Department Head/Supervisor are department-scoped to the
+        // ticket's own department here, to prove the rejection is role-based
+        // (transfer is CS-Manager-only now), not a department-scoping gap.
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, 2, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.TransferAsync(
+            caller, [role], ticket.TicketId, new TransferTicketRequestDto(targetDepartment.DepartmentId, "Misrouted", []));
+
+        Assert.Equal(expectSuccess ? TicketMutationOutcome.Success : TicketMutationOutcome.Forbidden, result.Outcome);
+        if (expectSuccess)
+        {
+            Assert.Equal(targetDepartment.DepartmentId, ticket.CurrentDepartmentId);
+            Assert.Null(ticket.CurrentOwnerEmployeeId);
+        }
+        else
+        {
+            Assert.Equal(2, ticket.CurrentDepartmentId);
+            Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        }
+    }
+
     [Fact]
-    public async Task TransferAsync_BySupervisor_MovesDepartmentAndClearsOwner()
+    public async Task TransferAsync_ByCsManager_MovesDepartmentAndClearsOwner()
     {
         var f = CreateService();
         var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
         ticket.AssignTo(Guid.NewGuid());
         var targetDepartment = f.Departments.AddDepartment("Facility Management", "FM");
-        var caller = Guid.NewGuid();
 
         var result = await f.Service.TransferAsync(
-            caller, [Roles.CsSupervisor], ticket.TicketId,
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
             new TransferTicketRequestDto(targetDepartment.DepartmentId, "Misrouted", []));
 
         Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
         Assert.Equal(targetDepartment.DepartmentId, ticket.CurrentDepartmentId);
         Assert.Null(ticket.CurrentOwnerEmployeeId);
         Assert.Contains(f.Audit.Written, w => w.Action == "Transfer");
-    }
-
-    [Fact]
-    public async Task TransferAsync_ByDepartmentEmployee_ReturnsForbidden()
-    {
-        var f = CreateService();
-        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
-        var targetDepartment = f.Departments.AddDepartment("Facility Management", "FM");
-        var caller = Guid.NewGuid();
-        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, 2, true, DateTime.UtcNow, null));
-
-        var result = await f.Service.TransferAsync(
-            caller, [Roles.DepartmentEmployee], ticket.TicketId,
-            new TransferTicketRequestDto(targetDepartment.DepartmentId, "Misrouted", []));
-
-        Assert.Equal(TicketMutationOutcome.Forbidden, result.Outcome);
     }
 
     [Fact]
@@ -210,5 +290,23 @@ public class TicketAssignmentAppServiceTests
             new TransferTicketRequestDto(2, "No-op", []));
 
         Assert.Equal(TicketMutationOutcome.AlreadyInTargetDepartment, result.Outcome);
+    }
+
+    [Fact]
+    public async Task TransferAsync_OnClosedTicket_ReturnsTicketClosed_NoDatabaseWrites()
+    {
+        var f = CreateService();
+        var ticket = await SeedClosedTicketAsync(f.Tickets, departmentId: 2);
+        var targetDepartment = f.Departments.AddDepartment("Facility Management", "FM");
+
+        var result = await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(targetDepartment.DepartmentId, "Misrouted", []));
+
+        Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(2, ticket.CurrentDepartmentId);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        Assert.DoesNotContain(f.Audit.Written, w => w.Action == "Transfer");
     }
 }

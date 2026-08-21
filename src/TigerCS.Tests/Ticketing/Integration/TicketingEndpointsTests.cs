@@ -197,8 +197,22 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var login = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
         workerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
 
-        // Self-claim.
-        var assignResponse = await workerClient.PostAsJsonAsync(
+        // PR correction: Department Employee holds no assignment capability
+        // at all (not even self-claim) — a Department Head in the same
+        // department assigns them instead.
+        var (deptHeadUsername, deptHeadPassword, deptHeadId) = await _factory.SeedEmployeeAsync(Roles.DepartmentHead);
+        await _factory.AssignPrimaryDepartmentAsync(deptHeadId, departmentId);
+        var deptHeadClient = _factory.CreateClient();
+        var deptHeadLoginResponse = await deptHeadClient.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(deptHeadUsername, deptHeadPassword));
+        var deptHeadLogin = await deptHeadLoginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        deptHeadClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deptHeadLogin!.AccessToken);
+
+        // Department Employee cannot self-claim.
+        var selfClaimAttempt = await workerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(workerId, initialRowVersion));
+        Assert.Equal(HttpStatusCode.Forbidden, selfClaimAttempt.StatusCode);
+
+        var assignResponse = await deptHeadClient.PostAsJsonAsync(
             $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(workerId, initialRowVersion));
         Assert.Equal(HttpStatusCode.OK, assignResponse.StatusCode);
         var afterAssign = await assignResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
@@ -237,12 +251,15 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
     }
 
     [Fact]
-    public async Task Assign_ByEmployeeOfADifferentDepartment_Returns403_PreventsCrossDepartmentAssignment()
+    public async Task Assign_ByDepartmentHeadOfADifferentDepartment_Returns403_PreventsCrossDepartmentAssignment()
     {
         var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
         var (ticketId, _, _) = await CreateVerifiedTicketAsync(agentClient);
 
-        var (outsiderUsername, outsiderPassword, outsiderId) = await _factory.SeedEmployeeAsync(Roles.DepartmentEmployee);
+        // Department Head genuinely holds Assign authority (PR correction) —
+        // just not for a department they don't belong to, which is what
+        // this test isolates.
+        var (outsiderUsername, outsiderPassword, outsiderId) = await _factory.SeedEmployeeAsync(Roles.DepartmentHead);
         var otherDepartmentId = await _factory.CreateDepartmentAsync("Unrelated " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         await _factory.AssignPrimaryDepartmentAsync(outsiderId, otherDepartmentId);
 
@@ -255,6 +272,93 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
             $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(outsiderId, []));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Transfer_ByDepartmentHead_Returns403_TransferIsCsManagerOnly()
+    {
+        var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, departmentId, _) = await CreateVerifiedTicketAsync(agentClient);
+
+        var (deptHeadUsername, deptHeadPassword, deptHeadId) = await _factory.SeedEmployeeAsync(Roles.DepartmentHead);
+        await _factory.AssignPrimaryDepartmentAsync(deptHeadId, departmentId);
+        var deptHeadClient = _factory.CreateClient();
+        var loginResponse = await deptHeadClient.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(deptHeadUsername, deptHeadPassword));
+        var login = await loginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        deptHeadClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+
+        var otherDepartmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+
+        var response = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/transfer", new TransferTicketRequestDto(otherDepartmentId, "Misrouted", []));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ClosedTicket_AssignTransferStatusResolveClose_AllReturn422_NoFurtherStateChange()
+    {
+        var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, departmentId, initialRowVersion) = await CreateVerifiedTicketAsync(agentClient);
+
+        var (deptHeadUsername, deptHeadPassword, deptHeadId) = await _factory.SeedEmployeeAsync(Roles.DepartmentHead);
+        await _factory.AssignPrimaryDepartmentAsync(deptHeadId, departmentId);
+        var deptHeadClient = _factory.CreateClient();
+        var deptHeadLoginResponse = await deptHeadClient.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(deptHeadUsername, deptHeadPassword));
+        var deptHeadLogin = await deptHeadLoginResponse.Content.ReadFromJsonAsync<LoginResponseDto>();
+        deptHeadClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deptHeadLogin!.AccessToken);
+
+        var assignResponse = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(deptHeadId, initialRowVersion));
+        var afterAssign = await assignResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        var statusResponse = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/status", new ChangeStatusRequestDto("InProgress", Convert.FromBase64String(afterAssign!.RowVersion)));
+        var afterStatus = await statusResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        var resolveResponse = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/resolution",
+            new ResolveTicketRequestDto("Resolved", "Fixed it.", null, null, Convert.FromBase64String(afterStatus!.RowVersion)));
+        var afterResolve = await resolveResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        var closeResponse = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/close", new CloseTicketRequestDto(Convert.FromBase64String(afterResolve!.RowVersion)));
+        var closed = await closeResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Closed", closed!.TicketStatus);
+        var closedRowVersion = Convert.FromBase64String(closed.RowVersion);
+
+        // Every mutating operation now rejects with 422 — no exceptions.
+        var reassign = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(deptHeadId, closedRowVersion));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, reassign.StatusCode);
+
+        var otherDepartmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var managerClient = await CreateAuthenticatedClientAsync(Roles.CsManager);
+        var transfer = await managerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/transfer", new TransferTicketRequestDto(otherDepartmentId, "n/a", closedRowVersion));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, transfer.StatusCode);
+
+        var statusChange = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/status", new ChangeStatusRequestDto("InProgress", closedRowVersion));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, statusChange.StatusCode);
+
+        var reResolve = await deptHeadClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/resolution",
+            new ResolveTicketRequestDto("Resolved", "n/a", null, null, closedRowVersion));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, reResolve.StatusCode);
+
+        var reClose = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/close", new CloseTicketRequestDto(closedRowVersion));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, reClose.StatusCode);
+
+        // Reading remains allowed throughout.
+        var detail = await agentClient.GetAsync($"/api/tickets/{ticketId}");
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        var finalDetail = await detail.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Closed", finalDetail!.TicketStatus);
+
+        var notes = await agentClient.GetAsync($"/api/tickets/{ticketId}/notes");
+        Assert.Equal(HttpStatusCode.OK, notes.StatusCode);
     }
 
     [Fact]

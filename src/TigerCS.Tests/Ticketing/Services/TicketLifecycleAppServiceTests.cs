@@ -259,4 +259,61 @@ public class TicketLifecycleAppServiceTests
         Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
         Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
     }
+
+    private static async Task<(Ticket Ticket, Guid Owner)> SeedClosedTicketAsync(FakeTicketRepository repo, int departmentId = 2)
+    {
+        var owner = Guid.NewGuid();
+        var ticket = await SeedInProgressTicketAsync(repo, owner, departmentId);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        ticket.Close();
+        return (ticket, owner);
+    }
+
+    // ---- Closed-ticket immutability (PR correction) — every mutating operation, no database writes ----
+
+    [Fact]
+    public async Task ChangeStatusAsync_OnClosedTicket_ReturnsTicketClosed_NoDatabaseWrites()
+    {
+        var f = CreateService();
+        var (ticket, owner) = await SeedClosedTicketAsync(f.Tickets);
+
+        var result = await f.Service.ChangeStatusAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ChangeStatusRequestDto("InProgress", []));
+
+        Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(TicketStatus.Closed, ticket.TicketStatus);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        Assert.Empty(f.StatusHistory.Added);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_OnClosedTicket_ReturnsTicketClosed_NoDatabaseWrites()
+    {
+        var f = CreateService();
+        var (ticket, owner) = await SeedClosedTicketAsync(f.Tickets);
+        var resolutionsBefore = f.Resolutions.Added.Count;
+
+        var result = await f.Service.ResolveAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ResolveTicketRequestDto("Resolved", "Attempted re-resolution.", null, null, []));
+
+        Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(resolutionsBefore, f.Resolutions.Added.Count);
+    }
+
+    [Fact]
+    public async Task CloseAsync_OnAlreadyClosedTicket_ReturnsTicketClosed_NoDatabaseWrites()
+    {
+        var f = CreateService();
+        var (ticket, _) = await SeedClosedTicketAsync(f.Tickets);
+
+        var result = await f.Service.CloseAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId, new CloseTicketRequestDto([]));
+
+        Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+    }
 }

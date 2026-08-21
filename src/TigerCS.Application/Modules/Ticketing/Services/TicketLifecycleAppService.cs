@@ -51,6 +51,14 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }
 
+        // Closed-ticket immutability (PR correction): rejected before any
+        // transaction/write — see TicketAssignmentAppService.AssignAsync's
+        // identical remark.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -61,6 +69,10 @@ public sealed class TicketLifecycleAppService(
         try
         {
             ticket.ChangeStatus(newStatus);
+        }
+        catch (TicketClosedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
         catch (InvalidTicketStatusTransitionException)
         {
@@ -118,6 +130,13 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }
 
+        // Closed-ticket immutability (PR correction): rejected before any
+        // transaction/write.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+
         if (outcome == ResolutionOutcome.Duplicate)
         {
             var duplicateTarget = request.DuplicateOfTicketId is { } targetId
@@ -140,6 +159,10 @@ public sealed class TicketLifecycleAppService(
         try
         {
             ticket.Resolve(outcome, request.DuplicateOfTicketId);
+        }
+        catch (TicketClosedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
         catch (TicketNotEligibleForResolutionException)
         {
@@ -199,6 +222,17 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }
 
+        // Closed-ticket immutability (PR correction): closing an
+        // already-Closed ticket is this condition, not NotYetResolved
+        // (checked next) — a Closed ticket always has a current resolution,
+        // so without this explicit check first it would otherwise fall
+        // through to the resolution lookup below. Rejected before any
+        // transaction/write.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+
         var currentResolution = await ticketResolutionRepository.GetCurrentAsync(ticketId, cancellationToken);
         if (currentResolution is null)
         {
@@ -215,6 +249,10 @@ public sealed class TicketLifecycleAppService(
         try
         {
             ticket.Close();
+        }
+        catch (TicketClosedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
         catch (TicketNotYetResolvedException)
         {
