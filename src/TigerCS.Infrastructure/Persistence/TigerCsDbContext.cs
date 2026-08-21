@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using TigerCS.Domain.Audit;
+using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -13,19 +14,25 @@ using TigerCS.Infrastructure.Modules.CustomerVerification.Configurations;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Configurations;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Configurations;
 using TigerCS.Infrastructure.Modules.Ticketing.Configurations;
+using TigerCS.Infrastructure.Persistence.Configurations;
 
 namespace TigerCS.Infrastructure.Persistence;
 
 /// <summary>
-/// This increment adds Ticket Intake and Ticket Creation — IntakeRecords,
-/// Tickets, TicketRequesterSnapshots, TicketStatusHistory (Ticketing
-/// module), plus the minimal Categories/Priorities reference data Ticketing
-/// needs to classify, prioritize, and route a ticket at creation
-/// (Classification and Routing / SLA and Escalation module ownership per
-/// Module-Design.md — only the reference data those modules own is mapped
-/// here, not their own business logic, which remains out of scope). SLA due-
-/// date computation, escalation, Genesys, notifications, and attachments are
-/// not mapped here yet — those arrive with their own modules' increments.
+/// Identity and Access, Customer Verification, Ticketing, and — added by the
+/// SLA and Escalation increment — <c>SlaPolicies</c>, <c>TicketSlaInstances</c>,
+/// <c>TicketEscalations</c>, the <c>BusinessCalendars</c>/
+/// <c>BusinessCalendarWorkingDays</c>/<c>Holidays</c> reference data
+/// (ADR-0010), and <c>IdempotencyRecords</c> (ADR-0014).
+///
+/// <para>
+/// Two groups of MVP-Data-Dictionary.md §2.1–2.27 remain deliberately
+/// unmapped, per MVP-Implementation-Backlog.md S-04's "25 of 27" scope:
+/// <c>TicketSlaPausePeriods</c> (§0.2 — SLA pause/resume is not built in this
+/// pilot) and <c>PriorityDowngradeRequests</c> (§0 — downgrades are hard-
+/// disabled). Genesys, notifications, attachments and <c>OutboxMessages</c>
+/// arrive with their own increments.
+/// </para>
 /// </summary>
 public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     : IdentityDbContext<ApplicationUser, ApplicationRole, Guid>(options)
@@ -62,6 +69,20 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketNote> TicketNotes => Set<TicketNote>();
 
+    public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
+
+    public DbSet<BusinessCalendar> BusinessCalendars => Set<BusinessCalendar>();
+
+    public DbSet<BusinessCalendarWorkingDay> BusinessCalendarWorkingDays => Set<BusinessCalendarWorkingDay>();
+
+    public DbSet<Holiday> Holidays => Set<Holiday>();
+
+    public DbSet<TicketSlaInstance> TicketSlaInstances => Set<TicketSlaInstance>();
+
+    public DbSet<TicketEscalation> TicketEscalations => Set<TicketEscalation>();
+
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -86,6 +107,14 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketAssignmentConfiguration());
         builder.ApplyConfiguration(new TicketResolutionConfiguration());
         builder.ApplyConfiguration(new TicketNoteConfiguration());
+
+        builder.ApplyConfiguration(new SlaPolicyConfiguration());
+        builder.ApplyConfiguration(new BusinessCalendarConfiguration());
+        builder.ApplyConfiguration(new BusinessCalendarWorkingDayConfiguration());
+        builder.ApplyConfiguration(new HolidayConfiguration());
+        builder.ApplyConfiguration(new TicketSlaInstanceConfiguration());
+        builder.ApplyConfiguration(new TicketEscalationConfiguration());
+        builder.ApplyConfiguration(new IdempotencyRecordConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a

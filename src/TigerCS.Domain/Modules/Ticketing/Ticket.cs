@@ -11,11 +11,13 @@ namespace TigerCS.Domain.Modules.Ticketing;
 
 /// <summary>
 /// MVP-ERD.md §2.10 / MVP-Data-Dictionary.md §2.10 — the ticket aggregate
-/// root and its five independent lifecycle dimensions (ADR-0008). This
-/// increment implements only the ticket's creation moment (initial lifecycle
-/// — MVP-Implementation-Backlog.md's later S-13/S-14/S-16 items: assignment,
-/// transfer, status change, priority change, resolve/close — are out of
-/// scope here and are not exposed by any method below).
+/// root and its five independent lifecycle dimensions (ADR-0008): creation,
+/// assignment/transfer, the status sub-machine, resolve/close, and — added
+/// by the SLA and Escalation increment — first-response recording, the
+/// <see cref="EscalationLevel"/> dimension, and the <see cref="SlaState"/>
+/// projection of the two independent SLA clocks. Priority change
+/// (MVP-Implementation-Backlog.md S-14) is still not exposed by any method
+/// below.
 ///
 /// <para>
 /// <b>UnitReferenceId/ContactReferenceId/RequesterSnapshot nullability — a
@@ -108,10 +110,11 @@ public class Ticket
         var ticket = CreateCore(ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc);
         ticket.VerificationStatus = CrmVerificationStatus.PendingCrmVerification;
 
-        // Not yet SLA-clocked (FR-TKT-09) — the clock has nothing to run
-        // against until a unit/contact is actually resolved; SLA
-        // due-date computation itself remains out of scope for this
-        // increment regardless (SLA and Escalation module, later).
+        // Not yet SLA-clocked (FR-TKT-09: an unverified ticket "does not
+        // start its SLA clock"). No TicketSlaInstance is opened for a
+        // provisional ticket and no due date is computed until
+        // ReconcileVerification runs — see that method's remarks for how
+        // this reconciles with MVP-ERD.md §2.15's "≥1 from creation".
         ticket.SlaState = SlaState.Paused;
         return ticket;
     }
@@ -186,6 +189,17 @@ public class Ticket
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
         VerificationStatus = CrmVerificationStatus.Verified;
+
+        // The SLA clock starts here for a provisional ticket, not at
+        // creation. MVP-ERD.md §2.15 describes TicketSlaInstances as
+        // "Required (≥1 from creation)", which FR-TKT-09 contradicts for
+        // this path — an unverified ticket "does not start its SLA clock",
+        // and both due columns are NOT NULL, so there is no value a
+        // from-creation row could legitimately carry. Reconciled the same
+        // way this type already reconciles its nullable Unit/Contact FKs
+        // (see the type's own remarks): the SLA period opens at the moment
+        // the ticket becomes Verified. The calling application service opens
+        // it in the same transaction as this call.
         SlaState = SlaState.Running;
     }
 
@@ -292,6 +306,102 @@ public class Ticket
         }
 
         TicketStatus = TicketStatus.Closed;
+    }
+
+    /// <summary>
+    /// ISSUE-019 / MVP-API-Contracts.md §5.2 — records the first genuine,
+    /// human-authored response to the customer. Write-once at the ticket
+    /// level (MVP-ERD.md §2.10): a second call throws rather than
+    /// overwriting, because the First Response SLA is measured against the
+    /// <i>first</i> engagement and a later correction would silently move a
+    /// contractual measurement.
+    ///
+    /// <para>
+    /// The automated acknowledgement never reaches this method, on any
+    /// channel — that is <see cref="AcknowledgementSentAtUtc"/>'s separate
+    /// job, and keeping the two apart is the whole point of ISSUE-019.
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="occurredAtUtc"/> may precede
+    /// <see cref="CreatedAtUtc"/>: SLA-Architecture.md §16's Example E has a
+    /// Genesys call answered at 08:58 satisfying a ticket created moments
+    /// later at 09:00, and the actual moment of human engagement is the
+    /// correct value there. No Genesys adapter ships in this increment; the
+    /// method simply does not forbid the case its own approved example
+    /// requires.
+    /// </para>
+    /// </summary>
+    public void RecordFirstHumanResponse(DateTime occurredAtUtc)
+    {
+        EnsureNotClosed();
+
+        if (FirstHumanResponseAtUtc is { } already)
+        {
+            throw new FirstResponseAlreadyRecordedException(TicketId, already);
+        }
+
+        FirstHumanResponseAtUtc = occurredAtUtc;
+    }
+
+    /// <summary>
+    /// Advances the <see cref="EscalationLevel"/> dimension — and nothing
+    /// else.
+    ///
+    /// <para>
+    /// <b>Escalation is a separate dimension from <see cref="TicketStatus"/></b>
+    /// (ADR-0008, Solution-Analysis.md §5.3/§7.6: "escalating a ticket never
+    /// removes it from active work"). This method deliberately does not
+    /// touch <see cref="TicketStatus"/>, <see cref="ResolutionOutcome"/> or
+    /// <see cref="SlaState"/>, so an escalated ticket stays exactly as Open
+    /// or InProgress as it was.
+    /// </para>
+    ///
+    /// <para>
+    /// The level only ever rises. ADR-0011 models it as a state rather than
+    /// a counter, so an automatic Level 2 raised by a later breach must not
+    /// pull a ticket back down from a Level 4 a CS Manager already set.
+    /// </para>
+    /// </summary>
+    public void RaiseEscalationLevel(EscalationLevel newLevel)
+    {
+        EnsureNotClosed();
+
+        if (newLevel <= EscalationLevel)
+        {
+            throw new EscalationLevelCannotBeLoweredException(TicketId, EscalationLevel, newLevel);
+        }
+
+        EscalationLevel = newLevel;
+    }
+
+    /// <summary>
+    /// Projects a recorded SLA breach onto the ticket's own
+    /// <see cref="SlaState"/> dimension (SLA-Architecture.md §11).
+    ///
+    /// <para>
+    /// The two clocks breach independently and are tracked independently on
+    /// <c>TicketSlaInstances</c> (ADR-0009); <see cref="SlaState"/> is a
+    /// single column, so it carries the ticket-level summary: breached if
+    /// <i>either</i> clock is. Sticky, matching the breach flags' own
+    /// immutability rule (MVP-ERD.md §2.15) — nothing moves this back to
+    /// Running or Met.
+    /// </para>
+    /// </summary>
+    public void MarkSlaBreached() => SlaState = SlaState.Breached;
+
+    /// <summary>
+    /// Marks the SLA met once the resolution landed within its deadline.
+    /// A breach already recorded wins and is never downgraded to Met, so a
+    /// ticket that missed its First Response target and then resolved on
+    /// time still reports Breached.
+    /// </summary>
+    public void MarkSlaMet()
+    {
+        if (SlaState != SlaState.Breached)
+        {
+            SlaState = SlaState.Met;
+        }
     }
 
     /// <summary>Closed-ticket immutability (PR correction): every mutating method above calls this first — a Closed ticket accepts no further Assign/Transfer/ChangeStatus/Resolve/Close.</summary>

@@ -10,15 +10,19 @@ using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
+using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
+using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Audit;
+using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
+using TigerCS.Infrastructure.Modules.SlaAndEscalation.Repositories;
 using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
 using TigerCS.Infrastructure.Persistence;
 
@@ -145,6 +149,28 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<TicketLifecycleAppService>();
         services.AddScoped<TicketNoteAppService>();
         services.AddScoped<TicketReconciliationAppService>();
+
+        // SLA and Escalation (ADR-0009/0010/0011/0014/0015). No policy,
+        // controller or role list here names the System Administrator role:
+        // every service below routes its resource-scoped decisions through
+        // AuthorizationGate and every policy through
+        // SystemAdministratorOverrideHandler, so ADR-0024's central override
+        // covers this whole module without a line of override-specific code
+        // — which is the structural property requirement 4 of that
+        // correction asked for.
+        services.AddScoped<ISlaPolicyRepository, SlaPolicyRepository>();
+        services.AddScoped<IBusinessCalendarRepository, BusinessCalendarRepository>();
+        services.AddScoped<ITicketSlaInstanceRepository, TicketSlaInstanceRepository>();
+        services.AddScoped<ITicketEscalationRepository, TicketEscalationRepository>();
+        services.AddScoped<IIdempotencyRecordStore, IdempotencyRecordStore>();
+        services.AddScoped<SlaDueDateService>();
+        services.AddScoped<SlaBreachProcessor>();
+        services.AddScoped<SlaBreachDetectionAppService>();
+        services.AddScoped<SlaQueryAppService>();
+        services.AddScoped<SlaFirstResponseAppService>();
+        services.AddScoped<TicketEscalationAppService>();
+
+        services.AddTigerCsBackgroundJobs(configuration);
 
         return services;
     }

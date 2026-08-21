@@ -20,6 +20,14 @@ public sealed class SwaggerApiFactory(string environment) : WebApplicationFactor
     {
         builder.UseEnvironment(environment);
 
+        // ADR-0015's Hangfire server provisions its own SQL Server schema at
+        // startup; these tests read the OpenAPI document from a host with no
+        // database behind it. Set through UseSetting rather than
+        // ConfigureAppConfiguration because the background-job registration
+        // reads it during service registration, before that block's sources
+        // are merged — see TigerCsApiFactory for the full note.
+        builder.UseSetting("BackgroundJobs:Enabled", "false");
+
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:TigerCsDatabase"] = "Server=(unused-for-tests);Database=(unused-for-tests);",
