@@ -1,4 +1,5 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -217,7 +218,7 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        if (!callerRoles.Any(TicketRoleSets.Close.Contains))
+        if (!AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.Close.Contains)))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }
@@ -283,37 +284,39 @@ public sealed class TicketLifecycleAppService(
         return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
     }
 
-    private async Task<bool> IsCurrentOwnerOrDepartmentAuthorityAsync(
-        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken)
-    {
-        if (ticket.CurrentOwnerEmployeeId == callerEmployeeId)
+    private Task<bool> IsCurrentOwnerOrDepartmentAuthorityAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
+        AuthorizationGate.EvaluateAsync(callerRoles, async () =>
         {
-            return true;
-        }
+            if (ticket.CurrentOwnerEmployeeId == callerEmployeeId)
+            {
+                return true;
+            }
 
-        if (callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains))
+            if (callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains))
+            {
+                return true;
+            }
+
+            return callerRoles.Contains(Roles.DepartmentHead)
+                && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken);
+        });
+
+    /// <summary>ISSUE-022: Resolve is Department Employee/Head only. A Department Employee must be the ticket's current owner (the one who actually worked it); a Department Head may resolve any ticket in a department they belong to. Both are permission rules, so both run under the ADR-0024 override — the ticket's own eligibility for resolution (<see cref="Ticket.Resolve"/>) is separate, and is not.</summary>
+    private Task<bool> IsResolveAuthorizedAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
+        AuthorizationGate.EvaluateAsync(callerRoles, async () =>
         {
-            return true;
-        }
+            if (!callerRoles.Any(TicketRoleSets.Resolve.Contains))
+            {
+                return false;
+            }
 
-        return callerRoles.Contains(Roles.DepartmentHead)
-            && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken);
-    }
+            if (callerRoles.Contains(Roles.DepartmentHead))
+            {
+                return await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken);
+            }
 
-    /// <summary>ISSUE-022: Resolve is Department Employee/Head only. A Department Employee must be the ticket's current owner (the one who actually worked it); a Department Head may resolve any ticket in a department they belong to.</summary>
-    private async Task<bool> IsResolveAuthorizedAsync(
-        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken)
-    {
-        if (!callerRoles.Any(TicketRoleSets.Resolve.Contains))
-        {
-            return false;
-        }
-
-        if (callerRoles.Contains(Roles.DepartmentHead))
-        {
-            return await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken);
-        }
-
-        return ticket.CurrentOwnerEmployeeId == callerEmployeeId;
-    }
+            return ticket.CurrentOwnerEmployeeId == callerEmployeeId;
+        });
 }

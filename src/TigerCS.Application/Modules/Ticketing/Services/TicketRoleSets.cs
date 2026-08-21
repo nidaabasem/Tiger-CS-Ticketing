@@ -12,6 +12,18 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// its own remarks ("flagged for confirmation before a real ticket endpoint
 /// consumes this policy") — this is that endpoint, and this is the
 /// resolution.
+///
+/// <para>
+/// <b>System Administrator is deliberately absent from the operational sets
+/// below, and is authorized anyway.</b> Every consumer of this class routes
+/// its decision through <c>AuthorizationGate</c>, which applies the
+/// <c>AuthorizationOverride</c> (ADR-0024 — confirmed management decision)
+/// before the set is consulted. Adding the role to these lists instead would
+/// be the per-call-site duplication that correction's requirement 4
+/// explicitly rules out, and would lose the distinction these sets exist to
+/// record: what each role is granted <i>by the permission matrix</i>, as
+/// against what the override grants on top of it.
+/// </para>
 /// </summary>
 public static class TicketRoleSets
 {

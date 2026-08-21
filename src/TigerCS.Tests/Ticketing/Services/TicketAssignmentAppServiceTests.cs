@@ -58,8 +58,12 @@ public class TicketAssignmentAppServiceTests
     // CS Agent and Department Employee: no assignment capability at all
     // (not even self-claim, which this correction removes entirely).
     // CS Supervisor / Department Head: assign/reassign within their own
-    // department only. CS Manager: cross-department. GM/Chairman/SysAdmin/
-    // Reporting User: no operational assignment.
+    // department only. CS Manager: cross-department. GM/Chairman/Reporting
+    // User: no operational assignment.
+    // System Administrator: authorized — not by the permission matrix, which
+    // still grants it no Assign, but by the ADR-0024 central override, which
+    // TicketAssignmentAppService reaches through AuthorizationGate. This row
+    // is the superseded exclusion's replacement, not a widened matrix.
     public static IEnumerable<object[]> AssignRoleMatrix() =>
     [
         [Roles.CsAgent, false],
@@ -69,7 +73,7 @@ public class TicketAssignmentAppServiceTests
         [Roles.CsManager, true],
         [Roles.GeneralManager, false],
         [Roles.ChairmanCeo, false],
-        [Roles.SystemAdministrator, false],
+        [Roles.SystemAdministrator, true],
         [Roles.ReportingUser, false]
     ];
 
@@ -185,6 +189,69 @@ public class TicketAssignmentAppServiceTests
         Assert.DoesNotContain(f.Audit.Written, w => w.Action == "Assign");
     }
 
+    /// <summary>
+    /// Requirement 2 of the ADR-0024 correction: the override grants
+    /// authorization, not immunity. A System Administrator that loses a
+    /// RowVersion race gets the same 409 outcome and the same rollback as
+    /// the CS Supervisor in the test below — the authorization gate is
+    /// passed, the concurrency check still refuses.
+    /// </summary>
+    [Fact]
+    public async Task AssignAsync_SystemAdministrator_ConcurrentModification_StillReturnsConcurrencyConflictAndRollsBack()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var caller = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        f.UnitOfWork.ThrowTicketConcurrencyConflictOnCall = 1;
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.SystemAdministrator], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.ConcurrencyConflict, result.Outcome);
+        Assert.Equal(1, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
+        Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
+    }
+
+    /// <summary>
+    /// The administrator is authorized for Assign but the ticket's own
+    /// validation is untouched: the assignment target must still be a member
+    /// of the ticket's current department (MVP-API-Contracts.md §3.5).
+    /// </summary>
+    [Fact]
+    public async Task AssignAsync_SystemAdministrator_TargetOutsideTheTicketsDepartment_StillReturnsEmployeeNotInDepartment()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+
+        var result = await f.Service.AssignAsync(
+            Guid.NewGuid(), [Roles.SystemAdministrator], ticket.TicketId,
+            new AssignTicketRequestDto(Guid.NewGuid(), []));
+
+        Assert.Equal(TicketMutationOutcome.EmployeeNotInDepartment, result.Outcome);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+    }
+
+    /// <summary>Closed-ticket immutability outranks the override: 422, not 200.</summary>
+    [Fact]
+    public async Task AssignAsync_SystemAdministrator_OnClosedTicket_StillReturnsTicketClosed_NoDatabaseWrites()
+    {
+        var f = CreateService();
+        var ticket = await SeedClosedTicketAsync(f.Tickets);
+        var target = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(target, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AssignAsync(
+            Guid.NewGuid(), [Roles.SystemAdministrator], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        Assert.Empty(f.Assignments.Added);
+    }
+
     [Fact]
     public async Task AssignAsync_ConcurrentModification_ReturnsConcurrencyConflictAndRollsBack()
     {
@@ -203,7 +270,8 @@ public class TicketAssignmentAppServiceTests
         Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
     }
 
-    // ---- Transfer authorization matrix (PR correction): CS Manager only ----
+    // ---- Transfer authorization matrix (PR correction): CS Manager only,
+    // plus System Administrator via the ADR-0024 central override ----
     public static IEnumerable<object[]> TransferRoleMatrix() =>
     [
         [Roles.CsAgent, false],
@@ -213,7 +281,7 @@ public class TicketAssignmentAppServiceTests
         [Roles.CsManager, true],
         [Roles.GeneralManager, false],
         [Roles.ChairmanCeo, false],
-        [Roles.SystemAdministrator, false],
+        [Roles.SystemAdministrator, true],
         [Roles.ReportingUser, false]
     ];
 

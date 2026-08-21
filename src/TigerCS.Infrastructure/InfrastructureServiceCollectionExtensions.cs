@@ -102,6 +102,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IAuthorizationHandler, ActiveEmployeeHandler>();
         services.AddScoped<IAuthorizationHandler, DepartmentScopedHandler>();
 
+        // The central System Administrator authorization override (ADR-0024).
+        // Registered once, here, rather than referenced by any policy or
+        // controller: ASP.NET Core runs every registered IAuthorizationHandler
+        // against every authorization evaluation, so this one registration is
+        // what makes the override apply to the whole policy catalog — and to
+        // policies added after it. Singleton because the handler holds no
+        // state and touches no scoped service; the other two are scoped
+        // because they inject scoped repositories.
+        services.AddSingleton<IAuthorizationHandler, SystemAdministratorOverrideHandler>();
+
         services.AddScoped<AuthenticationAppService>();
         services.AddScoped<UserProfileAppService>();
         services.AddScoped<DepartmentUserAppService>();
