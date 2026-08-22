@@ -75,6 +75,15 @@ public class IdempotencyRecord
 /// <summary>The <c>Scope</c> values of MVP-Data-Dictionary.md §2.23, named once so no call site spells one differently.</summary>
 public static class IdempotencyScopes
 {
-    /// <summary>The SLA breach check of SLA-Architecture.md §15 — the only scope this increment writes.</summary>
+    /// <summary>The SLA breach check of SLA-Architecture.md §15.</summary>
     public const string SlaBreachCheck = "SlaBreachCheck";
+
+    /// <summary>
+    /// ADR-0013/ADR-0014's Outbox dedup. The key is composed at <i>enqueue</i>
+    /// time from <c>TicketId + EventType + EventVersion</c>, inside the same
+    /// transaction as the business state change, so the unique index makes
+    /// "one logical event produces at most one Outbox message" a database
+    /// fact rather than an application convention.
+    /// </summary>
+    public const string OutboxDispatch = "OutboxDispatch";
 }

@@ -309,6 +309,46 @@ public class Ticket
     }
 
     /// <summary>
+    /// Records that the <b>automated</b> acknowledgement (FR-NOT-01) was
+    /// delivered.
+    ///
+    /// <para>
+    /// <b>This is not, and can never become, a First Response event.</b>
+    /// FR-SLA-05/ISSUE-019 exist precisely because an acknowledgement fires
+    /// within seconds of creation and would otherwise "satisfy" every
+    /// first-response target automatically, making the KPI meaningless. This
+    /// method therefore writes <see cref="AcknowledgementSentAtUtc"/> and
+    /// touches nothing else — not <see cref="FirstHumanResponseAtUtc"/>, not
+    /// <see cref="SlaState"/>, not <see cref="TicketStatus"/>. The two
+    /// timestamps are separate columns (MVP-Data-Dictionary.md §2.10) read by
+    /// separate code paths, and <c>SlaBreachProcessor</c> resolves First
+    /// Response from <see cref="FirstHumanResponseAtUtc"/> alone.
+    /// </para>
+    ///
+    /// <para>
+    /// Write-once, and deliberately <i>not</i> gated on
+    /// <see cref="EnsureNotClosed"/>. Write-once is the delivery-side
+    /// duplicate guard: a redelivered Outbox message reaching an
+    /// already-acknowledged ticket is refused here rather than emailing the
+    /// customer twice. The closed-ticket gate is omitted because an
+    /// acknowledgement is an asynchronous consequence of creation, and a
+    /// ticket created and closed within the dispatcher's polling interval
+    /// must still be able to record what was already sent — refusing would
+    /// lose the record of a delivery that genuinely happened, which is worse
+    /// than recording it.
+    /// </para>
+    /// </summary>
+    public void RecordAcknowledgementSent(DateTime sentAtUtc)
+    {
+        if (AcknowledgementSentAtUtc is { } already)
+        {
+            throw new AcknowledgementAlreadySentException(TicketId, already);
+        }
+
+        AcknowledgementSentAtUtc = sentAtUtc;
+    }
+
+    /// <summary>
     /// ISSUE-019 / MVP-API-Contracts.md §5.2 — records the first genuine,
     /// human-authored response to the customer. Write-once at the ticket
     /// level (MVP-ERD.md §2.10): a second call throws rather than
