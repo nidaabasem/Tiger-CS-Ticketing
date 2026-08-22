@@ -1,0 +1,28 @@
+@*
+    The emblem behind the login artwork.
+
+    This is a drawn mark, not the approved photograph: the photographic asset
+    is not in the repository, and inventing a stand-in image would put fake
+    brand artwork into source control. The composition is built so the real
+    file drops in without a code change - place it at
+    wwwroot/img/login-tiger.jpg and set --login-photo on .login__art (see
+    tiger.css), and it layers over this without disturbing the type or the form.
+*@
+<svg class="login__emblem" viewBox="0 0 320 320" role="img" aria-hidden="true" focusable="false">
+    <defs>
+        <linearGradient id="tg-gold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#e3c46f" stop-opacity="0.30" />
+            <stop offset="100%" stop-color="#9a7420" stop-opacity="0.10" />
+        </linearGradient>
+    </defs>
+    <g fill="url(#tg-gold)">
+        <path d="M160 26 190 60l38-12-9 40 38 22-32 26 14 41-42-8-37 39-37-39-42 8 14-41-32-26 38-22-9-40 38 12Z"/>
+    </g>
+    <g fill="none" stroke="#d4ab45" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round">
+        <path d="M110 132c8-16 26-27 50-27s42 11 50 27"/>
+        <path d="M96 168c0-36 28-63 64-63s64 27 64 63c0 20-9 37-23 49l7 27-25-12c-7 3-15 4-23 4s-16-1-23-4l-25 12 7-27c-14-12-23-29-23-49Z"/>
+        <path d="M124 152l22 12-22 12M196 152l-22 12 22 12"/>
+        <path d="M137 199c6 8 14 12 23 12s17-4 23-12"/>
+        <path d="M160 164v22"/>
+    </g>
+</svg>

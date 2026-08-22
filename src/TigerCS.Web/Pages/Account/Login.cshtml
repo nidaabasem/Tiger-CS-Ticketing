@@ -1,0 +1,101 @@
+@page
+@model LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+    Layout = "_LoginLayout";
+}
+
+<div class="login">
+    <section class="login__art" aria-hidden="true">
+        <div class="login__photo"></div>
+        <partial name="_LoginEmblem" />
+        <div class="login__artfoot">
+            <div class="login__wordmark">Tiger Group</div>
+            <div class="login__tagline">Internal Service Platform</div>
+        </div>
+    </section>
+
+    <section class="login__form">
+        <div class="login__card">
+            <div class="login__eyebrow">Internal Service Platform</div>
+            <h1 class="login__title">Welcome back</h1>
+            <p class="login__lede">Sign in to access the Tiger Group Service Desk.</p>
+
+            @* One banner, one place. The server never says which field was
+               wrong on a rejected sign-in - that would confirm whether a
+               username exists. Locked and deactivated accounts get their own
+               distinct wording because the recovery action genuinely differs. *@
+            @if (Model.Banner is not null)
+            {
+                <div class="notice notice--@Model.Banner.Value.Severity" role="alert">
+                    <span class="notice__glyph" aria-hidden="true">@Model.Banner.Value.Glyph</span>
+                    <div class="notice__body">
+                        <div class="notice__title">@Model.Banner.Value.Title</div>
+                        <div>@Model.Banner.Value.Message</div>
+                    </div>
+                </div>
+            }
+
+            <form method="post" novalidate>
+                <div class="field">
+                    <label for="username">Username or email</label>
+                    <input type="text" id="username" name="Username" value="@Model.Username"
+                           autocomplete="username" autocapitalize="none" spellcheck="false"
+                           required aria-required="true"
+                           aria-invalid="@(Model.UsernameError is not null ? "true" : null)"
+                           aria-describedby="@(Model.UsernameError is not null ? "username-error" : null)" />
+                    @if (Model.UsernameError is not null)
+                    {
+                        <p class="field-error" id="username-error">@Model.UsernameError</p>
+                    }
+                </div>
+
+                <div class="field">
+                    <label for="password">Password</label>
+                    <div class="pw">
+                        <input type="password" id="password" name="Password"
+                               autocomplete="current-password"
+                               required aria-required="true"
+                               aria-invalid="@(Model.PasswordError is not null ? "true" : null)"
+                               aria-describedby="@(Model.PasswordError is not null ? "password-error" : null)" />
+                        @* Progressive enhancement: without JavaScript the field
+                           is still a perfectly usable password input and this
+                           button simply does not appear. *@
+                        <button type="button" class="pw__toggle" data-pw-toggle="password" hidden
+                                aria-controls="password" aria-pressed="false">Show</button>
+                    </div>
+                    @if (Model.PasswordError is not null)
+                    {
+                        <p class="field-error" id="password-error">@Model.PasswordError</p>
+                    }
+                </div>
+
+                @*
+                    No "Remember me" and no "Forgot password".
+
+                    Remember-me: the only authentication contract is
+                    POST /api/auth/login returning a JWT with a fixed
+                    ExpiresAtUtc. There is no refresh-token endpoint, so the
+                    only way to make a session outlive that token would be to
+                    store the password or mint a second long-lived credential -
+                    neither of which any approved document sanctions. The brief
+                    says to include it only if it is technically supported
+                    safely; it is not, so it is omitted rather than faked.
+
+                    Forgot password: no reset API exists, and
+                    MVP-UI-Wireframes.md §1 records reset as an admin-mediated,
+                    out-of-band process for the pilot. A link that went nowhere
+                    would be worse than its absence.
+                *@
+
+                <button type="submit" class="btn btn--gold btn--block btn--lg" data-submit-once
+                        data-busy-label="Signing in…">Sign in</button>
+            </form>
+
+            <div class="login__foot">
+                <span aria-hidden="true">🛡</span>
+                <span>Protected internal workspace. Activity is recorded.</span>
+            </div>
+        </div>
+    </section>
+</div>

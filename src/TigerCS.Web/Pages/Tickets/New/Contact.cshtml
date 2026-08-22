@@ -1,0 +1,140 @@
+@page
+@model ContactModel
+@{
+    ViewData["Title"] = "New ticket";
+    ViewData["Crumb"] = "Step 3 — contact";
+}
+
+<div class="content--narrow">
+    <div class="page-head"><h1 class="page-head__title">Confirm the caller</h1></div>
+
+    <partial name="_WizardSteps" model="3" />
+
+    <div class="summary-strip">
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Intake record</div>
+            <div class="summary-strip__value">#@Model.State!.IntakeRecordId</div>
+        </div>
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Unit</div>
+            <div class="summary-strip__value">@Model.State.UnitLabel</div>
+        </div>
+    </div>
+
+    @if (Model.CrmUnavailable)
+    {
+        <div class="notice notice--warn" role="status">
+            <span class="notice__glyph" aria-hidden="true">⚠</span>
+            <div class="notice__body">
+                <div class="notice__title">Tiger CRM became unavailable</div>
+                <div>The contact list cannot be loaded. Go back to the unit step to take the fallback path.</div>
+            </div>
+        </div>
+        <p><a class="btn btn--ghost" asp-page="/Tickets/New/Unit">‹ Back to unit search</a></p>
+        return;
+    }
+
+    @if (Model.Problem is not null)
+    {
+        <div class="notice notice--error" role="alert">
+            <span class="notice__glyph" aria-hidden="true">⚠</span>
+            <div class="notice__body">
+                <div class="notice__title">@(Model.Problem.Title ?? "The contacts could not be loaded")</div>
+                <div>@Model.Problem.UserMessage()</div>
+            </div>
+        </div>
+    }
+
+    @if (Model.GateError is not null)
+    {
+        <div class="notice notice--error" role="alert">
+            <span class="notice__glyph" aria-hidden="true">⚠</span>
+            <div class="notice__body">@Model.GateError</div>
+        </div>
+    }
+
+    <form method="post" asp-page-handler="Confirm">
+        <div class="panel" style="margin-bottom:1.1rem;">
+            <div class="panel__head"><span class="panel__title">Contacts on this unit</span></div>
+            <div class="panel__body">
+                @if (Model.Contacts.Count == 0)
+                {
+                    <div class="state" style="padding:1.5rem 0;">
+                        <div class="state__title">No contacts recorded for this unit</div>
+                        <p class="state__body">
+                            This unit has no contacts in CRM, so the caller's identity cannot be
+                            verified against it. Go back and check the unit.
+                        </p>
+                        <a class="btn btn--ghost" asp-page="/Tickets/New/Unit">‹ Back to unit search</a>
+                    </div>
+                }
+                else
+                {
+                    <fieldset style="border:0;padding:0;margin:0;">
+                        <legend class="visually-hidden">Select the contact you are speaking to</legend>
+                        <ul class="pick-list">
+                            @foreach (var contact in Model.Contacts)
+                            {
+                                var label = $"{contact.DisplayName ?? "Name not recorded"} ({contact.ContactType})";
+                                var inputId = $"contact-{contact.ContactReferenceId}";
+                                <li>
+                                    <label class="pick" for="@inputId" style="cursor:pointer;">
+                                        <input type="radio" id="@inputId" name="contactReferenceId"
+                                               value="@contact.ContactReferenceId" style="width:auto;flex:none;"
+                                               data-contact-label="@label" required />
+                                        <span class="pick__main">
+                                            <span class="pick__title">@(contact.DisplayName ?? "Name not recorded")</span>
+                                            <span class="pick__sub">
+                                                @contact.ContactType
+                                                @if (!string.IsNullOrWhiteSpace(contact.ContactChannel))
+                                                {
+                                                    <text> · @contact.ContactChannel</text>
+                                                }
+                                            </span>
+                                            @if (contact.AuthorizedRepresentativeOfContactReferenceId is int representedContact)
+                                            {
+                                                @* ISSUE-007: the authorization chain must be
+                                                   visible before any detail is disclosed. *@
+                                                <span class="pick__sub" style="color:var(--warn);">
+                                                    Authorised representative of contact #@representedContact
+                                                </span>
+                                            }
+                                        </span>
+                                    </label>
+                                </li>
+                            }
+                        </ul>
+                    </fieldset>
+                }
+            </div>
+        </div>
+
+        @if (Model.Contacts.Count > 0)
+        {
+            <div class="panel">
+                <div class="panel__body">
+                    <label style="display:flex;gap:0.6rem;align-items:flex-start;font-weight:600;cursor:pointer;">
+                        <input type="checkbox" name="confirmed" value="true" required
+                               style="width:auto;flex:none;margin-top:0.2rem;" />
+                        <span>
+                            I have verified this caller's identity against the CRM record above.
+                            <span style="display:block;font-weight:400;color:var(--ink-500);margin-top:0.2rem;">
+                                This is recorded against the verification session and cannot be changed afterwards.
+                            </span>
+                        </span>
+                    </label>
+
+                    <input type="hidden" name="contactLabel" data-contact-label-target value="" />
+
+                    <div class="actionbar" style="margin-top:1rem;">
+                        <button type="submit" class="btn btn--primary" data-submit-once
+                                data-busy-label="Confirming…">Confirm and continue</button>
+                        <a class="btn btn--ghost" asp-page="/Tickets/New/Unit">‹ Back</a>
+                    </div>
+                </div>
+            </div>
+        }
+    </form>
+
+    <p style="margin-top:1rem;"><a asp-page="/Tickets/Index">Cancel and return to the queue</a></p>
+</div>

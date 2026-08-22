@@ -1,0 +1,255 @@
+@page
+@model ReviewModel
+@{
+    ViewData["Title"] = "New ticket";
+    ViewData["Crumb"] = "Step 4 — ticket";
+}
+
+<div class="content--narrow">
+
+@if (Model.CreatedTicket is not null)
+{
+    @* Final confirmation, carrying the real ticket number from the API — never
+       a locally generated or predicted one. *@
+    var created = Model.CreatedTicket;
+    <div class="page-head"><h1 class="page-head__title">Ticket created</h1></div>
+
+    <div class="panel">
+        <div class="panel__body" style="text-align:center;padding:2rem 1rem;">
+            <div class="badge badge--ok" style="font-size:0.8rem;">
+                <span class="badge__glyph" aria-hidden="true">✓</span><span>Created</span>
+            </div>
+            <div class="ticket-head__no" style="font-size:1.9rem;margin:0.7rem 0 0.2rem;">
+                @created.TicketNumber
+            </div>
+            <p style="color:var(--ink-500);max-width:44ch;margin:0 auto 1.2rem;">
+                Give this number to the caller. It is the reference for everything that follows.
+            </p>
+
+            <div class="ticket-head__meta" style="justify-content:center;margin-bottom:1.4rem;">
+                <partial name="_Badge" model="TicketBadges.Priority(created.PriorityId)" />
+                <partial name="_Badge" model="TicketBadges.Status(created.TicketStatus)" />
+                <partial name="_Badge" model="TicketBadges.Verification(created.VerificationStatus)" />
+            </div>
+
+            @if (created.VerificationStatus == "PendingCrmVerification")
+            {
+                <div class="notice notice--warn" style="text-align:left;">
+                    <span class="notice__glyph" aria-hidden="true">◑</span>
+                    <div class="notice__body">
+                        <div class="notice__title">Provisional — raised without CRM verification</div>
+                        <div>
+                            This ticket was created while Tiger CRM was unreachable, so the caller's
+                            unit and contact are not confirmed. It must be reconciled once CRM is
+                            available again.
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="actionbar" style="justify-content:center;">
+                <a class="btn btn--primary" asp-page="/Tickets/Details" asp-route-id="@created.TicketId">
+                    Open ticket
+                </a>
+                <a class="btn btn--ghost" asp-page="/Tickets/New/Intake">Record another call</a>
+                <a class="btn btn--ghost" asp-page="/Tickets/Index">Back to the queue</a>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+@if (Model.QueuedIntakeRecord is not null)
+{
+    @*
+        ISSUE-006's Medium/Low outage outcome. This is a success, and it is
+        deliberately NOT presented as a created ticket: no ticket exists, there
+        is no ticket number, and telling the caller otherwise would be telling
+        them something false.
+    *@
+    var intake = Model.QueuedIntakeRecord;
+    <div class="page-head"><h1 class="page-head__title">Interaction recorded</h1></div>
+
+    <div class="panel">
+        <div class="panel__body" style="text-align:center;padding:2rem 1rem;">
+            <div class="badge badge--warn" style="font-size:0.8rem;">
+                <span class="badge__glyph" aria-hidden="true">◑</span><span>Queued for CRM</span>
+            </div>
+            <div class="ticket-head__no" style="font-size:1.5rem;margin:0.7rem 0 0.2rem;">
+                Intake record #@intake.IntakeRecordId
+            </div>
+
+            <div class="notice notice--info" style="text-align:left;max-width:52ch;margin:1.2rem auto;">
+                <span class="notice__glyph" aria-hidden="true">i</span>
+                <div class="notice__body">
+                    <div class="notice__title">No ticket was created</div>
+                    <div>
+                        Tiger CRM is unavailable, and a @TicketBadges.PriorityName(Model.PriorityId).ToLowerInvariant()
+                        request is not raised without verification. The interaction is recorded and
+                        stays queued until CRM can be reached and the caller verified.
+                        <strong>Do not give the caller a ticket number</strong> — there is not one yet.
+                    </div>
+                </div>
+            </div>
+
+            <div class="actionbar" style="justify-content:center;">
+                <a class="btn btn--primary" asp-page="/Tickets/New/Intake">Record another call</a>
+                <a class="btn btn--ghost" asp-page="/Tickets/Index">Back to the queue</a>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="page-head"><h1 class="page-head__title">Ticket details</h1></div>
+
+<partial name="_WizardSteps" model="4" />
+
+<div class="summary-strip">
+    <div class="summary-strip__item">
+        <div class="summary-strip__label">Intake record</div>
+        <div class="summary-strip__value">#@Model.State!.IntakeRecordId</div>
+    </div>
+    @if (Model.IsFallbackPath)
+    {
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Verification</div>
+            <div class="summary-strip__value">CRM unavailable</div>
+        </div>
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Unit number given</div>
+            <div class="summary-strip__value">@Model.State.RawUnitNumberEntered</div>
+        </div>
+    }
+    else
+    {
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Unit</div>
+            <div class="summary-strip__value">@Model.State.UnitLabel</div>
+        </div>
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Verified caller</div>
+            <div class="summary-strip__value">@Model.State.ContactLabel</div>
+        </div>
+    }
+</div>
+
+@if (Model.IsFallbackPath)
+{
+    <div class="notice notice--warn" role="status">
+        <span class="notice__glyph" aria-hidden="true">⚠</span>
+        <div class="notice__body">
+            <div class="notice__title">Proceeding without CRM verification</div>
+            <div>
+                <strong>Critical</strong> and <strong>High</strong> are raised immediately as
+                provisional tickets, to be reconciled later.
+                <strong>Medium</strong> and <strong>Low</strong> are not raised as tickets at all —
+                the interaction stays recorded and queued until CRM can be reached.
+            </div>
+        </div>
+    </div>
+}
+
+@if (Model.Problem is not null)
+{
+    <div class="notice notice--error" role="alert">
+        <span class="notice__glyph" aria-hidden="true">⚠</span>
+        <div class="notice__body">
+            <div class="notice__title">@(Model.Problem.Title ?? "The ticket could not be created")</div>
+            <div>@Model.Problem.UserMessage()</div>
+            @if (Model.RequiresReverification)
+            {
+                <p style="margin:0.5rem 0 0;">
+                    <a asp-page="/Tickets/New/Unit">Verify the caller again</a> — this verification
+                    can no longer be used.
+                </p>
+            }
+        </div>
+    </div>
+}
+
+<form method="post" novalidate>
+    <input type="hidden" name="SubmitToken" value="@Model.SubmitToken" />
+
+    <div class="panel">
+        <div class="panel__head"><span class="panel__title">Classify the request</span></div>
+        <div class="panel__body">
+            <div class="field">
+                <label for="CategoryId">Category id</label>
+                <input type="number" id="CategoryId" name="CategoryId" min="1" required
+                       value="@(Model.CategoryId > 0 ? Model.CategoryId.ToString() : null)"
+                       aria-invalid="@(Model.FieldErrors.ContainsKey("CategoryId") ? "true" : null)"
+                       aria-describedby="category-hint @(Model.FieldErrors.ContainsKey("CategoryId") ? "category-error" : null)" />
+                <p class="field__hint" id="category-hint">
+                    The category decides which department the ticket routes to. Entered as a number
+                    because the API exposes no category list — the service validates it and will say
+                    if it is wrong.
+                </p>
+                @if (Model.FieldErrors.TryGetValue("CategoryId", out var categoryError))
+                {
+                    <p class="field-error" id="category-error">@categoryError</p>
+                }
+            </div>
+
+            <div class="field">
+                <label for="PriorityId">Priority</label>
+                <select id="PriorityId" name="PriorityId" required
+                        aria-invalid="@(Model.FieldErrors.ContainsKey("PriorityId") ? "true" : null)">
+                    @foreach (var (id, name) in TicketBadges.Priorities)
+                    {
+                        <option value="@id" selected="@(Model.PriorityId == id)">@name</option>
+                    }
+                </select>
+                @if (Model.State.PriorityHint is byte hint)
+                {
+                    <p class="field__hint">
+                        Your intake hint was @TicketBadges.PriorityName(hint).
+                    </p>
+                }
+                @if (Model.FieldErrors.TryGetValue("PriorityId", out var priorityError))
+                {
+                    <p class="field-error">@priorityError</p>
+                }
+                @* Priority is fixed after creation during the pilot, and there
+                   is no downgrade path anywhere in this UI - not as a disabled
+                   control, simply absent, because no server capability backs
+                   it (backlog §0 / S-14). *@
+                <p class="field__hint" style="color:var(--warn);">
+                    Priority is fixed after ticket creation during the pilot. Downgrades are not permitted.
+                </p>
+            </div>
+
+            <div class="field">
+                <label for="RequestSummary">Request summary</label>
+                <textarea id="RequestSummary" name="RequestSummary" rows="5" required
+                          maxlength="@ReviewModel.SummaryMaxLength"
+                          data-count-target="summary-count"
+                          aria-invalid="@(Model.FieldErrors.ContainsKey("RequestSummary") ? "true" : null)"
+                          aria-describedby="summary-count @(Model.FieldErrors.ContainsKey("RequestSummary") ? "summary-error" : null)"
+                          placeholder="What is the caller asking for, in your words?">@Model.RequestSummary</textarea>
+                <p class="field__hint" id="summary-count" aria-live="polite">
+                    Up to @ReviewModel.SummaryMaxLength characters.
+                </p>
+                @if (Model.FieldErrors.TryGetValue("RequestSummary", out var summaryError))
+                {
+                    <p class="field-error" id="summary-error">@summaryError</p>
+                }
+            </div>
+
+            <div class="actionbar">
+                @* data-submit-once disables the button on submit, so a
+                   double-click cannot fire twice. The SubmitToken above is the
+                   real guarantee - it survives a refresh, a Back-and-resubmit
+                   and a browser retry, none of which JavaScript can catch. *@
+                <button type="submit" class="btn btn--gold btn--lg" data-submit-once
+                        data-busy-label="Creating…">
+                    @(Model.IsFallbackPath ? "Submit without verification" : "Create ticket")
+                </button>
+                <a class="btn btn--ghost" asp-page="/Tickets/Index"
+                   data-confirm-leave="Discard this ticket? The interaction stays recorded.">Cancel</a>
+            </div>
+        </div>
+    </div>
+</form>
+
+</div>
