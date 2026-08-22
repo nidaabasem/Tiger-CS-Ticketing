@@ -8,10 +8,15 @@ using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Domain.Audit;
 using TigerCS.Infrastructure.Identity;
+using TigerCS.Application.Modules.Notifications.Services;
+using TigerCS.Domain.Infrastructure;
+using TigerCS.Domain.Modules.Notifications;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
+using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Infrastructure.Persistence;
 
 namespace TigerCS.Tests.IdentityAndAccess.Integration;
@@ -256,5 +261,61 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var detection = scope.ServiceProvider.GetRequiredService<SlaBreachDetectionAppService>();
         return await detection.SweepAsync();
+    }
+
+    /// <summary>
+    /// Runs one pass of ADR-0013's Outbox dispatcher exactly as the recurring
+    /// Hangfire job would, without a scheduler present.
+    ///
+    /// <para>
+    /// <c>BackgroundJobs:Enabled</c> is false in this host (no SQL Server for
+    /// Hangfire's own schema), which governs job <i>execution</i> only — the
+    /// dispatcher, its handlers and the email adapter are all registered and
+    /// exercised here unchanged.
+    /// </para>
+    /// </summary>
+    public async Task<OutboxDispatchResult> RunOutboxDispatchAsync()
+    {
+        using var scope = Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+    }
+
+    /// <summary>The development email adapter, so a test can assert what would actually have been delivered.</summary>
+    public RecordingEmailSender EmailSender => Services.GetRequiredService<RecordingEmailSender>();
+
+    public async Task<IReadOnlyList<OutboxMessage>> GetOutboxMessagesAsync()
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.OutboxMessages.OrderBy(m => m.OccurredAtUtc).ToListAsync();
+    }
+
+    public async Task<IReadOnlyList<Notification>> GetNotificationsAsync(long ticketId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.Notifications.Where(n => n.TicketId == ticketId).ToListAsync();
+    }
+
+    public async Task<IReadOnlyList<IdempotencyRecord>> GetIdempotencyRecordsAsync(string scopeName)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.IdempotencyRecords.Where(r => r.Scope == scopeName).ToListAsync();
+    }
+
+    public async Task<Ticket?> GetTicketAsync(long ticketId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.Tickets.AsNoTracking().FirstOrDefaultAsync(t => t.TicketId == ticketId);
+    }
+
+    /// <summary>Audit entries recorded against an Outbox message id, for the notification-audit assertions.</summary>
+    public async Task<IReadOnlyList<AuditEntry>> GetNotificationAuditAsync()
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.AuditEntries.Where(a => a.Action.StartsWith("Notification")).ToListAsync();
     }
 }

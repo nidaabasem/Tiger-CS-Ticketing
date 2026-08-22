@@ -119,11 +119,28 @@ public sealed class FakeNotificationRepository : INotificationRepository
 
 /// <summary>
 /// Unit of work for dispatcher tests.
+///
+/// <para>
 /// <see cref="ClaimsToLose"/> simulates the concurrency-token race a second
-/// worker loses, without needing two real database connections.
+/// worker loses, and <see cref="SavesToFail"/> the database failure that can
+/// follow a successful send, without needing two real database connections.
+/// </para>
+///
+/// <para>
+/// <b>Models EF's reload-on-discard faithfully, which matters.</b> The real
+/// <c>DiscardPendingChangesAsync</c> calls <c>ReloadAsync</c>, so an entity
+/// mutated in memory before a failed save is reset to its committed values. A
+/// fake that merely counted the call would let a test observe a
+/// <c>Processed</c> message whose save actually failed — the exact state the
+/// production code does not leave behind. <see cref="Track"/> registers the
+/// messages whose committed state should be restored.
+/// </para>
 /// </summary>
 public sealed class FakeNotificationsUnitOfWork : INotificationsUnitOfWork
 {
+    private readonly List<OutboxMessage> _tracked = [];
+    private readonly Dictionary<Guid, OutboxMessageSnapshot> _committed = [];
+
     public int SaveCount { get; private set; }
 
     public int ClaimCount { get; private set; }
@@ -136,6 +153,19 @@ public sealed class FakeNotificationsUnitOfWork : INotificationsUnitOfWork
     /// <summary>Number of subsequent outcome saves that throw, simulating a database failure after a send.</summary>
     public int SavesToFail { get; set; }
 
+    /// <summary>Registers messages whose committed state this unit of work should be able to restore on discard.</summary>
+    public void Track(IEnumerable<OutboxMessage> messages)
+    {
+        foreach (var message in messages)
+        {
+            if (!_tracked.Contains(message))
+            {
+                _tracked.Add(message);
+                _committed[message.OutboxMessageId] = OutboxMessageSnapshot.Of(message);
+            }
+        }
+    }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveCount++;
@@ -146,6 +176,7 @@ public sealed class FakeNotificationsUnitOfWork : INotificationsUnitOfWork
             throw new InvalidOperationException("Simulated failure persisting the dispatch outcome.");
         }
 
+        Commit();
         return Task.CompletedTask;
     }
 
@@ -156,15 +187,58 @@ public sealed class FakeNotificationsUnitOfWork : INotificationsUnitOfWork
         if (ClaimsToLose > 0)
         {
             ClaimsToLose--;
+
+            // The loser's UPDATE matched zero rows, so its in-memory claim is
+            // rolled back to the committed state — what ReloadAsync does.
+            Restore();
             return Task.FromResult(false);
         }
 
+        Commit();
         return Task.FromResult(true);
     }
 
     public Task DiscardPendingChangesAsync(CancellationToken cancellationToken = default)
     {
         DiscardCount++;
+        Restore();
         return Task.CompletedTask;
+    }
+
+    private void Commit()
+    {
+        foreach (var message in _tracked)
+        {
+            _committed[message.OutboxMessageId] = OutboxMessageSnapshot.Of(message);
+        }
+    }
+
+    private void Restore()
+    {
+        foreach (var message in _tracked)
+        {
+            if (_committed.TryGetValue(message.OutboxMessageId, out var snapshot))
+            {
+                snapshot.RestoreTo(message);
+            }
+        }
+    }
+
+    /// <summary>The four mutable columns of <c>OutboxMessages</c>, captured so a discard can put them back exactly as a reload would.</summary>
+    private sealed record OutboxMessageSnapshot(OutboxMessageStatus Status, int Attempts, string? LastError, DateTime? ProcessedAtUtc)
+    {
+        public static OutboxMessageSnapshot Of(OutboxMessage message) =>
+            new(message.Status, message.Attempts, message.LastError, message.ProcessedAtUtc);
+
+        public void RestoreTo(OutboxMessage message)
+        {
+            Set(message, nameof(OutboxMessage.Status), Status);
+            Set(message, nameof(OutboxMessage.Attempts), Attempts);
+            Set(message, nameof(OutboxMessage.LastError), LastError);
+            Set(message, nameof(OutboxMessage.ProcessedAtUtc), ProcessedAtUtc);
+        }
+
+        private static void Set(OutboxMessage message, string property, object? value) =>
+            typeof(OutboxMessage).GetProperty(property)!.SetValue(message, value);
     }
 }
