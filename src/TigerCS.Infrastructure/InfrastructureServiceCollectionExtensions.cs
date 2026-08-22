@@ -5,12 +5,16 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
+using TigerCS.Application.Modules.Notifications;
+using TigerCS.Application.Modules.Notifications.Abstractions;
+using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -22,6 +26,7 @@ using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
+using TigerCS.Infrastructure.Modules.Notifications.Repositories;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Repositories;
 using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
 using TigerCS.Infrastructure.Persistence;
@@ -169,6 +174,28 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<SlaQueryAppService>();
         services.AddScoped<SlaFirstResponseAppService>();
         services.AddScoped<TicketEscalationAppService>();
+
+        // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
+        // MVP-Data-Dictionary.md §2.21/§2.23).
+        //
+        // IOutboxWriter is registered here, in the Infrastructure module that
+        // Module-Design.md says owns OutboxMessage — Ticketing consumes the
+        // port and never references the Notifications module, so the
+        // prohibited-dependency rule holds in both directions.
+        services.AddScoped<IOutboxWriter, OutboxWriter>();
+        services.AddScoped<IOutboxMessageRepository, OutboxMessageRepository>();
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<INotificationsUnitOfWork, NotificationsUnitOfWork>();
+
+        // Every IOutboxEventHandler registered against this interface is
+        // discovered by the dispatcher and matched on its own EventType, so a
+        // later consumer (SLA breach alerts, Genesys event processing) is one
+        // registration with no dispatcher change.
+        services.AddScoped<IOutboxEventHandler, TicketAcknowledgementHandler>();
+
+        services.AddScoped(sp => sp
+            .GetRequiredService<IOptions<OutboxDispatchOptions>>().Value.ToPolicy());
+        services.AddScoped<OutboxDispatcher>();
 
         services.AddTigerCsBackgroundJobs(configuration);
 

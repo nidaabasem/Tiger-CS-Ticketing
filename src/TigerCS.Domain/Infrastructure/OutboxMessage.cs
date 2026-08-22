@@ -48,6 +48,23 @@ public class OutboxMessage
     /// </summary>
     public long IdempotencyRecordId { get; private set; }
 
+    /// <summary>
+    /// Navigation to the reservation above.
+    ///
+    /// <para>
+    /// <b>Present because the FK genuinely requires it, not for convenience.</b>
+    /// <c>IdempotencyRecords.IdempotencyRecordId</c> is a store-generated
+    /// bigint (MVP-Data-Dictionary.md §2.23), so when the record and the
+    /// message are added to one unit of work — which ADR-0013 requires, since
+    /// both must commit inside the business transaction — the record's key
+    /// does not exist until its INSERT runs. Only a tracked relationship lets
+    /// EF order the two inserts and propagate the generated key into this
+    /// message's FK. Without it the message would insert with
+    /// <c>IdempotencyRecordId = 0</c> and violate the foreign key.
+    /// </para>
+    /// </summary>
+    public IdempotencyRecord? IdempotencyRecord { get; private set; }
+
     public OutboxMessageStatus Status { get; private set; }
 
     /// <summary>
@@ -78,9 +95,11 @@ public class OutboxMessage
         string eventType,
         string payload,
         Guid correlationId,
-        long idempotencyRecordId,
+        IdempotencyRecord idempotencyRecord,
         DateTime occurredAtUtc)
     {
+        ArgumentNullException.ThrowIfNull(idempotencyRecord);
+
         if (string.IsNullOrWhiteSpace(eventType))
         {
             throw new ArgumentException("EventType is required.", nameof(eventType));
@@ -95,7 +114,8 @@ public class OutboxMessage
         EventType = eventType;
         Payload = payload;
         CorrelationId = correlationId;
-        IdempotencyRecordId = idempotencyRecordId;
+        IdempotencyRecord = idempotencyRecord;
+        IdempotencyRecordId = idempotencyRecord.IdempotencyRecordId;
         Status = OutboxMessageStatus.Pending;
         Attempts = 0;
         OccurredAtUtc = occurredAtUtc;

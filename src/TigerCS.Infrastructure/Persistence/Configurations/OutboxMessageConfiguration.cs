@@ -47,7 +47,7 @@ public class OutboxMessageConfiguration : IEntityTypeConfiguration<OutboxMessage
         // proof a logical event was already handled — deleting one because
         // its message was cleaned up would silently re-open the door to a
         // duplicate.
-        builder.HasOne<IdempotencyRecord>()
+        builder.HasOne(m => m.IdempotencyRecord)
             .WithMany()
             .HasForeignKey(m => m.IdempotencyRecordId)
             .OnDelete(DeleteBehavior.Restrict)

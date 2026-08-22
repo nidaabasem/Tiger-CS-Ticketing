@@ -155,6 +155,10 @@ public sealed class FakeTicketRequesterSnapshotRepository : ITicketRequesterSnap
         Added.Add(snapshot);
         return Task.CompletedTask;
     }
+
+    /// <summary>Reads back from <see cref="Added"/>, so a test that creates a ticket through the real service sees the same snapshot the acknowledgement handler would.</summary>
+    public Task<TicketRequesterSnapshot?> GetByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Added.FirstOrDefault(s => s.TicketId == ticketId));
 }
 
 public sealed class FakeTicketStatusHistoryRepository : ITicketStatusHistoryRepository

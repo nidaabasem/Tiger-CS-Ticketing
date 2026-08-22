@@ -44,6 +44,18 @@
     <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.19.2" />
   </ItemGroup>
 
+  <ItemGroup Label="Logging abstractions (ADR-0020)">
+    <!--
+      Abstractions only - ILogger<T> and nothing else. Referenced by
+      TigerCS.Application so the Outbox dispatcher can emit the structured,
+      correlation-ID-carrying log lines ADR-0020 requires, without the
+      Application project taking a dependency on any logging implementation,
+      DI container, or configuration system. The provider is chosen in the
+      composition root, as it was before.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+  </ItemGroup>
+
   <ItemGroup Label="Background jobs (Hangfire, ADR-0015) -- netstandard2.0, runtime-agnostic">
     <PackageVersion Include="Hangfire.Core" Version="1.8.24" />
     <PackageVersion Include="Hangfire.SqlServer" Version="1.8.24" />
