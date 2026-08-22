@@ -88,7 +88,7 @@ jobs:
           path: src/idempotent-migration.sql
           retention-days: 30
 
-      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing, AddTicketOperations, AddSlaAndEscalation)
+      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing, AddTicketOperations, AddSlaAndEscalation, AddNotificationsAndOutbox)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
@@ -134,6 +134,7 @@ jobs:
             "TicketAssignments" "TicketResolutions" "TicketNotes" \
             "SlaPolicies" "BusinessCalendars" "BusinessCalendarWorkingDays" "Holidays" \
             "TicketSlaInstances" "TicketEscalations" "IdempotencyRecords" \
+            "OutboxMessages" "Notifications" \
             "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
@@ -141,11 +142,11 @@ jobs:
           echo "--- expected tables ---"
           echo "$expected"
           if [ "$actual_sorted" != "$expected" ]; then
-            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing + SLA and Escalation schema exactly."
+            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing + SLA and Escalation + Notifications schema exactly."
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 31 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables."
+          echo "Table list matches exactly: 33 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -486,6 +487,135 @@ jobs:
             exit 1
           fi
           echo "All foreign keys on the SLA and Escalation tables are NO_ACTION (Restrict), as required."
+
+      - name: Verify schema — filtered unique index (one notification per Outbox message and type)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # The database-level half of "duplicate processing does not send
+          # twice": a genuine race between two dispatch attempts for one
+          # message cannot produce two delivery rows. Filtered because
+          # OutboxMessageId is nullable (MVP-Data-Dictionary.md §2.21 allows a
+          # Pending row before its Outbox link) and SQL Server treats multiple
+          # NULLs as duplicates in a unique index — without the filter, the
+          # second such row would be rejected for entirely the wrong reason.
+          #
+          # Asserted here rather than in a unit test because the EF Core
+          # InMemory provider ignores filtered unique indexes entirely.
+          filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = 'UX_Notifications_OutboxMessageId_NotificationType' AND is_unique = 1;" | sed '/^$/d' | tr -d ' ')
+          echo "filter_definition: '$filter'"
+          filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+          if [ -z "$filter_trimmed" ]; then
+            echo "::error::UX_Notifications_OutboxMessageId_NotificationType is missing or not unique."
+            exit 1
+          fi
+          if [ "$filter_trimmed" != "([OutboxMessageId]ISNOTNULL)" ]; then
+            echo "::error::UX_Notifications_OutboxMessageId_NotificationType filter_definition was '$filter_trimmed', expected '([OutboxMessageId]ISNOTNULL)'."
+            exit 1
+          fi
+          echo "Filtered unique index present with the expected filter."
+
+      - name: Verify schema — filtered dispatcher and dead-letter indexes on OutboxMessages
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # The dispatcher's hot path reads only Pending rows, and ADR-0020
+          # alerts on the dead-letter count. Both indexes are filtered so
+          # Processed rows — which accumulate indefinitely, since nothing
+          # deletes them — never grow either index. Filters are asserted
+          # exactly: an index that silently lost its filter would still answer
+          # every query correctly while quietly degrading as the table grows.
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT name + '=' + ISNULL(REPLACE(REPLACE(filter_definition, ' ', ''), CHAR(9), ''), 'NOFILTER') FROM sys.indexes WHERE object_id = OBJECT_ID('OutboxMessages') AND name IS NOT NULL AND name LIKE 'IX_%' ORDER BY name;" | sed '/^$/d' | tr -d ' ')
+          actual_sorted=$(echo "$actual" | sort)
+          expected=$(printf '%s\n' \
+            "IX_OutboxMessages_CorrelationId=NOFILTER" \
+            "IX_OutboxMessages_DeadLettered=([Status]=(3))" \
+            "IX_OutboxMessages_IdempotencyRecordId=NOFILTER" \
+            "IX_OutboxMessages_Status_OccurredAtUtc=([Status]=(1))" | sort)
+          echo "--- actual ---"
+          echo "$actual_sorted"
+          echo "--- expected ---"
+          echo "$expected"
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::Indexes on OutboxMessages do not match the expected set exactly."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "OutboxMessages indexes match, with the expected filters."
+
+      - name: Verify schema — Notifications/OutboxMessages column nullability
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # MVP-Data-Dictionary.md §2.21/§2.23, asserted column by column.
+          # RecipientAddress must be NULLABLE: a ticket whose verified
+          # requester snapshot yields no deliverable email address still gets
+          # a Notifications row, dead-lettered and visible, rather than being
+          # silently skipped — a NOT NULL column here would force the code to
+          # invent an address, which is exactly what this increment refuses to
+          # do. IdempotencyRecordId must be NOT NULL: ADR-0014's dedup key is
+          # required for every Outbox message (MVP-ERD.md §2.23).
+          #
+          # The column-name filter below applies across BOTH tables, and the
+          # two tables share names: OutboxMessages has its own CorrelationId,
+          # and its primary key is literally called OutboxMessageId — the same
+          # name as the Notifications foreign key pointing at it. Both are
+          # listed explicitly rather than filtered out, so this check asserts
+          # every row the query can return instead of quietly ignoring the two
+          # it did not anticipate.
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT TABLE_NAME + '.' + COLUMN_NAME + '=' + IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ('Notifications','OutboxMessages') AND COLUMN_NAME IN ('TicketId','RecipientEmployeeId','RecipientAddress','DeliveryStatus','CorrelationId','OutboxMessageId','RetryCount','IdempotencyRecordId','Status','Attempts','LastError','ProcessedAtUtc','Payload') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
+          actual_sorted=$(echo "$actual" | sort)
+          expected=$(printf '%s\n' \
+            "Notifications.TicketId=YES" \
+            "Notifications.RecipientEmployeeId=YES" \
+            "Notifications.RecipientAddress=YES" \
+            "Notifications.DeliveryStatus=NO" \
+            "Notifications.CorrelationId=NO" \
+            "Notifications.OutboxMessageId=YES" \
+            "Notifications.RetryCount=NO" \
+            "OutboxMessages.OutboxMessageId=NO" \
+            "OutboxMessages.CorrelationId=NO" \
+            "OutboxMessages.Payload=NO" \
+            "OutboxMessages.IdempotencyRecordId=NO" \
+            "OutboxMessages.Status=NO" \
+            "OutboxMessages.Attempts=NO" \
+            "OutboxMessages.LastError=YES" \
+            "OutboxMessages.ProcessedAtUtc=YES" | sort)
+          echo "--- actual nullability ---"
+          echo "$actual_sorted"
+          echo "--- expected nullability ---"
+          echo "$expected"
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::Notifications/OutboxMessages column nullability does not match MVP-Data-Dictionary.md §2.21/§2.23."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "Column nullability matches the Data Dictionary."
+
+      - name: Verify schema — foreign keys on the Notifications tables
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # MVP-ERD.md §2.21/§2.23 mark every one of these Restrict. A
+          # notification and its Outbox message are permanent records of an
+          # attempted customer contact, and an idempotency record is the proof
+          # a logical event was already handled — a cascade through any of them
+          # would destroy the evidence FR-NOT-05's operational queue and
+          # ADR-0018's audit trail depend on.
+          actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(parent_object_id) + '->' + OBJECT_NAME(referenced_object_id) + ':' + delete_referential_action_desc FROM sys.foreign_keys WHERE OBJECT_NAME(parent_object_id) IN ('Notifications','OutboxMessages') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
+          echo "--- foreign keys (child->parent:delete-action) ---"
+          echo "$actual"
+          expected=$(printf '%s\n' \
+            "Notifications->OutboxMessages:NO_ACTION" \
+            "Notifications->Tickets:NO_ACTION" \
+            "OutboxMessages->IdempotencyRecords:NO_ACTION" | sort)
+          actual_sorted=$(echo "$actual" | sort)
+          if [ "$actual_sorted" != "$expected" ]; then
+            echo "::error::Foreign keys on the Notifications tables do not match the expected Restrict-everywhere set."
+            diff <(echo "$expected") <(echo "$actual_sorted") || true
+            exit 1
+          fi
+          echo "All three foreign keys are present and NO_ACTION (Restrict), as required."
 
       - name: Verify no schema drift (no-op probe migration)
         working-directory: src

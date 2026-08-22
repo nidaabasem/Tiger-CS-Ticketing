@@ -5,6 +5,7 @@ using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.IdentityAndAccess.Fakes;
+using TigerCS.Tests.Notifications.Fakes;
 using TigerCS.Tests.SlaAndEscalation.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
 
@@ -24,7 +25,8 @@ public class TicketCreationAppServiceTests
         FakeTicketStatusHistoryRepository StatusHistory,
         FakeAuditEntryWriter Audit,
         FakeTicketingUnitOfWork UnitOfWork,
-        SlaServiceFixture Sla);
+        SlaServiceFixture Sla,
+        FakeOutboxWriter Outbox);
 
     private static Fixture CreateService()
     {
@@ -39,6 +41,12 @@ public class TicketCreationAppServiceTests
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
 
+        // ADR-0013: the TicketCreated Outbox message is written in the same
+        // transaction as the ticket, so the fake writer's staged rows follow
+        // this unit of work's own commit/rollback.
+        var outbox = new FakeOutboxWriter();
+        unitOfWork.OutboxWriter = outbox;
+
         // Ticket creation now opens the ticket's initial SLA period
         // (backlog S-08's corrected acceptance criterion), so the SLA
         // services are part of this harness rather than a separate concern.
@@ -46,9 +54,9 @@ public class TicketCreationAppServiceTests
 
         var service = new TicketCreationAppService(
             intakeRecords, sessions, categories, priorities, departments,
-            tickets, snapshots, statusHistory, unitOfWork, audit, sla.DueDates, TimeProvider.System);
+            tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System);
 
-        return new Fixture(service, intakeRecords, sessions, categories, priorities, departments, tickets, snapshots, statusHistory, audit, unitOfWork, sla);
+        return new Fixture(service, intakeRecords, sessions, categories, priorities, departments, tickets, snapshots, statusHistory, audit, unitOfWork, sla, outbox);
     }
 
     private static async Task<(TigerCS.Domain.Modules.Ticketing.IntakeRecord Record, Guid AgentId)> SeedUnitRelatedIntakeAsync(

@@ -6,6 +6,17 @@
     <ProjectReference Include="..\TigerCS.Domain\TigerCS.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      ILogger<T> only (ADR-0020's structured, correlation-tracked logging).
+      Abstractions package deliberately - no logging implementation, no DI
+      container and no configuration system enters this project, so the
+      Application layer still depends on nothing but the Domain plus one
+      interface.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!--
       Emits the XML documentation file, so the doc comments on this project's

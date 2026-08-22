@@ -207,6 +207,61 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("IdempotencyRecords", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Infrastructure.OutboxMessage", b =>
+                {
+                    b.Property<Guid>("OutboxMessageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<long>("IdempotencyRecordId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("ProcessedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.HasKey("OutboxMessageId");
+
+                    b.HasIndex("CorrelationId")
+                        .HasDatabaseName("IX_OutboxMessages_CorrelationId");
+
+                    b.HasIndex("IdempotencyRecordId");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("IX_OutboxMessages_DeadLettered")
+                        .HasFilter("[Status] = 3");
+
+                    b.HasIndex("Status", "OccurredAtUtc")
+                        .HasDatabaseName("IX_OutboxMessages_Status_OccurredAtUtc")
+                        .HasFilter("[Status] = 1");
+
+                    b.ToTable("OutboxMessages", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.ClassificationAndRouting.Category", b =>
                 {
                     b.Property<int>("CategoryId")
@@ -496,6 +551,61 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("UserDepartmentAssignments", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Notifications.Notification", b =>
+                {
+                    b.Property<long>("NotificationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("NotificationId"));
+
+                    b.Property<byte>("Channel")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("DeliveryStatus")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("NotificationType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid?>("OutboxMessageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RecipientAddress")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<Guid?>("RecipientEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("NotificationId");
+
+                    b.HasIndex("DeliveryStatus")
+                        .HasDatabaseName("IX_Notifications_DeliveryStatus");
+
+                    b.HasIndex("TicketId")
+                        .HasDatabaseName("IX_Notifications_TicketId");
+
+                    b.HasIndex("OutboxMessageId", "NotificationType")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Notifications_OutboxMessageId_NotificationType")
+                        .HasFilter("[OutboxMessageId] IS NOT NULL");
+
+                    b.ToTable("Notifications", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendar", b =>
@@ -1264,6 +1374,17 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Infrastructure.OutboxMessage", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Infrastructure.IdempotencyRecord", "IdempotencyRecord")
+                        .WithMany()
+                        .HasForeignKey("IdempotencyRecordId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("IdempotencyRecord");
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.ClassificationAndRouting.Category", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
@@ -1333,6 +1454,19 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Navigation("Department");
 
                     b.Navigation("Employee");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Notifications.Notification", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Infrastructure.OutboxMessage", null)
+                        .WithMany()
+                        .HasForeignKey("OutboxMessageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.BusinessCalendarWorkingDay", b =>

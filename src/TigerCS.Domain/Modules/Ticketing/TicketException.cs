@@ -73,3 +73,17 @@ public sealed class TicketClosedException(long ticketId)
 {
     public long TicketId { get; } = ticketId;
 }
+
+/// <summary>
+/// <c>Ticket.AcknowledgementSentAtUtc</c> is write-once (MVP-Data-Dictionary.md
+/// §2.10). Thrown when a redelivered <c>TicketCreated</c> Outbox message
+/// reaches a ticket whose automated acknowledgement was already delivered —
+/// the domain-level half of "duplicate processing does not send twice"
+/// (ADR-0013/ADR-0014). Callers treat it as "already done", not as an error.
+/// </summary>
+public sealed class AcknowledgementAlreadySentException(long ticketId, DateTime sentAtUtc)
+    : TicketException($"Ticket {ticketId} already recorded its automated acknowledgement as sent at {sentAtUtc:O} — the field is write-once.")
+{
+    public long TicketId { get; } = ticketId;
+    public DateTime SentAtUtc { get; } = sentAtUtc;
+}

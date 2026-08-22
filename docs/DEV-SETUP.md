@@ -234,11 +234,20 @@ runs the migration against an actual SQL Server 2022 service container in
 GitHub Actions instead — automated, not a manual local run, and not merely
 `dotnet ef migrations script` reviewed by eye.
 
-**Confirmed by that workflow (run #4, commit `88818d2`, [green run](https://github.com/nidaabasem/Tiger-CS-Ticketing/actions/runs/32250361013)):**
+**Confirmed by that workflow.** The pinned expected-table list is refreshed with
+every schema-adding increment, which is the point of it: an unannounced table is
+a workflow failure, not a silent pass. It stood at 11 tables after Identity and
+Access, 31 after SLA and Escalation, and **33 as of the Notifications increment**
+(`OutboxMessages` and `Notifications`, MVP-Data-Dictionary.md §2.21/§2.23).
+`TicketSlaPausePeriods` and `PriorityDowngradeRequests` remain deliberately
+absent (MVP-Implementation-Backlog.md §0/§0.2), as do all Genesys tables.
 
 - [x] `dotnet ef database update` against a real SQL Server 2022 container completes with no error.
-- [x] `SELECT name FROM sys.tables ORDER BY name;` against the resulting database returns exactly the 11 expected tables (`AspNetRoleClaims`, `AspNetRoles`, `AspNetUserClaims`, `AspNetUserLogins`, `AspNetUserRoles`, `AspNetUserTokens`, `AspNetUsers`, `Departments`, `Employees`, `UserDepartmentAssignments`, `__EFMigrationsHistory`) — nothing else, confirmed by the workflow's own table-list diff, not eyeballed.
-- [x] `IX_UserDepartmentAssignments_EmployeeId_PrimaryOnly`'s `filter_definition` is exactly `([IsPrimary]=(1))`.
+- [x] `SELECT name FROM sys.tables ORDER BY name;` returns exactly the expected table list — nothing else, confirmed by the workflow's own table-list diff, not eyeballed.
+- [x] Every filtered unique index is present **with its exact `filter_definition`** — the primary-department index, the CRM verification-session idempotency index, the current-assignment and current-resolution indexes, the current-SLA-period and one-auto-breach-per-ticket indexes, and the Notifications increment's `UX_Notifications_OutboxMessageId_NotificationType`. The EF Core InMemory provider ignores filtered indexes entirely, so this is the only place they are actually exercised.
+- [x] The `OutboxMessages` dispatcher and dead-letter indexes carry their `[Status]` filters, so `Processed` rows — which nothing deletes — never grow the indexes the hot path reads.
+- [x] Column nullability on `Notifications`/`OutboxMessages` matches §2.21/§2.23, including `RecipientAddress` being nullable: a ticket with no deliverable requester address still gets a dead-lettered, visible row rather than a fabricated address.
+- [x] Every foreign key on the SLA, Escalation and Notifications tables is `NO_ACTION` (Restrict).
 - [x] `dotnet ef migrations has-pending-model-changes` against the live, migrated database reports "No changes have been made to the model since the last migration." — no drift between the model and the applied schema.
 
 **Not covered by that workflow — still only verified via the InMemory-backed integration tests, not against a real SQL Server:**

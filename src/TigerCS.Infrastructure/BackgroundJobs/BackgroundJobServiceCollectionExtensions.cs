@@ -27,10 +27,13 @@ public static class BackgroundJobServiceCollectionExtensions
         var options = configuration.GetSection(BackgroundJobOptions.SectionName).Get<BackgroundJobOptions>()
             ?? new BackgroundJobOptions();
 
+        services.Configure<OutboxDispatchOptions>(configuration.GetSection(OutboxDispatchOptions.SectionName));
+
         // Registered whether or not Hangfire runs, so a fired job resolves
         // the same way in every environment.
         services.AddScoped<SlaDeadlineCheckJob>();
         services.AddScoped<SlaSweepJob>();
+        services.AddScoped<OutboxDispatchJob>();
 
         if (!options.Enabled)
         {
@@ -64,6 +67,44 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddSingleton<ISlaDeadlineScheduler, HangfireSlaDeadlineScheduler>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Registers ADR-0013/ADR-0015's recurring Outbox dispatcher — the job
+    /// that turns committed Outbox rows into outbound effects. Called after
+    /// the host is built, for the same reason as the sweep below.
+    ///
+    /// <para>
+    /// <b>Not registering it does not lose messages.</b> With
+    /// <c>BackgroundJobs:Enabled</c> false (the test host, which has no SQL
+    /// Server for Hangfire's own schema) Outbox rows still commit with their
+    /// business transactions and stay <c>Pending</c> until something
+    /// dispatches them — the switch governs when delivery happens, never
+    /// whether the intent to deliver was recorded.
+    /// </para>
+    /// </summary>
+    public static void UseTigerCsRecurringOutboxDispatch(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, OutboxDispatchOptions outboxOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(backgroundJobOptions);
+        ArgumentNullException.ThrowIfNull(outboxOptions);
+
+        if (!backgroundJobOptions.Enabled)
+        {
+            return;
+        }
+
+        // Clamped rather than trusted: a mistyped interval would silently
+        // delay every customer-facing acknowledgement in the system, and an
+        // interval of zero or negative would be rejected by Hangfire's cron
+        // parser at startup rather than at a useful moment.
+        var minutes = Math.Clamp(outboxOptions.PollIntervalMinutes, 1, 15);
+
+        services.GetRequiredService<IRecurringJobManager>().AddOrUpdate<OutboxDispatchJob>(
+            OutboxDispatchJob.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            $"*/{minutes} * * * *");
     }
 
     /// <summary>
