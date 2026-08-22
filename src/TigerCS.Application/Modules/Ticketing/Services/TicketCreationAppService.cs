@@ -2,8 +2,11 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.Notifications;
+using TigerCS.Application.Modules.Notifications.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
@@ -52,6 +55,7 @@ public sealed class TicketCreationAppService(
     ITicketStatusHistoryRepository statusHistoryRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
+    IOutboxWriter outboxWriter,
     SlaDueDateService slaDueDateService,
     TimeProvider timeProvider)
 {
@@ -167,6 +171,8 @@ public sealed class TicketCreationAppService(
             beforeValue: null, afterValue: $"ConsumedByTicketId={ticket.TicketId}",
             correlationId, cancellationToken);
 
+        await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, correlationId, now, cancellationToken);
+
         try
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -263,16 +269,90 @@ public sealed class TicketCreationAppService(
         // ticket becomes Verified.
         await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
 
+        var provisionalCorrelationId = Guid.NewGuid();
+
         await auditWriter.WriteAsync(
             callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
             beforeValue: null,
             afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus=PendingCrmVerification;Provisional=true",
-            Guid.NewGuid(), cancellationToken);
+            provisionalCorrelationId, cancellationToken);
+
+        await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, provisionalCorrelationId, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         return TicketCreationResult.Success(ToDto(ticket));
+    }
+
+    /// <summary>
+    /// Writes MVP-API-Contracts.md §3.1's <c>TicketCreated</c> Outbox event —
+    /// the one that "drives the automated acknowledgement notification"
+    /// (FR-NOT-01) — into the same transaction as the ticket itself.
+    ///
+    /// <para>
+    /// <b>Nothing is sent from here.</b> NFR-REL-01 is explicit that nothing
+    /// is dispatched from application code inside a request handler without
+    /// first being durably recorded in the same transaction as the state
+    /// change. This method records; ADR-0015's recurring dispatcher delivers,
+    /// after the commit. A caller that rolls back — a lost
+    /// optimistic-concurrency race on session consumption, a ticket-number
+    /// collision — takes this row down with it, so a ticket that does not
+    /// exist can never acknowledge anything.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Written for a provisional ticket too, deliberately.</b> FR-NOT-01's
+    /// acceptance criterion is "email attempted for every ticket", and a
+    /// provisional (ISSUE-006) ticket has no verified requester snapshot to
+    /// resolve a recipient from. Skipping the event would make that ticket
+    /// invisible — indistinguishable from one that was acknowledged — whereas
+    /// enqueuing it produces a dead-lettered, audited, countable record that
+    /// no acknowledgement could be sent and why. Reported rather than
+    /// guessed: <b>no merged document defines whether such a ticket should be
+    /// acknowledged once it is later reconciled to Verified</b>, so
+    /// reconciliation deliberately does not enqueue a second event.
+    /// </para>
+    ///
+    /// <para>
+    /// A <c>null</c> return means the key was already reserved — the same
+    /// logical event is already enqueued, so no second message is written.
+    /// That is the normal outcome of a retried request, not an error, and no
+    /// audit entry is written for it because nothing was queued.
+    /// </para>
+    /// </summary>
+    private async Task EnqueueTicketCreatedAsync(
+        Ticket ticket, Guid callerEmployeeId, Guid correlationId, DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var payload = new TicketCreatedEventPayload(ticket.TicketId, OutboxEventTypes.TicketCreatedVersion);
+
+        var message = await outboxWriter.WriteAsync(
+            OutboxEventTypes.TicketCreated,
+            payload.ToJson(),
+            correlationId,
+            OutboxEventTypes.IdempotencyKeyFor(
+                OutboxEventTypes.TicketCreated, ticket.TicketId, OutboxEventTypes.TicketCreatedVersion),
+            nowUtc,
+            cancellationToken);
+
+        if (message is null)
+        {
+            return;
+        }
+
+        // "Notification queued" (ADR-0018) — the one notification audit event
+        // written synchronously, in the business transaction, so the audit
+        // trail records the intent at the moment it became durable rather
+        // than whenever a background job next runs.
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            NotificationAuditActions.NotificationQueued,
+            NotificationAuditActions.OutboxMessageEntityType,
+            message.OutboxMessageId.ToString(),
+            beforeValue: null,
+            afterValue: $"EventType={OutboxEventTypes.TicketCreated};TicketId={ticket.TicketId};Status=Pending",
+            correlationId,
+            cancellationToken);
     }
 
     /// <summary>

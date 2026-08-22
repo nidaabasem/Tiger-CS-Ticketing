@@ -228,6 +228,14 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
 {
     public int SaveChangesCallCount { get; private set; }
 
+    /// <summary>
+    /// Optional Outbox writer whose staged rows follow this unit of work's
+    /// own fate, so an atomicity test can assert the real property: an Outbox
+    /// message becomes durable only when the business transaction commits,
+    /// and a rollback leaves none behind (ADR-0013).
+    /// </summary>
+    public TigerCS.Tests.Notifications.Fakes.FakeOutboxWriter? OutboxWriter { get; set; }
+
     public int TransactionsBegun { get; private set; }
     public int TransactionsCommitted { get; private set; }
     public int TransactionsRolledBack { get; private set; }
@@ -279,6 +287,7 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
         public Task CommitAsync(CancellationToken cancellationToken = default)
         {
             owner.TransactionsCommitted++;
+            owner.OutboxWriter?.Commit();
             _resolved = true;
             return Task.CompletedTask;
         }
@@ -286,6 +295,7 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
         public Task RollbackAsync(CancellationToken cancellationToken = default)
         {
             owner.TransactionsRolledBack++;
+            owner.OutboxWriter?.Rollback();
             _resolved = true;
             return Task.CompletedTask;
         }
@@ -297,6 +307,7 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
             if (!_resolved)
             {
                 owner.TransactionsRolledBack++;
+                owner.OutboxWriter?.Rollback();
                 _resolved = true;
             }
 

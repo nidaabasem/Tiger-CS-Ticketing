@@ -127,6 +127,35 @@ public class StartupValidationTests
     }
 
     /// <summary>
+    /// The Notifications increment's equivalent guard.
+    /// <c>RecordingEmailSender</c> reports every send as successful without
+    /// contacting a provider, so running it outside Development/Testing would
+    /// mark tickets acknowledged, write <c>Sent</c> notification rows and
+    /// satisfy every dashboard while no customer received anything — a silent
+    /// total failure that looks exactly like success. Program.cs refuses to
+    /// start instead.
+    ///
+    /// <para>
+    /// The CRM provider is set to a non-Mock value here so the failure this
+    /// asserts can only be the email guard: with both at their defaults the
+    /// CRM guard would fire first and the test would pass for the wrong
+    /// reason.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ProductionEnvironment_WithRecordingEmailProvider_FailsAtStartup()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+
+        using var factory = new ConfiguredFactory("Production", config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("Notifications:Email:Provider", ex.ToString());
+        Assert.Contains("Recording", ex.ToString());
+    }
+
+    /// <summary>
     /// Final correction: proves the guard is conditional on the selected
     /// gateway type (Crm:Provider), not simply the environment name — a
     /// non-Mock provider must be able to start in Production, since a
@@ -144,6 +173,15 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "InternalCrmGateway";
+
+        // The Notifications increment added a second, identically-shaped
+        // startup guard (EmailSenderSafety): RecordingEmailSender may not run
+        // outside Development/Testing either. Both must therefore name a
+        // non-double provider for this test to still be about what it says it
+        // is about — that Production is not refused by environment name
+        // alone.
+        config["Notifications:Email:Provider"] = "Office365EmailSender";
+
         using var factory = new ConfiguredFactory("Production", config);
 
         var server = factory.Server;

@@ -9,6 +9,7 @@ using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
 using TigerCS.Integrations.Modules.CrmIntegration;
+using TigerCS.Integrations.Modules.EmailIntegration;
 
 // Never log token/claim contents (review item 4) — IdentityModelEventSource's PII
 // logging defaults to off already, but this makes the choice explicit rather than
@@ -114,6 +115,28 @@ using (var crmStartupScope = app.Services.CreateScope())
     }
 }
 
+// Fail fast if the recording email adapter would run outside
+// Development/Testing. Same conditional-on-provider shape as the CRM guard
+// above (EmailSenderSafety.IsUnsafe), and for a sharper reason:
+// RecordingEmailSender reports every send as successful without contacting
+// any provider, so running it for real would mark tickets acknowledged, write
+// Sent notification rows and satisfy every dashboard and audit query while no
+// customer ever received anything. A silent, total failure that looks exactly
+// like success is worse than a loud one.
+using (var emailStartupScope = app.Services.CreateScope())
+{
+    var emailOptions = emailStartupScope.ServiceProvider.GetRequiredService<IOptions<EmailSenderOptions>>().Value;
+    if (EmailSenderSafety.IsUnsafe(emailOptions.Provider, app.Environment.EnvironmentName))
+    {
+        throw new InvalidOperationException(
+            $"Notifications:Email:Provider is 'Recording' in environment '{app.Environment.EnvironmentName}'. "
+            + "RecordingEmailSender never delivers anything (see its own remarks) and may only run in "
+            + $"{string.Join("/", EmailSenderSafety.RecordingAllowedEnvironments)}. No real email provider is "
+            + "confirmed for this pilot: configure a real IEmailSender implementation and set "
+            + "Notifications:Email:Provider accordingly before deploying to this environment.");
+    }
+}
+
 // Swagger UI at /swagger and the OpenAPI JSON at /swagger/v1/swagger.json,
 // in Development and Testing only — never mapped in Production (see
 // OpenApiDocumentation.EnabledEnvironments).
@@ -135,6 +158,15 @@ using (var backgroundJobScope = app.Services.CreateScope())
     var backgroundJobOptions = backgroundJobScope.ServiceProvider
         .GetRequiredService<IOptions<BackgroundJobOptions>>().Value;
     app.Services.UseTigerCsRecurringSlaSweep(backgroundJobOptions);
+
+    // ADR-0013/ADR-0015 — the recurring Outbox dispatcher. Registered
+    // alongside the sweep because both need live job storage. With
+    // BackgroundJobs:Enabled false this is a no-op and Outbox rows simply
+    // stay Pending: the switch governs when delivery happens, never whether
+    // the intent to deliver was durably recorded.
+    var outboxOptions = backgroundJobScope.ServiceProvider
+        .GetRequiredService<IOptions<OutboxDispatchOptions>>().Value;
+    app.Services.UseTigerCsRecurringOutboxDispatch(backgroundJobOptions, outboxOptions);
 }
 
 app.UseHttpsRedirection();
