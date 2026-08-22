@@ -1,0 +1,90 @@
+@page
+@model IntakeModel
+@{
+    ViewData["Title"] = "New ticket";
+    ViewData["Crumb"] = "Step 1 — intake";
+}
+
+<div class="content--narrow">
+    <div class="page-head"><h1 class="page-head__title">New ticket</h1></div>
+
+    <partial name="_WizardSteps" model="1" />
+
+    @if (!Model.IsPermitted)
+    {
+        @* The nav does not offer this page to a user without the capability,
+           but a direct URL still lands here. The API would refuse the intake
+           call with 403 regardless; saying so up front is kinder than letting
+           them fill in a form that cannot be submitted. *@
+        <div class="panel">
+            <div class="state" role="alert">
+                <div class="state__title">You cannot create tickets</div>
+                <p class="state__body">
+                    Creating a ticket requires the CS Agent or CS Supervisor role. Your account
+                    does not hold one, so the service will refuse this action.
+                </p>
+                <a class="btn btn--primary" asp-page="/Tickets/Index">Back to the queue</a>
+            </div>
+        </div>
+        return;
+    }
+
+    @if (Model.Problem is not null)
+    {
+        <div class="notice notice--error" role="alert">
+            <span class="notice__glyph" aria-hidden="true">⚠</span>
+            <div class="notice__body">
+                <div class="notice__title">@(Model.Problem.Title ?? "The interaction could not be recorded")</div>
+                <div>@Model.Problem.UserMessage()</div>
+            </div>
+        </div>
+    }
+
+    <div class="panel">
+        <div class="panel__head"><span class="panel__title">Record the interaction</span></div>
+        <div class="panel__body">
+            <p class="u-muted">
+                The interaction is recorded first, before any CRM lookup, so nothing is lost if
+                verification cannot be completed.
+            </p>
+
+            <form method="post" novalidate>
+                <div class="field">
+                    <label for="RawUnitNumberEntered">Unit number, as the caller gave it</label>
+                    <input type="text" id="RawUnitNumberEntered" name="RawUnitNumberEntered"
+                           value="@Model.RawUnitNumberEntered" required autofocus
+                           aria-invalid="@(Model.FieldError is not null ? "true" : null)"
+                           aria-describedby="unit-hint @(Model.FieldError is not null ? "unit-error" : null)" />
+                    <p class="field__hint" id="unit-hint">
+                        Recorded exactly as spoken, before any lookup — do not tidy it up.
+                    </p>
+                    @if (Model.FieldError is not null)
+                    {
+                        <p class="field-error" id="unit-error">@Model.FieldError</p>
+                    }
+                </div>
+
+                <div class="field">
+                    <label for="PriorityHint">Priority hint (optional)</label>
+                    <select id="PriorityHint" name="PriorityHint">
+                        <option value="">No hint</option>
+                        @foreach (var (id, name) in TicketBadges.Priorities)
+                        {
+                            <option value="@id" selected="@(Model.PriorityHint == id)">@name</option>
+                        }
+                    </select>
+                    <p class="field__hint">
+                        Your initial read. The ticket's actual priority is chosen at the last step.
+                    </p>
+                </div>
+
+                <div class="actionbar">
+                    <button type="submit" class="btn btn--primary" data-submit-once data-busy-label="Recording…">
+                        Record and continue
+                    </button>
+                    <a class="btn btn--ghost" asp-page="/Tickets/Index">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

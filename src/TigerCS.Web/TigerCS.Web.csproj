@@ -3,9 +3,46 @@
   <!-- TargetFramework, Nullable, ImplicitUsings, TreatWarningsAsErrors inherited from Directory.Build.props -->
 
   <ItemGroup>
+    <!--
+      TigerCS.Application is referenced for its request/response DTO records
+      ONLY. Those records are the API's own wire contract, so reusing them as
+      the typed HttpClient's serialization types makes a contract drift a
+      compile error in this project rather than a runtime deserialization
+      surprise in a browser.
+
+      This does NOT give TigerCS.Web database access: TigerCS.Application
+      depends on TigerCS.Domain plus Microsoft.Extensions.Logging.Abstractions
+      and nothing else - no EF Core, no SQL Server, no DbContext. The
+      repository ports it declares are interfaces whose implementations live
+      in TigerCS.Infrastructure, which this project deliberately does not
+      reference (see below).
+
+      TigerCS.Infrastructure was removed from this project: it is the project
+      that carries EF Core, the SQL Server provider and TigerCsDbContext, and
+      keeping the reference left "TigerCS.Web must not touch the database"
+      as a convention a future edit could break silently rather than a
+      structural fact the compiler enforces. Nothing in this project used it.
+      ArchitectureBoundaryTests asserts the absence.
+    -->
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
-    <ProjectReference Include="..\TigerCS.Infrastructure\TigerCS.Infrastructure.csproj" />
+    <!--
+      Kept as it was. TigerCS.Reporting currently contains no code at all and
+      this increment uses none of it (dashboards and reporting are out of
+      scope), but removing it was not part of what was authorised here, and it
+      reaches only Domain + Application, so it introduces no database access
+      today. ArchitectureBoundaryTests guards the transitive case rather than
+      this reference list, so the boundary holds even if that changes.
+    -->
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
   </ItemGroup>
+
+  <!--
+    Deliberately no InternalsVisibleTo. TigerCS.Api's top-level statements
+    already generate an internal, test-visible global 'Program'; exposing this
+    project's as well would make WebApplicationFactory<Program> ambiguous in
+    TigerCS.Tests and break every existing API integration test. The tests here
+    target the public TigerCS.Web.WebHostMarker instead, which resolves the
+    same entry point without the name collision.
+  -->
 
 </Project>

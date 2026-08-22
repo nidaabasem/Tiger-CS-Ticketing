@@ -26,6 +26,7 @@
     <ProjectReference Include="..\TigerCS.Integrations\TigerCS.Integrations.csproj" />
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
     <ProjectReference Include="..\TigerCS.Api\TigerCS.Api.csproj" />
+    <ProjectReference Include="..\TigerCS.Web\TigerCS.Web.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,326 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Ticket queue";
+    var returnUrl = Model.CurrentUrl();
+}
+
+<div class="page-head">
+    <h1 class="page-head__title">Ticket queue</h1>
+    @if (Model.LoadProblem is null)
+    {
+        <span class="page-head__count">@Model.TotalCount.ToString("N0") total</span>
+    }
+    <span class="page-head__spacer"></span>
+    @if (NavigationPolicy.CanStartNewTicket(Model.CurrentUser))
+    {
+        <a class="btn btn--gold" asp-page="/Tickets/New/Intake">+ New ticket</a>
+    }
+</div>
+
+@if (Model.LoadProblem is not null)
+{
+    @* Full-panel error with a retry, per wireframe §3's error state. *@
+    <div class="panel">
+        <div class="state" role="alert">
+            <div class="state__title">The queue could not be loaded</div>
+            <p class="state__body">@Model.LoadProblem.UserMessage()</p>
+            <a class="btn btn--primary" href="@returnUrl">Try again</a>
+        </div>
+    </div>
+    return;
+}
+
+@* Quick filters. Each is a plain link, so they work without JavaScript, are
+   individually bookmarkable, and announce their own state. *@
+<div class="filter-chips">
+    <a class="chip @(Model.HasAnyFilter ? null : "chip--active")"
+       asp-page="/Tickets/Index"
+       aria-current="@(Model.HasAnyFilter ? null : "true")">All visible</a>
+
+    <a class="chip @(Model.OwnerEmployeeId == Model.CurrentUser.EmployeeId && Model.OwnerEmployeeId.HasValue ? "chip--active" : null)"
+       asp-page="/Tickets/Index"
+       asp-all-route-data="@Model.RouteWithFilter("ownerEmployeeId", Model.OwnerEmployeeId.HasValue ? null : Model.CurrentUser.EmployeeId?.ToString())">
+        Assigned to me
+    </a>
+
+    <a class="chip @(Model.VerificationStatus == "PendingCrmVerification" ? "chip--active" : null)"
+       asp-page="/Tickets/Index"
+       asp-all-route-data="@Model.RouteWithFilter("verificationStatus", Model.VerificationStatus == "PendingCrmVerification" ? null : "PendingCrmVerification")">
+        <span aria-hidden="true">◑</span> Pending CRM
+    </a>
+
+    <a class="chip @(Model.PriorityId == 1 ? "chip--alert chip--active" : "chip--alert")"
+       asp-page="/Tickets/Index"
+       asp-all-route-data="@Model.RouteWithFilter("priorityId", Model.PriorityId == 1 ? null : "1")">
+        <span aria-hidden="true">▲</span> Critical
+    </a>
+
+    <a class="chip @(Model.TicketStatus == "Open" ? "chip--active" : null)"
+       asp-page="/Tickets/Index"
+       asp-all-route-data="@Model.RouteWithFilter("ticketStatus", Model.TicketStatus == "Open" ? null : "Open")">
+        Open
+    </a>
+</div>
+
+<div class="panel u-mb-4">
+    <div class="panel__body">
+        <form method="get" class="filters">
+            <div class="field">
+                <label for="search">Search</label>
+                <input type="search" id="search" name="search" value="@Model.Search"
+                       placeholder="Ticket number or summary" />
+                <p class="field__hint">Matches ticket number and request summary.</p>
+            </div>
+
+            <div class="field">
+                <label for="ticketStatus">Status</label>
+                <select id="ticketStatus" name="ticketStatus">
+                    <option value="">Any status</option>
+                    @foreach (var (value, name) in TicketBadges.AllStatuses)
+                    {
+                        <option value="@value" selected="@(Model.TicketStatus == value)">@name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="priorityId">Priority</label>
+                <select id="priorityId" name="priorityId">
+                    <option value="">Any priority</option>
+                    @foreach (var (id, name) in TicketBadges.Priorities)
+                    {
+                        <option value="@id" selected="@(Model.PriorityId == id)">@name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="verificationStatus">Verification</label>
+                <select id="verificationStatus" name="verificationStatus">
+                    <option value="">Any</option>
+                    @foreach (var (value, name) in TicketBadges.VerificationStatuses)
+                    {
+                        <option value="@value" selected="@(Model.VerificationStatus == value)">@name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="departmentId">Department</label>
+                @*
+                    Only the caller's own departments can be offered by name:
+                    GET /api/users/me is the sole source of a department name in
+                    the whole contract, and no endpoint lists departments. A
+                    cross-department viewer gets a numeric box rather than a
+                    fabricated list.
+                *@
+                @if (Model.CurrentUser.Departments.Count > 0)
+                {
+                    <select id="departmentId" name="departmentId">
+                        <option value="">Any department I can see</option>
+                        @foreach (var department in Model.CurrentUser.Departments.OrderBy(d => d.Value))
+                        {
+                            <option value="@department.Key" selected="@(Model.DepartmentId == department.Key)">
+                                @department.Value
+                            </option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <input type="number" id="departmentId" name="departmentId" min="1"
+                           value="@(Model.DepartmentId?.ToString())" placeholder="Department id" />
+                }
+            </div>
+
+            <div class="field">
+                <label for="categoryId">Category id</label>
+                <input type="number" id="categoryId" name="categoryId" min="1"
+                       value="@(Model.CategoryId?.ToString())" placeholder="Any category" />
+                <p class="field__hint">Numeric: the API exposes no category list.</p>
+            </div>
+
+            <div class="field">
+                <label for="pageSize">Rows</label>
+                <select id="pageSize" name="pageSize">
+                    @foreach (var size in new[] { 25, 50, 100 })
+                    {
+                        <option value="@size" selected="@(Model.PageSize == size)">@size per page</option>
+                    }
+                </select>
+            </div>
+
+            <input type="hidden" name="sortBy" value="@Model.SortBy" />
+            <input type="hidden" name="pageNumber" value="1" />
+            <input type="hidden" name="sortDir" value="@Model.SortDir" />
+
+            <div class="field actionbar">
+                <button type="submit" class="btn btn--primary">Apply</button>
+                <a class="btn btn--ghost" asp-page="/Tickets/Index">Clear</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="panel">
+    @if (Model.Tickets.Count == 0)
+    {
+        <div class="state">
+            <div class="state__title">
+                @(Model.HasAnyFilter ? "No tickets match these filters" : "No tickets to show")
+            </div>
+            <p class="state__body">
+                @if (Model.HasAnyFilter)
+                {
+                    <text>Try widening the filters, or clear them to see everything you have access to.</text>
+                }
+                else
+                {
+                    <text>
+                        Tickets you have access to will appear here. What you can see is decided
+                        by the service, based on your roles and department assignments.
+                    </text>
+                }
+            </p>
+            @if (Model.HasAnyFilter)
+            {
+                <a class="btn btn--ghost" asp-page="/Tickets/Index">Clear filters</a>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="queue">
+                <caption class="visually-hidden">
+                    Tickets visible to you, page @Model.PageNumber of @Model.TotalPages.
+                    Select a ticket number to open it.
+                </caption>
+                <thead>
+                <tr>
+                    <th scope="col" aria-sort="@Model.AriaSort("ticketNumber")">
+                        <a asp-page="/Tickets/Index"
+                           asp-all-route-data="@Model.RouteWith(sortBy: "ticketNumber", sortDir: Model.NextSortDir("ticketNumber"), page: 1)">
+                            Ticket <span aria-hidden="true">@(Model.AriaSort("ticketNumber") == "ascending" ? "↑" : Model.AriaSort("ticketNumber") == "descending" ? "↓" : "")</span>
+                        </a>
+                    </th>
+                    <th scope="col">Summary</th>
+                    <th scope="col" aria-sort="@Model.AriaSort("priority")">
+                        <a asp-page="/Tickets/Index"
+                           asp-all-route-data="@Model.RouteWith(sortBy: "priority", sortDir: Model.NextSortDir("priority"), page: 1)">
+                            Priority <span aria-hidden="true">@(Model.AriaSort("priority") == "ascending" ? "↑" : Model.AriaSort("priority") == "descending" ? "↓" : "")</span>
+                        </a>
+                    </th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Verification</th>
+                    @if (Model.SlaBadgesEnabled)
+                    {
+                        <th scope="col">SLA</th>
+                    }
+                    <th scope="col">Owner</th>
+                    <th scope="col">Department</th>
+                    <th scope="col">Category</th>
+                    <th scope="col" aria-sort="@Model.AriaSort("createdAtUtc")">
+                        <a asp-page="/Tickets/Index"
+                           asp-all-route-data="@Model.RouteWith(sortBy: "createdAtUtc", sortDir: Model.NextSortDir("createdAtUtc"), page: 1)">
+                            Created <span aria-hidden="true">@(Model.AriaSort("createdAtUtc") == "ascending" ? "↑" : Model.AriaSort("createdAtUtc") == "descending" ? "↓" : "")</span>
+                        </a>
+                    </th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var ticket in Model.Tickets)
+                {
+                    var priority = TicketBadges.Priority(ticket.PriorityId);
+                    var isClosed = ticket.TicketStatus == "Closed";
+                    var rail = ticket.PriorityId switch
+                    {
+                        1 => "rail--critical", 2 => "rail--high", 3 => "rail--medium", _ => "rail--low"
+                    };
+                    Model.SlaByTicketId.TryGetValue(ticket.TicketId, out var sla);
+                    var ownerName = Model.OwnerName(ticket.CurrentOwnerEmployeeId);
+
+                    <tr class="@rail @(isClosed ? "is-closed" : null)">
+                        <td class="ticket-no">
+                            @* The row's link is the ticket number: a real anchor,
+                               keyboard-reachable and openable in a new tab, rather
+                               than a click handler on a table row. returnUrl carries
+                               the whole filter state so Back lands exactly here. *@
+                            <a asp-page="/Tickets/Details" asp-route-id="@ticket.TicketId"
+                               asp-route-returnUrl="@returnUrl">@ticket.TicketNumber</a>
+                        </td>
+                        <td class="cell-summary" title="@ticket.RequestSummary">@ticket.RequestSummary</td>
+                        <td><partial name="_Badge" model="priority" /></td>
+                        <td><partial name="_Badge" model="TicketBadges.Status(ticket.TicketStatus)" /></td>
+                        <td><partial name="_Badge" model="TicketBadges.Verification(ticket.VerificationStatus)" /></td>
+                        @if (Model.SlaBadgesEnabled)
+                        {
+                            <td><partial name="_Badge" model="TicketBadges.SlaFor(sla)" /></td>
+                        }
+                        <td class="cell-person">
+                            @if (ticket.CurrentOwnerEmployeeId is null)
+                            {
+                                <span class="cell-muted">Unassigned</span>
+                            }
+                            else if (ownerName is not null)
+                            {
+                                @ownerName
+                            }
+                            else
+                            {
+                                <span class="cell-muted" title="Name not resolvable from this department's roster">Assigned</span>
+                            }
+                        </td>
+                        <td class="cell-nowrap">@Model.CurrentUser.DepartmentLabel(ticket.CurrentDepartmentId)</td>
+                        <td class="cell-num">@ticket.CategoryId</td>
+                        <td class="cell-num cell-nowrap">
+                            <time datetime="@ticket.CreatedAtUtc.ToString("o")">
+                                @ticket.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")
+                            </time>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pager">
+            <span class="pager__info">
+                Showing @(((Model.PageNumber - 1) * Model.PageSize) + 1)–@Math.Min(Model.PageNumber * Model.PageSize, Model.TotalCount)
+                of @Model.TotalCount.ToString("N0")
+            </span>
+            <span class="pager__spacer"></span>
+            <nav class="pager__links" aria-label="Pagination">
+                <a class="pager__link" aria-disabled="@(Model.PageNumber <= 1)"
+                   asp-page="/Tickets/Index" asp-all-route-data="@Model.RouteWith(page: Model.PageNumber - 1)"
+                   rel="prev"><span aria-hidden="true">‹</span><span class="visually-hidden">Previous page</span></a>
+
+                @{
+                    var first = Math.Max(1, Model.PageNumber - 2);
+                    var last = Math.Min(Model.TotalPages, first + 4);
+                    first = Math.Max(1, last - 4);
+                }
+                @for (var pageNumber = first; pageNumber <= last; pageNumber++)
+                {
+                    <a class="pager__link"
+                       aria-current="@(pageNumber == Model.PageNumber ? "page" : null)"
+                       asp-page="/Tickets/Index" asp-all-route-data="@Model.RouteWith(page: pageNumber)">@pageNumber</a>
+                }
+
+                <a class="pager__link" aria-disabled="@(Model.PageNumber >= Model.TotalPages)"
+                   asp-page="/Tickets/Index" asp-all-route-data="@Model.RouteWith(page: Model.PageNumber + 1)"
+                   rel="next"><span aria-hidden="true">›</span><span class="visually-hidden">Next page</span></a>
+            </nav>
+        </div>
+    }
+</div>
+
+@if (Model.SlaBadgesEnabled && Model.Tickets.Count > 0)
+{
+    <p class="field__hint u-mt-3">
+        SLA state is read per ticket from the SLA endpoint, because the queue endpoint does not
+        return it. A ticket whose SLA could not be read shows <em>SLA unknown</em> rather than
+        being assumed healthy.
+    </p>
+}

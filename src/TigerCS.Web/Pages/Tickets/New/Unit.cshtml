@@ -1,0 +1,130 @@
+@page
+@model UnitModel
+@{
+    ViewData["Title"] = "New ticket";
+    ViewData["Crumb"] = "Step 2 — unit";
+}
+
+<div class="content--narrow">
+    <div class="page-head"><h1 class="page-head__title">Find the unit</h1></div>
+
+    <partial name="_WizardSteps" model="2" />
+
+    <div class="summary-strip">
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Intake record</div>
+            <div class="summary-strip__value">#@Model.State!.IntakeRecordId</div>
+        </div>
+        <div class="summary-strip__item">
+            <div class="summary-strip__label">Unit number given</div>
+            <div class="summary-strip__value">@Model.State.RawUnitNumberEntered</div>
+        </div>
+    </div>
+
+    @if (Model.CrmUnavailable)
+    {
+        @*
+            role="status", not role="alert": this is an expected, handled
+            condition with a clear next step, per wireframe §4's accessibility
+            note. Presenting it as an alarm would be wrong.
+        *@
+        <div class="notice notice--warn" role="status">
+            <span class="notice__glyph" aria-hidden="true">⚠</span>
+            <div class="notice__body">
+                <div class="notice__title">Tiger CRM is unavailable</div>
+                <p class="u-mt-1 u-mb-2">
+                    The unit cannot be verified right now. You can still proceed without
+                    verification: a <strong>Critical</strong> or <strong>High</strong> request
+                    is raised immediately as a provisional ticket, and a
+                    <strong>Medium</strong> or <strong>Low</strong> one stays recorded as an
+                    interaction and is queued until CRM can be reached.
+                </p>
+                <form method="post" asp-page-handler="Fallback">
+                    <button type="submit" class="btn btn--gold">Continue without verification</button>
+                </form>
+            </div>
+        </div>
+    }
+
+    @if (Model.Problem is not null)
+    {
+        <div class="notice notice--error" role="alert">
+            <span class="notice__glyph" aria-hidden="true">⚠</span>
+            <div class="notice__body">
+                <div class="notice__title">@(Model.Problem.Title ?? "The search failed")</div>
+                <div>@Model.Problem.UserMessage()</div>
+            </div>
+        </div>
+    }
+
+    <div class="panel u-mb-4">
+        <div class="panel__body">
+            <form method="get" class="filters">
+                <div class="field">
+                    <label for="unitNumber">Unit number</label>
+                    <input type="text" id="unitNumber" name="unitNumber" value="@Model.UnitNumber" required />
+                </div>
+                <div class="field">
+                    <label for="propertyName">Property (optional)</label>
+                    <input type="text" id="propertyName" name="propertyName" value="@Model.PropertyName" />
+                </div>
+                <div class="field actionbar">
+                    <button type="submit" class="btn btn--primary">Search CRM</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    @if (Model.HasSearched && !Model.CrmUnavailable && Model.Problem is null)
+    {
+        <div class="panel">
+            <div class="panel__head">
+                <span class="panel__title">Matching units</span>
+                <span class="page-head__count">@(Model.Results?.Count ?? 0)</span>
+            </div>
+            <div class="panel__body">
+                @if (Model.Results is null || Model.Results.Count == 0)
+                {
+                    <div class="state state--compact">
+                        <div class="state__title">No matching units found</div>
+                        <p class="state__body">Check the number with the caller and try again.</p>
+                    </div>
+                }
+                else
+                {
+                    <ul class="pick-list">
+                        @foreach (var unit in Model.Results)
+                        {
+                            var label = string.Join(" · ", new[]
+                            {
+                                unit.UnitNumber, unit.PropertyName, unit.TowerName, unit.UnitType
+                            }.Where(part => !string.IsNullOrWhiteSpace(part)));
+
+                            <li>
+                                <form method="post" asp-page-handler="Select">
+                                    <input type="hidden" name="unitReferenceId" value="@unit.UnitReferenceId" />
+                                    <input type="hidden" name="crmUnitId" value="@unit.CrmUnitId" />
+                                    <input type="hidden" name="unitLabel" value="@label" />
+                                    <button type="submit" class="pick" data-submit-once>
+                                        <span class="pick__main">
+                                            <span class="pick__title">Unit @unit.UnitNumber</span>
+                                            <span class="pick__sub">
+                                                @(string.IsNullOrWhiteSpace(unit.PropertyName) ? "Property not recorded" : unit.PropertyName)
+                                                @if (!string.IsNullOrWhiteSpace(unit.TowerName)) { <text> · @unit.TowerName</text> }
+                                                · @unit.ContactCount contact@(unit.ContactCount == 1 ? "" : "s")
+                                            </span>
+                                        </span>
+                                        <span class="pick__go" aria-hidden="true">›</span>
+                                        <span class="visually-hidden">Select unit @unit.UnitNumber and continue</span>
+                                    </button>
+                                </form>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    }
+
+    <p class="u-mt-4"><a asp-page="/Tickets/Index">Cancel and return to the queue</a></p>
+</div>

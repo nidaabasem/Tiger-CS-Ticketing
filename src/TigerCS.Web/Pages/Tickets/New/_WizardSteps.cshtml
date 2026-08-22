@@ -1,0 +1,22 @@
+@model int
+@*
+    Progress through the wizard. Current step is passed in as 1-4.
+    aria-current marks the active step for assistive technology; the numbers
+    are decorative and the label carries the meaning.
+*@
+@{
+    var steps = new[] { "Intake", "Unit", "Contact", "Ticket" };
+}
+<ol class="stepper" aria-label="New ticket progress">
+    @for (var index = 0; index < steps.Length; index++)
+    {
+        var number = index + 1;
+        var state = number < Model ? "step--done" : number == Model ? "step--current" : null;
+        <li class="step @state" aria-current="@(number == Model ? "step" : null)">
+            <span class="step__no" aria-hidden="true">@(number < Model ? "✓" : number.ToString())</span>
+            <span class="step__label">
+                <span class="visually-hidden">Step @number of @steps.Length: </span>@steps[index]
+            </span>
+        </li>
+    }
+</ol>

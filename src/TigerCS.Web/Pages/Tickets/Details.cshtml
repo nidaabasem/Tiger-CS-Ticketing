@@ -1,0 +1,578 @@
+@page "{id:long}"
+@model DetailsModel
+@{
+    ViewData["Title"] = Model.Ticket is null ? "Ticket" : Model.Ticket.TicketNumber;
+    ViewData["Crumb"] = "Ticket queue / detail";
+}
+
+@if (Model.LoadProblem is not null)
+{
+    var notFound = Model.LoadProblem.StatusCode == System.Net.HttpStatusCode.NotFound;
+    var forbidden = Model.LoadProblem.StatusCode == System.Net.HttpStatusCode.Forbidden;
+    <div class="panel">
+        <div class="state" role="alert">
+            <div class="state__title">
+                @(notFound ? "Ticket not found, or you don't have access"
+                    : forbidden ? "You don't have access to this ticket"
+                    : "This ticket could not be loaded")
+            </div>
+            <p class="state__body">
+                @if (notFound || forbidden)
+                {
+                    <text>
+                        The service decides which tickets you can see from your roles and
+                        department assignments. If you believe you should have access,
+                        ask your supervisor.
+                    </text>
+                }
+                else
+                {
+                    @Model.LoadProblem.UserMessage()
+                }
+            </p>
+            <a class="btn btn--primary" href="@Model.BackUrl">Back to the queue</a>
+        </div>
+    </div>
+    return;
+}
+
+@{
+    var ticket = Model.Ticket!;
+    var user = Model.CurrentUser;
+    var rowVersion = ticket.RowVersion;
+    var canAssign = TicketActionPolicy.CanAssign(user, ticket);
+    var canTransfer = TicketActionPolicy.CanTransfer(user, ticket);
+    var canChangeStatus = TicketActionPolicy.CanChangeStatus(user, ticket);
+    var canResolve = TicketActionPolicy.CanResolve(user, ticket);
+    var canClose = TicketActionPolicy.CanClose(user, ticket);
+    var canReconcile = TicketActionPolicy.CanReconcile(user, ticket);
+    var canNote = TicketActionPolicy.CanAddNote(ticket);
+    var escalationBadge = TicketBadges.Escalation(ticket.EscalationLevel);
+}
+
+<p class="u-mb-2">
+    <a href="@Model.BackUrl">‹ Back to the queue</a>
+</p>
+
+@if (Model.ActionSuccess is not null)
+{
+    <div class="notice notice--success" role="status">
+        <span class="notice__glyph" aria-hidden="true">✓</span>
+        <div class="notice__body">@Model.ActionSuccess</div>
+    </div>
+}
+
+@if (Model.ActionProblem is not null)
+{
+    var conflict = Model.ActionProblem.StatusCode == System.Net.HttpStatusCode.Conflict;
+    <div class="notice notice--error" role="alert">
+        <span class="notice__glyph" aria-hidden="true">⚠</span>
+        <div class="notice__body">
+            <div class="notice__title">
+                @(Model.ActionProblem.Title ?? "That action could not be completed")
+            </div>
+            <div>@Model.ActionProblem.UserMessage()</div>
+            @if (conflict)
+            {
+                <div class="u-mt-1">
+                    The ticket below has been reloaded with its current values — check them and try again.
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (Model.IsClosed)
+{
+    @* Closed is terminal server-side: assignment, transfer, status change,
+       resolution and closing are all refused with 422. The screen says so
+       once, prominently, and every action control is genuinely absent rather
+       than present-and-failing. *@
+    <div class="notice notice--info" role="status">
+        <span class="notice__glyph" aria-hidden="true">🔒</span>
+        <div class="notice__body">
+            <div class="notice__title">This ticket is closed and read-only</div>
+            <div>No further changes can be made to it — including notes.</div>
+        </div>
+    </div>
+}
+
+@if (Model.IsPendingCrm)
+{
+    <div class="notice notice--warn" role="status">
+        <span class="notice__glyph" aria-hidden="true">◑</span>
+        <div class="notice__body">
+            <div class="notice__title">Provisional ticket — pending CRM verification</div>
+            <div>
+                This ticket was raised while Tiger CRM was unreachable, so the caller's unit and
+                contact have not been confirmed. Treat the customer details as unverified until it
+                is reconciled.
+            </div>
+        </div>
+    </div>
+}
+
+<div class="detail">
+    <div class="detail__head">
+        <div class="ticket-head">
+            <div class="ticket-head__row">
+                <div class="u-grow">
+                    <div class="ticket-head__no">@ticket.TicketNumber</div>
+                    <h1 class="ticket-head__summary">@ticket.RequestSummary</h1>
+                    <div class="ticket-head__meta">
+                        <partial name="_Badge" model="TicketBadges.Priority(ticket.PriorityId)" />
+                        <partial name="_Badge" model="TicketBadges.Status(ticket.TicketStatus)" />
+                        <partial name="_Badge" model="TicketBadges.Verification(ticket.VerificationStatus)" />
+                        @if (escalationBadge is not null)
+                        {
+                            <partial name="_Badge" model="escalationBadge.Value" />
+                        }
+                        @if (ticket.ReopenCount > 0)
+                        {
+                            <span class="badge badge--neutral">Reopened @ticket.ReopenCount×</span>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            @if (!Model.IsClosed && (canAssign || canTransfer || canChangeStatus || canResolve || canClose || canReconcile))
+            {
+                <div class="actionbar">
+                    @if (canAssign)
+                    {
+                        <button type="button" class="btn btn--ghost" data-dialog-open="dlg-assign">Assign</button>
+                    }
+                    @if (canTransfer)
+                    {
+                        <button type="button" class="btn btn--ghost" data-dialog-open="dlg-transfer">Transfer</button>
+                    }
+                    @if (canChangeStatus)
+                    {
+                        <button type="button" class="btn btn--ghost" data-dialog-open="dlg-status">Change status</button>
+                    }
+                    @if (canResolve)
+                    {
+                        <button type="button" class="btn btn--primary" data-dialog-open="dlg-resolve">Resolve</button>
+                    }
+                    @if (canClose)
+                    {
+                        <button type="button" class="btn btn--primary" data-dialog-open="dlg-close">Close</button>
+                    }
+                    @if (canReconcile)
+                    {
+                        <button type="button" class="btn btn--gold" data-dialog-open="dlg-reconcile">Reconcile with CRM</button>
+                    }
+                </div>
+            }
+        </div>
+
+    </div>
+
+    <div class="detail__main">
+        <div class="panel">
+            <div class="panel__head"><span class="panel__title">Activity</span></div>
+            <div class="panel__body">
+                @*
+                    Composed from notes and escalations, which are the only
+                    history endpoints that exist. MVP-API-Contracts.md §3.13
+                    specifies a unified GET /api/tickets/{id}/timeline covering
+                    status history, assignments and resolutions as well; it is
+                    not implemented, so those events are genuinely absent rather
+                    than reconstructed from guesswork.
+                *@
+                @{
+                    var events = Model.Notes
+                        .Select(n => (When: n.CreatedAtUtc, Kind: "note", Who: Model.PersonName(n.AuthorEmployeeId), Text: n.NoteText, Level: (byte)0))
+                        .Concat(Model.Escalations.Select(e => (
+                            When: e.RaisedAtUtc,
+                            Kind: "escalation",
+                            Who: "System",
+                            Text: $"Escalated to level {e.Level} ({e.TriggerType})."
+                                  + (string.IsNullOrWhiteSpace(e.NotifiedRoles) ? "" : $" Notified: {e.NotifiedRoles}."),
+                            Level: e.Level)))
+                        .OrderByDescending(e => e.When)
+                        .ToList();
+                }
+
+                @if (events.Count == 0)
+                {
+                    <div class="state state--compact">
+                        <div class="state__title">Nothing recorded yet</div>
+                        <p class="state__body">Notes and escalations on this ticket will appear here.</p>
+                    </div>
+                }
+                else
+                {
+                    <ul class="activity">
+                        @foreach (var item in events)
+                        {
+                            <li class="activity__item">
+                                <div class="activity__dot @(item.Kind == "escalation" ? "activity__dot--escalation" : null)"
+                                     aria-hidden="true">
+                                    @(item.Kind == "escalation"
+                                        ? "↑"
+                                        : string.Concat(item.Who.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => char.ToUpperInvariant(p[0]))))
+                                </div>
+                                <div>
+                                    <div class="activity__head">
+                                        <span class="activity__who">@item.Who</span>
+                                        @if (item.Kind == "escalation")
+                                        {
+                                            <span class="badge badge--warn">Escalation</span>
+                                        }
+                                        <time class="activity__when" datetime="@item.When.ToString("o")">
+                                            @item.When.ToString("yyyy-MM-dd HH:mm") UTC
+                                        </time>
+                                    </div>
+                                    <div class="activity__text">@item.Text</div>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            @if (canNote)
+            {
+                <div class="panel__body">
+                    <form method="post" asp-page-handler="AddNote">
+                        <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                        <div class="field">
+                            <label for="noteText">Add a note</label>
+                            <textarea id="noteText" name="noteText" rows="3" required
+                                      placeholder="Record what happened, in your own words."></textarea>
+                            <p class="field__hint">
+                                Notes are visible to staff who can see this ticket. The API records a single
+                                note type — there is no separate internal-only note in this contract.
+                            </p>
+                        </div>
+                        <button type="submit" class="btn btn--primary" data-submit-once data-busy-label="Adding…">
+                            Add note
+                        </button>
+                    </form>
+                </div>
+            }
+        </div>
+    </div>
+
+    <aside class="detail__aside">
+        <partial name="_SlaPanel" model="Model.Sla" />
+
+        <div class="panel">
+            <div class="panel__head"><span class="panel__title">Ticket details</span></div>
+            <div class="panel__body">
+                <dl class="deflist">
+                    <dt>Status</dt>
+                    <dd><partial name="_Badge" model="TicketBadges.Status(ticket.TicketStatus)" /></dd>
+
+                    <dt>Priority</dt>
+                    <dd><partial name="_Badge" model="TicketBadges.Priority(ticket.PriorityId)" /></dd>
+
+                    <dt>Category</dt>
+                    <dd class="cell-num">@ticket.CategoryId</dd>
+
+                    <dt>Department</dt>
+                    <dd>@user.DepartmentLabel(ticket.CurrentDepartmentId)</dd>
+
+                    <dt>Raised in</dt>
+                    <dd>@user.DepartmentLabel(ticket.OriginatingDepartmentId)</dd>
+
+                    <dt>Owner</dt>
+                    <dd>
+                        @if (ticket.CurrentOwnerEmployeeId is Guid owner)
+                        {
+                            @Model.PersonName(owner)
+                        }
+                        else
+                        {
+                            <span class="cell-muted">Unassigned</span>
+                        }
+                    </dd>
+
+                    <dt>Created</dt>
+                    <dd>
+                        <time datetime="@ticket.CreatedAtUtc.ToString("o")">
+                            @ticket.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC
+                        </time>
+                    </dd>
+
+                    @if (TicketBadges.ResolutionOutcomeName(ticket.ResolutionOutcome) is string outcome)
+                    {
+                        <dt>Resolution</dt>
+                        <dd>@outcome</dd>
+                    }
+
+                    @if (ticket.DuplicateOfTicketId is long duplicateOf)
+                    {
+                        <dt>Duplicate of</dt>
+                        <dd><a asp-page="/Tickets/Details" asp-route-id="@duplicateOf">Ticket #@duplicateOf</a></dd>
+                    }
+                </dl>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel__head"><span class="panel__title">Customer &amp; unit</span></div>
+            <div class="panel__body">
+                @*
+                    MVP-API-Contracts.md §3.3 specifies a nested RequesterSnapshot
+                    on the detail response. The shipped TicketDetailDto carries
+                    only these two reference ids, and no endpoint resolves them
+                    (GET /api/crm/units/{crmUnitId} takes the CRM id, which is a
+                    different identifier). So the references are shown as they
+                    are, and the gap is stated rather than filled with a
+                    plausible-looking name.
+                *@
+                @if (ticket.UnitReferenceId is null && ticket.ContactReferenceId is null)
+                {
+                    <p class="cell-muted u-m-0">
+                        No verified unit or contact is recorded on this ticket.
+                        @if (Model.IsPendingCrm)
+                        {
+                            <text>It is provisional and awaiting CRM reconciliation.</text>
+                        }
+                    </p>
+                }
+                else
+                {
+                    <dl class="deflist">
+                        <dt>Unit ref.</dt>
+                        <dd class="cell-num">@(ticket.UnitReferenceId?.ToString() ?? "—")</dd>
+                        <dt>Contact ref.</dt>
+                        <dd class="cell-num">@(ticket.ContactReferenceId?.ToString() ?? "—")</dd>
+                    </dl>
+                    <p class="field__hint u-mt-2">
+                        The verified unit and contact are held server-side. The ticket API does not
+                        expose the snapshot, so only the references can be shown here.
+                    </p>
+                }
+            </div>
+        </div>
+    </aside>
+</div>
+
+@* --------------------------------------------------------------- dialogs *@
+@if (!Model.IsClosed)
+{
+    @if (canAssign)
+    {
+        <dialog class="modal" id="dlg-assign" aria-labelledby="dlg-assign-title">
+            <form method="post" asp-page-handler="Assign">
+                <input type="hidden" name="rowVersion" value="@rowVersion" />
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <div class="modal__head"><h2 class="modal__title" id="dlg-assign-title">Assign this ticket</h2></div>
+                <div class="modal__body">
+                    @if (Model.AssignableMembers.Count == 0)
+                    {
+                        <p>
+                            No active staff could be listed for this ticket's department. The service
+                            only accepts an assignee who is an active member of it.
+                        </p>
+                    }
+                    else
+                    {
+                        <div class="field">
+                            <label for="assignedEmployeeId">Assign to</label>
+                            <select id="assignedEmployeeId" name="assignedEmployeeId" required>
+                                @foreach (var member in Model.AssignableMembers)
+                                {
+                                    <option value="@member.EmployeeId"
+                                            selected="@(ticket.CurrentOwnerEmployeeId == member.EmployeeId)">
+                                        @member.DisplayName
+                                    </option>
+                                }
+                            </select>
+                            <p class="field__hint">Members of this ticket's current department only.</p>
+                        </div>
+                        @if (ticket.CurrentOwnerEmployeeId is Guid current)
+                        {
+                            <div class="notice notice--warn notice--flush">
+                                <span class="notice__glyph" aria-hidden="true">⚠</span>
+                                <div class="notice__body">
+                                    This will reassign the ticket away from @Model.PersonName(current).
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="modal__foot">
+                    <button type="button" class="btn btn--ghost" data-dialog-close>Cancel</button>
+                    <button type="submit" class="btn btn--primary" data-submit-once
+                            disabled="@(Model.AssignableMembers.Count == 0)">Assign</button>
+                </div>
+            </form>
+        </dialog>
+    }
+
+    @if (canTransfer)
+    {
+        <dialog class="modal" id="dlg-transfer" aria-labelledby="dlg-transfer-title">
+            <form method="post" asp-page-handler="Transfer">
+                <input type="hidden" name="rowVersion" value="@rowVersion" />
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <div class="modal__head"><h2 class="modal__title" id="dlg-transfer-title">Transfer to another department</h2></div>
+                <div class="modal__body">
+                    <div class="notice notice--warn">
+                        <span class="notice__glyph" aria-hidden="true">⚠</span>
+                        <div class="notice__body">
+                            Transferring clears the current assignment. The receiving department
+                            will need to claim the ticket.
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="targetDepartmentId">Target department</label>
+                        @if (user.Departments.Count > 0)
+                        {
+                            <select id="targetDepartmentId" name="targetDepartmentId" required>
+                                @foreach (var department in user.Departments
+                                    .Where(d => d.Key != ticket.CurrentDepartmentId).OrderBy(d => d.Value))
+                                {
+                                    <option value="@department.Key">@department.Value</option>
+                                }
+                            </select>
+                            <p class="field__hint">
+                                Only departments you belong to can be listed by name — the API exposes
+                                no department directory. Use the id box below for any other department.
+                            </p>
+                            <input type="number" name="targetDepartmentId" min="1" placeholder="…or a department id"
+                                   class="u-mt-1" />
+                        }
+                        else
+                        {
+                            <input type="number" id="targetDepartmentId" name="targetDepartmentId" min="1" required
+                                   placeholder="Department id" />
+                            <p class="field__hint">Numeric: the API exposes no department directory.</p>
+                        }
+                    </div>
+                    <div class="field">
+                        <label for="transferReason">Reason</label>
+                        <textarea id="transferReason" name="reason" rows="3" required
+                                  placeholder="Why is this being transferred?"></textarea>
+                    </div>
+                </div>
+                <div class="modal__foot">
+                    <button type="button" class="btn btn--ghost" data-dialog-close>Cancel</button>
+                    <button type="submit" class="btn btn--primary" data-submit-once>Transfer</button>
+                </div>
+            </form>
+        </dialog>
+    }
+
+    @if (canChangeStatus)
+    {
+        <dialog class="modal" id="dlg-status" aria-labelledby="dlg-status-title">
+            <form method="post" asp-page-handler="ChangeStatus">
+                <input type="hidden" name="rowVersion" value="@rowVersion" />
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <div class="modal__head"><h2 class="modal__title" id="dlg-status-title">Change status</h2></div>
+                <div class="modal__body">
+                    <div class="field">
+                        <label for="newStatus">New status</label>
+                        <select id="newStatus" name="newStatus" required>
+                            @foreach (var (value, name) in TicketBadges.WorkingStatuses)
+                            {
+                                <option value="@value" selected="@(ticket.TicketStatus == value)">@name</option>
+                            }
+                        </select>
+                        <p class="field__hint">
+                            Resolved and Closed are reached through their own actions, not from here.
+                            The service rejects a transition that isn't valid from the current status.
+                        </p>
+                    </div>
+                </div>
+                <div class="modal__foot">
+                    <button type="button" class="btn btn--ghost" data-dialog-close>Cancel</button>
+                    <button type="submit" class="btn btn--primary" data-submit-once>Update status</button>
+                </div>
+            </form>
+        </dialog>
+    }
+
+    @if (canResolve)
+    {
+        <dialog class="modal" id="dlg-resolve" aria-labelledby="dlg-resolve-title">
+            <form method="post" asp-page-handler="Resolve">
+                <input type="hidden" name="rowVersion" value="@rowVersion" />
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <div class="modal__head"><h2 class="modal__title" id="dlg-resolve-title">Resolve this ticket</h2></div>
+                <div class="modal__body">
+                    <div class="field">
+                        <label for="resolutionOutcome">Outcome</label>
+                        <select id="resolutionOutcome" name="resolutionOutcome" required data-toggle-duplicate>
+                            @foreach (var (value, name) in TicketBadges.ResolutionOutcomes)
+                            {
+                                <option value="@value">@name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field" data-duplicate-field hidden>
+                        <label for="duplicateOfTicketId">Duplicate of ticket id</label>
+                        <input type="number" id="duplicateOfTicketId" name="duplicateOfTicketId" min="1" />
+                        <p class="field__hint">Required when the outcome is Duplicate. The target must not itself be a duplicate.</p>
+                    </div>
+                    <div class="field">
+                        <label for="resolutionNote">Resolution note</label>
+                        <textarea id="resolutionNote" name="resolutionNote" rows="3" required
+                                  placeholder="How was this resolved?"></textarea>
+                    </div>
+                </div>
+                <div class="modal__foot">
+                    <button type="button" class="btn btn--ghost" data-dialog-close>Cancel</button>
+                    <button type="submit" class="btn btn--primary" data-submit-once>Resolve</button>
+                </div>
+            </form>
+        </dialog>
+    }
+
+    @if (canClose)
+    {
+        <dialog class="modal" id="dlg-close" aria-labelledby="dlg-close-title">
+            <form method="post" asp-page-handler="Close">
+                <input type="hidden" name="rowVersion" value="@rowVersion" />
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <div class="modal__head"><h2 class="modal__title" id="dlg-close-title">Close this ticket?</h2></div>
+                <div class="modal__body">
+                    <p class="u-m-0">
+                        Closing is final. A closed ticket accepts no further assignment, transfer,
+                        status change, resolution or notes.
+                    </p>
+                </div>
+                <div class="modal__foot">
+                    <button type="button" class="btn btn--ghost" data-dialog-close>Cancel</button>
+                    <button type="submit" class="btn btn--danger" data-submit-once>Close ticket</button>
+                </div>
+            </form>
+        </dialog>
+    }
+
+    @if (canReconcile)
+    {
+        <dialog class="modal" id="dlg-reconcile" aria-labelledby="dlg-reconcile-title">
+            <form method="post" asp-page-handler="Reconcile">
+                <input type="hidden" name="rowVersion" value="@rowVersion" />
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <div class="modal__head"><h2 class="modal__title" id="dlg-reconcile-title">Reconcile with CRM</h2></div>
+                <div class="modal__body">
+                    <p>
+                        Verify the caller's unit and contact through the
+                        <a asp-page="/Tickets/New/Intake">new-ticket verification flow</a> first, then paste
+                        the confirmed session id here.
+                    </p>
+                    <div class="field">
+                        <label for="verificationSessionId">Verification session id</label>
+                        <input type="text" id="verificationSessionId" name="verificationSessionId" required
+                               placeholder="00000000-0000-0000-0000-000000000000" />
+                        <p class="field__hint">
+                            The session must be yours, confirmed, unexpired, unused, and must match this
+                            ticket's originating unit number.
+                        </p>
+                    </div>
+                </div>
+                <div class="modal__foot">
+                    <button type="button" class="btn btn--ghost" data-dialog-close>Cancel</button>
+                    <button type="submit" class="btn btn--gold" data-submit-once>Reconcile</button>
+                </div>
+            </form>
+        </dialog>
+    }
+}

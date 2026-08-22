@@ -1,0 +1,109 @@
+@inject UserContextAccessor UserContextAccessor
+@{
+    var user = UserContextAccessor.Current;
+    var currentPage = ViewContext.RouteData.Values["page"] as string ?? string.Empty;
+    bool IsActive(string page) => currentPage.StartsWith(page, StringComparison.OrdinalIgnoreCase);
+    var initials = string.Concat(
+        user.DisplayName
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Take(2)
+            .Select(part => char.ToUpperInvariant(part[0])));
+}
+<!DOCTYPE html>
+@* lang is fixed to English for this increment; the attribute is set from one
+   place so a future localisation changes it here rather than in every view. *@
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] · Tiger Group Service Desk</title>
+    <link rel="stylesheet" href="~/css/tiger.css" asp-append-version="true" />
+    <link rel="icon" href="~/img/favicon.svg" type="image/svg+xml" />
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<div class="shell">
+    <nav class="shell__nav" aria-label="Primary">
+        <div class="brand">
+            <div class="brand__mark">
+                <partial name="_BrandMark" />
+                <span class="brand__name">Tiger Group</span>
+            </div>
+            <div class="brand__sub">Service Desk</div>
+        </div>
+
+        <div class="nav-primary">
+            @* Offered destinations are filtered by permission. This is the
+               shell being useful, not the security boundary: the API decides
+               again on every call, and a user who navigates directly to a page
+               they may not use still sees that page's unauthorized state. *@
+            @if (NavigationPolicy.CanStartNewTicket(user))
+            {
+                <a class="nav-cta" asp-page="/Tickets/New/Intake">+ New ticket</a>
+            }
+
+            <div class="nav-group__label">Tickets</div>
+            <a class="nav-link @(IsActive("/Tickets/Index") ? "nav-link--active" : null)"
+               asp-page="/Tickets/Index"
+               aria-current="@(IsActive("/Tickets/Index") ? "page" : null)">
+                <span class="nav-link__icon" aria-hidden="true">▤</span>
+                <span>Ticket queue</span>
+            </a>
+            <a class="nav-link" asp-page="/Tickets/Index" asp-route-ownerEmployeeId="@user.EmployeeId">
+                <span class="nav-link__icon" aria-hidden="true">◉</span>
+                <span>My tickets</span>
+            </a>
+            <a class="nav-link" asp-page="/Tickets/Index" asp-route-verificationStatus="PendingCrmVerification">
+                <span class="nav-link__icon" aria-hidden="true">◑</span>
+                <span>Pending CRM</span>
+            </a>
+
+            @* Deliberately no "Breached SLA" destination. GET /api/tickets has
+               no slaState filter and TicketSummaryDto carries no SLA field, so
+               such a link could only be a client-side filter over one page -
+               which would silently under-report breaches on every other page.
+               A missing filter is honest; a wrong one is not. *@
+        </div>
+
+        <div class="nav-footer">
+            <form method="post" asp-page="/Account/Logout">
+                <button type="submit" class="nav-link nav-link--button">
+                    <span class="nav-link__icon" aria-hidden="true">⇥</span>
+                    <span>Sign out</span>
+                </button>
+            </form>
+        </div>
+    </nav>
+
+    <div class="shell__main">
+        <header class="commandbar">
+            <span class="commandbar__title">@ViewData["Title"]</span>
+            @if (ViewData["Crumb"] is string crumb)
+            {
+                <span class="commandbar__crumb">@crumb</span>
+            }
+            <span class="commandbar__spacer"></span>
+
+            <div class="identity">
+                <div class="identity__text">
+                    <div class="identity__name">@user.DisplayName</div>
+                    <div class="identity__role" title="@string.Join(", ", user.Roles)">@user.PrimaryRole</div>
+                </div>
+                <div class="identity__avatar" aria-hidden="true">@initials</div>
+                <span class="visually-hidden">
+                    Signed in as @user.DisplayName, roles: @string.Join(", ", user.Roles).
+                </span>
+            </div>
+        </header>
+
+        <main class="content" id="main" tabindex="-1">
+            @RenderBody()
+        </main>
+    </div>
+</div>
+
+<script src="~/js/tiger.js" asp-append-version="true"></script>
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

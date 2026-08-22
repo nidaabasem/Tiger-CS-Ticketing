@@ -1,0 +1,147 @@
+@model TicketSlaSummaryResponseDto?
+@*
+    The SLA panel (MVP-API-Contracts.md §5.1).
+
+    Per ADR-0016 this shows a due timestamp and a coarse state, never a live
+    ticking countdown: the approved design is state/deadline-change events
+    only, and a per-second timer would also imply a precision the server does
+    not promise.
+*@
+@{
+    var breached = Model is not null && (Model.FirstResponseBreached || Model.ResolutionBreached);
+    var figureModifier = Model is null ? "none"
+        : breached ? "breached"
+        : Model.SlaState switch { "Met" => "ok", "Running" => "warn", _ => "none" };
+    var headline = Model is null ? "Unknown"
+        : breached ? "Breached"
+        : Model.SlaState switch
+        {
+            "Running" => "Running",
+            "Met" => "Met",
+            "Paused" => "Paused",
+            "NotApplicable" => "None",
+            _ => Model.SlaState
+        };
+}
+<div class="panel">
+    <div class="panel__head"><span class="panel__title">Service level</span></div>
+    <div class="panel__body">
+        @if (Model is null)
+        {
+            <p class="cell-muted u-m-0">
+                The SLA panel could not be loaded for this ticket. It is not being reported as
+                healthy — the state is genuinely unknown here.
+            </p>
+        }
+        else
+        {
+            <div class="sla-figure sla-figure--@figureModifier">
+                <div class="sla-figure__state">@headline</div>
+                <div class="sla-figure__label">SLA state</div>
+                @{
+                    // The fill is one of two fixed widths rather than a computed
+                    // one: a computed width would have to be an inline style,
+                    // which this application's Content-Security-Policy blocks.
+                    var fillWidth = breached || Model.SlaState == "Met" ? "meter__fill--full" : null;
+                    var fillTone = breached ? "meter__fill--breached"
+                        : figureModifier == "warn" ? "meter__fill--warn" : null;
+                }
+                <div class="meter" aria-hidden="true">
+                    <div class="meter__fill @fillTone @fillWidth"></div>
+                </div>
+            </div>
+
+            @if (breached)
+            {
+                <div class="notice notice--error notice--tight" role="status">
+                    <span class="notice__glyph" aria-hidden="true">!</span>
+                    <div class="notice__body">
+                        <div class="notice__title">SLA breached</div>
+                        <div>
+                            @if (Model.FirstResponseBreached && Model.ResolutionBreached)
+                            {
+                                <text>Both the first-response and resolution deadlines were missed.</text>
+                            }
+                            else if (Model.FirstResponseBreached)
+                            {
+                                <text>The first-response deadline was missed.</text>
+                            }
+                            else
+                            {
+                                <text>The resolution deadline was missed.</text>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <dl class="deflist u-mt-3">
+                <dt>First response</dt>
+                <dd>
+                    @if (Model.FirstResponseDueAtUtc is DateTime firstDue)
+                    {
+                        <time datetime="@firstDue.ToString("o")">@firstDue.ToString("yyyy-MM-dd HH:mm") UTC</time>
+                        @if (Model.FirstResponseBreached)
+                        {
+                            <text> </text><span class="badge badge--critical"><span class="badge__glyph" aria-hidden="true">!</span><span>Missed</span></span>
+                        }
+                    }
+                    else
+                    {
+                        <span class="cell-muted">No clock — awaiting CRM verification</span>
+                    }
+                </dd>
+
+                <dt>Responded</dt>
+                <dd>
+                    @if (Model.FirstHumanResponseAtUtc is DateTime responded)
+                    {
+                        <time datetime="@responded.ToString("o")">@responded.ToString("yyyy-MM-dd HH:mm") UTC</time>
+                    }
+                    else
+                    {
+                        <span class="cell-muted">Not yet</span>
+                    }
+                </dd>
+
+                <dt>Resolution</dt>
+                <dd>
+                    @if (Model.ResolutionDueAtUtc is DateTime resolutionDue)
+                    {
+                        <time datetime="@resolutionDue.ToString("o")">@resolutionDue.ToString("yyyy-MM-dd HH:mm") UTC</time>
+                        @if (Model.ResolutionBreached)
+                        {
+                            <text> </text><span class="badge badge--critical"><span class="badge__glyph" aria-hidden="true">!</span><span>Missed</span></span>
+                        }
+                    }
+                    else
+                    {
+                        <span class="cell-muted">No clock — awaiting CRM verification</span>
+                    }
+                </dd>
+
+                <dt>Escalation</dt>
+                <dd>
+                    @{ var escalation = TicketBadges.Escalation(Model.EscalationLevel); }
+                    @if (escalation is not null)
+                    {
+                        <partial name="_Badge" model="escalation.Value" />
+                    }
+                    else
+                    {
+                        <span class="cell-muted">None</span>
+                    }
+                </dd>
+            </dl>
+
+            @* SLA pause/resume is not built in this pilot (backlog §0.2). The
+               API returns these three fields at their pause-free values, so
+               saying "never paused" would overstate what is known: the honest
+               statement is that the mechanism does not exist yet. *@
+            <p class="field__hint u-mt-3">
+                SLA pause and resume are not part of this pilot, so no pause time is counted
+                against these deadlines.
+            </p>
+        }
+    </div>
+</div>

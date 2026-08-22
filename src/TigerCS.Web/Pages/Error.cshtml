@@ -1,0 +1,31 @@
+@page
+@model ErrorModel
+@{
+    ViewData["Title"] = Model.Title;
+    Layout = User.Identity?.IsAuthenticated == true ? "_Layout" : "_LoginLayout";
+}
+
+@* Signed out, the error stands alone on the dark ground the login page uses;
+   signed in, it sits inside the shell. *@
+<div class="@(User.Identity?.IsAuthenticated == true ? null : "login__form error-standalone")">
+    <div class="panel content--narrow panel--centered">
+        <div class="state" role="alert">
+            <div class="badge badge--neutral badge--lg">Error @Model.HttpStatus</div>
+            <div class="state__title u-mt-2">@Model.Title</div>
+            <p class="state__body">@Model.Message</p>
+            <div class="actionbar actionbar--center">
+                @if (User.Identity?.IsAuthenticated == true)
+                {
+                    <a class="btn btn--primary" asp-page="/Tickets/Index">Back to the queue</a>
+                }
+                else
+                {
+                    <a class="btn btn--primary" asp-page="/Account/Login">Go to sign in</a>
+                }
+            </div>
+            <p class="field__hint u-mt-5">
+                Reference <code>@Model.CorrelationId</code>
+            </p>
+        </div>
+    </div>
+</div>

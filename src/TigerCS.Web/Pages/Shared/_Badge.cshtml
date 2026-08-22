@@ -1,0 +1,20 @@
+@model BadgeSpec
+@*
+    The single renderer for every status signal in the application.
+
+    Colour is never the only carrier of meaning: the label is always present,
+    a glyph is added for the states that must stand out in greyscale, and
+    ScreenReaderText supplies the context a sighted user reads from colour.
+    The glyph itself is aria-hidden so it is not announced as punctuation.
+*@
+<span class="badge badge--@Model.CssModifier">
+    @if (!string.IsNullOrEmpty(Model.Glyph))
+    {
+        <span class="badge__glyph" aria-hidden="true">@Model.Glyph</span>
+    }
+    <span>@Model.Label</span>
+    @if (!string.IsNullOrEmpty(Model.ScreenReaderText))
+    {
+        <span class="visually-hidden">. @Model.ScreenReaderText</span>
+    }
+</span>
