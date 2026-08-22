@@ -54,12 +54,12 @@
     }
 
     <form method="post" asp-page-handler="Confirm">
-        <div class="panel" style="margin-bottom:1.1rem;">
+        <div class="panel u-mb-4">
             <div class="panel__head"><span class="panel__title">Contacts on this unit</span></div>
             <div class="panel__body">
                 @if (Model.Contacts.Count == 0)
                 {
-                    <div class="state" style="padding:1.5rem 0;">
+                    <div class="state state--compact">
                         <div class="state__title">No contacts recorded for this unit</div>
                         <p class="state__body">
                             This unit has no contacts in CRM, so the caller's identity cannot be
@@ -70,7 +70,7 @@
                 }
                 else
                 {
-                    <fieldset style="border:0;padding:0;margin:0;">
+                    <fieldset class="fieldset-bare">
                         <legend class="visually-hidden">Select the contact you are speaking to</legend>
                         <ul class="pick-list">
                             @foreach (var contact in Model.Contacts)
@@ -78,9 +78,9 @@
                                 var label = $"{contact.DisplayName ?? "Name not recorded"} ({contact.ContactType})";
                                 var inputId = $"contact-{contact.ContactReferenceId}";
                                 <li>
-                                    <label class="pick" for="@inputId" style="cursor:pointer;">
+                                    <label class="pick pick--label" for="@inputId">
                                         <input type="radio" id="@inputId" name="contactReferenceId"
-                                               value="@contact.ContactReferenceId" style="width:auto;flex:none;"
+                                               value="@contact.ContactReferenceId" class="u-control"
                                                data-contact-label="@label" required />
                                         <span class="pick__main">
                                             <span class="pick__title">@(contact.DisplayName ?? "Name not recorded")</span>
@@ -95,7 +95,7 @@
                                             {
                                                 @* ISSUE-007: the authorization chain must be
                                                    visible before any detail is disclosed. *@
-                                                <span class="pick__sub" style="color:var(--warn);">
+                                                <span class="pick__sub u-warn">
                                                     Authorised representative of contact #@representedContact
                                                 </span>
                                             }
@@ -113,12 +113,12 @@
         {
             <div class="panel">
                 <div class="panel__body">
-                    <label style="display:flex;gap:0.6rem;align-items:flex-start;font-weight:600;cursor:pointer;">
+                    <label class="confirm-check">
                         <input type="checkbox" name="confirmed" value="true" required
-                               style="width:auto;flex:none;margin-top:0.2rem;" />
+                               class="u-control u-mt-1" />
                         <span>
                             I have verified this caller's identity against the CRM record above.
-                            <span style="display:block;font-weight:400;color:var(--ink-500);margin-top:0.2rem;">
+                            <span class="confirm-check__note">
                                 This is recorded against the verification session and cannot be changed afterwards.
                             </span>
                         </span>
@@ -126,7 +126,7 @@
 
                     <input type="hidden" name="contactLabel" data-contact-label-target value="" />
 
-                    <div class="actionbar" style="margin-top:1rem;">
+                    <div class="actionbar u-mt-4">
                         <button type="submit" class="btn btn--primary" data-submit-once
                                 data-busy-label="Confirming…">Confirm and continue</button>
                         <a class="btn btn--ghost" asp-page="/Tickets/New/Unit">‹ Back</a>
@@ -136,5 +136,5 @@
         }
     </form>
 
-    <p style="margin-top:1rem;"><a asp-page="/Tickets/Index">Cancel and return to the queue</a></p>
+    <p class="u-mt-4"><a asp-page="/Tickets/Index">Cancel and return to the queue</a></p>
 </div>

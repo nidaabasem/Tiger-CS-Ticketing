@@ -1,28 +1,48 @@
 @*
-    The emblem behind the login artwork.
+    The login artwork's emblem.
 
-    This is a drawn mark, not the approved photograph: the photographic asset
-    is not in the repository, and inventing a stand-in image would put fake
-    brand artwork into source control. The composition is built so the real
-    file drops in without a code change - place it at
-    wwwroot/img/login-tiger.jpg and set --login-photo on .login__art (see
-    tiger.css), and it layers over this without disturbing the type or the form.
+    Deliberately abstract. The approved reference is a photograph of a
+    gold-striped tiger against a dark ground, and that file is not in this
+    repository; committing an invented figurative stand-in would put fake brand
+    artwork into source control, and a hand-drawn animal at this size reads as
+    a cartoon rather than as the reference's restraint. What is drawn instead is
+    the reference's actual visual signature - tapered gold striping raking
+    across a dark field - which carries the same identity without pretending to
+    be the photograph.
+
+    The composition is built so the real asset drops in without a code change:
+    place it at wwwroot/img/login-tiger.jpg and set --login-photo on .login__art
+    (see tiger.css). It layers over this and neither the type nor the form moves.
 *@
-<svg class="login__emblem" viewBox="0 0 320 320" role="img" aria-hidden="true" focusable="false">
+<svg class="login__emblem" viewBox="0 0 420 420" role="img" aria-hidden="true" focusable="false"
+     preserveAspectRatio="xMidYMid meet">
     <defs>
-        <linearGradient id="tg-gold" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#e3c46f" stop-opacity="0.30" />
-            <stop offset="100%" stop-color="#9a7420" stop-opacity="0.10" />
+        <linearGradient id="tg-stripe" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#e3c46f" stop-opacity="0.85" />
+            <stop offset="55%" stop-color="#c9a03c" stop-opacity="0.55" />
+            <stop offset="100%" stop-color="#8a6718" stop-opacity="0.10" />
+        </linearGradient>
+        <linearGradient id="tg-stripe-faint" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#e3c46f" stop-opacity="0.28" />
+            <stop offset="100%" stop-color="#8a6718" stop-opacity="0.04" />
         </linearGradient>
     </defs>
-    <g fill="url(#tg-gold)">
-        <path d="M160 26 190 60l38-12-9 40 38 22-32 26 14 41-42-8-37 39-37-39-42 8 14-41-32-26 38-22-9-40 38 12Z"/>
+
+    @* Tapered strokes, raking from lower left to upper right. Each is a closed
+       path rather than a stroked line so the taper is real. *@
+    <g fill="url(#tg-stripe)">
+        <path d="M56 300c46-58 96-112 150-160 8-7 17-13 26-19-6 10-14 20-23 29-46 47-91 96-131 152-8 11-16 22-22 34 0-13 0-25 0-36Z" />
+        <path d="M120 328c50-62 104-121 162-173 9-8 19-15 29-22-7 11-15 21-25 31-49 51-97 104-140 162-9 12-17 24-25 37 0-12 0-24 0-35Z" />
+        <path d="M196 348c48-60 100-117 156-167 9-8 18-15 28-21-7 10-15 20-24 30-47 49-94 100-135 156-9 12-17 24-25 36 0-12 0-23 0-34Z" />
     </g>
-    <g fill="none" stroke="#d4ab45" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round">
-        <path d="M110 132c8-16 26-27 50-27s42 11 50 27"/>
-        <path d="M96 168c0-36 28-63 64-63s64 27 64 63c0 20-9 37-23 49l7 27-25-12c-7 3-15 4-23 4s-16-1-23-4l-25 12 7-27c-14-12-23-29-23-49Z"/>
-        <path d="M124 152l22 12-22 12M196 152l-22 12 22 12"/>
-        <path d="M137 199c6 8 14 12 23 12s17-4 23-12"/>
-        <path d="M160 164v22"/>
+
+    <g fill="url(#tg-stripe-faint)">
+        <path d="M20 232c40-50 84-97 131-140 7-6 15-12 23-17-6 9-13 18-20 26-40 41-79 84-114 132-7 9-14 19-20 29 0-11 0-21 0-30Z" />
+        <path d="M268 366c44-54 91-106 142-152 8-7 17-14 26-20-6 9-14 19-22 27-43 45-86 92-124 143-8 11-15 22-22 33 0-11 0-21 0-31Z" />
+        <path d="M338 388c34-42 71-82 111-118 6-6 13-11 20-16-5 7-11 15-17 21-34 35-68 72-98 112-6 8-12 17-16 25 0-8 0-16 0-24Z" />
     </g>
+
+    @* A single hairline rule, the editorial device that keeps the field from
+       looking like decoration for its own sake. *@
+    <path d="M40 396h340" stroke="#d4ab45" stroke-opacity="0.30" stroke-width="1.5" fill="none" />
 </svg>

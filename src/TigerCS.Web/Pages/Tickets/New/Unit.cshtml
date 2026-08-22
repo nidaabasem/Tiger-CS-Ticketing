@@ -32,7 +32,7 @@
             <span class="notice__glyph" aria-hidden="true">⚠</span>
             <div class="notice__body">
                 <div class="notice__title">Tiger CRM is unavailable</div>
-                <p style="margin:0.35rem 0 0.7rem;">
+                <p class="u-mt-1 u-mb-2">
                     The unit cannot be verified right now. You can still proceed without
                     verification: a <strong>Critical</strong> or <strong>High</strong> request
                     is raised immediately as a provisional ticket, and a
@@ -57,7 +57,7 @@
         </div>
     }
 
-    <div class="panel" style="margin-bottom:1.1rem;">
+    <div class="panel u-mb-4">
         <div class="panel__body">
             <form method="get" class="filters">
                 <div class="field">
@@ -85,7 +85,7 @@
             <div class="panel__body">
                 @if (Model.Results is null || Model.Results.Count == 0)
                 {
-                    <div class="state" style="padding:1.5rem 0;">
+                    <div class="state state--compact">
                         <div class="state__title">No matching units found</div>
                         <p class="state__body">Check the number with the caller and try again.</p>
                     </div>
@@ -126,5 +126,5 @@
         </div>
     }
 
-    <p style="margin-top:1rem;"><a asp-page="/Tickets/Index">Cancel and return to the queue</a></p>
+    <p class="u-mt-4"><a asp-page="/Tickets/Index">Cancel and return to the queue</a></p>
 </div>

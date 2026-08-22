@@ -63,7 +63,7 @@
     </a>
 </div>
 
-<div class="panel" style="margin-bottom:1.1rem;">
+<div class="panel u-mb-4">
     <div class="panel__body">
         <form method="get" class="filters">
             <div class="field">
@@ -258,7 +258,7 @@
                         {
                             <td><partial name="_Badge" model="TicketBadges.SlaFor(sla)" /></td>
                         }
-                        <td>
+                        <td class="cell-person">
                             @if (ticket.CurrentOwnerEmployeeId is null)
                             {
                                 <span class="cell-muted">Unassigned</span>
@@ -272,9 +272,9 @@
                                 <span class="cell-muted" title="Name not resolvable from this department's roster">Assigned</span>
                             }
                         </td>
-                        <td>@Model.CurrentUser.DepartmentLabel(ticket.CurrentDepartmentId)</td>
+                        <td class="cell-nowrap">@Model.CurrentUser.DepartmentLabel(ticket.CurrentDepartmentId)</td>
                         <td class="cell-num">@ticket.CategoryId</td>
-                        <td class="cell-num">
+                        <td class="cell-num cell-nowrap">
                             <time datetime="@ticket.CreatedAtUtc.ToString("o")">
                                 @ticket.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")
                             </time>
@@ -318,7 +318,7 @@
 
 @if (Model.SlaBadgesEnabled && Model.Tickets.Count > 0)
 {
-    <p class="field__hint" style="margin-top:0.7rem;">
+    <p class="field__hint u-mt-3">
         SLA state is read per ticket from the SLA endpoint, because the queue endpoint does not
         return it. A ticket whose SLA could not be read shows <em>SLA unknown</em> rather than
         being assumed healthy.

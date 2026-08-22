@@ -15,18 +15,18 @@
     <div class="page-head"><h1 class="page-head__title">Ticket created</h1></div>
 
     <div class="panel">
-        <div class="panel__body" style="text-align:center;padding:2rem 1rem;">
-            <div class="badge badge--ok" style="font-size:0.8rem;">
+        <div class="panel__body u-center panel__body--pad">
+            <div class="badge badge--ok badge--lg">
                 <span class="badge__glyph" aria-hidden="true">✓</span><span>Created</span>
             </div>
-            <div class="ticket-head__no" style="font-size:1.9rem;margin:0.7rem 0 0.2rem;">
+            <div class="ticket-head__no figure-number figure-number--lg">
                 @created.TicketNumber
             </div>
-            <p style="color:var(--ink-500);max-width:44ch;margin:0 auto 1.2rem;">
+            <p class="confirm-lede">
                 Give this number to the caller. It is the reference for everything that follows.
             </p>
 
-            <div class="ticket-head__meta" style="justify-content:center;margin-bottom:1.4rem;">
+            <div class="ticket-head__meta actionbar--center u-mb-4">
                 <partial name="_Badge" model="TicketBadges.Priority(created.PriorityId)" />
                 <partial name="_Badge" model="TicketBadges.Status(created.TicketStatus)" />
                 <partial name="_Badge" model="TicketBadges.Verification(created.VerificationStatus)" />
@@ -34,7 +34,7 @@
 
             @if (created.VerificationStatus == "PendingCrmVerification")
             {
-                <div class="notice notice--warn" style="text-align:left;">
+                <div class="notice notice--warn notice--measured">
                     <span class="notice__glyph" aria-hidden="true">◑</span>
                     <div class="notice__body">
                         <div class="notice__title">Provisional — raised without CRM verification</div>
@@ -47,7 +47,7 @@
                 </div>
             }
 
-            <div class="actionbar" style="justify-content:center;">
+            <div class="actionbar actionbar--center">
                 <a class="btn btn--primary" asp-page="/Tickets/Details" asp-route-id="@created.TicketId">
                     Open ticket
                 </a>
@@ -71,15 +71,15 @@
     <div class="page-head"><h1 class="page-head__title">Interaction recorded</h1></div>
 
     <div class="panel">
-        <div class="panel__body" style="text-align:center;padding:2rem 1rem;">
-            <div class="badge badge--warn" style="font-size:0.8rem;">
+        <div class="panel__body u-center panel__body--pad">
+            <div class="badge badge--warn badge--lg">
                 <span class="badge__glyph" aria-hidden="true">◑</span><span>Queued for CRM</span>
             </div>
-            <div class="ticket-head__no" style="font-size:1.5rem;margin:0.7rem 0 0.2rem;">
+            <div class="ticket-head__no figure-number figure-number--md">
                 Intake record #@intake.IntakeRecordId
             </div>
 
-            <div class="notice notice--info" style="text-align:left;max-width:52ch;margin:1.2rem auto;">
+            <div class="notice notice--info notice--measured">
                 <span class="notice__glyph" aria-hidden="true">i</span>
                 <div class="notice__body">
                     <div class="notice__title">No ticket was created</div>
@@ -92,7 +92,7 @@
                 </div>
             </div>
 
-            <div class="actionbar" style="justify-content:center;">
+            <div class="actionbar actionbar--center">
                 <a class="btn btn--primary" asp-page="/Tickets/New/Intake">Record another call</a>
                 <a class="btn btn--ghost" asp-page="/Tickets/Index">Back to the queue</a>
             </div>
@@ -159,7 +159,7 @@
             <div>@Model.Problem.UserMessage()</div>
             @if (Model.RequiresReverification)
             {
-                <p style="margin:0.5rem 0 0;">
+                <p class="u-mt-1 u-m-0">
                     <a asp-page="/Tickets/New/Unit">Verify the caller again</a> — this verification
                     can no longer be used.
                 </p>
@@ -214,7 +214,7 @@
                    is no downgrade path anywhere in this UI - not as a disabled
                    control, simply absent, because no server capability backs
                    it (backlog §0 / S-14). *@
-                <p class="field__hint" style="color:var(--warn);">
+                <p class="field__hint u-warn">
                     Priority is fixed after ticket creation during the pilot. Downgrades are not permitted.
                 </p>
             </div>

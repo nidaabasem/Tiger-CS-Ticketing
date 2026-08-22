@@ -28,7 +28,7 @@
     <div class="panel__body">
         @if (Model is null)
         {
-            <p class="cell-muted" style="margin:0;">
+            <p class="cell-muted u-m-0">
                 The SLA panel could not be loaded for this ticket. It is not being reported as
                 healthy — the state is genuinely unknown here.
             </p>
@@ -38,15 +38,22 @@
             <div class="sla-figure sla-figure--@figureModifier">
                 <div class="sla-figure__state">@headline</div>
                 <div class="sla-figure__label">SLA state</div>
+                @{
+                    // The fill is one of two fixed widths rather than a computed
+                    // one: a computed width would have to be an inline style,
+                    // which this application's Content-Security-Policy blocks.
+                    var fillWidth = breached || Model.SlaState == "Met" ? "meter__fill--full" : null;
+                    var fillTone = breached ? "meter__fill--breached"
+                        : figureModifier == "warn" ? "meter__fill--warn" : null;
+                }
                 <div class="meter" aria-hidden="true">
-                    <div class="meter__fill @(breached ? "meter__fill--breached" : figureModifier == "warn" ? "meter__fill--warn" : null)"
-                         style="width:@(breached ? "100%" : Model.SlaState == "Met" ? "100%" : "45%");"></div>
+                    <div class="meter__fill @fillTone @fillWidth"></div>
                 </div>
             </div>
 
             @if (breached)
             {
-                <div class="notice notice--error" style="margin:0.6rem 0 0.8rem;" role="status">
+                <div class="notice notice--error notice--tight" role="status">
                     <span class="notice__glyph" aria-hidden="true">!</span>
                     <div class="notice__body">
                         <div class="notice__title">SLA breached</div>
@@ -68,7 +75,7 @@
                 </div>
             }
 
-            <dl class="deflist" style="margin-top:0.7rem;">
+            <dl class="deflist u-mt-3">
                 <dt>First response</dt>
                 <dd>
                     @if (Model.FirstResponseDueAtUtc is DateTime firstDue)
@@ -131,7 +138,7 @@
                API returns these three fields at their pause-free values, so
                saying "never paused" would overstate what is known: the honest
                statement is that the mechanism does not exist yet. *@
-            <p class="field__hint" style="margin-top:0.8rem;">
+            <p class="field__hint u-mt-3">
                 SLA pause and resume are not part of this pilot, so no pause time is counted
                 against these deadlines.
             </p>

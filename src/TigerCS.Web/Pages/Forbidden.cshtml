@@ -2,10 +2,10 @@
 @model ForbiddenModel
 @{ ViewData["Title"] = "Access denied"; }
 
-<div class="panel content--narrow" style="margin:2rem auto;">
+<div class="panel content--narrow panel--centered">
     <div class="state" role="alert">
-        <div class="badge badge--neutral" style="font-size:0.72rem;">Error 403</div>
-        <div class="state__title" style="margin-top:0.6rem;">You don't have access to this</div>
+        <div class="badge badge--neutral badge--lg">Error 403</div>
+        <div class="state__title u-mt-2">You don't have access to this</div>
         <p class="state__body">
             Your account is signed in, but it does not hold the role this action needs.
             Permissions are decided by the ticketing service, not by this screen — if you

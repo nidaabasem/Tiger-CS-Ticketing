@@ -152,6 +152,25 @@ a:hover { color: var(--gold-600); }
 }
 .nav-link__icon { width: 16px; height: 16px; flex: none; opacity: 0.85; }
 
+/*
+  The sign-out control is a form submit, not a link, because signing out must
+  be a POST - a GET sign-out can be triggered by any third-party page embedding
+  an image. It is styled as a nav item so it reads as one, which needs the
+  button's own font, background and border reset explicitly.
+*/
+.nav-link--button {
+  width: 100%;
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: var(--ivory-200);
+  cursor: pointer;
+}
+.nav-link--button:hover { background: var(--navy-800); color: var(--ivory-50); }
+
 .nav-cta {
   margin: 0 0.75rem 0.5rem;
   display: block; text-align: center; text-decoration: none;
@@ -280,13 +299,13 @@ input:disabled, select:disabled, textarea:disabled { background: var(--ivory-200
 .queue thead th {
   text-align: left; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--ink-500); font-weight: 650;
-  padding: 0.55rem 0.6rem; border-bottom: var(--rule);
+  padding: 0.55rem 0.55rem; border-bottom: var(--rule);
   background: var(--ivory-100); position: sticky; top: 0; z-index: 1;
   white-space: nowrap;
 }
 .queue thead th a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 0.25rem; }
 .queue thead th a:hover { color: var(--gold-600); }
-.queue tbody td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--ivory-200); vertical-align: middle; }
+.queue tbody td { padding: 0.5rem 0.55rem; border-bottom: 1px solid var(--ivory-200); vertical-align: middle; }
 .queue tbody tr:hover { background: var(--ivory-100); }
 .queue tbody tr:focus-within { background: var(--ivory-100); }
 
@@ -300,21 +319,30 @@ input:disabled, select:disabled, textarea:disabled { background: var(--ivory-200
 .queue tbody tr.is-closed td { color: var(--ink-400); }
 .queue tbody tr.is-closed .ticket-no { text-decoration: line-through; }
 
-.ticket-no { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; letter-spacing: -0.01em; }
+/* Ticket numbers and department names never wrap: a number broken across
+   three lines is unscannable, which is the one thing this table is for. */
+.ticket-no { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+.cell-nowrap { white-space: nowrap; }
 .ticket-no a { color: var(--navy-800); text-decoration: none; }
 .ticket-no a:hover { color: var(--gold-600); text-decoration: underline; }
 
 .cell-summary {
-  max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--ink-700);
 }
+/* Owner names stay on one line; a wrapped name doubles every row's height. */
+.cell-person { white-space: nowrap; }
 .cell-muted { color: var(--ink-400); font-style: italic; }
 .cell-num { font-family: var(--font-mono); font-size: 0.78rem; }
 
 .table-scroll { overflow-x: auto; }
 
 /* ---------------------------------------------------------------- filters */
-.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.65rem; align-items: end; }
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.65rem 0.9rem; align-items: start; }
+.filters .field:not(.actionbar) { display: flex; flex-direction: column; }
+.filters .field__hint { margin-top: auto; padding-top: 0.25rem; }
+/* The submit pair is a row, not a stacked field. */
+.filters .actionbar { flex-direction: row; align-self: end; }
 .filters .field { margin-bottom: 0; }
 .filter-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
 .chip {
@@ -358,7 +386,16 @@ input:disabled, select:disabled, textarea:disabled { background: var(--ivory-200
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 
 /* ---------------------------------------------------------------- detail */
+/*
+  The ticket header spans both columns so it stays first in the reading order
+  at every width. Wireframe §7 asks for the SLA summary to sit directly under
+  the header strip once the layout stacks - "kept high-visibility even when
+  stacked" - which is what the ordering below does, without ever pushing the
+  ticket number and summary below the panels.
+*/
 .detail { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 1.1rem; align-items: start; }
+.detail__head { grid-column: 1 / -1; }
+.detail__main { min-width: 0; }
 .detail__aside { display: flex; flex-direction: column; gap: 1.1rem; }
 
 .ticket-head { background: var(--ivory-50); border: var(--rule); border-radius: var(--radius-lg); padding: 1rem 1.15rem; }
@@ -490,8 +527,8 @@ dialog.modal::backdrop { background: rgba(11, 18, 32, 0.55); }
   background-size: cover; background-position: 32% center;
 }
 .login__emblem {
-  position: absolute; left: 6%; top: 50%; transform: translateY(-52%);
-  width: min(58%, 460px); opacity: 0.9; pointer-events: none;
+  position: absolute; left: 50%; top: 48%; transform: translate(-50%, -50%);
+  width: min(76%, 620px); opacity: 0.95; pointer-events: none;
 }
 .login__artfoot { position: relative; padding: 2.25rem 2.5rem; }
 .login__wordmark {
@@ -532,7 +569,9 @@ dialog.modal::backdrop { background: rgba(11, 18, 32, 0.55); }
 /* ---------------------------------------------------------- responsive */
 @media (max-width: 1080px) {
   .detail { grid-template-columns: minmax(0, 1fr); }
-  .detail__aside { order: -1; }
+  .detail__head { order: 0; }
+  .detail__aside { order: 1; }
+  .detail__main { order: 2; }
 }
 
 @media (max-width: 900px) {
@@ -568,3 +607,76 @@ dialog.modal::backdrop { background: rgba(11, 18, 32, 0.55); }
   .shell__nav, .commandbar, .actionbar, .pager { display: none; }
   body { background: #fff; }
 }
+
+
+/* ------------------------------------------------------- layout utilities */
+/*
+  These exist because the Content-Security-Policy this application sends is
+  style-src 'self' with no 'unsafe-inline'. That correctly blocks inline
+  style attributes as well as inline <style> blocks, so a `style="..."` in a
+  view is silently dropped by the browser rather than applied. Every piece of
+  presentation therefore lives in this file, which is where it belongs anyway.
+*/
+.u-m-0      { margin: 0; }
+.u-mt-1     { margin-top: 0.35rem; }
+.u-mt-2     { margin-top: 0.6rem; }
+.u-mt-3     { margin-top: 0.8rem; }
+.u-mt-4     { margin-top: 1.1rem; }
+.u-mt-5     { margin-top: 1.4rem; }
+.u-mb-2     { margin-bottom: 0.6rem; }
+.u-mb-4     { margin-bottom: 1.1rem; }
+.u-grow     { flex: 1; min-width: 0; }
+.u-center   { text-align: center; }
+.u-muted    { color: var(--ink-500); }
+.u-warn     { color: var(--warn); }
+.u-measure  { max-width: 46ch; margin-left: auto; margin-right: auto; }
+
+.actionbar--center { justify-content: center; }
+
+/* A checkbox or radio must not stretch to the field width the way text inputs do. */
+.u-control  { width: auto; flex: none; }
+
+.fieldset-bare { border: 0; padding: 0; margin: 0; }
+
+.state--compact { padding: 1.5rem 0; }
+
+.panel--centered { margin: 2rem auto; }
+
+.panel__body--pad { padding: 2rem 1rem; }
+
+/* The composer sits below the activity feed on a tinted ground. */
+.panel__body--composer { border-top: var(--rule); background: var(--ivory-100); }
+
+/* The action bar under the ticket header. */
+.ticket-head__actions { margin-top: 0.9rem; padding-top: 0.9rem; border-top: var(--rule); }
+
+/* Confirmation figures. */
+.figure-number      { font-family: var(--font-mono); font-weight: 700; color: var(--navy-800); margin: 0.7rem 0 0.2rem; }
+.figure-number--lg  { font-size: 1.9rem; }
+.figure-number--md  { font-size: 1.5rem; }
+
+/* The confirmation lede under a created ticket number. */
+.confirm-lede { color: var(--ink-500); max-width: 44ch; margin: 0 auto 1.2rem; }
+
+/* A notice that reads as body copy inside a centred panel. */
+.notice--measured { text-align: left; max-width: 52ch; margin: 1.2rem auto; }
+.notice--flush    { margin-bottom: 0; }
+.notice--tight    { margin: 0.6rem 0 0.8rem; }
+
+/* The confirmation gate on the contact step. */
+.confirm-check { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 600; cursor: pointer; }
+.confirm-check__note { display: block; font-weight: 400; color: var(--ink-500); margin-top: 0.2rem; }
+
+/* Selectable rows behave as labels on the contact step. */
+.pick--label { cursor: pointer; }
+
+.badge--lg { font-size: 0.8rem; }
+
+/* The SLA meter's fill is one of three fixed states rather than a computed
+   width, since a computed width would have to be an inline style. */
+.meter__fill { width: 45%; }
+.meter__fill--full { width: 100%; }
+
+.stepper { list-style: none; padding: 0; }
+
+.error-standalone { min-height: 100vh; }

@@ -50,7 +50,7 @@
     var escalationBadge = TicketBadges.Escalation(ticket.EscalationLevel);
 }
 
-<p style="margin-bottom:0.8rem;">
+<p class="u-mb-2">
     <a href="@Model.BackUrl">‹ Back to the queue</a>
 </p>
 
@@ -74,7 +74,7 @@
             <div>@Model.ActionProblem.UserMessage()</div>
             @if (conflict)
             {
-                <div style="margin-top:0.35rem;">
+                <div class="u-mt-1">
                     The ticket below has been reloaded with its current values — check them and try again.
                 </div>
             }
@@ -113,10 +113,10 @@
 }
 
 <div class="detail">
-    <div>
+    <div class="detail__head">
         <div class="ticket-head">
             <div class="ticket-head__row">
-                <div style="flex:1;min-width:0;">
+                <div class="u-grow">
                     <div class="ticket-head__no">@ticket.TicketNumber</div>
                     <h1 class="ticket-head__summary">@ticket.RequestSummary</h1>
                     <div class="ticket-head__meta">
@@ -137,7 +137,7 @@
 
             @if (!Model.IsClosed && (canAssign || canTransfer || canChangeStatus || canResolve || canClose || canReconcile))
             {
-                <div class="actionbar" style="margin-top:0.9rem;padding-top:0.9rem;border-top:var(--rule);">
+                <div class="actionbar">
                     @if (canAssign)
                     {
                         <button type="button" class="btn btn--ghost" data-dialog-open="dlg-assign">Assign</button>
@@ -166,7 +166,10 @@
             }
         </div>
 
-        <div class="panel" style="margin-top:1.1rem;">
+    </div>
+
+    <div class="detail__main">
+        <div class="panel">
             <div class="panel__head"><span class="panel__title">Activity</span></div>
             <div class="panel__body">
                 @*
@@ -193,7 +196,7 @@
 
                 @if (events.Count == 0)
                 {
-                    <div class="state" style="padding:1.5rem 0;">
+                    <div class="state state--compact">
                         <div class="state__title">Nothing recorded yet</div>
                         <p class="state__body">Notes and escalations on this ticket will appear here.</p>
                     </div>
@@ -231,7 +234,7 @@
 
             @if (canNote)
             {
-                <div class="panel__body" style="border-top:var(--rule);background:var(--ivory-100);">
+                <div class="panel__body">
                     <form method="post" asp-page-handler="AddNote">
                         <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
                         <div class="field">
@@ -322,7 +325,7 @@
                 *@
                 @if (ticket.UnitReferenceId is null && ticket.ContactReferenceId is null)
                 {
-                    <p class="cell-muted" style="margin:0;">
+                    <p class="cell-muted u-m-0">
                         No verified unit or contact is recorded on this ticket.
                         @if (Model.IsPendingCrm)
                         {
@@ -338,7 +341,7 @@
                         <dt>Contact ref.</dt>
                         <dd class="cell-num">@(ticket.ContactReferenceId?.ToString() ?? "—")</dd>
                     </dl>
-                    <p class="field__hint" style="margin-top:0.6rem;">
+                    <p class="field__hint u-mt-2">
                         The verified unit and contact are held server-side. The ticket API does not
                         expose the snapshot, so only the references can be shown here.
                     </p>
@@ -383,7 +386,7 @@
                         </div>
                         @if (ticket.CurrentOwnerEmployeeId is Guid current)
                         {
-                            <div class="notice notice--warn" style="margin-bottom:0;">
+                            <div class="notice notice--warn notice--flush">
                                 <span class="notice__glyph" aria-hidden="true">⚠</span>
                                 <div class="notice__body">
                                     This will reassign the ticket away from @Model.PersonName(current).
@@ -432,7 +435,7 @@
                                 no department directory. Use the id box below for any other department.
                             </p>
                             <input type="number" name="targetDepartmentId" min="1" placeholder="…or a department id"
-                                   style="margin-top:0.4rem;" />
+                                   class="u-mt-1" />
                         }
                         else
                         {
@@ -529,7 +532,7 @@
                 <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
                 <div class="modal__head"><h2 class="modal__title" id="dlg-close-title">Close this ticket?</h2></div>
                 <div class="modal__body">
-                    <p style="margin:0;">
+                    <p class="u-m-0">
                         Closing is final. A closed ticket accepts no further assignment, transfer,
                         status change, resolution or notes.
                     </p>
