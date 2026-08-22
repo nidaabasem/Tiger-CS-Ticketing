@@ -43,10 +43,17 @@ public sealed class IndexModel(
     [BindProperty(SupportsGet = true)] public string? SortBy { get; set; }
     [BindProperty(SupportsGet = true)] public string? SortDir { get; set; }
     /// <summary>
-    /// Bound from <c>?page=</c>. Named <c>PageNumber</c> rather than
-    /// <c>Page</c> because <c>PageModel.Page()</c> already owns that name.
+    /// Bound from <c>?pageNumber=</c>.
+    ///
+    /// <para>
+    /// Deliberately not <c>?page=</c>: Razor Pages reserves the route value
+    /// <c>page</c> for the page's own path, so a <c>page</c> query parameter is
+    /// shadowed by route data and never reaches this property - paging would
+    /// silently stay on page 1. The property is also named <c>PageNumber</c>
+    /// rather than <c>Page</c> because <c>PageModel.Page()</c> owns that name.
+    /// </para>
     /// </summary>
-    [BindProperty(SupportsGet = true, Name = "page")] public int PageNumber { get; set; } = 1;
+    [BindProperty(SupportsGet = true)] public int PageNumber { get; set; } = 1;
     [BindProperty(SupportsGet = true)] public int PageSize { get; set; } = DefaultPageSize;
 
     public UserContext CurrentUser { get; private set; } = UserContext.Anonymous;
@@ -163,7 +170,7 @@ public sealed class IndexModel(
         AddIf(route, "sortBy", sortBy ?? SortBy);
         AddIf(route, "sortDir", sortDir ?? SortDir);
         AddIf(route, "pageSize", (pageSize ?? PageSize).ToString(CultureInfo.InvariantCulture));
-        AddIf(route, "page", (page ?? PageNumber).ToString(CultureInfo.InvariantCulture));
+        AddIf(route, "pageNumber", (page ?? PageNumber).ToString(CultureInfo.InvariantCulture));
 
         return route;
     }
@@ -182,7 +189,7 @@ public sealed class IndexModel(
             route[key] = value;
         }
 
-        route["page"] = "1";
+        route["pageNumber"] = "1";
         return route;
     }
 

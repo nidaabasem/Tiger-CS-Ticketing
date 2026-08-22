@@ -36,9 +36,13 @@
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- So TigerCS.Tests can host this app with WebApplicationFactory. -->
-    <InternalsVisibleTo Include="TigerCS.Tests" />
-  </ItemGroup>
+  <!--
+    Deliberately no InternalsVisibleTo. TigerCS.Api's top-level statements
+    already generate an internal, test-visible global 'Program'; exposing this
+    project's as well would make WebApplicationFactory<Program> ambiguous in
+    TigerCS.Tests and break every existing API integration test. The tests here
+    target the public TigerCS.Web.WebHostMarker instead, which resolves the
+    same entry point without the name collision.
+  -->
 
 </Project>
