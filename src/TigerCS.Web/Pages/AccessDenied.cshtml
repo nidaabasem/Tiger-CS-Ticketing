@@ -1,0 +1,19 @@
+@page "/AccessDenied"
+@model TigerCS.Web.Pages.AccessDeniedModel
+@{
+    ViewData["Title"] = "Access Denied";
+    Layout = "_LoginLayout";
+}
+
+<div class="login-shell">
+    <div class="login-stack">
+        <div class="login-card">
+            <div class="login-brand">
+                @await Html.PartialAsync("_BrandMark")
+                <div class="login-brand__product">Access denied</div>
+                <div class="login-brand__subtitle">Your account does not have permission to view this page.</div>
+            </div>
+            <a class="btn btn-gold btn-block" href="/Tickets">Back to Ticket Queue</a>
+        </div>
+    </div>
+</div>
