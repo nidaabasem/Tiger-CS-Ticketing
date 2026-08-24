@@ -1,0 +1,29 @@
+@model TicketRecord
+@{
+    var searchBlob = $"{Model.Id} {Model.Subject} {Model.CustomerName} {Model.Unit}".ToLowerInvariant();
+}
+<tr data-ticket-row
+    data-href="/Tickets/@Model.Id"
+    data-search="@searchBlob"
+    data-status="@TicketDisplay.StatusCssKey(Model.Status)"
+    data-priority="@TicketDisplay.PriorityCssKey(Model.Priority)"
+    data-department="@Model.Department"
+    data-owner="@Model.Owner"
+    data-sla="@TicketDisplay.SlaCssKey(Model.Sla)">
+    <td>
+        <span class="badge badge-status-@TicketDisplay.StatusCssKey(Model.Status)">
+            <span class="badge-dot"></span>@TicketDisplay.StatusLabel(Model.Status)
+        </span>
+    </td>
+    <td><a class="ticket-id-link" href="/Tickets/@Model.Id">@Model.Id</a></td>
+    <td>
+        <div class="cell-primary">@Model.CustomerName</div>
+        <div class="cell-sub">@Model.Project · @Model.Unit</div>
+    </td>
+    <td class="col-subject">@Model.Subject</td>
+    <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(Model.Priority)">@TicketDisplay.PriorityLabel(Model.Priority)</span></td>
+    <td>@Model.Department</td>
+    <td>@Model.Owner</td>
+    <td><span class="badge badge-sla-@TicketDisplay.SlaCssKey(Model.Sla)">@Model.SlaText</span></td>
+    <td class="text-secondary">@Model.LastActivity</td>
+</tr>

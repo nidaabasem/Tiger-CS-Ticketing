@@ -1,0 +1,291 @@
+@page "/Tickets/{id}"
+@model TigerCS.Web.Pages.TicketDetailsModel
+@{
+    var t = Model.Ticket;
+    ViewData["Title"] = t.Id;
+    ViewData["ActiveNav"] = "queue";
+    Layout = "_Layout";
+
+    (string Icon, string Cls) IconFor(string kind) => kind switch
+    {
+        "created" => ("M12 5v14M5 12h14", ""),
+        "verified" => ("M5 13l4 4L19 7", "icon-success"),
+        "assigned" => ("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0", ""),
+        "priority" => ("M12 5v9M12 18h.01", "icon-gold"),
+        "note" => ("M5 5h14v11H9l-4 4V5Z", ""),
+        "reply" => ("M4 6h16v10H8l-4 4V6Z", ""),
+        "sla" => ("M12 8v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "icon-critical"),
+        "transfer" => ("M7 7h10M7 7l3-3M7 7l3 3M17 17H7M17 17l-3-3M17 17l-3 3", ""),
+        _ => ("M12 5v14M5 12h14", "")
+    };
+
+    var auditKinds = new HashSet<string> { "assigned", "priority", "sla", "transfer" };
+    var auditEntries = t.Activities.Where(a => auditKinds.Contains(a.IconKind)).ToList();
+    var attachments = t.Activities.Where(a => a.HasAttachment).ToList();
+    var replies = t.Activities.Where(a => a.IconKind is "reply" or "note").ToList();
+}
+
+<div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/Tickets">Tickets</a>
+        <span class="sep">/</span>
+        <span class="current">@t.Id</span>
+    </nav>
+
+    <section class="ticket-header">
+        <div class="ticket-header__top">
+            <div>
+                <div class="ticket-header__id">@t.Id</div>
+                <h1 class="ticket-header__title">@t.Subject</h1>
+                <div class="ticket-header__meta">
+                    <span><strong>Customer:</strong> @t.CustomerName</span>
+                    <span><strong>Project:</strong> @t.Project</span>
+                    <span><strong>Unit:</strong> @t.Unit</span>
+                </div>
+                <div class="ticket-header__badges">
+                    <span class="badge badge-status-@TicketDisplay.StatusCssKey(t.Status)"><span class="badge-dot"></span>@TicketDisplay.StatusLabel(t.Status)</span>
+                    <span class="badge badge-priority-@TicketDisplay.PriorityCssKey(t.Priority)">@TicketDisplay.PriorityLabel(t.Priority)</span>
+                    <span class="badge badge-sla-@TicketDisplay.SlaCssKey(t.Sla)">SLA: @t.SlaText</span>
+                </div>
+            </div>
+
+            <div class="ticket-header__actions">
+                <div class="menu-wrap">
+                    <button type="button" class="btn btn-outline btn-sm" data-menu-trigger="assignMenu" aria-haspopup="true" aria-expanded="false">Assign</button>
+                    <div class="menu-panel" id="assignMenu" role="menu" data-menu-select="owner">
+                        <div class="menu-panel__header">Assign to</div>
+                        @foreach (var owner in new[] { "Omar Nasser", "Sara Haddad", "Khalid Musa", "Lina Youssef", "Fadi Rahal", "Maya Aoun" })
+                        {
+                            <button type="button" class="menu-item" role="menuitem" data-menu-select="@owner">@owner</button>
+                        }
+                    </div>
+                </div>
+
+                <div class="menu-wrap">
+                    <button type="button" class="btn btn-outline btn-sm" data-menu-trigger="transferMenu" aria-haspopup="true" aria-expanded="false">Transfer</button>
+                    <div class="menu-panel" id="transferMenu" role="menu" data-menu-select="department">
+                        <div class="menu-panel__header">Transfer to department</div>
+                        @foreach (var dept in new[] { "Maintenance", "Customer Care", "Finance", "Facilities", "Technical Support", "Sales" })
+                        {
+                            <button type="button" class="menu-item" role="menuitem" data-menu-select="@dept">@dept</button>
+                        }
+                    </div>
+                </div>
+
+                <div class="menu-wrap">
+                    <button type="button" class="btn btn-gold btn-sm" data-menu-trigger="statusMenu" aria-haspopup="true" aria-expanded="false">Change Status</button>
+                    <div class="menu-panel" id="statusMenu" role="menu">
+                        <div class="menu-panel__header">Set status</div>
+                        <button type="button" class="menu-item" role="menuitem">Open</button>
+                        <button type="button" class="menu-item" role="menuitem">In Progress</button>
+                        <button type="button" class="menu-item" role="menuitem">Awaiting Customer</button>
+                        <button type="button" class="menu-item" role="menuitem">Closed</button>
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-outline btn-sm">Escalate</button>
+
+                <div class="menu-wrap">
+                    <button type="button" class="btn-icon" data-menu-trigger="moreMenu" aria-haspopup="true" aria-expanded="false" aria-label="More actions">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="5" cy="12" r="1.6" fill="currentColor" /><circle cx="12" cy="12" r="1.6" fill="currentColor" /><circle cx="19" cy="12" r="1.6" fill="currentColor" /></svg>
+                    </button>
+                    <div class="menu-panel" id="moreMenu" role="menu">
+                        <div class="menu-panel__header">More actions</div>
+                        <button type="button" class="menu-item" role="menuitem">Print ticket</button>
+                        <button type="button" class="menu-item" role="menuitem">Export as PDF</button>
+                        <button type="button" class="menu-item" role="menuitem">Merge ticket</button>
+                        <div class="menu-divider"></div>
+                        <button type="button" class="menu-item text-critical" role="menuitem">Delete ticket</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (t.Sla == SlaState.Breached)
+        {
+            <div class="sla-breach-banner">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                Resolution SLA @t.RemainingOrBreach.ToLowerInvariant() — escalation level @t.EscalationLevel.
+            </div>
+        }
+    </section>
+
+    <div class="detail-layout">
+        <div class="detail-main">
+            <div class="tabs" data-tabs="ticketTabPanels" role="tablist">
+                <button type="button" class="tab-btn is-active" role="tab" aria-selected="true" data-tab-target="tab-activity">Activity</button>
+                <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab-target="tab-conversation">Conversation</button>
+                <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab-target="tab-attachments">Attachments</button>
+                <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab-target="tab-audit">Audit History</button>
+            </div>
+
+            <div id="ticketTabPanels">
+                <div class="tab-panel is-active" id="tab-activity" role="tabpanel">
+                    <ol class="timeline">
+                        @foreach (var activity in t.Activities)
+                        {
+                            var (path, cls) = IconFor(activity.IconKind);
+                            <li class="timeline-item">
+                                <span class="timeline-icon @cls"><svg viewBox="0 0 24 24" fill="none"><path d="@path" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                                <div class="timeline-row">
+                                    <span class="timeline-text"><strong>@activity.Actor</strong> — @activity.Action</span>
+                                    <span class="timeline-time">@activity.Timestamp</span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(activity.Note))
+                                {
+                                    <div class="timeline-note">@activity.Note</div>
+                                }
+                                @if (activity.HasAttachment)
+                                {
+                                    <div class="timeline-attachment">
+                                        <svg viewBox="0 0 24 24" fill="none"><path d="M8 12l6-6a3 3 0 1 1 4 4l-8 8a4 4 0 1 1-5-6l7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                                        1 attachment
+                                    </div>
+                                }
+                            </li>
+                        }
+                    </ol>
+
+                    <div class="composer">
+                        <div class="composer-toggle" data-composer-toggle>
+                            <button type="button" class="is-active" data-mode="reply">Reply to Customer</button>
+                            <button type="button" data-mode="note">Internal Note</button>
+                        </div>
+                        <textarea id="composerMessage" placeholder="Write a reply to the customer…" aria-label="Compose message"></textarea>
+                        <div class="composer__footer">
+                            <button type="button" class="btn-icon" aria-label="Attach file">
+                                <svg viewBox="0 0 24 24" fill="none"><path d="M8 12l6-6a3 3 0 1 1 4 4l-8 8a4 4 0 1 1-5-6l7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                            </button>
+                            <button type="button" class="btn btn-gold btn-sm" id="composerSend">Send Reply</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel" id="tab-conversation" role="tabpanel">
+                    @if (replies.Count == 0)
+                    {
+                        <div class="placeholder-block">
+                            <svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16v10H8l-4 4V6Z" stroke="currentColor" stroke-width="1.4" /></svg>
+                            <p>No customer conversation yet.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <ol class="timeline">
+                            @foreach (var activity in replies)
+                            {
+                                var (path, cls) = IconFor(activity.IconKind);
+                                <li class="timeline-item">
+                                    <span class="timeline-icon @cls"><svg viewBox="0 0 24 24" fill="none"><path d="@path" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                                    <div class="timeline-row">
+                                        <span class="timeline-text"><strong>@activity.Actor</strong> — @activity.Action</span>
+                                        <span class="timeline-time">@activity.Timestamp</span>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(activity.Note))
+                                    {
+                                        <div class="timeline-note">@activity.Note</div>
+                                    }
+                                </li>
+                            }
+                        </ol>
+                    }
+                </div>
+
+                <div class="tab-panel" id="tab-attachments" role="tabpanel">
+                    @if (attachments.Count == 0)
+                    {
+                        <div class="placeholder-block">
+                            <svg viewBox="0 0 24 24" fill="none"><path d="M8 12l6-6a3 3 0 1 1 4 4l-8 8a4 4 0 1 1-5-6l7-7" stroke="currentColor" stroke-width="1.4" /></svg>
+                            <p>No attachments yet.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="audit-list">
+                            @foreach (var a in attachments)
+                            {
+                                <div class="audit-row">
+                                    <span><strong>photo_@(t.Id.ToLowerInvariant()).jpg</strong> · uploaded by @a.Actor</span>
+                                    <span class="text-secondary">@a.Timestamp</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="tab-panel" id="tab-audit" role="tabpanel">
+                    @if (auditEntries.Count == 0)
+                    {
+                        <div class="placeholder-block">
+                            <svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+                            <p>No field changes recorded.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="audit-list">
+                            @foreach (var a in auditEntries)
+                            {
+                                <div class="audit-row">
+                                    <span class="audit-row__field">@a.Action</span>
+                                    <span>@a.Actor</span>
+                                    <span class="text-secondary">@a.Timestamp</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <aside class="facts-panel">
+            <div class="facts-section">
+                <div class="facts-section__title">Ticket Information</div>
+                <dl>
+                    <div class="facts-row"><dt>Ticket ID</dt><dd>@t.Id</dd></div>
+                    <div class="facts-row"><dt>Source</dt><dd>@t.Source</dd></div>
+                    <div class="facts-row"><dt>Created</dt><dd>@t.CreatedDate</dd></div>
+                    <div class="facts-row"><dt>Created by</dt><dd>@t.CreatedBy</dd></div>
+                    <div class="facts-row"><dt>Status</dt><dd>@TicketDisplay.StatusLabel(t.Status)</dd></div>
+                    <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.Priority)</dd></div>
+                    <div class="facts-row"><dt>Department</dt><dd data-menu-select-target="department">@t.Department</dd></div>
+                    <div class="facts-row"><dt>Category</dt><dd>@t.Category</dd></div>
+                    <div class="facts-row"><dt>Subcategory</dt><dd>@t.Subcategory</dd></div>
+                    <div class="facts-row"><dt>Owner</dt><dd data-menu-select-target="owner">@t.Owner</dd></div>
+                    <div class="facts-row"><dt>Escalation level</dt><dd>@(t.EscalationLevel == 0 ? "None" : $"Level {t.EscalationLevel}")</dd></div>
+                </dl>
+            </div>
+
+            <div class="facts-section">
+                <div class="facts-section__title">Customer Information</div>
+                <dl>
+                    <div class="facts-row"><dt>Customer</dt><dd>@t.CustomerName</dd></div>
+                    <div class="facts-row"><dt>CRM Customer ID</dt><dd>@t.CrmCustomerId</dd></div>
+                    <div class="facts-row"><dt>Mobile</dt><dd>@t.Mobile</dd></div>
+                    <div class="facts-row"><dt>Email</dt><dd>@t.Email</dd></div>
+                    <div class="facts-row"><dt>Preferred language</dt><dd>@t.PreferredLanguage</dd></div>
+                </dl>
+            </div>
+
+            <div class="facts-section">
+                <div class="facts-section__title">Property Information</div>
+                <dl>
+                    <div class="facts-row"><dt>Project</dt><dd>@t.Project</dd></div>
+                    <div class="facts-row"><dt>Tower</dt><dd>@t.Tower</dd></div>
+                    <div class="facts-row"><dt>Unit number</dt><dd>@t.Unit</dd></div>
+                    <div class="facts-row"><dt>Unit status</dt><dd>@t.UnitStatus</dd></div>
+                </dl>
+            </div>
+
+            <div class="facts-section">
+                <div class="facts-section__title">SLA Information</div>
+                <dl>
+                    <div class="facts-row"><dt>First response due</dt><dd>@t.FirstResponseDue</dd></div>
+                    <div class="facts-row"><dt>Resolution due</dt><dd>@t.ResolutionDue</dd></div>
+                    <div class="facts-row"><dt>Remaining / breach</dt><dd class="@(t.Sla == SlaState.Breached ? "is-critical" : "")">@t.RemainingOrBreach</dd></div>
+                    <div class="facts-row"><dt>Escalation level</dt><dd>@(t.EscalationLevel == 0 ? "None" : $"Level {t.EscalationLevel}")</dd></div>
+                </dl>
+            </div>
+        </aside>
+    </div>
+</div>

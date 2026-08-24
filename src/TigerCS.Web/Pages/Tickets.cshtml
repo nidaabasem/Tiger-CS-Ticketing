@@ -1,0 +1,188 @@
+@page "/Tickets"
+@model TigerCS.Web.Pages.TicketsModel
+@{
+    ViewData["Title"] = "Tickets";
+    ViewData["ActiveNav"] = "queue";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    <div class="page-header">
+        <h1 class="page-title">Ticket Queue</h1>
+        <button type="button" class="btn btn-gold">+ New Ticket</button>
+    </div>
+
+    <div class="counter-row">
+        <div class="counter-card counter-card--open">
+            <span class="counter-card__icon"><svg viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="16" rx="1.5" stroke="currentColor" stroke-width="1.6" /><path d="M9 9h6M9 13h6M9 17h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg></span>
+            <div>
+                <div class="counter-card__value">166</div>
+                <div class="counter-card__label">Open Tickets</div>
+            </div>
+        </div>
+        <div class="counter-card counter-card--closed">
+            <span class="counter-card__icon"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+            <div>
+                <div class="counter-card__value">139</div>
+                <div class="counter-card__label">Closed Today</div>
+            </div>
+        </div>
+        <div class="counter-card counter-card--waiting">
+            <span class="counter-card__icon"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6" /><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg></span>
+            <div>
+                <div class="counter-card__value">33</div>
+                <div class="counter-card__label">Awaiting Customer</div>
+            </div>
+        </div>
+        <div class="counter-card counter-card--progress">
+            <span class="counter-card__icon"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 1 1 3 6.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /><path d="M4 17v-5h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+            <div>
+                <div class="counter-card__value">18</div>
+                <div class="counter-card__label">In Progress</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="filter-bar" id="ticketFilters">
+        <div class="search-field filter-bar__search">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" /><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+            <input type="search" id="filterSearch" placeholder="Search by ticket ID, subject, or customer…" aria-label="Search tickets" />
+        </div>
+
+        <select class="field-select" id="filterStatus" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="inprogress">In Progress</option>
+            <option value="awaitingcustomer">Awaiting Customer</option>
+            <option value="closed">Closed</option>
+        </select>
+
+        <select class="field-select" id="filterPriority" aria-label="Filter by priority">
+            <option value="">All priorities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+        </select>
+
+        <select class="field-select" id="filterDepartment" aria-label="Filter by department">
+            <option value="">All departments</option>
+            @foreach (var dept in Model.Departments)
+            {
+                <option value="@dept">@dept</option>
+            }
+        </select>
+
+        <select class="field-select" id="filterOwner" aria-label="Filter by owner">
+            <option value="">All owners</option>
+            @foreach (var owner in Model.Owners)
+            {
+                <option value="@owner">@owner</option>
+            }
+        </select>
+
+        <select class="field-select" id="filterSla" aria-label="Filter by SLA state">
+            <option value="">All SLA states</option>
+            <option value="ontrack">On track</option>
+            <option value="duesoon">Due soon</option>
+            <option value="breached">Breached</option>
+        </select>
+
+        <input type="date" class="field-input" aria-label="Created date" value="2026-08-24" />
+
+        <button type="button" class="btn btn-ghost btn-sm filter-bar__clear" id="filterClear">Clear filters</button>
+    </div>
+
+    <div class="panel">
+        <div class="panel__header">
+            <span class="panel__title">Today&rsquo;s Tickets</span>
+            <select class="field-select" aria-label="Rows per page">
+                <option>25</option>
+                <option>50</option>
+                <option>100</option>
+            </select>
+        </div>
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Ticket ID</th>
+                        <th>Customer / Unit</th>
+                        <th>Subject</th>
+                        <th>Priority</th>
+                        <th>Department</th>
+                        <th>Owner</th>
+                        <th>SLA</th>
+                        <th>Last Activity</th>
+                    </tr>
+                </thead>
+                <tbody data-table-body>
+                    @foreach (var ticket in Model.TodaysTickets)
+                    {
+                        @await Html.PartialAsync("_TicketRow", ticket)
+                    }
+                    <tr class="empty-row" style="display:none;">
+                        <td colspan="9">No tickets match the current filters.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="panel__footer">
+            <span>Showing 1 to @Model.TodaysTickets.Count of 166 entries</span>
+            <nav class="pagination" aria-label="Today's tickets pagination">
+                <button type="button" data-page="prev">Prev</button>
+                <button type="button" data-page="1" class="is-active">1</button>
+                <button type="button" data-page="2">2</button>
+                <button type="button" data-page="3">3</button>
+                <button type="button" data-page="next">Next</button>
+            </nav>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel__header">
+            <span class="panel__title">Pending Tickets</span>
+            <select class="field-select" aria-label="Select days">
+                <option>7 Days</option>
+                <option>14 Days</option>
+                <option>30 Days</option>
+            </select>
+        </div>
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Ticket ID</th>
+                        <th>Customer / Unit</th>
+                        <th>Subject</th>
+                        <th>Priority</th>
+                        <th>Department</th>
+                        <th>Owner</th>
+                        <th>SLA</th>
+                        <th>Last Activity</th>
+                    </tr>
+                </thead>
+                <tbody data-table-body>
+                    @foreach (var ticket in Model.PendingTickets)
+                    {
+                        @await Html.PartialAsync("_TicketRow", ticket)
+                    }
+                    <tr class="empty-row" style="display:none;">
+                        <td colspan="9">No tickets match the current filters.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="panel__footer">
+            <span>Showing 1 to @Model.PendingTickets.Count of 33 entries</span>
+            <nav class="pagination" aria-label="Pending tickets pagination">
+                <button type="button" data-page="prev">Prev</button>
+                <button type="button" data-page="1" class="is-active">1</button>
+                <button type="button" data-page="2">2</button>
+                <button type="button" data-page="next">Next</button>
+            </nav>
+        </div>
+    </div>
+</div>

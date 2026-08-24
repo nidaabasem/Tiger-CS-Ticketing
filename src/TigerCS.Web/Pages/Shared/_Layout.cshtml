@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] · Tiger Ticketing</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%231A1A1A'/%3E%3Cpath d='M6 18L10 6M11 18L15 6M16 18L20 6' stroke='%23B7923D' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+    @await Html.PartialAsync("_Header")
+    @await Html.PartialAsync("_Nav")
+
+    <main>
+        @RenderBody()
+    </main>
+
+    <script src="~/js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<header class="app-header">
+    <a class="app-header__brand" href="/Tickets" aria-label="Tiger Ticketing home">
+        @await Html.PartialAsync("_BrandMark")
+        <span class="brand-name">Tiger <span>Ticketing</span></span>
+    </a>
+
+    <div class="app-header__search">
+        <form class="search-field" role="search" action="/Tickets" method="get" onsubmit="return false;">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" /><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+            <input type="search" id="globalSearch" name="q" placeholder="Search tickets, customers, units…" aria-label="Global search" />
+        </form>
+    </div>
+
+    <div class="app-header__spacer"></div>
+
+    <div class="app-header__actions">
+        <div class="menu-wrap">
+            <button type="button" class="btn-icon" data-menu-trigger="notifMenu" aria-haspopup="true" aria-expanded="false" aria-label="Notifications">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9a6 6 0 1 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /><path d="M10 19a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+                <span class="notif-dot" aria-hidden="true"></span>
+            </button>
+            <div class="menu-panel" id="notifMenu" role="menu">
+                <div class="menu-panel__header">Notifications</div>
+                <button type="button" class="menu-item" role="menuitem">
+                    <div>
+                        <strong>SLA breached — TKT-2026-01842</strong>
+                        <small>Resolution SLA exceeded by 42 minutes</small>
+                    </div>
+                </button>
+                <button type="button" class="menu-item" role="menuitem">
+                    <div>
+                        <strong>New reply from Ahmed Khalil</strong>
+                        <small>TKT-2026-01842 · 9 minutes ago</small>
+                    </div>
+                </button>
+                <button type="button" class="menu-item" role="menuitem">
+                    <div>
+                        <strong>Ticket assigned to you</strong>
+                        <small>TKT-2026-01828 · 22 minutes ago</small>
+                    </div>
+                </button>
+                <div class="menu-divider"></div>
+                <button type="button" class="menu-item" role="menuitem"><strong>View all notifications</strong></button>
+            </div>
+        </div>
+
+        <div class="menu-wrap">
+            <button type="button" class="btn-icon" data-menu-trigger="settingsMenu" aria-haspopup="true" aria-expanded="false" aria-label="Settings">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="currentColor" stroke-width="1.8" /><path d="M19.4 13.5c.1-.5.1-1 0-1.5l1.6-1.2-1.5-2.6-1.9.6a5.7 5.7 0 0 0-1.3-.8L16 6h-3l-.3 2c-.5.2-.9.5-1.3.8l-1.9-.6-1.5 2.6L9.6 12c-.1.5-.1 1 0 1.5L8 14.7l1.5 2.6 1.9-.6c.4.3.8.6 1.3.8L13 20h3l.3-2c.5-.2.9-.5 1.3-.8l1.9.6 1.5-2.6-1.6-1.7Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>
+            </button>
+            <div class="menu-panel" id="settingsMenu" role="menu">
+                <div class="menu-panel__header">Settings</div>
+                <button type="button" class="menu-item" role="menuitem">Workspace preferences</button>
+                <button type="button" class="menu-item" role="menuitem">Notification rules</button>
+                <button type="button" class="menu-item" role="menuitem">SLA policies</button>
+                <button type="button" class="menu-item" role="menuitem">Department routing</button>
+            </div>
+        </div>
+
+        <span class="header-divider" aria-hidden="true"></span>
+
+        <div class="menu-wrap">
+            <button type="button" class="avatar" data-menu-trigger="avatarMenu" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">NB</button>
+            <div class="menu-panel" id="avatarMenu" role="menu">
+                <div class="menu-panel__header">Nidaa Basem</div>
+                <button type="button" class="menu-item" role="menuitem">My profile</button>
+                <button type="button" class="menu-item" role="menuitem">My tickets</button>
+                <div class="menu-divider"></div>
+                <a class="menu-item" role="menuitem" href="/Login"><strong>Sign out</strong></a>
+            </div>
+        </div>
+    </div>
+</header>
