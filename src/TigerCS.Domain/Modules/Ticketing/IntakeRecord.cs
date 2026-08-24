@@ -10,15 +10,14 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// request answered verbally).
 ///
 /// <para>
-/// <b>IsUnitRelated — a structural refinement, not a new business rule.</b>
-/// Neither field is named in the approved Data Dictionary, but every
-/// merged document (MVP-ERD.md, Tickets' NOT NULL Unit/Contact FKs,
-/// FR-VER-01) models tickets as always unit-scoped, and ISSUE-006's
-/// provisional-ticket rule is explicitly stated in terms of a unit-related
-/// request. This column exists to let a general/non-unit interaction (which
-/// never promotes to a ticket, matching this entity's own already-documented
-/// "many intake attempts never become a ticket" assumption) be distinguished
-/// from one this module will attempt to verify and promote.
+/// <b>IsUnitRelated — governs the CRM-verification path, not eligibility
+/// for becoming a ticket.</b> Every intake, unit-related or not, can be
+/// promoted to a ticket once a category has been selected; CRM
+/// verification (a <c>VerificationSession</c>, unit/contact references) is
+/// required only when the request is unit-related. A non-unit-related
+/// intake is promoted directly, with no unit/contact reference and no
+/// verification step — see <c>TicketCreationAppService.CreateFromNonUnitIntakeAsync</c>
+/// and <see cref="TigerCS.Domain.Modules.Ticketing.Ticket.CreateNonUnitRelated"/>.
 /// </para>
 /// </summary>
 public class IntakeRecord
@@ -70,17 +69,26 @@ public class IntakeRecord
         CrmVerificationStatus = CrmVerificationStatus.Unverified;
     }
 
-    /// <summary>Links this record to the ticket it was promoted into and records the reconciliation outcome — write-once (a second promotion attempt is a defect, not a valid state, and is rejected by the caller before this is ever invoked twice).</summary>
+    /// <summary>
+    /// Links this record to the ticket it was promoted into and records the
+    /// reconciliation outcome — write-once (a second promotion attempt is a
+    /// defect, not a valid state, and is rejected by the caller before this
+    /// is ever invoked twice).
+    ///
+    /// <para>
+    /// <b>No longer restricted to unit-related intakes.</b> Every intake,
+    /// whether unit-related or not, can be promoted to a ticket once a
+    /// category has been selected — CRM verification is required only for
+    /// the unit-related path (enforced upstream, by the caller choosing
+    /// which creation flow to invoke, not by this method). This method
+    /// itself never inspects <see cref="IsUnitRelated"/>.
+    /// </para>
+    /// </summary>
     public void LinkToTicket(long ticketId, CrmVerificationStatus resultingStatus)
     {
         if (LinkedTicketId is not null)
         {
             throw new IntakeRecordAlreadyLinkedException(IntakeRecordId, LinkedTicketId.Value);
-        }
-
-        if (!IsUnitRelated)
-        {
-            throw new IntakeRecordNotUnitRelatedException(IntakeRecordId);
         }
 
         LinkedTicketId = ticketId;

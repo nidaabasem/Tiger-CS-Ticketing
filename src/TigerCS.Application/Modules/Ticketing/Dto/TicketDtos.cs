@@ -24,6 +24,29 @@ public sealed record CreateProvisionalTicketRequestDto(
     byte PriorityId,
     string RequestSummary);
 
+/// <summary>
+/// Product correction: every intake, whether unit-related or not, can be
+/// converted into a ticket after selecting one of the three categories; CRM
+/// verification is required only when the request is unit-related. This is
+/// the non-unit-related path — there is no VerificationSession to consume,
+/// and the resulting ticket carries no unit/contact reference.
+/// </summary>
+/// <param name="IntakeRecordId">Required. The non-unit-related intake record to promote. It must not already be linked to a ticket.</param>
+/// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
+/// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
+public sealed record CreateTicketFromNonUnitIntakeRequestDto(
+    long IntakeRecordId,
+    int CategoryId,
+    byte PriorityId,
+    string RequestSummary);
+
+/// <summary>A category available for ticket creation (MVP-Data-Dictionary.md §2.7).</summary>
+/// <param name="CategoryId">The category.</param>
+/// <param name="Name">The display name.</param>
+/// <param name="DepartmentId">The department this category routes to (FR-CLS-01/FR-RTE-01).</param>
+public sealed record CategoryResponseDto(int CategoryId, string Name, int DepartmentId);
+
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>
 /// <param name="TicketNumber">The human-facing ticket number.</param>
@@ -67,6 +90,10 @@ public enum TicketCreationOutcome
     IntakeRecordNotFound,
     IntakeRecordAlreadyLinked,
     IntakeRecordNotUnitRelated,
+
+    /// <summary>The intake record IS unit-related — it must go through the verified or provisional path (POST /api/tickets or POST /api/tickets/provisional), not the non-unit path.</summary>
+    IntakeRecordIsUnitRelated,
+
     VerificationSessionNotFound,
     VerificationSessionForbidden,
     VerificationSessionNotConfirmed,

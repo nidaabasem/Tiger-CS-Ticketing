@@ -29,6 +29,7 @@ public static class OpenApiTags
     public const string CrmLookup = "CRM Lookup";
     public const string CustomerVerification = "Customer Verification";
     public const string Intake = "Intake";
+    public const string Categories = "Categories";
     public const string Tickets = "Tickets";
     public const string Assignment = "Assignment";
     public const string Transfer = "Transfer";
@@ -52,6 +53,7 @@ public static class OpenApiTags
         (CrmLookup, "Read-only lookups against Tiger CRM: units and the contacts linked to a unit."),
         (CustomerVerification, "Verification sessions — recording that a requester was confirmed against a CRM unit and contact."),
         (Intake, "Intake records — every customer interaction is captured before verification is attempted."),
+        (Categories, "The category directory used to route and create tickets."),
         (Tickets, "Ticket creation and ticket queries (queue and detail)."),
         (Assignment, "Assigning a ticket to an employee."),
         (Transfer, "Transferring a ticket to another department."),

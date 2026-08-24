@@ -29,11 +29,17 @@ public class IntakeRecordTests
     }
 
     [Fact]
-    public void LinkToTicket_NonUnitRelated_Throws()
+    public void LinkToTicket_NonUnitRelated_Succeeds()
     {
+        // Product correction: every intake, whether unit-related or not,
+        // can be promoted to a ticket once a category is selected — this
+        // method no longer restricts promotion to unit-related intakes.
         var record = new IntakeRecord(Channel.Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
-        Assert.Throws<IntakeRecordNotUnitRelatedException>(() => record.LinkToTicket(1, CrmVerificationStatus.Verified));
+        record.LinkToTicket(1, CrmVerificationStatus.Unverified);
+
+        Assert.Equal(1, record.LinkedTicketId);
+        Assert.Equal(CrmVerificationStatus.Unverified, record.CrmVerificationStatus);
     }
 
     [Fact]
@@ -53,5 +59,17 @@ public class IntakeRecordTests
         record.MarkPendingCrmVerification();
 
         Assert.Equal(CrmVerificationStatus.PendingCrmVerification, record.CrmVerificationStatus);
+    }
+
+    [Fact]
+    public void MarkPendingCrmVerification_NonUnitRelated_Throws()
+    {
+        // Unlike LinkToTicket, MarkPendingCrmVerification is still
+        // unit-related-only: ISSUE-006's "queued for CRM verification"
+        // outcome makes no sense for a request with no CRM verification to
+        // wait on.
+        var record = new IntakeRecord(Channel.Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+
+        Assert.Throws<IntakeRecordNotUnitRelatedException>(() => record.MarkPendingCrmVerification());
     }
 }

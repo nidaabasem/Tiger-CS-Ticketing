@@ -62,12 +62,6 @@
                 <button type="submit" class="btn btn-gold">Continue</button>
             </form>
         }
-        else if (Model.Step == "not-unit-related")
-        {
-            <div class="section-card__title">Interaction recorded</div>
-            <p>This interaction was logged. A ticket cannot be created from a non-unit-related intake via the current API — only unit-related intakes can be promoted to a ticket.</p>
-            <a class="btn" href="/Tickets">Back to Ticket Queue</a>
-        }
         else if (Model.Step == "unit")
         {
             <div class="section-card__title">Step 2 — Find the unit (Tiger CRM)</div>
@@ -161,16 +155,34 @@
                 <button type="submit" class="btn btn-gold">Confirm identity &amp; continue</button>
             </form>
         }
-        else if (Model.Step == "create")
+        else if (Model.Step is "create" or "create-non-unit")
         {
-            <div class="section-card__title">Step 5 — Create the ticket</div>
-            <form method="post" asp-page-handler="Create">
+            var isNonUnit = Model.Step == "create-non-unit";
+            <div class="section-card__title">Step @(isNonUnit ? "2" : "5") — Create the ticket</div>
+            <form method="post" asp-page-handler="@(isNonUnit ? "CreateNonUnit" : "Create")">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <input type="hidden" name="verificationSessionId" value="@Model.VerificationSessionId" />
+                @if (!isNonUnit)
+                {
+                    <input type="hidden" name="verificationSessionId" value="@Model.VerificationSessionId" />
+                }
                 <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.CategoryId">Category ID</label>
-                    <input class="form-control" asp-for="CreateStep.CategoryId" />
-                    <span class="field-hint">No category directory endpoint exists yet — enter the numeric category id.</span>
+                    <label class="form-label">Category</label>
+                    @if (Model.Categories.Count == 0)
+                    {
+                        <p class="field-hint">No categories are available. Contact an administrator.</p>
+                    }
+                    else
+                    {
+                        <div class="category-picker">
+                            @foreach (var category in Model.Categories)
+                            {
+                                <input class="category-picker__input" type="radio" id="category-@category.CategoryId"
+                                       name="CreateStep.CategoryId" value="@category.CategoryId"
+                                       checked="@(Model.CreateStep.CategoryId == category.CategoryId)" />
+                                <label class="category-picker__card" for="category-@category.CategoryId">@category.Name</label>
+                            }
+                        </div>
+                    }
                 </div>
                 <div class="form-group">
                     <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>

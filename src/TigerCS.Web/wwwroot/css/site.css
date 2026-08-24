@@ -362,6 +362,19 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 
 .section-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
 .wizard-card { max-width: 560px; }
+
+/* Category picker — a hidden radio immediately followed by its label, same
+   no-JS ":checked + label" technique as .tab-input above, styled as a
+   selectable card instead of a tab. */
+.category-picker { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
+.category-picker__input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.category-picker__card {
+  flex: 1 1 140px; padding: var(--space-4) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--color-surface); font-size: 13px; font-weight: 600; color: var(--color-text); text-align: center; cursor: pointer;
+}
+.category-picker__card:hover { border-color: var(--color-gold); }
+.category-picker__input:checked + .category-picker__card { border-color: var(--color-gold); background: var(--color-gold-pale); color: var(--color-gold-dark); }
+.category-picker__input:focus-visible + .category-picker__card { outline: 2px solid var(--color-gold); outline-offset: 2px; }
 .section-card__title { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: var(--space-3); }
 
 /* tabs — no JS required: a radio input immediately followed by its label,

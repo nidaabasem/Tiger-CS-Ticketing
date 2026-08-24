@@ -119,6 +119,35 @@ public class Ticket
         return ticket;
     }
 
+    /// <summary>
+    /// A ticket created from a non-unit-related intake (product correction:
+    /// "every Intake, whether unit-related or not, can be converted into a
+    /// Ticket after selecting one of the three categories; CRM verification
+    /// is required only when the request is unit-related"). No
+    /// <c>VerificationSession</c> exists for this path and none is required
+    /// — <see cref="UnitReferenceId"/>/<see cref="ContactReferenceId"/> stay
+    /// null for the ticket's entire lifetime (there is no reconciliation
+    /// step waiting to fill them in, unlike <see cref="CreateProvisional"/>).
+    /// <see cref="VerificationStatus"/> is <see cref="CrmVerificationStatus.Unverified"/>
+    /// — not Verified (nothing was verified) and not PendingCrmVerification
+    /// (nothing is queued for verification; it is fully actionable now).
+    /// The SLA clock starts immediately, exactly as it does for
+    /// <see cref="CreateVerified"/>: this path has no CRM gate to wait on.
+    /// </summary>
+    public static Ticket CreateNonUnitRelated(
+        string ticketNumber,
+        int departmentId,
+        int categoryId,
+        byte priorityId,
+        string requestSummary,
+        DateTime createdAtUtc)
+    {
+        var ticket = CreateCore(ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc);
+        ticket.VerificationStatus = CrmVerificationStatus.Unverified;
+        ticket.SlaState = SlaState.Running;
+        return ticket;
+    }
+
     private static Ticket CreateCore(
         string ticketNumber, int departmentId, int categoryId, byte priorityId, string requestSummary, DateTime createdAtUtc)
     {

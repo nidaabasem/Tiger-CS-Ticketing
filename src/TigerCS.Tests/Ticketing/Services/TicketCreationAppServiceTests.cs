@@ -69,6 +69,16 @@ public class TicketCreationAppServiceTests
         return (record, agentId);
     }
 
+    private static async Task<(TigerCS.Domain.Modules.Ticketing.IntakeRecord Record, Guid AgentId)> SeedNonUnitRelatedIntakeAsync(
+        FakeIntakeRecordRepository repo)
+    {
+        var agentId = Guid.NewGuid();
+        var record = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            Channel.Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, agentId, DateTime.UtcNow);
+        await repo.AddAsync(record);
+        return (record, agentId);
+    }
+
     private static VerificationSession ConfirmedSession(Guid agentId, int unitReferenceId, int contactReferenceId)
     {
         var session = new VerificationSession(
@@ -420,5 +430,142 @@ public class TicketCreationAppServiceTests
             agentId, new CreateProvisionalTicketRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Critical, "Flooding"));
 
         Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
+    }
+
+    // ---- CreateFromNonUnitIntakeAsync ----
+    // Product correction: every intake, whether unit-related or not, can
+    // become a ticket once a category is selected; CRM verification is
+    // required only for the unit-related path above. This path has no
+    // VerificationSession at all.
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_HappyPath_CreatesUnverifiedTicketWithNoUnitContactAndLinksIntake()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LEA");
+        var category = f.Categories.Seed(department.DepartmentId, "Leasing");
+        var (intake, agentId) = await SeedNonUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "General leasing question"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Unverified", result.Response!.VerificationStatus);
+        Assert.Null(result.Response.UnitReferenceId);
+        Assert.Null(result.Response.ContactReferenceId);
+        Assert.StartsWith("TG-LEA-", result.Response.TicketNumber);
+
+        var linkedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.Equal(result.Response.TicketId, linkedIntake!.LinkedTicketId);
+        Assert.Equal(CrmVerificationStatus.Unverified, linkedIntake.CrmVerificationStatus);
+
+        // No VerificationSession, no snapshot — this path never verifies anyone.
+        Assert.Empty(f.Snapshots.Added);
+
+        Assert.Equal(4, f.StatusHistory.Added.Count);
+        Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
+        Assert.Single(f.Outbox.Committed);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_UnitRelatedIntakeRecord_ReturnsIntakeRecordIsUnitRelated()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LEA");
+        var category = f.Categories.Seed(department.DepartmentId, "Leasing");
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.IntakeRecordIsUnitRelated, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_IntakeRecordNotFound_ReturnsNotFound()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LEA");
+        var category = f.Categories.Seed(department.DepartmentId, "Leasing");
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            Guid.NewGuid(), new CreateTicketFromNonUnitIntakeRequestDto(999, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.IntakeRecordNotFound, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_IntakeRecordAlreadyLinked_ReturnsAlreadyLinked()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LEA");
+        var category = f.Categories.Seed(department.DepartmentId, "Leasing");
+        var (intake, agentId) = await SeedNonUnitRelatedIntakeAsync(f.IntakeRecords);
+        intake.LinkToTicket(1, CrmVerificationStatus.Unverified);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.IntakeRecordAlreadyLinked, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_CategoryNotFound_ReturnsCategoryNotFound()
+    {
+        var f = CreateService();
+        var (intake, agentId) = await SeedNonUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, 999, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.CategoryNotFound, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_CategoryRoutesToInactiveDepartment_ReturnsDepartmentInactive()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Retiring Department", "OLD");
+        var category = f.Categories.Seed(department.DepartmentId);
+        department.Deactivate();
+        var (intake, agentId) = await SeedNonUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.DepartmentInactive, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_TicketNumberCollision_ReturnsTicketNumberCollision()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LEA");
+        var category = f.Categories.Seed(department.DepartmentId, "Leasing");
+        var (intake, agentId) = await SeedNonUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        f.UnitOfWork.ThrowDuplicateWriteExceptionOnCall = 1;
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_HappyPath_CommitsExactlyOneTransaction()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LEA");
+        var category = f.Categories.Seed(department.DepartmentId, "Leasing");
+        var (intake, agentId) = await SeedNonUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal(1, f.UnitOfWork.TransactionsBegun);
+        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+        Assert.Equal(0, f.UnitOfWork.TransactionsRolledBack);
     }
 }

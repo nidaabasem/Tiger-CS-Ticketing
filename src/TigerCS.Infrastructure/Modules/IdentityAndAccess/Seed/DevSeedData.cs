@@ -96,17 +96,22 @@ public static class DevSeedData
 
         var customerService = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "CS", cancellationToken);
         var facilities = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "FM", cancellationToken);
-        if (customerService is null || facilities is null)
+        var leasing = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "LEA", cancellationToken);
+        if (customerService is null || facilities is null || leasing is null)
         {
-            logger.LogWarning("Skipping category seed — expected departments (CS, FM) not found.");
+            logger.LogWarning("Skipping category seed — expected departments (CS, FM, LEA) not found.");
             return;
         }
 
-        dbContext.Categories.Add(new Category("General Inquiry", customerService.DepartmentId));
-        dbContext.Categories.Add(new Category("Corrective Maintenance", facilities.DepartmentId));
+        // The three top-level categories offered on ticket creation (product
+        // correction: category selection, not unit-relatedness, gates ticket
+        // creation).
+        dbContext.Categories.Add(new Category("Leasing", leasing.DepartmentId));
+        dbContext.Categories.Add(new Category("Customer Service", customerService.DepartmentId));
+        dbContext.Categories.Add(new Category("Maintenance", facilities.DepartmentId));
 
         await dbContext.SaveChangesAsync(cancellationToken);
-        logger.LogInformation("Seeded 2 sample categories.");
+        logger.LogInformation("Seeded 3 sample categories.");
     }
 
     private static async Task SeedRolesAsync(
@@ -141,7 +146,8 @@ public static class DevSeedData
             ["Customer Service", "CS"],
             ["Facilities Management", "FM"],
             ["Finance", "FIN"],
-            ["Information Technology", "IT"]
+            ["Information Technology", "IT"],
+            ["Leasing", "LEA"]
         ];
 
         foreach (var d in sampleDepartments)

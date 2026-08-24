@@ -14,6 +14,9 @@ public sealed class FakeCategoryRepository : ICategoryRepository
     public Task<Category?> GetByIdAsync(int categoryId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_categories.GetValueOrDefault(categoryId));
 
+    public Task<IReadOnlyList<Category>> ListActiveAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Category>>(_categories.Values.Where(c => c.IsActive).ToList());
+
     public Category Seed(int departmentId, string name = "General Inquiry", bool isActive = true)
     {
         var category = new Category(name, departmentId, isActive: isActive);
