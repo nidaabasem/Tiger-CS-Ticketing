@@ -367,6 +367,77 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(HttpStatusCode.OK, notes.StatusCode);
     }
 
+    // --- POST /api/tickets/non-unit: business-rule change (non-unit intakes may become tickets) ---
+
+    [Fact]
+    public async Task CreateFromNonUnitIntake_ValidCategory_Returns201WithUnverifiedTicketAndNoUnitOrProjectData()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Customer Service " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.False(intake!.IsUnitRelated);
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "General billing question"));
+
+        // Routes successfully from category alone — no Unit/Project/CRM data
+        // of any kind was ever supplied.
+        Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
+        var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+        Assert.Equal("Unverified", ticket!.VerificationStatus);
+        Assert.Equal("Open", ticket.TicketStatus);
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.Equal(departmentId, ticket.OriginatingDepartmentId);
+        Assert.StartsWith("TG-", ticket.TicketNumber);
+
+        var detailResponse = await client.GetAsync($"/api/tickets/{ticket.TicketId}");
+        Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntake_NoValidCategory_Returns404()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", false, null, null));
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake!.IntakeRecordId, CategoryId: 999_999, (byte)PriorityLevel.Medium, "General billing question"));
+
+        Assert.Equal(HttpStatusCode.NotFound, ticketResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntake_UnitRelatedIntake_Returns422_MustUseCrmVerifiedPath()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Customer Service " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, ticketResponse.StatusCode);
+    }
+
     [Fact]
     public async Task GetQueue_WithoutToken_Returns401()
     {

@@ -83,7 +83,10 @@ public sealed class NewTicketModel(
 
         if (!Intake.IsUnitRelated)
         {
-            return RedirectToPage(new { step = "not-unit-related" });
+            // Business-rule change: a non-unit-related intake has no CRM
+            // unit/contact to verify, so it skips straight to category
+            // selection and ticket creation — no CRM Verification step.
+            return RedirectToPage(new { step = "non-unit-create", intakeRecordId = result.Value.IntakeRecordId });
         }
 
         return RedirectToPage(new { step = "unit", intakeRecordId = result.Value.IntakeRecordId });
@@ -150,6 +153,25 @@ public sealed class NewTicketModel(
             intakeRecordId, verificationSessionId, CreateStep.CategoryId, CreateStep.PriorityId, CreateStep.RequestSummary);
 
         var result = await ticketsClient.CreateFromVerificationAsync(request, cancellationToken);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            ErrorMessage = result.Detail ?? "Could not create the ticket.";
+            return Page();
+        }
+
+        return RedirectToPage("/TicketDetails", new { id = result.Value.TicketId });
+    }
+
+    /// <summary>Business-rule change: a non-unit-related intake skips CRM Verification entirely and creates the ticket directly from the selected category.</summary>
+    public async Task<IActionResult> OnPostCreateNonUnitAsync(long intakeRecordId, CancellationToken cancellationToken)
+    {
+        Step = "non-unit-create";
+        IntakeRecordId = intakeRecordId;
+
+        var request = new CreateTicketFromNonUnitIntakeRequestDto(
+            intakeRecordId, CreateStep.CategoryId, CreateStep.PriorityId, CreateStep.RequestSummary);
+
+        var result = await ticketsClient.CreateFromNonUnitIntakeAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
         {
             ErrorMessage = result.Detail ?? "Could not create the ticket.";

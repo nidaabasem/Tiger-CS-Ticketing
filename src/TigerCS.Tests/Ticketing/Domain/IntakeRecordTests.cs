@@ -29,11 +29,18 @@ public class IntakeRecordTests
     }
 
     [Fact]
-    public void LinkToTicket_NonUnitRelated_Throws()
+    public void LinkToTicket_NonUnitRelated_Succeeds()
     {
+        // Business-rule change: a non-unit-related intake may be promoted to
+        // a ticket too — only its CrmVerificationStatus differs (Unverified,
+        // never Verified/PendingCrmVerification, since it has nothing to
+        // verify against the CRM).
         var record = new IntakeRecord(Channel.Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
-        Assert.Throws<IntakeRecordNotUnitRelatedException>(() => record.LinkToTicket(1, CrmVerificationStatus.Verified));
+        record.LinkToTicket(1, CrmVerificationStatus.Unverified);
+
+        Assert.Equal(1, record.LinkedTicketId);
+        Assert.Equal(CrmVerificationStatus.Unverified, record.CrmVerificationStatus);
     }
 
     [Fact]
@@ -53,5 +60,16 @@ public class IntakeRecordTests
         record.MarkPendingCrmVerification();
 
         Assert.Equal(CrmVerificationStatus.PendingCrmVerification, record.CrmVerificationStatus);
+    }
+
+    [Fact]
+    public void MarkPendingCrmVerification_NonUnitRelated_Throws()
+    {
+        // Unchanged: ISSUE-006's CRM-outage queueing only ever applies to a
+        // unit-related request awaiting CRM reconciliation — a non-unit
+        // request has nothing to reconcile and is never queued this way.
+        var record = new IntakeRecord(Channel.Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+
+        Assert.Throws<IntakeRecordNotUnitRelatedException>(() => record.MarkPendingCrmVerification());
     }
 }

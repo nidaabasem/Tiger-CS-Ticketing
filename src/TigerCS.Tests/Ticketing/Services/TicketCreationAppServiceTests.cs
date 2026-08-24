@@ -421,4 +421,123 @@ public class TicketCreationAppServiceTests
 
         Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
     }
+
+    private static async Task<(TigerCS.Domain.Modules.Ticketing.IntakeRecord Record, Guid AgentId)> SeedNonUnitIntakeAsync(
+        FakeIntakeRecordRepository repo)
+    {
+        var agentId = Guid.NewGuid();
+        var record = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            Channel.Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, agentId, DateTime.UtcNow);
+        await repo.AddAsync(record);
+        return (record, agentId);
+    }
+
+    // --- CreateFromNonUnitIntakeAsync: business-rule change (non-unit intakes may become tickets) ---
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_ValidCategory_CreatesUnverifiedTicketAndLinksIntake()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedNonUnitIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "General billing question"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Unverified", result.Response!.VerificationStatus);
+        Assert.Null(result.Response.UnitReferenceId);
+        Assert.Null(result.Response.ContactReferenceId);
+        Assert.StartsWith("TG-CS-", result.Response.TicketNumber);
+
+        var linkedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.Equal(result.Response.TicketId, linkedIntake!.LinkedTicketId);
+        Assert.Equal(CrmVerificationStatus.Unverified, linkedIntake.CrmVerificationStatus);
+
+        // No CRM unit/contact snapshot is ever written for a non-unit ticket.
+        Assert.Empty(f.Snapshots.Added);
+
+        Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
+
+        // CreateFromNonUnitIntakeAsync never calls the CRM — TicketCreationAppService
+        // has no ICrmGateway/CRM-related dependency at all (see its constructor), so
+        // a CRM outage structurally cannot block this path. This fixture (and the
+        // successful result above) proves the path completes with no CRM fake wired in.
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_CategoryNotFound_Rejected()
+    {
+        var f = CreateService();
+        var (intake, agentId) = await SeedNonUnitIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, CategoryId: 999, (byte)PriorityLevel.Medium, "General billing question"));
+
+        Assert.Equal(TicketCreationOutcome.CategoryNotFound, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+
+        var reloadedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.Null(reloadedIntake!.LinkedTicketId);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_UnitRelatedIntakeRecord_ReturnsUnitRelated()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        // A unit-related intake must still go through CRM verification —
+        // via CreateFromVerificationSessionAsync or CreateProvisionalAsync —
+        // not this path.
+        Assert.Equal(TicketCreationOutcome.IntakeRecordUnitRelated, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_IntakeRecordAlreadyLinked_ReturnsAlreadyLinked()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedNonUnitIntakeAsync(f.IntakeRecords);
+        intake.LinkToTicket(1, CrmVerificationStatus.Unverified);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.IntakeRecordAlreadyLinked, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_IntakeRecordNotFound_ReturnsNotFound()
+    {
+        var f = CreateService();
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            Guid.NewGuid(), new CreateTicketFromNonUnitIntakeRequestDto(IntakeRecordId: 999, CategoryId: 1, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.IntakeRecordNotFound, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateFromNonUnitIntakeAsync_HappyPath_OpensInitialSlaPeriod()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedNonUnitIntakeAsync(f.IntakeRecords);
+
+        var result = await f.Service.CreateFromNonUnitIntakeAsync(
+            agentId, new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, category.CategoryId, (byte)PriorityLevel.Medium, "General billing question"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Running", result.Response!.SlaState);
+    }
 }

@@ -35,7 +35,11 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// with no call site yet, matching the same forward-building pattern
 /// VerificationSession.Consume() used ahead of this module's own arrival).
 /// Nothing already-approved is removed: a <see cref="CrmVerificationStatus.Verified"/>
-/// ticket still always has both.
+/// ticket still always has both. A non-unit-related ticket
+/// (<see cref="CreateNonUnit"/>) extends this same relaxation permanently
+/// rather than provisionally — it has no CRM unit/contact to resolve, ever,
+/// so both stay null for its whole lifecycle, and its
+/// <see cref="VerificationStatus"/> never leaves <see cref="CrmVerificationStatus.Unverified"/>.
 /// </para>
 /// </summary>
 public class Ticket
@@ -116,6 +120,31 @@ public class Ticket
         // ReconcileVerification runs — see that method's remarks for how
         // this reconciles with MVP-ERD.md §2.15's "≥1 from creation".
         ticket.SlaState = SlaState.Paused;
+        return ticket;
+    }
+
+    /// <summary>
+    /// Business-rule change: a non-unit-related request has no CRM unit/
+    /// contact to verify, so it promotes directly once a Ticket Category is
+    /// selected — CRM verification is required only when the originating
+    /// <see cref="IntakeRecord.IsUnitRelated"/> is true (see that type's
+    /// remarks). <see cref="VerificationStatus"/> is <see cref="CrmVerificationStatus.Unverified"/>
+    /// for the life of this ticket — never <see cref="CrmVerificationStatus.PendingCrmVerification"/>,
+    /// which is reserved for a unit-related ticket genuinely awaiting CRM
+    /// reconciliation (ISSUE-006) — and, having nothing to wait on, the SLA
+    /// clock starts immediately, the same as <see cref="CreateVerified"/>.
+    /// </summary>
+    public static Ticket CreateNonUnit(
+        string ticketNumber,
+        int departmentId,
+        int categoryId,
+        byte priorityId,
+        string requestSummary,
+        DateTime createdAtUtc)
+    {
+        var ticket = CreateCore(ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc);
+        ticket.VerificationStatus = CrmVerificationStatus.Unverified;
+        ticket.SlaState = SlaState.Running;
         return ticket;
     }
 

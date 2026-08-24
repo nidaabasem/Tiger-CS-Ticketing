@@ -46,6 +46,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/intake-records"] = nameof(SystemAdministratorEndpointAuthorizationTests.CreateIntakeRecord_WithSystemAdministratorJwt_Returns201),
         ["POST /api/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.CreateTicketFromVerificationSession_Returns201),
         ["POST /api/tickets/provisional"] = nameof(SystemAdministratorEndpointAuthorizationTests.CreateProvisionalTicket_Returns201),
+        ["POST /api/tickets/non-unit"] = nameof(SystemAdministratorEndpointAuthorizationTests.CreateTicketFromNonUnitIntake_Returns201),
         ["GET /api/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketQueue_Returns200),
         ["GET /api/tickets/{ticketId:long}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketDetail_ForATicketInADepartmentTheAdministratorDoesNotBelongTo_Returns200),
         ["POST /api/tickets/{ticketId:long}/assignment"] = nameof(SystemAdministratorEndpointAuthorizationTests.AssignTicket_Returns200),

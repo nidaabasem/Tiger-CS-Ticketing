@@ -315,6 +315,25 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    [Fact]
+    public async Task CreateTicketFromNonUnitIntake_Returns201()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Customer Service " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
+
+        var intake = await (await client.PostAsJsonAsync(
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", false, null, null)))
+            .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "General billing question"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     // ---------------------------------------------------------------
     // Ticket queries
     // ---------------------------------------------------------------

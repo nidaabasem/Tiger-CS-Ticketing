@@ -9,14 +9,19 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
-/// Items 3–8 of this increment's scope. Two creation paths, matching
-/// TicketCreationAppService's own two methods:
+/// Items 3–8 of this increment's scope, plus a later business-rule change.
+/// Three creation paths, matching TicketCreationAppService's own three
+/// methods:
 /// <list type="bullet">
-/// <item><see cref="Create"/> — the normal path (FR-CH-01/FR-VER-02):
+/// <item><see cref="Create"/> — the normal unit-related path (FR-CH-01/FR-VER-02):
 /// a unit-related request, from an already-confirmed VerificationSession.</item>
 /// <item><see cref="CreateProvisional"/> — ISSUE-006's approved fallback:
 /// Critical/High proceeds immediately while the CRM is unreachable;
 /// Medium/Low is queued instead of rejected outright (200, not an error).</item>
+/// <item><see cref="CreateFromNonUnitIntake"/> — a non-unit-related request:
+/// no CRM unit/contact to verify, so it promotes directly once a Ticket
+/// Category is selected. Ticket Category is required on every path; CRM
+/// verification is required only on the two unit-related paths above.</item>
 /// </list>
 /// Scoped to CS Agent/CS Supervisor only (PolicyNames.CustomerVerification) —
 /// same rationale as VerificationSessionsController/CrmController: the
@@ -102,6 +107,39 @@ public class TicketsController(
         }
 
         var result = await ticketCreationAppService.CreateProvisionalAsync(employeeId.Value, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    /// <summary>Create a ticket from a non-unit-related intake. CS Agent/CS Supervisor only.</summary>
+    /// <remarks>
+    /// Business-rule change: a non-unit-related intake has no CRM unit/
+    /// contact to verify, so it is promoted directly once a supported Ticket
+    /// Category is selected — no verification session is created or
+    /// consumed for this path, and the CRM is never called.
+    /// </remarks>
+    /// <param name="request">The intake record to promote, plus category, priority, and summary.</param>
+    /// <response code="201">The created ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">The intake record, category, priority, or the category's routed department was not found (or the department is inactive).</response>
+    /// <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
+    /// <response code="422">The intake record is unit-related — promote it via the verification-session or provisional path instead, so CRM verification is enforced.</response>
+    [HttpPost("non-unit")]
+    [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> CreateFromNonUnitIntake(
+        [FromBody] CreateTicketFromNonUnitIntakeRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketCreationAppService.CreateFromNonUnitIntakeAsync(employeeId.Value, request, cancellationToken);
         return ToActionResult(result);
     }
 
@@ -435,7 +473,13 @@ public class TicketsController(
         TicketCreationOutcome.IntakeRecordNotUnitRelated => Problem(
             type: "https://tigercs.internal/problems/intake-record-not-unit-related",
             title: "Intake record is not unit-related",
-            detail: "A non-unit-related IntakeRecord cannot be promoted to a ticket in this increment.",
+            detail: "This IntakeRecord is not unit-related — promote it via POST /api/tickets/non-unit instead.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.IntakeRecordUnitRelated => Problem(
+            type: "https://tigercs.internal/problems/intake-record-unit-related",
+            title: "Intake record is unit-related",
+            detail: "CRM verification is required for unit-related intakes — promote this IntakeRecord via POST /api/tickets or POST /api/tickets/provisional instead.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketCreationOutcome.VerificationSessionNotFound => Problem(

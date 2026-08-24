@@ -24,6 +24,17 @@ public sealed record CreateProvisionalTicketRequestDto(
     byte PriorityId,
     string RequestSummary);
 
+/// <summary>Business-rule change: a non-unit-related intake has no CRM unit/contact to verify, so it promotes directly once a Ticket Category is selected — no VerificationSessionId, because none is ever created for this path.</summary>
+/// <param name="IntakeRecordId">Required. The non-unit-related intake record to promote. It must not already be linked to a ticket.</param>
+/// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
+/// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
+public sealed record CreateTicketFromNonUnitIntakeRequestDto(
+    long IntakeRecordId,
+    int CategoryId,
+    byte PriorityId,
+    string RequestSummary);
+
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>
 /// <param name="TicketNumber">The human-facing ticket number.</param>
@@ -66,7 +77,13 @@ public enum TicketCreationOutcome
 
     IntakeRecordNotFound,
     IntakeRecordAlreadyLinked,
+
+    /// <summary>Returned by the unit-related creation paths (verification-session and provisional) when given a non-unit-related IntakeRecord — those paths establish CRM verification, which a non-unit-related intake has nothing to verify. Promote it via the non-unit path instead.</summary>
     IntakeRecordNotUnitRelated,
+
+    /// <summary>Returned by the non-unit creation path when given a unit-related IntakeRecord — CRM verification is required for unit-related intakes, so it must be promoted via the verification-session or provisional path instead.</summary>
+    IntakeRecordUnitRelated,
+
     VerificationSessionNotFound,
     VerificationSessionForbidden,
     VerificationSessionNotConfirmed,

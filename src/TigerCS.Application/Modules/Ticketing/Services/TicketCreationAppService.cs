@@ -21,7 +21,12 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// unavailable (ISSUE-006, Management-Decisions.md — approved as
 /// recommended). Medium/Low requests during an outage are never turned into
 /// a ticket here — they remain queued on their IntakeRecord instead
-/// (<see cref="TicketCreationOutcome.QueuedPendingVerification"/>).
+/// (<see cref="TicketCreationOutcome.QueuedPendingVerification"/>). A later
+/// business-rule change added (c) <see cref="CreateFromNonUnitIntakeAsync"/>:
+/// a non-unit-related request has no CRM unit/contact to verify at all, so
+/// it promotes directly once a Ticket Category is selected — Ticket Category
+/// is required on every path; CRM verification is required only on (a)/(b),
+/// which exist precisely because the underlying intake is unit-related.
 ///
 /// <para>
 /// <b>Two SaveChanges calls per path, in one real transaction.</b> Both
@@ -278,6 +283,84 @@ public sealed class TicketCreationAppService(
             provisionalCorrelationId, cancellationToken);
 
         await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, provisionalCorrelationId, now, cancellationToken);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return TicketCreationResult.Success(ToDto(ticket));
+    }
+
+    /// <summary>
+    /// Business-rule change: a non-unit-related intake has no CRM unit/
+    /// contact to verify, so it promotes to a ticket directly once a
+    /// supported Ticket Category is selected — CRM verification is required
+    /// only when the IntakeRecord <see cref="IntakeRecord.IsUnitRelated"/>.
+    /// Nothing here calls the CRM: a CRM outage never blocks this path.
+    /// </summary>
+    public async Task<TicketCreationResult> CreateFromNonUnitIntakeAsync(
+        Guid callerEmployeeId, CreateTicketFromNonUnitIntakeRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var intakeRecord = await intakeRecordRepository.GetByIdAsync(request.IntakeRecordId, cancellationToken);
+        if (intakeRecord is null)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordNotFound);
+        }
+
+        if (intakeRecord.LinkedTicketId is not null)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordAlreadyLinked);
+        }
+
+        if (intakeRecord.IsUnitRelated)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordUnitRelated);
+        }
+
+        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
+        if (routing.Failure is { } routingFailure)
+        {
+            return TicketCreationResult.Failure(routingFailure);
+        }
+
+        var category = routing.Category!;
+        var priority = routing.Priority!;
+        var department = routing.Department!;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        Ticket ticket;
+        try
+        {
+            var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
+            ticket = Ticket.CreateNonUnit(
+                ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+
+            await ticketRepository.AddAsync(ticket, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
+        }
+
+        intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified);
+
+        await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
+
+        var correlationId = Guid.NewGuid();
+
+        // Clock starts at creation, same as the verified path — a non-unit
+        // ticket has nothing pending to gate it (see Ticket.CreateNonUnit's
+        // remarks).
+        await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
+            beforeValue: null, afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus=Unverified;UnitRelated=false",
+            correlationId, cancellationToken);
+
+        await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, correlationId, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

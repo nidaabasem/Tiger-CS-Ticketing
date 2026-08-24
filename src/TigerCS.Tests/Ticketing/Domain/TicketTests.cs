@@ -49,6 +49,24 @@ public class TicketTests
     }
 
     [Fact]
+    public void CreateNonUnit_SetsUnverifiedStatusAndRunningSlaWithNoUnitOrContactReference()
+    {
+        var ticket = Ticket.CreateNonUnit(
+            "TG-CS-20260820-0006", departmentId: 2, categoryId: 5,
+            priorityId: (byte)PriorityLevel.Medium, "General question about billing", DateTime.UtcNow);
+
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
+        Assert.Equal(EscalationLevel.None, ticket.EscalationLevel);
+        // Nothing pending — the clock starts at creation, same as CreateVerified.
+        Assert.Equal(SlaState.Running, ticket.SlaState);
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.Equal(2, ticket.OriginatingDepartmentId);
+        Assert.Equal(2, ticket.CurrentDepartmentId);
+    }
+
+    [Fact]
     public void ReconcileVerification_OnProvisionalTicket_PopulatesReferencesAndMarksVerified()
     {
         var ticket = Ticket.CreateProvisional(

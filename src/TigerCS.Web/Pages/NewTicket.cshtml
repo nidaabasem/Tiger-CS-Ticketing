@@ -62,11 +62,32 @@
                 <button type="submit" class="btn btn-gold">Continue</button>
             </form>
         }
-        else if (Model.Step == "not-unit-related")
+        else if (Model.Step == "non-unit-create")
         {
-            <div class="section-card__title">Interaction recorded</div>
-            <p>This interaction was logged. A ticket cannot be created from a non-unit-related intake via the current API — only unit-related intakes can be promoted to a ticket.</p>
-            <a class="btn" href="/Tickets">Back to Ticket Queue</a>
+            <div class="section-card__title">Step 2 — Category, details &amp; create ticket</div>
+            <p class="text-secondary">This interaction is not unit-related, so no CRM verification is needed — select a ticket category and create the ticket directly.</p>
+            <form method="post" asp-page-handler="CreateNonUnit">
+                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                <div class="form-group">
+                    <label class="form-label" asp-for="CreateStep.CategoryId">Category ID</label>
+                    <input class="form-control" asp-for="CreateStep.CategoryId" />
+                    <span class="field-hint">No category directory endpoint exists yet — enter the numeric category id.</span>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>
+                    <select class="form-control" asp-for="CreateStep.PriorityId">
+                        @for (byte p = 1; p <= 4; p++)
+                        {
+                            <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="CreateStep.RequestSummary">Request summary</label>
+                    <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3"></textarea>
+                </div>
+                <button type="submit" class="btn btn-gold">Create ticket</button>
+            </form>
         }
         else if (Model.Step == "unit")
         {
