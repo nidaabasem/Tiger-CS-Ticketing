@@ -1,0 +1,192 @@
+@page "/NewTicket"
+@model TigerCS.Web.Pages.NewTicketModel
+@{
+    ViewData["Title"] = "New Ticket";
+    ViewData["ActiveNav"] = "queue";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/Tickets">Tickets</a>
+        <span class="sep">/</span>
+        <span class="current">New Ticket</span>
+    </nav>
+
+    <div class="page-header">
+        <h1 class="page-title">New Ticket</h1>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+            <span>@Model.ErrorMessage</span>
+        </div>
+    }
+
+    <div class="section-card wizard-card">
+        @if (Model.Step == "intake")
+        {
+            <div class="section-card__title">Step 1 — Record the interaction</div>
+            <form method="post" asp-page-handler="Intake">
+                <div class="form-group">
+                    <label class="form-label" asp-for="Intake.ChannelId">Channel</label>
+                    <select class="form-control" asp-for="Intake.ChannelId">
+                        @foreach (var c in new[] { "Phone", "AppOrWebsite", "WhatsAppOrLiveChat", "SocialMediaDirectMessage", "FaceToFaceKiosk" })
+                        {
+                            <option value="@c">@c</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-field">
+                        <input asp-for="Intake.IsUnitRelated" />
+                        This interaction concerns a specific unit
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="Intake.RawUnitNumberEntered">Unit number (as given by the caller)</label>
+                    <input class="form-control" asp-for="Intake.RawUnitNumberEntered" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="Intake.PriorityHint">Priority hint (optional)</label>
+                    <select class="form-control" asp-for="Intake.PriorityHint">
+                        <option value="">—</option>
+                        @for (byte p = 1; p <= 4; p++)
+                        {
+                            <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                        }
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-gold">Continue</button>
+            </form>
+        }
+        else if (Model.Step == "not-unit-related")
+        {
+            <div class="section-card__title">Interaction recorded</div>
+            <p>This interaction was logged. A ticket cannot be created from a non-unit-related intake via the current API — only unit-related intakes can be promoted to a ticket.</p>
+            <a class="btn" href="/Tickets">Back to Ticket Queue</a>
+        }
+        else if (Model.Step == "unit")
+        {
+            <div class="section-card__title">Step 2 — Find the unit (Tiger CRM)</div>
+            <form method="post" asp-page-handler="SearchUnit">
+                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                <div class="form-group">
+                    <label class="form-label" asp-for="UnitSearchStep.UnitNumber">Unit number</label>
+                    <input class="form-control" asp-for="UnitSearchStep.UnitNumber" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="UnitSearchStep.PropertyName">Property name (optional)</label>
+                    <input class="form-control" asp-for="UnitSearchStep.PropertyName" />
+                </div>
+                <button type="submit" class="btn btn-gold">Search</button>
+            </form>
+
+            @if (Model.UnitResults.Count > 0)
+            {
+                <div class="entry-list entry-list--spaced">
+                    @foreach (var unit in Model.UnitResults)
+                    {
+                        <form method="post" asp-page-handler="SelectUnit" class="entry-row">
+                            <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                            <input type="hidden" name="unitReferenceId" value="@unit.UnitReferenceId" />
+                            <input type="hidden" name="crmUnitId" value="@unit.CrmUnitId" />
+                            <input type="hidden" name="unitNumber" value="@unit.UnitNumber" />
+                            <span>
+                                <strong>@unit.UnitNumber</strong>
+                                <span class="text-secondary">@(unit.PropertyName is null ? "" : $"· {unit.PropertyName}") @(unit.TowerName is null ? "" : $"· {unit.TowerName}")</span>
+                            </span>
+                            <button type="submit" class="btn btn-sm">Select</button>
+                        </form>
+                    }
+                </div>
+            }
+        }
+        else if (Model.Step == "contact")
+        {
+            <div class="section-card__title">Step 3 — Select the contact</div>
+            <p class="text-secondary">Unit: @Model.UnitNumber</p>
+
+            @if (Model.ContactResults.Count == 0)
+            {
+                <div class="empty-state"><p>No contacts found for this unit.</p></div>
+            }
+            else
+            {
+                <div class="entry-list">
+                    @foreach (var contact in Model.ContactResults)
+                    {
+                        <form method="post" asp-page-handler="SelectContact" class="entry-row">
+                            <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                            <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
+                            <input type="hidden" name="crmUnitId" value="@Model.CrmUnitId" />
+                            <input type="hidden" name="unitNumber" value="@Model.UnitNumber" />
+                            <input type="hidden" name="contactReferenceId" value="@contact.ContactReferenceId" />
+                            <input type="hidden" name="contactDisplayName" value="@contact.DisplayName" />
+                            <span>
+                                <strong>@(contact.DisplayName ?? "(no name on file)")</strong>
+                                <span class="text-secondary">@contact.ContactType @(contact.ContactChannel is null ? "" : $"· {contact.ContactChannel}")</span>
+                            </span>
+                            <button type="submit" class="btn btn-sm">Select</button>
+                        </form>
+                    }
+                </div>
+            }
+        }
+        else if (Model.Step == "confirm")
+        {
+            <div class="section-card__title">Step 4 — Confirm verification</div>
+            <dl>
+                <div class="facts-row"><dt>Unit</dt><dd>@Model.UnitNumber</dd></div>
+                <div class="facts-row"><dt>Contact</dt><dd>@Model.ContactDisplayName</dd></div>
+            </dl>
+            <form method="post" asp-page-handler="Confirm">
+                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
+                <input type="hidden" name="unitNumber" value="@Model.UnitNumber" />
+                <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
+                <input type="hidden" name="contactDisplayName" value="@Model.ContactDisplayName" />
+                <div class="form-group">
+                    <label class="form-label" asp-for="ConfirmStep.VerificationMethod">Verification method</label>
+                    <select class="form-control" asp-for="ConfirmStep.VerificationMethod">
+                        <option value="ManualAgentConfirmation">Manual agent confirmation</option>
+                        <option value="AuthenticatedDigitalUser">Authenticated digital user</option>
+                        <option value="Otp">OTP</option>
+                        <option value="FaceToFaceDocumentCheck">Face-to-face document check</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-gold">Confirm identity &amp; continue</button>
+            </form>
+        }
+        else if (Model.Step == "create")
+        {
+            <div class="section-card__title">Step 5 — Create the ticket</div>
+            <form method="post" asp-page-handler="Create">
+                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                <input type="hidden" name="verificationSessionId" value="@Model.VerificationSessionId" />
+                <div class="form-group">
+                    <label class="form-label" asp-for="CreateStep.CategoryId">Category ID</label>
+                    <input class="form-control" asp-for="CreateStep.CategoryId" />
+                    <span class="field-hint">No category directory endpoint exists yet — enter the numeric category id.</span>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>
+                    <select class="form-control" asp-for="CreateStep.PriorityId">
+                        @for (byte p = 1; p <= 4; p++)
+                        {
+                            <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="CreateStep.RequestSummary">Request summary</label>
+                    <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3"></textarea>
+                </div>
+                <button type="submit" class="btn btn-gold">Create ticket</button>
+            </form>
+        }
+    </div>
+</div>
