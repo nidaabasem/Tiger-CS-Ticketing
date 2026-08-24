@@ -1,0 +1,21 @@
+@{
+    var active = ViewData["ActiveNav"] as string ?? "queue";
+    var currentUser = CurrentUser.FromPrincipal(User);
+    (string Key, string Label, string Href)[] items =
+    [
+        ("queue", "Queue", "/Tickets"),
+        ("my", "My Tickets", currentUser is null ? "/Tickets" : $"/Tickets?ownerEmployeeId={currentUser.EmployeeId}"),
+        ("pendingcrm", "Pending CRM", "/Tickets?verificationStatus=PendingCrmVerification"),
+        ("closed", "Closed", "/Tickets?ticketStatus=Closed"),
+    ];
+}
+<nav class="app-nav" aria-label="Primary">
+    <ul class="app-nav__list">
+        @foreach (var item in items)
+        {
+            <li>
+                <a class="app-nav__link @(item.Key == active ? "is-active" : "")" href="@item.Href" aria-current="@(item.Key == active ? "page" : null)">@item.Label</a>
+            </li>
+        }
+    </ul>
+</nav>

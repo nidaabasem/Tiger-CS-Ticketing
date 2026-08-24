@@ -1,0 +1,52 @@
+@model TigerCS.Web.Pages.TicketQueueRow
+@{
+    var t = Model.Ticket;
+    var sla = Model.Sla;
+    (string Label, string CssKey)? slaBadge = sla is not null ? TicketDisplay.SlaBadgeText(sla, DateTime.UtcNow) : null;
+}
+<tr>
+    <td>
+        <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(t.TicketStatus)">
+            <span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(t.TicketStatus)
+        </span>
+    </td>
+    <td><a class="ticket-id-link" href="/Tickets/@t.TicketId">@t.TicketNumber</a></td>
+    <td class="col-subject">@t.RequestSummary</td>
+    <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(t.PriorityId)">@TicketDisplay.PriorityLabel(t.PriorityId)</span></td>
+    <td>
+        @if (Model.DepartmentName is not null)
+        {
+            @Model.DepartmentName
+        }
+        else
+        {
+            <span class="id-fallback">Department #@t.CurrentDepartmentId</span>
+        }
+    </td>
+    <td>
+        @if (t.CurrentOwnerEmployeeId is null)
+        {
+            <span class="text-secondary">Unassigned</span>
+        }
+        else if (Model.OwnerName is not null)
+        {
+            @Model.OwnerName
+        }
+        else
+        {
+            <span class="id-fallback" title="@t.CurrentOwnerEmployeeId">Employee #@t.CurrentOwnerEmployeeId.Value.ToString()[..8]</span>
+        }
+    </td>
+    <td><span class="badge badge-verification-@t.VerificationStatus.ToLowerInvariant()">@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</span></td>
+    <td>
+        @if (slaBadge is not null)
+        {
+            <span class="badge badge-sla-@slaBadge.Value.CssKey">@slaBadge.Value.Label</span>
+        }
+        else
+        {
+            <span class="text-secondary">—</span>
+        }
+    </td>
+    <td class="text-secondary text-mono">@t.CreatedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</td>
+</tr>
