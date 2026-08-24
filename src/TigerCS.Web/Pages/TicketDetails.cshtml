@@ -1,0 +1,352 @@
+@page "/Tickets/{id:long}"
+@model TigerCS.Web.Pages.TicketDetailsModel
+@{
+    ViewData["ActiveNav"] = "queue";
+    Layout = "_Layout";
+}
+
+@if (Model.Ticket is null)
+{
+    ViewData["Title"] = "Ticket unavailable";
+    <div class="page">
+        <div class="error-state">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+            <p>
+                @(Model.Outcome switch
+                {
+                    ApiOutcome.Forbidden => "You don't have permission to view this ticket.",
+                    ApiOutcome.Unauthorized => "Your session is no longer valid. Sign in again.",
+                    ApiOutcome.Unreachable or ApiOutcome.BadGateway => "Tiger Ticketing System could not reach the ticketing service.",
+                    _ => "This ticket could not be loaded."
+                })
+            </p>
+            <a class="btn btn-sm" href="/Tickets">Back to Ticket Queue</a>
+        </div>
+    </div>
+}
+else
+{
+    var t = Model.Ticket;
+    ViewData["Title"] = t.TicketNumber;
+    var isClosed = t.TicketStatus == "Closed";
+    var isResolved = t.TicketStatus == "Resolved";
+    (string Label, string CssKey)? slaBadge = Model.Sla is not null ? TicketDisplay.SlaBadgeText(Model.Sla, DateTime.UtcNow) : null;
+
+    <div class="page">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="/Tickets">Tickets</a>
+            <span class="sep">/</span>
+            <span class="current">@t.TicketNumber</span>
+        </nav>
+
+        @if (!string.IsNullOrEmpty(Model.ActionSuccess))
+        {
+            <div class="alert alert-success" role="status">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                <span>@Model.ActionSuccess</span>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(Model.ActionError))
+        {
+            <div class="alert alert-error" role="alert">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                <span>@Model.ActionError</span>
+            </div>
+        }
+
+        <section class="ticket-header">
+            <div class="ticket-header__top">
+                <div>
+                    <div class="ticket-header__id">@t.TicketNumber</div>
+                    <h1 class="ticket-header__title">@t.RequestSummary</h1>
+                    <div class="ticket-header__meta">
+                        <span><strong>Department:</strong> @(Model.DepartmentName ?? $"Department #{t.CurrentDepartmentId}")</span>
+                        <span><strong>Owner:</strong> @(t.CurrentOwnerEmployeeId is null ? "Unassigned" : Model.OwnerName ?? $"Employee #{t.CurrentOwnerEmployeeId.Value.ToString()[..8]}")</span>
+                        <span><strong>Category:</strong> #@t.CategoryId</span>
+                    </div>
+                    <div class="ticket-header__badges">
+                        <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(t.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</span>
+                        <span class="badge badge-priority-@TicketDisplay.PriorityCssKey(t.PriorityId)">@TicketDisplay.PriorityLabel(t.PriorityId)</span>
+                        <span class="badge badge-verification-@t.VerificationStatus.ToLowerInvariant()">@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</span>
+                        @if (slaBadge is not null)
+                        {
+                            <span class="badge badge-sla-@slaBadge.Value.CssKey">SLA: @slaBadge.Value.Label</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="ticket-header__actions">
+                    @if (!isClosed)
+                    {
+                        <details class="disclosure" open="@(Model.OpenSection == "assign" ? "open" : null)">
+                            <summary class="btn btn-sm">Assign</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="Assign" class="action-form">
+                                    <input type="hidden" asp-for="Assign.RowVersionBase64" />
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Assign.AssignedEmployeeId">Assign to</label>
+                                        <select class="field-select" asp-for="Assign.AssignedEmployeeId">
+                                            @foreach (var member in Model.AssignableEmployees)
+                                            {
+                                                <option value="@member.EmployeeId">@member.DisplayName</option>
+                                            }
+                                        </select>
+                                        @if (Model.AssignableEmployees.Count == 0)
+                                        {
+                                            <span class="field-hint">No active members found in this department.</span>
+                                        }
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Assign</button></div>
+                                </form>
+                            </div>
+                        </details>
+
+                        <details class="disclosure" open="@(Model.OpenSection == "transfer" ? "open" : null)">
+                            <summary class="btn btn-sm">Transfer</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="Transfer" class="action-form">
+                                    <input type="hidden" asp-for="Transfer.RowVersionBase64" />
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Transfer.TargetDepartmentId">Target department ID</label>
+                                        <input class="form-control" asp-for="Transfer.TargetDepartmentId" list="myDepartments" />
+                                        <datalist id="myDepartments">
+                                            @foreach (var d in Model.NameResolver.OwnDepartments)
+                                            {
+                                                <option value="@d.DepartmentId">@d.Name</option>
+                                            }
+                                        </datalist>
+                                        <span class="field-hint">No department directory endpoint exists yet — enter the numeric department id (your own memberships are suggested above).</span>
+                                    </div>
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Transfer.Reason">Reason</label>
+                                        <textarea class="form-control" asp-for="Transfer.Reason" rows="2"></textarea>
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Transfer</button></div>
+                                </form>
+                            </div>
+                        </details>
+
+                        <details class="disclosure" open="@(Model.OpenSection == "status" ? "open" : null)">
+                            <summary class="btn @(isResolved ? "btn-sm" : "btn-gold btn-sm")">Change Status</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="ChangeStatus" class="action-form">
+                                    <input type="hidden" asp-for="Status.RowVersionBase64" />
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Status.NewStatus">New status</label>
+                                        <select class="field-select" asp-for="Status.NewStatus">
+                                            @foreach (var s in new[] { "Open", "InProgress", "PendingCustomer", "PendingThirdParty" })
+                                            {
+                                                <option value="@s">@TicketDisplay.TicketStatusLabel(s)</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Update status</button></div>
+                                </form>
+                            </div>
+                        </details>
+
+                        <details class="disclosure" open="@(Model.OpenSection == "resolve" ? "open" : null)">
+                            <summary class="btn btn-sm">Resolve</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="Resolve" class="action-form">
+                                    <input type="hidden" asp-for="Resolve.RowVersionBase64" />
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Resolve.ResolutionOutcome">Outcome</label>
+                                        <select class="field-select" asp-for="Resolve.ResolutionOutcome">
+                                            @foreach (var o in new[] { "Resolved", "Cancelled", "Rejected", "Duplicate" })
+                                            {
+                                                <option value="@o">@o</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Resolve.DuplicateOfTicketId">Duplicate of ticket ID</label>
+                                        <input class="form-control" asp-for="Resolve.DuplicateOfTicketId" />
+                                        <span class="field-hint">Only used when outcome is Duplicate.</span>
+                                    </div>
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Resolve.ResolutionNote">Resolution note</label>
+                                        <textarea class="form-control" asp-for="Resolve.ResolutionNote" rows="3"></textarea>
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Resolve</button></div>
+                                </form>
+                            </div>
+                        </details>
+
+                        <details class="disclosure" open="@(Model.OpenSection == "escalate" ? "open" : null)">
+                            <summary class="btn btn-sm">Escalate</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="Escalate" class="action-form">
+                                    <input type="hidden" asp-for="Escalate.RowVersionBase64" />
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Escalate.Level">Escalate to level</label>
+                                        <select class="field-select" asp-for="Escalate.Level">
+                                            @for (byte lvl = 1; lvl <= 4; lvl++)
+                                            {
+                                                <option value="@lvl">Level @lvl</option>
+                                            }
+                                        </select>
+                                        <span class="field-hint">Current level: @TicketDisplay.EscalationLevelLabel(t.EscalationLevel). Levels only rise. Level 4 is restricted to CS Manager/GM.</span>
+                                    </div>
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Escalate.Note">Note (optional)</label>
+                                        <textarea class="form-control" asp-for="Escalate.Note" rows="2"></textarea>
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-critical btn-sm">Escalate</button></div>
+                                </form>
+                            </div>
+                        </details>
+                    }
+
+                    @if (isResolved)
+                    {
+                        <form method="post" asp-page-handler="Close">
+                            <input type="hidden" asp-for="Close.RowVersionBase64" />
+                            <button type="submit" class="btn btn-gold btn-sm">Close ticket</button>
+                        </form>
+                    }
+                </div>
+            </div>
+
+            @if (isClosed)
+            {
+                <div class="status-banner status-banner--closed">
+                    <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="16" height="10" rx="1.6" stroke="currentColor" stroke-width="1.6" /><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.6" /></svg>
+                    This ticket is closed and read-only. Resolution: @TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome).
+                </div>
+            }
+            else if (slaBadge?.CssKey == "breached")
+            {
+                <div class="status-banner status-banner--critical">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                    SLA @slaBadge.Value.Label.ToLowerInvariant() — escalation level @TicketDisplay.EscalationLevelLabel(t.EscalationLevel).
+                </div>
+            }
+            else if (t.VerificationStatus == "PendingCrmVerification")
+            {
+                <div class="status-banner status-banner--pending">
+                    <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" /><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                    Pending CRM verification — this ticket was created provisionally and awaits reconciliation.
+                </div>
+            }
+        </section>
+
+        <div class="detail-layout">
+            <div>
+                <div class="tabs-card">
+                    <input type="radio" name="ticketTab" id="tab-activity" class="tab-input" checked />
+                    <label class="tab-label" for="tab-activity">Activity</label>
+                    <input type="radio" name="ticketTab" id="tab-audit" class="tab-input" />
+                    <label class="tab-label" for="tab-audit">Audit History</label>
+
+                    <div class="tabs-body">
+                        <div class="tab-panel" id="panel-activity">
+                            @if (Model.ActivityFeed.Count == 0)
+                            {
+                                <div class="empty-state"><p>No activity recorded yet.</p></div>
+                            }
+                            else
+                            {
+                                <ol class="timeline">
+                                    @foreach (var entry in Model.ActivityFeed)
+                                    {
+                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-gold", _ => "icon-quiet" };
+                                        <li class="timeline-item">
+                                            <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
+                                            <div class="timeline-row">
+                                                <span class="timeline-text"><strong>@entry.Actor</strong> — @entry.Description</span>
+                                                <span class="timeline-time">@entry.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm")</span>
+                                            </div>
+                                            @if (!string.IsNullOrEmpty(entry.Note))
+                                            {
+                                                <div class="timeline-note @(entry.IsHuman ? "timeline-note--human" : "timeline-note--system")">@entry.Note</div>
+                                            }
+                                        </li>
+                                    }
+                                </ol>
+                            }
+
+                            @if (!isClosed)
+                            {
+                                <div class="composer">
+                                    <form method="post" asp-page-handler="AddNote">
+                                        <label class="field-label" asp-for="Note.NoteText">Add a note</label>
+                                        <textarea class="form-control" asp-for="Note.NoteText" rows="3" placeholder="Write a note…"></textarea>
+                                        <div class="composer__footer">
+                                            <button type="submit" class="btn btn-gold btn-sm">Save note</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="tab-panel" id="panel-audit">
+                            @if (Model.Escalations.Count == 0)
+                            {
+                                <div class="empty-state"><p>No escalations recorded.</p></div>
+                            }
+                            else
+                            {
+                                <div class="entry-list">
+                                    @foreach (var e in Model.Escalations)
+                                    {
+                                        <div class="entry-row">
+                                            <span class="entry-row__field">Escalated to @TicketDisplay.EscalationLevelLabel($"Level{e.Level}") (@e.TriggerType)</span>
+                                            <span class="text-secondary">@e.RaisedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="facts-panel">
+                <div class="facts-section">
+                    <div class="facts-section__title">Ticket Information</div>
+                    <dl>
+                        <div class="facts-row"><dt>Ticket number</dt><dd>@t.TicketNumber</dd></div>
+                        <div class="facts-row"><dt>Status</dt><dd>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</dd></div>
+                        <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.PriorityId)</dd></div>
+                        <div class="facts-row"><dt>Category</dt><dd class="id-fallback">#@t.CategoryId</dd></div>
+                        <div class="facts-row"><dt>Department</dt><dd>@(Model.DepartmentName ?? $"#{t.CurrentDepartmentId}")</dd></div>
+                        <div class="facts-row"><dt>Owner</dt><dd>@(t.CurrentOwnerEmployeeId is null ? "Unassigned" : Model.OwnerName ?? $"#{t.CurrentOwnerEmployeeId.Value.ToString()[..8]}")</dd></div>
+                        <div class="facts-row"><dt>Escalation level</dt><dd>@TicketDisplay.EscalationLevelLabel(t.EscalationLevel)</dd></div>
+                        <div class="facts-row"><dt>Reopen count</dt><dd>@t.ReopenCount</dd></div>
+                        @if (t.ResolutionOutcome is not null)
+                        {
+                            <div class="facts-row"><dt>Resolution</dt><dd>@TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome)</dd></div>
+                        }
+                    </dl>
+                </div>
+
+                <div class="facts-section">
+                    <div class="facts-section__title">Verification &amp; Unit</div>
+                    <dl>
+                        <div class="facts-row"><dt>Verification</dt><dd>@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</dd></div>
+                        <div class="facts-row"><dt>Unit reference</dt><dd class="id-fallback">@(t.UnitReferenceId is int u ? $"#{u}" : "—")</dd></div>
+                        <div class="facts-row"><dt>Contact reference</dt><dd class="id-fallback">@(t.ContactReferenceId is int c ? $"#{c}" : "—")</dd></div>
+                    </dl>
+                </div>
+
+                <div class="facts-section">
+                    <div class="facts-section__title">SLA Information</div>
+                    @if (Model.Sla is null)
+                    {
+                        <p class="text-secondary">SLA data unavailable.</p>
+                    }
+                    else
+                    {
+                        <dl>
+                            <div class="facts-row"><dt>First response due</dt><dd>@(Model.Sla.FirstResponseDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
+                            <div class="facts-row"><dt>First response</dt><dd class="@(Model.Sla.FirstResponseBreached ? "is-critical" : "")">@(Model.Sla.FirstHumanResponseAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? (Model.Sla.FirstResponseBreached ? "Breached" : "Pending"))</dd></div>
+                            <div class="facts-row"><dt>Resolution due</dt><dd>@(Model.Sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
+                            <div class="facts-row"><dt>Resolution</dt><dd class="@(Model.Sla.ResolutionBreached ? "is-critical" : "")">@(Model.Sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(Model.Sla.SlaState))</dd></div>
+                        </dl>
+                    }
+                </div>
+            </aside>
+        </div>
+    </div>
+}
