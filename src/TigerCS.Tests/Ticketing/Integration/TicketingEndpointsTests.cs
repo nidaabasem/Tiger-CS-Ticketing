@@ -368,6 +368,86 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
     }
 
     [Fact]
+    public async Task FullLifecycle_NonUnitRelatedIntakeCreate_ProducesUnverifiedTicketWithNoCrmCall()
+    {
+        // Product correction: every intake, whether unit-related or not,
+        // can become a ticket once a category is selected — CRM
+        // verification is required only for the unit-related path. This
+        // test never calls /api/crm or /api/verification-sessions at all.
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Leasing " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Leasing", departmentId);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.False(intake!.IsUnitRelated);
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "General leasing question"));
+
+        Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
+        var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+        Assert.Equal("Unverified", ticket!.VerificationStatus);
+        Assert.Equal("Open", ticket.TicketStatus);
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.StartsWith("TG-", ticket.TicketNumber);
+
+        // Promoting the same intake a second time is rejected, not silently re-executed.
+        var replay = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "Second attempt"));
+        Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateNonUnit_WithUnitRelatedIntakeRecord_Returns422()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Leasing " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Leasing", departmentId);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/tickets/non-unit",
+            new CreateTicketFromNonUnitIntakeRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetCategories_AuthenticatedStaff_ReturnsActiveCategories()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Leasing " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Leasing " + Guid.NewGuid(), departmentId);
+
+        var response = await client.GetAsync("/api/categories");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var categories = await response.Content.ReadFromJsonAsync<List<CategoryResponseDto>>();
+        Assert.Contains(categories!, c => c.CategoryId == categoryId);
+    }
+
+    [Fact]
+    public async Task GetCategories_WithoutToken_Returns401()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/categories");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GetQueue_WithoutToken_Returns401()
     {
         var client = _factory.CreateClient();

@@ -191,6 +191,90 @@ public sealed class TicketCreationAppService(
         return TicketCreationResult.Success(ToDto(ticket));
     }
 
+    /// <summary>
+    /// Product correction: every intake, whether unit-related or not, can be
+    /// converted into a ticket after selecting one of the three categories;
+    /// CRM verification is required only when the request is unit-related.
+    /// This is the non-unit-related path — no <see cref="VerificationSession"/>
+    /// is consulted or consumed, and the resulting ticket's
+    /// UnitReferenceId/ContactReferenceId stay null for its entire lifetime
+    /// (see <see cref="Ticket.CreateNonUnitRelated"/>). VerificationStatus is
+    /// Unverified, never Verified or PendingCrmVerification — nothing was
+    /// verified and nothing is queued for verification.
+    /// </summary>
+    public async Task<TicketCreationResult> CreateFromNonUnitIntakeAsync(
+        Guid callerEmployeeId, CreateTicketFromNonUnitIntakeRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var intakeRecord = await intakeRecordRepository.GetByIdAsync(request.IntakeRecordId, cancellationToken);
+        if (intakeRecord is null)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordNotFound);
+        }
+
+        if (intakeRecord.LinkedTicketId is not null)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordAlreadyLinked);
+        }
+
+        if (intakeRecord.IsUnitRelated)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordIsUnitRelated);
+        }
+
+        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
+        if (routing.Failure is { } routingFailure)
+        {
+            return TicketCreationResult.Failure(routingFailure);
+        }
+
+        var category = routing.Category!;
+        var priority = routing.Priority!;
+        var department = routing.Department!;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        Ticket ticket;
+        try
+        {
+            var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
+            ticket = Ticket.CreateNonUnitRelated(
+                ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+
+            await ticketRepository.AddAsync(ticket, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DuplicateWriteException)
+        {
+            // Nothing else has been touched yet — the IntakeRecord is still
+            // unlinked. Safe to retry the whole request unchanged.
+            return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
+        }
+
+        intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified);
+
+        await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
+
+        var correlationId = Guid.NewGuid();
+
+        // No CRM gate on this path — the ticket is fully actionable the
+        // moment it exists, exactly like the verified path, so its SLA
+        // clock (SlaState.Running per Ticket.CreateNonUnitRelated) opens now.
+        await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
+            beforeValue: null, afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus=Unverified;NonUnitRelated=true",
+            correlationId, cancellationToken);
+
+        await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, correlationId, now, cancellationToken);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return TicketCreationResult.Success(ToDto(ticket));
+    }
+
     public async Task<TicketCreationResult> CreateProvisionalAsync(
         Guid callerEmployeeId, CreateProvisionalTicketRequestDto request, CancellationToken cancellationToken = default)
     {

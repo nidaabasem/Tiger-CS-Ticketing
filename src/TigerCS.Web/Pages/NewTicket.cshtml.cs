@@ -25,7 +25,8 @@ public sealed class NewTicketModel(
     IntakeRecordsApiClient intakeClient,
     CrmApiClient crmClient,
     VerificationSessionsApiClient verificationClient,
-    TicketsApiClient ticketsClient) : PageModel
+    TicketsApiClient ticketsClient,
+    CategoriesApiClient categoriesClient) : PageModel
 {
     public string Step { get; private set; } = "intake";
     public string? ErrorMessage { get; private set; }
@@ -36,6 +37,7 @@ public sealed class NewTicketModel(
     public IReadOnlyList<ContactVerificationResponseDto> ContactResults { get; private set; } = [];
     [BindProperty] public ConfirmStepInput ConfirmStep { get; set; } = new();
     [BindProperty] public CreateStepInput CreateStep { get; set; } = new();
+    public IReadOnlyList<CategoryResponseDto> Categories { get; private set; } = [];
 
     public long? IntakeRecordId { get; private set; }
     public int? UnitReferenceId { get; private set; }
@@ -65,7 +67,18 @@ public sealed class NewTicketModel(
             ContactResults = result.IsSuccess && result.Value is not null ? result.Value : [];
         }
 
+        if (Step is "create" or "create-non-unit")
+        {
+            await LoadCategoriesAsync(cancellationToken);
+        }
+
         return Page();
+    }
+
+    private async Task LoadCategoriesAsync(CancellationToken cancellationToken)
+    {
+        var result = await categoriesClient.ListActiveAsync(cancellationToken);
+        Categories = result.IsSuccess && result.Value is not null ? result.Value : [];
     }
 
     public async Task<IActionResult> OnPostIntakeAsync(CancellationToken cancellationToken)
@@ -83,7 +96,10 @@ public sealed class NewTicketModel(
 
         if (!Intake.IsUnitRelated)
         {
-            return RedirectToPage(new { step = "not-unit-related" });
+            // Product correction: a non-unit-related intake still becomes a
+            // ticket once a category is selected — CRM verification is only
+            // required for the unit-related path above.
+            return RedirectToPage(new { step = "create-non-unit", intakeRecordId = result.Value.IntakeRecordId });
         }
 
         return RedirectToPage(new { step = "unit", intakeRecordId = result.Value.IntakeRecordId });
@@ -145,6 +161,7 @@ public sealed class NewTicketModel(
     {
         Step = "create";
         IntakeRecordId = intakeRecordId;
+        VerificationSessionId = verificationSessionId.ToString();
 
         var request = new CreateTicketFromVerificationRequestDto(
             intakeRecordId, verificationSessionId, CreateStep.CategoryId, CreateStep.PriorityId, CreateStep.RequestSummary);
@@ -153,6 +170,30 @@ public sealed class NewTicketModel(
         if (!result.IsSuccess || result.Value is null)
         {
             ErrorMessage = result.Detail ?? "Could not create the ticket.";
+            await LoadCategoriesAsync(cancellationToken);
+            return Page();
+        }
+
+        return RedirectToPage("/TicketDetails", new { id = result.Value.TicketId });
+    }
+
+    /// <summary>
+    /// Product correction: creates a ticket from a non-unit-related intake —
+    /// no VerificationSession involved, gated only by category selection.
+    /// </summary>
+    public async Task<IActionResult> OnPostCreateNonUnitAsync(long intakeRecordId, CancellationToken cancellationToken)
+    {
+        Step = "create-non-unit";
+        IntakeRecordId = intakeRecordId;
+
+        var request = new CreateTicketFromNonUnitIntakeRequestDto(
+            intakeRecordId, CreateStep.CategoryId, CreateStep.PriorityId, CreateStep.RequestSummary);
+
+        var result = await ticketsClient.CreateFromNonUnitIntakeAsync(request, cancellationToken);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            ErrorMessage = result.Detail ?? "Could not create the ticket.";
+            await LoadCategoriesAsync(cancellationToken);
             return Page();
         }
 

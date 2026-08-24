@@ -24,6 +24,26 @@ public class TicketTests
     }
 
     [Fact]
+    public void CreateNonUnitRelated_SetsUnverifiedAndRunningWithNoUnitContactReferences()
+    {
+        var ticket = Ticket.CreateNonUnitRelated(
+            "TG-CS-20260824-0001", departmentId: 2, categoryId: 5, priorityId: (byte)PriorityLevel.Medium,
+            "General question about billing", DateTime.UtcNow);
+
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
+        Assert.Equal(EscalationLevel.None, ticket.EscalationLevel);
+        // No CRM gate on this path — the SLA clock starts immediately, same
+        // as CreateVerified, unlike CreateProvisional's SlaState.Paused.
+        Assert.Equal(SlaState.Running, ticket.SlaState);
+        Assert.Null(ticket.ResolutionOutcome);
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.Equal(2, ticket.OriginatingDepartmentId);
+        Assert.Equal(2, ticket.CurrentDepartmentId);
+    }
+
+    [Fact]
     public void CreateProvisional_CriticalPriority_SucceedsWithNoUnitOrContactReference()
     {
         var ticket = Ticket.CreateProvisional(

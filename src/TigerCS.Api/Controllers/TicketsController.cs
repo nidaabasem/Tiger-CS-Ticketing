@@ -105,6 +105,40 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
+    /// <summary>Create a ticket from a non-unit-related intake. CS Agent/CS Supervisor only.</summary>
+    /// <remarks>
+    /// Product correction: every intake, whether unit-related or not, can be
+    /// converted into a ticket after selecting one of the three categories;
+    /// CRM verification is required only when the request is unit-related.
+    /// There is no VerificationSession for this path — the resulting ticket
+    /// carries no unit/contact reference and verificationStatus Unverified.
+    /// </remarks>
+    /// <param name="request">The non-unit-related intake record to promote, plus category, priority, and summary.</param>
+    /// <response code="201">The created ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">The intake record, category, priority, or the category's routed department was not found (or the department is inactive).</response>
+    /// <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
+    /// <response code="422">The intake record is unit-related — use the verified or provisional path instead.</response>
+    [HttpPost("non-unit")]
+    [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> CreateFromNonUnitIntake(
+        [FromBody] CreateTicketFromNonUnitIntakeRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketCreationAppService.CreateFromNonUnitIntakeAsync(employeeId.Value, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
     /// <summary>The ticket queue — a filtered, sorted, paged list of tickets visible to the caller.</summary>
     /// <remarks>
     /// MVP-API-Contracts.md §3.2. Department visibility is resolved
@@ -435,7 +469,13 @@ public class TicketsController(
         TicketCreationOutcome.IntakeRecordNotUnitRelated => Problem(
             type: "https://tigercs.internal/problems/intake-record-not-unit-related",
             title: "Intake record is not unit-related",
-            detail: "A non-unit-related IntakeRecord cannot be promoted to a ticket in this increment.",
+            detail: "A non-unit-related IntakeRecord cannot be promoted via this endpoint — use POST /api/tickets/non-unit instead.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.IntakeRecordIsUnitRelated => Problem(
+            type: "https://tigercs.internal/problems/intake-record-is-unit-related",
+            title: "Intake record is unit-related",
+            detail: "A unit-related IntakeRecord requires CRM verification — use POST /api/tickets or POST /api/tickets/provisional instead.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketCreationOutcome.VerificationSessionNotFound => Problem(

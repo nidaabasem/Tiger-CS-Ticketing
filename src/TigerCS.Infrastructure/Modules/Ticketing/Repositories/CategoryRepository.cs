@@ -9,4 +9,7 @@ public sealed class CategoryRepository(TigerCsDbContext dbContext) : ICategoryRe
 {
     public Task<Category?> GetByIdAsync(int categoryId, CancellationToken cancellationToken = default) =>
         dbContext.Categories.FirstOrDefaultAsync(c => c.CategoryId == categoryId, cancellationToken);
+
+    public async Task<IReadOnlyList<Category>> ListActiveAsync(CancellationToken cancellationToken = default) =>
+        await dbContext.Categories.Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync(cancellationToken);
 }

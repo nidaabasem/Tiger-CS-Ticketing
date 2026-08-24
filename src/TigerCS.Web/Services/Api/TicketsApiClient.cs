@@ -61,4 +61,8 @@ public sealed class TicketsApiClient(HttpClient httpClient) : ApiClientBase(http
     public Task<ApiResult<TicketResponseDto>> CreateFromVerificationAsync(
         CreateTicketFromVerificationRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<CreateTicketFromVerificationRequestDto, TicketResponseDto>("api/tickets", request, cancellationToken);
+
+    public Task<ApiResult<TicketResponseDto>> CreateFromNonUnitIntakeAsync(
+        CreateTicketFromNonUnitIntakeRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<CreateTicketFromNonUnitIntakeRequestDto, TicketResponseDto>("api/tickets/non-unit", request, cancellationToken);
 }
