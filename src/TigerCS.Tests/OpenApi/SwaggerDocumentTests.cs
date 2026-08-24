@@ -80,8 +80,11 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
 
         "POST /api/intake-records",
 
+        "GET /api/categories",
+
         "POST /api/tickets",
         "POST /api/tickets/provisional",
+        "POST /api/tickets/non-unit",
         "GET /api/tickets",
         "GET /api/tickets/{ticketId}",
         "POST /api/tickets/{ticketId}/assignment",

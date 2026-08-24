@@ -464,7 +464,7 @@ public class TicketCreationAppServiceTests
 
         Assert.Equal(4, f.StatusHistory.Added.Count);
         Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
-        Assert.Single(f.Outbox.Staged);
+        Assert.Single(f.Outbox.Committed);
     }
 
     [Fact]
