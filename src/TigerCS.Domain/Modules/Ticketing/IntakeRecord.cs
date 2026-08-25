@@ -27,17 +27,35 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// </para>
 ///
 /// <para>
-/// <b>IsUnitRelated — no longer a promotion gate.</b> Every intake,
-/// unit-related or not, may be promoted to a <see cref="Ticket"/> once a
-/// supported Ticket Category is selected (<see cref="LinkToTicket"/>).
-/// Customer lookup (CRM/PACT/Tasleeh) is enrichment/identification, not a
-/// promotion gate either — whether a match is Found, NotFound, or the source
-/// Failed to answer, ticket creation proceeds the same way; a found match
-/// only supplies the Ticket's optional <c>UnitReferenceId</c>/
-/// <c>ContactReferenceId</c>. Many intake attempts still never become a
-/// ticket at all (e.g. a wrong-number call, a simple information request
-/// answered verbally) — that remains a choice the calling agent makes, not a
-/// restriction this column encodes.
+/// <b>IsUnitRelated — a classification of the interaction/Ticket, not a
+/// promotion gate, and not fixed at creation.</b> Every intake, unit-related
+/// or not, may be promoted to a <see cref="Ticket"/> once a supported Ticket
+/// Category is selected (<see cref="LinkToTicket"/>). Its real meaning is
+/// "this interaction is actually associated with a selected Unit" — which
+/// the current New Ticket wizard cannot know at intake time, because
+/// identification is deferred entirely to customer lookup (CRM/PACT/Tasleeh),
+/// run afterward. <see cref="LinkToTicket"/>'s <c>hasSelectedUnit</c>
+/// parameter is the one explicit, source-agnostic signal that upgrades this
+/// flag to true — deliberately not inferred from
+/// <see cref="CrmVerificationStatus"/> (a differently-scoped, CRM-named
+/// concept: whether a customer match was verified, not whether a Unit was
+/// selected) or from which lookup source produced the match. Upgrade-only:
+/// an intake already unit-related at creation is never pulled back to false
+/// by a later Ticket outcome. A final state of <c>IsUnitRelated == false</c>
+/// with a linked Ticket whose <c>UnitReferenceId</c> is not null never
+/// occurs through this path.
+/// </para>
+///
+/// <para>
+/// <b>RawUnitNumberEntered — optional historical/raw intake information
+/// only, entirely independent of IsUnitRelated.</b> The unit number exactly
+/// as the caller said it, before any lookup — useful as an audit/intake note
+/// when it happens to be captured, but never required for, and never the
+/// source of, unit-related classification: the authoritative Unit is always
+/// the one resolved through customer lookup (<c>UnitReferenceId</c> on the
+/// eventual <see cref="Ticket"/>), never this raw string. The constructor
+/// does not couple this field to <c>isUnitRelated</c> in either direction —
+/// both may be set (or omitted) independently.
 /// </para>
 /// </summary>
 public class IntakeRecord
@@ -78,18 +96,13 @@ public class IntakeRecord
                 nameof(phoneNumber));
         }
 
-        if (isUnitRelated && string.IsNullOrWhiteSpace(rawUnitNumberEntered))
-        {
-            throw new ArgumentException(
-                "RawUnitNumberEntered is required when IsUnitRelated is true — there is nothing to later verify against the CRM otherwise.",
-                nameof(rawUnitNumberEntered));
-        }
-
-        if (!isUnitRelated && rawUnitNumberEntered is not null)
-        {
-            throw new ArgumentException(
-                "RawUnitNumberEntered must be null for a non-unit-related interaction.", nameof(rawUnitNumberEntered));
-        }
+        // No coupling between isUnitRelated and rawUnitNumberEntered — see
+        // this type's remarks. The lookup-first workflow means IsUnitRelated
+        // is routinely still false here and only later upgraded by
+        // LinkToTicket once a real Unit is selected, with no raw number ever
+        // captured; equally, a raw number may be jotted down as a historical
+        // note independent of whether the interaction is (yet) classified
+        // unit-related.
 
         ChannelId = channelId;
         PhoneNumber = phoneNumber;
@@ -114,8 +127,33 @@ public class IntakeRecord
     /// selected. A lookup outcome of NotFound or Failed is recorded here
     /// exactly like Found; none of the three ever blocks this call.
     /// </para>
+    ///
+    /// <para>
+    /// <b><see cref="IsUnitRelated"/> is upgraded here, never downgraded —
+    /// driven by <paramref name="hasSelectedUnit"/> alone, never by
+    /// <paramref name="resultingStatus"/>.</b> The current New Ticket wizard
+    /// never asks the agent to classify the interaction up front — it always
+    /// creates the intake with <see cref="IsUnitRelated"/> false and no
+    /// <see cref="RawUnitNumberEntered"/>, deferring identification to
+    /// customer lookup (CRM/PACT/Tasleeh) entirely.
+    /// <paramref name="hasSelectedUnit"/> is the caller's explicit,
+    /// source-agnostic answer to "does the promoted Ticket carry a selected,
+    /// validated Unit reference" (<c>TicketCreationAppService.CreateAsync</c>
+    /// — this method's only caller — passes whether it resolved a real
+    /// <c>UnitReferenceId</c>/<c>ContactReferenceId</c> pair, from whichever
+    /// source produced it). This is deliberately <i>not</i> inferred from
+    /// <paramref name="resultingStatus"/>: <see cref="CrmVerificationStatus"/>
+    /// records a differently-scoped, CRM-named concept (whether a customer
+    /// match was verified) that must not silently double as "a Unit was
+    /// selected" — a customer verified with no Unit chosen must never
+    /// classify as unit-related. An intake already unit-related at creation
+    /// (a caller outside the current wizard, e.g. a future channel that does
+    /// collect this up front) is left exactly as it was — this never
+    /// reclassifies a genuinely unit-related intake as not, regardless of
+    /// this Ticket's own outcome.
+    /// </para>
     /// </summary>
-    public void LinkToTicket(long ticketId, CrmVerificationStatus resultingStatus)
+    public void LinkToTicket(long ticketId, CrmVerificationStatus resultingStatus, bool hasSelectedUnit)
     {
         if (LinkedTicketId is not null)
         {
@@ -124,5 +162,10 @@ public class IntakeRecord
 
         LinkedTicketId = ticketId;
         CrmVerificationStatus = resultingStatus;
+
+        if (hasSelectedUnit)
+        {
+            IsUnitRelated = true;
+        }
     }
 }

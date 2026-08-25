@@ -213,15 +213,22 @@ public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
     public bool ThrowUnavailable { get; set; }
     public int SearchCallCount { get; private set; }
 
-    private readonly Dictionary<string, CrmCustomerMatch> _fixtures = [];
+    private readonly Dictionary<string, List<CrmCustomerMatch>> _fixtures = [];
 
+    /// <summary>Seeds one more customer match for this phone number — call again for the same phone to seed multiple customers.</summary>
     public FakeCrmCustomerLookupGateway Seed(string phoneNumber, CrmCustomerMatch match)
     {
-        _fixtures[phoneNumber] = match;
+        if (!_fixtures.TryGetValue(phoneNumber, out var matches))
+        {
+            matches = [];
+            _fixtures[phoneNumber] = matches;
+        }
+
+        matches.Add(match);
         return this;
     }
 
-    public Task<CrmCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<CrmCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         SearchCallCount++;
         if (ThrowUnavailable)
@@ -229,7 +236,7 @@ public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
             throw new CrmCustomerLookupGatewayUnavailableException("Simulated CRM outage.");
         }
 
-        return Task.FromResult(_fixtures.GetValueOrDefault(phoneNumber));
+        return Task.FromResult<IReadOnlyList<CrmCustomerMatch>>(_fixtures.TryGetValue(phoneNumber, out var matches) ? matches : []);
     }
 }
 
@@ -238,15 +245,22 @@ public sealed class FakePactGateway : IPactGateway
     public bool ThrowUnavailable { get; set; }
     public int SearchCallCount { get; private set; }
 
-    private readonly Dictionary<string, PactCustomerMatch> _fixtures = [];
+    private readonly Dictionary<string, List<PactCustomerMatch>> _fixtures = [];
 
+    /// <summary>Seeds one more customer match for this phone number — call again for the same phone to seed multiple customers.</summary>
     public FakePactGateway Seed(string phoneNumber, PactCustomerMatch match)
     {
-        _fixtures[phoneNumber] = match;
+        if (!_fixtures.TryGetValue(phoneNumber, out var matches))
+        {
+            matches = [];
+            _fixtures[phoneNumber] = matches;
+        }
+
+        matches.Add(match);
         return this;
     }
 
-    public Task<PactCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<PactCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         SearchCallCount++;
         if (ThrowUnavailable)
@@ -254,7 +268,7 @@ public sealed class FakePactGateway : IPactGateway
             throw new PactGatewayUnavailableException("Simulated PACT outage.");
         }
 
-        return Task.FromResult(_fixtures.GetValueOrDefault(phoneNumber));
+        return Task.FromResult<IReadOnlyList<PactCustomerMatch>>(_fixtures.TryGetValue(phoneNumber, out var matches) ? matches : []);
     }
 }
 
@@ -263,15 +277,22 @@ public sealed class FakeTasleehGateway : ITasleehGateway
     public bool ThrowUnavailable { get; set; }
     public int SearchCallCount { get; private set; }
 
-    private readonly Dictionary<string, TasleehCustomerMatch> _fixtures = [];
+    private readonly Dictionary<string, List<TasleehCustomerMatch>> _fixtures = [];
 
+    /// <summary>Seeds one more customer match for this phone number — call again for the same phone to seed multiple customers.</summary>
     public FakeTasleehGateway Seed(string phoneNumber, TasleehCustomerMatch match)
     {
-        _fixtures[phoneNumber] = match;
+        if (!_fixtures.TryGetValue(phoneNumber, out var matches))
+        {
+            matches = [];
+            _fixtures[phoneNumber] = matches;
+        }
+
+        matches.Add(match);
         return this;
     }
 
-    public Task<TasleehCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TasleehCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         SearchCallCount++;
         if (ThrowUnavailable)
@@ -279,6 +300,6 @@ public sealed class FakeTasleehGateway : ITasleehGateway
             throw new TasleehGatewayUnavailableException("Simulated Tasleeh outage.");
         }
 
-        return Task.FromResult(_fixtures.GetValueOrDefault(phoneNumber));
+        return Task.FromResult<IReadOnlyList<TasleehCustomerMatch>>(_fixtures.TryGetValue(phoneNumber, out var matches) ? matches : []);
     }
 }

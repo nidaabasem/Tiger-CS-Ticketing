@@ -44,7 +44,85 @@ public sealed class MockCrmGateway : ICrmGateway, ICrmCustomerLookupGateway
                     new CrmContactResult(
                         "CRM-CONTACT-2004", "Property Management Co.", "pm@example.com", ContactType.Representative,
                         "CRM-CONTACT-2003")
+                ]),
+
+            // Business-rule change: fixtures below back SearchByPhoneAsync's
+            // Buyer-lookup-by-phone (multiple customers, multiple units per
+            // customer) — additive, never mutating the two units above, so
+            // GetUnitAsync/SearchUnitsAsync/GetContactsAsync's existing
+            // behavior and tests are untouched.
+            ["CRM-UNIT-1101"] = (
+                new CrmUnitResult("CRM-UNIT-1101", "1205", "Tiger Sky Tower", "Tower 1", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3001", "Ahmed Ali", PhoneBuyerOneAndTwoUnits, ContactType.Owner, null)]),
+            ["CRM-UNIT-1102"] = (
+                new CrmUnitResult("CRM-UNIT-1102", "1403", "Tiger Sky Tower", "Tower 1", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3002", "Ahmed Ali", PhoneBuyerOneAndTwoUnits, ContactType.Owner, null)]),
+            ["CRM-UNIT-1103"] = (
+                new CrmUnitResult("CRM-UNIT-1103", "2004", "Tiger Sky Tower", "Tower 2", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3003", "Ahmad Ali Hassan", PhoneBuyerOneAndTwoUnits, ContactType.Owner, null)]),
+            ["CRM-UNIT-1104"] = (
+                new CrmUnitResult("CRM-UNIT-1104", "3010", "Tiger Sky Tower", "Tower 3", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3004", "Khalid Nasser", PhoneTenantOnly, ContactType.Tenant, null)]),
+            ["CRM-UNIT-1105"] = (
+                new CrmUnitResult("CRM-UNIT-1105", "4010", "Tiger Sky Tower", "Tower 4", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3005", "Mona Youssef", PhoneOwnerAndTenant, ContactType.Owner, null)]),
+            ["CRM-UNIT-1106"] = (
+                new CrmUnitResult("CRM-UNIT-1106", "4011", "Tiger Sky Tower", "Tower 4", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3006", "Mona Youssef", PhoneOwnerAndTenant, ContactType.Tenant, null)]),
+            ["CRM-UNIT-1107"] = (
+                new CrmUnitResult("CRM-UNIT-1107", "5001", "Tiger Sky Tower", "Tower 5", "Residential"),
+                [new CrmContactResult("CRM-CONTACT-3010", "Sami Nasser", PhoneSingleCustomerSingleUnit, ContactType.Owner, null)]),
+
+            // A duplicate relationship row for the same unit/contact — data
+            // glitch testing (Buyer test 7: duplicate rows never duplicate units).
+            ["CRM-UNIT-1108"] = (
+                new CrmUnitResult("CRM-UNIT-1108", "6001", "Tiger Sky Tower", "Tower 6", "Residential"),
+                [
+                    new CrmContactResult("CRM-CONTACT-3011", "Rania Adel", PhoneDuplicateRelationshipRow, ContactType.Owner, null),
+                    new CrmContactResult("CRM-CONTACT-3011", "Rania Adel", PhoneDuplicateRelationshipRow, ContactType.Owner, null)
                 ])
+        };
+
+    private const string PhoneBuyerOneAndTwoUnits = "+971501234567";
+    private const string PhoneTenantOnly = "+971502223333";
+    private const string PhoneOwnerAndTenant = "+971503334444";
+    private const string PhoneSingleCustomerSingleUnit = "+971509990001";
+    private const string PhoneDuplicateRelationshipRow = "+971505556666";
+
+    /// <summary>
+    /// Groups a matched contact's own per-unit relationship id
+    /// (<see cref="CrmContactResult.CrmContactId"/>) to the Buyer's own,
+    /// stable external customer identity — the real distinction
+    /// <c>tblCustomer</c>/<c>tblLeadCustomer</c>-style CRM schemas draw
+    /// between a customer and their per-unit relationship record, expressed
+    /// here without adding a new field to <see cref="CrmContactResult"/>
+    /// (that record stays exactly what <c>ICrmGateway</c>'s own contract
+    /// already documents — see that interface's remarks) since this mapping
+    /// is private to <see cref="SearchByPhoneAsync"/>'s fixture data only.
+    /// Two different <see cref="CrmContactResult.CrmContactId"/> values
+    /// mapping to the same external customer id here is exactly how "one
+    /// Buyer, two units" is represented (CRM-CONTACT-3001/-3002 → Ahmed Ali);
+    /// two different contacts left unmapped (falling back to their own
+    /// CrmContactId below) that happen to share a phone number is how "two
+    /// different customers sharing a phone" is represented
+    /// (CRM-CONTACT-3001 vs CRM-CONTACT-3003).
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> ExternalCustomerIdByContactId =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CRM-CONTACT-3001"] = "CRM-CUST-5001",
+            ["CRM-CONTACT-3002"] = "CRM-CUST-5001",
+            ["CRM-CONTACT-3005"] = "CRM-CUST-5004",
+            ["CRM-CONTACT-3006"] = "CRM-CUST-5004"
+        };
+
+    private static readonly IReadOnlyDictionary<string, (string? Email, string? CustomerType)> CustomerDirectory =
+        new Dictionary<string, (string?, string?)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CRM-CUST-5001"] = ("ahmed.ali@example.com", "Buyer"),
+            ["CRM-CONTACT-3003"] = ("ahmad.hassan@example.com", "Buyer"),
+            ["CRM-CONTACT-3004"] = (null, "Buyer"),
+            ["CRM-CUST-5004"] = ("mona.youssef@example.com", "Buyer")
         };
 
     public Task<CrmUnitResult?> GetUnitAsync(string crmUnitId, CancellationToken cancellationToken = default)
@@ -76,14 +154,24 @@ public sealed class MockCrmGateway : ICrmGateway, ICrmCustomerLookupGateway
     }
 
     /// <summary>
-    /// Business-rule change: phone-based customer search, for
+    /// Business-rule change: phone-based Buyer search, for
     /// <see cref="CustomerLookupAppService"/> — a distinct capability from
     /// this gateway's own unit-number lookups above (see
-    /// <see cref="ICrmCustomerLookupGateway"/>'s remarks). Matches a fixture
-    /// contact whose <see cref="CrmContactResult.ContactChannel"/> equals the
-    /// searched phone number.
+    /// <see cref="ICrmCustomerLookupGateway"/>'s remarks). Never assumes one
+    /// phone number resolves to one customer, or one customer owns one unit:
+    /// every fixture contact across every unit whose
+    /// <see cref="CrmContactResult.ContactChannel"/> equals the searched
+    /// phone number is grouped into its Buyer
+    /// (<see cref="ExternalCustomerIdByContactId"/>), and only
+    /// <see cref="ContactType.Owner"/> relationships contribute a unit — this
+    /// integration's real, existing ownership signal (there is no Lead/deal-
+    /// status concept anywhere in <c>ICrmGateway</c>'s contract to filter by
+    /// instead; see <see cref="ExternalCustomerIdByContactId"/>'s remarks). A
+    /// Tenant/Representative-only relationship still surfaces its Buyer
+    /// (Found, with zero eligible units) — a customer existing with no
+    /// eligible unit is not the same as no customer at all.
     /// </summary>
-    public Task<CrmCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<CrmCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         if (phoneNumber.Contains(OutageTrigger, StringComparison.OrdinalIgnoreCase))
         {
@@ -91,18 +179,37 @@ public sealed class MockCrmGateway : ICrmGateway, ICrmCustomerLookupGateway
                 $"Simulated CRM outage triggered by '{phoneNumber}' (MockCrmGateway — a test double, never a real CRM failure).");
         }
 
-        foreach (var (unit, contacts) in Fixtures.Values)
+        var matchingContacts = Fixtures.Values
+            .SelectMany(f => f.Contacts.Select(contact => (f.Unit, Contact: contact)))
+            .Where(x => string.Equals(x.Contact.ContactChannel, phoneNumber, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (matchingContacts.Count == 0)
         {
-            var contact = contacts.FirstOrDefault(c =>
-                string.Equals(c.ContactChannel, phoneNumber, StringComparison.OrdinalIgnoreCase));
-            if (contact is not null)
-            {
-                return Task.FromResult<CrmCustomerMatch?>(
-                    new CrmCustomerMatch(unit.CrmUnitId, contact.CrmContactId, contact.DisplayName, contact.ContactChannel));
-            }
+            return Task.FromResult<IReadOnlyList<CrmCustomerMatch>>([]);
         }
 
-        return Task.FromResult<CrmCustomerMatch?>(null);
+        var customers = matchingContacts
+            .GroupBy(x => ExternalCustomerIdByContactId.GetValueOrDefault(x.Contact.CrmContactId, x.Contact.CrmContactId))
+            .Select(group =>
+            {
+                var externalCustomerId = group.Key;
+                (string? Email, string? CustomerType) directory = CustomerDirectory.TryGetValue(externalCustomerId, out var directoryEntry)
+                    ? directoryEntry
+                    : (null, null);
+
+                var units = group
+                    .Where(x => x.Contact.ContactType == ContactType.Owner)
+                    .Select(x => new CrmCustomerUnitMatch(x.Unit.CrmUnitId, x.Contact.CrmContactId))
+                    .DistinctBy(u => u.CrmUnitId)
+                    .ToList();
+
+                return new CrmCustomerMatch(
+                    externalCustomerId, group.First().Contact.DisplayName, phoneNumber, directory.Email, directory.CustomerType, units);
+            })
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<CrmCustomerMatch>>(customers);
     }
 
     private static void ThrowIfSimulatedOutage(string input)

@@ -46,31 +46,23 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label" asp-for="Intake.DepartmentId">Department (optional)</label>
-                    <input class="form-control" asp-for="Intake.DepartmentId" />
-                    <span class="field-hint">
-                        If set, customer lookup searches only that Department's configured source(s) (CRM/PACT/Tasleeh).
-                        Leave blank to search all three. No department directory endpoint exists yet — enter the numeric department id.
-                    </span>
-                </div>
-                <div class="form-group">
-                    <label class="checkbox-field">
-                        <input asp-for="Intake.IsUnitRelated" />
-                        This interaction concerns a specific unit
-                    </label>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="Intake.RawUnitNumberEntered">Unit number (as given by the caller)</label>
-                    <input class="form-control" asp-for="Intake.RawUnitNumberEntered" />
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="Intake.PriorityHint">Priority hint (optional)</label>
-                    <select class="form-control" asp-for="Intake.PriorityHint">
-                        <option value="">—</option>
-                        @for (byte p = 1; p <= 4; p++)
+                    @if (Model.DepartmentsErrorMessage is not null)
+                    {
+                        <div class="alert alert-error" role="alert">
+                            <span>@Model.DepartmentsErrorMessage</span>
+                        </div>
+                    }
+                    <select class="form-control" asp-for="Intake.DepartmentId">
+                        <option value="">Select Department</option>
+                        @foreach (var department in Model.Departments)
                         {
-                            <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                            <option value="@department.DepartmentId">@department.Name</option>
                         }
                     </select>
+                    <span class="field-hint">
+                        If set, customer lookup searches only that Department's configured source(s) (CRM/PACT/Tasleeh).
+                        Leave unselected to search all three.
+                    </span>
                 </div>
                 <button type="submit" class="btn btn-gold">Continue</button>
             </form>
@@ -95,7 +87,7 @@
             }
             else if (Model.LookupResult is not null)
             {
-                @if (!Model.LookupResult.Sources.Any(s => s.Status == "Found"))
+                @if (!Model.LookupResult.Sources.Any(s => s.Status == "Found" && s.Customers.Count > 0))
                 {
                     <div class="alert alert-info" role="status">
                         <span>No customer information found. You can continue creating the ticket.</span>
@@ -104,12 +96,12 @@
                 <div class="entry-list entry-list--spaced">
                     @foreach (var source in Model.LookupResult.Sources)
                     {
-                        <div class="entry-row">
-                            <span>
+                        <div class="entry-row entry-row--block">
+                            <div>
                                 <strong>@source.Source</strong>
                                 @if (source.Status == "Found")
                                 {
-                                    <span class="text-secondary">· @(source.DisplayName ?? "(no name on file)") @(source.PhoneNumber is null ? "" : $"· {source.PhoneNumber}") @(source.UnitNumber is null ? "" : $"· Unit {source.UnitNumber}")</span>
+                                    <span class="text-secondary">· @source.Customers.Count matching customer@(source.Customers.Count == 1 ? "" : "s")</span>
                                 }
                                 else if (source.Status == "NotFound")
                                 {
@@ -119,17 +111,61 @@
                                 {
                                     <span class="text-secondary">· @source.Source is temporarily unavailable</span>
                                 }
-                            </span>
-                            @if (source.Status == "Found" && source.UnitReferenceId is int unitReferenceId && source.ContactReferenceId is int contactReferenceId)
+                            </div>
+
+                            @if (source.Status == "Found")
                             {
-                                <form method="post" asp-page-handler="UseMatch">
-                                    <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                                    <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                                    <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
-                                    <input type="hidden" name="unitReferenceId" value="@unitReferenceId" />
-                                    <input type="hidden" name="contactReferenceId" value="@contactReferenceId" />
-                                    <button type="submit" class="btn btn-sm">Use this match</button>
-                                </form>
+                                @foreach (var customer in source.Customers)
+                                {
+                                    var selectableUnits = customer.Units.Where(u => u.UnitReferenceId is not null && u.ContactReferenceId is not null).ToList();
+                                    <div class="customer-card">
+                                        <div><strong>@(customer.DisplayName ?? "(no name on file)")</strong></div>
+                                        <div class="text-secondary">
+                                            @(customer.PhoneNumber is null ? "" : customer.PhoneNumber)
+                                            @(customer.Email is null ? "" : $"· {customer.Email}")
+                                            @(customer.CustomerType is null ? "" : $"· {customer.CustomerType}")
+                                        </div>
+
+                                        @if (selectableUnits.Count == 0)
+                                        {
+                                            <p class="text-secondary">No eligible units found.</p>
+                                            <form method="post" asp-page-handler="ContinueWithoutMatch">
+                                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                                                @if (customer.DisplayName is not null)
+                                                {
+                                                    <input type="hidden" name="customerDisplayName" value="@customer.DisplayName" />
+                                                }
+                                                <button type="submit" class="btn btn-sm">Use this customer</button>
+                                            </form>
+                                        }
+                                        else
+                                        {
+                                            <form method="post" asp-page-handler="UseMatch">
+                                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                                                @if (customer.DisplayName is not null)
+                                                {
+                                                    <input type="hidden" name="customerDisplayName" value="@customer.DisplayName" />
+                                                }
+                                                <div class="unit-options">
+                                                    <p class="text-secondary">Select Unit (optional)</p>
+                                                    @foreach (var unit in selectableUnits)
+                                                    {
+                                                        var unitLabel = $"{unit.PropertyName ?? unit.TowerName ?? "Unit"} — Unit {unit.UnitNumber}{(string.IsNullOrEmpty(unit.UnitType) ? "" : $" ({unit.UnitType})")}";
+                                                        <label class="checkbox-field">
+                                                            <input type="radio" name="selectedUnitRef" value="@($"{unit.UnitReferenceId}:{unit.ContactReferenceId}:{Uri.EscapeDataString(unitLabel)}")" required />
+                                                            @unitLabel
+                                                        </label>
+                                                    }
+                                                </div>
+                                                <button type="submit" class="btn btn-sm">Use this customer</button>
+                                            </form>
+                                        }
+                                    </div>
+                                }
                             }
                         </div>
                     }
@@ -145,19 +181,27 @@
         }
         else if (Model.Step == "create")
         {
-            <div class="section-card__title">Step 3 — Category, details &amp; create ticket</div>
-            @if (!string.IsNullOrEmpty(Model.PhoneNumber))
-            {
-                <p class="text-secondary">Phone number on file: <strong>@Model.PhoneNumber</strong></p>
-            }
-            @if (Model.UnitReferenceId is int selectedUnit)
-            {
-                <p class="text-secondary">Linking matched unit/contact reference #@selectedUnit.</p>
-            }
-            else
-            {
-                <p class="text-secondary">No customer match linked — the ticket will still be created.</p>
-            }
+            <div class="section-card__title">Step 3 — Ticket details</div>
+
+            <div class="customer-card">
+                <div><strong>Phone</strong></div>
+                <div class="text-secondary">@(Model.PhoneNumber ?? "—")</div>
+
+                <div><strong>Customer</strong></div>
+                <div class="text-secondary">@(Model.CustomerDisplayName ?? "No customer match linked — the ticket will still be created.")</div>
+
+                @if (Model.UnitLabel is not null)
+                {
+                    <div><strong>Unit</strong></div>
+                    <div class="text-secondary">@Model.UnitLabel</div>
+                }
+
+                <p>
+                    <a class="btn btn-sm" asp-page="/NewTicket" asp-route-step="lookup"
+                       asp-route-intakeRecordId="@Model.IntakeRecordId" asp-route-phoneNumber="@Model.PhoneNumber"
+                       asp-route-departmentId="@Model.DepartmentId">Change customer/unit</a>
+                </p>
+            </div>
 
             @if (Model.CategoriesErrorMessage is not null)
             {
@@ -168,7 +212,8 @@
                     <a class="btn btn-sm" asp-page="/NewTicket"
                        asp-route-step="create" asp-route-intakeRecordId="@Model.IntakeRecordId" asp-route-phoneNumber="@Model.PhoneNumber"
                        asp-route-departmentId="@Model.DepartmentId" asp-route-unitReferenceId="@Model.UnitReferenceId"
-                       asp-route-contactReferenceId="@Model.ContactReferenceId">Retry</a>
+                       asp-route-contactReferenceId="@Model.ContactReferenceId" asp-route-customerDisplayName="@Model.CustomerDisplayName"
+                       asp-route-unitLabel="@Model.UnitLabel">Retry</a>
                 </p>
             }
             else if (Model.Categories.Count == 0)
@@ -185,6 +230,8 @@
                     <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
                     <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
                     <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
+                    <input type="hidden" name="customerDisplayName" value="@Model.CustomerDisplayName" />
+                    <input type="hidden" name="unitLabel" value="@Model.UnitLabel" />
                     <div class="form-group">
                         <label class="form-label" asp-for="CreateStep.CategoryId">Category *</label>
                         <select class="form-control" asp-for="CreateStep.CategoryId" required>
@@ -201,8 +248,9 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>
-                        <select class="form-control" asp-for="CreateStep.PriorityId">
+                        <label class="form-label" asp-for="CreateStep.PriorityId">Priority *</label>
+                        <select class="form-control" asp-for="CreateStep.PriorityId" required>
+                            <option value="">Select Priority</option>
                             @for (byte p = 1; p <= 4; p++)
                             {
                                 <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
@@ -210,8 +258,8 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label" asp-for="CreateStep.RequestSummary">Request summary</label>
-                        <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3"></textarea>
+                        <label class="form-label" asp-for="CreateStep.RequestSummary">Request Summary *</label>
+                        <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3" required></textarea>
                     </div>
                     <button type="submit" class="btn btn-gold">Create ticket</button>
                 </form>

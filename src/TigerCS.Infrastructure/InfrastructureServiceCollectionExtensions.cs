@@ -125,6 +125,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<AuthenticationAppService>();
         services.AddScoped<UserProfileAppService>();
         services.AddScoped<DepartmentUserAppService>();
+        services.AddScoped<DepartmentDirectoryAppService>();
         services.AddScoped<RoleCatalogAppService>();
         services.AddScoped<UserActivationAppService>();
         services.AddScoped<DepartmentAssignmentService>();

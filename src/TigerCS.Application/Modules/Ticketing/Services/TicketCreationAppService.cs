@@ -129,7 +129,12 @@ public sealed class TicketCreationAppService(
             return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
         }
 
-        intakeRecord.LinkToTicket(ticket.TicketId, ticket.VerificationStatus);
+        // hasSelectedUnit is the real, source-agnostic rule for
+        // IntakeRecord.IsUnitRelated: a resolved local Unit/Contact
+        // reference was linked — not ticket.VerificationStatus, which is a
+        // separate, CRM-named concept (see IntakeRecord.LinkToTicket's
+        // remarks).
+        intakeRecord.LinkToTicket(ticket.TicketId, ticket.VerificationStatus, unitReference is not null);
 
         if (unitReference is not null && contactReference is not null)
         {

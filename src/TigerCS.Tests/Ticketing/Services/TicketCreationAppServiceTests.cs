@@ -113,6 +113,87 @@ public class TicketCreationAppServiceTests
         Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
     }
 
+    // ---- Data-consistency correction: IntakeRecord.IsUnitRelated must never
+    // end up false while its linked Ticket carries a real UnitReferenceId.
+    // The current New Ticket wizard always creates the IntakeRecord with
+    // IsUnitRelated=false (identification is deferred to customer lookup,
+    // run after intake) — these prove the classification catches up once a
+    // real Unit is actually selected and linked, and never fabricates one
+    // when it wasn't. ----
+
+    [Fact]
+    public async Task CreateAsync_IntakeCreatedNotUnitRelated_UnitSelectedFromLookup_UpgradesIntakeToUnitRelated()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        // Mirrors what the New Ticket wizard actually sends today: no unit
+        // classification known at intake time.
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var unit = f.UnitReferences.Seed("CRM-UNIT-1001", "1205", "Tiger Sky Tower");
+        var contact = f.ContactReferences.Seed(unit.UnitReferenceId, "CRM-CONTACT-2001", "Ahmed Ali");
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, unit.UnitReferenceId, contact.ContactReferenceId, category.CategoryId, (byte)PriorityLevel.High, "AC not cooling"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal(unit.UnitReferenceId, result.Response!.UnitReferenceId);
+
+        var linkedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        // The bad state this correction rules out: a linked Ticket with a
+        // real UnitReferenceId while its own IntakeRecord still reports
+        // IsUnitRelated=false.
+        Assert.True(linkedIntake!.IsUnitRelated);
+    }
+
+    [Fact]
+    public async Task CreateAsync_IntakeCreatedNotUnitRelated_NoUnitSelected_IntakeRemainsNotUnitRelated()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "General question"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Null(result.Response!.UnitReferenceId);
+
+        var linkedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.False(linkedIntake!.IsUnitRelated);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MultipleUnitsAvailable_SelectingOneCorrectlyMarksIntakeUnitRelated_UsesThatUnitsOwnReference()
+    {
+        // Two distinct units/contacts the way a customer-lookup match with
+        // several eligible units would resolve to — the agent selects the
+        // second, not the first, one.
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var firstUnit = f.UnitReferences.Seed("CRM-UNIT-1001", "1205", "Tiger Sky Tower");
+        var firstContact = f.ContactReferences.Seed(firstUnit.UnitReferenceId, "CRM-CONTACT-2001", "Ahmed Ali");
+        var secondUnit = f.UnitReferences.Seed("CRM-UNIT-1002", "1403", "Tiger Sky Tower");
+        var secondContact = f.ContactReferences.Seed(secondUnit.UnitReferenceId, "CRM-CONTACT-2002", "Ahmed Ali");
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, secondUnit.UnitReferenceId, secondContact.ContactReferenceId, category.CategoryId, (byte)PriorityLevel.High, "Unit 1403 issue"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal(secondUnit.UnitReferenceId, result.Response!.UnitReferenceId);
+        Assert.NotEqual(firstUnit.UnitReferenceId, result.Response.UnitReferenceId);
+
+        var linkedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.True(linkedIntake!.IsUnitRelated);
+    }
+
     [Fact]
     public async Task CreateAsync_SecondTicketNumberSameDayDepartment_IncrementsSequence()
     {
@@ -352,7 +433,7 @@ public class TicketCreationAppServiceTests
         var department = f.Departments.AddDepartment("Customer Service", "CS");
         var category = f.Categories.Seed(department.DepartmentId);
         var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords);
-        intake.LinkToTicket(1, CrmVerificationStatus.Unverified);
+        intake.LinkToTicket(1, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
 
         var result = await f.Service.CreateAsync(
             agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "x"));

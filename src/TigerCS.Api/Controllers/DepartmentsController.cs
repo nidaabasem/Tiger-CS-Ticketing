@@ -8,8 +8,25 @@ namespace TigerCS.Api.Controllers;
 [ApiController]
 [Route("api/departments")]
 [Tags(OpenApiTags.Departments)]
-public class DepartmentsController(DepartmentUserAppService departmentUserAppService) : ControllerBase
+public class DepartmentsController(
+    DepartmentUserAppService departmentUserAppService,
+    DepartmentDirectoryAppService departmentDirectoryAppService) : ControllerBase
 {
+    /// <summary>
+    /// The Department directory — every Department a Department dropdown may
+    /// offer, so no UI ever asks anyone to type a raw <c>DepartmentId</c>.
+    /// Any authenticated staff member may view.
+    /// </summary>
+    /// <param name="activeOnly">When true (the default), excludes deactivated departments.</param>
+    /// <response code="200">The Department directory, ordered by name.</response>
+    [HttpGet]
+    [ProducesResponseType<IReadOnlyCollection<DepartmentDto>>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> List([FromQuery] bool activeOnly = true, CancellationToken cancellationToken = default)
+    {
+        var departments = await departmentDirectoryAppService.ListAsync(activeOnly, cancellationToken);
+        return Ok(departments);
+    }
+
     /// <summary>List the users assigned to a department. Any authenticated staff member may view.</summary>
     /// <remarks>MVP-API-Contracts.md §1.4.</remarks>
     /// <param name="departmentId">The department to list.</param>

@@ -34,9 +34,11 @@ public class CustomerLookupController(CustomerLookupAppService customerLookupApp
     /// have no entry at all, never a fake NotFound. A searched source that
     /// found nothing (NotFound) or could not be reached (Failed) never hides
     /// another source's match, and this call never blocks or gates ticket
-    /// creation (<c>POST /api/tickets</c>). Pass a Found CRM source's
-    /// unitReferenceId/contactReferenceId straight to ticket creation to
-    /// link it; PACT/Tasleeh matches are display-only.
+    /// creation (<c>POST /api/tickets</c>). A Found source carries 0..N
+    /// matched customers, each with 0..N units — pass whichever unit's
+    /// unitReferenceId/contactReferenceId the agent selected straight to
+    /// ticket creation to link it; PACT/Tasleeh matches are display-only
+    /// (their units list is always empty).
     /// </remarks>
     /// <param name="intakeRecordId">The intake record whose phone number (and optional DepartmentId, to narrow which sources are searched) to search with.</param>
     /// <response code="200">Each source actually searched, one entry per source, each Found/NotFound/Failed.</response>

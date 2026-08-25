@@ -102,16 +102,110 @@ public class CustomerLookupAppServiceTests
         var contact = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
             "CRM-CONTACT-2001", "Ahmed Al-Farsi", Phone, ContactType.Owner, null);
         f.CrmUnitGateway.Seed(unit, contact);
-        f.Crm.Seed(Phone, new CrmCustomerMatch(unit.CrmUnitId, contact.CrmContactId, contact.DisplayName, Phone));
+        f.Crm.Seed(Phone, new CrmCustomerMatch(
+            "CRM-CUST-9001", contact.DisplayName, Phone, "ahmed@example.com", "Buyer",
+            [new CrmCustomerUnitMatch(unit.CrmUnitId, contact.CrmContactId)]));
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
         var crmResult = Assert.Single(result.Response!.Sources, s => s.Source == "Crm");
         Assert.Equal("Found", crmResult.Status);
-        Assert.Equal("Ahmed Al-Farsi", crmResult.DisplayName);
-        Assert.NotNull(crmResult.UnitReferenceId);
-        Assert.NotNull(crmResult.ContactReferenceId);
-        Assert.Equal("1204", crmResult.UnitNumber);
+        var customer = Assert.Single(crmResult.Customers);
+        Assert.Equal("CRM-CUST-9001", customer.ExternalCustomerId);
+        Assert.Equal("Ahmed Al-Farsi", customer.DisplayName);
+        Assert.Equal("ahmed@example.com", customer.Email);
+        Assert.Equal("Buyer", customer.CustomerType);
+        var matchedUnit = Assert.Single(customer.Units);
+        Assert.NotNull(matchedUnit.UnitReferenceId);
+        Assert.NotNull(matchedUnit.ContactReferenceId);
+        Assert.Equal("1204", matchedUnit.UnitNumber);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CrmMatchHasMultipleUnits_ReturnsAllOfThemForTheSameCustomer()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        var unit1 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmUnitResult("CRM-UNIT-1001", "1204", "Tiger Tower A", "Tower A", "Residential");
+        var contact1 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
+            "CRM-CONTACT-2001", "Ahmed Al-Farsi", Phone, ContactType.Owner, null);
+        var unit2 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmUnitResult("CRM-UNIT-1002", "0507", "Tiger Tower B", "Tower B", "Commercial");
+        var contact2 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
+            "CRM-CONTACT-2002", "Ahmed Al-Farsi", Phone, ContactType.Owner, null);
+        f.CrmUnitGateway.Seed(unit1, contact1);
+        f.CrmUnitGateway.Seed(unit2, contact2);
+        f.Crm.Seed(Phone, new CrmCustomerMatch(
+            "CRM-CUST-9001", "Ahmed Al-Farsi", Phone, null, "Buyer",
+            [new CrmCustomerUnitMatch(unit1.CrmUnitId, contact1.CrmContactId), new CrmCustomerUnitMatch(unit2.CrmUnitId, contact2.CrmContactId)]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var crmResult = Assert.Single(result.Response!.Sources, s => s.Source == "Crm");
+        var customer = Assert.Single(crmResult.Customers);
+        Assert.Equal(2, customer.Units.Count);
+        Assert.Contains(customer.Units, u => u.UnitNumber == "1204");
+        Assert.Contains(customer.Units, u => u.UnitNumber == "0507");
+    }
+
+    [Fact]
+    public async Task SearchAsync_CrmReturnsMultipleCustomers_AllAreReturned()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        var unit1 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmUnitResult("CRM-UNIT-1001", "1204", "Tiger Tower A", "Tower A", "Residential");
+        var contact1 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
+            "CRM-CONTACT-2001", "Ahmed Al-Farsi", Phone, ContactType.Owner, null);
+        var unit2 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmUnitResult("CRM-UNIT-1002", "0507", "Tiger Tower B", "Tower B", "Commercial");
+        var contact2 = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
+            "CRM-CONTACT-2002", "Ahmad Al-Farsi Jr.", Phone, ContactType.Owner, null);
+        f.CrmUnitGateway.Seed(unit1, contact1);
+        f.CrmUnitGateway.Seed(unit2, contact2);
+        f.Crm.Seed(Phone, new CrmCustomerMatch("CRM-CUST-9001", "Ahmed Al-Farsi", Phone, null, "Buyer", [new CrmCustomerUnitMatch(unit1.CrmUnitId, contact1.CrmContactId)]));
+        f.Crm.Seed(Phone, new CrmCustomerMatch("CRM-CUST-9002", "Ahmad Al-Farsi Jr.", Phone, null, "Buyer", [new CrmCustomerUnitMatch(unit2.CrmUnitId, contact2.CrmContactId)]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var crmResult = Assert.Single(result.Response!.Sources, s => s.Source == "Crm");
+        Assert.Equal("Found", crmResult.Status);
+        Assert.Equal(2, crmResult.Customers.Count);
+        Assert.Equal("1204", Assert.Single(crmResult.Customers, c => c.ExternalCustomerId == "CRM-CUST-9001").Units.Single().UnitNumber);
+        Assert.Equal("0507", Assert.Single(crmResult.Customers, c => c.ExternalCustomerId == "CRM-CUST-9002").Units.Single().UnitNumber);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CrmCustomerHasNoUnits_StillFoundWithEmptyUnitsList()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Crm.Seed(Phone, new CrmCustomerMatch("CRM-CUST-9003", "Khalid Nasser", Phone, null, "Buyer", []));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var crmResult = Assert.Single(result.Response!.Sources, s => s.Source == "Crm");
+        Assert.Equal("Found", crmResult.Status);
+        var customer = Assert.Single(crmResult.Customers);
+        Assert.Empty(customer.Units);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CrmMatchHasDuplicateUnitRows_DoesNotDuplicateUnitsInResult()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        var unit = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmUnitResult("CRM-UNIT-1001", "1204", "Tiger Tower A", "Tower A", "Residential");
+        var contact = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
+            "CRM-CONTACT-2001", "Ahmed Al-Farsi", Phone, ContactType.Owner, null);
+        f.CrmUnitGateway.Seed(unit, contact);
+        // A duplicate relationship row for the very same unit/contact pair —
+        // must never surface as two units for the customer.
+        f.Crm.Seed(Phone, new CrmCustomerMatch(
+            "CRM-CUST-9001", "Ahmed Al-Farsi", Phone, null, "Buyer",
+            [new CrmCustomerUnitMatch(unit.CrmUnitId, contact.CrmContactId), new CrmCustomerUnitMatch(unit.CrmUnitId, contact.CrmContactId)]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var customer = Assert.Single(Assert.Single(result.Response!.Sources, s => s.Source == "Crm").Customers);
+        Assert.Single(customer.Units);
     }
 
     [Fact]
@@ -140,8 +234,25 @@ public class CustomerLookupAppServiceTests
 
         var pactResult = Assert.Single(result.Response!.Sources, s => s.Source == "Pact");
         Assert.Equal("Found", pactResult.Status);
-        Assert.Equal("Fatima Noor", pactResult.DisplayName);
-        Assert.Null(pactResult.UnitReferenceId);
+        var customer = Assert.Single(pactResult.Customers);
+        Assert.Equal("Fatima Noor", customer.DisplayName);
+        Assert.Empty(customer.Units);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactFindsMultipleMatches_ReturnsFoundWithAllCustomers()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-2", "Youssef Noor", Phone));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = Assert.Single(result.Response!.Sources, s => s.Source == "Pact");
+        Assert.Equal("Found", pactResult.Status);
+        Assert.Equal(2, pactResult.Customers.Count);
+        Assert.All(pactResult.Customers, c => Assert.Empty(c.Units));
     }
 
     [Fact]
@@ -167,7 +278,7 @@ public class CustomerLookupAppServiceTests
 
         var tasleehResult = Assert.Single(result.Response!.Sources, s => s.Source == "Tasleeh");
         Assert.Equal("Found", tasleehResult.Status);
-        Assert.Equal("Omar Khalid", tasleehResult.DisplayName);
+        Assert.Equal("Omar Khalid", Assert.Single(tasleehResult.Customers).DisplayName);
     }
 
     [Fact]
@@ -191,7 +302,8 @@ public class CustomerLookupAppServiceTests
         var contact = new TigerCS.Application.Modules.CustomerVerification.CrmIntegration.CrmContactResult(
             "CRM-CONTACT-2001", "Ahmed Al-Farsi", Phone, ContactType.Owner, null);
         f.CrmUnitGateway.Seed(unit, contact);
-        f.Crm.Seed(Phone, new CrmCustomerMatch(unit.CrmUnitId, contact.CrmContactId, contact.DisplayName, Phone));
+        f.Crm.Seed(Phone, new CrmCustomerMatch(
+            "CRM-CUST-9001", contact.DisplayName, Phone, null, "Buyer", [new CrmCustomerUnitMatch(unit.CrmUnitId, contact.CrmContactId)]));
         f.Pact.ThrowUnavailable = true;
         // Tasleeh has no fixture for this phone number — NotFound.
 

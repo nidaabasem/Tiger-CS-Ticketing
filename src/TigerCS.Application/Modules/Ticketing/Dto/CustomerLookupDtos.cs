@@ -13,32 +13,68 @@ public enum CustomerLookupSourceStatus
     Failed
 }
 
+/// <summary>
+/// One unit associated with a matched customer, inside a
+/// <see cref="CustomerLookupCustomerDto"/>. Business-rule change: a customer
+/// is never assumed to have exactly one unit — this is one entry in that
+/// customer's 0..N units. Only the fields the source's own gateway actually
+/// exposes are populated; a field the source doesn't have on file is left
+/// null rather than fabricated (e.g. Pact/Tasleeh never populate any of
+/// these beyond what their own match already carries — see
+/// <see cref="CustomerLookupCustomerDto.Units"/>'s remarks).
+/// </summary>
+/// <param name="ExternalUnitId">The source's own immutable identifier for the unit — for Crm, its CrmUnitId.</param>
+/// <param name="UnitNumber">The unit number, when the source has one on file.</param>
+/// <param name="PropertyName">The property the unit belongs to, when the source has one on file.</param>
+/// <param name="TowerName">The tower within the property, when the source has one on file.</param>
+/// <param name="UnitType">The unit type, when the source has one on file.</param>
+/// <param name="UnitReferenceId">This system's local cache id for the unit, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+/// <param name="ContactReferenceId">This system's local cache id for the specific customer/unit relationship, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+public sealed record CustomerLookupUnitDto(
+    string ExternalUnitId,
+    string? UnitNumber,
+    string? PropertyName,
+    string? TowerName,
+    string? UnitType,
+    int? UnitReferenceId,
+    int? ContactReferenceId);
+
+/// <summary>
+/// One matched customer inside a <see cref="CustomerLookupSourceResultDto"/>.
+/// Business-rule change: a phone number is never assumed to resolve to one
+/// customer — a source's Found result carries 0..N of these.
+/// </summary>
+/// <param name="ExternalCustomerId">The source's own immutable identifier for the customer.</param>
+/// <param name="DisplayName">The customer's name, when the source has one on file.</param>
+/// <param name="PhoneNumber">The customer's phone number, when the source has one on file.</param>
+/// <param name="Email">The customer's email, when the source has one on file.</param>
+/// <param name="CustomerType">The customer's source-recorded customer type (e.g. "Buyer"), when the source has one on file.</param>
+/// <param name="Units">Every unit (0..N) this source associates with the customer by its own ownership/relationship rules. Empty — never fabricated — for a source that exposes no unit/tenancy data at all (Pact, Tasleeh today) or for a customer the source has on file with no eligible unit.</param>
+public sealed record CustomerLookupCustomerDto(
+    string ExternalCustomerId,
+    string? DisplayName,
+    string? PhoneNumber,
+    string? Email,
+    string? CustomerType,
+    IReadOnlyList<CustomerLookupUnitDto> Units);
+
 /// <summary>One source's result — CRM, PACT, or Tasleeh — inside a <see cref="CustomerLookupResultDto"/>.</summary>
 /// <param name="Source">"Crm", "Pact", or "Tasleeh".</param>
-/// <param name="Status">Found, NotFound, or Failed — see <see cref="CustomerLookupSourceStatus"/>.</param>
-/// <param name="DisplayName">The matched customer's name, when Found.</param>
-/// <param name="PhoneNumber">The matched customer's phone number, when Found.</param>
-/// <param name="UnitNumber">The matched CRM unit's number, when Found and the source is Crm; null for Pact/Tasleeh, which carry no unit linkage.</param>
-/// <param name="UnitReferenceId">The local reference id of the matched unit, when Found and the source is Crm — pass this to ticket creation to link it. Null for Pact/Tasleeh.</param>
-/// <param name="ContactReferenceId">The local reference id of the matched contact, when Found and the source is Crm — pass this to ticket creation to link it. Null for Pact/Tasleeh.</param>
+/// <param name="Status">Found, NotFound, or Failed — see <see cref="CustomerLookupSourceStatus"/>. Found means one or more customer matched; NotFound means the source answered with zero customers.</param>
+/// <param name="Customers">0..N matched customers, each with 0..N units — empty for NotFound/Failed.</param>
 public sealed record CustomerLookupSourceResultDto(
     string Source,
     string Status,
-    string? DisplayName,
-    string? PhoneNumber,
-    string? UnitNumber,
-    int? UnitReferenceId,
-    int? ContactReferenceId)
+    IReadOnlyList<CustomerLookupCustomerDto> Customers)
 {
-    public static CustomerLookupSourceResultDto Found(
-        string source, string? displayName, string? phoneNumber, string? unitNumber = null, int? unitReferenceId = null, int? contactReferenceId = null) =>
-        new(source, nameof(CustomerLookupSourceStatus.Found), displayName, phoneNumber, unitNumber, unitReferenceId, contactReferenceId);
+    public static CustomerLookupSourceResultDto Found(string source, IReadOnlyList<CustomerLookupCustomerDto> customers) =>
+        new(source, nameof(CustomerLookupSourceStatus.Found), customers);
 
     public static CustomerLookupSourceResultDto NotFound(string source) =>
-        new(source, nameof(CustomerLookupSourceStatus.NotFound), null, null, null, null, null);
+        new(source, nameof(CustomerLookupSourceStatus.NotFound), []);
 
     public static CustomerLookupSourceResultDto Failed(string source) =>
-        new(source, nameof(CustomerLookupSourceStatus.Failed), null, null, null, null, null);
+        new(source, nameof(CustomerLookupSourceStatus.Failed), []);
 }
 
 /// <summary>

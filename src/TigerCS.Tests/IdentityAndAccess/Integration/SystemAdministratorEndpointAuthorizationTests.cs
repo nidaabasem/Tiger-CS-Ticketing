@@ -67,21 +67,22 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
             departmentPrefix + " " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
-        // "+971500000001" matches MockCrmGateway's CRM-UNIT-1001/CRM-CONTACT-2002 fixture.
+        // "+971509990001" matches MockCrmGateway's CRM-UNIT-1107/CRM-CONTACT-3010 fixture (Sami Nasser, an Owner — a valid Buyer ownership record).
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971509990001", null, true, "5001", null));
         intakeResponse.EnsureSuccessStatusCode();
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
         lookupResponse.EnsureSuccessStatusCode();
         var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
-        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
+        var crmCustomer = Assert.Single(lookup!.Sources.Single(s => s.Source == "Crm").Customers);
+        var crmUnit = Assert.Single(crmCustomer.Units);
 
         var ticketResponse = await client.PostAsJsonAsync(
             "/api/tickets",
             new CreateTicketRequestDto(
-                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+                intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var created = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
 
@@ -156,6 +157,16 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         var response = await client.PatchAsJsonAsync(
             $"/api/users/{targetEmployeeId}/activation", new ActivationRequestDto(false, "Left the company"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListDepartments_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/departments");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
