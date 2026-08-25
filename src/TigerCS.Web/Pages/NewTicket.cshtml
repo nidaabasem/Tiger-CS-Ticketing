@@ -95,7 +95,7 @@
             }
             else if (Model.LookupResult is not null)
             {
-                @if (!Model.LookupResult.Sources.Any(s => s.Status == "Found"))
+                @if (!Model.LookupResult.Sources.Any(s => s.Status == "Found" && s.Customers.Count > 0))
                 {
                     <div class="alert alert-info" role="status">
                         <span>No customer information found. You can continue creating the ticket.</span>
@@ -104,12 +104,12 @@
                 <div class="entry-list entry-list--spaced">
                     @foreach (var source in Model.LookupResult.Sources)
                     {
-                        <div class="entry-row">
-                            <span>
+                        <div class="entry-row entry-row--block">
+                            <div>
                                 <strong>@source.Source</strong>
                                 @if (source.Status == "Found")
                                 {
-                                    <span class="text-secondary">· @(source.DisplayName ?? "(no name on file)") @(source.PhoneNumber is null ? "" : $"· {source.PhoneNumber}") @(source.UnitNumber is null ? "" : $"· Unit {source.UnitNumber}")</span>
+                                    <span class="text-secondary">· @source.Customers.Count matching customer@(source.Customers.Count == 1 ? "" : "s")</span>
                                 }
                                 else if (source.Status == "NotFound")
                                 {
@@ -119,17 +119,52 @@
                                 {
                                     <span class="text-secondary">· @source.Source is temporarily unavailable</span>
                                 }
-                            </span>
-                            @if (source.Status == "Found" && source.UnitReferenceId is int unitReferenceId && source.ContactReferenceId is int contactReferenceId)
+                            </div>
+
+                            @if (source.Status == "Found")
                             {
-                                <form method="post" asp-page-handler="UseMatch">
-                                    <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                                    <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                                    <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
-                                    <input type="hidden" name="unitReferenceId" value="@unitReferenceId" />
-                                    <input type="hidden" name="contactReferenceId" value="@contactReferenceId" />
-                                    <button type="submit" class="btn btn-sm">Use this match</button>
-                                </form>
+                                @foreach (var customer in source.Customers)
+                                {
+                                    var selectableUnits = customer.Units.Where(u => u.UnitReferenceId is not null && u.ContactReferenceId is not null).ToList();
+                                    <div class="customer-card">
+                                        <div><strong>@(customer.DisplayName ?? "(no name on file)")</strong></div>
+                                        <div class="text-secondary">
+                                            @(customer.PhoneNumber is null ? "" : customer.PhoneNumber)
+                                            @(customer.Email is null ? "" : $"· {customer.Email}")
+                                            @(customer.CustomerType is null ? "" : $"· {customer.CustomerType}")
+                                        </div>
+
+                                        @if (selectableUnits.Count == 0)
+                                        {
+                                            <p class="text-secondary">No eligible units found.</p>
+                                            <form method="post" asp-page-handler="ContinueWithoutMatch">
+                                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                                                <button type="submit" class="btn btn-sm">Use this customer</button>
+                                            </form>
+                                        }
+                                        else
+                                        {
+                                            <form method="post" asp-page-handler="UseMatch">
+                                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                                                <div class="unit-options">
+                                                    @foreach (var unit in selectableUnits)
+                                                    {
+                                                        <label class="checkbox-field">
+                                                            <input type="radio" name="selectedUnitRef" value="@($"{unit.UnitReferenceId}:{unit.ContactReferenceId}")" required />
+                                                            @(unit.PropertyName ?? unit.TowerName ?? "Unit") — Unit @unit.UnitNumber
+                                                            @(string.IsNullOrEmpty(unit.UnitType) ? "" : $"({unit.UnitType})")
+                                                        </label>
+                                                    }
+                                                </div>
+                                                <button type="submit" class="btn btn-sm">Use this customer</button>
+                                            </form>
+                                        }
+                                    </div>
+                                }
                             }
                         </div>
                     }

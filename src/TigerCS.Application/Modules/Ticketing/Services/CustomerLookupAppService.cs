@@ -88,48 +88,87 @@ public sealed class CustomerLookupAppService(
         _ => throw new ArgumentOutOfRangeException(nameof(source), source, "Unknown customer lookup source.")
     };
 
+    /// <summary>
+    /// Business-rule change: a phone number may match several distinct
+    /// Buyers, and each Buyer may own several units — never assumed to be
+    /// one of either. Every matched Buyer's every unit is resolved to this
+    /// system's own local UnitReference/ContactReference cache ids via the
+    /// same tested cache-aside upsert <see cref="SearchCrmAsync"/> already
+    /// used (<see cref="CrmUnitLookupAppService"/>), one unit at a time, so
+    /// each unit in the response carries the correct pair to pass straight
+    /// to ticket creation for that specific customer/unit relationship.
+    /// </summary>
     private async Task<CustomerLookupSourceResultDto> SearchCrmAsync(string phoneNumber, CancellationToken cancellationToken)
     {
         var sourceName = CustomerLookupSource.Crm.ToString();
 
-        CrmCustomerMatch? match;
+        IReadOnlyList<CrmCustomerMatch> matches;
         try
         {
-            match = await crmCustomerLookupGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
+            matches = await crmCustomerLookupGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
         }
         catch (CrmCustomerLookupGatewayUnavailableException)
         {
             return CustomerLookupSourceResultDto.Failed(sourceName);
         }
 
-        if (match is null)
+        if (matches.Count == 0)
         {
             return CustomerLookupSourceResultDto.NotFound(sourceName);
         }
 
-        // Cache-aside upsert (CrmUnitLookupAppService already absorbs any
-        // gateway failure into its own CrmUnavailable outcome rather than
-        // throwing — MockCrmGateway already answered above for this same
-        // phone search, so a failure here would be a genuinely new,
-        // independent fault).
-        var unitResult = await crmUnitLookupAppService.GetUnitAsync(match.CrmUnitId, cancellationToken);
-        if (unitResult.Outcome != CrmLookupOutcome.Success || unitResult.Response is null)
+        var customers = new List<CustomerLookupCustomerDto>();
+        foreach (var match in matches)
         {
-            return CustomerLookupSourceResultDto.Failed(sourceName);
+            var units = new List<CustomerLookupUnitDto>();
+
+            // Distinct by CrmUnitId: a duplicate relationship row for the
+            // same unit (e.g. a data glitch upstream) must never surface as
+            // two separate units for the same customer.
+            foreach (var unitMatch in match.Units.DistinctBy(u => u.CrmUnitId))
+            {
+                // Cache-aside upsert (CrmUnitLookupAppService already absorbs
+                // any gateway failure into its own CrmUnavailable outcome
+                // rather than throwing — MockCrmGateway already answered
+                // above for this same phone search, so a failure here would
+                // be a genuinely new, independent fault).
+                var unitResult = await crmUnitLookupAppService.GetUnitAsync(unitMatch.CrmUnitId, cancellationToken);
+                if (unitResult.Outcome == CrmLookupOutcome.CrmUnavailable)
+                {
+                    // A genuine CRM outage mid-resolution is the same fault
+                    // the top-level catch above handles — isolate the whole
+                    // Crm source, not just this one unit/customer.
+                    return CustomerLookupSourceResultDto.Failed(sourceName);
+                }
+
+                if (unitResult.Outcome != CrmLookupOutcome.Success || unitResult.Response is null)
+                {
+                    // Matched by phone, but the unit record itself is
+                    // already gone from the CRM — skip just this one unit,
+                    // never the whole customer.
+                    continue;
+                }
+
+                var contactsResult = await crmUnitLookupAppService.GetContactsAsync(unitMatch.CrmUnitId, cancellationToken);
+                var contact = contactsResult.Outcome == CrmLookupOutcome.Success
+                    ? contactsResult.Contacts?.FirstOrDefault(c => c.CrmContactId == unitMatch.CrmContactId)
+                    : null;
+
+                units.Add(new CustomerLookupUnitDto(
+                    unitMatch.CrmUnitId,
+                    unitResult.Response.UnitNumber,
+                    unitResult.Response.PropertyName,
+                    unitResult.Response.TowerName,
+                    unitResult.Response.UnitType,
+                    unitResult.Response.UnitReferenceId,
+                    contact?.ContactReferenceId));
+            }
+
+            customers.Add(new CustomerLookupCustomerDto(
+                match.ExternalCustomerId, match.DisplayName, match.PhoneNumber, match.Email, match.CustomerType, units));
         }
 
-        var contactsResult = await crmUnitLookupAppService.GetContactsAsync(match.CrmUnitId, cancellationToken);
-        var contact = contactsResult.Outcome == CrmLookupOutcome.Success
-            ? contactsResult.Contacts?.FirstOrDefault(c => c.CrmContactId == match.CrmContactId)
-            : null;
-
-        return CustomerLookupSourceResultDto.Found(
-            sourceName,
-            contact?.DisplayName ?? match.DisplayName,
-            contact?.ContactChannel ?? match.PhoneNumber,
-            unitResult.Response.UnitNumber,
-            unitResult.Response.UnitReferenceId,
-            contact?.ContactReferenceId);
+        return CustomerLookupSourceResultDto.Found(sourceName, customers);
     }
 
     private async Task<CustomerLookupSourceResultDto> SearchPactAsync(string phoneNumber, CancellationToken cancellationToken)
@@ -137,10 +176,19 @@ public sealed class CustomerLookupAppService(
         var sourceName = CustomerLookupSource.Pact.ToString();
         try
         {
-            var match = await pactGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
-            return match is null
-                ? CustomerLookupSourceResultDto.NotFound(sourceName)
-                : CustomerLookupSourceResultDto.Found(sourceName, match.DisplayName, match.PhoneNumber);
+            var matches = await pactGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
+            if (matches.Count == 0)
+            {
+                return CustomerLookupSourceResultDto.NotFound(sourceName);
+            }
+
+            // Pact exposes no unit/tenancy data today — Units is an empty
+            // list, never fabricated (see CustomerLookupCustomerDto's remarks).
+            var customers = matches
+                .Select(match => new CustomerLookupCustomerDto(
+                    match.PactCustomerId, match.DisplayName, match.PhoneNumber, Email: null, CustomerType: null, Units: []))
+                .ToList();
+            return CustomerLookupSourceResultDto.Found(sourceName, customers);
         }
         catch (PactGatewayUnavailableException)
         {
@@ -153,10 +201,19 @@ public sealed class CustomerLookupAppService(
         var sourceName = CustomerLookupSource.Tasleeh.ToString();
         try
         {
-            var match = await tasleehGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
-            return match is null
-                ? CustomerLookupSourceResultDto.NotFound(sourceName)
-                : CustomerLookupSourceResultDto.Found(sourceName, match.DisplayName, match.PhoneNumber);
+            var matches = await tasleehGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
+            if (matches.Count == 0)
+            {
+                return CustomerLookupSourceResultDto.NotFound(sourceName);
+            }
+
+            // Tasleeh exposes no asset/unit data today — Units is an empty
+            // list, never fabricated (see CustomerLookupCustomerDto's remarks).
+            var customers = matches
+                .Select(match => new CustomerLookupCustomerDto(
+                    match.TasleehCustomerId, match.DisplayName, match.PhoneNumber, Email: null, CustomerType: null, Units: []))
+                .ToList();
+            return CustomerLookupSourceResultDto.Found(sourceName, customers);
         }
         catch (TasleehGatewayUnavailableException)
         {

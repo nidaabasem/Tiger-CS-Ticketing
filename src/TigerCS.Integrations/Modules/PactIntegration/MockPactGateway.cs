@@ -30,7 +30,7 @@ public sealed class MockPactGateway : IPactGateway
             ["+971500000002"] = new PactCustomerMatch("PACT-CUST-3001", "Fatima Noor", "+971500000002")
         };
 
-    public Task<PactCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<PactCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         if (phoneNumber.Contains(OutageTrigger, StringComparison.OrdinalIgnoreCase))
         {
@@ -38,6 +38,7 @@ public sealed class MockPactGateway : IPactGateway
                 $"Simulated PACT outage triggered by '{phoneNumber}' (MockPactGateway — a test double, never a real PACT failure).");
         }
 
-        return Task.FromResult(Fixtures.GetValueOrDefault(phoneNumber));
+        return Task.FromResult<IReadOnlyList<PactCustomerMatch>>(
+            Fixtures.TryGetValue(phoneNumber, out var match) ? [match] : []);
     }
 }

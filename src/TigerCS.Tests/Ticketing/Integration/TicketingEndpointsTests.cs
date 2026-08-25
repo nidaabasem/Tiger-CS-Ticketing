@@ -21,8 +21,8 @@ namespace TigerCS.Tests.Ticketing.Integration;
 /// </summary>
 public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
 {
-    /// <summary>Matches MockCrmGateway's CRM-UNIT-1001/CRM-CONTACT-2002 fixture (Sara Yousef) — the standard "customer found" phone number for these tests.</summary>
-    private const string PhoneWithCrmMatch = "+971500000001";
+    /// <summary>Matches MockCrmGateway's CRM-UNIT-1107/CRM-CONTACT-3010 fixture (Sami Nasser, an Owner — a valid Buyer ownership record) — the standard "customer found, with an eligible unit" phone number for these tests.</summary>
+    private const string PhoneWithCrmMatch = "+971509990001";
     private const string PhoneWithNoMatch = "+971500009999";
 
     private readonly TigerCsApiFactory _factory;
@@ -69,28 +69,30 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
         Assert.Equal(HttpStatusCode.OK, lookupResponse.StatusCode);
         var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
-        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
-        Assert.Equal("Found", crmMatch.Status);
-        Assert.NotNull(crmMatch.UnitReferenceId);
-        Assert.NotNull(crmMatch.ContactReferenceId);
+        var crmResult = lookup!.Sources.Single(s => s.Source == "Crm");
+        Assert.Equal("Found", crmResult.Status);
+        var crmCustomer = Assert.Single(crmResult.Customers);
+        var crmUnit = Assert.Single(crmCustomer.Units);
+        Assert.NotNull(crmUnit.UnitReferenceId);
+        Assert.NotNull(crmUnit.ContactReferenceId);
 
         var ticketResponse = await client.PostAsJsonAsync(
             "/api/tickets",
             new CreateTicketRequestDto(
-                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+                intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
 
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
         Assert.Equal("Verified", ticket!.VerificationStatus);
         Assert.Equal("Open", ticket.TicketStatus);
-        Assert.Equal(crmMatch.UnitReferenceId, ticket.UnitReferenceId);
+        Assert.Equal(crmUnit.UnitReferenceId, ticket.UnitReferenceId);
         Assert.StartsWith("TG-", ticket.TicketNumber);
 
         // Reusing an already-linked IntakeRecord is rejected, not silently re-executed.
         var replay = await client.PostAsJsonAsync(
             "/api/tickets",
             new CreateTicketRequestDto(
-                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "Second attempt"));
+                intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "Second attempt"));
         Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
     }
 
@@ -300,12 +302,13 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
 
         var lookupResponse = await creatorClient.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
         var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
-        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
+        var crmCustomer = Assert.Single(lookup!.Sources.Single(s => s.Source == "Crm").Customers);
+        var crmUnit = Assert.Single(crmCustomer.Units);
 
         var ticketResponse = await creatorClient.PostAsJsonAsync(
             "/api/tickets",
             new CreateTicketRequestDto(
-                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+                intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
 
         return (ticket!.TicketId, departmentId, Convert.FromBase64String(ticket.RowVersion));

@@ -136,7 +136,13 @@ public sealed class NewTicketModelTests
         var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+15551234567",
             [
-                new CustomerLookupSourceResultDto("Crm", "Found", "Jane Doe", "+15551234567", "12B", 5, 9)
+                new CustomerLookupSourceResultDto("Crm", "Found",
+                [
+                    new CustomerLookupCustomerDto("CRM-CUST-1", "Jane Doe", "+15551234567", null, "Buyer",
+                    [
+                        new CustomerLookupUnitDto("CRM-UNIT-1", "12B", "Tiger Tower", null, null, 5, 9)
+                    ])
+                ])
             ])));
 
         await model.OnGetAsync("lookup", 42, "+15551234567", null, null, null, CancellationToken.None);
@@ -144,9 +150,11 @@ public sealed class NewTicketModelTests
         Assert.Null(model.ErrorMessage);
         var source = Assert.Single(model.LookupResult!.Sources);
         Assert.Equal("Found", source.Status);
-        Assert.Equal("Jane Doe", source.DisplayName);
-        Assert.Equal(5, source.UnitReferenceId);
-        Assert.Equal(9, source.ContactReferenceId);
+        var customer = Assert.Single(source.Customers);
+        Assert.Equal("Jane Doe", customer.DisplayName);
+        var unit = Assert.Single(customer.Units);
+        Assert.Equal(5, unit.UnitReferenceId);
+        Assert.Equal(9, unit.ContactReferenceId);
     }
 
     [Fact]
@@ -155,7 +163,7 @@ public sealed class NewTicketModelTests
         var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+15551234567",
             [
-                new CustomerLookupSourceResultDto("Crm", "NotFound", null, null, null, null, null)
+                CustomerLookupSourceResultDto.NotFound("Crm")
             ])));
 
         await model.OnGetAsync("lookup", 42, "+15551234567", null, null, null, CancellationToken.None);
@@ -170,7 +178,7 @@ public sealed class NewTicketModelTests
         var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+15551234567",
             [
-                new CustomerLookupSourceResultDto("Pact", "Failed", null, null, null, null, null)
+                CustomerLookupSourceResultDto.Failed("Pact")
             ])));
 
         await model.OnGetAsync("lookup", 42, "+15551234567", null, null, null, CancellationToken.None);
@@ -188,9 +196,15 @@ public sealed class NewTicketModelTests
         var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+15551234567",
             [
-                new CustomerLookupSourceResultDto("Crm", "Found", "Jane Doe", "+15551234567", "12B", 5, 9),
-                new CustomerLookupSourceResultDto("Pact", "Failed", null, null, null, null, null),
-                new CustomerLookupSourceResultDto("Tasleeh", "NotFound", null, null, null, null, null)
+                new CustomerLookupSourceResultDto("Crm", "Found",
+                [
+                    new CustomerLookupCustomerDto("CRM-CUST-1", "Jane Doe", "+15551234567", null, "Buyer",
+                    [
+                        new CustomerLookupUnitDto("CRM-UNIT-1", "12B", "Tiger Tower", null, null, 5, 9)
+                    ])
+                ]),
+                CustomerLookupSourceResultDto.Failed("Pact"),
+                CustomerLookupSourceResultDto.NotFound("Tasleeh")
             ])));
 
         await model.OnGetAsync("lookup", 42, "+15551234567", null, null, null, CancellationToken.None);
@@ -210,9 +224,9 @@ public sealed class NewTicketModelTests
         var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+15551234567",
             [
-                new CustomerLookupSourceResultDto("Crm", "NotFound", null, null, null, null, null),
-                new CustomerLookupSourceResultDto("Pact", "NotFound", null, null, null, null, null),
-                new CustomerLookupSourceResultDto("Tasleeh", "NotFound", null, null, null, null, null)
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.NotFound("Pact"),
+                CustomerLookupSourceResultDto.NotFound("Tasleeh")
             ])));
 
         await model.OnGetAsync("lookup", 42, "+15551234567", null, null, null, CancellationToken.None);
@@ -229,12 +243,63 @@ public sealed class NewTicketModelTests
         var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+15551234567",
             [
-                new CustomerLookupSourceResultDto("Pact", "Found", "Jane Doe", "+15551234567", null, null, null)
+                new CustomerLookupSourceResultDto("Pact", "Found",
+                [
+                    new CustomerLookupCustomerDto("PACT-CUST-1", "Jane Doe", "+15551234567", null, null, [])
+                ])
             ])));
 
         await model.OnGetAsync("lookup", 42, "+15551234567", null, null, null, CancellationToken.None);
 
         Assert.Equal(["Pact"], model.LookupResult!.Sources.Select(s => s.Source));
+    }
+
+    // ---- Multiple customer/unit matches: the DTO shape carries them, selection is never automatic ----
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_MultipleCustomers_AllPresentInLookupResult()
+    {
+        var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+971501234567",
+            [
+                new CustomerLookupSourceResultDto("Crm", "Found",
+                [
+                    new CustomerLookupCustomerDto("CRM-CUST-1", "Ahmed Ali", "+971501234567", null, "Buyer",
+                    [
+                        new CustomerLookupUnitDto("CRM-UNIT-1", "1205", "Tiger Sky Tower", null, null, 5, 9),
+                        new CustomerLookupUnitDto("CRM-UNIT-2", "1403", "Tiger Sky Tower", null, null, 6, 10)
+                    ]),
+                    new CustomerLookupCustomerDto("CRM-CUST-2", "Ahmad Ali Hassan", "+971501234567", null, "Buyer",
+                    [
+                        new CustomerLookupUnitDto("CRM-UNIT-3", "2004", "Tiger Sky Tower", null, null, 7, 11)
+                    ])
+                ])
+            ])));
+
+        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, CancellationToken.None);
+
+        var source = Assert.Single(model.LookupResult!.Sources);
+        Assert.Equal(2, source.Customers.Count);
+        Assert.Equal(2, source.Customers.Single(c => c.ExternalCustomerId == "CRM-CUST-1").Units.Count);
+        Assert.Single(source.Customers.Single(c => c.ExternalCustomerId == "CRM-CUST-2").Units);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_CustomerWithNoUnits_StillPresentInLookupResult()
+    {
+        var (model, _, _, _, _) = CreateModel(lookupResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+971502223333",
+            [
+                new CustomerLookupSourceResultDto("Crm", "Found",
+                [
+                    new CustomerLookupCustomerDto("CRM-CUST-3", "Khalid Nasser", "+971502223333", null, "Buyer", [])
+                ])
+            ])));
+
+        await model.OnGetAsync("lookup", 42, "+971502223333", null, null, null, CancellationToken.None);
+
+        var customer = Assert.Single(Assert.Single(model.LookupResult!.Sources).Customers);
+        Assert.Empty(customer.Units);
     }
 
     [Fact]
@@ -378,7 +443,7 @@ public sealed class NewTicketModelTests
     {
         var (model, _, _, _, _) = CreateModel();
 
-        var result = model.OnPostUseMatch(42, "+15551234567", 7, 5, 9);
+        var result = model.OnPostUseMatch(42, "+15551234567", 7, "5:9");
 
         var redirect = Assert.IsType<RedirectToPageResult>(result);
         var values = RouteValues(redirect);
@@ -386,6 +451,21 @@ public sealed class NewTicketModelTests
         Assert.Equal(7, values["departmentId"]);
         Assert.Equal(5, values["unitReferenceId"]);
         Assert.Equal(9, values["contactReferenceId"]);
+    }
+
+    [Fact]
+    public void OnPostUseMatch_DifferentUnitSelected_CarriesThatUnitsOwnReferences()
+    {
+        // A customer with multiple units must be able to carry forward
+        // whichever specific unit's reference pair the agent actually
+        // selected — never defaulting to the first one.
+        var (model, _, _, _, _) = CreateModel();
+
+        var result = model.OnPostUseMatch(42, "+971501234567", null, "6:10");
+
+        var values = RouteValues(Assert.IsType<RedirectToPageResult>(result));
+        Assert.Equal(6, values["unitReferenceId"]);
+        Assert.Equal(10, values["contactReferenceId"]);
     }
 
     [Fact]

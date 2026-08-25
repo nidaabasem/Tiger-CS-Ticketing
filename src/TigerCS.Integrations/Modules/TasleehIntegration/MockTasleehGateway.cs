@@ -30,7 +30,7 @@ public sealed class MockTasleehGateway : ITasleehGateway
             ["+971500000003"] = new TasleehCustomerMatch("TSL-CUST-4001", "Omar Khalid", "+971500000003")
         };
 
-    public Task<TasleehCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TasleehCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         if (phoneNumber.Contains(OutageTrigger, StringComparison.OrdinalIgnoreCase))
         {
@@ -38,6 +38,7 @@ public sealed class MockTasleehGateway : ITasleehGateway
                 $"Simulated Tasleeh outage triggered by '{phoneNumber}' (MockTasleehGateway — a test double, never a real Tasleeh failure).");
         }
 
-        return Task.FromResult(Fixtures.GetValueOrDefault(phoneNumber));
+        return Task.FromResult<IReadOnlyList<TasleehCustomerMatch>>(
+            Fixtures.TryGetValue(phoneNumber, out var match) ? [match] : []);
     }
 }

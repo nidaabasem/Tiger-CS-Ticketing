@@ -47,18 +47,20 @@ public class SlaAndEscalationEndpointsTests : IClassFixture<TigerCsApiFactory>
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
+        // "+971509990001" matches MockCrmGateway's CRM-UNIT-1107/CRM-CONTACT-3010 fixture (Sami Nasser, an Owner — a valid Buyer ownership record).
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971509990001", null, true, "5001", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var lookup = await (await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup"))
             .Content.ReadFromJsonAsync<CustomerLookupResultDto>();
-        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
+        var crmCustomer = Assert.Single(lookup!.Sources.Single(s => s.Source == "Crm").Customers);
+        var crmUnit = Assert.Single(crmCustomer.Units);
 
         var createResponse = await client.PostAsJsonAsync(
             "/api/tickets",
             new CreateTicketRequestDto(
-                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, priorityId, "AC unit not cooling"));
+                intake.IntakeRecordId, crmUnit.UnitReferenceId, crmUnit.ContactReferenceId, categoryId, priorityId, "AC unit not cooling"));
 
         // Asserted rather than assumed: ticket creation is CS Agent/CS
         // Supervisor only (PolicyNames.CustomerVerification), so a helper

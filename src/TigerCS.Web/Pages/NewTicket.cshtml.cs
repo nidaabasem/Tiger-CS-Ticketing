@@ -120,9 +120,23 @@ public sealed class NewTicketModel(
         });
     }
 
-    /// <summary>The agent selected a CRM lookup match — its unit/contact reference carries forward to ticket creation.</summary>
-    public IActionResult OnPostUseMatch(long intakeRecordId, string? phoneNumber, int? departmentId, int unitReferenceId, int contactReferenceId) =>
-        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, departmentId, unitReferenceId, contactReferenceId });
+    /// <summary>
+    /// The agent selected one customer's unit from a customer-lookup match —
+    /// its unit/contact reference carries forward to ticket creation.
+    /// <paramref name="selectedUnitRef"/> is a single "{unitReferenceId}:{contactReferenceId}"
+    /// value (a plain HTML radio button can only carry one value per option,
+    /// and a customer's unit list is rendered without JavaScript — see
+    /// NewTicket.cshtml) so the two ids for whichever unit the agent picked
+    /// always travel together and can never be mismatched from two separate
+    /// same-named radio groups.
+    /// </summary>
+    public IActionResult OnPostUseMatch(long intakeRecordId, string? phoneNumber, int? departmentId, string selectedUnitRef)
+    {
+        var parts = selectedUnitRef.Split(':');
+        var unitReferenceId = int.Parse(parts[0]);
+        var contactReferenceId = int.Parse(parts[1]);
+        return RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, departmentId, unitReferenceId, contactReferenceId });
+    }
 
     /// <summary>No match selected — found nothing, a source failed, or the agent chose to proceed anyway. None of those blocks ticket creation.</summary>
     public IActionResult OnPostContinueWithoutMatch(long intakeRecordId, string? phoneNumber, int? departmentId) =>

@@ -435,6 +435,12 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 .entry-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); font-size: 12.5px; }
 .entry-row:last-child { border-bottom: 0; }
 .entry-row__field { color: var(--color-text-secondary); }
+.entry-row--block { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+
+/* customer lookup: multiple customer/unit matches */
+
+.customer-card { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.unit-options { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) 0; }
 
 /* ---------- Responsive ---------- */
 
