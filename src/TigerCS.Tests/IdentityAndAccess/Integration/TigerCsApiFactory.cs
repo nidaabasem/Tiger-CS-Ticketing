@@ -5,6 +5,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -18,6 +21,7 @@ using TigerCS.Domain.Modules.Notifications;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Infrastructure.Persistence;
+using TigerCS.Tests.CustomerVerification.Fakes;
 
 namespace TigerCS.Tests.IdentityAndAccess.Integration;
 
@@ -100,6 +104,28 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 // enforcement elsewhere in this codebase (see
                 // CustomerVerificationUnitOfWork's remarks).
                 .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
+
+            // CrmBuyerHttpGateway (Program.cs -> AddTigerCsIntegrations) is a
+            // real HTTP client with no test/mock provider switch of its own
+            // (unlike ICrmGateway's MockCrmGateway) — this host has no real
+            // CRM to call, so it's swapped for a deterministic in-memory
+            // double here, the same way the SQL Server DbContext above is
+            // swapped for the InMemory provider. Production wiring
+            // (IntegrationsServiceCollectionExtensions) is untouched.
+            services.RemoveAll<ICrmBuyerLookupGateway>();
+            services.AddScoped<ICrmBuyerLookupGateway>(_ => new FakeCrmBuyerLookupGateway().Returns(
+                CrmBuyerLookupResult.Success(
+                [
+                    new CrmBuyerMatchDto(
+                        new CrmCustomerDto(9001, "Test Buyer", null, "+971500000900", "buyer@example.test"),
+                        [
+                            new CrmBuyerUnitDto(
+                                LeadId: 9100, LeadStatus: 8, LeadStatusName: "Sold", UnitId: 9200,
+                                UnitNumber: "1204", UnitStatus: 3, UnitType: 2, FloorNumber: 12, ProjectId: 79,
+                                ProjectName: "Tiger Tower", ProjectArabicName: null, CustomerType: 1,
+                                CustomerTypeName: "Buyer")
+                        ])
+                ])));
         });
     }
 

@@ -74,6 +74,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/crm/units/search",
         "GET /api/crm/units/{crmUnitId}",
         "GET /api/crm/units/{crmUnitId}/contacts",
+        "GET /api/crm/buyers",
 
         "POST /api/verification-sessions",
         "GET /api/verification-sessions/{verificationSessionId}",
@@ -207,6 +208,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     [InlineData("/api/roles", "GET", OpenApiTags.Roles)]
     [InlineData("/api/departments/{departmentId}/users", "GET", OpenApiTags.Departments)]
     [InlineData("/api/crm/units/search", "GET", OpenApiTags.CrmLookup)]
+    [InlineData("/api/crm/buyers", "GET", OpenApiTags.CrmLookup)]
     [InlineData("/api/verification-sessions", "POST", OpenApiTags.CustomerVerification)]
     [InlineData("/api/intake-records", "POST", OpenApiTags.Intake)]
     [InlineData("/api/tickets", "POST", OpenApiTags.Tickets)]

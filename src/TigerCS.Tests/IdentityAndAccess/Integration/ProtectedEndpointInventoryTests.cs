@@ -41,6 +41,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/crm/units/{crmUnitId}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCrmUnit_Returns200),
         ["GET /api/crm/units/search"] = nameof(SystemAdministratorEndpointAuthorizationTests.SearchCrmUnits_Returns200),
         ["GET /api/crm/units/{crmUnitId}/contacts"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCrmUnitContacts_Returns200),
+        ["GET /api/crm/buyers"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetBuyerByPhone_Returns200),
         ["POST /api/verification-sessions"] = nameof(SystemAdministratorEndpointAuthorizationTests.CreateVerificationSession_Returns201),
         ["GET /api/verification-sessions/{verificationSessionId:guid}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetVerificationSession_Returns200),
         ["POST /api/intake-records"] = nameof(SystemAdministratorEndpointAuthorizationTests.CreateIntakeRecord_WithSystemAdministratorJwt_Returns201),

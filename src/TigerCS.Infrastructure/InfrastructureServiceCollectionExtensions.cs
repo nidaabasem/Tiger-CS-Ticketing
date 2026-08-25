@@ -135,6 +135,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IVerificationSessionRepository, VerificationSessionRepository>();
         services.AddScoped<ICustomerVerificationUnitOfWork, CustomerVerificationUnitOfWork>();
         services.AddScoped<CrmUnitLookupAppService>();
+        services.AddScoped<CrmBuyerLookupAppService>();
         services.AddScoped<VerificationSessionAppService>();
 
         services.AddScoped<ICategoryRepository, CategoryRepository>();
