@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
@@ -138,6 +139,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<VerificationSessionAppService>();
 
         services.AddScoped<ICategoryRepository, CategoryRepository>();
+        services.AddScoped<CategoryCatalogAppService>();
         services.AddScoped<IPriorityRepository, PriorityRepository>();
         services.AddScoped<IIntakeRecordRepository, IntakeRecordRepository>();
         services.AddScoped<IDepartmentCustomerLookupSourceRepository, DepartmentCustomerLookupSourceRepository>();

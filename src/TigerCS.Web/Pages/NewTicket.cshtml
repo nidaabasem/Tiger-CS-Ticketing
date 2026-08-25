@@ -125,6 +125,7 @@
                                 <form method="post" asp-page-handler="UseMatch">
                                     <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
                                     <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                    <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
                                     <input type="hidden" name="unitReferenceId" value="@unitReferenceId" />
                                     <input type="hidden" name="contactReferenceId" value="@contactReferenceId" />
                                     <button type="submit" class="btn btn-sm">Use this match</button>
@@ -138,6 +139,7 @@
             <form method="post" asp-page-handler="ContinueWithoutMatch">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
                 <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
                 <button type="submit" class="btn">Continue to Ticket</button>
             </form>
         }
@@ -156,31 +158,64 @@
             {
                 <p class="text-secondary">No customer match linked — the ticket will still be created.</p>
             }
-            <form method="post" asp-page-handler="Create">
-                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
-                <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
-                <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.CategoryId">Category ID</label>
-                    <input class="form-control" asp-for="CreateStep.CategoryId" />
-                    <span class="field-hint">No category directory endpoint exists yet — enter the numeric category id.</span>
+
+            @if (Model.CategoriesErrorMessage is not null)
+            {
+                <div class="alert alert-error" role="alert">
+                    <span>@Model.CategoriesErrorMessage</span>
                 </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>
-                    <select class="form-control" asp-for="CreateStep.PriorityId">
-                        @for (byte p = 1; p <= 4; p++)
-                        {
-                            <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
-                        }
-                    </select>
+                <p>
+                    <a class="btn btn-sm" asp-page="/NewTicket"
+                       asp-route-step="create" asp-route-intakeRecordId="@Model.IntakeRecordId" asp-route-phoneNumber="@Model.PhoneNumber"
+                       asp-route-departmentId="@Model.DepartmentId" asp-route-unitReferenceId="@Model.UnitReferenceId"
+                       asp-route-contactReferenceId="@Model.ContactReferenceId">Retry</a>
+                </p>
+            }
+            else if (Model.Categories.Count == 0)
+            {
+                <div class="alert alert-info" role="status">
+                    <span>No active categories are configured for this department.</span>
                 </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.RequestSummary">Request summary</label>
-                    <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3"></textarea>
-                </div>
-                <button type="submit" class="btn btn-gold">Create ticket</button>
-            </form>
+            }
+            else
+            {
+                <form method="post" asp-page-handler="Create">
+                    <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                    <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                    <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                    <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
+                    <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
+                    <div class="form-group">
+                        <label class="form-label" asp-for="CreateStep.CategoryId">Category *</label>
+                        <select class="form-control" asp-for="CreateStep.CategoryId" required>
+                            <option value="">Select Category</option>
+                            @foreach (var group in Model.Categories.GroupBy(c => c.DepartmentName))
+                            {
+                                <optgroup label="@group.Key">
+                                    @foreach (var category in group)
+                                    {
+                                        <option value="@category.CategoryId">@category.Name</option>
+                                    }
+                                </optgroup>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>
+                        <select class="form-control" asp-for="CreateStep.PriorityId">
+                            @for (byte p = 1; p <= 4; p++)
+                            {
+                                <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="CreateStep.RequestSummary">Request summary</label>
+                        <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-gold">Create ticket</button>
+                </form>
+            }
         }
     </div>
 </div>

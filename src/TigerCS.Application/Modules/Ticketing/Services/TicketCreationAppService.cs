@@ -95,7 +95,7 @@ public sealed class TicketCreationAppService(
             }
         }
 
-        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
+        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, intakeRecord.DepartmentId, cancellationToken);
         if (routing.Failure is { } routingFailure)
         {
             return TicketCreationResult.Failure(routingFailure);
@@ -243,16 +243,27 @@ public sealed class TicketCreationAppService(
     /// Resolves and validates Category → Department routing (FR-CLS-01/
     /// FR-RTE-01) and Priority together, since ticket creation needs both.
     /// Rejects a Category that is missing/inactive, a Priority that is
-    /// missing, and — item 9 of this review — a Category whose routed
-    /// Department is itself missing/inactive, so a ticket can never be
-    /// silently routed to a department nobody is staffing.
+    /// missing, a Category whose routed Department is itself missing/
+    /// inactive (item 9 of the senior review, so a ticket can never be
+    /// silently routed to a department nobody is staffing), and — the
+    /// Category-directory follow-up — a Category that routes to a different
+    /// Department than the one the IntakeRecord itself named. The UI's
+    /// Category dropdown is always scoped to the IntakeRecord's Department
+    /// (or offers every Department's Categories when none was given), so
+    /// this last case only fires against a request built outside that UI.
     /// </summary>
-    private async Task<RoutingResolution> ResolveRoutingAsync(int categoryId, byte priorityId, CancellationToken cancellationToken)
+    private async Task<RoutingResolution> ResolveRoutingAsync(
+        int categoryId, byte priorityId, int? intakeDepartmentId, CancellationToken cancellationToken)
     {
         var category = await categoryRepository.GetByIdAsync(categoryId, cancellationToken);
         if (category is null || !category.IsActive)
         {
             return RoutingResolution.Failed(TicketCreationOutcome.CategoryNotFound);
+        }
+
+        if (intakeDepartmentId is { } departmentIdOnIntake && category.DepartmentId != departmentIdOnIntake)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.CategoryDepartmentMismatch);
         }
 
         var priority = await priorityRepository.GetByIdAsync(priorityId, cancellationToken);

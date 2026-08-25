@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Web.Services.Api;
 
@@ -31,6 +32,7 @@ namespace TigerCS.Web.Pages;
 public sealed class NewTicketModel(
     IntakeRecordsApiClient intakeClient,
     CustomerLookupApiClient customerLookupClient,
+    CategoriesApiClient categoriesClient,
     TicketsApiClient ticketsClient) : PageModel
 {
     public string Step { get; private set; } = "intake";
@@ -41,16 +43,29 @@ public sealed class NewTicketModel(
 
     public long? IntakeRecordId { get; private set; }
     public string? PhoneNumber { get; private set; }
+    public int? DepartmentId { get; private set; }
     public int? UnitReferenceId { get; private set; }
     public int? ContactReferenceId { get; private set; }
     public CustomerLookupResultDto? LookupResult { get; private set; }
 
+    /// <summary>
+    /// The active Categories the Category dropdown offers — scoped to
+    /// <see cref="DepartmentId"/> when set, otherwise every active Category.
+    /// Populated on Step 3 only (<see cref="LoadCategoriesAsync"/>).
+    /// </summary>
+    public IReadOnlyCollection<CategoryDto> Categories { get; private set; } = [];
+
+    /// <summary>Set only when the Categories API call itself failed — distinct from "loaded successfully but empty".</summary>
+    public string? CategoriesErrorMessage { get; private set; }
+
     public async Task<IActionResult> OnGetAsync(
-        string? step, long? intakeRecordId, string? phoneNumber, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
+        string? step, long? intakeRecordId, string? phoneNumber, int? departmentId,
+        int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
     {
         Step = step ?? "intake";
         IntakeRecordId = intakeRecordId;
         PhoneNumber = phoneNumber;
+        DepartmentId = departmentId;
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
 
@@ -65,6 +80,10 @@ public sealed class NewTicketModel(
             {
                 LookupResult = result.Value;
             }
+        }
+        else if (Step == "create")
+        {
+            await LoadCategoriesAsync(cancellationToken);
         }
 
         return Page();
@@ -87,39 +106,84 @@ public sealed class NewTicketModel(
         // Business-rule change: customer lookup runs for every intake — a
         // non-unit-related interaction may still be a known CRM/PACT/Tasleeh
         // customer, and none of the three ever gates what happens next.
-        // The phone number carried forward from here on is the one the Api
-        // just echoed back on the saved IntakeRecord — never reformatted.
-        return RedirectToPage(new { step = "lookup", intakeRecordId = result.Value.IntakeRecordId, phoneNumber = result.Value.PhoneNumber });
+        // The phone number and Department carried forward from here on are
+        // exactly what the Api just echoed back on the saved IntakeRecord —
+        // the phone number never reformatted, the Department (if any) is what
+        // will scope both the customer lookup already ran under and the
+        // Category dropdown on Step 3.
+        return RedirectToPage(new
+        {
+            step = "lookup",
+            intakeRecordId = result.Value.IntakeRecordId,
+            phoneNumber = result.Value.PhoneNumber,
+            departmentId = result.Value.DepartmentId
+        });
     }
 
     /// <summary>The agent selected a CRM lookup match — its unit/contact reference carries forward to ticket creation.</summary>
-    public IActionResult OnPostUseMatch(long intakeRecordId, string? phoneNumber, int unitReferenceId, int contactReferenceId) =>
-        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, unitReferenceId, contactReferenceId });
+    public IActionResult OnPostUseMatch(long intakeRecordId, string? phoneNumber, int? departmentId, int unitReferenceId, int contactReferenceId) =>
+        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, departmentId, unitReferenceId, contactReferenceId });
 
     /// <summary>No match selected — found nothing, a source failed, or the agent chose to proceed anyway. None of those blocks ticket creation.</summary>
-    public IActionResult OnPostContinueWithoutMatch(long intakeRecordId, string? phoneNumber) =>
-        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber });
+    public IActionResult OnPostContinueWithoutMatch(long intakeRecordId, string? phoneNumber, int? departmentId) =>
+        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, departmentId });
 
     public async Task<IActionResult> OnPostCreateAsync(
-        long intakeRecordId, string? phoneNumber, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
+        long intakeRecordId, string? phoneNumber, int? departmentId, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
     {
         Step = "create";
         IntakeRecordId = intakeRecordId;
         PhoneNumber = phoneNumber;
+        DepartmentId = departmentId;
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
 
+        // The dropdown is the only way to supply a CategoryId, and it only
+        // ever offers real, active, correctly-scoped options — but the
+        // request is still rejected here (rather than trusted) if somehow
+        // none was selected. POST /api/tickets is the actual authority: it
+        // re-validates the category exists, is active, and (item below)
+        // matches the IntakeRecord's own Department.
+        if (CreateStep.CategoryId is not { } categoryId)
+        {
+            ErrorMessage = "Select a category before creating the ticket.";
+            await LoadCategoriesAsync(cancellationToken);
+            return Page();
+        }
+
         var request = new CreateTicketRequestDto(
-            intakeRecordId, unitReferenceId, contactReferenceId, CreateStep.CategoryId, CreateStep.PriorityId, CreateStep.RequestSummary);
+            intakeRecordId, unitReferenceId, contactReferenceId, categoryId, CreateStep.PriorityId, CreateStep.RequestSummary);
 
         var result = await ticketsClient.CreateAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
         {
             ErrorMessage = result.Detail ?? "Could not create the ticket.";
+            await LoadCategoriesAsync(cancellationToken);
             return Page();
         }
 
         return RedirectToPage("/TicketDetails", new { id = result.Value.TicketId });
+    }
+
+    /// <summary>
+    /// Active Categories for Step 3's dropdown, scoped to
+    /// <see cref="DepartmentId"/> when the Intake named one. Failure and
+    /// "loaded but empty" are kept distinct (<see cref="CategoriesErrorMessage"/>
+    /// vs. an empty <see cref="Categories"/>) since the view shows a
+    /// different message, and neither ever falls back to a manual id field.
+    /// </summary>
+    private async Task LoadCategoriesAsync(CancellationToken cancellationToken)
+    {
+        var result = await categoriesClient.GetCategoriesAsync(DepartmentId, cancellationToken);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            CategoriesErrorMessage = result.Detail ?? "Unable to load ticket categories. Please try again.";
+            Categories = [];
+        }
+        else
+        {
+            Categories = result.Value;
+        }
     }
 
     public sealed class IntakeInput
@@ -128,7 +192,7 @@ public sealed class NewTicketModel(
         public string ChannelId { get; set; } = "Phone";
         [Required]
         public string PhoneNumber { get; set; } = string.Empty;
-        /// <summary>Optional — when set, narrows customer lookup to this Department's configured source(s) instead of searching CRM+PACT+Tasleeh.</summary>
+        /// <summary>Optional — when set, narrows customer lookup to this Department's configured source(s) instead of searching CRM+PACT+Tasleeh, and later scopes the Category dropdown to this Department only.</summary>
         public int? DepartmentId { get; set; }
         public bool IsUnitRelated { get; set; } = true;
         public string? RawUnitNumberEntered { get; set; }
@@ -137,8 +201,9 @@ public sealed class NewTicketModel(
 
     public sealed class CreateStepInput
     {
-        [Required, Range(1, int.MaxValue)]
-        public int CategoryId { get; set; }
+        /// <summary>The real CategoryId of a dropdown selection — never typed in by hand. Nullable so "nothing selected" is a distinct, validatable state rather than a fake id like 0.</summary>
+        [Required(ErrorMessage = "Select a category.")]
+        public int? CategoryId { get; set; }
         public byte PriorityId { get; set; } = 3;
         [Required]
         public string RequestSummary { get; set; } = string.Empty;

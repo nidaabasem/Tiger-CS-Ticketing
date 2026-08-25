@@ -274,6 +274,61 @@ public class TicketCreationAppServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_CategoryDepartmentDiffersFromIntakeDepartment_ReturnsCategoryDepartmentMismatch()
+    {
+        var f = CreateService();
+        var customerService = f.Departments.AddDepartment("Customer Service", "CS");
+        var facilities = f.Departments.AddDepartment("Facilities Management", "FM");
+        var facilitiesCategory = f.Categories.Seed(facilities.DepartmentId, "Corrective Maintenance");
+
+        var agentId = Guid.NewGuid();
+        var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            Channel.Phone, "+971500009999", customerService.DepartmentId, false, null, priorityHint: null, agentId, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(intake.IntakeRecordId, null, null, facilitiesCategory.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.CategoryDepartmentMismatch, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_CategoryDepartmentMatchesIntakeDepartment_Succeeds()
+    {
+        var f = CreateService();
+        var facilities = f.Departments.AddDepartment("Facilities Management", "FM");
+        var category = f.Categories.Seed(facilities.DepartmentId, "Corrective Maintenance");
+
+        var agentId = Guid.NewGuid();
+        var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            Channel.Phone, "+971500009999", facilities.DepartmentId, false, null, priorityHint: null, agentId, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task CreateAsync_IntakeHasNoDepartment_AnyActiveCategorysDepartmentIsAccepted()
+    {
+        // No Department named on the Intake means the Category dropdown offered
+        // every active Category — nothing to mismatch against.
+        var f = CreateService();
+        var facilities = f.Departments.AddDepartment("Facilities Management", "FM");
+        var category = f.Categories.Seed(facilities.DepartmentId, "Corrective Maintenance");
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "x"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
     public async Task CreateAsync_CategoryRoutesToInactiveDepartment_ReturnsDepartmentInactive()
     {
         var f = CreateService();
