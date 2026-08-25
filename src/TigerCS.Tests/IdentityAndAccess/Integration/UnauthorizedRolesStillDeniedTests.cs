@@ -235,6 +235,7 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/users/me")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/departments")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/api/departments/{departmentId}/users")).StatusCode);
 
         // The queue endpoint itself is open to any authenticated staff

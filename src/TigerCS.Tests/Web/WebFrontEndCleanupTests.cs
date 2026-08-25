@@ -83,6 +83,73 @@ public sealed class WebFrontEndCleanupTests
         Assert.Equal(typeof(int?), property!.PropertyType);
     }
 
+    // ---- Department directory: the manual numeric DepartmentId textbox and its temporary help text are gone ----
+
+    [Fact]
+    public void NewTicketView_DoesNotContainTheManualDepartmentIdInput()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.DoesNotContain("No department directory endpoint exists yet", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("enter the department id", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("enter the numeric department id", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<input class=\"form-control\" asp-for=\"Intake.DepartmentId\" />", html);
+    }
+
+    [Fact]
+    public void NewTicketView_RendersADepartmentDropdown_LabeledByName()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("Department (optional)", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"Intake.DepartmentId\"", html);
+        Assert.Contains("department.Name", html);
+        Assert.Contains("department.DepartmentId", html);
+    }
+
+    [Fact]
+    public void NewTicketView_DoesNotContainTheOldUnitIdentificationOrPriorityHintUi()
+    {
+        // Item 2/3 of the correction: the caller-given unit number is no
+        // longer a primary Step 1 selection mechanism, and Priority moved
+        // entirely to Step 3 — neither exists in the view any more.
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.DoesNotContain("This interaction concerns a specific unit", html);
+        Assert.DoesNotContain("Unit number (as given by the caller)", html);
+        Assert.DoesNotContain("Priority hint", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Intake.IsUnitRelated", html);
+        Assert.DoesNotContain("Intake.RawUnitNumberEntered", html);
+        Assert.DoesNotContain("Intake.PriorityHint", html);
+        Assert.DoesNotContain("unit-related intake only", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("confirmed verification required", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NewTicketView_UnitIsSelectedFromLookupResults_NeverAutomatically()
+    {
+        // The actual Ticket Unit is a radio choice inside a matched
+        // customer's own Units — never a manually-typed number, and never
+        // pre-checked (no customer or unit is ever auto-selected).
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("Select Unit (optional)", html);
+        Assert.Contains("type=\"radio\" name=\"selectedUnitRef\"", html);
+        Assert.DoesNotContain("checked", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NewTicketView_Step3_ShowsCustomerAndUnitSummary_WithPriorityRequired()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("Model.CustomerDisplayName", html);
+        Assert.Contains("Model.UnitLabel", html);
+        Assert.Contains("Priority *", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.PriorityId\"", html);
+        Assert.Contains("Select Priority", html);
+    }
+
     // ---- 16: deleted endpoints/clients are gone, and the only ticket-creation client method is CreateAsync → POST api/tickets ----
 
     [Fact]

@@ -162,6 +162,16 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
+    public async Task ListDepartments_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/departments");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task ListDepartmentUsers_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();
