@@ -8,9 +8,3 @@ public sealed class IntakeRecordAlreadyLinkedException(long intakeRecordId, long
     public long IntakeRecordId { get; } = intakeRecordId;
     public long LinkedTicketId { get; } = linkedTicketId;
 }
-
-public sealed class IntakeRecordNotUnitRelatedException(long intakeRecordId)
-    : IntakeRecordException($"IntakeRecord {intakeRecordId} is not unit-related and cannot be promoted to a ticket.")
-{
-    public long IntakeRecordId { get; } = intakeRecordId;
-}

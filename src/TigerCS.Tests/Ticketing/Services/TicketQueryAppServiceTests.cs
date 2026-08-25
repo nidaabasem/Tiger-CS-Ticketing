@@ -72,17 +72,17 @@ public class TicketQueryAppServiceTests
     }
 
     [Fact]
-    public async Task GetDetailAsync_ProvisionalTicket_ExposesPendingCrmVerificationAndNullReferences_NeverFabricatesVerified()
+    public async Task GetDetailAsync_UnverifiedTicket_ExposesUnverifiedAndNullReferences_NeverFabricatesVerified()
     {
         var f = CreateService();
-        var ticket = Ticket.CreateProvisional(
+        var ticket = Ticket.CreateUnverified(
             "TG-CS-20260821-0099", 2, 5, (byte)PriorityLevel.Critical, "Flooding", DateTime.UtcNow);
         await f.Tickets.AddAsync(ticket);
 
         var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
 
         Assert.Equal(TicketQueryOutcome.Success, result.Outcome);
-        Assert.Equal("PendingCrmVerification", result.Response!.VerificationStatus);
+        Assert.Equal("Unverified", result.Response!.VerificationStatus);
         Assert.Null(result.Response.UnitReferenceId);
         Assert.Null(result.Response.ContactReferenceId);
     }

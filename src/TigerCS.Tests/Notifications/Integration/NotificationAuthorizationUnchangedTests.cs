@@ -42,17 +42,19 @@ public class NotificationAuthorizationUnchangedTests : IClassFixture<TigerCsApiF
     }
 
     /// <summary>
-    /// Drives the real intake → CRM lookup → verification → ticket sequence.
+    /// Drives the real intake → CRM lookup → ticket sequence.
     ///
     /// <para>
     /// <paramref name="setupClient"/> defaults to <paramref name="client"/>
-    /// itself, because MVP-ERD.md §2.24's single-agent-ownership rule means
-    /// only the session's own owner may consume it — a caller handed somebody
-    /// else's session is refused on <i>that</i> rule, not on the endpoint's
-    /// authorization policy, and conflating the two would let this test pass
-    /// for the wrong reason. A caller who cannot reach the setup endpoints at
-    /// all passes an agent as <paramref name="setupClient"/>, so the only
-    /// thing the final POST measures is whether that role may create a ticket.
+    /// itself. Business-rule change: ticket creation no longer consumes a
+    /// VerificationSession (MVP-ERD.md §2.24's single-agent-ownership rule no
+    /// longer applies to this path at all — see
+    /// TicketCreationAppService.CreateAsync's remarks), so
+    /// <paramref name="setupClient"/> only resolves the CRM unit/contact ids
+    /// directly; a caller who cannot reach the setup endpoints at all passes
+    /// an agent as <paramref name="setupClient"/>, so the only thing the
+    /// final POST measures is whether <paramref name="client"/>'s role may
+    /// create a ticket.
     /// </para>
     /// </summary>
     private async Task<HttpResponseMessage> AttemptTicketCreationAsync(HttpClient client, HttpClient? setupClient = null)
@@ -64,7 +66,7 @@ public class NotificationAuthorizationUnchangedTests : IClassFixture<TigerCsApiF
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await setupClient.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var unit = await (await setupClient.GetAsync("/api/crm/units/CRM-UNIT-1001"))
@@ -72,15 +74,10 @@ public class NotificationAuthorizationUnchangedTests : IClassFixture<TigerCsApiF
         var contacts = await (await setupClient.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts"))
             .Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
 
-        var session = await (await setupClient.PostAsJsonAsync(
-                "/api/verification-sessions",
-                new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation")))
-            .Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
-
         return await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId,
+            new CreateTicketRequestDto(
+                intake!.IntakeRecordId, unit!.UnitReferenceId, contacts![0].ContactReferenceId, categoryId,
                 (byte)PriorityLevel.High, "AC unit not cooling"));
     }
 

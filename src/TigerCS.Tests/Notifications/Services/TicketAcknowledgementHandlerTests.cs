@@ -160,16 +160,17 @@ public class TicketAcknowledgementHandlerTests
     }
 
     /// <summary>
-    /// A provisional (ISSUE-006) ticket has no verified requester snapshot at
-    /// all. The event is still enqueued so "email attempted for every ticket"
-    /// holds, and it dead-letters visibly rather than being skipped — which
-    /// would make it indistinguishable from a ticket that was acknowledged.
+    /// An unverified ticket (no customer match at creation) has no verified
+    /// requester snapshot at all. The event is still enqueued so "email
+    /// attempted for every ticket" holds, and it dead-letters visibly rather
+    /// than being skipped — which would make it indistinguishable from a
+    /// ticket that was acknowledged.
     /// </summary>
     [Fact]
-    public async Task ProvisionalTicketWithNoSnapshot_DeadLettersVisibly()
+    public async Task UnverifiedTicketWithNoSnapshot_DeadLettersVisibly()
     {
         var f = new NotificationServiceFixture();
-        var ticket = await f.SeedProvisionalTicketAsync();
+        var ticket = await f.SeedUnverifiedTicketAsync();
         var message = f.EnqueueTicketCreated(ticket.TicketId);
 
         var result = await f.CreateHandler().HandleAsync(message);

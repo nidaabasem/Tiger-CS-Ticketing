@@ -9,24 +9,15 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
-/// Items 3–8 of this increment's scope, plus a later business-rule change.
-/// Three creation paths, matching TicketCreationAppService's own three
-/// methods:
-/// <list type="bullet">
-/// <item><see cref="Create"/> — the normal unit-related path (FR-CH-01/FR-VER-02):
-/// a unit-related request, from an already-confirmed VerificationSession.</item>
-/// <item><see cref="CreateProvisional"/> — ISSUE-006's approved fallback:
-/// Critical/High proceeds immediately while the CRM is unreachable;
-/// Medium/Low is queued instead of rejected outright (200, not an error).</item>
-/// <item><see cref="CreateFromNonUnitIntake"/> — a non-unit-related request:
-/// no CRM unit/contact to verify, so it promotes directly once a Ticket
-/// Category is selected. Ticket Category is required on every path; CRM
-/// verification is required only on the two unit-related paths above.</item>
-/// </list>
-/// Scoped to CS Agent/CS Supervisor only (PolicyNames.CustomerVerification) —
-/// same rationale as VerificationSessionsController/CrmController: the
-/// Solution-Analysis.md §4.1 permission matrix grants ticket-Create to
-/// exactly these two roles.
+/// Items 3–8 of this increment's scope, plus a later business-rule change:
+/// a single ticket-creation path for every IntakeRecord. Customer
+/// information from CRM, PACT, or Tasleeh is attached when available
+/// (<see cref="CustomerLookupController"/>); lack of a match never blocks
+/// <see cref="Create"/> — the only thing every ticket requires is a valid
+/// Ticket Category. Scoped to CS Agent/CS Supervisor only
+/// (PolicyNames.CustomerVerification) — same rationale as
+/// VerificationSessionsController/CrmController: the Solution-Analysis.md
+/// §4.1 permission matrix grants ticket-Create to exactly these two roles.
 /// </summary>
 [ApiController]
 [Route("api/tickets")]
@@ -40,29 +31,30 @@ public class TicketsController(
     TicketNoteAppService ticketNoteAppService,
     TicketReconciliationAppService ticketReconciliationAppService) : ControllerBase
 {
-    /// <summary>Create a ticket from a confirmed verification session. CS Agent/CS Supervisor only.</summary>
+    /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
-    /// The normal path (FR-CH-01/FR-VER-02, MVP-API-Contracts.md §3.1).
-    /// Scoped to CS Agent/CS Supervisor (Solution-Analysis.md §4.1's Create
-    /// column) — layered on top of the class-level AuthenticatedStaff policy,
-    /// not a replacement for it.
+    /// Create a ticket from an IntakeRecord. Customer information from CRM,
+    /// PACT, or Tasleeh is attached when available (see
+    /// <c>GET /api/intake-records/{intakeRecordId}/customer-lookup</c>);
+    /// lack of a match does not prevent ticket creation. Ticket Category is
+    /// required for every ticket. Scoped to CS Agent/CS Supervisor
+    /// (Solution-Analysis.md §4.1's Create column) — layered on top of the
+    /// class-level AuthenticatedStaff policy, not a replacement for it.
     /// </remarks>
-    /// <param name="request">The intake record and confirmed verification session to promote, plus category, priority, and summary.</param>
+    /// <param name="request">The intake record to promote, plus the matched unit/contact (if the agent selected one), category, priority, and summary.</param>
     /// <response code="201">The created ticket.</response>
     /// <response code="400">The request body was malformed.</response>
-    /// <response code="404">The intake record, verification session, category, priority, or the category's routed department was not found (or the department is inactive).</response>
-    /// <response code="409">The intake record was already promoted to a ticket, the verification session was already consumed, or a ticket-number collision occurred — retry.</response>
-    /// <response code="410">The verification session has expired.</response>
-    /// <response code="422">The intake record is not unit-related, or the verification session is not confirmed.</response>
+    /// <response code="404">The intake record, unit reference, contact reference, category, priority, or the category's routed department was not found (or the department is inactive).</response>
+    /// <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
+    /// <response code="422">UnitReferenceId and ContactReferenceId were not both supplied or both omitted.</response>
     [HttpPost]
     [Authorize(Policy = PolicyNames.CustomerVerification)]
     [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status410Gone)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
-    public async Task<IActionResult> Create([FromBody] CreateTicketFromVerificationRequestDto request, CancellationToken cancellationToken)
+    public async Task<IActionResult> Create([FromBody] CreateTicketRequestDto request, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
         if (employeeId is null)
@@ -70,76 +62,7 @@ public class TicketsController(
             return Unauthorized();
         }
 
-        var result = await ticketCreationAppService.CreateFromVerificationSessionAsync(employeeId.Value, request, cancellationToken);
-        return ToActionResult(result);
-    }
-
-    /// <summary>Create a provisional ticket while the CRM is unreachable. CS Agent/CS Supervisor only.</summary>
-    /// <remarks>
-    /// ISSUE-006's approved fallback (Management-Decisions.md) — see
-    /// TicketCreationAppService.CreateProvisionalAsync's remarks. There is no
-    /// verification session to consume; the resulting ticket carries
-    /// verificationStatus PendingCrmVerification until it is reconciled via
-    /// <c>POST /api/tickets/{ticketId}/reconciliation</c>.
-    /// </remarks>
-    /// <param name="request">The intake record to promote, plus category, priority, and summary.</param>
-    /// <response code="201">The created provisional ticket.</response>
-    /// <response code="200">No ticket was created — the request remains queued for CRM reconciliation. Returns the updated intake record, not a ticket.</response>
-    /// <response code="400">The request body was malformed.</response>
-    /// <response code="404">The intake record, category, priority, or the category's routed department was not found (or the department is inactive).</response>
-    /// <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
-    /// <response code="422">The intake record is not unit-related.</response>
-    [HttpPost("provisional")]
-    [Authorize(Policy = PolicyNames.CustomerVerification)]
-    [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
-    [ProducesResponseType<IntakeRecordResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
-    public async Task<IActionResult> CreateProvisional(
-        [FromBody] CreateProvisionalTicketRequestDto request, CancellationToken cancellationToken)
-    {
-        var employeeId = GetEmployeeId();
-        if (employeeId is null)
-        {
-            return Unauthorized();
-        }
-
-        var result = await ticketCreationAppService.CreateProvisionalAsync(employeeId.Value, request, cancellationToken);
-        return ToActionResult(result);
-    }
-
-    /// <summary>Create a ticket from a non-unit-related intake. CS Agent/CS Supervisor only.</summary>
-    /// <remarks>
-    /// Business-rule change: a non-unit-related intake has no CRM unit/
-    /// contact to verify, so it is promoted directly once a supported Ticket
-    /// Category is selected — no verification session is created or
-    /// consumed for this path, and the CRM is never called.
-    /// </remarks>
-    /// <param name="request">The intake record to promote, plus category, priority, and summary.</param>
-    /// <response code="201">The created ticket.</response>
-    /// <response code="400">The request body was malformed.</response>
-    /// <response code="404">The intake record, category, priority, or the category's routed department was not found (or the department is inactive).</response>
-    /// <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
-    /// <response code="422">The intake record is unit-related — promote it via the verification-session or provisional path instead, so CRM verification is enforced.</response>
-    [HttpPost("non-unit")]
-    [Authorize(Policy = PolicyNames.CustomerVerification)]
-    [ProducesResponseType<TicketResponseDto>(StatusCodes.Status201Created)]
-    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
-    public async Task<IActionResult> CreateFromNonUnitIntake(
-        [FromBody] CreateTicketFromNonUnitIntakeRequestDto request, CancellationToken cancellationToken)
-    {
-        var employeeId = GetEmployeeId();
-        if (employeeId is null)
-        {
-            return Unauthorized();
-        }
-
-        var result = await ticketCreationAppService.CreateFromNonUnitIntakeAsync(employeeId.Value, request, cancellationToken);
+        var result = await ticketCreationAppService.CreateAsync(employeeId.Value, request, cancellationToken);
         return ToActionResult(result);
     }
 
@@ -175,11 +98,11 @@ public class TicketsController(
 
     /// <summary>Full detail for one ticket.</summary>
     /// <remarks>
-    /// MVP-API-Contracts.md §3.3. A not-yet-reconciled provisional ticket is
-    /// returned with verificationStatus PendingCrmVerification and a null
-    /// unit/contact — never fabricated as Verified. <c>rowVersion</c> from
-    /// this response is what the assignment, transfer, status, resolution,
-    /// close, and reconciliation calls expect back.
+    /// MVP-API-Contracts.md §3.3. A ticket created with no customer match is
+    /// returned with verificationStatus Unverified and a null unit/contact —
+    /// never fabricated as Verified. <c>rowVersion</c> from this response is
+    /// what the assignment, transfer, status, resolution, close, and
+    /// reconciliation calls expect back.
     /// </remarks>
     /// <param name="ticketId">The ticket to fetch.</param>
     /// <response code="200">The ticket.</response>
@@ -360,12 +283,12 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>Reconcile a provisional ticket against a confirmed verification session. CS Agent/CS Supervisor only.</summary>
+    /// <summary>Link a confirmed CRM match onto a ticket that did not have one at creation. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
     /// See TicketReconciliationAppService's remarks. Scoped to CS Agent/CS
     /// Supervisor — the same actors who own verification-session creation.
     /// </remarks>
-    /// <param name="ticketId">The provisional ticket to reconcile.</param>
+    /// <param name="ticketId">The not-yet-verified ticket to reconcile.</param>
     /// <param name="request">The confirmed verification session to consume, and the ticket's current rowVersion.</param>
     /// <response code="200">The reconciled ticket, now verificationStatus Verified.</response>
     /// <response code="400">The request body was malformed.</response>
@@ -455,10 +378,6 @@ public class TicketsController(
         TicketCreationOutcome.Success =>
             Created($"/api/tickets/{result.Response!.TicketId}", result.Response),
 
-        // Not an error — ISSUE-006's approved "Medium/Low remains queued"
-        // outcome. 200, carrying the updated IntakeRecord, not a ticket.
-        TicketCreationOutcome.QueuedPendingVerification => Ok(result.QueuedIntakeRecord),
-
         TicketCreationOutcome.IntakeRecordNotFound => Problem(
             type: "https://tigercs.internal/problems/intake-record-not-found",
             title: "Intake record not found",
@@ -470,39 +389,21 @@ public class TicketsController(
             detail: "This IntakeRecord is already linked to a ticket.",
             statusCode: StatusCodes.Status409Conflict),
 
-        TicketCreationOutcome.IntakeRecordNotUnitRelated => Problem(
-            type: "https://tigercs.internal/problems/intake-record-not-unit-related",
-            title: "Intake record is not unit-related",
-            detail: "This IntakeRecord is not unit-related — promote it via POST /api/tickets/non-unit instead.",
+        TicketCreationOutcome.UnitOrContactReferenceMismatch => Problem(
+            type: "https://tigercs.internal/problems/unit-or-contact-reference-mismatch",
+            title: "UnitReferenceId and ContactReferenceId mismatch",
+            detail: "UnitReferenceId and ContactReferenceId must both be supplied or both be omitted.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
-        TicketCreationOutcome.IntakeRecordUnitRelated => Problem(
-            type: "https://tigercs.internal/problems/intake-record-unit-related",
-            title: "Intake record is unit-related",
-            detail: "CRM verification is required for unit-related intakes — promote this IntakeRecord via POST /api/tickets or POST /api/tickets/provisional instead.",
-            statusCode: StatusCodes.Status422UnprocessableEntity),
-
-        TicketCreationOutcome.VerificationSessionNotFound => Problem(
-            type: "https://tigercs.internal/problems/verification-session-not-found",
-            title: "Verification session not found",
+        TicketCreationOutcome.UnitReferenceNotFound => Problem(
+            type: "https://tigercs.internal/problems/unit-reference-not-found",
+            title: "Unit reference not found",
             statusCode: StatusCodes.Status404NotFound),
 
-        TicketCreationOutcome.VerificationSessionForbidden => Forbid(),
-
-        TicketCreationOutcome.VerificationSessionNotConfirmed => Problem(
-            type: "https://tigercs.internal/problems/verification-session-not-confirmed",
-            title: "Verification session not confirmed",
-            statusCode: StatusCodes.Status422UnprocessableEntity),
-
-        TicketCreationOutcome.VerificationSessionAlreadyConsumed => Problem(
-            type: "https://tigercs.internal/problems/verification-session-already-consumed",
-            title: "Verification session already consumed",
-            statusCode: StatusCodes.Status409Conflict),
-
-        TicketCreationOutcome.VerificationSessionExpired => Problem(
-            type: "https://tigercs.internal/problems/verification-session-expired",
-            title: "Verification session expired",
-            statusCode: StatusCodes.Status410Gone),
+        TicketCreationOutcome.ContactReferenceNotFound => Problem(
+            type: "https://tigercs.internal/problems/contact-reference-not-found",
+            title: "Contact reference not found",
+            statusCode: StatusCodes.Status404NotFound),
 
         TicketCreationOutcome.CategoryNotFound => Problem(
             type: "https://tigercs.internal/problems/category-not-found",
@@ -602,9 +503,10 @@ public class TicketsController(
             detail: "The verification session's unit does not match this ticket's originating raw unit number.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
-        TicketMutationOutcome.NotPendingCrmVerification => Problem(
-            type: "https://tigercs.internal/problems/not-pending-crm-verification",
-            title: "Ticket is not pending CRM verification",
+        TicketMutationOutcome.AlreadyVerified => Problem(
+            type: "https://tigercs.internal/problems/ticket-already-verified",
+            title: "Ticket is already verified",
+            detail: "This ticket already has a linked unit/contact — there is nothing left to reconcile.",
             statusCode: StatusCodes.Status409Conflict),
 
         TicketMutationOutcome.VerificationSessionNotFound => Problem(

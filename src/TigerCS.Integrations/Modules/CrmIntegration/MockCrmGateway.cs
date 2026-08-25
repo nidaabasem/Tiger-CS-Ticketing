@@ -1,4 +1,5 @@
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Domain.Modules.CustomerVerification;
 
 namespace TigerCS.Integrations.Modules.CrmIntegration;
@@ -22,7 +23,7 @@ namespace TigerCS.Integrations.Modules.CrmIntegration;
 /// go-live communication (MVP-Implementation-Backlog.md §0).
 /// </para>
 /// </summary>
-public sealed class MockCrmGateway : ICrmGateway
+public sealed class MockCrmGateway : ICrmGateway, ICrmCustomerLookupGateway
 {
     /// <summary>Any input containing this token simulates a CRM outage — 502/504 fallback-path testing (MVP-API-Contracts.md §2.1).</summary>
     public const string OutageTrigger = "OUTAGE";
@@ -72,6 +73,36 @@ public sealed class MockCrmGateway : ICrmGateway
         ThrowIfSimulatedOutage(crmUnitId);
         return Task.FromResult<IReadOnlyList<CrmContactResult>>(
             Fixtures.TryGetValue(crmUnitId, out var fixture) ? fixture.Contacts : []);
+    }
+
+    /// <summary>
+    /// Business-rule change: phone-based customer search, for
+    /// <see cref="CustomerLookupAppService"/> — a distinct capability from
+    /// this gateway's own unit-number lookups above (see
+    /// <see cref="ICrmCustomerLookupGateway"/>'s remarks). Matches a fixture
+    /// contact whose <see cref="CrmContactResult.ContactChannel"/> equals the
+    /// searched phone number.
+    /// </summary>
+    public Task<CrmCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    {
+        if (phoneNumber.Contains(OutageTrigger, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new CrmCustomerLookupGatewayUnavailableException(
+                $"Simulated CRM outage triggered by '{phoneNumber}' (MockCrmGateway — a test double, never a real CRM failure).");
+        }
+
+        foreach (var (unit, contacts) in Fixtures.Values)
+        {
+            var contact = contacts.FirstOrDefault(c =>
+                string.Equals(c.ContactChannel, phoneNumber, StringComparison.OrdinalIgnoreCase));
+            if (contact is not null)
+            {
+                return Task.FromResult<CrmCustomerMatch?>(
+                    new CrmCustomerMatch(unit.CrmUnitId, contact.CrmContactId, contact.DisplayName, contact.ContactChannel));
+            }
+        }
+
+        return Task.FromResult<CrmCustomerMatch?>(null);
     }
 
     private static void ThrowIfSimulatedOutage(string input)

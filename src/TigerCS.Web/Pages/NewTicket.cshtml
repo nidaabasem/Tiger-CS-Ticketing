@@ -40,6 +40,11 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label class="form-label" asp-for="Intake.PhoneNumber">Phone number</label>
+                    <input class="form-control" asp-for="Intake.PhoneNumber" placeholder="+9715XXXXXXXX" />
+                    <span class="field-hint">Used to search CRM, PACT, and Tasleeh for this customer.</span>
+                </div>
+                <div class="form-group">
                     <label class="checkbox-field">
                         <input asp-for="Intake.IsUnitRelated" />
                         This interaction concerns a specific unit
@@ -62,132 +67,66 @@
                 <button type="submit" class="btn btn-gold">Continue</button>
             </form>
         }
-        else if (Model.Step == "non-unit-create")
+        else if (Model.Step == "lookup")
         {
-            <div class="section-card__title">Step 2 — Category, details &amp; create ticket</div>
-            <p class="text-secondary">This interaction is not unit-related, so no CRM verification is needed — select a ticket category and create the ticket directly.</p>
-            <form method="post" asp-page-handler="CreateNonUnit">
-                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.CategoryId">Category ID</label>
-                    <input class="form-control" asp-for="CreateStep.CategoryId" />
-                    <span class="field-hint">No category directory endpoint exists yet — enter the numeric category id.</span>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.PriorityId">Priority</label>
-                    <select class="form-control" asp-for="CreateStep.PriorityId">
-                        @for (byte p = 1; p <= 4; p++)
-                        {
-                            <option value="@p">@TicketDisplay.PriorityLabel(p)</option>
-                        }
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="CreateStep.RequestSummary">Request summary</label>
-                    <textarea class="form-control" asp-for="CreateStep.RequestSummary" rows="3"></textarea>
-                </div>
-                <button type="submit" class="btn btn-gold">Create ticket</button>
-            </form>
-        }
-        else if (Model.Step == "unit")
-        {
-            <div class="section-card__title">Step 2 — Find the unit (Tiger CRM)</div>
-            <form method="post" asp-page-handler="SearchUnit">
-                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <div class="form-group">
-                    <label class="form-label" asp-for="UnitSearchStep.UnitNumber">Unit number</label>
-                    <input class="form-control" asp-for="UnitSearchStep.UnitNumber" />
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="UnitSearchStep.PropertyName">Property name (optional)</label>
-                    <input class="form-control" asp-for="UnitSearchStep.PropertyName" />
-                </div>
-                <button type="submit" class="btn btn-gold">Search</button>
-            </form>
+            <div class="section-card__title">Step 2 — Customer lookup (CRM / PACT / Tasleeh)</div>
+            <p class="text-secondary">Searching by phone number. A source finding nothing, or being unavailable, never blocks creating the ticket.</p>
 
-            @if (Model.UnitResults.Count > 0)
+            @if (Model.LookupResult is not null)
             {
                 <div class="entry-list entry-list--spaced">
-                    @foreach (var unit in Model.UnitResults)
+                    @foreach (var source in Model.LookupResult.Sources)
                     {
-                        <form method="post" asp-page-handler="SelectUnit" class="entry-row">
-                            <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                            <input type="hidden" name="unitReferenceId" value="@unit.UnitReferenceId" />
-                            <input type="hidden" name="crmUnitId" value="@unit.CrmUnitId" />
-                            <input type="hidden" name="unitNumber" value="@unit.UnitNumber" />
+                        <div class="entry-row">
                             <span>
-                                <strong>@unit.UnitNumber</strong>
-                                <span class="text-secondary">@(unit.PropertyName is null ? "" : $"· {unit.PropertyName}") @(unit.TowerName is null ? "" : $"· {unit.TowerName}")</span>
+                                <strong>@source.Source</strong>
+                                @if (source.Status == "Found")
+                                {
+                                    <span class="text-secondary">· @(source.DisplayName ?? "(no name on file)") @(source.PhoneNumber is null ? "" : $"· {source.PhoneNumber}") @(source.UnitNumber is null ? "" : $"· Unit {source.UnitNumber}")</span>
+                                }
+                                else if (source.Status == "NotFound")
+                                {
+                                    <span class="text-secondary">· No match found</span>
+                                }
+                                else
+                                {
+                                    <span class="text-secondary">· Unavailable — could not be reached</span>
+                                }
                             </span>
-                            <button type="submit" class="btn btn-sm">Select</button>
-                        </form>
+                            @if (source.Status == "Found" && source.UnitReferenceId is int unitReferenceId && source.ContactReferenceId is int contactReferenceId)
+                            {
+                                <form method="post" asp-page-handler="UseMatch">
+                                    <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                    <input type="hidden" name="unitReferenceId" value="@unitReferenceId" />
+                                    <input type="hidden" name="contactReferenceId" value="@contactReferenceId" />
+                                    <button type="submit" class="btn btn-sm">Use this match</button>
+                                </form>
+                            }
+                        </div>
                     }
                 </div>
             }
-        }
-        else if (Model.Step == "contact")
-        {
-            <div class="section-card__title">Step 3 — Select the contact</div>
-            <p class="text-secondary">Unit: @Model.UnitNumber</p>
 
-            @if (Model.ContactResults.Count == 0)
-            {
-                <div class="empty-state"><p>No contacts found for this unit.</p></div>
-            }
-            else
-            {
-                <div class="entry-list">
-                    @foreach (var contact in Model.ContactResults)
-                    {
-                        <form method="post" asp-page-handler="SelectContact" class="entry-row">
-                            <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                            <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
-                            <input type="hidden" name="crmUnitId" value="@Model.CrmUnitId" />
-                            <input type="hidden" name="unitNumber" value="@Model.UnitNumber" />
-                            <input type="hidden" name="contactReferenceId" value="@contact.ContactReferenceId" />
-                            <input type="hidden" name="contactDisplayName" value="@contact.DisplayName" />
-                            <span>
-                                <strong>@(contact.DisplayName ?? "(no name on file)")</strong>
-                                <span class="text-secondary">@contact.ContactType @(contact.ContactChannel is null ? "" : $"· {contact.ContactChannel}")</span>
-                            </span>
-                            <button type="submit" class="btn btn-sm">Select</button>
-                        </form>
-                    }
-                </div>
-            }
-        }
-        else if (Model.Step == "confirm")
-        {
-            <div class="section-card__title">Step 4 — Confirm verification</div>
-            <dl>
-                <div class="facts-row"><dt>Unit</dt><dd>@Model.UnitNumber</dd></div>
-                <div class="facts-row"><dt>Contact</dt><dd>@Model.ContactDisplayName</dd></div>
-            </dl>
-            <form method="post" asp-page-handler="Confirm">
+            <form method="post" asp-page-handler="ContinueWithoutMatch">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
-                <input type="hidden" name="unitNumber" value="@Model.UnitNumber" />
-                <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
-                <input type="hidden" name="contactDisplayName" value="@Model.ContactDisplayName" />
-                <div class="form-group">
-                    <label class="form-label" asp-for="ConfirmStep.VerificationMethod">Verification method</label>
-                    <select class="form-control" asp-for="ConfirmStep.VerificationMethod">
-                        <option value="ManualAgentConfirmation">Manual agent confirmation</option>
-                        <option value="AuthenticatedDigitalUser">Authenticated digital user</option>
-                        <option value="Otp">OTP</option>
-                        <option value="FaceToFaceDocumentCheck">Face-to-face document check</option>
-                        <option value="Other">Other</option>
-                    </select>
-                </div>
-                <button type="submit" class="btn btn-gold">Confirm identity &amp; continue</button>
+                <button type="submit" class="btn">Continue without a match</button>
             </form>
         }
         else if (Model.Step == "create")
         {
-            <div class="section-card__title">Step 5 — Create the ticket</div>
+            <div class="section-card__title">Step 3 — Category, details &amp; create ticket</div>
+            @if (Model.UnitReferenceId is int selectedUnit)
+            {
+                <p class="text-secondary">Linking matched unit/contact reference #@selectedUnit.</p>
+            }
+            else
+            {
+                <p class="text-secondary">No customer match linked — the ticket will still be created.</p>
+            }
             <form method="post" asp-page-handler="Create">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <input type="hidden" name="verificationSessionId" value="@Model.VerificationSessionId" />
+                <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
+                <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
                 <div class="form-group">
                     <label class="form-label" asp-for="CreateStep.CategoryId">Category ID</label>
                     <input class="form-control" asp-for="CreateStep.CategoryId" />

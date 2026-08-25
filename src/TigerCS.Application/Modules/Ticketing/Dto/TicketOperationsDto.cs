@@ -154,8 +154,8 @@ public enum TicketMutationOutcome
     /// <summary>Reconciliation-specific: the session's raw unit context doesn't match the ticket's originating raw unit number.</summary>
     ReconciliationUnitMismatch,
 
-    /// <summary>Reconciliation-specific: VerificationStatus isn't PendingCrmVerification (already reconciled, or not a provisional ticket).</summary>
-    NotPendingCrmVerification,
+    /// <summary>Reconciliation-specific: the ticket is already Verified — there is no unit/contact left to reconcile.</summary>
+    AlreadyVerified,
 
     VerificationSessionNotFound,
     VerificationSessionForbidden,

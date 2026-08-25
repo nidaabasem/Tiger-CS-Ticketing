@@ -25,17 +25,21 @@ namespace TigerCS.Api.Controllers;
 [Tags(OpenApiTags.Intake)]
 public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppService) : ControllerBase
 {
-    /// <summary>Record a customer interaction, before any verification is attempted.</summary>
+    /// <summary>Record a customer interaction, before any customer lookup is attempted.</summary>
     /// <remarks>
     /// The unconditional first step of intake (MVP-ERD.md §2.9): every
-    /// interaction is captured, unit-related or not, so none is silently lost.
+    /// interaction is captured, unit-related or not, so none is silently
+    /// lost. The phone number captured here is what customer lookup
+    /// (<c>GET /api/intake-records/{intakeRecordId}/customer-lookup</c>)
+    /// later searches CRM/PACT/Tasleeh with.
     /// </remarks>
-    /// <param name="request">The channel, whether the request concerns a unit, and the raw unit number if so.</param>
+    /// <param name="request">The channel, the phone number, whether the request concerns a unit, and the raw unit number if so.</param>
     /// <response code="201">The intake record, with its initial crmVerificationStatus.</response>
     /// <response code="400">
     /// channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
-    /// SocialMediaDirectMessage, FaceToFaceKiosk; or rawUnitNumberEntered was
-    /// absent while isUnitRelated was true, or present while it was false.
+    /// SocialMediaDirectMessage, FaceToFaceKiosk; phoneNumber was blank; or
+    /// rawUnitNumberEntered was absent while isUnitRelated was true, or
+    /// present while it was false.
     /// </response>
     [HttpPost]
     [ProducesResponseType<IntakeRecordResponseDto>(StatusCodes.Status201Created)]
@@ -46,6 +50,12 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
         {
             ModelState.AddModelError(
                 nameof(request.ChannelId), $"ChannelId must be one of: {string.Join(", ", Enum.GetNames<Channel>())}.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PhoneNumber))
+        {
+            ModelState.AddModelError(nameof(request.PhoneNumber), "Required.");
             return ValidationProblem(ModelState);
         }
 

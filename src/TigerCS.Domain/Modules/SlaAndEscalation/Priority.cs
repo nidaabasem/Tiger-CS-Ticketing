@@ -33,8 +33,4 @@ public class Priority
         Name = name;
         DisplayOrder = displayOrder;
     }
-
-    /// <summary>ISSUE-006 (approved, Management-Decisions.md) — Critical/High are the two tiers eligible for provisional ticket creation during a CRM outage; Medium/Low are not.</summary>
-    public static bool IsCriticalOrHigh(byte priorityId) =>
-        priorityId is (byte)PriorityLevel.Critical or (byte)PriorityLevel.High;
 }

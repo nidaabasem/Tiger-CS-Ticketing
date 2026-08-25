@@ -24,7 +24,7 @@ public sealed class IntakeRecordAppService(
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
         var intakeRecord = new IntakeRecord(
-            channel, request.IsUnitRelated, request.RawUnitNumberEntered, request.PriorityHint, createdByEmployeeId, now);
+            channel, request.PhoneNumber, request.IsUnitRelated, request.RawUnitNumberEntered, request.PriorityHint, createdByEmployeeId, now);
 
         // Both SaveChanges calls below share one real transaction (senior
         // review item 11 — audit entries must be atomic with the business
@@ -56,6 +56,7 @@ public sealed class IntakeRecordAppService(
         intakeRecord.IntakeRecordId,
         intakeRecord.ChannelId.ToString(),
         intakeRecord.ReceivedAtUtc,
+        intakeRecord.PhoneNumber,
         intakeRecord.IsUnitRelated,
         intakeRecord.RawUnitNumberEntered,
         intakeRecord.PriorityHint,

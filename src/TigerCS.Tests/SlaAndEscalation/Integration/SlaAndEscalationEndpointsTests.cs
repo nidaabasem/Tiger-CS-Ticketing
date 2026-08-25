@@ -40,7 +40,7 @@ public class SlaAndEscalationEndpointsTests : IClassFixture<TigerCsApiFactory>
         return (client, employeeId);
     }
 
-    /// <summary>Drives the real intake → CRM lookup → verification → ticket sequence, so the ticket under test is created exactly as production creates one.</summary>
+    /// <summary>Drives the real intake → customer lookup → ticket sequence, so the ticket under test is created exactly as production creates one.</summary>
     private async Task<TicketDetailDto> CreateTicketAsync(HttpClient client, byte priorityId)
     {
         await _factory.SeedPrioritiesAsync();
@@ -48,23 +48,17 @@ public class SlaAndEscalationEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
-        var unit = await (await client.GetAsync("/api/crm/units/CRM-UNIT-1001"))
-            .Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
-        var contacts = await (await client.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts"))
-            .Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
-
-        var session = await (await client.PostAsJsonAsync(
-                "/api/verification-sessions",
-                new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation")))
-            .Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+        var lookup = await (await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup"))
+            .Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
 
         var createResponse = await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId, priorityId, "AC unit not cooling"));
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, priorityId, "AC unit not cooling"));
 
         // Asserted rather than assumed: ticket creation is CS Agent/CS
         // Supervisor only (PolicyNames.CustomerVerification), so a helper

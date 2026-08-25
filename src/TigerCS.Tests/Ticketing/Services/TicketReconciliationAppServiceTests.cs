@@ -4,7 +4,6 @@ using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
-using TigerCS.Tests.SlaAndEscalation.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
 
 namespace TigerCS.Tests.Ticketing.Services;
@@ -19,8 +18,7 @@ public class TicketReconciliationAppServiceTests
         FakeTicketRequesterSnapshotRepository Snapshots,
         FakeTicketStatusHistoryRepository StatusHistory,
         FakeAuditEntryWriter Audit,
-        FakeTicketingUnitOfWork UnitOfWork,
-        SlaServiceFixture Sla);
+        FakeTicketingUnitOfWork UnitOfWork);
 
     private static Fixture CreateService()
     {
@@ -32,28 +30,27 @@ public class TicketReconciliationAppServiceTests
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
 
-        // Reconciliation is where a provisional ticket's SLA clock starts
-        // (FR-TKT-09), so the due-date service belongs to this harness now.
-        var sla = new SlaServiceFixture(tickets, statusHistory: statusHistory, audit: audit, unitOfWork: unitOfWork);
-
+        // Business-rule change: every ticket's SLA clock now starts at
+        // creation, so reconciliation no longer opens an SLA period — no
+        // SlaDueDateService dependency here any more.
         var service = new TicketReconciliationAppService(
-            tickets, intakeRecords, sessions, snapshots, statusHistory, unitOfWork, audit, sla.DueDates, TimeProvider.System);
+            tickets, intakeRecords, sessions, snapshots, statusHistory, unitOfWork, audit, TimeProvider.System);
 
-        return new Fixture(service, tickets, intakeRecords, sessions, snapshots, statusHistory, audit, unitOfWork, sla);
+        return new Fixture(service, tickets, intakeRecords, sessions, snapshots, statusHistory, audit, unitOfWork);
     }
 
-    private static async Task<(Ticket Ticket, IntakeRecord Intake, Guid AgentId)> SeedProvisionalTicketAsync(
+    private static async Task<(Ticket Ticket, IntakeRecord Intake, Guid AgentId)> SeedUnverifiedTicketAsync(
         Fixture f, string rawUnitNumberEntered = "1204")
     {
         var agentId = Guid.NewGuid();
-        var ticket = Ticket.CreateProvisional(
+        var ticket = Ticket.CreateUnverified(
             "TG-CS-20260821-0020", departmentId: 2, categoryId: 5,
             priorityId: (byte)PriorityLevel.Critical, "Flooding reported", DateTime.UtcNow);
         await f.Tickets.AddAsync(ticket);
 
-        var intake = new IntakeRecord(Channel.Phone, isUnitRelated: true, rawUnitNumberEntered, priorityHint: null, agentId, DateTime.UtcNow);
+        var intake = new IntakeRecord(Channel.Phone, "+971500000001", isUnitRelated: true, rawUnitNumberEntered, priorityHint: null, agentId, DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(intake);
-        intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.PendingCrmVerification);
+        intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified);
 
         return (ticket, intake, agentId);
     }
@@ -72,7 +69,7 @@ public class TicketReconciliationAppServiceTests
     public async Task ReconcileAsync_MatchingUnitContext_PopulatesReferencesAndCreatesSnapshotExactlyOnce()
     {
         var f = CreateService();
-        var (ticket, _, agentId) = await SeedProvisionalTicketAsync(f, "1204");
+        var (ticket, _, agentId) = await SeedUnverifiedTicketAsync(f, "1204");
         var session = ConfirmedSession(agentId, "1204");
         await f.Sessions.AddAsync(session);
 
@@ -94,7 +91,7 @@ public class TicketReconciliationAppServiceTests
     public async Task ReconcileAsync_MismatchedUnitContext_ReturnsReconciliationUnitMismatch_DoesNotAttachWrongUnit()
     {
         var f = CreateService();
-        var (ticket, _, agentId) = await SeedProvisionalTicketAsync(f, "1204");
+        var (ticket, _, agentId) = await SeedUnverifiedTicketAsync(f, "1204");
         // Agent confirmed a DIFFERENT unit than the one originally reported for this ticket.
         var session = ConfirmedSession(agentId, "9999");
         await f.Sessions.AddAsync(session);
@@ -103,14 +100,14 @@ public class TicketReconciliationAppServiceTests
             agentId, ticket.TicketId, new ReconcileTicketRequestDto(session.VerificationSessionId, []));
 
         Assert.Equal(TicketMutationOutcome.ReconciliationUnitMismatch, result.Outcome);
-        Assert.Equal(CrmVerificationStatus.PendingCrmVerification, ticket.VerificationStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
         Assert.Null(ticket.UnitReferenceId);
         Assert.Empty(f.Snapshots.Added);
         Assert.Equal(VerificationSessionStatus.Confirmed, session.Status);
     }
 
     [Fact]
-    public async Task ReconcileAsync_AlreadyVerifiedTicket_ReturnsNotPendingCrmVerification()
+    public async Task ReconcileAsync_AlreadyVerifiedTicket_ReturnsAlreadyVerified()
     {
         var f = CreateService();
         var agentId = Guid.NewGuid();
@@ -123,14 +120,14 @@ public class TicketReconciliationAppServiceTests
         var result = await f.Service.ReconcileAsync(
             agentId, ticket.TicketId, new ReconcileTicketRequestDto(session.VerificationSessionId, []));
 
-        Assert.Equal(TicketMutationOutcome.NotPendingCrmVerification, result.Outcome);
+        Assert.Equal(TicketMutationOutcome.AlreadyVerified, result.Outcome);
     }
 
     [Fact]
     public async Task ReconcileAsync_SessionOwnedByDifferentAgent_ReturnsForbidden()
     {
         var f = CreateService();
-        var (ticket, _, agentId) = await SeedProvisionalTicketAsync(f, "1204");
+        var (ticket, _, agentId) = await SeedUnverifiedTicketAsync(f, "1204");
         var session = ConfirmedSession(Guid.NewGuid(), "1204"); // different owner
         await f.Sessions.AddAsync(session);
 
@@ -144,7 +141,7 @@ public class TicketReconciliationAppServiceTests
     public async Task ReconcileAsync_SessionAlreadyConsumed_ReturnsAlreadyConsumed_SafeToRetryNeverDoubleReconciles()
     {
         var f = CreateService();
-        var (ticket, _, agentId) = await SeedProvisionalTicketAsync(f, "1204");
+        var (ticket, _, agentId) = await SeedUnverifiedTicketAsync(f, "1204");
         var session = ConfirmedSession(agentId, "1204");
         session.Consume(999, DateTime.UtcNow);
         await f.Sessions.AddAsync(session);
@@ -153,14 +150,14 @@ public class TicketReconciliationAppServiceTests
             agentId, ticket.TicketId, new ReconcileTicketRequestDto(session.VerificationSessionId, []));
 
         Assert.Equal(TicketMutationOutcome.VerificationSessionAlreadyConsumed, result.Outcome);
-        Assert.Equal(CrmVerificationStatus.PendingCrmVerification, ticket.VerificationStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
     }
 
     [Fact]
     public async Task ReconcileAsync_ConcurrentSessionConsumption_ReturnsAlreadyConsumedAndRollsBackTicketChange()
     {
         var f = CreateService();
-        var (ticket, _, agentId) = await SeedProvisionalTicketAsync(f, "1204");
+        var (ticket, _, agentId) = await SeedUnverifiedTicketAsync(f, "1204");
         var session = ConfirmedSession(agentId, "1204");
         await f.Sessions.AddAsync(session);
         f.UnitOfWork.ThrowConcurrencyConflictOnCall = 1;
@@ -178,7 +175,7 @@ public class TicketReconciliationAppServiceTests
     public async Task ReconcileAsync_TicketConcurrentlyModified_ReturnsConcurrencyConflict()
     {
         var f = CreateService();
-        var (ticket, _, agentId) = await SeedProvisionalTicketAsync(f, "1204");
+        var (ticket, _, agentId) = await SeedUnverifiedTicketAsync(f, "1204");
         var session = ConfirmedSession(agentId, "1204");
         await f.Sessions.AddAsync(session);
         f.UnitOfWork.ThrowTicketConcurrencyConflictOnCall = 1;

@@ -23,10 +23,11 @@ public class IntakeRecordAppServiceTests
         var employeeId = Guid.NewGuid();
 
         var result = await service.CreateAsync(
-            employeeId, new CreateIntakeRecordRequestDto("Phone", IsUnitRelated: true, "1204", PriorityHint: null));
+            employeeId, new CreateIntakeRecordRequestDto("Phone", "+971500000001", IsUnitRelated: true, "1204", PriorityHint: null));
 
         Assert.Equal(IntakeRecordOutcome.Success, result.Outcome);
-        Assert.True(result.Response!.IsUnitRelated);
+        Assert.Equal("+971500000001", result.Response!.PhoneNumber);
+        Assert.True(result.Response.IsUnitRelated);
         Assert.Equal("Unverified", result.Response.CrmVerificationStatus);
         Assert.NotNull(await records.GetByIdAsync(result.Response.IntakeRecordId));
         Assert.Contains(audit.Written, w => w.Action == "CreateIntakeRecord" && w.ActorEmployeeId == employeeId);
@@ -43,7 +44,7 @@ public class IntakeRecordAppServiceTests
         var (service, _, _, _) = CreateService();
 
         var result = await service.CreateAsync(
-            Guid.NewGuid(), new CreateIntakeRecordRequestDto("Phone", IsUnitRelated: false, null, PriorityHint: null));
+            Guid.NewGuid(), new CreateIntakeRecordRequestDto("Phone", "+971500000001", IsUnitRelated: false, null, PriorityHint: null));
 
         Assert.Equal(IntakeRecordOutcome.Success, result.Outcome);
         Assert.False(result.Response!.IsUnitRelated);

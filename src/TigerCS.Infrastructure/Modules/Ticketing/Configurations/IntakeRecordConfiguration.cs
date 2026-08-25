@@ -18,6 +18,7 @@ public class IntakeRecordConfiguration : IEntityTypeConfiguration<IntakeRecord>
 
         builder.Property(i => i.ChannelId).IsRequired();
         builder.Property(i => i.ReceivedAtUtc).IsRequired();
+        builder.Property(i => i.PhoneNumber).HasMaxLength(30).IsRequired();
         builder.Property(i => i.IsUnitRelated).IsRequired();
         builder.Property(i => i.RawUnitNumberEntered).HasMaxLength(50);
         builder.Property(i => i.CrmVerificationStatus).IsRequired();

@@ -79,10 +79,9 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/verification-sessions/{verificationSessionId}",
 
         "POST /api/intake-records",
+        "GET /api/intake-records/{intakeRecordId}/customer-lookup",
 
         "POST /api/tickets",
-        "POST /api/tickets/provisional",
-        "POST /api/tickets/non-unit",
         "GET /api/tickets",
         "GET /api/tickets/{ticketId}",
         "POST /api/tickets/{ticketId}/assignment",
@@ -325,6 +324,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     // Nullable request fields the endpoints explicitly accept as absent.
     [InlineData("CreateIntakeRecordRequestDto", "rawUnitNumberEntered")]
     [InlineData("CreateIntakeRecordRequestDto", "priorityHint")]
+    [InlineData("CreateTicketRequestDto", "unitReferenceId")]
+    [InlineData("CreateTicketRequestDto", "contactReferenceId")]
     [InlineData("ActivationRequestDto", "reason")]
     [InlineData("ResolveTicketRequestDto", "reasonCode")]
     [InlineData("ResolveTicketRequestDto", "duplicateOfTicketId")]
@@ -340,12 +341,13 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     [InlineData("LoginRequestDto", "username")]
     [InlineData("LoginRequestDto", "password")]
     [InlineData("CreateIntakeRecordRequestDto", "channelId")]
+    [InlineData("CreateIntakeRecordRequestDto", "phoneNumber")]
     [InlineData("CreateIntakeRecordRequestDto", "isUnitRelated")]
     [InlineData("AssignTicketRequestDto", "assignedEmployeeId")]
     [InlineData("AssignTicketRequestDto", "rowVersion")]
     [InlineData("ChangeStatusRequestDto", "newStatus")]
     [InlineData("TransferTicketRequestDto", "targetDepartmentId")]
-    [InlineData("CreateTicketFromVerificationRequestDto", "verificationSessionId")]
+    [InlineData("CreateTicketRequestDto", "categoryId")]
     public void MandatoryFields_AreMarkedRequired(string schemaName, string propertyName)
     {
         var schema = SchemaFor(schemaName);

@@ -59,7 +59,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     private Task<(HttpClient Client, Guid EmployeeId)> CreateAdministratorAsync() =>
         CreateClientAsync(Roles.SystemAdministrator);
 
-    /// <summary>Runs the real intake -> CRM lookup -> verification -> ticket sequence as the given client, returning the created ticket.</summary>
+    /// <summary>Runs the real intake -> customer lookup -> ticket sequence as the given client, returning the created ticket.</summary>
     private async Task<TicketDetailDto> CreateVerifiedTicketAsync(HttpClient client, string departmentPrefix)
     {
         await _factory.SeedPrioritiesAsync();
@@ -67,29 +67,21 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
             departmentPrefix + " " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
+        // "+971500000001" matches MockCrmGateway's CRM-UNIT-1001/CRM-CONTACT-2002 fixture.
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null));
         intakeResponse.EnsureSuccessStatusCode();
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
-        var unitResponse = await client.GetAsync("/api/crm/units/CRM-UNIT-1001");
-        unitResponse.EnsureSuccessStatusCode();
-        var unit = await unitResponse.Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
-
-        var contactsResponse = await client.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts");
-        contactsResponse.EnsureSuccessStatusCode();
-        var contacts = await contactsResponse.Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
-
-        var sessionResponse = await client.PostAsJsonAsync(
-            "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation"));
-        sessionResponse.EnsureSuccessStatusCode();
-        var session = await sessionResponse.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        lookupResponse.EnsureSuccessStatusCode();
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
 
         var ticketResponse = await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var created = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
 
@@ -269,7 +261,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var (client, _) = await CreateAdministratorAsync();
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -282,11 +274,31 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     // ---------------------------------------------------------------
+    // Customer lookup
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task SearchCustomerLookup_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var intake = await (await client.PostAsJsonAsync(
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
+            .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var response = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var lookup = await response.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        Assert.Equal(3, lookup!.Sources.Count);
+    }
+
+    // ---------------------------------------------------------------
     // Ticket creation
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task CreateTicketFromVerificationSession_Returns201()
+    public async Task CreateTicket_WithCustomerMatch_Returns201()
     {
         var (client, _) = await CreateAdministratorAsync();
 
@@ -297,26 +309,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
-    public async Task CreateProvisionalTicket_Returns201()
-    {
-        var (client, _) = await CreateAdministratorAsync();
-        await _factory.SeedPrioritiesAsync();
-        var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
-        var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
-
-        var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", (byte)PriorityLevel.Critical)))
-            .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
-
-        var response = await client.PostAsJsonAsync(
-            "/api/tickets/provisional",
-            new CreateProvisionalTicketRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Critical, "Flooding in lobby"));
-
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task CreateTicketFromNonUnitIntake_Returns201()
+    public async Task CreateTicket_NonUnitIntake_Returns201()
     {
         var (client, _) = await CreateAdministratorAsync();
         await _factory.SeedPrioritiesAsync();
@@ -324,12 +317,12 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", false, null, null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", false, null, null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var response = await client.PostAsJsonAsync(
-            "/api/tickets/non-unit",
-            new CreateTicketFromNonUnitIntakeRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Medium, "General billing question"));
+            "/api/tickets",
+            new CreateTicketRequestDto(intake!.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Medium, "General billing question"));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
@@ -549,20 +542,22 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task ReconcileProvisionalTicket_Returns200()
+    public async Task ReconcileUnverifiedTicket_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();
         await _factory.SeedPrioritiesAsync();
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
+        // Created with no customer match — business-rule change: customer
+        // lookup no longer gates creation, so this ticket starts Unverified.
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", (byte)PriorityLevel.Critical)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", true, "1204", (byte)PriorityLevel.Critical)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
-        var provisional = await (await client.PostAsJsonAsync(
-                "/api/tickets/provisional",
-                new CreateProvisionalTicketRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Critical, "Flooding in lobby")))
+        var unverified = await (await client.PostAsJsonAsync(
+                "/api/tickets",
+                new CreateTicketRequestDto(intake!.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Critical, "Flooding in lobby")))
             .Content.ReadFromJsonAsync<TicketResponseDto>();
 
         // The CRM comes back: the administrator verifies the same unit
@@ -577,8 +572,8 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
             .Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
 
         var response = await client.PostAsJsonAsync(
-            $"/api/tickets/{provisional!.TicketId}/reconciliation",
-            new ReconcileTicketRequestDto(session!.VerificationSessionId, Convert.FromBase64String(provisional.RowVersion)));
+            $"/api/tickets/{unverified!.TicketId}/reconciliation",
+            new ReconcileTicketRequestDto(session!.VerificationSessionId, Convert.FromBase64String(unverified.RowVersion)));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var reconciled = await response.Content.ReadFromJsonAsync<TicketDetailDto>();
@@ -671,7 +666,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var (client, adminEmployeeId) = await CreateAdministratorAsync();
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var intake = await response.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
@@ -701,11 +696,15 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     /// <para>
     /// This costs the administrator nothing operationally — it can create
     /// its own session and use that end-to-end, as
-    /// <see cref="CreateTicketFromVerificationSession_Returns201"/> does.
+    /// <see cref="CreateTicket_WithCustomerMatch_Returns201"/> does.
     /// Overriding it instead would let an administrator consume a session an
     /// agent was mid-way through and attribute the resulting requester
     /// snapshot to a verification they never performed, which is an audit
-    /// integrity problem, not an access one.
+    /// integrity problem, not an access one. Business-rule change: ticket
+    /// creation itself no longer consumes a VerificationSession at all (see
+    /// TicketCreationAppService.CreateAsync's remarks), so this ownership
+    /// rule is now exercised through the two calls that still do: reading a
+    /// session directly, and reconciling a ticket against one.
     /// </para>
     /// </summary>
     [Fact]
@@ -732,15 +731,18 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
         var intake = await (await adminClient.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        var unverified = await (await adminClient.PostAsJsonAsync(
+                "/api/tickets",
+                new CreateTicketRequestDto(intake!.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.High, "AC unit not cooling")))
+            .Content.ReadFromJsonAsync<TicketResponseDto>();
 
-        var createResponse = await adminClient.PostAsJsonAsync(
-            "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, agentsSession.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+        var reconcileResponse = await adminClient.PostAsJsonAsync(
+            $"/api/tickets/{unverified!.TicketId}/reconciliation",
+            new ReconcileTicketRequestDto(agentsSession.VerificationSessionId, Convert.FromBase64String(unverified.RowVersion)));
 
-        Assert.Equal(HttpStatusCode.Forbidden, createResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, reconcileResponse.StatusCode);
     }
 
     [Fact]
@@ -764,6 +766,6 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/roles")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,
-            (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null))).StatusCode);
+            (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null))).StatusCode);
     }
 }

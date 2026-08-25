@@ -2,8 +2,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Integrations.Modules.EmailIntegration;
+using TigerCS.Integrations.Modules.PactIntegration;
+using TigerCS.Integrations.Modules.TasleehIntegration;
 
 namespace TigerCS.Integrations.Modules.CrmIntegration;
 
@@ -13,12 +16,20 @@ public static class IntegrationsServiceCollectionExtensions
     {
         services.Configure<CrmGatewayOptions>(configuration.GetSection(CrmGatewayOptions.SectionName));
 
+        // ICrmGateway (unit-number lookup) and ICrmCustomerLookupGateway
+        // (business-rule change: phone-based customer search,
+        // CustomerLookupAppService's only caller) are deliberately separate
+        // interfaces (see ICrmCustomerLookupGateway's remarks) but the same
+        // "Mock" provider switch and the same single MockCrmGateway instance
+        // backs both — one fixture data set, not two to keep in sync.
+        services.AddScoped<MockCrmGateway>();
+
         services.AddScoped<ICrmGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Mock" => new MockCrmGateway(),
+                "Mock" => sp.GetRequiredService<MockCrmGateway>(),
                 _ => throw new NotSupportedException(
                     $"Crm:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
                     "pilot phase (MVP-Implementation-Backlog.md S-06) — no real Tiger Group CRM endpoint details " +
@@ -28,9 +39,63 @@ public static class IntegrationsServiceCollectionExtensions
             };
         });
 
+        services.AddScoped<ICrmCustomerLookupGateway>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            return options.Provider switch
+            {
+                "Mock" => sp.GetRequiredService<MockCrmGateway>(),
+                _ => throw new NotSupportedException(
+                    $"Crm:Provider '{options.Provider}' is not supported for customer lookup either — see the " +
+                    "ICrmGateway registration above for the same reasoning.")
+            };
+        });
+
+        AddPactGateway(services, configuration);
+        AddTasleehGateway(services, configuration);
         AddEmailSender(services, configuration);
 
         return services;
+    }
+
+    /// <summary>Business-rule change: PACT phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>
+    private static void AddPactGateway(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<PactGatewayOptions>(configuration.GetSection(PactGatewayOptions.SectionName));
+
+        services.AddScoped<IPactGateway>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<PactGatewayOptions>>().Value;
+            return options.Provider switch
+            {
+                "Mock" => new MockPactGateway(),
+                _ => throw new NotSupportedException(
+                    $"Pact:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
+                    "pilot phase — no real PACT endpoint details were available to build against. See " +
+                    "MockPactGateway's own remarks: it must never be described as production-ready, and a real " +
+                    "IPactGateway implementation is required before any other provider value can be used.")
+            };
+        });
+    }
+
+    /// <summary>Business-rule change: Tasleeh phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>
+    private static void AddTasleehGateway(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<TasleehGatewayOptions>(configuration.GetSection(TasleehGatewayOptions.SectionName));
+
+        services.AddScoped<ITasleehGateway>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<TasleehGatewayOptions>>().Value;
+            return options.Provider switch
+            {
+                "Mock" => new MockTasleehGateway(),
+                _ => throw new NotSupportedException(
+                    $"Tasleeh:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
+                    "pilot phase — no real Tasleeh endpoint details were available to build against. See " +
+                    "MockTasleehGateway's own remarks: it must never be described as production-ready, and a " +
+                    "real ITasleehGateway implementation is required before any other provider value can be used.")
+            };
+        });
     }
 
     /// <summary>

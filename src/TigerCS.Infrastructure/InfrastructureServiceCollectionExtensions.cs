@@ -148,6 +148,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketNoteRepository, TicketNoteRepository>();
         services.AddScoped<ITicketingUnitOfWork, TicketingUnitOfWork>();
         services.AddScoped<IntakeRecordAppService>();
+        services.AddScoped<CustomerLookupAppService>();
         services.AddScoped<TicketCreationAppService>();
         services.AddScoped<TicketQueryAppService>();
         services.AddScoped<TicketAssignmentAppService>();
