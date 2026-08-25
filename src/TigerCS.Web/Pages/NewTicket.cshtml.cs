@@ -40,15 +40,17 @@ public sealed class NewTicketModel(
     [BindProperty] public CreateStepInput CreateStep { get; set; } = new();
 
     public long? IntakeRecordId { get; private set; }
+    public string? PhoneNumber { get; private set; }
     public int? UnitReferenceId { get; private set; }
     public int? ContactReferenceId { get; private set; }
     public CustomerLookupResultDto? LookupResult { get; private set; }
 
     public async Task<IActionResult> OnGetAsync(
-        string? step, long? intakeRecordId, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
+        string? step, long? intakeRecordId, string? phoneNumber, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
     {
         Step = step ?? "intake";
         IntakeRecordId = intakeRecordId;
+        PhoneNumber = phoneNumber;
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
 
@@ -85,22 +87,25 @@ public sealed class NewTicketModel(
         // Business-rule change: customer lookup runs for every intake — a
         // non-unit-related interaction may still be a known CRM/PACT/Tasleeh
         // customer, and none of the three ever gates what happens next.
-        return RedirectToPage(new { step = "lookup", intakeRecordId = result.Value.IntakeRecordId });
+        // The phone number carried forward from here on is the one the Api
+        // just echoed back on the saved IntakeRecord — never reformatted.
+        return RedirectToPage(new { step = "lookup", intakeRecordId = result.Value.IntakeRecordId, phoneNumber = result.Value.PhoneNumber });
     }
 
     /// <summary>The agent selected a CRM lookup match — its unit/contact reference carries forward to ticket creation.</summary>
-    public IActionResult OnPostUseMatch(long intakeRecordId, int unitReferenceId, int contactReferenceId) =>
-        RedirectToPage(new { step = "create", intakeRecordId, unitReferenceId, contactReferenceId });
+    public IActionResult OnPostUseMatch(long intakeRecordId, string? phoneNumber, int unitReferenceId, int contactReferenceId) =>
+        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, unitReferenceId, contactReferenceId });
 
     /// <summary>No match selected — found nothing, a source failed, or the agent chose to proceed anyway. None of those blocks ticket creation.</summary>
-    public IActionResult OnPostContinueWithoutMatch(long intakeRecordId) =>
-        RedirectToPage(new { step = "create", intakeRecordId });
+    public IActionResult OnPostContinueWithoutMatch(long intakeRecordId, string? phoneNumber) =>
+        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber });
 
     public async Task<IActionResult> OnPostCreateAsync(
-        long intakeRecordId, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
+        long intakeRecordId, string? phoneNumber, int? unitReferenceId, int? contactReferenceId, CancellationToken cancellationToken)
     {
         Step = "create";
         IntakeRecordId = intakeRecordId;
+        PhoneNumber = phoneNumber;
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
 

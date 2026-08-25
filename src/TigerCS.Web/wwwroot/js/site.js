@@ -45,4 +45,15 @@
       });
     });
   }
+
+  // Prevent duplicate submission: disable a form's submit button(s) the
+  // moment it submits, so a double-click can't fire the request twice.
+  // Without JS the form still submits normally on every click.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
+      btn.disabled = true;
+    });
+  });
 })();
