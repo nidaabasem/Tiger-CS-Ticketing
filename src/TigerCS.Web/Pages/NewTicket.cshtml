@@ -78,13 +78,29 @@
         else if (Model.Step == "lookup")
         {
             <div class="section-card__title">Step 2 — Customer lookup</div>
+            @if (!string.IsNullOrEmpty(Model.PhoneNumber))
+            {
+                <p class="text-secondary">Phone number on file: <strong>@Model.PhoneNumber</strong></p>
+            }
             <p class="text-secondary">
                 Searching by phone number, scoped to the Department's configured source(s) if one was selected (otherwise CRM, PACT, and Tasleeh).
                 Only the systems actually searched are shown below. A source finding nothing, or being unavailable, never blocks creating the ticket.
             </p>
 
-            @if (Model.LookupResult is not null)
+            @if (Model.LookupResult is not null && Model.LookupResult.Sources.Count == 0)
             {
+                <div class="alert alert-info" role="status">
+                    <span>Customer lookup is not configured for the selected department. You can continue creating the ticket.</span>
+                </div>
+            }
+            else if (Model.LookupResult is not null)
+            {
+                @if (!Model.LookupResult.Sources.Any(s => s.Status == "Found"))
+                {
+                    <div class="alert alert-info" role="status">
+                        <span>No customer information found. You can continue creating the ticket.</span>
+                    </div>
+                }
                 <div class="entry-list entry-list--spaced">
                     @foreach (var source in Model.LookupResult.Sources)
                     {
@@ -101,13 +117,14 @@
                                 }
                                 else
                                 {
-                                    <span class="text-secondary">· Unavailable — could not be reached</span>
+                                    <span class="text-secondary">· @source.Source is temporarily unavailable</span>
                                 }
                             </span>
                             @if (source.Status == "Found" && source.UnitReferenceId is int unitReferenceId && source.ContactReferenceId is int contactReferenceId)
                             {
                                 <form method="post" asp-page-handler="UseMatch">
                                     <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                    <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
                                     <input type="hidden" name="unitReferenceId" value="@unitReferenceId" />
                                     <input type="hidden" name="contactReferenceId" value="@contactReferenceId" />
                                     <button type="submit" class="btn btn-sm">Use this match</button>
@@ -120,12 +137,17 @@
 
             <form method="post" asp-page-handler="ContinueWithoutMatch">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                <button type="submit" class="btn">Continue without a match</button>
+                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                <button type="submit" class="btn">Continue to Ticket</button>
             </form>
         }
         else if (Model.Step == "create")
         {
             <div class="section-card__title">Step 3 — Category, details &amp; create ticket</div>
+            @if (!string.IsNullOrEmpty(Model.PhoneNumber))
+            {
+                <p class="text-secondary">Phone number on file: <strong>@Model.PhoneNumber</strong></p>
+            }
             @if (Model.UnitReferenceId is int selectedUnit)
             {
                 <p class="text-secondary">Linking matched unit/contact reference #@selectedUnit.</p>
@@ -136,6 +158,7 @@
             }
             <form method="post" asp-page-handler="Create">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
                 <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
                 <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
                 <div class="form-group">

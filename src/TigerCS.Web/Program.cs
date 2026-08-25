@@ -37,10 +37,6 @@ builder.Services.AddHttpClient<TicketSlaApiClient>(client => client.BaseAddress 
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<UsersApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
-builder.Services.AddHttpClient<CrmApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
-    .AddHttpMessageHandler<BearerTokenHandler>();
-builder.Services.AddHttpClient<VerificationSessionsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
-    .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<IntakeRecordsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<CustomerLookupApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))

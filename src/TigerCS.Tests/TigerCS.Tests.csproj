@@ -26,6 +26,13 @@
     <ProjectReference Include="..\TigerCS.Integrations\TigerCS.Integrations.csproj" />
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
     <ProjectReference Include="..\TigerCS.Api\TigerCS.Api.csproj" />
+    <!-- Aliased: TigerCS.Web's own top-level-statement Program type would otherwise collide
+         (both are implicitly in the global namespace) with TigerCS.Api's Program, which the
+         existing WebApplicationFactory<Program>-based integration tests reference unqualified.
+         Nothing in the front-end tests needs TigerCS.Web's Program, so the alias is never used. -->
+    <ProjectReference Include="..\TigerCS.Web\TigerCS.Web.csproj">
+      <Aliases>TigerCsWeb</Aliases>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

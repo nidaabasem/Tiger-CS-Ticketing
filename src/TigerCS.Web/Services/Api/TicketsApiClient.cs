@@ -42,9 +42,6 @@ public sealed class TicketsApiClient(HttpClient httpClient) : ApiClientBase(http
     public Task<ApiResult<TicketDetailDto>> CloseAsync(long ticketId, CloseTicketRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<CloseTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/close", request, cancellationToken);
 
-    public Task<ApiResult<TicketDetailDto>> ReconcileAsync(long ticketId, ReconcileTicketRequestDto request, CancellationToken cancellationToken) =>
-        PostAsync<ReconcileTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/reconciliation", request, cancellationToken);
-
     public Task<ApiResult<TicketNoteResponseDto>> AddNoteAsync(long ticketId, CreateNoteRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<CreateNoteRequestDto, TicketNoteResponseDto>($"api/tickets/{ticketId}/notes", request, cancellationToken);
 
