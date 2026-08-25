@@ -1,6 +1,7 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Domain.Modules.CustomerVerification;
 
 namespace TigerCS.Tests.CustomerVerification.Fakes;
@@ -203,5 +204,81 @@ public sealed class FakeCrmGateway : ICrmGateway
 
         return Task.FromResult<IReadOnlyList<CrmContactResult>>(
             _fixtures.TryGetValue(crmUnitId, out var f) ? f.Contacts : []);
+    }
+}
+
+/// <summary>Business-rule change: phone-based customer search fake for CustomerLookupAppService's CRM leg — distinct from FakeCrmGateway above (see ICrmCustomerLookupGateway's remarks).</summary>
+public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
+{
+    public bool ThrowUnavailable { get; set; }
+    public int SearchCallCount { get; private set; }
+
+    private readonly Dictionary<string, CrmCustomerMatch> _fixtures = [];
+
+    public FakeCrmCustomerLookupGateway Seed(string phoneNumber, CrmCustomerMatch match)
+    {
+        _fixtures[phoneNumber] = match;
+        return this;
+    }
+
+    public Task<CrmCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    {
+        SearchCallCount++;
+        if (ThrowUnavailable)
+        {
+            throw new CrmCustomerLookupGatewayUnavailableException("Simulated CRM outage.");
+        }
+
+        return Task.FromResult(_fixtures.GetValueOrDefault(phoneNumber));
+    }
+}
+
+public sealed class FakePactGateway : IPactGateway
+{
+    public bool ThrowUnavailable { get; set; }
+    public int SearchCallCount { get; private set; }
+
+    private readonly Dictionary<string, PactCustomerMatch> _fixtures = [];
+
+    public FakePactGateway Seed(string phoneNumber, PactCustomerMatch match)
+    {
+        _fixtures[phoneNumber] = match;
+        return this;
+    }
+
+    public Task<PactCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    {
+        SearchCallCount++;
+        if (ThrowUnavailable)
+        {
+            throw new PactGatewayUnavailableException("Simulated PACT outage.");
+        }
+
+        return Task.FromResult(_fixtures.GetValueOrDefault(phoneNumber));
+    }
+}
+
+public sealed class FakeTasleehGateway : ITasleehGateway
+{
+    public bool ThrowUnavailable { get; set; }
+    public int SearchCallCount { get; private set; }
+
+    private readonly Dictionary<string, TasleehCustomerMatch> _fixtures = [];
+
+    public FakeTasleehGateway Seed(string phoneNumber, TasleehCustomerMatch match)
+    {
+        _fixtures[phoneNumber] = match;
+        return this;
+    }
+
+    public Task<TasleehCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    {
+        SearchCallCount++;
+        if (ThrowUnavailable)
+        {
+            throw new TasleehGatewayUnavailableException("Simulated Tasleeh outage.");
+        }
+
+        return Task.FromResult(_fixtures.GetValueOrDefault(phoneNumber));
     }
 }

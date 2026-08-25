@@ -58,7 +58,7 @@ public sealed class TicketsApiClient(HttpClient httpClient) : ApiClientBase(http
         return GetAsync<TicketNoteListResultDto>($"api/tickets/{ticketId}/notes?{query}", cancellationToken);
     }
 
-    public Task<ApiResult<TicketResponseDto>> CreateFromVerificationAsync(
-        CreateTicketFromVerificationRequestDto request, CancellationToken cancellationToken) =>
-        PostAsync<CreateTicketFromVerificationRequestDto, TicketResponseDto>("api/tickets", request, cancellationToken);
+    public Task<ApiResult<TicketResponseDto>> CreateAsync(
+        CreateTicketRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<CreateTicketRequestDto, TicketResponseDto>("api/tickets", request, cancellationToken);
 }

@@ -64,6 +64,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<IntakeRecord> IntakeRecords => Set<IntakeRecord>();
 
+    public DbSet<DepartmentCustomerLookupSource> DepartmentCustomerLookupSources => Set<DepartmentCustomerLookupSource>();
+
     public DbSet<Ticket> Tickets => Set<Ticket>();
 
     public DbSet<TicketRequesterSnapshot> TicketRequesterSnapshots => Set<TicketRequesterSnapshot>();
@@ -112,6 +114,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new PriorityConfiguration());
         builder.ApplyConfiguration(new CategoryConfiguration());
         builder.ApplyConfiguration(new IntakeRecordConfiguration());
+        builder.ApplyConfiguration(new DepartmentCustomerLookupSourceConfiguration());
         builder.ApplyConfiguration(new TicketConfiguration());
         builder.ApplyConfiguration(new TicketRequesterSnapshotConfiguration());
         builder.ApplyConfiguration(new TicketStatusHistoryConfiguration());

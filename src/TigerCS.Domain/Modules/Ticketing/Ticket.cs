@@ -20,22 +20,18 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// below.
 ///
 /// <para>
-/// <b>UnitReferenceId/ContactReferenceId/RequesterSnapshot nullability — a
-/// confirmed, narrow relaxation, not a silent schema deviation.</b>
-/// MVP-Data-Dictionary.md §2.10 marks both FKs NOT NULL and §2.8 says the
-/// snapshot is "created in the same transaction as the ticket," which is
-/// impossible for ISSUE-006's approved provisional-ticket rule (Critical/High
-/// proceeds immediately during a CRM outage, before any CRM unit/contact has
-/// been resolved — System-Architecture.md line 182). Confirmed during this
-/// increment's pre-coding review: both become populated only once
-/// <see cref="VerificationStatus"/> reaches <see cref="CrmVerificationStatus.Verified"/>
-/// — either immediately (the normal verified-at-creation path,
-/// <see cref="CreateVerified"/>) or later, at reconciliation
-/// (<see cref="ReconcileVerification"/> — implemented and unit-tested now,
-/// with no call site yet, matching the same forward-building pattern
-/// VerificationSession.Consume() used ahead of this module's own arrival).
-/// Nothing already-approved is removed: a <see cref="CrmVerificationStatus.Verified"/>
-/// ticket still always has both.
+/// <b>UnitReferenceId/ContactReferenceId/RequesterSnapshot are optional —
+/// a customer match is enrichment, never a Ticket creation gate.</b>
+/// Customer lookup (CRM/PACT/Tasleeh, <c>CustomerLookupAppService</c>) is
+/// enrichment/identification, not a promotion gate: whether the lookup finds
+/// a match, finds nothing, or a source fails to answer, ticket creation
+/// proceeds the same way (<see cref="CreateUnverified"/>). Only when the
+/// caller already has a resolved local unit/contact pair — because the agent
+/// selected a lookup match — is <see cref="CreateVerified"/> used instead,
+/// and both fields are populated together, never one without the other. A
+/// ticket that started unverified is not stuck that way: it may later be
+/// enriched or linked once customer/unit information becomes available,
+/// via <see cref="ReconcileVerification"/>.
 /// </para>
 /// </summary>
 public class Ticket
@@ -74,7 +70,7 @@ public class Ticket
 
     private Ticket() { }
 
-    /// <summary>The normal path (FR-CH-01/FR-VER-02): a ticket created from an already-confirmed, just-consumed <c>VerificationSession</c>. Fully verified from the moment it exists.</summary>
+    /// <summary>The customer-match path: the caller already has a resolved local unit/contact pair (the agent selected a CRM lookup match). Fully verified from the moment it exists.</summary>
     public static Ticket CreateVerified(
         string ticketNumber,
         int departmentId,
@@ -93,8 +89,20 @@ public class Ticket
         return ticket;
     }
 
-    /// <summary>ISSUE-006's approved fallback (Management-Decisions.md, System-Architecture.md line 182): Critical/High proceeds immediately, unverified, while the CRM is unreachable. No Unit/Contact reference and no requester snapshot exist yet — see this type's remarks for why that is a confirmed relaxation, not an oversight.</summary>
-    public static Ticket CreateProvisional(
+    /// <summary>
+    /// The default path whenever no resolved unit/contact pair is available
+    /// at creation time — whether the intake is not unit-related, the
+    /// customer lookup found no match, a lookup source failed to answer, or
+    /// the agent simply proceeded without selecting one. Customer lookup is
+    /// enrichment, never a Ticket creation gate (see this type's remarks), so
+    /// none of those reasons changes this factory's behavior: no Unit/Contact
+    /// reference and no requester snapshot exist yet, and the SLA clock still
+    /// starts immediately — nothing here is pending on an external system.
+    /// <see cref="VerificationStatus"/> stays <see cref="CrmVerificationStatus.Unverified"/>
+    /// until (and unless) <see cref="ReconcileVerification"/> later links a
+    /// unit/contact once one becomes available.
+    /// </summary>
+    public static Ticket CreateUnverified(
         string ticketNumber,
         int departmentId,
         int categoryId,
@@ -102,20 +110,9 @@ public class Ticket
         string requestSummary,
         DateTime createdAtUtc)
     {
-        if (!Priority.IsCriticalOrHigh(priorityId))
-        {
-            throw new ProvisionalTicketRequiresCriticalOrHighException(priorityId);
-        }
-
         var ticket = CreateCore(ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc);
-        ticket.VerificationStatus = CrmVerificationStatus.PendingCrmVerification;
-
-        // Not yet SLA-clocked (FR-TKT-09: an unverified ticket "does not
-        // start its SLA clock"). No TicketSlaInstance is opened for a
-        // provisional ticket and no due date is computed until
-        // ReconcileVerification runs — see that method's remarks for how
-        // this reconciles with MVP-ERD.md §2.15's "≥1 from creation".
-        ticket.SlaState = SlaState.Paused;
+        ticket.VerificationStatus = CrmVerificationStatus.Unverified;
+        ticket.SlaState = SlaState.Running;
         return ticket;
     }
 
@@ -152,55 +149,38 @@ public class Ticket
     }
 
     /// <summary>
-    /// Reconciles a provisional ticket once the CRM is reachable again and
-    /// the requester has actually been verified (ISSUE-006's "reconciled
-    /// once CRM returns"). Not called by any endpoint in this increment —
-    /// implemented and unit-tested now so the invariant is real and ready
-    /// for the next increment, the same forward-building pattern already
-    /// used for <c>VerificationSession.Consume()</c>.
+    /// Links a unit/contact pair onto a ticket that did not have one at
+    /// creation — the "later enrichment" story for a ticket that started
+    /// <see cref="CrmVerificationStatus.Unverified"/> (business-rule change:
+    /// customer lookup no longer gates creation, so this is the normal way a
+    /// ticket picks up a customer match afterward, not a rare recovery path).
     ///
     /// <para>
     /// <b>Deliberately a bare state transition, not full orchestration —
     /// same division of responsibility as <see cref="CreateVerified"/>.</b>
-    /// This method does not itself create a <c>TicketRequesterSnapshot</c>,
-    /// and takes raw IDs rather than a <c>VerificationSession</c>, exactly
-    /// as <see cref="CreateVerified"/> also takes raw
-    /// <c>unitReferenceId</c>/<c>contactReferenceId</c> rather than a
-    /// session object — in both cases, sourcing those IDs from a genuinely
-    /// confirmed, single-use, owned <c>VerificationSession</c> (never a
-    /// caller-supplied raw pair) and constructing the resulting
+    /// This method does not itself create a <c>TicketRequesterSnapshot</c>;
+    /// sourcing a genuinely resolved <c>unitReferenceId</c>/
+    /// <c>contactReferenceId</c> pair and constructing the resulting
     /// <c>TicketRequesterSnapshot</c> is the calling application service's
     /// job, done alongside this call in one transaction — see
-    /// <c>TicketCreationAppService.CreateFromVerificationSessionAsync</c>
-    /// for the pattern this method's future caller must mirror. A caller
-    /// that invokes this with unvalidated IDs, or that skips writing the
-    /// snapshot, produces a <see cref="CrmVerificationStatus.Verified"/>
-    /// ticket that violates ADR-0007 — that correctness is this method's
-    /// caller's responsibility, not something its own signature enforces.
+    /// <c>TicketCreationAppService.CreateAsync</c> for the pattern this
+    /// method's caller mirrors. A caller that invokes this with unvalidated
+    /// IDs, or that skips writing the snapshot, produces a
+    /// <see cref="CrmVerificationStatus.Verified"/> ticket that violates
+    /// ADR-0007 — that correctness is this method's caller's responsibility,
+    /// not something its own signature enforces.
     /// </para>
     /// </summary>
     public void ReconcileVerification(int unitReferenceId, int contactReferenceId)
     {
-        if (VerificationStatus != CrmVerificationStatus.PendingCrmVerification)
+        if (VerificationStatus == CrmVerificationStatus.Verified)
         {
-            throw new TicketNotPendingCrmVerificationException(TicketId, VerificationStatus);
+            throw new TicketAlreadyVerifiedException(TicketId);
         }
 
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
         VerificationStatus = CrmVerificationStatus.Verified;
-
-        // The SLA clock starts here for a provisional ticket, not at
-        // creation. MVP-ERD.md §2.15 describes TicketSlaInstances as
-        // "Required (≥1 from creation)", which FR-TKT-09 contradicts for
-        // this path — an unverified ticket "does not start its SLA clock",
-        // and both due columns are NOT NULL, so there is no value a
-        // from-creation row could legitimately carry. Reconciled the same
-        // way this type already reconciles its nullable Unit/Contact FKs
-        // (see the type's own remarks): the SLA period opens at the moment
-        // the ticket becomes Verified. The calling application service opens
-        // it in the same transaction as this call.
-        SlaState = SlaState.Running;
     }
 
     /// <summary>MVP-API-Contracts.md §3.5 / §2.12 — sets the current owner and appends a superseding <see cref="TicketAssignment"/> row is the caller's job (this method only updates the ticket's own denormalized pointer).</summary>

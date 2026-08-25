@@ -1,20 +1,31 @@
 namespace TigerCS.Application.Modules.Ticketing.Dto;
 
-/// <summary>The unconditional first step of intake (MVP-ERD.md §2.9) — created before verification, for every interaction, unit-related or not, so none is ever silently lost.</summary>
+/// <summary>The unconditional first step of intake (MVP-ERD.md §2.9) — created before customer lookup, for every interaction, unit-related or not, so none is ever silently lost.</summary>
 /// <param name="ChannelId">Required. One of Phone, AppOrWebsite, WhatsAppOrLiveChat, SocialMediaDirectMessage, FaceToFaceKiosk. Case-sensitive. MVP scope is Phone.</param>
+/// <param name="PhoneNumber">Required. The identifier customer lookup searches CRM/PACT/Tasleeh with. Preserved exactly as entered, regardless of what the lookup finds.</param>
+/// <param name="DepartmentId">
+/// Optional. When given, customer lookup searches only the source(s)
+/// configured for this Department instead of CRM+PACT+Tasleeh. Never a
+/// promotion gate — a Department-scoped intake still promotes to a ticket
+/// exactly like any other.
+/// </param>
 /// <param name="IsUnitRelated">Required. Whether the interaction concerns a specific unit.</param>
 /// <param name="RawUnitNumberEntered">Required when <paramref name="IsUnitRelated"/> is true, and must be omitted when it is false — exactly as the caller typed it, before any CRM lookup.</param>
 /// <param name="PriorityHint">Optional. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
 public sealed record CreateIntakeRecordRequestDto(
     string ChannelId,
+    string PhoneNumber,
+    int? DepartmentId,
     bool IsUnitRelated,
     string? RawUnitNumberEntered,
     byte? PriorityHint);
 
 /// <summary>A recorded intake (MVP-ERD.md §2.9).</summary>
-/// <param name="IntakeRecordId">The intake record. Pass this to ticket creation.</param>
+/// <param name="IntakeRecordId">The intake record. Pass this to customer lookup and ticket creation.</param>
 /// <param name="ChannelId">The channel the interaction arrived on.</param>
 /// <param name="ReceivedAtUtc">When the interaction was recorded, in UTC.</param>
+/// <param name="PhoneNumber">The identifier customer lookup searches CRM/PACT/Tasleeh with.</param>
+/// <param name="DepartmentId">When set, narrows customer lookup to this Department's configured source(s).</param>
 /// <param name="IsUnitRelated">Whether the interaction concerns a specific unit.</param>
 /// <param name="RawUnitNumberEntered">The unit number as the caller gave it, before any CRM lookup.</param>
 /// <param name="PriorityHint">The agent's priority hint, if given. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
@@ -24,6 +35,8 @@ public sealed record IntakeRecordResponseDto(
     long IntakeRecordId,
     string ChannelId,
     DateTime ReceivedAtUtc,
+    string PhoneNumber,
+    int? DepartmentId,
     bool IsUnitRelated,
     string? RawUnitNumberEntered,
     byte? PriorityHint,
@@ -32,10 +45,14 @@ public sealed record IntakeRecordResponseDto(
 
 public enum IntakeRecordOutcome
 {
-    Success
+    Success,
+
+    /// <summary>DepartmentId was supplied but does not reference a real Department.</summary>
+    DepartmentNotFound
 }
 
 public sealed record IntakeRecordResult(IntakeRecordOutcome Outcome, IntakeRecordResponseDto? Response = null)
 {
     public static IntakeRecordResult Success(IntakeRecordResponseDto response) => new(IntakeRecordOutcome.Success, response);
+    public static IntakeRecordResult Failure(IntakeRecordOutcome outcome) => new(outcome);
 }

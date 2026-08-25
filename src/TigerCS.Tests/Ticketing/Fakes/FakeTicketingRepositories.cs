@@ -56,6 +56,22 @@ public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
     }
 }
 
+public sealed class FakeDepartmentCustomerLookupSourceRepository : IDepartmentCustomerLookupSourceRepository
+{
+    private readonly Dictionary<int, List<CustomerLookupSource>> _sourcesByDepartmentId = [];
+
+    public FakeDepartmentCustomerLookupSourceRepository Seed(int departmentId, params CustomerLookupSource[] sources)
+    {
+        _sourcesByDepartmentId[departmentId] = sources.ToList();
+        return this;
+    }
+
+    public Task<IReadOnlyCollection<CustomerLookupSource>> GetSourcesForDepartmentAsync(
+        int departmentId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<CustomerLookupSource>>(
+            _sourcesByDepartmentId.GetValueOrDefault(departmentId, []));
+}
+
 public sealed class FakeTicketRepository : ITicketRepository
 {
     private readonly Dictionary<long, Ticket> _tickets = [];

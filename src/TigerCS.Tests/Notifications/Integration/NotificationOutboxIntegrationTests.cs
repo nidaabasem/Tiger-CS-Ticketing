@@ -55,24 +55,22 @@ public class NotificationOutboxIntegrationTests : IClassFixture<TigerCsApiFactor
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
+        // Resolved directly via the CRM unit-lookup endpoints (unchanged),
+        // not customer lookup, so this test can pick a specific contact by
+        // index (email vs phone channel) rather than whichever one the
+        // intake's own phone number happens to match.
         var unit = await (await client.GetAsync("/api/crm/units/CRM-UNIT-1001"))
             .Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
         var contacts = await (await client.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts"))
             .Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
 
-        var session = await (await client.PostAsJsonAsync(
-                "/api/verification-sessions",
-                new CreateVerificationSessionRequestDto(
-                    unit!.UnitReferenceId, contacts![contactIndex].ContactReferenceId, true, "ManualAgentConfirmation")))
-            .Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
-
         var createResponse = await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId,
+            new CreateTicketRequestDto(
+                intake!.IntakeRecordId, unit!.UnitReferenceId, contacts![contactIndex].ContactReferenceId, categoryId,
                 (byte)PriorityLevel.High, "AC unit not cooling"));
 
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);

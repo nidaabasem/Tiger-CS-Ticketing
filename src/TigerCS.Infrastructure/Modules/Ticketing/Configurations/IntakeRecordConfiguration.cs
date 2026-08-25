@@ -18,6 +18,7 @@ public class IntakeRecordConfiguration : IEntityTypeConfiguration<IntakeRecord>
 
         builder.Property(i => i.ChannelId).IsRequired();
         builder.Property(i => i.ReceivedAtUtc).IsRequired();
+        builder.Property(i => i.PhoneNumber).HasMaxLength(30).IsRequired();
         builder.Property(i => i.IsUnitRelated).IsRequired();
         builder.Property(i => i.RawUnitNumberEntered).HasMaxLength(50);
         builder.Property(i => i.CrmVerificationStatus).IsRequired();
@@ -26,6 +27,14 @@ public class IntakeRecordConfiguration : IEntityTypeConfiguration<IntakeRecord>
         builder.HasOne<Priority>()
             .WithMany()
             .HasForeignKey(i => i.PriorityHint)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Optional — narrows customer lookup to this Department's configured
+        // source(s) (DepartmentCustomerLookupSource); never a promotion gate.
+        builder.HasOne<Department>()
+            .WithMany()
+            .HasForeignKey(i => i.DepartmentId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 

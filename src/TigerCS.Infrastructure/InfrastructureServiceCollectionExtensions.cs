@@ -140,6 +140,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICategoryRepository, CategoryRepository>();
         services.AddScoped<IPriorityRepository, PriorityRepository>();
         services.AddScoped<IIntakeRecordRepository, IntakeRecordRepository>();
+        services.AddScoped<IDepartmentCustomerLookupSourceRepository, DepartmentCustomerLookupSourceRepository>();
         services.AddScoped<ITicketRepository, TicketRepository>();
         services.AddScoped<ITicketRequesterSnapshotRepository, TicketRequesterSnapshotRepository>();
         services.AddScoped<ITicketStatusHistoryRepository, TicketStatusHistoryRepository>();
@@ -148,6 +149,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketNoteRepository, TicketNoteRepository>();
         services.AddScoped<ITicketingUnitOfWork, TicketingUnitOfWork>();
         services.AddScoped<IntakeRecordAppService>();
+        services.AddScoped<CustomerLookupAppService>();
         services.AddScoped<TicketCreationAppService>();
         services.AddScoped<TicketQueryAppService>();
         services.AddScoped<TicketAssignmentAppService>();

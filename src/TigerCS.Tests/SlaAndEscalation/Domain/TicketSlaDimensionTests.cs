@@ -211,23 +211,23 @@ public class TicketSlaDimensionTests
         Assert.Equal(SlaState.Met, ticket.SlaState);
     }
 
-    /// <summary>FR-TKT-09: a ticket created provisionally during a CRM outage has not started its SLA clock.</summary>
+    /// <summary>Business-rule change: customer lookup no longer gates ticket creation, so an unverified ticket's SLA clock still starts immediately — nothing is pending on an external system.</summary>
     [Fact]
-    public void ProvisionalTicket_StartsWithItsClockUnstarted()
+    public void UnverifiedTicket_StartsWithItsClockRunning()
     {
-        var ticket = Ticket.CreateProvisional(
+        var ticket = Ticket.CreateUnverified(
             "TG-CS-20260823-0002", departmentId: 2, categoryId: 5,
             (byte)PriorityLevel.Critical, "Flooding reported", CreatedAt);
 
-        Assert.Equal(SlaState.Paused, ticket.SlaState);
-        Assert.Equal(CrmVerificationStatus.PendingCrmVerification, ticket.VerificationStatus);
+        Assert.Equal(SlaState.Running, ticket.SlaState);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
     }
 
-    /// <summary>Reconciliation is where a provisional ticket's clock starts.</summary>
+    /// <summary>Reconciling an unverified ticket links the unit/contact but leaves its already-running clock untouched.</summary>
     [Fact]
-    public void ReconciledTicket_StartsItsClock()
+    public void ReconciledTicket_LeavesItsAlreadyRunningClockUntouched()
     {
-        var ticket = Ticket.CreateProvisional(
+        var ticket = Ticket.CreateUnverified(
             "TG-CS-20260823-0002", departmentId: 2, categoryId: 5,
             (byte)PriorityLevel.Critical, "Flooding reported", CreatedAt);
 

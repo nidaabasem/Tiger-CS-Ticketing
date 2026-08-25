@@ -2,18 +2,11 @@ namespace TigerCS.Domain.Modules.Ticketing;
 
 public abstract class TicketException(string message) : Exception(message);
 
-/// <summary>ISSUE-006 (approved): only Critical/High may proceed as a provisional ticket during a CRM outage — Medium/Low must remain queued in their IntakeRecord instead (see IntakeRecord.MarkPendingCrmVerification).</summary>
-public sealed class ProvisionalTicketRequiresCriticalOrHighException(byte priorityId)
-    : TicketException($"PriorityId {priorityId} is not Critical/High — provisional ticket creation is not permitted; the request must remain pending CRM verification.")
-{
-    public byte PriorityId { get; } = priorityId;
-}
-
-public sealed class TicketNotPendingCrmVerificationException(long ticketId, CrmVerificationStatus actualStatus)
-    : TicketException($"Ticket {ticketId} cannot be reconciled — VerificationStatus is {actualStatus}, not PendingCrmVerification.")
+/// <summary>Ticket.ReconcileVerification links a unit/contact pair onto a ticket that does not have one yet — a ticket already Verified has nothing left to reconcile.</summary>
+public sealed class TicketAlreadyVerifiedException(long ticketId)
+    : TicketException($"Ticket {ticketId} is already Verified — it has no unit/contact left to reconcile.")
 {
     public long TicketId { get; } = ticketId;
-    public CrmVerificationStatus ActualStatus { get; } = actualStatus;
 }
 
 /// <summary>Solution-Analysis.md §5.6 transition table / ADR-0008: the requested TicketStatus is not reachable from the ticket's current TicketStatus.</summary>

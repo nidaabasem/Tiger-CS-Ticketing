@@ -1,25 +1,27 @@
 namespace TigerCS.Application.Modules.Ticketing.Dto;
 
-/// <summary>The normal path (FR-CH-01/FR-VER-02, MVP-API-Contracts.md §3.1): create a ticket from an already-confirmed VerificationSession, and link it back to the IntakeRecord that preceded it (MVP-ERD.md §2.9).</summary>
-/// <param name="IntakeRecordId">Required. The unit-related intake record to promote. It must not already be linked to a ticket.</param>
-/// <param name="VerificationSessionId">Required. A confirmed, unexpired, not-yet-consumed session owned by the caller.</param>
+/// <summary>
+/// Create a ticket from an IntakeRecord. Customer information from CRM,
+/// PACT, or Tasleeh is attached when available; lack of a match does not
+/// prevent ticket creation — Ticket Category is the only thing every ticket
+/// requires (business-rule change: customer lookup is enrichment, never a
+/// creation gate, for unit-related and non-unit-related intakes alike).
+/// </summary>
+/// <param name="IntakeRecordId">Required. The intake record to promote. It must not already be linked to a ticket.</param>
+/// <param name="UnitReferenceId">
+/// Optional. The local reference id of a unit the agent selected from a
+/// customer-lookup match (<c>GET /api/intake-records/{id}/customer-lookup</c>).
+/// Must be supplied together with <paramref name="ContactReferenceId"/> or
+/// not at all — never one without the other.
+/// </param>
+/// <param name="ContactReferenceId">Optional. The matching contact's local reference id — see <paramref name="UnitReferenceId"/>.</param>
 /// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
 /// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
 /// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
-public sealed record CreateTicketFromVerificationRequestDto(
+public sealed record CreateTicketRequestDto(
     long IntakeRecordId,
-    Guid VerificationSessionId,
-    int CategoryId,
-    byte PriorityId,
-    string RequestSummary);
-
-/// <summary>ISSUE-006's approved fallback: Critical/High proceeds immediately as a provisional ticket while the CRM is unreachable; there is no VerificationSession to consume.</summary>
-/// <param name="IntakeRecordId">Required. The unit-related intake record to promote. It must not already be linked to a ticket.</param>
-/// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
-/// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low. Critical/High proceed immediately; Medium/Low are answered with 200 and remain queued.</param>
-/// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
-public sealed record CreateProvisionalTicketRequestDto(
-    long IntakeRecordId,
+    int? UnitReferenceId,
+    int? ContactReferenceId,
     int CategoryId,
     byte PriorityId,
     string RequestSummary);
@@ -29,8 +31,8 @@ public sealed record CreateProvisionalTicketRequestDto(
 /// <param name="TicketNumber">The human-facing ticket number.</param>
 /// <param name="OriginatingDepartmentId">The department the ticket was raised in.</param>
 /// <param name="CurrentDepartmentId">The department that currently holds it.</param>
-/// <param name="UnitReferenceId">The verified unit, or null for a provisional ticket.</param>
-/// <param name="ContactReferenceId">The verified contact, or null for a provisional ticket.</param>
+/// <param name="UnitReferenceId">The matched unit, or null when no customer match was linked at creation.</param>
+/// <param name="ContactReferenceId">The matched contact, or null when no customer match was linked at creation.</param>
 /// <param name="CategoryId">The ticket's category.</param>
 /// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
@@ -61,17 +63,19 @@ public enum TicketCreationOutcome
 {
     Success,
 
-    /// <summary>ISSUE-006's "Medium/Low remain queued" outcome — no ticket was created; the IntakeRecord now awaits CRM reconciliation instead.</summary>
-    QueuedPendingVerification,
-
     IntakeRecordNotFound,
     IntakeRecordAlreadyLinked,
-    IntakeRecordNotUnitRelated,
-    VerificationSessionNotFound,
-    VerificationSessionForbidden,
-    VerificationSessionNotConfirmed,
-    VerificationSessionAlreadyConsumed,
-    VerificationSessionExpired,
+
+    /// <summary>UnitReferenceId and ContactReferenceId were not both supplied or both omitted — a customer match is always a unit+contact pair, never one alone.</summary>
+    UnitOrContactReferenceMismatch,
+
+    /// <summary>UnitReferenceId did not resolve to a real, previously cached unit reference.</summary>
+    UnitReferenceNotFound,
+
+    /// <summary>ContactReferenceId did not resolve to a real, previously cached contact reference.</summary>
+    ContactReferenceNotFound,
+
+    /// <summary>Ticket Category is required for every ticket.</summary>
     CategoryNotFound,
     PriorityNotFound,
 
@@ -82,10 +86,8 @@ public enum TicketCreationOutcome
     TicketNumberCollision
 }
 
-public sealed record TicketCreationResult(TicketCreationOutcome Outcome, TicketResponseDto? Response = null, IntakeRecordResponseDto? QueuedIntakeRecord = null)
+public sealed record TicketCreationResult(TicketCreationOutcome Outcome, TicketResponseDto? Response = null)
 {
     public static TicketCreationResult Success(TicketResponseDto response) => new(TicketCreationOutcome.Success, response);
-    public static TicketCreationResult QueuedPendingVerification(IntakeRecordResponseDto intakeRecord) =>
-        new(TicketCreationOutcome.QueuedPendingVerification, QueuedIntakeRecord: intakeRecord);
     public static TicketCreationResult Failure(TicketCreationOutcome outcome) => new(outcome);
 }

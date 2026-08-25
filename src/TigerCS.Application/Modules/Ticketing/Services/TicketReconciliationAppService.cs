@@ -1,7 +1,6 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
-using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.Ticketing;
@@ -9,18 +8,16 @@ using TigerCS.Domain.Modules.Ticketing;
 namespace TigerCS.Application.Modules.Ticketing.Services;
 
 /// <summary>
-/// This increment's item 6 — reconciles a provisional (Critical/High,
-/// ISSUE-006) ticket once the CRM is reachable again. No merged API
-/// contract predates provisional tickets, so this endpoint's shape is
-/// designed in this increment; <see cref="Ticket.ReconcileVerification"/>'s
-/// own remarks explicitly anticipated this ("the calling application
-/// service does both [snapshot + status change] in the same transaction —
-/// see TicketCreationAppService.CreateFromVerificationSessionAsync for the
-/// pattern this method's future caller must mirror"). This service mirrors
-/// that pattern, plus a safety check that pattern didn't need: confirming
-/// the newly-confirmed session actually corresponds to the same real-world
-/// interaction the provisional ticket was raised from, not a different
-/// unit the reconciling agent happened to have open.
+/// Links a confirmed CRM unit/contact match onto a ticket that did not have
+/// one at creation — the "later enrichment" path for a ticket that started
+/// <see cref="CrmVerificationStatus.Unverified"/> (business-rule change:
+/// customer lookup no longer gates creation, so an agent who created a
+/// ticket without a match — none found, a source was down, or they simply
+/// didn't look — can attach one afterward once it becomes available, via a
+/// confirmed <see cref="VerificationSession"/>). Includes a safety check:
+/// confirming the newly-confirmed session actually corresponds to the same
+/// real-world interaction the ticket was raised from, not a different unit
+/// the reconciling agent happened to have open.
 /// </summary>
 public sealed class TicketReconciliationAppService(
     ITicketRepository ticketRepository,
@@ -30,7 +27,6 @@ public sealed class TicketReconciliationAppService(
     ITicketStatusHistoryRepository statusHistoryRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
-    SlaDueDateService slaDueDateService,
     TimeProvider timeProvider)
 {
     public async Task<TicketMutationResult> ReconcileAsync(
@@ -45,9 +41,9 @@ public sealed class TicketReconciliationAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        if (ticket.VerificationStatus != CrmVerificationStatus.PendingCrmVerification)
+        if (ticket.VerificationStatus == CrmVerificationStatus.Verified)
         {
-            return TicketMutationResult.Failure(TicketMutationOutcome.NotPendingCrmVerification);
+            return TicketMutationResult.Failure(TicketMutationOutcome.AlreadyVerified);
         }
 
         var session = await verificationSessionRepository.GetByIdAsync(request.VerificationSessionId, cancellationToken);
@@ -87,15 +83,17 @@ public sealed class TicketReconciliationAppService(
 
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
+        var previousVerificationStatus = ticket.VerificationStatus;
+
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
         try
         {
             ticket.ReconcileVerification(session.UnitReferenceId, session.ContactReferenceId);
         }
-        catch (TicketNotPendingCrmVerificationException)
+        catch (TicketAlreadyVerifiedException)
         {
-            return TicketMutationResult.Failure(TicketMutationOutcome.NotPendingCrmVerification);
+            return TicketMutationResult.Failure(TicketMutationOutcome.AlreadyVerified);
         }
 
         session.Consume(ticketId, now);
@@ -116,29 +114,19 @@ public sealed class TicketReconciliationAppService(
         await statusHistoryRepository.AddAsync(
             new TicketStatusHistory(
                 ticketId, TicketStatusDimension.VerificationStatus,
-                (byte)CrmVerificationStatus.PendingCrmVerification, (byte)CrmVerificationStatus.Verified,
+                (byte)previousVerificationStatus, (byte)CrmVerificationStatus.Verified,
                 callerEmployeeId, actorIsSystem: false, note: null, correlationId, now),
             cancellationToken);
 
-        await statusHistoryRepository.AddAsync(
-            new TicketStatusHistory(
-                ticketId, TicketStatusDimension.SlaState,
-                (byte)SlaState.Paused, (byte)ticket.SlaState,
-                callerEmployeeId, actorIsSystem: false,
-                note: "SLA clock started at CRM reconciliation (FR-TKT-09).", correlationId, now),
-            cancellationToken);
-
-        // The SLA clock starts here, not at creation, for this one path.
-        // FR-TKT-09 keeps an unverified ticket unclocked, so a provisional
-        // ticket has carried no TicketSlaInstance until now; `now` is the
-        // moment it became Verified and is therefore its clock-start event.
-        // See Ticket.ReconcileVerification's remarks for how this reconciles
-        // with MVP-ERD.md §2.15's "Required (≥1 from creation)".
-        await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
-
+        // No SlaState change or new TicketSlaInstance here — business-rule
+        // change: every ticket's SLA clock now starts at creation
+        // (Ticket.CreateUnverified sets SlaState.Running immediately, and
+        // TicketCreationAppService always opens the initial period), so a
+        // ticket being reconciled here already has one running. Reconciling
+        // only ever links the unit/contact and flips VerificationStatus.
         await auditWriter.WriteAsync(
             callerEmployeeId, "Reconcile", "Ticket", ticketId.ToString(),
-            beforeValue: "VerificationStatus=PendingCrmVerification", afterValue: "VerificationStatus=Verified",
+            beforeValue: $"VerificationStatus={previousVerificationStatus}", afterValue: "VerificationStatus=Verified",
             correlationId, cancellationToken);
         await auditWriter.WriteAsync(
             callerEmployeeId, "ConsumeVerificationSession", "VerificationSession", session.VerificationSessionId.ToString(),

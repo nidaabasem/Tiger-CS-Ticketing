@@ -135,6 +135,7 @@ jobs:
             "SlaPolicies" "BusinessCalendars" "BusinessCalendarWorkingDays" "Holidays" \
             "TicketSlaInstances" "TicketEscalations" "IdempotencyRecords" \
             "OutboxMessages" "Notifications" \
+            "DepartmentCustomerLookupSources" \
             "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
@@ -146,7 +147,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 33 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables."
+          echo "Table list matches exactly: 34 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables. DepartmentCustomerLookupSources maps a Department to the customer-lookup source(s) CustomerLookupAppService searches for it."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -260,16 +261,19 @@ jobs:
           # increment's design review confirmed: UnitReferenceId/
           # ContactReferenceId are nullable (the provisional-ticket
           # relaxation), every other Tickets FK/required field is NOT NULL,
-          # and IntakeRecords.RawUnitNumberEntered/PriorityHint/LinkedTicketId
-          # are nullable while ChannelId/IsUnitRelated/CrmVerificationStatus/
-          # CreatedByEmployeeId are not.
+          # and IntakeRecords.RawUnitNumberEntered/PriorityHint/LinkedTicketId/
+          # DepartmentId are nullable while ChannelId/PhoneNumber/
+          # IsUnitRelated/CrmVerificationStatus/CreatedByEmployeeId are not.
+          # DepartmentId is optional — it only narrows which customer-lookup
+          # source(s) CustomerLookupAppService searches, never a promotion gate.
           actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
             -Q "SET NOCOUNT ON; SELECT TABLE_NAME + '.' + COLUMN_NAME + '=' + IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ('Tickets','IntakeRecords') ORDER BY TABLE_NAME, COLUMN_NAME;" | sed '/^$/d' | tr -d ' ')
           echo "--- actual nullability ---"
           echo "$actual"
           expected=$(printf '%s\n' \
             "IntakeRecords.ChannelId=NO" "IntakeRecords.CreatedByEmployeeId=NO" "IntakeRecords.CrmVerificationStatus=NO" \
-            "IntakeRecords.IntakeRecordId=NO" "IntakeRecords.IsUnitRelated=NO" "IntakeRecords.LinkedTicketId=YES" \
+            "IntakeRecords.DepartmentId=YES" "IntakeRecords.IntakeRecordId=NO" "IntakeRecords.IsUnitRelated=NO" \
+            "IntakeRecords.LinkedTicketId=YES" "IntakeRecords.PhoneNumber=NO" \
             "IntakeRecords.PriorityHint=YES" "IntakeRecords.RawUnitNumberEntered=YES" "IntakeRecords.ReceivedAtUtc=NO" \
             "Tickets.AcknowledgementSentAtUtc=YES" "Tickets.CategoryId=NO" "Tickets.ContactReferenceId=YES" \
             "Tickets.CreatedAtUtc=NO" "Tickets.CurrentDepartmentId=NO" "Tickets.CurrentOwnerEmployeeId=YES" \
@@ -286,7 +290,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (29 columns)."
+          echo "Column nullability matches the confirmed design exactly (32 columns)."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |
@@ -326,9 +330,12 @@ jobs:
           # be NO_ACTION (Restrict): this schema never cascades a delete
           # into Tickets/IntakeRecords/history, consistent with the 7-year
           # retention posture carried through every prior architecture
-          # document (MVP-ERD.md §3).
+          # document (MVP-ERD.md §3). DepartmentCustomerLookupSources ->
+          # Departments and IntakeRecords -> Departments (DepartmentId, the
+          # optional customer-lookup-source scoping FK) follow the same
+          # posture.
           actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
-            -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(parent_object_id) + '->' + OBJECT_NAME(referenced_object_id) + ':' + delete_referential_action_desc FROM sys.foreign_keys WHERE OBJECT_NAME(parent_object_id) IN ('Tickets','IntakeRecords','TicketRequesterSnapshots','TicketStatusHistory','Categories','TicketAssignments','TicketResolutions','TicketNotes') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
+            -Q "SET NOCOUNT ON; SELECT OBJECT_NAME(parent_object_id) + '->' + OBJECT_NAME(referenced_object_id) + ':' + delete_referential_action_desc FROM sys.foreign_keys WHERE OBJECT_NAME(parent_object_id) IN ('Tickets','IntakeRecords','TicketRequesterSnapshots','TicketStatusHistory','Categories','TicketAssignments','TicketResolutions','TicketNotes','DepartmentCustomerLookupSources') ORDER BY 1;" | sed '/^$/d' | tr -d ' ')
           echo "--- foreign keys (child->parent:delete-action) ---"
           echo "$actual"
           fk_count=$(echo "$actual" | grep -c '.' || true)
@@ -339,8 +346,8 @@ jobs:
             echo "$non_no_action"
             exit 1
           fi
-          if [ "$fk_count" -ne 25 ]; then
-            echo "::error::Expected exactly 25 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes, found $fk_count."
+          if [ "$fk_count" -ne 27 ]; then
+            echo "::error::Expected exactly 27 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes/DepartmentCustomerLookupSources, found $fk_count."
             exit 1
           fi
           echo "All foreign keys on the new Ticketing tables are NO_ACTION (Restrict), as required."

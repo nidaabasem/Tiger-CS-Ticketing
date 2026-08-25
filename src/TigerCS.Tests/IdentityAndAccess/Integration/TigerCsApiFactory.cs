@@ -174,6 +174,19 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         return category.CategoryId;
     }
 
+    /// <summary>Configures a Department's customer-lookup source(s) directly (bypassing the app services — test setup, not the thing under test).</summary>
+    public async Task SeedDepartmentCustomerLookupSourceAsync(int departmentId, params CustomerLookupSource[] sources)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        foreach (var source in sources)
+        {
+            db.DepartmentCustomerLookupSources.Add(new DepartmentCustomerLookupSource(departmentId, source));
+        }
+
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>
     /// Seeds the fixed MVP priority set and its SLA reference data
     /// (idempotent), needed since this factory does not run DevSeedData.

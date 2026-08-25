@@ -1,4 +1,5 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.Ticketing;
@@ -7,12 +8,13 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 
 /// <summary>
 /// Item 1 of this increment's scope: capture every customer interaction as
-/// an IntakeRecord before any verification is attempted, so no request is
+/// an IntakeRecord before any customer lookup is attempted, so no request is
 /// ever silently lost (MVP-ERD.md §2.9) — regardless of whether it turns
-/// out to be unit-related (item 2) or ever becomes a ticket at all.
+/// out to be unit-related or ever becomes a ticket at all.
 /// </summary>
 public sealed class IntakeRecordAppService(
     IIntakeRecordRepository intakeRecordRepository,
+    IDepartmentRepository departmentRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider)
@@ -20,11 +22,18 @@ public sealed class IntakeRecordAppService(
     public async Task<IntakeRecordResult> CreateAsync(
         Guid createdByEmployeeId, CreateIntakeRecordRequestDto request, CancellationToken cancellationToken = default)
     {
+        if (request.DepartmentId is { } departmentId
+            && await departmentRepository.GetByIdAsync(departmentId, cancellationToken) is null)
+        {
+            return IntakeRecordResult.Failure(IntakeRecordOutcome.DepartmentNotFound);
+        }
+
         var channel = Enum.Parse<Channel>(request.ChannelId);
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
         var intakeRecord = new IntakeRecord(
-            channel, request.IsUnitRelated, request.RawUnitNumberEntered, request.PriorityHint, createdByEmployeeId, now);
+            channel, request.PhoneNumber, request.DepartmentId, request.IsUnitRelated,
+            request.RawUnitNumberEntered, request.PriorityHint, createdByEmployeeId, now);
 
         // Both SaveChanges calls below share one real transaction (senior
         // review item 11 — audit entries must be atomic with the business
@@ -56,6 +65,8 @@ public sealed class IntakeRecordAppService(
         intakeRecord.IntakeRecordId,
         intakeRecord.ChannelId.ToString(),
         intakeRecord.ReceivedAtUtc,
+        intakeRecord.PhoneNumber,
+        intakeRecord.DepartmentId,
         intakeRecord.IsUnitRelated,
         intakeRecord.RawUnitNumberEntered,
         intakeRecord.PriorityHint,

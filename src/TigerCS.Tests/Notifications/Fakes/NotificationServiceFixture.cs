@@ -70,12 +70,12 @@ public sealed class NotificationServiceFixture
         return ticket;
     }
 
-    /// <summary>A provisional (CRM-outage, ISSUE-006) ticket — no requester snapshot exists for it at all.</summary>
-    public async Task<Ticket> SeedProvisionalTicketAsync(string ticketNumber = "TG-CS-20260822-0002")
+    /// <summary>An unverified ticket (no customer match at creation) — no requester snapshot exists for it at all.</summary>
+    public async Task<Ticket> SeedUnverifiedTicketAsync(string ticketNumber = "TG-CS-20260822-0002")
     {
         var department = Departments.AddDepartment("Facilities", "FM");
 
-        var ticket = Ticket.CreateProvisional(
+        var ticket = Ticket.CreateUnverified(
             ticketNumber, department.DepartmentId, categoryId: 1, priorityId: 1,
             "Lift stuck between floors.", Time.GetUtcNow().UtcDateTime);
         await Tickets.AddAsync(ticket);

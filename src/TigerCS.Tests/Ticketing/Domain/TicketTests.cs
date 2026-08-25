@@ -24,34 +24,48 @@ public class TicketTests
     }
 
     [Fact]
-    public void CreateProvisional_CriticalPriority_SucceedsWithNoUnitOrContactReference()
+    public void CreateUnverified_SetsUnverifiedStatusAndRunningSlaWithNoUnitOrContactReference()
     {
-        var ticket = Ticket.CreateProvisional(
+        // Business-rule change: customer lookup no longer gates ticket
+        // creation, for any priority — CreateUnverified is now the single
+        // "no resolved unit/contact pair yet" path, used whether the intake
+        // is not unit-related, the lookup found nothing, or a source failed.
+        var ticket = Ticket.CreateUnverified(
             "TG-CS-20260820-0002", departmentId: 2, categoryId: 5,
             priorityId: (byte)PriorityLevel.Critical, "Flooding reported", DateTime.UtcNow);
 
-        Assert.Equal(CrmVerificationStatus.PendingCrmVerification, ticket.VerificationStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
         Assert.Null(ticket.UnitReferenceId);
         Assert.Null(ticket.ContactReferenceId);
-        // Not yet SLA-clocked (FR-TKT-09) — no due date exists to run against yet.
-        Assert.Equal(SlaState.Paused, ticket.SlaState);
+        // Nothing pending any more — the clock starts at creation regardless of priority.
+        Assert.Equal(SlaState.Running, ticket.SlaState);
         Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
     }
 
-    [Theory]
-    [InlineData(PriorityLevel.Medium)]
-    [InlineData(PriorityLevel.Low)]
-    public void CreateProvisional_MediumOrLowPriority_Throws_IssueSixOnlyAllowsCriticalOrHigh(PriorityLevel level)
+    [Fact]
+    public void CreateUnverified_MediumPriority_SucceedsWithNoUnitOrContactReference()
     {
-        Assert.Throws<ProvisionalTicketRequiresCriticalOrHighException>(() =>
-            Ticket.CreateProvisional(
-                "TG-CS-20260820-0003", departmentId: 2, categoryId: 5, (byte)level, "Leaking tap", DateTime.UtcNow));
+        // ISSUE-006's Critical/High-only restriction is gone: any priority
+        // creates a ticket the same way now — no external system's
+        // availability changes that.
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260820-0006", departmentId: 2, categoryId: 5,
+            priorityId: (byte)PriorityLevel.Medium, "General question about billing", DateTime.UtcNow);
+
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
+        Assert.Equal(EscalationLevel.None, ticket.EscalationLevel);
+        Assert.Equal(SlaState.Running, ticket.SlaState);
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.Equal(2, ticket.OriginatingDepartmentId);
+        Assert.Equal(2, ticket.CurrentDepartmentId);
     }
 
     [Fact]
-    public void ReconcileVerification_OnProvisionalTicket_PopulatesReferencesAndMarksVerified()
+    public void ReconcileVerification_OnUnverifiedTicket_PopulatesReferencesAndMarksVerified()
     {
-        var ticket = Ticket.CreateProvisional(
+        var ticket = Ticket.CreateUnverified(
             "TG-CS-20260820-0004", departmentId: 2, categoryId: 5,
             priorityId: (byte)PriorityLevel.Critical, "Flooding reported", DateTime.UtcNow);
 
@@ -60,6 +74,7 @@ public class TicketTests
         Assert.Equal(CrmVerificationStatus.Verified, ticket.VerificationStatus);
         Assert.Equal(30, ticket.UnitReferenceId);
         Assert.Equal(40, ticket.ContactReferenceId);
+        // Unaffected — the clock was already running from creation.
         Assert.Equal(SlaState.Running, ticket.SlaState);
     }
 
@@ -70,7 +85,7 @@ public class TicketTests
             "TG-CS-20260820-0005", departmentId: 2, unitReferenceId: 10, contactReferenceId: 20,
             categoryId: 5, priorityId: (byte)PriorityLevel.High, "AC not cooling", DateTime.UtcNow);
 
-        Assert.Throws<TicketNotPendingCrmVerificationException>(() => ticket.ReconcileVerification(30, 40));
+        Assert.Throws<TicketAlreadyVerifiedException>(() => ticket.ReconcileVerification(30, 40));
     }
 
     private static Ticket NewOpenTicket() =>

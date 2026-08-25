@@ -14,39 +14,39 @@ using TigerCS.Domain.Modules.Ticketing;
 namespace TigerCS.Application.Modules.Ticketing.Services;
 
 /// <summary>
-/// Items 3–8 of this increment's scope: create a ticket either (a) from an
-/// already-confirmed <see cref="VerificationSession"/> for a unit-related
-/// request (the normal path, FR-CH-01/FR-VER-02), or (b) as an approved
-/// provisional ticket for a Critical/High request when the CRM is
-/// unavailable (ISSUE-006, Management-Decisions.md — approved as
-/// recommended). Medium/Low requests during an outage are never turned into
-/// a ticket here — they remain queued on their IntakeRecord instead
-/// (<see cref="TicketCreationOutcome.QueuedPendingVerification"/>).
+/// Business-rule change: a single ticket-creation path for every IntakeRecord
+/// — unit-related or not. Customer information from CRM, PACT, or Tasleeh is
+/// attached when the agent already resolved a match via
+/// <see cref="CustomerLookupAppService"/> (<see cref="CreateTicketRequestDto.UnitReferenceId"/>/
+/// <see cref="CreateTicketRequestDto.ContactReferenceId"/>); lack of a match
+/// never prevents ticket creation. The only thing every ticket requires is a
+/// valid, active Ticket Category. This method inspects the request and the
+/// IntakeRecord itself and creates the appropriate <see cref="Ticket"/>
+/// internally — <see cref="Ticket.CreateVerified"/> when a resolved
+/// unit/contact pair is supplied, <see cref="Ticket.CreateUnverified"/>
+/// otherwise — rather than exposing a separate endpoint per case.
 ///
 /// <para>
-/// <b>Two SaveChanges calls per path, in one real transaction.</b> Both
+/// <b>Two SaveChanges calls, in one real transaction.</b> Both
 /// <see cref="Ticket"/> and <see cref="IntakeRecord"/> use database-generated
 /// identity PKs (bigint), so a <see cref="Ticket"/>'s real <c>TicketId</c> is
-/// not known until its own insert commits — but consuming the session,
-/// linking the IntakeRecord, and writing the requester snapshot/status-
-/// history/audit rows all need that real ID. The ticket is therefore
-/// inserted alone first; everything else commits in a second call — both
-/// wrapped in one <see cref="ITicketingUnitOfWork.BeginTransactionAsync"/>
-/// scope, so a failure in the second call (a lost optimistic-concurrency
-/// race on session consumption, <see cref="VerificationSessionConcurrentlyConsumedException"/>,
-/// or any other failure) rolls back the first call's ticket insert too,
-/// rather than leaving an orphaned <c>Ticket</c> row with no snapshot/audit
-/// trail behind. A <c>TicketNumber</c> unique-index collision on the first
-/// call (<see cref="DuplicateWriteException"/>) is translated to
+/// not known until its own insert commits — but linking the IntakeRecord and
+/// writing the requester snapshot/status-history/audit rows all need that
+/// real ID. The ticket is therefore inserted alone first; everything else
+/// commits in a second call — both wrapped in one
+/// <see cref="ITicketingUnitOfWork.BeginTransactionAsync"/> scope. A
+/// <c>TicketNumber</c> unique-index collision on the first call
+/// (<see cref="DuplicateWriteException"/>) is translated to
 /// <see cref="TicketCreationOutcome.TicketNumberCollision"/> — a clean,
-/// retryable <c>409</c> rather than an unhandled exception; nothing has
-/// been touched yet at that point, so retrying the whole request is always
+/// retryable <c>409</c> rather than an unhandled exception; nothing has been
+/// touched yet at that point, so retrying the whole request is always
 /// correct.
 /// </para>
 /// </summary>
 public sealed class TicketCreationAppService(
     IIntakeRecordRepository intakeRecordRepository,
-    IVerificationSessionRepository verificationSessionRepository,
+    IUnitReferenceRepository unitReferenceRepository,
+    IContactReferenceRepository contactReferenceRepository,
     ICategoryRepository categoryRepository,
     IPriorityRepository priorityRepository,
     IDepartmentRepository departmentRepository,
@@ -59,8 +59,8 @@ public sealed class TicketCreationAppService(
     SlaDueDateService slaDueDateService,
     TimeProvider timeProvider)
 {
-    public async Task<TicketCreationResult> CreateFromVerificationSessionAsync(
-        Guid callerEmployeeId, CreateTicketFromVerificationRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<TicketCreationResult> CreateAsync(
+        Guid callerEmployeeId, CreateTicketRequestDto request, CancellationToken cancellationToken = default)
     {
         var intakeRecord = await intakeRecordRepository.GetByIdAsync(request.IntakeRecordId, cancellationToken);
         if (intakeRecord is null)
@@ -73,35 +73,26 @@ public sealed class TicketCreationAppService(
             return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordAlreadyLinked);
         }
 
-        if (!intakeRecord.IsUnitRelated)
+        if ((request.UnitReferenceId is null) != (request.ContactReferenceId is null))
         {
-            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordNotUnitRelated);
+            return TicketCreationResult.Failure(TicketCreationOutcome.UnitOrContactReferenceMismatch);
         }
 
-        var session = await verificationSessionRepository.GetByIdAsync(request.VerificationSessionId, cancellationToken);
-        if (session is null)
+        UnitReference? unitReference = null;
+        ContactReference? contactReference = null;
+        if (request.UnitReferenceId is { } unitReferenceId && request.ContactReferenceId is { } contactReferenceId)
         {
-            return TicketCreationResult.Failure(TicketCreationOutcome.VerificationSessionNotFound);
-        }
+            unitReference = await unitReferenceRepository.GetByIdAsync(unitReferenceId, cancellationToken);
+            if (unitReference is null)
+            {
+                return TicketCreationResult.Failure(TicketCreationOutcome.UnitReferenceNotFound);
+            }
 
-        // Single-agent ownership (MVP-ERD.md §2.24) — same rule VerificationSessionsController enforces on read.
-        if (!session.IsOwnedBy(callerEmployeeId))
-        {
-            return TicketCreationResult.Failure(TicketCreationOutcome.VerificationSessionForbidden);
-        }
-
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        var effectiveStatus = session.EffectiveStatus(now);
-        var sessionOutcome = effectiveStatus switch
-        {
-            VerificationSessionStatus.Expired => TicketCreationOutcome.VerificationSessionExpired,
-            VerificationSessionStatus.Consumed => TicketCreationOutcome.VerificationSessionAlreadyConsumed,
-            VerificationSessionStatus.Confirmed => (TicketCreationOutcome?)null,
-            _ => TicketCreationOutcome.VerificationSessionNotConfirmed
-        };
-        if (sessionOutcome is { } failureOutcome)
-        {
-            return TicketCreationResult.Failure(failureOutcome);
+            contactReference = await contactReferenceRepository.GetByIdAsync(contactReferenceId, cancellationToken);
+            if (contactReference is null)
+            {
+                return TicketCreationResult.Failure(TicketCreationOutcome.ContactReferenceNotFound);
+            }
         }
 
         var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
@@ -113,6 +104,7 @@ public sealed class TicketCreationAppService(
         var category = routing.Category!;
         var priority = routing.Priority!;
         var department = routing.Department!;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
@@ -120,35 +112,39 @@ public sealed class TicketCreationAppService(
         try
         {
             var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
-            ticket = Ticket.CreateVerified(
-                ticketNumber, category.DepartmentId, session.UnitReferenceId, session.ContactReferenceId,
-                category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+            ticket = unitReference is not null && contactReference is not null
+                ? Ticket.CreateVerified(
+                    ticketNumber, category.DepartmentId, unitReference.UnitReferenceId, contactReference.ContactReferenceId,
+                    category.CategoryId, priority.PriorityId, request.RequestSummary, now)
+                : Ticket.CreateUnverified(
+                    ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
 
             await ticketRepository.AddAsync(ticket, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch (DuplicateWriteException)
         {
-            // Nothing else has been touched yet — the session is still
-            // Confirmed/unconsumed, the IntakeRecord still unlinked. Safe to
-            // retry the whole request unchanged.
+            // Nothing else has been touched yet — the IntakeRecord is still
+            // unlinked. Safe to retry the whole request unchanged.
             return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
         }
 
-        session.Consume(ticket.TicketId, now);
-        intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Verified);
+        intakeRecord.LinkToTicket(ticket.TicketId, ticket.VerificationStatus);
 
-        await snapshotRepository.AddAsync(
-            new TicketRequesterSnapshot(
-                ticket.TicketId,
-                session.SnapshotUnitNumber ?? string.Empty,
-                session.SnapshotPropertyName,
-                session.SnapshotTowerName,
-                session.SnapshotUnitType,
-                session.SnapshotContactDisplayName,
-                session.SnapshotContactChannel,
-                now),
-            cancellationToken);
+        if (unitReference is not null && contactReference is not null)
+        {
+            await snapshotRepository.AddAsync(
+                new TicketRequesterSnapshot(
+                    ticket.TicketId,
+                    unitReference.UnitNumber,
+                    unitReference.PropertyName,
+                    unitReference.TowerName,
+                    unitReference.UnitType,
+                    contactReference.DisplayName,
+                    contactReference.ContactChannel,
+                    now),
+                cancellationToken);
+        }
 
         await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
 
@@ -156,128 +152,20 @@ public sealed class TicketCreationAppService(
 
         // Backlog S-08's corrected acceptance criterion: ticket creation
         // opens the ticket's initial TicketSlaInstances row with computed due
-        // dates. `now` is both the ticket's CreatedAtUtc and the approved SLA
-        // clock-start event (ISSUE-001 Option C, SLA-Architecture.md §1/§2),
-        // so the same value drives both — the clock cannot drift from the
-        // creation moment it is defined against.
+        // dates — always, immediately. Business-rule change: nothing about
+        // customer lookup ever pauses this clock any more (see
+        // Ticket.CreateUnverified's remarks); `now` is both the ticket's
+        // CreatedAtUtc and the SLA clock-start event (ISSUE-001 Option C,
+        // SLA-Architecture.md §1/§2).
         await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
-            beforeValue: null, afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus=Verified",
-            correlationId, cancellationToken);
-        await auditWriter.WriteAsync(
-            callerEmployeeId, "ConsumeVerificationSession", "VerificationSession", session.VerificationSessionId.ToString(),
-            beforeValue: null, afterValue: $"ConsumedByTicketId={ticket.TicketId}",
+            beforeValue: null,
+            afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus={ticket.VerificationStatus}",
             correlationId, cancellationToken);
 
         await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, correlationId, now, cancellationToken);
-
-        try
-        {
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-        catch (VerificationSessionConcurrentlyConsumedException)
-        {
-            // Another concurrent request already consumed this same session
-            // first (lost the optimistic-concurrency race on
-            // VerificationSessions.Status). The transaction's rollback-on-
-            // dispose below undoes this request's own Ticket insert, so no
-            // orphaned ticket, snapshot, or audit trail is left behind.
-            return TicketCreationResult.Failure(TicketCreationOutcome.VerificationSessionAlreadyConsumed);
-        }
-
-        await transaction.CommitAsync(cancellationToken);
-        return TicketCreationResult.Success(ToDto(ticket));
-    }
-
-    public async Task<TicketCreationResult> CreateProvisionalAsync(
-        Guid callerEmployeeId, CreateProvisionalTicketRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var intakeRecord = await intakeRecordRepository.GetByIdAsync(request.IntakeRecordId, cancellationToken);
-        if (intakeRecord is null)
-        {
-            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordNotFound);
-        }
-
-        if (intakeRecord.LinkedTicketId is not null)
-        {
-            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordAlreadyLinked);
-        }
-
-        if (!intakeRecord.IsUnitRelated)
-        {
-            return TicketCreationResult.Failure(TicketCreationOutcome.IntakeRecordNotUnitRelated);
-        }
-
-        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, cancellationToken);
-        if (routing.Failure is { } routingFailure)
-        {
-            return TicketCreationResult.Failure(routingFailure);
-        }
-
-        var category = routing.Category!;
-        var priority = routing.Priority!;
-        var department = routing.Department!;
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-
-        // ISSUE-006 (approved as recommended, Management-Decisions.md):
-        // Medium/Low remains queued for CRM verification rather than
-        // proceeding as a ticket — this is not an error, it is the correct,
-        // approved outcome for those two priority tiers during an outage.
-        if (!Priority.IsCriticalOrHigh(priority.PriorityId))
-        {
-            await using var queuedTransaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-
-            intakeRecord.MarkPendingCrmVerification();
-
-            await auditWriter.WriteAsync(
-                callerEmployeeId, "MarkPendingCrmVerification", "IntakeRecord", intakeRecord.IntakeRecordId.ToString(),
-                beforeValue: "CrmVerificationStatus=Unverified", afterValue: "CrmVerificationStatus=PendingCrmVerification",
-                Guid.NewGuid(), cancellationToken);
-
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            await queuedTransaction.CommitAsync(cancellationToken);
-
-            return TicketCreationResult.QueuedPendingVerification(IntakeRecordAppService.ToDto(intakeRecord));
-        }
-
-        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-
-        Ticket ticket;
-        try
-        {
-            var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
-            ticket = Ticket.CreateProvisional(
-                ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
-
-            await ticketRepository.AddAsync(ticket, cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-        catch (DuplicateWriteException)
-        {
-            return TicketCreationResult.Failure(TicketCreationOutcome.TicketNumberCollision);
-        }
-
-        intakeRecord.LinkToTicket(ticket.TicketId, CrmVerificationStatus.PendingCrmVerification);
-
-        // Deliberately no TicketSlaInstance here, unlike the verified path
-        // above. FR-TKT-09: a ticket whose VerificationStatus is not Verified
-        // "does not start its SLA clock", and both due columns are NOT NULL,
-        // so there is no honest value a from-creation row could carry. The
-        // period is opened by TicketReconciliationAppService the moment the
-        // ticket becomes Verified.
-        await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
-
-        var provisionalCorrelationId = Guid.NewGuid();
-
-        await auditWriter.WriteAsync(
-            callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
-            beforeValue: null,
-            afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus=PendingCrmVerification;Provisional=true",
-            provisionalCorrelationId, cancellationToken);
-
-        await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, provisionalCorrelationId, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -295,23 +183,19 @@ public sealed class TicketCreationAppService(
     /// is dispatched from application code inside a request handler without
     /// first being durably recorded in the same transaction as the state
     /// change. This method records; ADR-0015's recurring dispatcher delivers,
-    /// after the commit. A caller that rolls back — a lost
-    /// optimistic-concurrency race on session consumption, a ticket-number
+    /// after the commit. A caller that rolls back — a ticket-number
     /// collision — takes this row down with it, so a ticket that does not
     /// exist can never acknowledge anything.
     /// </para>
     ///
     /// <para>
-    /// <b>Written for a provisional ticket too, deliberately.</b> FR-NOT-01's
-    /// acceptance criterion is "email attempted for every ticket", and a
-    /// provisional (ISSUE-006) ticket has no verified requester snapshot to
-    /// resolve a recipient from. Skipping the event would make that ticket
-    /// invisible — indistinguishable from one that was acknowledged — whereas
-    /// enqueuing it produces a dead-lettered, audited, countable record that
-    /// no acknowledgement could be sent and why. Reported rather than
-    /// guessed: <b>no merged document defines whether such a ticket should be
-    /// acknowledged once it is later reconciled to Verified</b>, so
-    /// reconciliation deliberately does not enqueue a second event.
+    /// <b>Written for an unverified ticket too, deliberately.</b> FR-NOT-01's
+    /// acceptance criterion is "email attempted for every ticket", and an
+    /// unverified ticket has no requester snapshot to resolve a recipient
+    /// from. Skipping the event would make that ticket invisible —
+    /// indistinguishable from one that was acknowledged — whereas enqueuing
+    /// it produces a dead-lettered, audited, countable record that no
+    /// acknowledgement could be sent and why.
     /// </para>
     ///
     /// <para>
@@ -357,9 +241,9 @@ public sealed class TicketCreationAppService(
 
     /// <summary>
     /// Resolves and validates Category → Department routing (FR-CLS-01/
-    /// FR-RTE-01) and Priority together, since every creation path needs
-    /// both. Rejects a Category that is missing/inactive, a Priority that
-    /// is missing, and — item 9 of this review — a Category whose routed
+    /// FR-RTE-01) and Priority together, since ticket creation needs both.
+    /// Rejects a Category that is missing/inactive, a Priority that is
+    /// missing, and — item 9 of this review — a Category whose routed
     /// Department is itself missing/inactive, so a ticket can never be
     /// silently routed to a department nobody is staffing.
     /// </summary>
@@ -403,9 +287,9 @@ public sealed class TicketCreationAppService(
     /// Seeds one TicketStatusHistory row per dimension that actually has an
     /// initial value at creation (MVP-API-Contracts.md §3.1's audit note).
     /// ResolutionOutcome is deliberately excluded — it is null until the
-    /// ticket is later resolved (out of scope this increment), and
-    /// TicketStatusHistory.NewValue is NOT NULL (MVP-Data-Dictionary.md
-    /// §2.13), so there is no value to seed a row with yet.
+    /// ticket is later resolved, and TicketStatusHistory.NewValue is NOT NULL
+    /// (MVP-Data-Dictionary.md §2.13), so there is no value to seed a row
+    /// with yet.
     /// </summary>
     private async Task SeedStatusHistoryAsync(
         Ticket ticket, Guid actorEmployeeId, DateTime nowUtc, CancellationToken cancellationToken)

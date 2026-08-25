@@ -61,20 +61,15 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
-        var unit = await (await client.GetAsync("/api/crm/units/CRM-UNIT-1001"))
-            .Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
-        var contacts = await (await client.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts"))
-            .Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
-        var session = await (await client.PostAsJsonAsync(
-                "/api/verification-sessions",
-                new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation")))
-            .Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+        var lookup = await (await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup"))
+            .Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
         var created = await (await client.PostAsJsonAsync(
                 "/api/tickets",
-                new CreateTicketFromVerificationRequestDto(
-                    intake!.IntakeRecordId, session!.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling")))
+                new CreateTicketRequestDto(
+                    intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling")))
             .Content.ReadFromJsonAsync<TicketResponseDto>();
 
         var detail = await (await client.GetAsync($"/api/tickets/{created!.TicketId}"))
@@ -138,15 +133,13 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
             new CreateVerificationSessionRequestDto(1, 1, true, "ManualAgentConfirmation"))).StatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null))).StatusCode);
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/intake-records/1/customer-lookup")).StatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(1, Guid.NewGuid(), 1, (byte)PriorityLevel.High, "n/a"))).StatusCode);
-
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
-            "/api/tickets/provisional",
-            new CreateProvisionalTicketRequestDto(1, 1, (byte)PriorityLevel.Critical, "n/a"))).StatusCode);
+            new CreateTicketRequestDto(1, 1, 1, 1, (byte)PriorityLevel.High, "n/a"))).StatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
             "/api/tickets/1/reconciliation",
@@ -263,6 +256,6 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/crm/units/CRM-UNIT-1001")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/tickets")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null))).StatusCode);
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null))).StatusCode);
     }
 }

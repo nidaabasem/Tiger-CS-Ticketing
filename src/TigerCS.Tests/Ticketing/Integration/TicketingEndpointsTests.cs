@@ -1,24 +1,30 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.IdentityAndAccess.Integration;
 
 namespace TigerCS.Tests.Ticketing.Integration;
 
 /// <summary>
 /// End-to-end against the real Api host (real routing, real authorization,
-/// real EF Core-mapped schema — InMemory provider — the real MockCrmGateway
-/// fixture data) — exercising the actual sequence an agent follows: intake
-/// -> CRM lookup -> verification -> ticket creation, and ISSUE-006's
-/// provisional/queued fallback.
+/// real EF Core-mapped schema — InMemory provider — the real MockCrmGateway/
+/// MockPactGateway/MockTasleehGateway fixture data) — exercising the actual
+/// sequence an agent follows: intake -> customer lookup (CRM/PACT/Tasleeh)
+/// -> ticket creation. Business-rule change: customer lookup is enrichment,
+/// never a Ticket creation gate — every test below that creates a ticket
+/// without a customer match proves that directly.
 /// </summary>
 public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
 {
+    /// <summary>Matches MockCrmGateway's CRM-UNIT-1001/CRM-CONTACT-2002 fixture (Sara Yousef) — the standard "customer found" phone number for these tests.</summary>
+    private const string PhoneWithCrmMatch = "+971500000001";
+    private const string PhoneWithNoMatch = "+971500009999";
+
     private readonly TigerCsApiFactory _factory;
 
     public TicketingEndpointsTests(TigerCsApiFactory factory) => _factory = factory;
@@ -42,13 +48,13 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
-    public async Task FullLifecycle_IntakeVerifyCreate_ProducesVerifiedTicket()
+    public async Task FullLifecycle_IntakeLookupCreate_ProducesVerifiedTicket()
     {
         var client = await CreateAuthenticatedClientAsync();
         await _factory.SeedPrioritiesAsync();
@@ -56,88 +62,209 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
 
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
         Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
-        var unitResponse = await client.GetAsync("/api/crm/units/CRM-UNIT-1001");
-        unitResponse.EnsureSuccessStatusCode();
-        var unit = await unitResponse.Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
-
-        var contactsResponse = await client.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts");
-        contactsResponse.EnsureSuccessStatusCode();
-        var contacts = await contactsResponse.Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
-
-        var sessionResponse = await client.PostAsJsonAsync(
-            "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation"));
-        sessionResponse.EnsureSuccessStatusCode();
-        var session = await sessionResponse.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        Assert.Equal(HttpStatusCode.OK, lookupResponse.StatusCode);
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
+        Assert.Equal("Found", crmMatch.Status);
+        Assert.NotNull(crmMatch.UnitReferenceId);
+        Assert.NotNull(crmMatch.ContactReferenceId);
 
         var ticketResponse = await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
 
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
         Assert.Equal("Verified", ticket!.VerificationStatus);
         Assert.Equal("Open", ticket.TicketStatus);
-        Assert.Equal(unit.UnitReferenceId, ticket.UnitReferenceId);
+        Assert.Equal(crmMatch.UnitReferenceId, ticket.UnitReferenceId);
         Assert.StartsWith("TG-", ticket.TicketNumber);
 
-        // Reusing the same (now-consumed) session a second time is rejected, not silently re-executed.
+        // Reusing an already-linked IntakeRecord is rejected, not silently re-executed.
         var replay = await client.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake.IntakeRecordId, session.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "Second attempt"));
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "Second attempt"));
         Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
     }
 
     [Fact]
-    public async Task CreateProvisional_CriticalPriorityDuringOutage_Returns201WithPendingCrmVerification()
+    public async Task CreateTicket_NoCustomerMatch_StillReturns201WithUnverifiedTicket()
     {
+        // Business-rule change: CRM/PACT/Tasleeh finding nothing never blocks
+        // ticket creation — even for a unit-related intake.
         var client = await CreateAuthenticatedClientAsync();
         await _factory.SeedPrioritiesAsync();
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", (byte)PriorityLevel.Critical));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, true, "9999", (byte)PriorityLevel.Critical));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        Assert.All(lookup!.Sources, s => Assert.Equal("NotFound", s.Status));
+
         var response = await client.PostAsJsonAsync(
-            "/api/tickets/provisional",
-            new CreateProvisionalTicketRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Critical, "Flooding in lobby"));
+            "/api/tickets",
+            new CreateTicketRequestDto(intake.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Critical, "Flooding in lobby"));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var ticket = await response.Content.ReadFromJsonAsync<TicketResponseDto>();
-        Assert.Equal("PendingCrmVerification", ticket!.VerificationStatus);
+        Assert.Equal("Unverified", ticket!.VerificationStatus);
         Assert.Null(ticket.UnitReferenceId);
         Assert.Null(ticket.ContactReferenceId);
     }
 
     [Fact]
-    public async Task CreateProvisional_LowPriorityDuringOutage_Returns200QueuedNotACreatedTicket()
+    public async Task CreateIntakeRecord_BlankPhoneNumber_Returns400_RecordNotCreated()
     {
+        var client = await CreateAuthenticatedClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "", null, false, null, null));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CustomerLookup_DepartmentScopedToCrmOnly_SearchesOnlyCrm_NeverFallsBackToPactEvenThoughItHasAMatch()
+    {
+        // MockPactGateway has a real fixture match for +971500000002 — this
+        // proves that a Department configured for CRM only never falls back
+        // to PACT even when PACT would have found something.
+        const string phoneWithPactMatchOnly = "+971500000002";
+
+        var client = await CreateAuthenticatedClientAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("CRM-Only Dept " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        await _factory.SeedDepartmentCustomerLookupSourceAsync(departmentId, CustomerLookupSource.Crm);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", phoneWithPactMatchOnly, departmentId, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        Assert.Equal(HttpStatusCode.OK, lookupResponse.StatusCode);
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+
+        var source = Assert.Single(lookup!.Sources);
+        Assert.Equal("Crm", source.Source);
+        Assert.Equal("NotFound", source.Status);
+    }
+
+    [Fact]
+    public async Task CustomerLookup_NoDepartmentSelected_SearchesAllThreeSources()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+
+        Assert.Equal(3, lookup!.Sources.Count);
+        Assert.Contains(lookup.Sources, s => s.Source == "Crm");
+        Assert.Contains(lookup.Sources, s => s.Source == "Pact");
+        Assert.Contains(lookup.Sources, s => s.Source == "Tasleeh");
+    }
+
+    [Fact]
+    public async Task CreateIntakeRecord_UnknownDepartmentId_Returns404()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, 999_999, false, null, null));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateTicket_CrmOutageDuringLookup_StillReturns201()
+    {
+        // Business-rule change: a source that cannot be reached at all
+        // (Failed, not NotFound) still never blocks ticket creation.
         var client = await CreateAuthenticatedClientAsync();
         await _factory.SeedPrioritiesAsync();
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
+        // MockCrmGateway/MockPactGateway/MockTasleehGateway all trigger a
+        // simulated outage when the searched value contains "OUTAGE".
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "0507", (byte)PriorityLevel.Low));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500OUTAGE01", null, false, null, null));
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        Assert.Equal(HttpStatusCode.OK, lookupResponse.StatusCode);
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        Assert.All(lookup!.Sources, s => Assert.Equal("Failed", s.Status));
+
+        var response = await client.PostAsJsonAsync(
+            "/api/tickets",
+            new CreateTicketRequestDto(intake.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Medium, "General question"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateTicket_MissingCategory_Returns404_TicketRejected()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, false, null, null));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var response = await client.PostAsJsonAsync(
-            "/api/tickets/provisional",
-            new CreateProvisionalTicketRequestDto(intake!.IntakeRecordId, categoryId, (byte)PriorityLevel.Low, "Leaking tap"));
+            "/api/tickets",
+            new CreateTicketRequestDto(intake!.IntakeRecordId, null, null, CategoryId: 999_999, (byte)PriorityLevel.Medium, "General billing question"));
 
-        // Not an error — ISSUE-006's approved "remains queued" outcome (200, not 201).
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var queued = await response.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
-        Assert.Equal("PendingCrmVerification", queued!.CrmVerificationStatus);
-        Assert.Null(queued.LinkedTicketId);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateTicket_NonUnitIntake_Returns201()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Customer Service " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.False(intake!.IsUnitRelated);
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets",
+            new CreateTicketRequestDto(intake.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Medium, "General billing question"));
+
+        // Routes successfully from category alone — no Unit/CRM data of any kind was ever supplied.
+        Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
+        var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+        Assert.Equal("Unverified", ticket!.VerificationStatus);
+        Assert.Equal("Open", ticket.TicketStatus);
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.Equal(departmentId, ticket.OriginatingDepartmentId);
+        Assert.StartsWith("TG-", ticket.TicketNumber);
+
+        var detailResponse = await client.GetAsync($"/api/tickets/{ticket.TicketId}");
+        Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
     }
 
     // CS Agent/CS Supervisor by the CustomerVerification policy's own role
@@ -156,7 +283,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var client = await CreateAuthenticatedClientAsync(role);
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
 
         Assert.Equal(expectAuthorized ? HttpStatusCode.Created : HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -168,23 +295,17 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intakeResponse = await creatorClient.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
-        var unitResponse = await creatorClient.GetAsync("/api/crm/units/CRM-UNIT-1001");
-        var unit = await unitResponse.Content.ReadFromJsonAsync<UnitVerificationResponseDto>();
-        var contactsResponse = await creatorClient.GetAsync("/api/crm/units/CRM-UNIT-1001/contacts");
-        var contacts = await contactsResponse.Content.ReadFromJsonAsync<List<ContactVerificationResponseDto>>();
-
-        var sessionResponse = await creatorClient.PostAsJsonAsync(
-            "/api/verification-sessions",
-            new CreateVerificationSessionRequestDto(unit!.UnitReferenceId, contacts![0].ContactReferenceId, true, "ManualAgentConfirmation"));
-        var session = await sessionResponse.Content.ReadFromJsonAsync<VerificationSessionResponseDto>();
+        var lookupResponse = await creatorClient.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+        var crmMatch = lookup!.Sources.Single(s => s.Source == "Crm");
 
         var ticketResponse = await creatorClient.PostAsJsonAsync(
             "/api/tickets",
-            new CreateTicketFromVerificationRequestDto(
-                intake!.IntakeRecordId, session!.VerificationSessionId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, crmMatch.UnitReferenceId, crmMatch.ContactReferenceId, categoryId, (byte)PriorityLevel.High, "AC unit not cooling"));
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
 
         return (ticket!.TicketId, departmentId, Convert.FromBase64String(ticket.RowVersion));

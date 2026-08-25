@@ -879,6 +879,28 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.DepartmentCustomerLookupSource", b =>
+                {
+                    b.Property<int>("DepartmentCustomerLookupSourceId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("DepartmentCustomerLookupSourceId"));
+
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Source")
+                        .HasColumnType("tinyint");
+
+                    b.HasKey("DepartmentCustomerLookupSourceId");
+
+                    b.HasIndex("DepartmentId", "Source")
+                        .IsUnique();
+
+                    b.ToTable("DepartmentCustomerLookupSources", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.IntakeRecord", b =>
                 {
                     b.Property<long>("IntakeRecordId")
@@ -896,11 +918,19 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<byte>("CrmVerificationStatus")
                         .HasColumnType("tinyint");
 
+                    b.Property<int?>("DepartmentId")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsUnitRelated")
                         .HasColumnType("bit");
 
                     b.Property<long?>("LinkedTicketId")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
 
                     b.Property<byte?>("PriorityHint")
                         .HasColumnType("tinyint");
@@ -915,6 +945,8 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasKey("IntakeRecordId");
 
                     b.HasIndex("CreatedByEmployeeId");
+
+                    b.HasIndex("DepartmentId");
 
                     b.HasIndex("LinkedTicketId");
 
@@ -1541,6 +1573,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.DepartmentCustomerLookupSource", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.IntakeRecord", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
@@ -1548,6 +1589,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CreatedByEmployeeId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
                         .WithMany()

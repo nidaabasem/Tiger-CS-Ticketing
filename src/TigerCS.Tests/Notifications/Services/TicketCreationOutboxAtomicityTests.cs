@@ -3,7 +3,6 @@ using TigerCS.Application.Modules.Notifications.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Infrastructure;
-using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.IdentityAndAccess.Fakes;
@@ -23,7 +22,8 @@ public class TicketCreationOutboxAtomicityTests
     private sealed record Fixture(
         TicketCreationAppService Service,
         FakeIntakeRecordRepository IntakeRecords,
-        FakeVerificationSessionRepository Sessions,
+        FakeUnitReferenceRepository UnitReferences,
+        FakeContactReferenceRepository ContactReferences,
         FakeCategoryRepository Categories,
         FakeDepartmentRepository Departments,
         FakeTicketRepository Tickets,
@@ -34,7 +34,8 @@ public class TicketCreationOutboxAtomicityTests
     private static Fixture CreateService()
     {
         var intakeRecords = new FakeIntakeRecordRepository();
-        var sessions = new FakeVerificationSessionRepository();
+        var unitReferences = new FakeUnitReferenceRepository();
+        var contactReferences = new FakeContactReferenceRepository();
         var categories = new FakeCategoryRepository();
         var priorities = new FakePriorityRepository();
         var departments = new FakeDepartmentRepository();
@@ -49,27 +50,18 @@ public class TicketCreationOutboxAtomicityTests
         var sla = new SlaServiceFixture(tickets, statusHistory: statusHistory, audit: audit, unitOfWork: unitOfWork);
 
         var service = new TicketCreationAppService(
-            intakeRecords, sessions, categories, priorities, departments,
+            intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
             tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System);
 
-        return new Fixture(service, intakeRecords, sessions, categories, departments, tickets, audit, unitOfWork, outbox);
+        return new Fixture(service, intakeRecords, unitReferences, contactReferences, categories, departments, tickets, audit, unitOfWork, outbox);
     }
 
     private static async Task<(IntakeRecord Record, Guid AgentId)> SeedUnitRelatedIntakeAsync(FakeIntakeRecordRepository repo)
     {
         var agentId = Guid.NewGuid();
-        var record = new IntakeRecord(Channel.Phone, isUnitRelated: true, "1204", priorityHint: null, agentId, DateTime.UtcNow);
+        var record = new IntakeRecord(Channel.Phone, "+971500000001", null, isUnitRelated: true, "1204", priorityHint: null, agentId, DateTime.UtcNow);
         await repo.AddAsync(record);
         return (record, agentId);
-    }
-
-    private static VerificationSession ConfirmedSession(Guid agentId)
-    {
-        var session = new VerificationSession(
-            Guid.NewGuid(), agentId, 1, 1, "1204", "Tiger Tower A", "Tower A", "Residential",
-            "Ahmed Al-Farsi", "ahmed@example.com", DateTime.UtcNow, DateTime.UtcNow.AddMinutes(30), idempotencyKey: null);
-        session.Confirm(DateTime.UtcNow, VerificationMethod.ManualAgentConfirmation);
-        return session;
     }
 
     [Fact]
@@ -79,12 +71,12 @@ public class TicketCreationOutboxAtomicityTests
         var department = f.Departments.AddDepartment("Customer Service", "CS");
         var category = f.Categories.Seed(department.DepartmentId);
         var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
-        var session = ConfirmedSession(agentId);
-        await f.Sessions.AddAsync(session);
+        var unit = f.UnitReferences.Seed("CRM-UNIT-1001", "1204");
+        var contact = f.ContactReferences.Seed(unit.UnitReferenceId, "CRM-CONTACT-2001", "Ahmed Al-Farsi");
 
-        var result = await f.Service.CreateFromVerificationSessionAsync(
-            agentId, new CreateTicketFromVerificationRequestDto(
-                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, 2, "AC not cooling."));
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(
+                intake.IntakeRecordId, unit.UnitReferenceId, contact.ContactReferenceId, category.CategoryId, 2, "AC not cooling."));
 
         Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
         Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
@@ -105,7 +97,6 @@ public class TicketCreationOutboxAtomicityTests
         // operator-visible infrastructure row.
         Assert.DoesNotContain("AC not cooling", message.Payload, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Ahmed", message.Payload, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("ahmed@example.com", message.Payload, StringComparison.OrdinalIgnoreCase);
 
         // "Notification queued" (ADR-0018), written synchronously in the
         // business transaction.
@@ -126,19 +117,17 @@ public class TicketCreationOutboxAtomicityTests
         var department = f.Departments.AddDepartment("Customer Service", "CS");
         var category = f.Categories.Seed(department.DepartmentId);
         var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
-        var session = ConfirmedSession(agentId);
-        await f.Sessions.AddAsync(session);
 
-        // A concurrent request consumed the same session first: the second
-        // SaveChanges loses the optimistic-concurrency race and the whole
+        // A concurrent request generated the same ticket number first: the
+        // first SaveChanges loses the unique-index race and the whole
         // transaction rolls back.
-        f.UnitOfWork.ThrowConcurrencyConflictOnCall = 2;
+        f.UnitOfWork.ThrowDuplicateWriteExceptionOnCall = 1;
 
-        var result = await f.Service.CreateFromVerificationSessionAsync(
-            agentId, new CreateTicketFromVerificationRequestDto(
-                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, 2, "AC not cooling."));
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, 2, "AC not cooling."));
 
-        Assert.Equal(TicketCreationOutcome.VerificationSessionAlreadyConsumed, result.Outcome);
+        Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
         Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
         Assert.Equal(1, f.UnitOfWork.TransactionsRolledBack);
 
@@ -154,14 +143,12 @@ public class TicketCreationOutboxAtomicityTests
         var department = f.Departments.AddDepartment("Customer Service", "CS");
         var category = f.Categories.Seed(department.DepartmentId);
         var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
-        var session = ConfirmedSession(agentId);
-        await f.Sessions.AddAsync(session);
 
         f.UnitOfWork.ThrowDuplicateWriteExceptionOnCall = 1;
 
-        var result = await f.Service.CreateFromVerificationSessionAsync(
-            agentId, new CreateTicketFromVerificationRequestDto(
-                intake.IntakeRecordId, session.VerificationSessionId, category.CategoryId, 2, "AC not cooling."));
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, 2, "AC not cooling."));
 
         Assert.Equal(TicketCreationOutcome.TicketNumberCollision, result.Outcome);
         Assert.Empty(f.Outbox.Committed);
@@ -170,49 +157,27 @@ public class TicketCreationOutboxAtomicityTests
     }
 
     /// <summary>
-    /// FR-NOT-01: "email attempted for every ticket". A provisional
-    /// (ISSUE-006) ticket has no verified requester to write to, but the event
-    /// is still enqueued so the failure is visible rather than the ticket
-    /// being silently skipped.
+    /// FR-NOT-01: "email attempted for every ticket". Business-rule change:
+    /// an unverified ticket (no customer match linked at creation) has no
+    /// requester snapshot to write to, but the event is still enqueued so
+    /// the failure is visible rather than the ticket being silently skipped.
     /// </summary>
     [Fact]
-    public async Task ProvisionalTicket_AlsoEnqueuesTheAcknowledgementEvent()
+    public async Task UnverifiedTicket_AlsoEnqueuesTheAcknowledgementEvent()
     {
         var f = CreateService();
         var department = f.Departments.AddDepartment("Facilities", "FM");
         var category = f.Categories.Seed(department.DepartmentId);
         var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
 
-        var result = await f.Service.CreateProvisionalAsync(
-            agentId, new CreateProvisionalTicketRequestDto(
-                intake.IntakeRecordId, category.CategoryId, PriorityId: 1, "Lift stuck between floors."));
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, PriorityId: 1, "Lift stuck between floors."));
 
         Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
         var message = Assert.Single(f.Outbox.Committed);
         Assert.Equal(OutboxEventTypes.TicketCreated, message.EventType);
         Assert.Contains(f.Audit.Entries, e => e.Action == NotificationAuditActions.NotificationQueued);
-    }
-
-    /// <summary>
-    /// A Medium/Low request during a CRM outage stays queued on its
-    /// IntakeRecord and never becomes a ticket (ISSUE-006), so there is
-    /// nothing to acknowledge and no event may be written.
-    /// </summary>
-    [Fact]
-    public async Task QueuedPendingVerification_EnqueuesNothing()
-    {
-        var f = CreateService();
-        var department = f.Departments.AddDepartment("Facilities", "FM");
-        var category = f.Categories.Seed(department.DepartmentId);
-        var (intake, agentId) = await SeedUnitRelatedIntakeAsync(f.IntakeRecords);
-
-        var result = await f.Service.CreateProvisionalAsync(
-            agentId, new CreateProvisionalTicketRequestDto(
-                intake.IntakeRecordId, category.CategoryId, PriorityId: 3, "Tap dripping."));
-
-        Assert.Equal(TicketCreationOutcome.QueuedPendingVerification, result.Outcome);
-        Assert.Empty(f.Outbox.Committed);
-        Assert.Empty(f.Outbox.Staged);
     }
 
     /// <summary>

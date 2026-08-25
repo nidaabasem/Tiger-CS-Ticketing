@@ -29,6 +29,7 @@ public static class OpenApiTags
     public const string CrmLookup = "CRM Lookup";
     public const string CustomerVerification = "Customer Verification";
     public const string Intake = "Intake";
+    public const string CustomerLookup = "Customer Lookup";
     public const string Tickets = "Tickets";
     public const string Assignment = "Assignment";
     public const string Transfer = "Transfer";
@@ -51,13 +52,16 @@ public static class OpenApiTags
         (Departments, "Department membership listings."),
         (CrmLookup, "Read-only lookups against Tiger CRM: units and the contacts linked to a unit."),
         (CustomerVerification, "Verification sessions — recording that a requester was confirmed against a CRM unit and contact."),
-        (Intake, "Intake records — every customer interaction is captured before verification is attempted."),
+        (Intake, "Intake records — every customer interaction is captured before customer lookup is attempted."),
+        (CustomerLookup,
+            "Searches CRM, PACT, and Tasleeh for the intake's phone number and returns whatever each source found. "
+            + "Enrichment/identification only — a NotFound or Failed source never blocks ticket creation."),
         (Tickets, "Ticket creation and ticket queries (queue and detail)."),
         (Assignment, "Assigning a ticket to an employee."),
         (Transfer, "Transferring a ticket to another department."),
         (TicketLifecycle, "Status changes, resolution, and closing."),
         (Notes, "Ticket notes."),
-        (CrmReconciliation, "Reconciling a provisional ticket against a confirmed verification session."),
+        (CrmReconciliation, "Linking a confirmed CRM match onto a ticket that did not have one at creation."),
         (SlaAndEscalation,
             "SLA due dates and breach state, recording the First Human Response, and manual escalation. "
             + "Automatic Level 2 escalation on an SLA breach is system-triggered by a background job and has no endpoint. "
