@@ -74,4 +74,50 @@ public class IntakeRecordTests
 
         Assert.Throws<IntakeRecordAlreadyLinkedException>(() => record.LinkToTicket(2, CrmVerificationStatus.Verified));
     }
+
+    // ---- IsUnitRelated must never end up false while the linked Ticket has a real Unit reference ----
+
+    [Fact]
+    public void LinkToTicket_CreatedNotUnitRelated_VerifiedOutcome_UpgradesToUnitRelated()
+    {
+        // The current New Ticket wizard never classifies "unit-related" up
+        // front — every intake it creates has IsUnitRelated=false and no raw
+        // unit number, deferring identification to customer lookup entirely.
+        // A Verified outcome means the promoted Ticket was created with a
+        // resolved, already-validated unit/contact reference — stronger
+        // evidence than the raw unit number ever was — so the record must be
+        // reclassified, not left inconsistent with its own linked Ticket.
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+
+        record.LinkToTicket(1, CrmVerificationStatus.Verified);
+
+        Assert.True(record.IsUnitRelated);
+        Assert.Equal(CrmVerificationStatus.Verified, record.CrmVerificationStatus);
+    }
+
+    [Fact]
+    public void LinkToTicket_CreatedNotUnitRelated_UnverifiedOutcome_StaysNotUnitRelated()
+    {
+        // No resolved Unit reference was ever attached to the Ticket — the
+        // record must stay exactly what it was, not be classified unit-related
+        // just because a Ticket happened to link.
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+
+        record.LinkToTicket(1, CrmVerificationStatus.Unverified);
+
+        Assert.False(record.IsUnitRelated);
+    }
+
+    [Fact]
+    public void LinkToTicket_AlreadyUnitRelated_UnverifiedOutcome_NeverDowngraded()
+    {
+        // Upgrade-only: a record already unit-related at creation (e.g. a
+        // future caller outside the current wizard) must never be pulled
+        // back to false by this Ticket's own (unrelated) outcome.
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+
+        record.LinkToTicket(1, CrmVerificationStatus.Unverified);
+
+        Assert.True(record.IsUnitRelated);
+    }
 }

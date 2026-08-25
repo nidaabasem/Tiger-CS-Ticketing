@@ -538,6 +538,45 @@ public sealed class NewTicketModelTests
 
     // ---- 21: optional UnitReferenceId/ContactReferenceId can be null ----
 
+    // ---- 8: CustomerDisplayName/UnitLabel are display-only — never sent to any API as identity data ----
+
+    [Fact]
+    public async Task OnPostCreateAsync_NeverSendsCustomerDisplayNameOrUnitLabelToTicketsApi()
+    {
+        // The server must never trust browser-supplied labels as authoritative
+        // identity data — actual linking uses only the validated
+        // UnitReferenceId/ContactReferenceId the Api itself resolves.
+        // CustomerDisplayName/UnitLabel exist purely for Step 3's summary text.
+        var (model, _, _, _, _, tickets) = CreateModel(ticketsResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
+                100, "TG-CS-20260825-0001", 7, 7, 5, 9, 2, 3, "Open", "Unverified", "None", "Running", "Summary", DateTime.UtcNow, "AAAA")));
+        model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = 2, PriorityId = 3, RequestSummary = "Summary" };
+
+        await model.OnPostCreateAsync(
+            42, "+15551234567", null, 5, 9, "Ahmed Ali", "Tiger Sky Tower — Unit 1205", CancellationToken.None);
+
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        var properties = body.RootElement.EnumerateObject().Select(p => p.Name).ToArray();
+        Assert.DoesNotContain(properties, p => p.Contains("customerDisplayName", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(properties, p => p.Contains("unitLabel", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(properties, p => p.Contains("customerName", StringComparison.OrdinalIgnoreCase));
+        // Only the validated reference ids identify the unit/contact.
+        Assert.Equal(5, body.RootElement.GetProperty("unitReferenceId").GetInt32());
+        Assert.Equal(9, body.RootElement.GetProperty("contactReferenceId").GetInt32());
+    }
+
+    [Fact]
+    public void CreateTicketRequestDto_HasNoDisplayLabelFields()
+    {
+        // A structural guard, not just a snapshot of one request body: the
+        // wire contract itself carries only validated reference ids, so a
+        // future field addition can't silently start trusting a label.
+        var properties = typeof(CreateTicketRequestDto).GetProperties().Select(p => p.Name).ToArray();
+
+        Assert.DoesNotContain(properties, p => p.Contains("DisplayName", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(properties, p => p.Contains("Label", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public async Task OnPostCreateAsync_WithNullOptionalReferences_StillCreatesTicket()
     {
