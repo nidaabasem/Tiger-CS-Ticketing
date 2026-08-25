@@ -410,6 +410,12 @@ public class TicketsController(
             title: "Category not found",
             statusCode: StatusCodes.Status404NotFound),
 
+        TicketCreationOutcome.CategoryDepartmentMismatch => Problem(
+            type: "https://tigercs.internal/problems/category-department-mismatch",
+            title: "Category does not belong to the Intake department",
+            detail: "The selected category does not belong to the Intake department.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketCreationOutcome.PriorityNotFound => Problem(
             type: "https://tigercs.internal/problems/priority-not-found",
             title: "Priority not found",

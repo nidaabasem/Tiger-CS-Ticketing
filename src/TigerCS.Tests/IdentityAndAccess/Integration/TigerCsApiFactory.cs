@@ -164,11 +164,11 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>Creates a category routed to the given department (bypassing the app services — test setup, not the thing under test).</summary>
-    public async Task<int> CreateCategoryAsync(string name, int departmentId)
+    public async Task<int> CreateCategoryAsync(string name, int departmentId, bool isActive = true)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-        var category = new Category(name, departmentId);
+        var category = new Category(name, departmentId, isActive: isActive);
         db.Categories.Add(category);
         await db.SaveChangesAsync();
         return category.CategoryId;

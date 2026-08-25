@@ -82,6 +82,9 @@ public enum TicketCreationOutcome
     /// <summary>Item 9 (senior review): the Category's routed Department is missing or deactivated — never silently route a ticket to a department nobody is staffing.</summary>
     DepartmentInactive,
 
+    /// <summary>The IntakeRecord named a Department and the selected Category routes to a different one — the Category dropdown never offers this combination, so this only fires against a request built outside it.</summary>
+    CategoryDepartmentMismatch,
+
     /// <summary>A same-department, same-day TicketNumber collision (real DB unique-index race) — nothing else was touched; retrying the whole request is always correct.</summary>
     TicketNumberCollision
 }

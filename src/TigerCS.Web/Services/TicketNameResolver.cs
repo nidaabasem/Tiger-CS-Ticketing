@@ -25,8 +25,12 @@ namespace TigerCS.Web.Services;
 /// for note authorship, so any other author id is shown as-is.</item>
 /// </list>
 ///
-/// Category names have no lookup endpoint at all (no CategoriesController
-/// exists) and are always shown as-is by callers of this service.
+/// Category names are resolved by <see cref="CategoriesApiClient"/> where a
+/// Category is being <i>selected</i> (the New Ticket wizard's Category
+/// dropdown) — this resolver's own remit is only the ids above, so a
+/// Category shown elsewhere as a bare id (e.g. an existing ticket's
+/// CategoryId) is still shown as-is by callers of this service; wiring that
+/// display up to the same endpoint is a separate follow-up, not done here.
 /// Registered scoped, so its per-request caches live for one page render.
 /// </summary>
 public sealed class TicketNameResolver(UsersApiClient usersApiClient)

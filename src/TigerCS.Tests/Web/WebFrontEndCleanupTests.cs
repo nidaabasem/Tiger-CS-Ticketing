@@ -42,6 +42,47 @@ public sealed class WebFrontEndCleanupTests
         Assert.Contains("Continue to Ticket", html);
     }
 
+    // ---- Category directory: the manual numeric CategoryId textbox and its temporary help text are gone ----
+
+    [Fact]
+    public void NewTicketView_DoesNotContainTheManualCategoryIdInput()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.DoesNotContain("Category ID", html);
+        Assert.DoesNotContain("No category directory endpoint exists yet", html);
+        Assert.DoesNotContain("numeric category id", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("asp-for=\"CreateStep.CategoryId\" />", html);
+    }
+
+    [Fact]
+    public void NewTicketView_RendersACategoryDropdown_LabeledByName()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("Category *", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
+        Assert.Contains("category.Name", html);
+    }
+
+    [Fact]
+    public void NewTicketView_HandlesEmptyAndFailedCategoryLoadStates()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("No active categories are configured for this department.", html);
+        Assert.Contains("Model.CategoriesErrorMessage", html);
+    }
+
+    [Fact]
+    public void CreateStepInput_CategoryId_IsNullableWithNoNumericRangeFallback()
+    {
+        var property = typeof(TigerCsWeb::TigerCS.Web.Pages.NewTicketModel.CreateStepInput).GetProperty("CategoryId");
+
+        Assert.NotNull(property);
+        Assert.Equal(typeof(int?), property!.PropertyType);
+    }
+
     // ---- 16: deleted endpoints/clients are gone, and the only ticket-creation client method is CreateAsync → POST api/tickets ----
 
     [Fact]

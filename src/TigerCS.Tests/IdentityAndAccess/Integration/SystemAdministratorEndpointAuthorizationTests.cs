@@ -171,6 +171,16 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task GetCategories_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/categories");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     // ---------------------------------------------------------------
     // CRM unit/contact lookup (CustomerVerification policy)
     // ---------------------------------------------------------------

@@ -21,6 +21,14 @@ public sealed class FakeCategoryRepository : ICategoryRepository
         _categories[category.CategoryId] = category;
         return category;
     }
+
+    public Task<IReadOnlyCollection<Category>> ListAsync(bool activeOnly, int? departmentId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<Category>>(
+            _categories.Values
+                .Where(c => !activeOnly || c.IsActive)
+                .Where(c => departmentId is null || c.DepartmentId == departmentId)
+                .OrderBy(c => c.Name, StringComparer.Ordinal)
+                .ToList());
 }
 
 public sealed class FakePriorityRepository : IPriorityRepository

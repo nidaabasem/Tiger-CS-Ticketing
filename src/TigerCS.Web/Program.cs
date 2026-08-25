@@ -41,6 +41,8 @@ builder.Services.AddHttpClient<IntakeRecordsApiClient>(client => client.BaseAddr
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<CustomerLookupApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddHttpClient<CategoriesApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

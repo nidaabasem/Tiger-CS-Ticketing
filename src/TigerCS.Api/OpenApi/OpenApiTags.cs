@@ -26,6 +26,7 @@ public static class OpenApiTags
     public const string Users = "Users";
     public const string Roles = "Roles";
     public const string Departments = "Departments";
+    public const string Categories = "Categories";
     public const string CrmLookup = "CRM Lookup";
     public const string CustomerVerification = "Customer Verification";
     public const string Intake = "Intake";
@@ -50,6 +51,7 @@ public static class OpenApiTags
         (Users, "The signed-in user's own profile, and administrator-only user activation."),
         (Roles, "The fixed role catalogue used across the system."),
         (Departments, "Department membership listings."),
+        (Categories, "The active Ticket Category directory, optionally scoped to one Department — what the New Ticket UI's Category dropdown reads from."),
         (CrmLookup, "Read-only lookups against Tiger CRM: units and the contacts linked to a unit."),
         (CustomerVerification, "Verification sessions — recording that a requester was confirmed against a CRM unit and contact."),
         (Intake, "Intake records — every customer interaction is captured before customer lookup is attempted."),
