@@ -50,7 +50,7 @@ public class TicketReconciliationAppServiceTests
 
         var intake = new IntakeRecord(Channel.Phone, "+971500000001", null, isUnitRelated: true, rawUnitNumberEntered, priorityHint: null, agentId, DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(intake);
-        intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified);
+        intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
 
         return (ticket, intake, agentId);
     }

@@ -433,7 +433,7 @@ public class TicketCreationAppServiceTests
         var department = f.Departments.AddDepartment("Customer Service", "CS");
         var category = f.Categories.Seed(department.DepartmentId);
         var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords);
-        intake.LinkToTicket(1, CrmVerificationStatus.Unverified);
+        intake.LinkToTicket(1, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
 
         var result = await f.Service.CreateAsync(
             agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "x"));

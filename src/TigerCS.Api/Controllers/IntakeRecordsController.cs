@@ -33,13 +33,11 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
     /// (<c>GET /api/intake-records/{intakeRecordId}/customer-lookup</c>)
     /// later searches CRM/PACT/Tasleeh with.
     /// </remarks>
-    /// <param name="request">The channel, the phone number, an optional department (narrows customer lookup to its configured source(s)), whether the request concerns a unit, and the raw unit number if so.</param>
+    /// <param name="request">The channel, the phone number, an optional department (narrows customer lookup to its configured source(s)), whether the request concerns a unit, and the raw unit number if the caller happened to give one.</param>
     /// <response code="201">The intake record, with its initial crmVerificationStatus.</response>
     /// <response code="400">
     /// channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
-    /// SocialMediaDirectMessage, FaceToFaceKiosk; phoneNumber was blank; or
-    /// rawUnitNumberEntered was absent while isUnitRelated was true, or
-    /// present while it was false.
+    /// SocialMediaDirectMessage, FaceToFaceKiosk; or phoneNumber was blank.
     /// </response>
     /// <response code="404">departmentId was supplied but does not reference a real department.</response>
     [HttpPost]
@@ -58,18 +56,6 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
         if (string.IsNullOrWhiteSpace(request.PhoneNumber))
         {
             ModelState.AddModelError(nameof(request.PhoneNumber), "Required.");
-            return ValidationProblem(ModelState);
-        }
-
-        if (request.IsUnitRelated && string.IsNullOrWhiteSpace(request.RawUnitNumberEntered))
-        {
-            ModelState.AddModelError(nameof(request.RawUnitNumberEntered), "Required when IsUnitRelated is true.");
-            return ValidationProblem(ModelState);
-        }
-
-        if (!request.IsUnitRelated && request.RawUnitNumberEntered is not null)
-        {
-            ModelState.AddModelError(nameof(request.RawUnitNumberEntered), "Must be omitted when IsUnitRelated is false.");
             return ValidationProblem(ModelState);
         }
 
