@@ -69,7 +69,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         // "+971500000001" matches MockCrmGateway's CRM-UNIT-1001/CRM-CONTACT-2002 fixture.
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null));
         intakeResponse.EnsureSuccessStatusCode();
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
@@ -261,7 +261,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var (client, _) = await CreateAdministratorAsync();
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -283,7 +283,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var (client, _) = await CreateAdministratorAsync();
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var response = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
@@ -317,7 +317,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", false, null, null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", null, false, null, null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var response = await client.PostAsJsonAsync(
@@ -552,7 +552,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         // Created with no customer match — business-rule change: customer
         // lookup no longer gates creation, so this ticket starts Unverified.
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", true, "1204", (byte)PriorityLevel.Critical)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", null, true, "1204", (byte)PriorityLevel.Critical)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var unverified = await (await client.PostAsJsonAsync(
@@ -666,7 +666,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var (client, adminEmployeeId) = await CreateAdministratorAsync();
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var intake = await response.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
@@ -731,7 +731,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var departmentId = await _factory.CreateDepartmentAsync("Facilities " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
         var intake = await (await adminClient.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500009999", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
         var unverified = await (await adminClient.PostAsJsonAsync(
                 "/api/tickets",
@@ -766,6 +766,6 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/roles")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,
-            (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null))).StatusCode);
+            (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null))).StatusCode);
     }
 }

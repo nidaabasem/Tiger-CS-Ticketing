@@ -48,7 +48,7 @@ public class SlaAndEscalationEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var lookup = await (await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup"))

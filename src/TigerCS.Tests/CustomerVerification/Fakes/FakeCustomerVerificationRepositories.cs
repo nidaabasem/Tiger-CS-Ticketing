@@ -211,6 +211,7 @@ public sealed class FakeCrmGateway : ICrmGateway
 public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
 {
     public bool ThrowUnavailable { get; set; }
+    public int SearchCallCount { get; private set; }
 
     private readonly Dictionary<string, CrmCustomerMatch> _fixtures = [];
 
@@ -222,6 +223,7 @@ public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
 
     public Task<CrmCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
+        SearchCallCount++;
         if (ThrowUnavailable)
         {
             throw new CrmCustomerLookupGatewayUnavailableException("Simulated CRM outage.");
@@ -234,6 +236,7 @@ public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
 public sealed class FakePactGateway : IPactGateway
 {
     public bool ThrowUnavailable { get; set; }
+    public int SearchCallCount { get; private set; }
 
     private readonly Dictionary<string, PactCustomerMatch> _fixtures = [];
 
@@ -245,6 +248,7 @@ public sealed class FakePactGateway : IPactGateway
 
     public Task<PactCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
+        SearchCallCount++;
         if (ThrowUnavailable)
         {
             throw new PactGatewayUnavailableException("Simulated PACT outage.");
@@ -257,6 +261,7 @@ public sealed class FakePactGateway : IPactGateway
 public sealed class FakeTasleehGateway : ITasleehGateway
 {
     public bool ThrowUnavailable { get; set; }
+    public int SearchCallCount { get; private set; }
 
     private readonly Dictionary<string, TasleehCustomerMatch> _fixtures = [];
 
@@ -268,6 +273,7 @@ public sealed class FakeTasleehGateway : ITasleehGateway
 
     public Task<TasleehCustomerMatch?> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
+        SearchCallCount++;
         if (ThrowUnavailable)
         {
             throw new TasleehGatewayUnavailableException("Simulated Tasleeh outage.");

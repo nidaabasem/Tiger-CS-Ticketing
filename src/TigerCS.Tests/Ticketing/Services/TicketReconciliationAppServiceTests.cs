@@ -48,7 +48,7 @@ public class TicketReconciliationAppServiceTests
             priorityId: (byte)PriorityLevel.Critical, "Flooding reported", DateTime.UtcNow);
         await f.Tickets.AddAsync(ticket);
 
-        var intake = new IntakeRecord(Channel.Phone, "+971500000001", isUnitRelated: true, rawUnitNumberEntered, priorityHint: null, agentId, DateTime.UtcNow);
+        var intake = new IntakeRecord(Channel.Phone, "+971500000001", null, isUnitRelated: true, rawUnitNumberEntered, priorityHint: null, agentId, DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(intake);
         intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified);
 

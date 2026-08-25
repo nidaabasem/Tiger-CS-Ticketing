@@ -19,6 +19,14 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// </para>
 ///
 /// <para>
+/// <b>DepartmentId — optional, narrows which sources are searched.</b> When
+/// set, <c>CustomerLookupAppService</c> searches only the source(s)
+/// configured for that Department (<see cref="DepartmentCustomerLookupSource"/>)
+/// instead of all three. It never gates or restricts anything else — a
+/// Department-scoped intake is promoted to a Ticket exactly like any other.
+/// </para>
+///
+/// <para>
 /// <b>IsUnitRelated — no longer a promotion gate.</b> Every intake,
 /// unit-related or not, may be promoted to a <see cref="Ticket"/> once a
 /// supported Ticket Category is selected (<see cref="LinkToTicket"/>).
@@ -38,6 +46,7 @@ public class IntakeRecord
     public Channel ChannelId { get; private set; }
     public DateTime ReceivedAtUtc { get; private set; }
     public string PhoneNumber { get; private set; } = string.Empty;
+    public int? DepartmentId { get; private set; }
     public bool IsUnitRelated { get; private set; }
     public string? RawUnitNumberEntered { get; private set; }
     public byte? PriorityHint { get; private set; }
@@ -50,6 +59,7 @@ public class IntakeRecord
     public IntakeRecord(
         Channel channelId,
         string phoneNumber,
+        int? departmentId,
         bool isUnitRelated,
         string? rawUnitNumberEntered,
         byte? priorityHint,
@@ -83,6 +93,7 @@ public class IntakeRecord
 
         ChannelId = channelId;
         PhoneNumber = phoneNumber;
+        DepartmentId = departmentId;
         IsUnitRelated = isUnitRelated;
         RawUnitNumberEntered = rawUnitNumberEntered;
         PriorityHint = priorityHint;

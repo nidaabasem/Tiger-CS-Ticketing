@@ -9,12 +9,17 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
-/// Business-rule change: searches CRM, PACT, and Tasleeh by the intake's own
-/// phone number and returns whatever each source found — enrichment/
-/// identification for the agent, never a Ticket creation gate. Scoped to
-/// CS Agent/CS Supervisor only (PolicyNames.CustomerVerification), same
-/// rationale as IntakeRecordsController/CrmController: this is a step of the
-/// same intake-then-create sequence those endpoints belong to.
+/// Business-rule change: searches by the intake's own phone number and
+/// returns whatever each searched source found — enrichment/identification
+/// for the agent, never a Ticket creation gate. Which sources are searched
+/// depends on the intake's DepartmentId: when set, only that Department's
+/// configured source(s) (<see cref="TigerCS.Domain.Modules.Ticketing.DepartmentCustomerLookupSource"/>)
+/// are searched — never all three by default, and never falling back to an
+/// unconfigured source; when absent, all of CRM, PACT, and Tasleeh are
+/// searched. Scoped to CS Agent/CS Supervisor only
+/// (PolicyNames.CustomerVerification), same rationale as
+/// IntakeRecordsController/CrmController: this is a step of the same
+/// intake-then-create sequence those endpoints belong to.
 /// </summary>
 [ApiController]
 [Route("api/intake-records/{intakeRecordId:long}/customer-lookup")]
@@ -22,17 +27,19 @@ namespace TigerCS.Api.Controllers;
 [Tags(OpenApiTags.CustomerLookup)]
 public class CustomerLookupController(CustomerLookupAppService customerLookupAppService) : ControllerBase
 {
-    /// <summary>Search CRM, PACT, and Tasleeh for the intake's phone number.</summary>
+    /// <summary>Search the intake's Department-configured source(s) — or all of CRM/PACT/Tasleeh if no Department was selected — for its phone number.</summary>
     /// <remarks>
-    /// Always 200 with all three sources' outcomes together — a source that
+    /// Always 200, with one entry per source actually searched — unsearched
+    /// sources (because the intake's Department is not configured for them)
+    /// have no entry at all, never a fake NotFound. A searched source that
     /// found nothing (NotFound) or could not be reached (Failed) never hides
     /// another source's match, and this call never blocks or gates ticket
     /// creation (<c>POST /api/tickets</c>). Pass a Found CRM source's
     /// unitReferenceId/contactReferenceId straight to ticket creation to
     /// link it; PACT/Tasleeh matches are display-only.
     /// </remarks>
-    /// <param name="intakeRecordId">The intake record whose phone number to search with.</param>
-    /// <response code="200">CRM, PACT, and Tasleeh's results — one entry per source, each Found/NotFound/Failed.</response>
+    /// <param name="intakeRecordId">The intake record whose phone number (and optional DepartmentId, to narrow which sources are searched) to search with.</param>
+    /// <response code="200">Each source actually searched, one entry per source, each Found/NotFound/Failed.</response>
     /// <response code="404">No such intake record.</response>
     [HttpGet]
     [ProducesResponseType<CustomerLookupResultDto>(StatusCodes.Status200OK)]

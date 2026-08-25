@@ -5,6 +5,7 @@ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.IdentityAndAccess.Integration;
 
 namespace TigerCS.Tests.Ticketing.Integration;
@@ -47,7 +48,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -61,7 +62,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
 
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
         Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
@@ -104,7 +105,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, true, "9999", (byte)PriorityLevel.Critical));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, true, "9999", (byte)PriorityLevel.Critical));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
@@ -123,6 +124,73 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
     }
 
     [Fact]
+    public async Task CreateIntakeRecord_BlankPhoneNumber_Returns400_RecordNotCreated()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "", null, false, null, null));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CustomerLookup_DepartmentScopedToCrmOnly_SearchesOnlyCrm_NeverFallsBackToPactEvenThoughItHasAMatch()
+    {
+        // MockPactGateway has a real fixture match for +971500000002 — this
+        // proves that a Department configured for CRM only never falls back
+        // to PACT even when PACT would have found something.
+        const string phoneWithPactMatchOnly = "+971500000002";
+
+        var client = await CreateAuthenticatedClientAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("CRM-Only Dept " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        await _factory.SeedDepartmentCustomerLookupSourceAsync(departmentId, CustomerLookupSource.Crm);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", phoneWithPactMatchOnly, departmentId, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        Assert.Equal(HttpStatusCode.OK, lookupResponse.StatusCode);
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+
+        var source = Assert.Single(lookup!.Sources);
+        Assert.Equal("Crm", source.Source);
+        Assert.Equal("NotFound", source.Status);
+    }
+
+    [Fact]
+    public async Task CustomerLookup_NoDepartmentSelected_SearchesAllThreeSources()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
+        var lookup = await lookupResponse.Content.ReadFromJsonAsync<CustomerLookupResultDto>();
+
+        Assert.Equal(3, lookup!.Sources.Count);
+        Assert.Contains(lookup.Sources, s => s.Source == "Crm");
+        Assert.Contains(lookup.Sources, s => s.Source == "Pact");
+        Assert.Contains(lookup.Sources, s => s.Source == "Tasleeh");
+    }
+
+    [Fact]
+    public async Task CreateIntakeRecord_UnknownDepartmentId_Returns404()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, 999_999, false, null, null));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
     public async Task CreateTicket_CrmOutageDuringLookup_StillReturns201()
     {
         // Business-rule change: a source that cannot be reached at all
@@ -135,7 +203,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         // MockCrmGateway/MockPactGateway/MockTasleehGateway all trigger a
         // simulated outage when the searched value contains "OUTAGE".
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500OUTAGE01", false, null, null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500OUTAGE01", null, false, null, null));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var lookupResponse = await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");
@@ -157,7 +225,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         await _factory.SeedPrioritiesAsync();
 
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, false, null, null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, false, null, null));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var response = await client.PostAsJsonAsync(
@@ -176,7 +244,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
 
         var intakeResponse = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, false, null, null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithNoMatch, null, false, null, null));
         Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
         Assert.False(intake!.IsUnitRelated);
@@ -215,7 +283,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var client = await CreateAuthenticatedClientAsync(role);
 
         var response = await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
 
         Assert.Equal(expectAuthorized ? HttpStatusCode.Created : HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -227,7 +295,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intakeResponse = await creatorClient.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, true, "1204", null));
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         var lookupResponse = await creatorClient.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup");

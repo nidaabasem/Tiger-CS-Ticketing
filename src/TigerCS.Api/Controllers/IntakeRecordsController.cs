@@ -33,7 +33,7 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
     /// (<c>GET /api/intake-records/{intakeRecordId}/customer-lookup</c>)
     /// later searches CRM/PACT/Tasleeh with.
     /// </remarks>
-    /// <param name="request">The channel, the phone number, whether the request concerns a unit, and the raw unit number if so.</param>
+    /// <param name="request">The channel, the phone number, an optional department (narrows customer lookup to its configured source(s)), whether the request concerns a unit, and the raw unit number if so.</param>
     /// <response code="201">The intake record, with its initial crmVerificationStatus.</response>
     /// <response code="400">
     /// channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
@@ -41,9 +41,11 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
     /// rawUnitNumberEntered was absent while isUnitRelated was true, or
     /// present while it was false.
     /// </response>
+    /// <response code="404">departmentId was supplied but does not reference a real department.</response>
     [HttpPost]
     [ProducesResponseType<IntakeRecordResponseDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Create([FromBody] CreateIntakeRecordRequestDto request, CancellationToken cancellationToken)
     {
         if (!Enum.TryParse<Channel>(request.ChannelId, ignoreCase: false, out _))
@@ -78,7 +80,15 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
         }
 
         var result = await intakeRecordAppService.CreateAsync(employeeId.Value, request, cancellationToken);
-        return Created($"/api/intake-records/{result.Response!.IntakeRecordId}", result.Response);
+        return result.Outcome switch
+        {
+            IntakeRecordOutcome.Success => Created($"/api/intake-records/{result.Response!.IntakeRecordId}", result.Response),
+            IntakeRecordOutcome.DepartmentNotFound => Problem(
+                type: "https://tigercs.internal/problems/department-not-found",
+                title: "Department not found",
+                statusCode: StatusCodes.Status404NotFound),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
+        };
     }
 
     private Guid? GetEmployeeId()

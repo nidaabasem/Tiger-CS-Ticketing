@@ -71,7 +71,7 @@ public sealed class NewTicketModel(
     public async Task<IActionResult> OnPostIntakeAsync(CancellationToken cancellationToken)
     {
         var request = new CreateIntakeRecordRequestDto(
-            Intake.ChannelId, Intake.PhoneNumber, Intake.IsUnitRelated,
+            Intake.ChannelId, Intake.PhoneNumber, Intake.DepartmentId, Intake.IsUnitRelated,
             Intake.IsUnitRelated ? Intake.RawUnitNumberEntered : null, Intake.PriorityHint);
 
         var result = await intakeClient.CreateAsync(request, cancellationToken);
@@ -123,6 +123,8 @@ public sealed class NewTicketModel(
         public string ChannelId { get; set; } = "Phone";
         [Required]
         public string PhoneNumber { get; set; } = string.Empty;
+        /// <summary>Optional — when set, narrows customer lookup to this Department's configured source(s) instead of searching CRM+PACT+Tasleeh.</summary>
+        public int? DepartmentId { get; set; }
         public bool IsUnitRelated { get; set; } = true;
         public string? RawUnitNumberEntered { get; set; }
         public byte? PriorityHint { get; set; }

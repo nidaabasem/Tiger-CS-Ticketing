@@ -74,7 +74,7 @@ public class TicketCreationAppServiceTests
     {
         var agentId = Guid.NewGuid();
         var record = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
-            Channel.Phone, "+971500000001", isUnitRelated, isUnitRelated ? rawUnitNumberEntered : null, priorityHint: null, agentId, DateTime.UtcNow);
+            Channel.Phone, "+971500000001", null, isUnitRelated, isUnitRelated ? rawUnitNumberEntered : null, priorityHint: null, agentId, DateTime.UtcNow);
         await repo.AddAsync(record);
         return (record, agentId);
     }

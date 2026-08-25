@@ -61,7 +61,7 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
         var lookup = await (await client.GetAsync($"/api/intake-records/{intake!.IntakeRecordId}/customer-lookup"))
             .Content.ReadFromJsonAsync<CustomerLookupResultDto>();
@@ -133,7 +133,7 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
             new CreateVerificationSessionRequestDto(1, 1, true, "ManualAgentConfirmation"))).StatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null))).StatusCode);
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null))).StatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/intake-records/1/customer-lookup")).StatusCode);
 
@@ -256,6 +256,6 @@ public class UnauthorizedRolesStillDeniedTests : IClassFixture<TigerCsApiFactory
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/crm/units/CRM-UNIT-1001")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/tickets")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(
-            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null))).StatusCode);
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null))).StatusCode);
     }
 }

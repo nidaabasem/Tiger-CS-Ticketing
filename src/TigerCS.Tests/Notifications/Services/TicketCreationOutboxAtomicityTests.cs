@@ -59,7 +59,7 @@ public class TicketCreationOutboxAtomicityTests
     private static async Task<(IntakeRecord Record, Guid AgentId)> SeedUnitRelatedIntakeAsync(FakeIntakeRecordRepository repo)
     {
         var agentId = Guid.NewGuid();
-        var record = new IntakeRecord(Channel.Phone, "+971500000001", isUnitRelated: true, "1204", priorityHint: null, agentId, DateTime.UtcNow);
+        var record = new IntakeRecord(Channel.Phone, "+971500000001", null, isUnitRelated: true, "1204", priorityHint: null, agentId, DateTime.UtcNow);
         await repo.AddAsync(record);
         return (record, agentId);
     }

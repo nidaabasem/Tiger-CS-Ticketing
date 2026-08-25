@@ -55,7 +55,7 @@ public class NotificationOutboxIntegrationTests : IClassFixture<TigerCsApiFactor
         var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
 
         var intake = await (await client.PostAsJsonAsync(
-                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", true, "1204", null)))
+                "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null)))
             .Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
 
         // Resolved directly via the CRM unit-lookup endpoints (unchanged),

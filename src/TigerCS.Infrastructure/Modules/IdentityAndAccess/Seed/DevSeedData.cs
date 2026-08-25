@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
 using TigerCS.Infrastructure.Persistence;
@@ -35,6 +36,7 @@ public static class DevSeedData
         await SeedDepartmentsAsync(dbContext, logger, cancellationToken);
         await SeedPrioritiesAsync(dbContext, logger, cancellationToken);
         await SeedCategoriesAsync(dbContext, logger, cancellationToken);
+        await SeedDepartmentCustomerLookupSourcesAsync(dbContext, logger, cancellationToken);
         await SeedSlaReferenceDataAsync(dbContext, logger, cancellationToken);
         await SeedDevAdministratorAsync(dbContext, userManager, configuration, logger, cancellationToken);
     }
@@ -107,6 +109,41 @@ public static class DevSeedData
 
         await dbContext.SaveChangesAsync(cancellationToken);
         logger.LogInformation("Seeded 2 sample categories.");
+    }
+
+    /// <summary>
+    /// Sample Department → customer-lookup-source mapping (business-rule
+    /// change: customer lookup narrows to a Department's configured
+    /// source(s) instead of always searching CRM+PACT+Tasleeh). Illustrative
+    /// dev-only data, not a business decision — Customer Service maps to
+    /// CRM only, Facilities Management to CRM+Tasleeh, so both a
+    /// single-source and a multi-source Department exist to exercise
+    /// against locally.
+    /// </summary>
+    private static async Task SeedDepartmentCustomerLookupSourcesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        if (await dbContext.DepartmentCustomerLookupSources.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+
+        var customerService = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "CS", cancellationToken);
+        var facilities = await dbContext.Departments.FirstOrDefaultAsync(d => d.Code == "FM", cancellationToken);
+        if (customerService is null || facilities is null)
+        {
+            logger.LogWarning("Skipping department customer-lookup-source seed — expected departments (CS, FM) not found.");
+            return;
+        }
+
+        dbContext.DepartmentCustomerLookupSources.Add(
+            new DepartmentCustomerLookupSource(customerService.DepartmentId, CustomerLookupSource.Crm));
+        dbContext.DepartmentCustomerLookupSources.Add(
+            new DepartmentCustomerLookupSource(facilities.DepartmentId, CustomerLookupSource.Crm));
+        dbContext.DepartmentCustomerLookupSources.Add(
+            new DepartmentCustomerLookupSource(facilities.DepartmentId, CustomerLookupSource.Tasleeh));
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("Seeded department customer-lookup-source mappings (CS -> Crm; FM -> Crm+Tasleeh).");
     }
 
     private static async Task SeedRolesAsync(

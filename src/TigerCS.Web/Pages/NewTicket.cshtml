@@ -40,9 +40,17 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label" asp-for="Intake.PhoneNumber">Phone number</label>
+                    <label class="form-label" asp-for="Intake.PhoneNumber">Customer Phone Number *</label>
                     <input class="form-control" asp-for="Intake.PhoneNumber" placeholder="+9715XXXXXXXX" />
-                    <span class="field-hint">Used to search CRM, PACT, and Tasleeh for this customer.</span>
+                    <span class="field-hint">Used to search for this customer. Which systems are searched depends on the Department selected below.</span>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="Intake.DepartmentId">Department (optional)</label>
+                    <input class="form-control" asp-for="Intake.DepartmentId" />
+                    <span class="field-hint">
+                        If set, customer lookup searches only that Department's configured source(s) (CRM/PACT/Tasleeh).
+                        Leave blank to search all three. No department directory endpoint exists yet — enter the numeric department id.
+                    </span>
                 </div>
                 <div class="form-group">
                     <label class="checkbox-field">
@@ -69,8 +77,11 @@
         }
         else if (Model.Step == "lookup")
         {
-            <div class="section-card__title">Step 2 — Customer lookup (CRM / PACT / Tasleeh)</div>
-            <p class="text-secondary">Searching by phone number. A source finding nothing, or being unavailable, never blocks creating the ticket.</p>
+            <div class="section-card__title">Step 2 — Customer lookup</div>
+            <p class="text-secondary">
+                Searching by phone number, scoped to the Department's configured source(s) if one was selected (otherwise CRM, PACT, and Tasleeh).
+                Only the systems actually searched are shown below. A source finding nothing, or being unavailable, never blocks creating the ticket.
+            </p>
 
             @if (Model.LookupResult is not null)
             {

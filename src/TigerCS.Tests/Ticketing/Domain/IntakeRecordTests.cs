@@ -10,27 +10,27 @@ public class IntakeRecordTests
     public void Constructor_BlankPhoneNumber_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            new IntakeRecord(Channel.Phone, "", isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
+            new IntakeRecord(Channel.Phone, "", null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
     }
 
     [Fact]
     public void Constructor_UnitRelatedWithoutRawUnitNumber_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            new IntakeRecord(Channel.Phone, Phone, isUnitRelated: true, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
+            new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
     }
 
     [Fact]
     public void Constructor_NonUnitRelatedWithRawUnitNumber_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            new IntakeRecord(Channel.Phone, Phone, isUnitRelated: false, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
+            new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
     }
 
     [Fact]
     public void Constructor_NonUnitRelated_PreservesPhoneNumberAndStartsUnverifiedAndUnlinked()
     {
-        var record = new IntakeRecord(Channel.Phone, Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         Assert.Equal(Phone, record.PhoneNumber);
         Assert.False(record.IsUnitRelated);
@@ -45,7 +45,7 @@ public class IntakeRecordTests
         // a ticket too — only its CrmVerificationStatus differs (Unverified,
         // never Verified/PendingCrmVerification, since it has nothing to
         // verify against the CRM).
-        var record = new IntakeRecord(Channel.Phone, Phone, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Unverified);
 
@@ -59,7 +59,7 @@ public class IntakeRecordTests
         // Business-rule change: a customer-lookup match found before ticket
         // creation results in Verified; NotFound/Failed both still promote,
         // just with Unverified instead (see the test above).
-        var record = new IntakeRecord(Channel.Phone, Phone, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Verified);
 
@@ -69,7 +69,7 @@ public class IntakeRecordTests
     [Fact]
     public void LinkToTicket_AlreadyLinked_Throws()
     {
-        var record = new IntakeRecord(Channel.Phone, Phone, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
         record.LinkToTicket(1, CrmVerificationStatus.Verified);
 
         Assert.Throws<IntakeRecordAlreadyLinkedException>(() => record.LinkToTicket(2, CrmVerificationStatus.Verified));

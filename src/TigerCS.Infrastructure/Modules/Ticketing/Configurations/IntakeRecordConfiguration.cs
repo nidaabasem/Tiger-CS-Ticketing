@@ -30,6 +30,14 @@ public class IntakeRecordConfiguration : IEntityTypeConfiguration<IntakeRecord>
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Optional — narrows customer lookup to this Department's configured
+        // source(s) (DepartmentCustomerLookupSource); never a promotion gate.
+        builder.HasOne<Department>()
+            .WithMany()
+            .HasForeignKey(i => i.DepartmentId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // Employees are never hard-deleted (MVP-ERD.md §2.2) — Restrict is
         // never actually exercised, consistent with every other
         // Employees-referencing FK in this codebase.
