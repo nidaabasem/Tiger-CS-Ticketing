@@ -51,11 +51,47 @@ public static class IntegrationsServiceCollectionExtensions
             };
         });
 
+        AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);
         AddTasleehGateway(services, configuration);
         AddEmailSender(services, configuration);
 
         return services;
+    }
+
+    /// <summary>
+    /// The CRM Buyer Lookup increment's own real HTTP integration — unlike
+    /// <see cref="ICrmGateway"/>/<see cref="ICrmCustomerLookupGateway"/>
+    /// above, there is no "Mock"/provider switch here: CRM's
+    /// <c>GET /TicketingSystem/GetBuyerByPhone</c> endpoint has already been
+    /// implemented and manually verified CRM-side, so <c>CrmBuyerHttpGateway</c>
+    /// is always the real implementation.
+    ///
+    /// <para>
+    /// Registered via <c>AddHttpClient&lt;TClient, TImplementation&gt;</c> —
+    /// the idiomatic ASP.NET Core shape for a typed HttpClient (transient
+    /// wrapper over a factory-pooled <see cref="HttpMessageHandler"/>);
+    /// letting the factory own the client's lifetime is correct here even
+    /// though the other CRM ports above are registered <c>Scoped</c>
+    /// directly, since those hold no <see cref="HttpClient"/> at all yet.
+    /// The base address is read from <see cref="CrmGatewayOptions.BaseUrl"/>
+    /// lazily (per request), not at startup, so a missing/blank value never
+    /// prevents the host from starting — <c>CrmBuyerHttpGateway</c> itself
+    /// turns that into an <c>Unavailable</c> outcome on first use instead.
+    /// </para>
+    /// </summary>
+    private static void AddCrmBuyerLookupGateway(IServiceCollection services)
+    {
+        services.AddHttpClient<ICrmBuyerLookupGateway, CrmBuyerHttpGateway>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            {
+                client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
     }
 
     /// <summary>Business-rule change: PACT phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>
