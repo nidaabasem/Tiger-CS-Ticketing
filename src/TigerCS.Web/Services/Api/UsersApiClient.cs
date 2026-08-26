@@ -1,10 +1,11 @@
 using System.Web;
+using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 
 namespace TigerCS.Web.Services.Api;
 
 /// <summary>Calls TigerCS.Api's <c>api/users</c> and <c>api/departments</c> endpoints.</summary>
-public sealed class UsersApiClient(HttpClient httpClient) : ApiClientBase(httpClient)
+public sealed class UsersApiClient(HttpClient httpClient, ILogger<UsersApiClient> logger) : ApiClientBase(httpClient, logger)
 {
     public Task<ApiResult<CurrentUserResponseDto>> GetMeAsync(CancellationToken cancellationToken) =>
         GetAsync<CurrentUserResponseDto>("api/users/me", cancellationToken);

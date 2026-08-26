@@ -1,10 +1,11 @@
 using System.Web;
+using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Ticketing.Dto;
 
 namespace TigerCS.Web.Services.Api;
 
 /// <summary>Calls TigerCS.Api's <c>api/tickets</c> endpoints.</summary>
-public sealed class TicketsApiClient(HttpClient httpClient) : ApiClientBase(httpClient)
+public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiClient> logger) : ApiClientBase(httpClient, logger)
 {
     public Task<ApiResult<TicketListResultDto>> GetQueueAsync(TicketListRequestDto request, CancellationToken cancellationToken)
     {

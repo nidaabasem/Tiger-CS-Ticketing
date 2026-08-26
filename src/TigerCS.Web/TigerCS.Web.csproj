@@ -8,4 +8,11 @@
     <ProjectReference Include="..\TigerCS.Reporting\TigerCS.Reporting.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Lets TigerCS.Tests spin up TigerCS.Web's own (internal, top-level-statement)
+         Program via WebApplicationFactory<Program> to verify the real DI wiring —
+         e.g. that every typed Api client resolves the same configured BaseAddress. -->
+    <InternalsVisibleTo Include="TigerCS.Tests" />
+  </ItemGroup>
+
 </Project>

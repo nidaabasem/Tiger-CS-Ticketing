@@ -1,9 +1,10 @@
+using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 
 namespace TigerCS.Web.Services.Api;
 
 /// <summary>Calls TigerCS.Api's <c>api/tickets/{id}/sla</c> and <c>.../escalations</c> endpoints.</summary>
-public sealed class TicketSlaApiClient(HttpClient httpClient) : ApiClientBase(httpClient)
+public sealed class TicketSlaApiClient(HttpClient httpClient, ILogger<TicketSlaApiClient> logger) : ApiClientBase(httpClient, logger)
 {
     public Task<ApiResult<TicketSlaSummaryResponseDto>> GetSlaAsync(long ticketId, CancellationToken cancellationToken) =>
         GetAsync<TicketSlaSummaryResponseDto>($"api/tickets/{ticketId}/sla", cancellationToken);

@@ -8,6 +8,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Logging.Abstractions;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -43,11 +44,16 @@ public sealed class NewTicketModelTests
         var categoriesHandler = new FakeApiHandler(categoriesResponder ?? ((_, _) => throw new InvalidOperationException("Categories API not expected to be called.")));
         var ticketsHandler = new FakeApiHandler(ticketsResponder ?? ((_, _) => throw new InvalidOperationException("Tickets API not expected to be called.")));
 
-        var intakeClient = new IntakeRecordsApiClient(new HttpClient(intakeHandler) { BaseAddress = new Uri("http://localhost/") });
-        var lookupClient = new CustomerLookupApiClient(new HttpClient(lookupHandler) { BaseAddress = new Uri("http://localhost/") });
-        var departmentsClient = new DepartmentsApiClient(new HttpClient(departmentsHandler) { BaseAddress = new Uri("http://localhost/") });
-        var categoriesClient = new CategoriesApiClient(new HttpClient(categoriesHandler) { BaseAddress = new Uri("http://localhost/") });
-        var ticketsClient = new TicketsApiClient(new HttpClient(ticketsHandler) { BaseAddress = new Uri("http://localhost/") });
+        var intakeClient = new IntakeRecordsApiClient(
+            new HttpClient(intakeHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<IntakeRecordsApiClient>.Instance);
+        var lookupClient = new CustomerLookupApiClient(
+            new HttpClient(lookupHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CustomerLookupApiClient>.Instance);
+        var departmentsClient = new DepartmentsApiClient(
+            new HttpClient(departmentsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<DepartmentsApiClient>.Instance);
+        var categoriesClient = new CategoriesApiClient(
+            new HttpClient(categoriesHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CategoriesApiClient>.Instance);
+        var ticketsClient = new TicketsApiClient(
+            new HttpClient(ticketsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<TicketsApiClient>.Instance);
 
         var model = new NewTicketModel(intakeClient, lookupClient, departmentsClient, categoriesClient, ticketsClient);
         return (model, intakeHandler, lookupHandler, departmentsHandler, categoriesHandler, ticketsHandler);
@@ -702,4 +708,97 @@ public sealed class NewTicketModelTests
         redirect.RouteValues is null
             ? new Dictionary<string, object?>()
             : redirect.RouteValues.ToDictionary(kv => kv.Key, kv => kv.Value);
+
+    // ---- TigerCS.Web -> TigerCS.Api integration failure modes: every one must
+    // land as a controlled ErrorMessage/DepartmentsErrorMessage, never an
+    // unhandled exception, and — for the outcomes an agent can act on — with
+    // wording more specific than a bare generic fallback. ----
+
+    [Fact]
+    public async Task OnGetAsync_IntakeStep_DepartmentsApi401_SetsPredictableAuthMessage_NotGenericFallback()
+    {
+        // An empty-bodied 401 (the default ASP.NET Core auth challenge response,
+        // no ProblemDetails "detail"/"title") is exactly what a missing/expired
+        // bearer token from TigerCS.Web produces against a protected endpoint.
+        var (model, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
+            new HttpResponseMessage(HttpStatusCode.Unauthorized));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Empty(model.Departments);
+        Assert.NotNull(model.DepartmentsErrorMessage);
+        Assert.Contains("not authorized", model.DepartmentsErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_IntakeStep_DepartmentsApi403_SetsPredictableAuthMessage_NotGenericFallback()
+    {
+        var (model, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
+            new HttpResponseMessage(HttpStatusCode.Forbidden));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Empty(model.Departments);
+        Assert.NotNull(model.DepartmentsErrorMessage);
+        Assert.Contains("not authorized", model.DepartmentsErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_IntakeStep_DepartmentsApiUnreachable_SetsControlledFailureMessage_NoUnhandledException()
+    {
+        // Simulates TigerCS.Web pointed at an address nothing is listening on
+        // (the actual root cause of "Unable to load the department list") —
+        // HttpClient surfaces this as HttpRequestException, never a status code.
+        var (model, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
+            throw new HttpRequestException("Connection refused"));
+
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Empty(model.Departments);
+        Assert.NotNull(model.DepartmentsErrorMessage);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_ValidationError_SurfacesApiDetail_NotAGenericMessage()
+    {
+        // A 400 from POST /api/intake-records carries a ProblemDetails body —
+        // its "detail" must reach the page verbatim rather than being masked
+        // by the page's own generic "Could not record this interaction." text.
+        var (model, _, _, departments, _, _) = CreateModel(intakeResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.BadRequest, new { detail = "Customer phone number is invalid." }));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "not-a-phone-number" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal("Customer phone number is invalid.", model.ErrorMessage);
+        Assert.Single(departments.Requests); // Step 1 redisplays with the department dropdown reloaded
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_ApiUnreachable_SetsControlledFailureMessage_NoUnhandledException()
+    {
+        var (model, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+            throw new HttpRequestException("No connection could be made because the target machine actively refused it."));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.NotNull(model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_ApiUnauthorized_SetsPredictableAuthMessage_NotGenericFallback()
+    {
+        var (model, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+            new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.NotNull(model.ErrorMessage);
+        Assert.Contains("not authorized", model.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
 }
