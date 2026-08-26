@@ -20,6 +20,17 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
+// Every expected failure path in this Api already returns a structured
+// ProblemDetails body (Problem(...)/ValidationProblem(...) throughout the
+// controllers). Without this, an *unexpected* exception instead falls
+// through to Kestrel's bare, empty-body 500 — which TigerCS.Web's
+// ApiClientBase.DescribeFailureAsync cannot parse for a "detail", so the
+// Web page silently shows its own generic fallback text ("Unable to load
+// the department list.", "Could not record this interaction.") with no
+// indication anything actually went wrong server-side. This maps every
+// unhandled exception to a real ProblemDetails JSON body instead.
+builder.Services.AddProblemDetails();
+
 // Swagger/OpenAPI document generation (TigerCS.Api/OpenApi). Registering the
 // generator is unconditional; whether /swagger and /swagger/v1/swagger.json
 // are actually reachable is decided by MapTigerCsSwagger below, which maps
@@ -168,6 +179,8 @@ using (var backgroundJobScope = app.Services.CreateScope())
         .GetRequiredService<IOptions<OutboxDispatchOptions>>().Value;
     app.Services.UseTigerCsRecurringOutboxDispatch(backgroundJobOptions, outboxOptions);
 }
+
+app.UseExceptionHandler();
 
 app.UseHttpsRedirection();
 
