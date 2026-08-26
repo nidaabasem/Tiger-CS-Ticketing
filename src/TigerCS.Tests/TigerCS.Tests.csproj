@@ -29,7 +29,8 @@
     <!-- Aliased: TigerCS.Web's own top-level-statement Program type would otherwise collide
          (both are implicitly in the global namespace) with TigerCS.Api's Program, which the
          existing WebApplicationFactory<Program>-based integration tests reference unqualified.
-         Nothing in the front-end tests needs TigerCS.Web's Program, so the alias is never used. -->
+         Referenced as TigerCsWeb::Program by ApiClientConfigurationTests, which spins up
+         TigerCS.Web's own host via WebApplicationFactory to verify its DI wiring. -->
     <ProjectReference Include="..\TigerCS.Web\TigerCS.Web.csproj">
       <Aliases>TigerCsWeb</Aliases>
     </ProjectReference>

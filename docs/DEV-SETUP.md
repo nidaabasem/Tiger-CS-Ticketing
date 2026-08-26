@@ -326,3 +326,75 @@ The host must be able to resolve the calendar's `TimeZone` (`Asia/Dubai`). On
 Linux that needs `tzdata` installed. A zone that cannot be resolved fails
 loudly rather than falling back to UTC, which would silently shift every
 business-hours deadline by four hours.
+
+## 11. Running TigerCS.Web locally
+
+TigerCS.Web is a separate ASP.NET Core app — it never touches the database
+directly; every page that needs data calls TigerCS.Api over HTTP through a
+handful of typed `HttpClient`s (`src/TigerCS.Web/Services/Api/*ApiClient.cs`).
+All of them share **one** configuration source: the `TigerCsApi:BaseUrl`
+value `Program.cs` binds into `TigerCsApiOptions` and hands to every
+`AddHttpClient<...>()` registration. There is no per-client override and
+nothing here is ever hard-coded — if a page can't reach the Api, this is the
+one setting to check.
+
+```jsonc
+// src/TigerCS.Web/appsettings.Development.json
+"TigerCsApi": {
+  "BaseUrl": "https://localhost:7283"
+}
+```
+
+**This must match whatever port TigerCS.Api is actually listening on for
+you.** `src/TigerCS.Api/Properties/launchSettings.json`'s `https` profile
+binds `https://localhost:7283` (and, unless you've overridden it, also
+`http://localhost:5179`) — if you start the Api a different way (a custom
+`--urls`, a different launch profile, IIS Express, a container port
+mapping), update `TigerCsApi:BaseUrl` to match instead of assuming the
+default. A stale or mismatched value here is exactly what an "Unable to load
+the department list" / "Could not record this interaction" pair on the New
+Ticket page means — the Api itself can be completely healthy (confirmed via
+Swagger) while Web is still pointed at the wrong address.
+
+Both apps run over HTTPS in Development with the standard ASP.NET Core
+localhost dev certificate. Trust it once, machine-wide, if you haven't
+already — this is what lets the Web app's server-side `HttpClient` complete
+TLS to the Api without any certificate-validation code change:
+
+```bash
+dotnet dev-certs https --trust
+```
+
+Never work around a certificate error here by disabling TLS validation
+(`ServerCertificateCustomValidationCallback`, `HttpClientHandler.DangerousAcceptAnyServerCertificateValidator`,
+etc.) — that reintroduces the exact risk the dev certificate exists to avoid,
+for a problem `dotnet dev-certs https --trust` already solves.
+
+TigerCS.Web authenticates its own users with a cookie
+(`TigerCS.Web.Auth`, `Program.cs`) that never reaches the browser as
+JS-readable data. Server-side, `BearerTokenHandler` reads the Api access
+token back out of that cookie's claims and attaches it as
+`Authorization: Bearer {token}` on every outgoing call — every typed client
+except `AuthApiClient` (which signs in/out, before any token exists) is
+registered with `.AddHttpMessageHandler<BearerTokenHandler>()` in
+`Program.cs`. A page failing with an authorization-specific message ("Your
+session is not authorized to perform this action.") rather than a
+connectivity one means you're signed into Web but the forwarded token is
+being rejected — check that you're signed in with an account TigerCS.Api
+still considers active, not that the Api address is wrong.
+
+In Development, every non-success Api call (a mapped HTTP failure or a
+connection failure) is logged from `ApiClientBase` — method, relative
+endpoint, status code, the Api's own "detail"/"title" if it sent one, and
+the exception type on a connection failure. Never a token, a cookie, or a
+full response body. Check the Web app's own console/log output first when a
+page reports a generic failure — the specific cause is there even when the
+page itself only shows a safe, generic message.
+
+Run it from `src/TigerCS.Web`:
+
+```bash
+dotnet run
+```
+
+then open `https://localhost:7219`.

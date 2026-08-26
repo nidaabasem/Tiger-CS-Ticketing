@@ -110,7 +110,7 @@ public sealed class NewTicketModel(
             var result = await customerLookupClient.SearchAsync(id, cancellationToken);
             if (!result.IsSuccess || result.Value is null)
             {
-                ErrorMessage = result.Detail ?? "Could not search CRM/PACT/Tasleeh for this phone number.";
+                ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not search CRM/PACT/Tasleeh for this phone number.");
             }
             else
             {
@@ -143,7 +143,7 @@ public sealed class NewTicketModel(
         var result = await intakeClient.CreateAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
         {
-            ErrorMessage = result.Detail ?? "Could not record this interaction.";
+            ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not record this interaction.");
             Step = "intake";
             await LoadDepartmentsAsync(cancellationToken);
             return Page();
@@ -243,7 +243,7 @@ public sealed class NewTicketModel(
         var result = await ticketsClient.CreateAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
         {
-            ErrorMessage = result.Detail ?? "Could not create the ticket.";
+            ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not create the ticket.");
             await LoadCategoriesAsync(cancellationToken);
             return Page();
         }
@@ -264,7 +264,7 @@ public sealed class NewTicketModel(
         var result = await departmentsClient.GetDepartmentsAsync(cancellationToken);
         if (!result.IsSuccess || result.Value is null)
         {
-            DepartmentsErrorMessage = result.Detail ?? "Unable to load the department list. Please try again.";
+            DepartmentsErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Unable to load the department list. Please try again.");
             Departments = [];
         }
         else
@@ -285,7 +285,7 @@ public sealed class NewTicketModel(
         var result = await categoriesClient.GetCategoriesAsync(DepartmentId, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
         {
-            CategoriesErrorMessage = result.Detail ?? "Unable to load ticket categories. Please try again.";
+            CategoriesErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Unable to load ticket categories. Please try again.");
             Categories = [];
         }
         else
@@ -293,6 +293,20 @@ public sealed class NewTicketModel(
             Categories = result.Value;
         }
     }
+
+    /// <summary>
+    /// A user-facing fallback for a failed Api call whose response carried no
+    /// safe "detail"/"title" text (e.g. an empty-bodied 401/403, or a
+    /// connection failure) — distinct, actionable wording for the outcomes an
+    /// agent can actually act on; every other outcome keeps the caller's own
+    /// page-specific fallback text.
+    /// </summary>
+    private static string DescribeFailure(ApiOutcome outcome, string fallback) => outcome switch
+    {
+        ApiOutcome.Unauthorized or ApiOutcome.Forbidden => "Your session is not authorized to perform this action.",
+        ApiOutcome.Unreachable => "Unable to contact the Ticketing API. Please try again shortly.",
+        _ => fallback
+    };
 
     public sealed class IntakeInput
     {

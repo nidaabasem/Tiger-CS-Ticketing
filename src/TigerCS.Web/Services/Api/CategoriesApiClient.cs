@@ -1,10 +1,11 @@
 using System.Web;
+using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 
 namespace TigerCS.Web.Services.Api;
 
 /// <summary>Calls TigerCS.Api's <c>api/categories</c> endpoint.</summary>
-public sealed class CategoriesApiClient(HttpClient httpClient) : ApiClientBase(httpClient)
+public sealed class CategoriesApiClient(HttpClient httpClient, ILogger<CategoriesApiClient> logger) : ApiClientBase(httpClient, logger)
 {
     public Task<ApiResult<IReadOnlyCollection<CategoryDto>>> GetCategoriesAsync(int? departmentId, CancellationToken cancellationToken)
     {
