@@ -120,5 +120,14 @@ public sealed class TicketQueryAppService(
         ticket.RequestSummary,
         ticket.ReopenCount,
         ticket.CreatedAtUtc,
-        Convert.ToBase64String(ticket.RowVersion));
+        Convert.ToBase64String(ticket.RowVersion),
+        ticket.CrmBuyerCustomerId,
+        ticket.CrmBuyerLeadId,
+        ticket.CrmBuyerUnitId,
+        ticket.CrmBuyerProjectId,
+        ticket.CrmBuyerCustomerName,
+        ticket.CrmBuyerProjectName,
+        ticket.CrmBuyerUnitNumber,
+        ticket.ManualProjectName,
+        ticket.ManualUnitNumber);
 }

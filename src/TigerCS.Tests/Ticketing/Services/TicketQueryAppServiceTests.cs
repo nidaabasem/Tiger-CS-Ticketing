@@ -96,4 +96,91 @@ public class TicketQueryAppServiceTests
 
         Assert.Equal(TicketQueryOutcome.NotFound, result.Outcome);
     }
+
+    // ---- Ticket Details CRM Buyer / manual / legacy unit display (root-cause fix:
+    // TicketDetailDto never carried the CrmBuyer*/Manual* snapshot fields the Ticket
+    // entity already persists, so the read path silently dropped them) ----
+
+    [Fact]
+    public async Task GetDetailAsync_CrmBuyerVerifiedTicket_ExposesTheExactSelectedCustomerProjectAndUnit()
+    {
+        var f = CreateService();
+        var ticket = Ticket.CreateVerifiedFromCrmBuyer(
+            "TG-CS-20260827-0001", 2,
+            crmBuyerCustomerId: 555, crmBuyerLeadId: 306756, crmBuyerUnitId: 100003691, crmBuyerProjectId: 42,
+            crmBuyerCustomerName: "Walid Jalanbo", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "2508",
+            categoryId: 5, priorityId: (byte)PriorityLevel.Medium, requestSummary: "AC not cooling", DateTime.UtcNow);
+        await f.Tickets.AddAsync(ticket);
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.Equal(TicketQueryOutcome.Success, result.Outcome);
+        var dto = result.Response!;
+        Assert.Equal("Verified", dto.VerificationStatus);
+        Assert.Equal("Walid Jalanbo", dto.CrmBuyerCustomerName);
+        Assert.Equal("Nobles Tower", dto.CrmBuyerProjectName);
+        // The exact unit the agent selected — not merely "a" unit or the first match.
+        Assert.Equal("2508", dto.CrmBuyerUnitNumber);
+        Assert.Equal(100003691, dto.CrmBuyerUnitId);
+        Assert.Equal(306756, dto.CrmBuyerLeadId);
+        Assert.Null(dto.ManualProjectName);
+        Assert.Null(dto.ManualUnitNumber);
+        Assert.Null(dto.UnitReferenceId);
+        Assert.Null(dto.ContactReferenceId);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_ManualNoCrmMatchTicket_ExposesManualProjectAndUnit_NotVerified()
+    {
+        var f = CreateService();
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260827-0002", 2, 5, (byte)PriorityLevel.Low, "Water leak",
+            DateTime.UtcNow, manualProjectName: "Sapphire Residences", manualUnitNumber: "1204");
+        await f.Tickets.AddAsync(ticket);
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        var dto = result.Response!;
+        Assert.Equal("Unverified", dto.VerificationStatus);
+        Assert.Equal("Sapphire Residences", dto.ManualProjectName);
+        Assert.Equal("1204", dto.ManualUnitNumber);
+        Assert.Null(dto.CrmBuyerUnitId);
+        Assert.Null(dto.CrmBuyerCustomerName);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_LegacyVerifiedTicket_StaysBackwardCompatible_NoCrmOrManualFields()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, 2);
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        var dto = result.Response!;
+        Assert.Equal("Verified", dto.VerificationStatus);
+        Assert.Equal(10, dto.UnitReferenceId);
+        Assert.Equal(20, dto.ContactReferenceId);
+        Assert.Null(dto.CrmBuyerUnitId);
+        Assert.Null(dto.ManualProjectName);
+        Assert.Null(dto.ManualUnitNumber);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_PlainUnverifiedTicket_NullCrmAndManualFields_DoesNotThrow()
+    {
+        var f = CreateService();
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260827-0003", 2, 5, (byte)PriorityLevel.Critical, "General inquiry", DateTime.UtcNow);
+        await f.Tickets.AddAsync(ticket);
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        var dto = result.Response!;
+        Assert.Null(dto.CrmBuyerUnitId);
+        Assert.Null(dto.CrmBuyerCustomerName);
+        Assert.Null(dto.ManualProjectName);
+        Assert.Null(dto.ManualUnitNumber);
+        Assert.Null(dto.UnitReferenceId);
+        Assert.Null(dto.ContactReferenceId);
+    }
 }
