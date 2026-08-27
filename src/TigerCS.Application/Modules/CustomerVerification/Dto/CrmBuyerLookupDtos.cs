@@ -11,15 +11,18 @@ public sealed record CrmCustomerDto(
 
 /// <summary>
 /// One unit a CRM buyer owns, carrying the Lead it was sold/contracted
-/// through and the project it belongs to. Only units whose
-/// <paramref name="LeadStatus"/> is Sold (8) or Contract (9) and whose
-/// <paramref name="CustomerType"/> is Buyer (1) are valid for ticket
-/// creation — CRM already filters to this, and <c>CrmBuyerLookupAppService</c>
-/// re-checks it rather than trusting CRM's filtering alone.
+/// through and the project it belongs to. CRM's own <c>GetBuyerByPhone</c>
+/// endpoint already determines which units are Sold/Contract-eligible — real
+/// CRM Lead status codes are not a small, stable set Ticketing can safely
+/// hard-code (production has returned e.g. status 4 = "Contract"), so
+/// <c>CrmBuyerLookupAppService</c> does not re-filter by
+/// <paramref name="LeadStatus"/>. It does still require
+/// <paramref name="CustomerType"/> to be Buyer (1) — this phase's own scoping
+/// decision, not a guess at CRM's status semantics.
 /// </summary>
 /// <param name="LeadId">The CRM Lead identifier this unit was matched through.</param>
-/// <param name="LeadStatus">8 = Sold, 9 = Contract. Any other value is not a valid Buyer match.</param>
-/// <param name="LeadStatusName">CRM's display name for <paramref name="LeadStatus"/> (e.g. "Sold").</param>
+/// <param name="LeadStatus">CRM's Lead status code. Not re-validated by Ticketing — CRM's own filtering already determined eligibility.</param>
+/// <param name="LeadStatusName">CRM's display name for <paramref name="LeadStatus"/> (e.g. "Sold", "Contract").</param>
 /// <param name="UnitId">The unit's identifier in Tiger CRM.</param>
 /// <param name="UnitNumber">The unit number.</param>
 /// <param name="UnitStatus">CRM's unit status code.</param>

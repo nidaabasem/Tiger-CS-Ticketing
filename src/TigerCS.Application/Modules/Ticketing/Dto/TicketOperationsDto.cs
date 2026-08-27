@@ -79,6 +79,15 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="ReopenCount">How many times the ticket has been reopened.</param>
 /// <param name="CreatedAtUtc">When the ticket was created, in UTC.</param>
 /// <param name="RowVersion">The concurrency token, Base64-encoded. Send it back on the next write to this ticket.</param>
+/// <param name="CrmBuyerCustomerId">The real CRM Buyer Lookup match's customer id, or null when no CRM Buyer match was linked at creation.</param>
+/// <param name="CrmBuyerLeadId">The matched CRM Lead id, or null.</param>
+/// <param name="CrmBuyerUnitId">The matched CRM unit id, or null.</param>
+/// <param name="CrmBuyerProjectId">The matched CRM project id, or null.</param>
+/// <param name="CrmBuyerCustomerName">Ticket-time display snapshot of the matched Buyer's name, or null.</param>
+/// <param name="CrmBuyerProjectName">Ticket-time display snapshot of the matched unit's project name, or null.</param>
+/// <param name="CrmBuyerUnitNumber">Ticket-time display snapshot of the matched unit's number, or null.</param>
+/// <param name="ManualProjectName">The agent-entered Project name, when no CRM Buyer match was linked at creation.</param>
+/// <param name="ManualUnitNumber">The agent-entered Unit Number, when no CRM Buyer match was linked at creation.</param>
 public sealed record TicketDetailDto(
     long TicketId,
     string TicketNumber,
@@ -98,7 +107,16 @@ public sealed record TicketDetailDto(
     string RequestSummary,
     int ReopenCount,
     DateTime CreatedAtUtc,
-    string RowVersion);
+    string RowVersion,
+    int? CrmBuyerCustomerId = null,
+    int? CrmBuyerLeadId = null,
+    int? CrmBuyerUnitId = null,
+    int? CrmBuyerProjectId = null,
+    string? CrmBuyerCustomerName = null,
+    string? CrmBuyerProjectName = null,
+    string? CrmBuyerUnitNumber = null,
+    string? ManualProjectName = null,
+    string? ManualUnitNumber = null);
 
 public enum TicketQueryOutcome
 {

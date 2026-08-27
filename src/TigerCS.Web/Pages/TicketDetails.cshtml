@@ -32,6 +32,13 @@ else
     var isResolved = t.TicketStatus == "Resolved";
     (string Label, string CssKey)? slaBadge = Model.Sla is not null ? TicketDisplay.SlaBadgeText(Model.Sla, DateTime.UtcNow) : null;
 
+    // Display priority for the "Verification & Unit" panel (task: CRM Buyer snapshot >
+    // manual Project/Unit Number > legacy Unit/Contact reference) — a ticket carries at
+    // most one of these per the domain's own mutual-exclusion invariants.
+    var hasCrmBuyer = t.CrmBuyerUnitId is not null;
+    var hasManualUnit = !hasCrmBuyer && (!string.IsNullOrWhiteSpace(t.ManualProjectName) || !string.IsNullOrWhiteSpace(t.ManualUnitNumber));
+    var hasLegacyReference = !hasCrmBuyer && !hasManualUnit && (t.UnitReferenceId is not null || t.ContactReferenceId is not null);
+
     <div class="page">
         <nav class="breadcrumb" aria-label="Breadcrumb">
             <a href="/Tickets">Tickets</a>
@@ -324,9 +331,28 @@ else
                 <div class="facts-section">
                     <div class="facts-section__title">Verification &amp; Unit</div>
                     <dl>
-                        <div class="facts-row"><dt>Verification</dt><dd>@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</dd></div>
-                        <div class="facts-row"><dt>Unit reference</dt><dd class="id-fallback">@(t.UnitReferenceId is int u ? $"#{u}" : "—")</dd></div>
-                        <div class="facts-row"><dt>Contact reference</dt><dd class="id-fallback">@(t.ContactReferenceId is int c ? $"#{c}" : "—")</dd></div>
+                        <div class="facts-row">
+                            <dt>Verification</dt>
+                            <dd>@(hasManualUnit ? "Not Verified / Not Found" : TicketDisplay.VerificationStatusLabel(t.VerificationStatus))</dd>
+                        </div>
+                        @if (hasCrmBuyer)
+                        {
+                            <div class="facts-row"><dt>Customer</dt><dd>@(t.CrmBuyerCustomerName ?? "—")</dd></div>
+                            <div class="facts-row"><dt>Project</dt><dd>@(t.CrmBuyerProjectName ?? "—")</dd></div>
+                            <div class="facts-row"><dt>Unit Number</dt><dd>@(t.CrmBuyerUnitNumber ?? "—")</dd></div>
+                            <div class="facts-row"><dt>CRM Unit ID</dt><dd class="id-fallback">#@t.CrmBuyerUnitId</dd></div>
+                            <div class="facts-row"><dt>Lead ID</dt><dd class="id-fallback">@(t.CrmBuyerLeadId is int leadId ? $"#{leadId}" : "—")</dd></div>
+                        }
+                        else if (hasManualUnit)
+                        {
+                            <div class="facts-row"><dt>Project</dt><dd>@(t.ManualProjectName ?? "—")</dd></div>
+                            <div class="facts-row"><dt>Unit Number</dt><dd>@(t.ManualUnitNumber ?? "—")</dd></div>
+                        }
+                        else if (hasLegacyReference)
+                        {
+                            <div class="facts-row"><dt>Unit reference</dt><dd class="id-fallback">@(t.UnitReferenceId is int u ? $"#{u}" : "—")</dd></div>
+                            <div class="facts-row"><dt>Contact reference</dt><dd class="id-fallback">@(t.ContactReferenceId is int c ? $"#{c}" : "—")</dd></div>
+                        }
                     </dl>
                 </div>
 
