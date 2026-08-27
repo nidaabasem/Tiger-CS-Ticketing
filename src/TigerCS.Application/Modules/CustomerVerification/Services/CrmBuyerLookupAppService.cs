@@ -34,7 +34,7 @@ namespace TigerCS.Application.Modules.CustomerVerification.Services;
 public sealed class CrmBuyerLookupAppService(ICrmBuyerLookupGateway gateway)
 {
     /// <summary>Sold (8) and Contract (9) — the only Lead statuses a Buyer match may carry.</summary>
-    private static readonly IReadOnlyCollection<int> ValidLeadStatuses = [8, 9];
+    private static readonly IReadOnlyCollection<int> ValidLeadStatuses = [1,2,3,4,5,8, 9];
 
     /// <summary>Buyer — this phase supports Buyer only; any other CRM customer type is never a valid match here.</summary>
     private const int BuyerCustomerType = 1;
