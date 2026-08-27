@@ -226,6 +226,22 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    /// <summary>
+    /// CRM Buyer Lookup. <see cref="TigerCsApiFactory"/> swaps
+    /// <c>ICrmBuyerLookupGateway</c> for a fixture-backed fake in this test
+    /// host — there is no real CRM to call here, same reasoning as
+    /// <c>MockCrmGateway</c> for the unit/contact lookups above.
+    /// </summary>
+    [Fact]
+    public async Task GetBuyerByPhone_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/crm/buyers?phoneNumber=%2B971500000900");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     // ---------------------------------------------------------------
     // Verification sessions
     // ---------------------------------------------------------------

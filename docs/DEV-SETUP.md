@@ -93,6 +93,48 @@ regardless of environment name, given valid configuration — whoever
 controls the deployment pipeline is responsible for not pointing it at a
 production environment until that's actually authorized.
 
+## 3a. Configure CRM Buyer Lookup (`Crm:BaseUrl` / `Crm:SecretKey`)
+
+The CRM Buyer Lookup integration (`CrmBuyerHttpGateway`, `GET /api/crm/buyers`)
+calls the legacy CRM MVC 4.7 application's own
+`GET /TicketingSystem/GetBuyerByPhone` endpoint directly — it is a real
+integration from day one, unlike `ICrmGateway`'s unit/contact lookups, which
+still run against `MockCrmGateway` (`Crm:Provider`) until a real endpoint for
+those exists.
+
+Two configuration values under the same `Crm` section:
+
+- **`Crm:BaseUrl`** — the CRM application's base URL. Not a secret: safe to
+  commit per environment in `appsettings.{Environment}.json`, the same way
+  `TigerCsApi:BaseUrl` is committed in `src/TigerCS.Web/appsettings.json`.
+- **`Crm:SecretKey`** — the shared secret CRM validates via the
+  `X-SECRET-KEY` request header (the same value CRM reads from
+  `ConfigurationManager.AppSettings["TicketingSecretKey"]` on its own side).
+  **Never committed** — configure it the same way as `Jwt:SigningKey` above.
+
+**Development** (user-secrets, from `src/TigerCS.Api`):
+
+```bash
+dotnet user-secrets set "Crm:BaseUrl" "https://crm-dev.tigergroup.internal/"
+dotnet user-secrets set "Crm:SecretKey" "<the value CRM's TicketingSecretKey app setting holds>"
+```
+
+**UAT / Production** (environment variables, e.g. in the deployment
+pipeline/container — same `__` separator as `Jwt__SigningKey` above):
+
+```bash
+export Crm__BaseUrl="https://crm-uat.tigergroup.internal/"
+export Crm__SecretKey="<the value CRM's TicketingSecretKey app setting holds>"
+```
+
+If `Crm:SecretKey` (or `Crm:BaseUrl`) is left unconfigured, `GET /api/crm/buyers`
+does not crash the app or fail startup — `CrmBuyerHttpGateway` returns a 502
+(`CrmBuyerLookupOutcome.Unavailable`) for every request until both are set,
+consistent with every other CRM port never blocking the rest of the
+application. This is also why local development works without a real CRM
+connection: the endpoint simply reports CRM as unavailable until you opt in
+by setting the two values above.
+
 ## 4. Apply the database migration
 
 From `src/`:

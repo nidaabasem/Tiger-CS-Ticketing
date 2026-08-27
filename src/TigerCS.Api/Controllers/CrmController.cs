@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TigerCS.Api.OpenApi;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
@@ -34,7 +35,8 @@ namespace TigerCS.Api.Controllers;
 [Route("api/crm")]
 [Authorize(Policy = PolicyNames.CustomerVerification)]
 [Tags(OpenApiTags.CrmLookup)]
-public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService) : ControllerBase
+public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService, CrmBuyerLookupAppService crmBuyerLookupAppService)
+    : ControllerBase
 {
     /// <summary>Look a single CRM unit up by its CRM identifier.</summary>
     /// <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.1.</remarks>
@@ -116,6 +118,61 @@ public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService) : Co
                 type: "https://tigercs.internal/problems/unit-not-found",
                 title: "Unit not found",
                 statusCode: StatusCodes.Status404NotFound),
+            _ => Problem(
+                type: "https://tigercs.internal/problems/crm-unavailable",
+                title: "CRM is currently unavailable",
+                statusCode: StatusCodes.Status502BadGateway)
+        };
+    }
+
+    /// <summary>
+    /// CRM Buyer Lookup: search Tiger CRM by phone number for Buyer records
+    /// (Lead status Sold or Contract). Read-only passthrough onto CRM's own
+    /// <c>GET /TicketingSystem/GetBuyerByPhone</c> endpoint.
+    /// </summary>
+    /// <remarks>
+    /// A phone number is not assumed unique and a buyer is not assumed to
+    /// own one unit — the response may contain multiple customers, each with
+    /// multiple units, and this endpoint never selects one for the caller.
+    /// That selection is left to the CS agent (a future UI concern); this
+    /// endpoint only surfaces every valid match.
+    /// </remarks>
+    /// <param name="phoneNumber">Required. The phone number to search CRM for.</param>
+    /// <response code="200">One or more matching buyers, each with the units they own that are eligible (Sold/Contract, Buyer).</response>
+    /// <response code="400">phoneNumber was missing or blank, or CRM rejected/could not parse the request.</response>
+    /// <response code="401">CRM rejected the configured Crm:SecretKey.</response>
+    /// <response code="404">No matching Buyer for this phone number.</response>
+    /// <response code="502">Tiger CRM could not be reached.</response>
+    [HttpGet("buyers")]
+    [ProducesResponseType<IReadOnlyList<CrmBuyerMatchDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
+    public async Task<IActionResult> GetBuyerByPhone([FromQuery] string phoneNumber, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            return ValidationProblem();
+        }
+
+        var result = await crmBuyerLookupAppService.GetBuyerByPhoneAsync(phoneNumber, cancellationToken);
+
+        return result.Outcome switch
+        {
+            CrmBuyerLookupOutcome.Success => Ok(result.Buyers),
+            CrmBuyerLookupOutcome.NotFound => Problem(
+                type: "https://tigercs.internal/problems/buyer-not-found",
+                title: "No matching buyer",
+                statusCode: StatusCodes.Status404NotFound),
+            CrmBuyerLookupOutcome.Unauthorized => Problem(
+                type: "https://tigercs.internal/problems/crm-unauthorized",
+                title: "CRM rejected the configured secret key",
+                statusCode: StatusCodes.Status401Unauthorized),
+            CrmBuyerLookupOutcome.InvalidResponse => Problem(
+                type: "https://tigercs.internal/problems/crm-invalid-response",
+                title: "CRM rejected or returned an unusable response for this request",
+                statusCode: StatusCodes.Status400BadRequest),
             _ => Problem(
                 type: "https://tigercs.internal/problems/crm-unavailable",
                 title: "CRM is currently unavailable",
