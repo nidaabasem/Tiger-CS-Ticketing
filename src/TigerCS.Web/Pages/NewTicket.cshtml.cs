@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Web.Services.Api;
@@ -9,44 +10,46 @@ using TigerCS.Web.Services.Api;
 namespace TigerCS.Web.Pages;
 
 /// <summary>
-/// "+ New Ticket": Intake → customer lookup (CRM/PACT/Tasleeh) → ticket
-/// creation, wired to the real endpoints (POST /api/intake-records,
-/// GET /api/intake-records/{id}/customer-lookup, GET /api/departments,
+/// "+ New Ticket": Intake → real CRM Buyer Lookup → ticket creation, wired
+/// to the real endpoints (POST /api/intake-records,
+/// GET /api/crm/buyers?phoneNumber={phoneNumber}, GET /api/departments,
 /// POST /api/tickets).
 ///
 /// <para>
-/// <b>Business-rule change: customer lookup no longer gates ticket
-/// creation.</b> Every intake goes straight from lookup to category
-/// selection; the only thing every ticket requires is a valid Ticket
-/// Category. The old CRM-unit-search → verification-session-confirm
-/// sequence (which blocked creation on a confirmed session) is replaced by
-/// a single read-only lookup step: the agent may carry a Found customer
-/// match's unit/contact reference forward, or simply continue without one.
+/// <b>Business-rule change: this wizard's phone search calls the real CRM
+/// Buyer Lookup only.</b> Step 2 calls <see cref="CrmBuyerLookupApiClient"/> —
+/// <c>CrmController</c> → <c>CrmBuyerLookupAppService</c> →
+/// <c>CrmBuyerHttpGateway</c> → the legacy CRM's own <c>GetBuyerByPhone</c> —
+/// by phone number only. It never calls the generic CRM/PACT/Tasleeh
+/// <c>CustomerLookupApiClient</c>/<c>CustomerLookupController</c> path (still
+/// used elsewhere, not by this page), and it never searches CRM by Unit
+/// Number or Project. <c>Crm:SecretKey</c> stays server-to-server inside
+/// <c>CrmBuyerHttpGateway</c> — this page, and the browser, never see it.
 /// </para>
 ///
 /// <para>
-/// <b>The Unit is selected from customer-lookup results, never typed in.</b>
-/// Step 1 no longer asks the agent to identify a unit before lookup even
-/// runs — the current lookup model already returns each matched Customer's
-/// own 0..N Units, so the actual Ticket Unit (<see cref="UnitReferenceId"/>/
-/// <see cref="ContactReferenceId"/>) is always one the agent picked from
-/// those real, resolved results on Step 2 (<see cref="OnPostUseMatch"/>),
-/// never a raw unit number the caller happened to say over the phone.
+/// <b>Customer lookup no longer gates ticket creation.</b> A CRM match
+/// (Found), no match (NotFound), and a CRM outage (Unavailable) are all
+/// treated the same way for ticket creation: none of them block it. Found
+/// means the agent explicitly selects one Buyer's one eligible unit — never
+/// auto-selected. NotFound/Unavailable both require the agent to manually
+/// enter Project and Unit Number on Step 3 instead, and neither of those
+/// manual fields is ever used to run another CRM lookup.
 /// </para>
 ///
 /// State is carried step-to-step via the query string (GET) and hidden
-/// form fields (POST) rather than server-side session/TempData — every
-/// step is a plain, bookmarkable, refresh-safe request with no session
-/// state to lose, consistent with the rest of the app's no-JS-required
-/// progressive-enhancement forms. <see cref="CustomerDisplayName"/> and
-/// <see cref="UnitLabel"/> are carried the same way — display-only text for
-/// Step 3's summary, never trusted as anything but a label (ticket creation
-/// always re-validates <see cref="UnitReferenceId"/>/<see cref="ContactReferenceId"/>
-/// server-side).
+/// form fields (POST) rather than server-side session/TempData — every step
+/// is a plain, bookmarkable, refresh-safe request with no session state to
+/// lose, consistent with the rest of the app's no-JS-required
+/// progressive-enhancement forms. The CRM Buyer identifiers/snapshot text
+/// carried this way are display/carry-forward only — ticket creation
+/// (<c>POST /api/tickets</c>) re-validates the CRM Buyer id 4-tuple and the
+/// manual-fields-required-when-no-match rule server-side regardless of what
+/// this page sends.
 /// </summary>
 public sealed class NewTicketModel(
     IntakeRecordsApiClient intakeClient,
-    CustomerLookupApiClient customerLookupClient,
+    CrmBuyerLookupApiClient crmBuyerLookupClient,
     DepartmentsApiClient departmentsClient,
     CategoriesApiClient categoriesClient,
     TicketsApiClient ticketsClient) : PageModel
@@ -60,16 +63,23 @@ public sealed class NewTicketModel(
     public long? IntakeRecordId { get; private set; }
     public string? PhoneNumber { get; private set; }
     public int? DepartmentId { get; private set; }
-    public int? UnitReferenceId { get; private set; }
-    public int? ContactReferenceId { get; private set; }
 
-    /// <summary>Display-only — the selected Customer's name, carried forward from Step 2 for Step 3's summary. Never sent to any API; ticket creation relies only on the reference ids.</summary>
-    public string? CustomerDisplayName { get; private set; }
+    /// <summary>The real CRM Buyer Lookup match the agent selected on Step 2 — all four set together, or none. A distinct identifier space from the older CRM-unit-number cache (UnitReferenceId/ContactReferenceId).</summary>
+    public int? CrmBuyerCustomerId { get; private set; }
+    public int? CrmBuyerLeadId { get; private set; }
+    public int? CrmBuyerUnitId { get; private set; }
+    public int? CrmBuyerProjectId { get; private set; }
 
-    /// <summary>Display-only — the selected Unit's label (property/unit/status), carried forward from Step 2 for Step 3's summary. Never sent to any API.</summary>
-    public string? UnitLabel { get; private set; }
+    /// <summary>Display-only snapshot text carried forward from Step 2 for Step 3's summary. Never trusted as anything but a label — ticket creation re-validates the CRM Buyer ids server-side.</summary>
+    public string? CrmBuyerCustomerName { get; private set; }
+    public string? CrmBuyerProjectName { get; private set; }
+    public string? CrmBuyerUnitNumber { get; private set; }
 
-    public CustomerLookupResultDto? LookupResult { get; private set; }
+    /// <summary>Every Buyer <c>GET /api/crm/buyers?phoneNumber=</c> matched (0..N), each with 0..N eligible Sold/Contract units — never auto-selected. Null until Step 2 has actually run a lookup.</summary>
+    public IReadOnlyList<CrmBuyerMatchDto>? CrmBuyerMatches { get; private set; }
+
+    /// <summary>True when CRM Buyer Lookup itself could not be reached/answered (outage, timeout, misconfiguration) rather than answering with zero matches — same "Project/Unit Number required" consequence as NotFound, but a different message.</summary>
+    public bool CrmBuyerLookupUnavailable { get; private set; }
 
     /// <summary>
     /// The Department directory Step 1's dropdown renders — real, existing
@@ -93,29 +103,25 @@ public sealed class NewTicketModel(
 
     public async Task<IActionResult> OnGetAsync(
         string? step, long? intakeRecordId, string? phoneNumber, int? departmentId,
-        int? unitReferenceId, int? contactReferenceId, string? customerDisplayName, string? unitLabel,
+        int? crmBuyerCustomerId, int? crmBuyerLeadId, int? crmBuyerUnitId, int? crmBuyerProjectId,
+        string? crmBuyerCustomerName, string? crmBuyerProjectName, string? crmBuyerUnitNumber,
         CancellationToken cancellationToken)
     {
         Step = step ?? "intake";
         IntakeRecordId = intakeRecordId;
         PhoneNumber = phoneNumber;
         DepartmentId = departmentId;
-        UnitReferenceId = unitReferenceId;
-        ContactReferenceId = contactReferenceId;
-        CustomerDisplayName = customerDisplayName;
-        UnitLabel = unitLabel;
+        CrmBuyerCustomerId = crmBuyerCustomerId;
+        CrmBuyerLeadId = crmBuyerLeadId;
+        CrmBuyerUnitId = crmBuyerUnitId;
+        CrmBuyerProjectId = crmBuyerProjectId;
+        CrmBuyerCustomerName = crmBuyerCustomerName;
+        CrmBuyerProjectName = crmBuyerProjectName;
+        CrmBuyerUnitNumber = crmBuyerUnitNumber;
 
-        if (Step == "lookup" && IntakeRecordId is { } id)
+        if (Step == "lookup" && !string.IsNullOrWhiteSpace(PhoneNumber))
         {
-            var result = await customerLookupClient.SearchAsync(id, cancellationToken);
-            if (!result.IsSuccess || result.Value is null)
-            {
-                ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not search CRM/PACT/Tasleeh for this phone number.");
-            }
-            else
-            {
-                LookupResult = result.Value;
-            }
+            await RunCrmBuyerLookupAsync(cancellationToken);
         }
         else if (Step == "create")
         {
@@ -129,12 +135,38 @@ public sealed class NewTicketModel(
         return Page();
     }
 
+    /// <summary>
+    /// The one and only CRM search this wizard ever runs — phone number
+    /// only, never Unit Number/Project/Tower. Found (200), NotFound (404),
+    /// and every other outcome (401/400/502/network-unreachable — CRM
+    /// outage or misconfiguration) are all handled here without blocking the
+    /// wizard: only <see cref="CrmBuyerLookupUnavailable"/> distinguishes the
+    /// message shown, not what the agent is allowed to do next.
+    /// </summary>
+    private async Task RunCrmBuyerLookupAsync(CancellationToken cancellationToken)
+    {
+        var result = await crmBuyerLookupClient.SearchByPhoneAsync(PhoneNumber!, cancellationToken);
+        if (result.IsSuccess && result.Value is not null)
+        {
+            CrmBuyerMatches = result.Value;
+        }
+        else if (result.Outcome == ApiOutcome.NotFound)
+        {
+            CrmBuyerMatches = [];
+        }
+        else
+        {
+            CrmBuyerLookupUnavailable = true;
+            CrmBuyerMatches = [];
+        }
+    }
+
     public async Task<IActionResult> OnPostIntakeAsync(CancellationToken cancellationToken)
     {
         // The wizard never collects a caller-provided unit number or an
-        // Intake-specific priority hint (the real Ticket Unit comes from
-        // customer lookup on Step 2; the real Ticket Priority is chosen once,
-        // on Step 3) — every intake this page creates is recorded as
+        // Intake-specific priority hint (the real Ticket Unit comes from CRM
+        // Buyer Lookup on Step 2; the real Ticket Priority is chosen once, on
+        // Step 3) — every intake this page creates is recorded as
         // not-unit-related, with no raw unit number and no priority hint.
         var request = new CreateIntakeRecordRequestDto(
             Intake.ChannelId, Intake.PhoneNumber, Intake.DepartmentId, IsUnitRelated: false,
@@ -149,13 +181,10 @@ public sealed class NewTicketModel(
             return Page();
         }
 
-        // Business-rule change: customer lookup runs for every intake — none
-        // of CRM/PACT/Tasleeh ever gates what happens next. The phone number
-        // and Department carried forward from here on are exactly what the
-        // Api just echoed back on the saved IntakeRecord — the phone number
-        // never reformatted, the Department (if any) is what will scope both
-        // the customer lookup already ran under and the Category dropdown on
-        // Step 3.
+        // Business-rule change: CRM Buyer Lookup runs for every intake — it
+        // never gates what happens next. The phone number and Department
+        // carried forward from here on are exactly what the Api just echoed
+        // back on the saved IntakeRecord.
         return RedirectToPage(new
         {
             step = "lookup",
@@ -166,24 +195,30 @@ public sealed class NewTicketModel(
     }
 
     /// <summary>
-    /// The agent selected one customer's unit from a customer-lookup match —
-    /// its unit/contact reference carries forward to ticket creation.
-    /// <paramref name="selectedUnitRef"/> is a single
-    /// "{unitReferenceId}:{contactReferenceId}:{escaped display label}" value
-    /// (a plain HTML radio button can only carry one value per option, and a
-    /// customer's unit list is rendered without JavaScript — see
-    /// NewTicket.cshtml) so the ids and the label the agent saw always travel
-    /// together and can never be mismatched from two separate same-named
-    /// radio groups. The label is display-only, for Step 3's summary — never
-    /// used for anything but text on screen.
+    /// The agent explicitly selected one Buyer's one eligible unit from the
+    /// real CRM Buyer Lookup results — its CRM identifiers carry forward to
+    /// ticket creation. <paramref name="selectedCrmBuyerUnit"/> packs
+    /// "{customerId}:{leadId}:{unitId}:{projectId}:{escaped customer
+    /// name}:{escaped project name}:{escaped unit number}" into one value (a
+    /// plain HTML radio button can only carry one value per option, and the
+    /// unit list is rendered without JavaScript — see NewTicket.cshtml) so
+    /// the ids and the display text the agent saw always travel together and
+    /// can never be mismatched from two separate same-named radio groups.
+    /// Every text field is <see cref="Uri.EscapeDataString(string)"/>-encoded
+    /// before packing (encoding a literal ':' as %3A), so splitting on ':' is
+    /// always safe.
     /// </summary>
-    public IActionResult OnPostUseMatch(
-        long intakeRecordId, string? phoneNumber, int? departmentId, string selectedUnitRef, string? customerDisplayName)
+    public IActionResult OnPostUseCrmBuyerUnit(
+        long intakeRecordId, string? phoneNumber, int? departmentId, string selectedCrmBuyerUnit)
     {
-        var parts = selectedUnitRef.Split(':', 3);
-        var unitReferenceId = int.Parse(parts[0]);
-        var contactReferenceId = int.Parse(parts[1]);
-        var unitLabel = parts.Length > 2 ? Uri.UnescapeDataString(parts[2]) : null;
+        var parts = selectedCrmBuyerUnit.Split(':', 7);
+        var customerId = int.Parse(parts[0]);
+        var leadId = int.Parse(parts[1]);
+        var unitId = int.Parse(parts[2]);
+        var projectId = int.Parse(parts[3]);
+        var customerName = UnescapeOrNull(parts, 4);
+        var projectName = UnescapeOrNull(parts, 5);
+        var unitNumber = UnescapeOrNull(parts, 6);
 
         return RedirectToPage(new
         {
@@ -191,36 +226,69 @@ public sealed class NewTicketModel(
             intakeRecordId,
             phoneNumber,
             departmentId,
-            unitReferenceId,
-            contactReferenceId,
-            customerDisplayName,
-            unitLabel
+            crmBuyerCustomerId = customerId,
+            crmBuyerLeadId = leadId,
+            crmBuyerUnitId = unitId,
+            crmBuyerProjectId = projectId,
+            crmBuyerCustomerName = customerName,
+            crmBuyerProjectName = projectName,
+            crmBuyerUnitNumber = unitNumber
         });
     }
 
+    private static string? UnescapeOrNull(string[] parts, int index)
+    {
+        if (index >= parts.Length || parts[index].Length == 0)
+        {
+            return null;
+        }
+
+        return Uri.UnescapeDataString(parts[index]);
+    }
+
     /// <summary>
-    /// No Unit selected — either the agent chose "Use this customer" for a
-    /// match with no eligible units (<paramref name="customerDisplayName"/>
-    /// carries that customer's name forward), found nothing, a source
-    /// failed, or the agent chose to proceed without any match at all. None
-    /// of those blocks ticket creation.
+    /// No CRM Buyer unit selected — CRM found no match, CRM was unavailable,
+    /// or the agent chose to proceed without using a match CRM did find.
+    /// None of those blocks ticket creation; Step 3 requires the agent to
+    /// manually enter Project and Unit Number instead.
     /// </summary>
-    public IActionResult OnPostContinueWithoutMatch(
-        long intakeRecordId, string? phoneNumber, int? departmentId, string? customerDisplayName = null) =>
-        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, departmentId, customerDisplayName });
+    public IActionResult OnPostContinueWithoutMatch(long intakeRecordId, string? phoneNumber, int? departmentId) =>
+        RedirectToPage(new { step = "create", intakeRecordId, phoneNumber, departmentId });
 
     public async Task<IActionResult> OnPostCreateAsync(
-        long intakeRecordId, string? phoneNumber, int? departmentId, int? unitReferenceId, int? contactReferenceId,
-        string? customerDisplayName, string? unitLabel, CancellationToken cancellationToken)
+        long intakeRecordId, string? phoneNumber, int? departmentId,
+        int? crmBuyerCustomerId, int? crmBuyerLeadId, int? crmBuyerUnitId, int? crmBuyerProjectId,
+        string? crmBuyerCustomerName, string? crmBuyerProjectName, string? crmBuyerUnitNumber,
+        CancellationToken cancellationToken)
     {
         Step = "create";
         IntakeRecordId = intakeRecordId;
         PhoneNumber = phoneNumber;
         DepartmentId = departmentId;
-        UnitReferenceId = unitReferenceId;
-        ContactReferenceId = contactReferenceId;
-        CustomerDisplayName = customerDisplayName;
-        UnitLabel = unitLabel;
+        CrmBuyerCustomerId = crmBuyerCustomerId;
+        CrmBuyerLeadId = crmBuyerLeadId;
+        CrmBuyerUnitId = crmBuyerUnitId;
+        CrmBuyerProjectId = crmBuyerProjectId;
+        CrmBuyerCustomerName = crmBuyerCustomerName;
+        CrmBuyerProjectName = crmBuyerProjectName;
+        CrmBuyerUnitNumber = crmBuyerUnitNumber;
+
+        var hasCrmBuyerMatch = CrmBuyerUnitId is not null;
+
+        // Business-rule change: no verified CRM unit selected — CRM Buyer
+        // Lookup found no match for this phone number, or CRM was
+        // unavailable. Project and Unit Number are then both required,
+        // manually entered by the agent, and never used to run another CRM
+        // lookup (CRM is searched by phone number only — see
+        // RunCrmBuyerLookupAsync). POST /api/tickets is the actual
+        // authority and re-validates this same rule server-side.
+        if (!hasCrmBuyerMatch
+            && (string.IsNullOrWhiteSpace(CreateStep.ManualProjectName) || string.IsNullOrWhiteSpace(CreateStep.ManualUnitNumber)))
+        {
+            ErrorMessage = "Customer not found in CRM. Project and Unit Number are required.";
+            await LoadCategoriesAsync(cancellationToken);
+            return Page();
+        }
 
         // The dropdowns are the only way to supply a CategoryId/PriorityId —
         // never manually typed in — but the request is still rejected here
@@ -238,7 +306,21 @@ public sealed class NewTicketModel(
         }
 
         var request = new CreateTicketRequestDto(
-            intakeRecordId, unitReferenceId, contactReferenceId, categoryId, priorityId, CreateStep.RequestSummary);
+            IntakeRecordId: intakeRecordId,
+            UnitReferenceId: null,
+            ContactReferenceId: null,
+            CategoryId: categoryId,
+            PriorityId: priorityId,
+            RequestSummary: CreateStep.RequestSummary,
+            CrmBuyerCustomerId: hasCrmBuyerMatch ? crmBuyerCustomerId : null,
+            CrmBuyerLeadId: hasCrmBuyerMatch ? crmBuyerLeadId : null,
+            CrmBuyerUnitId: hasCrmBuyerMatch ? crmBuyerUnitId : null,
+            CrmBuyerProjectId: hasCrmBuyerMatch ? crmBuyerProjectId : null,
+            CrmBuyerCustomerName: hasCrmBuyerMatch ? crmBuyerCustomerName : null,
+            CrmBuyerProjectName: hasCrmBuyerMatch ? crmBuyerProjectName : null,
+            CrmBuyerUnitNumber: hasCrmBuyerMatch ? crmBuyerUnitNumber : null,
+            ManualProjectName: hasCrmBuyerMatch ? null : CreateStep.ManualProjectName,
+            ManualUnitNumber: hasCrmBuyerMatch ? null : CreateStep.ManualUnitNumber);
 
         var result = await ticketsClient.CreateAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)
@@ -316,10 +398,9 @@ public sealed class NewTicketModel(
         public string PhoneNumber { get; set; } = string.Empty;
         /// <summary>
         /// Optional — the real DepartmentId of a Step 1 dropdown selection,
-        /// never typed in by hand. When set, narrows customer lookup to this
-        /// Department's configured source(s) instead of searching
-        /// CRM+PACT+Tasleeh, and later scopes the Category dropdown to this
-        /// Department only.
+        /// never typed in by hand. Narrows the Category dropdown on Step 3 to
+        /// this Department only; CRM Buyer Lookup itself is never scoped by
+        /// Department — it always searches by phone number only.
         /// </summary>
         public int? DepartmentId { get; set; }
     }
@@ -334,5 +415,17 @@ public sealed class NewTicketModel(
         public byte? PriorityId { get; set; }
         [Required]
         public string RequestSummary { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Required, together with <see cref="ManualUnitNumber"/>, only when
+        /// no CRM Buyer unit was selected on Step 2 (business-rule change) —
+        /// validated in <c>OnPostCreateAsync</c> rather than
+        /// <see cref="RequiredAttribute"/> because the requirement is
+        /// conditional, not universal. Never used to run another CRM lookup.
+        /// </summary>
+        public string? ManualProjectName { get; set; }
+
+        /// <summary>Required together with <see cref="ManualProjectName"/> — see that property.</summary>
+        public string? ManualUnitNumber { get; set; }
     }
 }

@@ -62,6 +62,59 @@ public class TicketTests
         Assert.Equal(2, ticket.CurrentDepartmentId);
     }
 
+    // ---- Business-rule change: the real CRM Buyer Lookup match path (GET /api/crm/buyers) ----
+
+    [Fact]
+    public void CreateVerifiedFromCrmBuyer_SetsAllFourCrmIdsAndSnapshotText_VerifiedFromCreation()
+    {
+        var ticket = Ticket.CreateVerifiedFromCrmBuyer(
+            "TG-CS-20260827-0001", departmentId: 2,
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 901, crmBuyerUnitId: 101, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Ahmed Ali", crmBuyerProjectName: "Tiger Sky Tower", crmBuyerUnitNumber: "1205",
+            categoryId: 5, priorityId: (byte)PriorityLevel.High, "AC not cooling", DateTime.UtcNow);
+
+        Assert.Equal(CrmVerificationStatus.Verified, ticket.VerificationStatus);
+        Assert.Equal(SlaState.Running, ticket.SlaState);
+        Assert.Equal(5001, ticket.CrmBuyerCustomerId);
+        Assert.Equal(901, ticket.CrmBuyerLeadId);
+        Assert.Equal(101, ticket.CrmBuyerUnitId);
+        Assert.Equal(10, ticket.CrmBuyerProjectId);
+        Assert.Equal("Ahmed Ali", ticket.CrmBuyerCustomerName);
+        Assert.Equal("Tiger Sky Tower", ticket.CrmBuyerProjectName);
+        Assert.Equal("1205", ticket.CrmBuyerUnitNumber);
+        // A distinct identifier space from the older CRM-unit-number cache —
+        // never touches UnitReferenceId/ContactReferenceId.
+        Assert.Null(ticket.UnitReferenceId);
+        Assert.Null(ticket.ContactReferenceId);
+        Assert.Null(ticket.ManualProjectName);
+        Assert.Null(ticket.ManualUnitNumber);
+    }
+
+    [Fact]
+    public void CreateUnverified_WithManualProjectAndUnitNumber_StoresThemAndStaysUnverified()
+    {
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260827-0002", departmentId: 2, categoryId: 5, priorityId: (byte)PriorityLevel.Medium,
+            "General question", DateTime.UtcNow, manualProjectName: "Tiger Tower A", manualUnitNumber: "1204");
+
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
+        Assert.Equal("Tiger Tower A", ticket.ManualProjectName);
+        Assert.Equal("1204", ticket.ManualUnitNumber);
+        Assert.Null(ticket.CrmBuyerCustomerId);
+        Assert.Null(ticket.UnitReferenceId);
+    }
+
+    [Fact]
+    public void CreateUnverified_WithoutManualProjectOrUnitNumber_LeavesThemNull()
+    {
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260827-0003", departmentId: 2, categoryId: 5, priorityId: (byte)PriorityLevel.Medium,
+            "General question", DateTime.UtcNow);
+
+        Assert.Null(ticket.ManualProjectName);
+        Assert.Null(ticket.ManualUnitNumber);
+    }
+
     [Fact]
     public void ReconcileVerification_OnUnverifiedTicket_PopulatesReferencesAndMarksVerified()
     {

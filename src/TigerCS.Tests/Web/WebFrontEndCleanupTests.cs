@@ -33,12 +33,15 @@ public sealed class WebFrontEndCleanupTests
     }
 
     [Fact]
-    public void NewTicketView_NoMatchAndConfigMissingCases_OfferContinueRatherThanDeadEnd()
+    public void NewTicketView_NoMatchAndCrmUnavailableCases_OfferContinueRatherThanDeadEnd()
     {
+        // Business-rule change: CRM Buyer Lookup no longer gates ticket
+        // creation — a NotFound or Unavailable outcome both still show
+        // "Customer not found in CRM." and a Continue path onward, never a
+        // dead end.
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("No customer information found. You can continue creating the ticket.", html);
-        Assert.Contains("Customer lookup is not configured for the selected department. You can continue creating the ticket.", html);
+        Assert.Contains("Customer not found in CRM.", html);
         Assert.Contains("Continue to Ticket", html);
     }
 
@@ -126,28 +129,39 @@ public sealed class WebFrontEndCleanupTests
     }
 
     [Fact]
-    public void NewTicketView_UnitIsSelectedFromLookupResults_NeverAutomatically()
+    public void NewTicketView_UnitIsSelectedFromCrmBuyerLookupResults_NeverAutomatically()
     {
-        // The actual Ticket Unit is a radio choice inside a matched
-        // customer's own Units — never a manually-typed number, and never
-        // pre-checked (no customer or unit is ever auto-selected).
+        // The actual Ticket Unit is a radio choice inside a matched CRM
+        // Buyer's own eligible units — never a manually-typed number, and
+        // never pre-checked (no customer or unit is ever auto-selected).
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Select Unit (optional)", html);
-        Assert.Contains("type=\"radio\" name=\"selectedUnitRef\"", html);
+        Assert.Contains("Select Unit", html);
+        Assert.Contains("type=\"radio\" name=\"selectedCrmBuyerUnit\"", html);
         Assert.DoesNotContain("checked", html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void NewTicketView_Step3_ShowsCustomerAndUnitSummary_WithPriorityRequired()
+    public void NewTicketView_Step3_ShowsCrmBuyerCustomerAndUnitSummary_WithPriorityRequired()
     {
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Model.CustomerDisplayName", html);
-        Assert.Contains("Model.UnitLabel", html);
+        Assert.Contains("Model.CrmBuyerCustomerName", html);
+        Assert.Contains("Model.CrmBuyerUnitNumber", html);
         Assert.Contains("Priority *", html);
         Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.PriorityId\"", html);
         Assert.Contains("Select Priority", html);
+    }
+
+    [Fact]
+    public void NewTicketView_Step3_RequiresManualProjectAndUnitNumber_WhenNoCrmBuyerMatchSelected()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("Project *", html);
+        Assert.Contains("Unit Number *", html);
+        Assert.Contains("asp-for=\"CreateStep.ManualProjectName\"", html);
+        Assert.Contains("asp-for=\"CreateStep.ManualUnitNumber\"", html);
     }
 
     // ---- 16: deleted endpoints/clients are gone, and the only ticket-creation client method is CreateAsync → POST api/tickets ----
@@ -166,6 +180,31 @@ public sealed class WebFrontEndCleanupTests
         var type = typeof(TicketsApiClient).Assembly.GetType("TigerCS.Web.Services.Api.CrmApiClient");
 
         Assert.Null(type);
+    }
+
+    // ---- The New Ticket wizard's phone search must call ONLY the real CRM Buyer Lookup client ----
+
+    [Fact]
+    public void CrmBuyerLookupApiClient_ExistsInTigerCSWeb_CallingApiCrmBuyers()
+    {
+        var type = typeof(TicketsApiClient).Assembly.GetType("TigerCS.Web.Services.Api.CrmBuyerLookupApiClient");
+
+        Assert.NotNull(type);
+        var method = type!.GetMethod("SearchByPhoneAsync", BindingFlags.Public | BindingFlags.Instance);
+        Assert.NotNull(method);
+    }
+
+    [Fact]
+    public void NewTicketModel_NoLongerDependsOnTheGenericCustomerLookupApiClient()
+    {
+        // Business-rule change: the wizard's phone search must never fall
+        // back to the generic CRM/PACT/Tasleeh CustomerLookupController path
+        // — it calls the real CRM Buyer Lookup endpoint only.
+        var constructor = Assert.Single(typeof(TigerCsWeb::TigerCS.Web.Pages.NewTicketModel).GetConstructors());
+        var parameterTypeNames = constructor.GetParameters().Select(p => p.ParameterType.Name);
+
+        Assert.DoesNotContain("CustomerLookupApiClient", parameterTypeNames);
+        Assert.Contains("CrmBuyerLookupApiClient", parameterTypeNames);
     }
 
     [Fact]
