@@ -46,6 +46,38 @@ public class Ticket
     public int CategoryId { get; private set; }
     public byte PriorityId { get; private set; }
 
+    /// <summary>
+    /// Business-rule change: the real CRM Buyer Lookup match the agent
+    /// selected (<c>GET /api/crm/buyers</c> — phone search only, never a
+    /// Unit/Project search). A different identifier space from
+    /// <see cref="UnitReferenceId"/>/<see cref="ContactReferenceId"/> (that
+    /// pair is the older CRM-unit-number cache, ICrmGateway — see that
+    /// interface's remarks); the four CRM Buyer ids are always set together
+    /// or not at all, mirroring the Unit/Contact pair's own invariant. Set
+    /// only when the agent explicitly selected one of the matched Buyer's
+    /// eligible (Sold/Contract) units — CRM never auto-selects one.
+    /// </summary>
+    public int? CrmBuyerCustomerId { get; private set; }
+    public int? CrmBuyerLeadId { get; private set; }
+    public int? CrmBuyerUnitId { get; private set; }
+    public int? CrmBuyerProjectId { get; private set; }
+
+    /// <summary>Immutable, ticket-time snapshot of the selected CRM Buyer match's display text — never re-read from CRM afterward, same ADR-0007 reasoning as <see cref="TicketRequesterSnapshot"/>.</summary>
+    public string? CrmBuyerCustomerName { get; private set; }
+    public string? CrmBuyerProjectName { get; private set; }
+    public string? CrmBuyerUnitNumber { get; private set; }
+
+    /// <summary>
+    /// Business-rule change: when CRM Buyer Lookup found no match (or CRM was
+    /// unavailable), the agent manually enters Project and Unit Number
+    /// instead — both required together, and never used to run another CRM
+    /// lookup (CRM is searched by phone number only). Mutually exclusive with
+    /// the CrmBuyer* fields above: a ticket carries one or the other, never
+    /// both.
+    /// </summary>
+    public string? ManualProjectName { get; private set; }
+    public string? ManualUnitNumber { get; private set; }
+
     public TicketStatus TicketStatus { get; private set; }
     public CrmVerificationStatus VerificationStatus { get; private set; }
     public EscalationLevel EscalationLevel { get; private set; }
@@ -102,16 +134,73 @@ public class Ticket
     /// until (and unless) <see cref="ReconcileVerification"/> later links a
     /// unit/contact once one becomes available.
     /// </summary>
+    /// <param name="ticketNumber">The generated, unique ticket number.</param>
+    /// <param name="departmentId">The originating (and initial current) department.</param>
+    /// <param name="categoryId">The selected, active Ticket Category.</param>
+    /// <param name="priorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
+    /// <param name="requestSummary">The caller's request, in the agent's words.</param>
+    /// <param name="createdAtUtc">Creation time, in UTC — also the SLA clock-start event.</param>
+    /// <param name="manualProjectName">
+    /// Business-rule change: required together with <paramref name="manualUnitNumber"/>
+    /// when the CRM Buyer Lookup found no match for the intake's phone number
+    /// (or CRM was unavailable) — the caller enforces the pairing before this
+    /// factory runs (<c>TicketCreationAppService.CreateAsync</c>), same
+    /// division of responsibility as <see cref="CreateVerifiedFromCrmBuyer"/>.
+    /// </param>
+    /// <param name="manualUnitNumber">See <paramref name="manualProjectName"/>.</param>
     public static Ticket CreateUnverified(
         string ticketNumber,
         int departmentId,
         int categoryId,
         byte priorityId,
         string requestSummary,
-        DateTime createdAtUtc)
+        DateTime createdAtUtc,
+        string? manualProjectName = null,
+        string? manualUnitNumber = null)
     {
         var ticket = CreateCore(ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc);
         ticket.VerificationStatus = CrmVerificationStatus.Unverified;
+        ticket.SlaState = SlaState.Running;
+        ticket.ManualProjectName = manualProjectName;
+        ticket.ManualUnitNumber = manualUnitNumber;
+        return ticket;
+    }
+
+    /// <summary>
+    /// The real CRM Buyer Lookup match path: the agent explicitly selected
+    /// one of a matched Buyer's eligible (Sold/Contract) units from
+    /// <c>GET /api/crm/buyers</c>'s results. A different identifier space
+    /// from <see cref="CreateVerified"/>'s Unit/Contact reference pair (that
+    /// factory is the older CRM-unit-number cache path, ICrmGateway) — this
+    /// one never touches <see cref="UnitReferenceId"/>/<see cref="ContactReferenceId"/>.
+    /// Fully verified from the moment it exists, same as <see cref="CreateVerified"/>:
+    /// a real CRM Buyer match is exactly the kind of confirmed customer
+    /// identification <see cref="CrmVerificationStatus.Verified"/> means.
+    /// </summary>
+    public static Ticket CreateVerifiedFromCrmBuyer(
+        string ticketNumber,
+        int departmentId,
+        int crmBuyerCustomerId,
+        int crmBuyerLeadId,
+        int crmBuyerUnitId,
+        int crmBuyerProjectId,
+        string? crmBuyerCustomerName,
+        string? crmBuyerProjectName,
+        string? crmBuyerUnitNumber,
+        int categoryId,
+        byte priorityId,
+        string requestSummary,
+        DateTime createdAtUtc)
+    {
+        var ticket = CreateCore(ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc);
+        ticket.CrmBuyerCustomerId = crmBuyerCustomerId;
+        ticket.CrmBuyerLeadId = crmBuyerLeadId;
+        ticket.CrmBuyerUnitId = crmBuyerUnitId;
+        ticket.CrmBuyerProjectId = crmBuyerProjectId;
+        ticket.CrmBuyerCustomerName = crmBuyerCustomerName;
+        ticket.CrmBuyerProjectName = crmBuyerProjectName;
+        ticket.CrmBuyerUnitNumber = crmBuyerUnitNumber;
+        ticket.VerificationStatus = CrmVerificationStatus.Verified;
         ticket.SlaState = SlaState.Running;
         return ticket;
     }

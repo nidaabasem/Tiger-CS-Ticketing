@@ -95,6 +95,36 @@ public sealed class TicketCreationAppService(
             }
         }
 
+        // Business-rule change: the real CRM Buyer Lookup match (GET
+        // /api/crm/buyers — phone search only). All four CRM ids travel
+        // together or not at all, same pairing discipline as
+        // UnitReferenceId/ContactReferenceId above.
+        var crmBuyerIds = new[]
+        {
+            request.CrmBuyerCustomerId, request.CrmBuyerLeadId, request.CrmBuyerUnitId, request.CrmBuyerProjectId
+        };
+        var hasCrmBuyerMatch = crmBuyerIds.All(id => id is not null);
+        if (!hasCrmBuyerMatch && crmBuyerIds.Any(id => id is not null))
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.CrmBuyerReferenceMismatch);
+        }
+
+        var hasManualProjectUnit = !string.IsNullOrWhiteSpace(request.ManualProjectName)
+            || !string.IsNullOrWhiteSpace(request.ManualUnitNumber);
+        if (hasCrmBuyerMatch && hasManualProjectUnit)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.CrmBuyerAndManualProjectUnitBothSupplied);
+        }
+
+        // The New Ticket wizard's own "Project and Unit Number are required
+        // when no CRM Buyer match was selected" business rule is enforced in
+        // NewTicketModel.OnPostCreateAsync (TigerCS.Web), not here: Ticket
+        // Category remains the only universal requirement POST /api/tickets
+        // itself enforces for every caller (business-rule change predating
+        // CRM Buyer Lookup — see this method's own remarks). ManualProjectName/
+        // ManualUnitNumber are accepted and stored as optional pass-through
+        // fields whenever a caller does supply them.
+
         var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, intakeRecord.DepartmentId, cancellationToken);
         if (routing.Failure is { } routingFailure)
         {
@@ -112,12 +142,20 @@ public sealed class TicketCreationAppService(
         try
         {
             var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
-            ticket = unitReference is not null && contactReference is not null
-                ? Ticket.CreateVerified(
-                    ticketNumber, category.DepartmentId, unitReference.UnitReferenceId, contactReference.ContactReferenceId,
-                    category.CategoryId, priority.PriorityId, request.RequestSummary, now)
-                : Ticket.CreateUnverified(
-                    ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now);
+            ticket = (unitReference, contactReference, hasCrmBuyerMatch) switch
+            {
+                (not null, not null, _) => Ticket.CreateVerified(
+                    ticketNumber, category.DepartmentId, unitReference!.UnitReferenceId, contactReference!.ContactReferenceId,
+                    category.CategoryId, priority.PriorityId, request.RequestSummary, now),
+                (_, _, true) => Ticket.CreateVerifiedFromCrmBuyer(
+                    ticketNumber, category.DepartmentId,
+                    request.CrmBuyerCustomerId!.Value, request.CrmBuyerLeadId!.Value, request.CrmBuyerUnitId!.Value, request.CrmBuyerProjectId!.Value,
+                    request.CrmBuyerCustomerName, request.CrmBuyerProjectName, request.CrmBuyerUnitNumber,
+                    category.CategoryId, priority.PriorityId, request.RequestSummary, now),
+                _ => Ticket.CreateUnverified(
+                    ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now,
+                    request.ManualProjectName, request.ManualUnitNumber)
+            };
 
             await ticketRepository.AddAsync(ticket, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -131,10 +169,11 @@ public sealed class TicketCreationAppService(
 
         // hasSelectedUnit is the real, source-agnostic rule for
         // IntakeRecord.IsUnitRelated: a resolved local Unit/Contact
-        // reference was linked — not ticket.VerificationStatus, which is a
+        // reference — or, business-rule change, a real CRM Buyer Lookup
+        // match — was linked; not ticket.VerificationStatus, which is a
         // separate, CRM-named concept (see IntakeRecord.LinkToTicket's
         // remarks).
-        intakeRecord.LinkToTicket(ticket.TicketId, ticket.VerificationStatus, unitReference is not null);
+        intakeRecord.LinkToTicket(ticket.TicketId, ticket.VerificationStatus, unitReference is not null || hasCrmBuyerMatch);
 
         if (unitReference is not null && contactReference is not null)
         {
@@ -352,5 +391,14 @@ public sealed class TicketCreationAppService(
         ticket.SlaState.ToString(),
         ticket.RequestSummary,
         ticket.CreatedAtUtc,
-        Convert.ToBase64String(ticket.RowVersion));
+        Convert.ToBase64String(ticket.RowVersion),
+        ticket.CrmBuyerCustomerId,
+        ticket.CrmBuyerLeadId,
+        ticket.CrmBuyerUnitId,
+        ticket.CrmBuyerProjectId,
+        ticket.CrmBuyerCustomerName,
+        ticket.CrmBuyerProjectName,
+        ticket.CrmBuyerUnitNumber,
+        ticket.ManualProjectName,
+        ticket.ManualUnitNumber);
 }

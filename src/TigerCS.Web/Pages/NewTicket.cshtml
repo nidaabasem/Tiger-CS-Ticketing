@@ -69,106 +69,67 @@
         }
         else if (Model.Step == "lookup")
         {
-            <div class="section-card__title">Step 2 — Customer lookup</div>
+            <div class="section-card__title">Step 2 — CRM Buyer lookup</div>
             @if (!string.IsNullOrEmpty(Model.PhoneNumber))
             {
                 <p class="text-secondary">Phone number on file: <strong>@Model.PhoneNumber</strong></p>
             }
             <p class="text-secondary">
-                Searching by phone number, scoped to the Department's configured source(s) if one was selected (otherwise CRM, PACT, and Tasleeh).
-                Only the systems actually searched are shown below. A source finding nothing, or being unavailable, never blocks creating the ticket.
+                Searching Tiger CRM by phone number only (never by Unit Number or Project) for Buyer records with a Sold or Contract lead.
+                A phone number may match multiple customers, and a customer may own multiple eligible units — select the one that applies.
             </p>
 
-            @if (Model.LookupResult is not null && Model.LookupResult.Sources.Count == 0)
+            @if (Model.CrmBuyerMatches is { Count: > 0 } matches)
             {
-                <div class="alert alert-info" role="status">
-                    <span>Customer lookup is not configured for the selected department. You can continue creating the ticket.</span>
-                </div>
-            }
-            else if (Model.LookupResult is not null)
-            {
-                @if (!Model.LookupResult.Sources.Any(s => s.Status == "Found" && s.Customers.Count > 0))
-                {
-                    <div class="alert alert-info" role="status">
-                        <span>No customer information found. You can continue creating the ticket.</span>
-                    </div>
-                }
                 <div class="entry-list entry-list--spaced">
-                    @foreach (var source in Model.LookupResult.Sources)
+                    @foreach (var match in matches)
                     {
-                        <div class="entry-row entry-row--block">
-                            <div>
-                                <strong>@source.Source</strong>
-                                @if (source.Status == "Found")
-                                {
-                                    <span class="text-secondary">· @source.Customers.Count matching customer@(source.Customers.Count == 1 ? "" : "s")</span>
-                                }
-                                else if (source.Status == "NotFound")
-                                {
-                                    <span class="text-secondary">· No match found</span>
-                                }
-                                else
-                                {
-                                    <span class="text-secondary">· @source.Source is temporarily unavailable</span>
-                                }
+                        var customer = match.Customer;
+                        var customerName = customer.FullNameEnglish ?? customer.FullNameArabic;
+                        <div class="customer-card">
+                            <div><strong>@(customerName ?? "(no name on file)")</strong></div>
+                            <div class="text-secondary">
+                                @(customer.MobileNumber is null ? "" : customer.MobileNumber)
+                                @(customer.Email is null ? "" : $"· {customer.Email}")
                             </div>
 
-                            @if (source.Status == "Found")
-                            {
-                                @foreach (var customer in source.Customers)
-                                {
-                                    var selectableUnits = customer.Units.Where(u => u.UnitReferenceId is not null && u.ContactReferenceId is not null).ToList();
-                                    <div class="customer-card">
-                                        <div><strong>@(customer.DisplayName ?? "(no name on file)")</strong></div>
-                                        <div class="text-secondary">
-                                            @(customer.PhoneNumber is null ? "" : customer.PhoneNumber)
-                                            @(customer.Email is null ? "" : $"· {customer.Email}")
-                                            @(customer.CustomerType is null ? "" : $"· {customer.CustomerType}")
-                                        </div>
-
-                                        @if (selectableUnits.Count == 0)
-                                        {
-                                            <p class="text-secondary">No eligible units found.</p>
-                                            <form method="post" asp-page-handler="ContinueWithoutMatch">
-                                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
-                                                @if (customer.DisplayName is not null)
-                                                {
-                                                    <input type="hidden" name="customerDisplayName" value="@customer.DisplayName" />
-                                                }
-                                                <button type="submit" class="btn btn-sm">Use this customer</button>
-                                            </form>
-                                        }
-                                        else
-                                        {
-                                            <form method="post" asp-page-handler="UseMatch">
-                                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
-                                                @if (customer.DisplayName is not null)
-                                                {
-                                                    <input type="hidden" name="customerDisplayName" value="@customer.DisplayName" />
-                                                }
-                                                <div class="unit-options">
-                                                    <p class="text-secondary">Select Unit (optional)</p>
-                                                    @foreach (var unit in selectableUnits)
-                                                    {
-                                                        var unitLabel = $"{unit.PropertyName ?? unit.TowerName ?? "Unit"} — Unit {unit.UnitNumber}{(string.IsNullOrEmpty(unit.UnitType) ? "" : $" ({unit.UnitType})")}";
-                                                        <label class="checkbox-field">
-                                                            <input type="radio" name="selectedUnitRef" value="@($"{unit.UnitReferenceId}:{unit.ContactReferenceId}:{Uri.EscapeDataString(unitLabel)}")" required />
-                                                            @unitLabel
-                                                        </label>
-                                                    }
-                                                </div>
-                                                <button type="submit" class="btn btn-sm">Use this customer</button>
-                                            </form>
-                                        }
-                                    </div>
-                                }
-                            }
+                            <form method="post" asp-page-handler="UseCrmBuyerUnit">
+                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                                <div class="unit-options">
+                                    <p class="text-secondary">Select Unit</p>
+                                    @foreach (var unit in match.Units)
+                                    {
+                                        var statusLabel = unit.LeadStatusName ?? unit.LeadStatus.ToString();
+                                        var unitLabel = $"{unit.ProjectName ?? "Project"} / Unit {unit.UnitNumber} / {statusLabel}";
+                                        var packedValue = string.Join(':',
+                                            customer.CustomerId, unit.LeadId, unit.UnitId, unit.ProjectId,
+                                            Uri.EscapeDataString(customerName ?? string.Empty),
+                                            Uri.EscapeDataString(unit.ProjectName ?? string.Empty),
+                                            Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
+                                        <label class="checkbox-field">
+                                            <input type="radio" name="selectedCrmBuyerUnit" value="@packedValue" required />
+                                            @unitLabel
+                                        </label>
+                                    }
+                                </div>
+                                <button type="submit" class="btn btn-sm">Use this customer/unit</button>
+                            </form>
                         </div>
                     }
+                </div>
+            }
+            else if (Model.CrmBuyerLookupUnavailable)
+            {
+                <div class="alert alert-info" role="status">
+                    <span>Customer not found in CRM. CRM is temporarily unavailable — you can still continue creating the ticket; Project and Unit Number will be required.</span>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-info" role="status">
+                    <span>Customer not found in CRM. You can still continue creating the ticket; Project and Unit Number will be required.</span>
                 </div>
             }
 
@@ -187,13 +148,17 @@
                 <div><strong>Phone</strong></div>
                 <div class="text-secondary">@(Model.PhoneNumber ?? "—")</div>
 
-                <div><strong>Customer</strong></div>
-                <div class="text-secondary">@(Model.CustomerDisplayName ?? "No customer match linked — the ticket will still be created.")</div>
-
-                @if (Model.UnitLabel is not null)
+                @if (Model.CrmBuyerUnitId is not null)
                 {
+                    <div><strong>Customer (CRM verified)</strong></div>
+                    <div class="text-secondary">@(Model.CrmBuyerCustomerName ?? "(no name on file)")</div>
                     <div><strong>Unit</strong></div>
-                    <div class="text-secondary">@Model.UnitLabel</div>
+                    <div class="text-secondary">@(Model.CrmBuyerProjectName ?? "Project") / Unit @Model.CrmBuyerUnitNumber</div>
+                }
+                else
+                {
+                    <div><strong>Customer</strong></div>
+                    <div class="text-secondary">Customer not found in CRM — Project and Unit Number below are required.</div>
                 }
 
                 <p>
@@ -211,9 +176,10 @@
                 <p>
                     <a class="btn btn-sm" asp-page="/NewTicket"
                        asp-route-step="create" asp-route-intakeRecordId="@Model.IntakeRecordId" asp-route-phoneNumber="@Model.PhoneNumber"
-                       asp-route-departmentId="@Model.DepartmentId" asp-route-unitReferenceId="@Model.UnitReferenceId"
-                       asp-route-contactReferenceId="@Model.ContactReferenceId" asp-route-customerDisplayName="@Model.CustomerDisplayName"
-                       asp-route-unitLabel="@Model.UnitLabel">Retry</a>
+                       asp-route-departmentId="@Model.DepartmentId" asp-route-crmBuyerCustomerId="@Model.CrmBuyerCustomerId"
+                       asp-route-crmBuyerLeadId="@Model.CrmBuyerLeadId" asp-route-crmBuyerUnitId="@Model.CrmBuyerUnitId"
+                       asp-route-crmBuyerProjectId="@Model.CrmBuyerProjectId" asp-route-crmBuyerCustomerName="@Model.CrmBuyerCustomerName"
+                       asp-route-crmBuyerProjectName="@Model.CrmBuyerProjectName" asp-route-crmBuyerUnitNumber="@Model.CrmBuyerUnitNumber">Retry</a>
                 </p>
             }
             else if (Model.Categories.Count == 0)
@@ -228,10 +194,26 @@
                     <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
                     <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
                     <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
-                    <input type="hidden" name="unitReferenceId" value="@Model.UnitReferenceId" />
-                    <input type="hidden" name="contactReferenceId" value="@Model.ContactReferenceId" />
-                    <input type="hidden" name="customerDisplayName" value="@Model.CustomerDisplayName" />
-                    <input type="hidden" name="unitLabel" value="@Model.UnitLabel" />
+                    <input type="hidden" name="crmBuyerCustomerId" value="@Model.CrmBuyerCustomerId" />
+                    <input type="hidden" name="crmBuyerLeadId" value="@Model.CrmBuyerLeadId" />
+                    <input type="hidden" name="crmBuyerUnitId" value="@Model.CrmBuyerUnitId" />
+                    <input type="hidden" name="crmBuyerProjectId" value="@Model.CrmBuyerProjectId" />
+                    <input type="hidden" name="crmBuyerCustomerName" value="@Model.CrmBuyerCustomerName" />
+                    <input type="hidden" name="crmBuyerProjectName" value="@Model.CrmBuyerProjectName" />
+                    <input type="hidden" name="crmBuyerUnitNumber" value="@Model.CrmBuyerUnitNumber" />
+
+                    @if (Model.CrmBuyerUnitId is null)
+                    {
+                        <div class="form-group">
+                            <label class="form-label" asp-for="CreateStep.ManualProjectName">Project *</label>
+                            <input class="form-control" asp-for="CreateStep.ManualProjectName" required />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="CreateStep.ManualUnitNumber">Unit Number *</label>
+                            <input class="form-control" asp-for="CreateStep.ManualUnitNumber" required />
+                        </div>
+                    }
+
                     <div class="form-group">
                         <label class="form-label" asp-for="CreateStep.CategoryId">Category *</label>
                         <select class="form-control" asp-for="CreateStep.CategoryId" required>

@@ -15,6 +15,29 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// not at all — never one without the other.
 /// </param>
 /// <param name="ContactReferenceId">Optional. The matching contact's local reference id — see <paramref name="UnitReferenceId"/>.</param>
+/// <param name="CrmBuyerCustomerId">
+/// Optional. The real CRM Buyer Lookup match's customer id
+/// (<c>GET /api/crm/buyers</c> — phone search only) the agent selected.
+/// Must be supplied together with <paramref name="CrmBuyerLeadId"/>,
+/// <paramref name="CrmBuyerUnitId"/>, and <paramref name="CrmBuyerProjectId"/>
+/// or not at all. Mutually exclusive with <paramref name="ManualProjectName"/>/
+/// <paramref name="ManualUnitNumber"/> — a ticket carries a real CRM Buyer
+/// match or a manually-entered Project/Unit Number, never both.
+/// </param>
+/// <param name="CrmBuyerLeadId">Optional. See <paramref name="CrmBuyerCustomerId"/>.</param>
+/// <param name="CrmBuyerUnitId">Optional. See <paramref name="CrmBuyerCustomerId"/>.</param>
+/// <param name="CrmBuyerProjectId">Optional. See <paramref name="CrmBuyerCustomerId"/>.</param>
+/// <param name="CrmBuyerCustomerName">Optional display snapshot of the selected Buyer's name, captured at ticket-creation time.</param>
+/// <param name="CrmBuyerProjectName">Optional display snapshot of the selected unit's project name.</param>
+/// <param name="CrmBuyerUnitNumber">Optional display snapshot of the selected unit's number.</param>
+/// <param name="ManualProjectName">
+/// Required, together with <paramref name="ManualUnitNumber"/>, whenever no
+/// <paramref name="CrmBuyerUnitId"/> is supplied — i.e. CRM Buyer Lookup
+/// found no match for the intake's phone number, or CRM was unavailable.
+/// Never used to run another CRM lookup — CRM is searched by phone number
+/// only.
+/// </param>
+/// <param name="ManualUnitNumber">Required together with <paramref name="ManualProjectName"/> — see that parameter.</param>
 /// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
 /// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
 /// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
@@ -24,7 +47,16 @@ public sealed record CreateTicketRequestDto(
     int? ContactReferenceId,
     int CategoryId,
     byte PriorityId,
-    string RequestSummary);
+    string RequestSummary,
+    int? CrmBuyerCustomerId = null,
+    int? CrmBuyerLeadId = null,
+    int? CrmBuyerUnitId = null,
+    int? CrmBuyerProjectId = null,
+    string? CrmBuyerCustomerName = null,
+    string? CrmBuyerProjectName = null,
+    string? CrmBuyerUnitNumber = null,
+    string? ManualProjectName = null,
+    string? ManualUnitNumber = null);
 
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>
@@ -42,6 +74,15 @@ public sealed record CreateTicketRequestDto(
 /// <param name="RequestSummary">The request, in the agent's words.</param>
 /// <param name="CreatedAtUtc">When the ticket was created, in UTC.</param>
 /// <param name="RowVersion">The concurrency token, Base64-encoded. Send it back on any subsequent write to this ticket.</param>
+/// <param name="CrmBuyerCustomerId">The real CRM Buyer Lookup match's customer id, or null when no CRM Buyer match was linked at creation.</param>
+/// <param name="CrmBuyerLeadId">The matched CRM Lead id, or null.</param>
+/// <param name="CrmBuyerUnitId">The matched CRM unit id, or null.</param>
+/// <param name="CrmBuyerProjectId">The matched CRM project id, or null.</param>
+/// <param name="CrmBuyerCustomerName">Ticket-time display snapshot of the matched Buyer's name, or null.</param>
+/// <param name="CrmBuyerProjectName">Ticket-time display snapshot of the matched unit's project name, or null.</param>
+/// <param name="CrmBuyerUnitNumber">Ticket-time display snapshot of the matched unit's number, or null.</param>
+/// <param name="ManualProjectName">The agent-entered Project name, when no CRM Buyer match was linked at creation.</param>
+/// <param name="ManualUnitNumber">The agent-entered Unit Number, when no CRM Buyer match was linked at creation.</param>
 public sealed record TicketResponseDto(
     long TicketId,
     string TicketNumber,
@@ -57,7 +98,16 @@ public sealed record TicketResponseDto(
     string SlaState,
     string RequestSummary,
     DateTime CreatedAtUtc,
-    string RowVersion);
+    string RowVersion,
+    int? CrmBuyerCustomerId = null,
+    int? CrmBuyerLeadId = null,
+    int? CrmBuyerUnitId = null,
+    int? CrmBuyerProjectId = null,
+    string? CrmBuyerCustomerName = null,
+    string? CrmBuyerProjectName = null,
+    string? CrmBuyerUnitNumber = null,
+    string? ManualProjectName = null,
+    string? ManualUnitNumber = null);
 
 public enum TicketCreationOutcome
 {
@@ -74,6 +124,12 @@ public enum TicketCreationOutcome
 
     /// <summary>ContactReferenceId did not resolve to a real, previously cached contact reference.</summary>
     ContactReferenceNotFound,
+
+    /// <summary>CrmBuyerCustomerId/CrmBuyerLeadId/CrmBuyerUnitId/CrmBuyerProjectId were not all supplied or all omitted together — a real CRM Buyer match is always all four, never some.</summary>
+    CrmBuyerReferenceMismatch,
+
+    /// <summary>A ticket may carry a real CRM Buyer match (CrmBuyerUnitId) or a manually-entered Project/Unit Number, never both.</summary>
+    CrmBuyerAndManualProjectUnitBothSupplied,
 
     /// <summary>Ticket Category is required for every ticket.</summary>
     CategoryNotFound,

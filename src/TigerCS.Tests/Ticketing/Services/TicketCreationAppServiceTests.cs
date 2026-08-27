@@ -214,6 +214,103 @@ public class TicketCreationAppServiceTests
         Assert.EndsWith("0002", second.Response.TicketNumber);
     }
 
+    // ---- Business-rule change: the real CRM Buyer Lookup match path (GET /api/crm/buyers) ----
+
+    [Fact]
+    public async Task CreateAsync_CrmBuyerMatchSelected_CreatesVerifiedTicket_WithAllFourCrmIdsAndSnapshot()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "AC not cooling",
+                CrmBuyerCustomerId: 5001, CrmBuyerLeadId: 901, CrmBuyerUnitId: 101, CrmBuyerProjectId: 10,
+                CrmBuyerCustomerName: "Ahmed Ali", CrmBuyerProjectName: "Tiger Sky Tower", CrmBuyerUnitNumber: "1205"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Verified", result.Response!.VerificationStatus);
+        Assert.Equal(5001, result.Response.CrmBuyerCustomerId);
+        Assert.Equal(901, result.Response.CrmBuyerLeadId);
+        Assert.Equal(101, result.Response.CrmBuyerUnitId);
+        Assert.Equal(10, result.Response.CrmBuyerProjectId);
+        Assert.Equal("Ahmed Ali", result.Response.CrmBuyerCustomerName);
+        Assert.Equal("Tiger Sky Tower", result.Response.CrmBuyerProjectName);
+        Assert.Equal("1205", result.Response.CrmBuyerUnitNumber);
+        // A distinct identifier space from UnitReferenceId/ContactReferenceId.
+        Assert.Null(result.Response.UnitReferenceId);
+        Assert.Null(result.Response.ContactReferenceId);
+
+        var linkedIntake = await f.IntakeRecords.GetByIdAsync(intake.IntakeRecordId);
+        Assert.True(linkedIntake!.IsUnitRelated);
+        Assert.Equal(CrmVerificationStatus.Verified, linkedIntake.CrmVerificationStatus);
+    }
+
+    [Fact]
+    public async Task CreateAsync_OnlySomeCrmBuyerIdsSupplied_ReturnsCrmBuyerReferenceMismatch()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "x",
+                CrmBuyerCustomerId: 5001, CrmBuyerLeadId: 901, CrmBuyerUnitId: null, CrmBuyerProjectId: null));
+
+        Assert.Equal(TicketCreationOutcome.CrmBuyerReferenceMismatch, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_CrmBuyerMatchAndManualProjectUnitBothSupplied_Rejected()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "x",
+                CrmBuyerCustomerId: 5001, CrmBuyerLeadId: 901, CrmBuyerUnitId: 101, CrmBuyerProjectId: 10,
+                ManualProjectName: "Tiger Tower A", ManualUnitNumber: "1204"));
+
+        Assert.Equal(TicketCreationOutcome.CrmBuyerAndManualProjectUnitBothSupplied, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NoCrmMatch_ManualProjectAndUnitNumberSupplied_StoresThemOnTheTicket()
+    {
+        // No verified CRM unit was selected — Project/Unit Number were
+        // manually entered by the agent (never used to run another CRM
+        // lookup) and are stored as pass-through fields on the Unverified
+        // ticket.
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "x",
+                ManualProjectName: "Tiger Tower A", ManualUnitNumber: "1204"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Unverified", result.Response!.VerificationStatus);
+        Assert.Equal("Tiger Tower A", result.Response.ManualProjectName);
+        Assert.Equal("1204", result.Response.ManualUnitNumber);
+        Assert.Null(result.Response.CrmBuyerCustomerId);
+    }
+
     // --- Customer not found / non-unit / lookup failed: none of these ever block creation ---
 
     [Fact]

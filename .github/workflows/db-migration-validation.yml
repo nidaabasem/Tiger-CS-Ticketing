@@ -266,6 +266,14 @@ jobs:
           # IsUnitRelated/CrmVerificationStatus/CreatedByEmployeeId are not.
           # DepartmentId is optional — it only narrows which customer-lookup
           # source(s) CustomerLookupAppService searches, never a promotion gate.
+          #
+          # Business-rule change: CRM Buyer Lookup (GET /api/crm/buyers) adds
+          # nine nullable Tickets columns — CrmBuyerCustomerId/LeadId/UnitId/
+          # ProjectId plus their CustomerName/ProjectName/UnitNumber display
+          # snapshots, and the no-match ManualProjectName/ManualUnitNumber
+          # pair (Ticket.CreateVerifiedFromCrmBuyer/CreateUnverified) — a
+          # distinct identifier space from UnitReferenceId/ContactReferenceId,
+          # all optional since a ticket carries at most one of the two paths.
           actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
             -Q "SET NOCOUNT ON; SELECT TABLE_NAME + '.' + COLUMN_NAME + '=' + IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ('Tickets','IntakeRecords') ORDER BY TABLE_NAME, COLUMN_NAME;" | sed '/^$/d' | tr -d ' ')
           echo "--- actual nullability ---"
@@ -281,7 +289,10 @@ jobs:
             "Tickets.OriginatingDepartmentId=NO" "Tickets.PriorityId=NO" "Tickets.ReopenCount=NO" \
             "Tickets.RequestSummary=NO" "Tickets.ResolutionOutcome=YES" "Tickets.SlaState=NO" \
             "Tickets.TicketId=NO" "Tickets.TicketNumber=NO" "Tickets.TicketStatus=NO" \
-            "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" "Tickets.RowVersion=NO" | sort)
+            "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" "Tickets.RowVersion=NO" \
+            "Tickets.CrmBuyerCustomerId=YES" "Tickets.CrmBuyerLeadId=YES" "Tickets.CrmBuyerUnitId=YES" \
+            "Tickets.CrmBuyerProjectId=YES" "Tickets.CrmBuyerCustomerName=YES" "Tickets.CrmBuyerProjectName=YES" \
+            "Tickets.CrmBuyerUnitNumber=YES" "Tickets.ManualProjectName=YES" "Tickets.ManualUnitNumber=YES" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- expected nullability ---"
           echo "$expected"
@@ -290,7 +301,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (32 columns)."
+          echo "Column nullability matches the confirmed design exactly (41 columns)."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |

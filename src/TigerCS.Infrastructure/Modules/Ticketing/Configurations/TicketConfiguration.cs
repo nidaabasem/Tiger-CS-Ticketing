@@ -36,6 +36,21 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.Property(t => t.ReopenCount).IsRequired();
         builder.Property(t => t.CreatedAtUtc).IsRequired();
 
+        // Business-rule change: the real CRM Buyer Lookup match (GET
+        // /api/crm/buyers) — a distinct identifier space from
+        // UnitReferenceId/ContactReferenceId above (see Ticket's own
+        // remarks). No FK here: these are the legacy CRM's own identifiers,
+        // not a local cache table's primary key.
+        builder.Property(t => t.CrmBuyerCustomerId);
+        builder.Property(t => t.CrmBuyerLeadId);
+        builder.Property(t => t.CrmBuyerUnitId);
+        builder.Property(t => t.CrmBuyerProjectId);
+        builder.Property(t => t.CrmBuyerCustomerName).HasMaxLength(200);
+        builder.Property(t => t.CrmBuyerProjectName).HasMaxLength(200);
+        builder.Property(t => t.CrmBuyerUnitNumber).HasMaxLength(50);
+        builder.Property(t => t.ManualProjectName).HasMaxLength(200);
+        builder.Property(t => t.ManualUnitNumber).HasMaxLength(50);
+
         // MVP-Data-Dictionary.md §2.10 — optimistic concurrency for the
         // assignment/transfer/status-change/resolve/close/reconciliation
         // operations this increment adds (S-13). Deferred by the prior
