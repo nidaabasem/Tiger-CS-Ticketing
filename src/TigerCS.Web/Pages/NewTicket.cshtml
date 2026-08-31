@@ -76,48 +76,43 @@
             }
             <p class="text-secondary">
                 Searching Tiger CRM by phone number only (never by Unit Number or Project) for Buyer records with a Sold or Contract lead.
-                A phone number may match multiple customers, and a customer may own multiple eligible units — select the one that applies.
+                A phone number belongs to exactly one CRM customer; that customer may own multiple eligible units — select the one that applies.
             </p>
 
-            @if (Model.CrmBuyerMatches is { Count: > 0 } matches)
+            @if (Model.CrmBuyerMatch is { } match)
             {
-                <div class="entry-list entry-list--spaced">
-                    @foreach (var match in matches)
-                    {
-                        var customer = match.Customer;
-                        var customerName = customer.FullNameEnglish ?? customer.FullNameArabic;
-                        <div class="customer-card">
-                            <div><strong>@(customerName ?? "(no name on file)")</strong></div>
-                            <div class="text-secondary">
-                                @(customer.MobileNumber is null ? "" : customer.MobileNumber)
-                                @(customer.Email is null ? "" : $"· {customer.Email}")
-                            </div>
+                var customer = match.Customer;
+                var customerName = customer.FullNameEnglish ?? customer.FullNameArabic;
+                <div class="customer-card">
+                    <div><strong>@(customerName ?? "(no name on file)")</strong></div>
+                    <div class="text-secondary">
+                        @(customer.MobileNumber is null ? "" : customer.MobileNumber)
+                        @(customer.Email is null ? "" : $"· {customer.Email}")
+                    </div>
 
-                            <form method="post" asp-page-handler="UseCrmBuyerUnit">
-                                <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                                <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                                <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
-                                <div class="unit-options">
-                                    <p class="text-secondary">Select Unit</p>
-                                    @foreach (var unit in match.Units)
-                                    {
-                                        var statusLabel = unit.LeadStatusName ?? unit.LeadStatus.ToString();
-                                        var unitLabel = $"{unit.ProjectName ?? "Project"} / Unit {unit.UnitNumber} / {statusLabel}";
-                                        var packedValue = string.Join(':',
-                                            customer.CustomerId, unit.LeadId, unit.UnitId, unit.ProjectId,
-                                            Uri.EscapeDataString(customerName ?? string.Empty),
-                                            Uri.EscapeDataString(unit.ProjectName ?? string.Empty),
-                                            Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
-                                        <label class="checkbox-field">
-                                            <input type="radio" name="selectedCrmBuyerUnit" value="@packedValue" required />
-                                            @unitLabel
-                                        </label>
-                                    }
-                                </div>
-                                <button type="submit" class="btn btn-sm">Use this customer/unit</button>
-                            </form>
+                    <form method="post" asp-page-handler="UseCrmBuyerUnit">
+                        <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                        <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                        <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                        <div class="unit-options">
+                            <p class="text-secondary">Select Unit</p>
+                            @foreach (var unit in match.Units)
+                            {
+                                var statusLabel = unit.LeadStatusName ?? unit.LeadStatus.ToString();
+                                var unitLabel = $"{unit.ProjectName ?? "Project"} / Unit {unit.UnitNumber} / {statusLabel}";
+                                var packedValue = string.Join(':',
+                                    customer.CustomerId, unit.LeadId, unit.UnitId, unit.ProjectId,
+                                    Uri.EscapeDataString(customerName ?? string.Empty),
+                                    Uri.EscapeDataString(unit.ProjectName ?? string.Empty),
+                                    Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
+                                <label class="checkbox-field">
+                                    <input type="radio" name="selectedCrmBuyerUnit" value="@packedValue" required />
+                                    @unitLabel
+                                </label>
+                            }
                         </div>
-                    }
+                        <button type="submit" class="btn btn-sm">Use this customer/unit</button>
+                    </form>
                 </div>
             }
             else if (Model.CrmBuyerLookupUnavailable)
@@ -170,37 +165,39 @@
 
             @if (Model.CrmBuyerCustomerId is not null)
             {
-                <div class="customer-card">
-                    <div><strong>Previous Tickets</strong></div>
-                    @if (Model.PreviousTickets is null)
-                    {
-                        <p class="text-secondary">Previous ticket history is unavailable right now.</p>
-                    }
-                    else if (Model.PreviousTickets.Tickets.Count == 0)
-                    {
-                        <p class="text-secondary">No previous tickets found for this customer.</p>
-                    }
-                    else
-                    {
-                        <p class="text-secondary">
-                            Total: @Model.PreviousTickets.TotalTickets ·
-                            Open: @Model.PreviousTickets.OpenTickets ·
-                            Closed: @Model.PreviousTickets.ClosedTickets
-                        </p>
-                        <div class="entry-list">
-                            @foreach (var row in Model.PreviousTickets.Tickets)
-                            {
-                                <div class="entry-row">
-                                    <span class="entry-row__field">
-                                        <a href="/Tickets/@row.TicketId">@row.TicketNumber</a>
-                                        — @(row.ProjectName ?? "—") / @(row.UnitNumber ?? "—")
-                                    </span>
-                                    <span class="text-secondary">@TicketDisplay.TicketStatusLabel(row.TicketStatus) · @row.CreatedAtUtc.ToLocalTime().ToString("d MMM yyyy")</span>
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
+                <details class="disclosure">
+                    <summary class="btn btn-sm">Previous Tickets@(Model.PreviousTickets is not null ? $" ({Model.PreviousTickets.TotalTickets})" : "")</summary>
+                    <div class="disclosure__panel">
+                        @if (Model.PreviousTickets is null)
+                        {
+                            <p class="text-secondary">Previous ticket history is unavailable right now.</p>
+                        }
+                        else if (Model.PreviousTickets.Tickets.Count == 0)
+                        {
+                            <p class="text-secondary">No previous tickets found for this customer.</p>
+                        }
+                        else
+                        {
+                            <p class="text-secondary">
+                                Total: @Model.PreviousTickets.TotalTickets ·
+                                Open: @Model.PreviousTickets.OpenTickets ·
+                                Closed: @Model.PreviousTickets.ClosedTickets
+                            </p>
+                            <div class="entry-list">
+                                @foreach (var row in Model.PreviousTickets.Tickets)
+                                {
+                                    <div class="entry-row">
+                                        <span class="entry-row__field">
+                                            <a href="/Tickets/@row.TicketId">@row.TicketNumber</a>
+                                            — @(row.ProjectName ?? "—") / @(row.UnitNumber ?? "—")
+                                        </span>
+                                        <span class="text-secondary">@TicketDisplay.TicketStatusLabel(row.TicketStatus) · @row.CreatedAtUtc.ToLocalTime().ToString("d MMM yyyy")</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </details>
             }
 
             @if (Model.CategoriesErrorMessage is not null)

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
@@ -27,7 +28,7 @@ public class CrmBuyerLookupAppServiceTests
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success([new CrmBuyerMatchDto(Customer(), [Unit(leadStatus: 8)])]));
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -40,7 +41,7 @@ public class CrmBuyerLookupAppServiceTests
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success([new CrmBuyerMatchDto(Customer(), [Unit(leadStatus: 9)])]));
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -61,7 +62,7 @@ public class CrmBuyerLookupAppServiceTests
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success(
                 [new CrmBuyerMatchDto(Customer(), [Unit(leadStatus: 4, leadStatusName: "Contract", customerType: 1)])]));
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -80,17 +81,15 @@ public class CrmBuyerLookupAppServiceTests
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success(
             [
-                new CrmBuyerMatchDto(Customer(1), [Unit(leadStatus: 4, unitId: 500), Unit(leadStatus: 8, unitId: 501)]),
-                new CrmBuyerMatchDto(Customer(2), [Unit(leadStatus: 250, unitId: 600)])
+                new CrmBuyerMatchDto(Customer(1), [Unit(leadStatus: 4, unitId: 500), Unit(leadStatus: 8, unitId: 501), Unit(leadStatus: 250, unitId: 600)])
             ]));
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
         Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
-        Assert.Equal(2, result.Buyers!.Count);
-        Assert.Equal(2, result.Buyers!.Single(b => b.Customer.CustomerId == 1).Units.Count);
-        Assert.Single(result.Buyers!.Single(b => b.Customer.CustomerId == 2).Units);
+        var buyer = Assert.Single(result.Buyers!);
+        Assert.Equal(3, buyer.Units.Count);
     }
 
     // ---- Buyer-only validation is intentionally preserved: CustomerType == 1 (Buyer) ----
@@ -100,7 +99,7 @@ public class CrmBuyerLookupAppServiceTests
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success([new CrmBuyerMatchDto(Customer(), [Unit(customerType: 2)])])); // e.g. Tenant, out of scope this phase
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -115,7 +114,7 @@ public class CrmBuyerLookupAppServiceTests
             [
                 new CrmBuyerMatchDto(Customer(), [Unit(customerType: 1, unitId: 500), Unit(customerType: 2, unitId: 501)])
             ]));
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -134,7 +133,7 @@ public class CrmBuyerLookupAppServiceTests
                 new CrmBuyerMatchDto(Customer(1), [Unit(customerType: 1)]),
                 new CrmBuyerMatchDto(Customer(2), [Unit(customerType: 2)])
             ]));
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -144,29 +143,74 @@ public class CrmBuyerLookupAppServiceTests
     }
 
     [Fact]
-    public async Task GetBuyerByPhoneAsync_MultipleUnitsAndMultipleBuyers_PreservesAllValidOnes()
+    public async Task GetBuyerByPhoneAsync_OneCustomerWithMultipleUnits_ReturnsAllOfThem()
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success(
-            [
-                new CrmBuyerMatchDto(Customer(1), [Unit(leadStatus: 8, unitId: 500), Unit(leadStatus: 9, unitId: 501)]),
-                new CrmBuyerMatchDto(Customer(2), [Unit(leadStatus: 8, unitId: 600)])
-            ]));
-        var service = new CrmBuyerLookupAppService(gateway);
+                [new CrmBuyerMatchDto(Customer(1), [Unit(leadStatus: 8, unitId: 500), Unit(leadStatus: 9, unitId: 501)])]));
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
         Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
-        Assert.Equal(2, result.Buyers!.Count);
-        Assert.Equal(2, result.Buyers!.Single(b => b.Customer.CustomerId == 1).Units.Count);
-        Assert.Single(result.Buyers!.Single(b => b.Customer.CustomerId == 2).Units);
+        var buyer = Assert.Single(result.Buyers!);
+        Assert.Equal(2, buyer.Units.Count);
+    }
+
+    // ---- Business rule: a CRM phone number belongs to exactly one customer.
+    // CrmBuyerLookupAppService consolidates to a single CrmBuyerMatchDto —
+    // never a list the caller has to disambiguate between customers. ----
+
+    [Fact]
+    public async Task GetBuyerByPhoneAsync_CrmReturnsTheSameCustomerTwice_MergesUnitsWithoutDuplicates()
+    {
+        // Resilience for CRM fragmenting one customer's Leads across multiple
+        // entries — not a distinct-customer situation, so their units merge
+        // into one CrmBuyerMatchDto rather than becoming two "buyers".
+        var gateway = new FakeCrmBuyerLookupGateway().Returns(
+            CrmBuyerLookupResult.Success(
+            [
+                new CrmBuyerMatchDto(Customer(1), [Unit(unitId: 500), Unit(unitId: 501)]),
+                new CrmBuyerMatchDto(Customer(1), [Unit(unitId: 501), Unit(unitId: 600)])
+            ]));
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
+
+        var result = await service.GetBuyerByPhoneAsync("+971500000000");
+
+        Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
+        var buyer = Assert.Single(result.Buyers!);
+        Assert.Equal(1, buyer.Customer.CustomerId);
+        Assert.Equal([500, 501, 600], buyer.Units.Select(u => u.UnitId).Order());
+    }
+
+    [Fact]
+    public async Task GetBuyerByPhoneAsync_CrmUnexpectedlyReturnsTwoDistinctCustomers_ResilientlyKeepsTheFirstOnly()
+    {
+        // The genuinely anomalous case the business rule says should never
+        // happen — this service must not throw, and must never hand a caller
+        // built for "one customer" an ambiguous multi-customer result.
+        var gateway = new FakeCrmBuyerLookupGateway().Returns(
+            CrmBuyerLookupResult.Success(
+            [
+                new CrmBuyerMatchDto(Customer(1), [Unit(unitId: 500), Unit(unitId: 501)]),
+                new CrmBuyerMatchDto(Customer(2), [Unit(unitId: 600)])
+            ]));
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
+
+        var result = await service.GetBuyerByPhoneAsync("+971500000000");
+
+        Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
+        var buyer = Assert.Single(result.Buyers!);
+        Assert.Equal(1, buyer.Customer.CustomerId);
+        Assert.Equal(2, buyer.Units.Count);
+        Assert.DoesNotContain(buyer.Units, u => u.UnitId == 600);
     }
 
     [Fact]
     public async Task GetBuyerByPhoneAsync_GatewayNotFound_PassesThrough()
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(CrmBuyerLookupResult.NotFound());
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -177,7 +221,7 @@ public class CrmBuyerLookupAppServiceTests
     public async Task GetBuyerByPhoneAsync_GatewayUnauthorized_PassesThrough()
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(CrmBuyerLookupResult.Unauthorized());
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -188,7 +232,7 @@ public class CrmBuyerLookupAppServiceTests
     public async Task GetBuyerByPhoneAsync_GatewayUnavailable_PassesThrough()
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(CrmBuyerLookupResult.Unavailable());
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
@@ -199,7 +243,7 @@ public class CrmBuyerLookupAppServiceTests
     public async Task GetBuyerByPhoneAsync_PassesPhoneNumberThroughToGatewayUnchanged()
     {
         var gateway = new FakeCrmBuyerLookupGateway().Returns(CrmBuyerLookupResult.NotFound());
-        var service = new CrmBuyerLookupAppService(gateway);
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
 
         await service.GetBuyerByPhoneAsync("+971 50 000 0000");
 

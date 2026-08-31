@@ -380,7 +380,17 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 .tabs-body { border-top: 1px solid var(--color-border); }
 .tab-panel { display: none; padding: var(--space-4); }
 #tab-activity:checked ~ .tabs-body #panel-activity,
-#tab-audit:checked ~ .tabs-body #panel-audit { display: block; }
+#tab-audit:checked ~ .tabs-body #panel-audit,
+#tab-details:checked ~ .tabs-body #panel-details,
+#tab-history:checked ~ .tabs-body #panel-history { display: block; }
+
+/* Page-level Details/Previous Tickets tabs (Ticket Details) — same
+   mechanism as the tabs above, one level up: wraps the whole detail-layout
+   (including its own inner Activity/Audit History tabs-card) as "Details",
+   with Customer History moved out to its own tab so it never visually
+   competes with the primary ticket information. */
+.tabs-card--page > .tabs-body { padding: 0 var(--space-4) var(--space-4); }
+.tabs-card--page > .tabs-body > .tab-panel { padding: var(--space-4) 0 0; }
 
 /* activity timeline */
 

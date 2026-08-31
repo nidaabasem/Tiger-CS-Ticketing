@@ -12,13 +12,19 @@ namespace TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 /// (MVP-Implementation-Backlog.md's CRM Buyer Lookup increment).
 ///
 /// <para>
-/// <b>Read-only, and never resolves ambiguity on its own.</b> A phone number
-/// may match multiple CRM customers, and one customer may own multiple valid
-/// units — this port returns all of it and picks nothing: no automatic unit
-/// selection, matching the business rule that only the CS agent (via a future
-/// UI) may choose the relevant unit. This interface holds no verification
-/// state and makes no ticket-creation decision, matching every other CRM
-/// port's own documented boundary.
+/// <b>Read-only, and never resolves ambiguity on its own.</b> This is the raw
+/// CRM contract boundary — it returns CRM's response exactly as CRM sent it,
+/// including the (expected-never-to-happen) case of more than one customer
+/// entry for one phone number. Business rule: CRM guarantees a phone number
+/// belongs to exactly one customer; enforcing/consolidating that (and staying
+/// resilient if CRM's own response does not honor it) is
+/// <c>CrmBuyerLookupAppService</c>'s job, not this port's — this interface
+/// stays a thin, unopinionated passthrough. One customer may still own
+/// multiple valid units, and this port picks none of them: no automatic unit
+/// selection, matching the business rule that only the CS agent (via the New
+/// Ticket UI) may choose the relevant unit. This interface holds no
+/// verification state and makes no ticket-creation decision, matching every
+/// other CRM port's own documented boundary.
 /// </para>
 ///
 /// <para>

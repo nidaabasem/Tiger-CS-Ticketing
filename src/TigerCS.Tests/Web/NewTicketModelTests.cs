@@ -214,7 +214,7 @@ public sealed class NewTicketModelTests
     // ---- Scenario 1: one buyer, one unit ----
 
     [Fact]
-    public async Task OnGetAsync_Lookup_OneBuyerOneUnit_PopulatesCrmBuyerMatches()
+    public async Task OnGetAsync_Lookup_OneBuyerOneUnit_PopulatesCrmBuyerMatch()
     {
         var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(
             SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", leadId: 900, unitId: 100, projectId: 10, unitNumber: "5001", projectName: "Tiger Sky Tower")));
@@ -222,8 +222,9 @@ public sealed class NewTicketModelTests
         await model.OnGetAsync("lookup", 42, "+971509990001", null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.False(model.CrmBuyerLookupUnavailable);
-        var match = Assert.Single(model.CrmBuyerMatches!);
-        Assert.Equal("Sami Nasser", match.Customer.FullNameEnglish);
+        var match = model.CrmBuyerMatch;
+        Assert.NotNull(match);
+        Assert.Equal("Sami Nasser", match!.Customer.FullNameEnglish);
         var unit = Assert.Single(match.Units);
         Assert.Equal("5001", unit.UnitNumber);
         Assert.Equal("Tiger Sky Tower", unit.ProjectName);
@@ -245,8 +246,9 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, CancellationToken.None);
 
-        var match = Assert.Single(model.CrmBuyerMatches!);
-        Assert.Equal(2, match.Units.Count);
+        var match = model.CrmBuyerMatch;
+        Assert.NotNull(match);
+        Assert.Equal(2, match!.Units.Count);
         Assert.Contains(match.Units, u => u is { UnitNumber: "1205", LeadStatus: 8 });
         Assert.Contains(match.Units, u => u is { UnitNumber: "1403", LeadStatus: 9 });
         // Nothing on the model itself picks a unit — CrmBuyerUnitId stays
@@ -254,10 +256,13 @@ public sealed class NewTicketModelTests
         Assert.Null(model.CrmBuyerUnitId);
     }
 
-    // ---- Scenario 3: multiple buyers matched by the same phone number ----
+    // ---- Scenario 3: business rule — a CRM phone number belongs to exactly
+    // one customer (TigerCS.Api's CrmBuyerLookupAppService already
+    // consolidates to at most one). This page is built for exactly that; the
+    // defensive "take the first" below is not a multi-customer UI. ----
 
     [Fact]
-    public async Task OnGetAsync_Lookup_MultipleBuyersSamePhone_AllBuyersPresent_NoneAutoSelected()
+    public async Task OnGetAsync_Lookup_ApiUnexpectedlyReturnsMultipleCustomers_WebLayerDefensivelyUsesTheFirstOnly()
     {
         var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(
             SingleUnitBuyer(5001, "Ahmed Ali", "+971501234567", 901, 101, 10, "1205", "Tiger Sky Tower"),
@@ -265,9 +270,8 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, CancellationToken.None);
 
-        Assert.Equal(2, model.CrmBuyerMatches!.Count);
-        Assert.Contains(model.CrmBuyerMatches, m => m.Customer.CustomerId == 5001);
-        Assert.Contains(model.CrmBuyerMatches, m => m.Customer.CustomerId == 5002);
+        Assert.NotNull(model.CrmBuyerMatch);
+        Assert.Equal(5001, model.CrmBuyerMatch!.Customer.CustomerId);
         Assert.Null(model.CrmBuyerCustomerId);
     }
 
@@ -281,8 +285,7 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
 
-        Assert.NotNull(model.CrmBuyerMatches);
-        Assert.Empty(model.CrmBuyerMatches!);
+        Assert.Null(model.CrmBuyerMatch);
         Assert.False(model.CrmBuyerLookupUnavailable);
     }
 
@@ -296,8 +299,7 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
 
-        Assert.NotNull(model.CrmBuyerMatches);
-        Assert.Empty(model.CrmBuyerMatches!);
+        Assert.Null(model.CrmBuyerMatch);
         Assert.True(model.CrmBuyerLookupUnavailable);
         Assert.Null(model.ErrorMessage); // never a blocking error — the wizard must remain usable
     }
@@ -310,8 +312,7 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
 
-        Assert.NotNull(model.CrmBuyerMatches);
-        Assert.Empty(model.CrmBuyerMatches!);
+        Assert.Null(model.CrmBuyerMatch);
         Assert.True(model.CrmBuyerLookupUnavailable);
     }
 
@@ -646,7 +647,8 @@ public sealed class NewTicketModelTests
         await model.OnGetAsync(
             "lookup", (long)lookupRoute["intakeRecordId"]!, (string?)lookupRoute["phoneNumber"], (int?)lookupRoute["departmentId"],
             null, null, null, null, null, null, null, CancellationToken.None);
-        var match = Assert.Single(model.CrmBuyerMatches!);
+        var match = model.CrmBuyerMatch;
+        Assert.NotNull(match);
         var unit = Assert.Single(match.Units);
         var packed = string.Join(':', match.Customer.CustomerId, unit.LeadId, unit.UnitId, unit.ProjectId,
             Uri.EscapeDataString(match.Customer.FullNameEnglish!), Uri.EscapeDataString(unit.ProjectName!), Uri.EscapeDataString(unit.UnitNumber!));
@@ -695,7 +697,7 @@ public sealed class NewTicketModelTests
         await model.OnGetAsync(
             "lookup", (long)lookupRoute["intakeRecordId"]!, (string?)lookupRoute["phoneNumber"], (int?)lookupRoute["departmentId"],
             null, null, null, null, null, null, null, CancellationToken.None);
-        Assert.Empty(model.CrmBuyerMatches!);
+        Assert.Null(model.CrmBuyerMatch);
 
         var continueResult = model.OnPostContinueWithoutMatch(42, "+9613040922", 2);
         var createRoute = RouteValues(Assert.IsType<RedirectToPageResult>(continueResult));

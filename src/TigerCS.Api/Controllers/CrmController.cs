@@ -131,14 +131,16 @@ public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService, CrmB
     /// <c>GET /TicketingSystem/GetBuyerByPhone</c> endpoint.
     /// </summary>
     /// <remarks>
-    /// A phone number is not assumed unique and a buyer is not assumed to
-    /// own one unit — the response may contain multiple customers, each with
-    /// multiple units, and this endpoint never selects one for the caller.
-    /// That selection is left to the CS agent (a future UI concern); this
-    /// endpoint only surfaces every valid match.
+    /// Business rule: a CRM phone number belongs to exactly one customer, so
+    /// this endpoint returns at most one entry (<c>CrmBuyerLookupAppService</c>
+    /// consolidates to a single customer even if CRM's own response does
+    /// not honor that). A buyer is not assumed to own only one unit — every
+    /// eligible (Sold/Contract, Buyer) unit that customer owns is returned,
+    /// and this endpoint never selects one for the caller; that selection is
+    /// left to the CS agent in the New Ticket UI.
     /// </remarks>
     /// <param name="phoneNumber">Required. The phone number to search CRM for.</param>
-    /// <response code="200">One or more matching buyers, each with the units they own that are eligible (Sold/Contract, Buyer).</response>
+    /// <response code="200">The matching buyer (at most one), with the units they own that are eligible (Sold/Contract, Buyer).</response>
     /// <response code="400">phoneNumber was missing or blank, or CRM rejected/could not parse the request.</response>
     /// <response code="401">CRM rejected the configured Crm:SecretKey.</response>
     /// <response code="404">No matching Buyer for this phone number.</response>
