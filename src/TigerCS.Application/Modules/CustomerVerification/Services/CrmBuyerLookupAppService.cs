@@ -30,15 +30,20 @@ namespace TigerCS.Application.Modules.CustomerVerification.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Resilient, not naive, about CRM breaking its own uniqueness
-/// guarantee.</b> <see cref="ConsolidateToSingleCustomer"/> handles a CRM
-/// response that names the same CustomerId more than once (its units are
-/// merged, deduplicated by UnitId — CRM fragmenting one customer's Leads
-/// across multiple entries is not a distinct-customer situation) and, for the
-/// genuinely unexpected case of two different CustomerIds answering the same
-/// phone number, deterministically keeps the first one CRM returned and logs
-/// a warning for investigation — this service never throws, and never hands
-/// a caller built for "one customer" an ambiguous multi-customer result.
+/// <b>Never guesses when CRM breaks its own uniqueness guarantee.</b> CRM
+/// naming the same CustomerId more than once is not a distinct-customer
+/// situation — <see cref="MergeUnitsForOneCustomer"/> merges those entries'
+/// units (deduplicated by UnitId) into one <see cref="CrmBuyerMatchDto"/>.
+/// But CRM naming two or more genuinely different CustomerIds for the same
+/// phone number is a real data-integrity conflict this service refuses to
+/// paper over: it does not pick a "first" customer, does not return a
+/// <see cref="CrmBuyerLookupOutcome.Success"/> result at all, and never lets
+/// a Ticket or IntakeRecord get linked to either candidate automatically.
+/// Instead it returns <see cref="CrmBuyerLookupOutcome.AmbiguousCustomerMatch"/>
+/// and logs one warning for investigation — the phone number masked and the
+/// distinct CustomerIds named, but never CRM's secret key (this service
+/// never has it in the first place; see <c>CrmBuyerHttpGateway</c>). This
+/// service never throws for this case either.
 /// </para>
 ///
 /// <para>
@@ -72,33 +77,41 @@ public sealed class CrmBuyerLookupAppService(ICrmBuyerLookupGateway gateway, ILo
             return CrmBuyerLookupResult.NotFound(result.Message);
         }
 
-        var customer = ConsolidateToSingleCustomer(validBuyers, phoneNumber);
+        var distinctCustomerIds = validBuyers.Select(b => b.Customer.CustomerId).Distinct().ToList();
+        if (distinctCustomerIds.Count > 1)
+        {
+            // Data-integrity conflict, not something to guess through — see
+            // this type's own remarks. No customer/unit is selected, and no
+            // Success result is returned, for any of the candidates.
+            logger.LogWarning(
+                "CRM GetBuyerByPhone returned {CustomerCount} distinct customers ({CustomerIds}) for {MaskedPhoneNumber}, " +
+                "but a CRM phone number is expected to belong to exactly one customer. Treating this as a CRM " +
+                "data-integrity conflict — no customer will be auto-selected.",
+                distinctCustomerIds.Count, string.Join(",", distinctCustomerIds), Mask(phoneNumber));
+            return CrmBuyerLookupResult.AmbiguousCustomerMatch(result.Message);
+        }
+
+        var customer = MergeUnitsForOneCustomer(validBuyers);
         return CrmBuyerLookupResult.Success([customer], result.Message);
     }
 
-    /// <summary>See this type's own remarks for the business rule and the resilience behavior below.</summary>
-    private CrmBuyerMatchDto ConsolidateToSingleCustomer(List<CrmBuyerMatchDto> validBuyers, string phoneNumber)
+    /// <summary>
+    /// Every entry in <paramref name="entriesForOneCustomer"/> already shares
+    /// the same CustomerId (the caller only reaches this once ambiguity
+    /// across different customers has been ruled out) — merges their units
+    /// into one <see cref="CrmBuyerMatchDto"/>, deduplicated by UnitId, since
+    /// CRM fragmenting one customer's Leads across multiple entries is not a
+    /// distinct-customer situation.
+    /// </summary>
+    private static CrmBuyerMatchDto MergeUnitsForOneCustomer(List<CrmBuyerMatchDto> entriesForOneCustomer)
     {
-        var distinctCustomerIds = validBuyers.Select(b => b.Customer.CustomerId).Distinct().ToList();
-        var primaryCustomerId = distinctCustomerIds[0];
-
-        if (distinctCustomerIds.Count > 1)
-        {
-            logger.LogWarning(
-                "CRM GetBuyerByPhone returned {CustomerCount} distinct customers for {MaskedPhoneNumber}, " +
-                "but a CRM phone number is expected to belong to exactly one customer. Using the first customer " +
-                "returned (CustomerId {PrimaryCustomerId}) and discarding the rest.",
-                distinctCustomerIds.Count, Mask(phoneNumber), primaryCustomerId);
-        }
-
-        var entriesForPrimaryCustomer = validBuyers.Where(b => b.Customer.CustomerId == primaryCustomerId).ToList();
-        var mergedUnits = entriesForPrimaryCustomer
+        var mergedUnits = entriesForOneCustomer
             .SelectMany(b => b.Units)
             .GroupBy(u => u.UnitId)
             .Select(g => g.First())
             .ToList();
 
-        return entriesForPrimaryCustomer[0] with { Units = mergedUnits };
+        return entriesForOneCustomer[0] with { Units = mergedUnits };
     }
 
     private static bool IsValidBuyerUnit(CrmBuyerUnitDto unit) => unit.CustomerType == BuyerCustomerType;

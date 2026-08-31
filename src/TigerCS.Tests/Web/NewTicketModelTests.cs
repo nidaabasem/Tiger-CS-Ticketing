@@ -257,9 +257,11 @@ public sealed class NewTicketModelTests
     }
 
     // ---- Scenario 3: business rule — a CRM phone number belongs to exactly
-    // one customer (TigerCS.Api's CrmBuyerLookupAppService already
-    // consolidates to at most one). This page is built for exactly that; the
-    // defensive "take the first" below is not a multi-customer UI. ----
+    // one customer. TigerCS.Api's CrmBuyerLookupAppService never actually
+    // answers 200 OK with more than one distinct customer any more — that
+    // case is now a 409 Conflict (see Scenario 3b below) — so the "take the
+    // first" here is defense-in-depth only ("never trust a contract further
+    // than the wire"), not a real path this Api produces. ----
 
     [Fact]
     public async Task OnGetAsync_Lookup_ApiUnexpectedlyReturnsMultipleCustomers_WebLayerDefensivelyUsesTheFirstOnly()
@@ -273,6 +275,61 @@ public sealed class NewTicketModelTests
         Assert.NotNull(model.CrmBuyerMatch);
         Assert.Equal(5001, model.CrmBuyerMatch!.Customer.CustomerId);
         Assert.Null(model.CrmBuyerCustomerId);
+    }
+
+    // ---- Scenario 3b: CRM data-integrity conflict — TigerCS.Api answers 409
+    // (CrmBuyerLookupAppService's AmbiguousCustomerMatch outcome) when CRM
+    // itself named more than one distinct customer for this phone number.
+    // Never auto-selects a customer/unit; the wizard still isn't blocked. ----
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_CrmAmbiguousCustomerMatch_FlagsAmbiguous_NeverAutoSelectsACustomer()
+    {
+        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
+            new HttpResponseMessage(HttpStatusCode.Conflict));
+
+        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.True(model.CrmBuyerAmbiguousMatch);
+        Assert.Null(model.CrmBuyerMatch);
+        Assert.False(model.CrmBuyerLookupUnavailable); // a distinct condition from "CRM unavailable" — different message
+        Assert.Null(model.ErrorMessage); // never a blocking error — the wizard must remain usable
+    }
+
+    [Fact]
+    public async Task FullFlow_CrmAmbiguousCustomerMatch_TicketCreationStillSucceeds_ViaManualProjectUnitNumber()
+    {
+        // Item 4: even after an ambiguous CRM data-integrity conflict, the
+        // agent can still continue the wizard through the existing
+        // unverified/manual Project+Unit-Number path — exactly like a plain
+        // "not found" — and ticket creation is never blocked.
+        var (model, _, _, _, _, tickets, _) = CreateModel(
+            crmBuyerLookupResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.Conflict),
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")),
+            ticketsResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
+                301, "TG-FM-20260827-0003", 2, 2, null, null, 2, 3, "Open", "Unverified", "None", "Running", "x", DateTime.UtcNow, "AAAA")));
+
+        await model.OnGetAsync("lookup", 42, "+971501234567", 2, null, null, null, null, null, null, null, CancellationToken.None);
+        Assert.True(model.CrmBuyerAmbiguousMatch);
+
+        var continueResult = model.OnPostContinueWithoutMatch(42, "+971501234567", 2);
+        var createRoute = RouteValues(Assert.IsType<RedirectToPageResult>(continueResult));
+
+        await model.OnGetAsync("create", 42, "+971501234567", (int?)createRoute["departmentId"], null, null, null, null, null, null, null, CancellationToken.None);
+
+        model.CreateStep = new NewTicketModel.CreateStepInput
+        {
+            CategoryId = model.Categories.Single().CategoryId, PriorityId = 3, RequestSummary = "x",
+            ManualProjectName = "Tiger Tower A", ManualUnitNumber = "1204"
+        };
+        var createResult = await model.OnPostCreateAsync(42, "+971501234567", 2, null, null, null, null, null, null, null, CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToPageResult>(createResult);
+        Assert.Equal("/TicketDetails", redirect.PageName);
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        Assert.Equal("Tiger Tower A", body.RootElement.GetProperty("manualProjectName").GetString());
+        Assert.Equal("1204", body.RootElement.GetProperty("manualUnitNumber").GetString());
+        Assert.True(body.RootElement.GetProperty("crmBuyerCustomerId").ValueKind == JsonValueKind.Null);
     }
 
     // ---- Scenario 4: no CRM match ----

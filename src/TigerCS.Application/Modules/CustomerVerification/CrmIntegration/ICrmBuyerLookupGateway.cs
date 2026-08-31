@@ -62,7 +62,21 @@ public enum CrmBuyerLookupOutcome
     InvalidResponse,
 
     /// <summary>CRM could not be reached at all — timeout, network failure, or an unexpected HTTP status.</summary>
-    Unavailable
+    Unavailable,
+
+    /// <summary>
+    /// CRM answered with more than one distinct CustomerId for the same
+    /// phone number — a CRM data-integrity conflict, since a phone number is
+    /// expected to uniquely identify exactly one CRM customer. Never
+    /// produced by the gateway itself (a straight passthrough of whatever
+    /// CRM sent) — only <c>CrmBuyerLookupAppService</c> detects and returns
+    /// this, after grouping CRM's response by CustomerId. No customer or
+    /// unit is auto-selected when this outcome is returned: the caller (New
+    /// Ticket) falls back to the manual Project/Unit Number path exactly as
+    /// it does for <see cref="NotFound"/>, but is expected to show a
+    /// distinct message naming the conflict rather than "not found".
+    /// </summary>
+    AmbiguousCustomerMatch
 }
 
 /// <summary>
@@ -88,4 +102,7 @@ public sealed record CrmBuyerLookupResult(
 
     public static CrmBuyerLookupResult Unavailable(string? message = null) =>
         new(CrmBuyerLookupOutcome.Unavailable, Message: message);
+
+    public static CrmBuyerLookupResult AmbiguousCustomerMatch(string? message = null) =>
+        new(CrmBuyerLookupOutcome.AmbiguousCustomerMatch, Message: message);
 }
