@@ -32,6 +32,7 @@ public static class OpenApiTags
     public const string Intake = "Intake";
     public const string CustomerLookup = "Customer Lookup";
     public const string Tickets = "Tickets";
+    public const string CustomerHistory = "Customer History";
     public const string Assignment = "Assignment";
     public const string Transfer = "Transfer";
     public const string TicketLifecycle = "Ticket Lifecycle";
@@ -59,6 +60,10 @@ public static class OpenApiTags
             "Searches CRM, PACT, and Tasleeh for the intake's phone number and returns whatever each source found. "
             + "Enrichment/identification only — a NotFound or Failed source never blocks ticket creation."),
         (Tickets, "Ticket creation and ticket queries (queue and detail)."),
+        (CustomerHistory,
+            "Customer -> previous ticket history, sourced entirely from the Tickets table (never a live CRM call). "
+            + "Verified history is keyed by the exact CrmBuyerCustomerId the agent selected; unverified history falls back "
+            + "to the persisted phone-number snapshot and is always labelled as such."),
         (Assignment, "Assigning a ticket to an employee."),
         (Transfer, "Transferring a ticket to another department."),
         (TicketLifecycle, "Status changes, resolution, and closing."),

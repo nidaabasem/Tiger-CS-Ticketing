@@ -113,7 +113,12 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
             // swapped for the InMemory provider. Production wiring
             // (IntegrationsServiceCollectionExtensions) is untouched.
             services.RemoveAll<ICrmBuyerLookupGateway>();
-            services.AddScoped<ICrmBuyerLookupGateway>(_ => new FakeCrmBuyerLookupGateway().Returns(
+            // Registered as a singleton (rather than one fresh instance per
+            // scope, as the fixture predates this) so a test can hold onto
+            // the same instance across separate requests/scopes and assert
+            // its CallCount never rises while loading Customer History —
+            // proof that history never issues a live CRM call.
+            services.AddSingleton(_ => new FakeCrmBuyerLookupGateway().Returns(
                 CrmBuyerLookupResult.Success(
                 [
                     new CrmBuyerMatchDto(
@@ -126,6 +131,7 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                                 CustomerTypeName: "Buyer")
                         ])
                 ])));
+            services.AddScoped<ICrmBuyerLookupGateway>(sp => sp.GetRequiredService<FakeCrmBuyerLookupGateway>());
         });
     }
 
@@ -321,6 +327,9 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
 
     /// <summary>The development email adapter, so a test can assert what would actually have been delivered.</summary>
     public RecordingEmailSender EmailSender => Services.GetRequiredService<RecordingEmailSender>();
+
+    /// <summary>The single, shared CRM Buyer Lookup double for this host — its <c>CallCount</c> proves whether a live CRM call actually happened.</summary>
+    public FakeCrmBuyerLookupGateway CrmBuyerLookupGateway => Services.GetRequiredService<FakeCrmBuyerLookupGateway>();
 
     public async Task<IReadOnlyList<OutboxMessage>> GetOutboxMessagesAsync()
     {

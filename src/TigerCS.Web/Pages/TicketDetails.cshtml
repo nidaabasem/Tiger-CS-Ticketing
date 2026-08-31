@@ -357,6 +357,51 @@ else
                 </div>
 
                 <div class="facts-section">
+                    <div class="facts-section__title">Customer History</div>
+                    @if (Model.CustomerHistory is null)
+                    {
+                        <p class="text-secondary">Customer history is unavailable right now.</p>
+                    }
+                    else
+                    {
+                        var history = Model.CustomerHistory;
+                        @if (history.VerificationType == "Unverified")
+                        {
+                            <p class="badge badge-verification-unverified">Unverified Customer History</p>
+                        }
+                        <dl>
+                            @if (!string.IsNullOrEmpty(history.CustomerDisplayName))
+                            {
+                                <div class="facts-row"><dt>Customer</dt><dd>@history.CustomerDisplayName</dd></div>
+                            }
+                            <div class="facts-row"><dt>Total tickets</dt><dd>@history.TotalTickets</dd></div>
+                            <div class="facts-row"><dt>Open</dt><dd>@history.OpenTickets</dd></div>
+                            <div class="facts-row"><dt>Closed</dt><dd>@history.ClosedTickets</dd></div>
+                        </dl>
+
+                        @if (history.Tickets.Count == 0)
+                        {
+                            <p class="text-secondary">No previous tickets found for this customer.</p>
+                        }
+                        else
+                        {
+                            <div class="entry-list">
+                                @foreach (var row in history.Tickets)
+                                {
+                                    <div class="entry-row">
+                                        <span class="entry-row__field">
+                                            <a href="/Tickets/@row.TicketId">@row.TicketNumber</a>
+                                            — @(row.ProjectName ?? "—") / @(row.UnitNumber ?? "—") — @TicketDisplay.TicketStatusLabel(row.TicketStatus)
+                                        </span>
+                                        <span class="text-secondary">@row.CreatedAtUtc.ToLocalTime().ToString("d MMM yyyy")</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="facts-section">
                     <div class="facts-section__title">SLA Information</div>
                     @if (Model.Sla is null)
                     {

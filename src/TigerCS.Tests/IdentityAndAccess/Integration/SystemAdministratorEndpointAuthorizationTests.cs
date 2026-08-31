@@ -93,6 +93,50 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
     private static byte[] RowVersionOf(TicketDetailDto ticket) => Convert.FromBase64String(ticket.RowVersion);
 
+    /// <summary>
+    /// Runs intake -> CRM Buyer Lookup -> ticket creation, producing a ticket
+    /// with a real CrmBuyerCustomerId (the identity Customer History keys
+    /// verified lookups on) rather than <see cref="CreateVerifiedTicketAsync"/>'s
+    /// legacy UnitReferenceId/ContactReferenceId pair. Uses
+    /// FakeCrmBuyerLookupGateway's fixed fixture (CustomerId 9001).
+    /// </summary>
+    private async Task<TicketDetailDto> CreateCrmBuyerVerifiedTicketAsync(HttpClient client, string departmentPrefix)
+    {
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync(
+            departmentPrefix + " " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Corrective Maintenance", departmentId);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000900", departmentId, false, null, null));
+        intakeResponse.EnsureSuccessStatusCode();
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var buyersResponse = await client.GetAsync("/api/crm/buyers?phoneNumber=%2B971500000900");
+        buyersResponse.EnsureSuccessStatusCode();
+        var buyers = await buyersResponse.Content.ReadFromJsonAsync<List<CrmBuyerMatchDto>>();
+        var buyer = Assert.Single(buyers!);
+        var unit = Assert.Single(buyer.Units);
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets",
+            new CreateTicketRequestDto(
+                intake!.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.High, "AC unit not cooling",
+                CrmBuyerCustomerId: buyer.Customer.CustomerId,
+                CrmBuyerLeadId: unit.LeadId,
+                CrmBuyerUnitId: unit.UnitId,
+                CrmBuyerProjectId: unit.ProjectId,
+                CrmBuyerCustomerName: buyer.Customer.FullNameEnglish,
+                CrmBuyerProjectName: unit.ProjectName,
+                CrmBuyerUnitNumber: unit.UnitNumber));
+        Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
+        var created = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+
+        var detailResponse = await client.GetAsync($"/api/tickets/{created!.TicketId}");
+        detailResponse.EnsureSuccessStatusCode();
+        return (await detailResponse.Content.ReadFromJsonAsync<TicketDetailDto>())!;
+    }
+
     // ---------------------------------------------------------------
     // Requirement 3 — the account is only ever "System Administrator".
     // ---------------------------------------------------------------
@@ -388,6 +432,56 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var response = await adminClient.GetAsync($"/api/tickets/{ticket.TicketId}");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetTicketCustomerHistory_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateCrmBuyerVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/tickets/{ticket.TicketId}/customer-history");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = await response.Content.ReadFromJsonAsync<CustomerHistoryDto>();
+        Assert.Equal("Verified", history!.VerificationType);
+    }
+
+    [Fact]
+    public async Task GetCrmCustomerTicketHistory_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateCrmBuyerVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/customers/crm/{ticket.CrmBuyerCustomerId}/ticket-history");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = await response.Content.ReadFromJsonAsync<CustomerHistoryDto>();
+        // FakeCrmBuyerLookupGateway's fixture always returns the same
+        // CrmBuyerCustomerId (9001) regardless of phone searched, and this
+        // class shares one database across every test method
+        // (IClassFixture<TigerCsApiFactory>) — so another test's own
+        // CRM-buyer-verified ticket may already exist here too. This asserts
+        // the endpoint works and finds this ticket, not that this test's
+        // database is empty beforehand.
+        Assert.True(history!.TotalTickets >= 1);
+        Assert.Contains(history.Tickets, t => t.TicketId == ticket.TicketId);
+    }
+
+    [Fact]
+    public async Task CustomerHistory_NeverIssuesALiveCrmCall()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateCrmBuyerVerifiedTicketAsync(client, "Facilities");
+        var callsBeforeHistory = _factory.CrmBuyerLookupGateway.CallCount;
+        Assert.True(callsBeforeHistory > 0); // sanity: ticket creation really did call CRM once.
+
+        var ticketHistoryResponse = await client.GetAsync($"/api/tickets/{ticket.TicketId}/customer-history");
+        var crmCustomerHistoryResponse = await client.GetAsync($"/api/customers/crm/{ticket.CrmBuyerCustomerId}/ticket-history");
+
+        Assert.Equal(HttpStatusCode.OK, ticketHistoryResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, crmCustomerHistoryResponse.StatusCode);
+        Assert.Equal(callsBeforeHistory, _factory.CrmBuyerLookupGateway.CallCount);
     }
 
     // ---------------------------------------------------------------

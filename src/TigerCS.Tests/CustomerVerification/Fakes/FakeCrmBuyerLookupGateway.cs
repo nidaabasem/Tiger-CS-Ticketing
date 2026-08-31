@@ -9,6 +9,9 @@ public sealed class FakeCrmBuyerLookupGateway : ICrmBuyerLookupGateway
 
     public string? LastSearchedPhoneNumber { get; private set; }
 
+    /// <summary>Number of times <see cref="GetBuyerByPhoneAsync"/> was actually invoked — proof that Customer History never calls CRM live (it must stay exactly what it was before a history call).</summary>
+    public int CallCount { get; private set; }
+
     public FakeCrmBuyerLookupGateway Returns(CrmBuyerLookupResult result)
     {
         _result = result;
@@ -18,6 +21,7 @@ public sealed class FakeCrmBuyerLookupGateway : ICrmBuyerLookupGateway
     public Task<CrmBuyerLookupResult> GetBuyerByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
     {
         LastSearchedPhoneNumber = phoneNumber;
+        CallCount++;
         return Task.FromResult(_result);
     }
 }

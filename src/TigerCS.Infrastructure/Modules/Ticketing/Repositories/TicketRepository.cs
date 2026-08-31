@@ -83,4 +83,49 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
 
     public void SetRowVersion(Ticket ticket, byte[] rowVersion) =>
         dbContext.Entry(ticket).Property(t => t.RowVersion).OriginalValue = rowVersion;
+
+    public async Task<CustomerHistoryQueryResult> SearchCustomerHistoryAsync(
+        CustomerHistoryQuery query, CancellationToken cancellationToken = default)
+    {
+        IQueryable<Ticket> filtered;
+        if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
+        {
+            filtered = dbContext.Tickets.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
+        }
+        else if (query.TicketIds is { Count: > 0 } ticketIds)
+        {
+            filtered = dbContext.Tickets.Where(t => ticketIds.Contains(t.TicketId));
+        }
+        else
+        {
+            return new CustomerHistoryQueryResult([], 0, 0, 0);
+        }
+
+        if (query.VisibleDepartmentIds is not null)
+        {
+            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
+        }
+
+        if (query.ExcludeTicketId is { } excludeTicketId)
+        {
+            filtered = filtered.Where(t => t.TicketId != excludeTicketId);
+        }
+
+        var statusCounts = await filtered
+            .GroupBy(t => t.TicketStatus)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        var closedCount = statusCounts
+            .Where(s => s.Status == TicketStatus.Resolved || s.Status == TicketStatus.Closed)
+            .Sum(s => s.Count);
+        var totalCount = statusCounts.Sum(s => s.Count);
+
+        var items = await filtered
+            .OrderByDescending(t => t.CreatedAtUtc)
+            .Take(query.Limit)
+            .ToListAsync(cancellationToken);
+
+        return new CustomerHistoryQueryResult(items, totalCount, totalCount - closedCount, closedCount);
+    }
 }

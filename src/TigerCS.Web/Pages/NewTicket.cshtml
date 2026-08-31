@@ -168,6 +168,41 @@
                 </p>
             </div>
 
+            @if (Model.CrmBuyerCustomerId is not null)
+            {
+                <div class="customer-card">
+                    <div><strong>Previous Tickets</strong></div>
+                    @if (Model.PreviousTickets is null)
+                    {
+                        <p class="text-secondary">Previous ticket history is unavailable right now.</p>
+                    }
+                    else if (Model.PreviousTickets.Tickets.Count == 0)
+                    {
+                        <p class="text-secondary">No previous tickets found for this customer.</p>
+                    }
+                    else
+                    {
+                        <p class="text-secondary">
+                            Total: @Model.PreviousTickets.TotalTickets ·
+                            Open: @Model.PreviousTickets.OpenTickets ·
+                            Closed: @Model.PreviousTickets.ClosedTickets
+                        </p>
+                        <div class="entry-list">
+                            @foreach (var row in Model.PreviousTickets.Tickets)
+                            {
+                                <div class="entry-row">
+                                    <span class="entry-row__field">
+                                        <a href="/Tickets/@row.TicketId">@row.TicketNumber</a>
+                                        — @(row.ProjectName ?? "—") / @(row.UnitNumber ?? "—")
+                                    </span>
+                                    <span class="text-secondary">@TicketDisplay.TicketStatusLabel(row.TicketStatus) · @row.CreatedAtUtc.ToLocalTime().ToString("d MMM yyyy")</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
             @if (Model.CategoriesErrorMessage is not null)
             {
                 <div class="alert alert-error" role="alert">

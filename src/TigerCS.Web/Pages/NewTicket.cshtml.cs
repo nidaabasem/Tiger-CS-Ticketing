@@ -52,7 +52,8 @@ public sealed class NewTicketModel(
     CrmBuyerLookupApiClient crmBuyerLookupClient,
     DepartmentsApiClient departmentsClient,
     CategoriesApiClient categoriesClient,
-    TicketsApiClient ticketsClient) : PageModel
+    TicketsApiClient ticketsClient,
+    CustomerHistoryApiClient customerHistoryClient) : PageModel
 {
     public string Step { get; private set; } = "intake";
     public string? ErrorMessage { get; private set; }
@@ -101,6 +102,17 @@ public sealed class NewTicketModel(
     /// <summary>Set only when the Categories API call itself failed — distinct from "loaded successfully but empty".</summary>
     public string? CategoriesErrorMessage { get; private set; }
 
+    /// <summary>
+    /// Step 3's compact "Previous Tickets" preview — the exact CRM Buyer
+    /// customer the agent just selected on Step 2, never the first raw phone
+    /// search result. Null when no CRM Buyer match was selected (nothing
+    /// verified to key history on yet) or when the lookup itself failed;
+    /// populated only on Step 3 (<see cref="LoadPreviousTicketsAsync"/>).
+    /// Sourced entirely from the Tickets table — this call never touches
+    /// CRM.
+    /// </summary>
+    public CustomerHistoryDto? PreviousTickets { get; private set; }
+
     public async Task<IActionResult> OnGetAsync(
         string? step, long? intakeRecordId, string? phoneNumber, int? departmentId,
         int? crmBuyerCustomerId, int? crmBuyerLeadId, int? crmBuyerUnitId, int? crmBuyerProjectId,
@@ -126,6 +138,7 @@ public sealed class NewTicketModel(
         else if (Step == "create")
         {
             await LoadCategoriesAsync(cancellationToken);
+            await LoadPreviousTicketsAsync(cancellationToken);
         }
         else
         {
@@ -287,6 +300,7 @@ public sealed class NewTicketModel(
         {
             ErrorMessage = "Customer not found in CRM. Project and Unit Number are required.";
             await LoadCategoriesAsync(cancellationToken);
+            await LoadPreviousTicketsAsync(cancellationToken);
             return Page();
         }
 
@@ -302,6 +316,7 @@ public sealed class NewTicketModel(
                 ? "Select a category before creating the ticket."
                 : "Select a priority before creating the ticket.";
             await LoadCategoriesAsync(cancellationToken);
+            await LoadPreviousTicketsAsync(cancellationToken);
             return Page();
         }
 
@@ -327,6 +342,7 @@ public sealed class NewTicketModel(
         {
             ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not create the ticket.");
             await LoadCategoriesAsync(cancellationToken);
+            await LoadPreviousTicketsAsync(cancellationToken);
             return Page();
         }
 
@@ -374,6 +390,29 @@ public sealed class NewTicketModel(
         {
             Categories = result.Value;
         }
+    }
+
+    /// <summary>
+    /// Step 3's "Previous Tickets" preview — always the CRM Buyer customer
+    /// the agent explicitly selected on Step 2 (<see cref="CrmBuyerCustomerId"/>),
+    /// never re-derived from the raw phone search results. No CRM Buyer
+    /// match selected (CRM not found, unavailable, or the agent proceeded
+    /// without one) means there is no verified identity yet to show history
+    /// for, so this is skipped entirely rather than falling back to a phone
+    /// number — that fallback is Ticket Details' job, once a ticket (and its
+    /// IntakeRecord link) actually exists. A failed call here never blocks
+    /// the wizard; it just leaves <see cref="PreviousTickets"/> null and the
+    /// page shows no preview section.
+    /// </summary>
+    private async Task LoadPreviousTicketsAsync(CancellationToken cancellationToken)
+    {
+        if (CrmBuyerCustomerId is not { } crmBuyerCustomerId)
+        {
+            return;
+        }
+
+        var result = await customerHistoryClient.GetByCrmCustomerIdAsync(crmBuyerCustomerId, limit: 5, cancellationToken);
+        PreviousTickets = result.IsSuccess ? result.Value : null;
     }
 
     /// <summary>

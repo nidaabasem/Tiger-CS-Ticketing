@@ -59,4 +59,13 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
     public Task<ApiResult<TicketResponseDto>> CreateAsync(
         CreateTicketRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<CreateTicketRequestDto, TicketResponseDto>("api/tickets", request, cancellationToken);
+
+    /// <summary>Customer History for this ticket's customer — verified (CrmBuyerCustomerId) when the ticket has one, otherwise the phone-snapshot fallback. Never a live CRM call.</summary>
+    public Task<ApiResult<CustomerHistoryDto>> GetCustomerHistoryAsync(long ticketId, int? limit, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (limit is int l) query["limit"] = l.ToString();
+
+        return GetAsync<CustomerHistoryDto>($"api/tickets/{ticketId}/customer-history?{query}", cancellationToken);
+    }
 }
