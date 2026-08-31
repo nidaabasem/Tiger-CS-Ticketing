@@ -29,7 +29,8 @@ public class TicketsController(
     TicketAssignmentAppService ticketAssignmentAppService,
     TicketLifecycleAppService ticketLifecycleAppService,
     TicketNoteAppService ticketNoteAppService,
-    TicketReconciliationAppService ticketReconciliationAppService) : ControllerBase
+    TicketReconciliationAppService ticketReconciliationAppService,
+    CustomerHistoryAppService customerHistoryAppService) : ControllerBase
 {
     /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
@@ -123,6 +124,41 @@ public class TicketsController(
         {
             TicketQueryOutcome.Success => Ok(result.Response),
             TicketQueryOutcome.Forbidden => Forbid(),
+            _ => NotFound()
+        };
+    }
+
+    /// <summary>Customer History — this ticket's customer's other tickets.</summary>
+    /// <remarks>
+    /// Verified when the ticket has a CrmBuyerCustomerId (keyed by that exact
+    /// id, never by phone); otherwise falls back to the phone-number
+    /// snapshot recorded on the IntakeRecord this ticket was promoted from,
+    /// and is labelled "Unverified" in the response. The current ticket is
+    /// always excluded from its own history. Sourced entirely from the
+    /// Tickets table — never a live CRM call — and scoped to the same
+    /// department visibility as <see cref="GetDetail"/>.
+    /// </remarks>
+    /// <param name="ticketId">The ticket whose customer's history to fetch.</param>
+    /// <param name="limit">Maximum previous tickets to return, newest first. Defaults to 5; capped at 50.</param>
+    /// <response code="200">The customer's ticket-count summary and most recent previous tickets (possibly empty).</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    [HttpGet("{ticketId:long}/customer-history")]
+    [Tags(OpenApiTags.CustomerHistory)]
+    [ProducesResponseType<CustomerHistoryDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetCustomerHistory(long ticketId, [FromQuery] int? limit, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await customerHistoryAppService.GetForTicketAsync(employeeId.Value, GetRoles(), ticketId, limit, cancellationToken);
+        return result.Outcome switch
+        {
+            CustomerHistoryOutcome.Success => Ok(result.Response),
+            CustomerHistoryOutcome.Forbidden => Forbid(),
             _ => NotFound()
         };
     }

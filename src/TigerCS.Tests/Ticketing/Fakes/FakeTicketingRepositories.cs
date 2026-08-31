@@ -56,6 +56,14 @@ public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
     public Task<IntakeRecord?> GetByLinkedTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_records.Values.FirstOrDefault(r => r.LinkedTicketId == ticketId));
 
+    public Task<IReadOnlyList<long>> ListLinkedTicketIdsByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<long>>(
+            _records.Values
+                .Where(r => r.PhoneNumber == phoneNumber && r.LinkedTicketId is not null)
+                .Select(r => r.LinkedTicketId!.Value)
+                .Distinct()
+                .ToList());
+
     public Task AddAsync(IntakeRecord intakeRecord, CancellationToken cancellationToken = default)
     {
         typeof(IntakeRecord).GetProperty(nameof(IntakeRecord.IntakeRecordId))!.SetValue(intakeRecord, _nextId++);
@@ -167,6 +175,40 @@ public sealed class FakeTicketRepository : ITicketRepository
     /// <summary>Test double — RowVersion concurrency is simulated by FakeTicketingUnitOfWork.ThrowTicketConcurrencyConflictOnCall instead, since there's no real change tracker here to prime.</summary>
     public void SetRowVersion(Ticket ticket, byte[] rowVersion)
     {
+    }
+
+    public Task<CustomerHistoryQueryResult> SearchCustomerHistoryAsync(
+        CustomerHistoryQuery query, CancellationToken cancellationToken = default)
+    {
+        IEnumerable<Ticket> filtered;
+        if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
+        {
+            filtered = _tickets.Values.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
+        }
+        else if (query.TicketIds is { Count: > 0 } ticketIds)
+        {
+            filtered = _tickets.Values.Where(t => ticketIds.Contains(t.TicketId));
+        }
+        else
+        {
+            return Task.FromResult(new CustomerHistoryQueryResult([], 0, 0, 0));
+        }
+
+        if (query.VisibleDepartmentIds is not null)
+        {
+            filtered = filtered.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
+        }
+
+        if (query.ExcludeTicketId is { } excludeTicketId)
+        {
+            filtered = filtered.Where(t => t.TicketId != excludeTicketId);
+        }
+
+        var all = filtered.ToList();
+        var closedCount = all.Count(t => t.TicketStatus is TicketStatus.Resolved or TicketStatus.Closed);
+        var items = all.OrderByDescending(t => t.CreatedAtUtc).Take(query.Limit).ToList();
+
+        return Task.FromResult(new CustomerHistoryQueryResult(items, all.Count, all.Count - closedCount, closedCount));
     }
 }
 

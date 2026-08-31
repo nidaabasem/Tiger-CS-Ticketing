@@ -32,6 +32,15 @@ public sealed class TicketDetailsModel(
     public TicketSlaSummaryResponseDto? Sla { get; private set; }
     public IReadOnlyList<TicketNoteResponseDto> Notes { get; private set; } = [];
     public IReadOnlyList<TicketEscalationResponseDto> Escalations { get; private set; } = [];
+
+    /// <summary>
+    /// Customer History — this ticket's customer's other tickets, verified
+    /// (CrmBuyerCustomerId) or unverified (phone-snapshot fallback), the
+    /// current ticket already excluded. Null only when the call itself
+    /// failed; an empty <see cref="CustomerHistoryDto.Tickets"/> is a normal,
+    /// successful "no previous tickets" result. Never a live CRM call.
+    /// </summary>
+    public CustomerHistoryDto? CustomerHistory { get; private set; }
     public string? DepartmentName { get; private set; }
     public string? OwnerName { get; private set; }
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
@@ -249,13 +258,15 @@ public sealed class TicketDetailsModel(
         var notesTask = ticketsApiClient.GetNotesAsync(TicketId, 1, 50, cancellationToken);
         var escalationsTask = slaApiClient.GetEscalationsAsync(TicketId, cancellationToken);
         var assignableTask = usersApiClient.GetDepartmentUsersAsync(Ticket.CurrentDepartmentId, 1, 100, cancellationToken);
+        var customerHistoryTask = ticketsApiClient.GetCustomerHistoryAsync(TicketId, limit: 10, cancellationToken);
 
-        await Task.WhenAll(slaTask, notesTask, escalationsTask, assignableTask);
+        await Task.WhenAll(slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask);
 
         Sla = slaTask.Result.IsSuccess ? slaTask.Result.Value : null;
         Notes = notesTask.Result.IsSuccess && notesTask.Result.Value is not null ? notesTask.Result.Value.Items : [];
         Escalations = escalationsTask.Result.IsSuccess && escalationsTask.Result.Value is not null ? escalationsTask.Result.Value : [];
         AssignableEmployees = assignableTask.Result.IsSuccess && assignableTask.Result.Value is not null ? [.. assignableTask.Result.Value.Items] : [];
+        CustomerHistory = customerHistoryTask.Result.IsSuccess ? customerHistoryTask.Result.Value : null;
 
         DepartmentName = nameResolver.TryGetDepartmentName(Ticket.CurrentDepartmentId);
         OwnerName = Ticket.CurrentOwnerEmployeeId is Guid ownerId

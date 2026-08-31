@@ -31,6 +31,38 @@ public sealed record TicketQuery(
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 
+/// <summary>
+/// Customer History (Customer → Previous Ticket History, this increment).
+/// Exactly one of <see cref="CrmBuyerCustomerId"/>/<see cref="TicketIds"/> is
+/// ever meaningful — the CRM-verified identity (<c>CrmBuyerCustomerId</c>)
+/// and the phone-snapshot fallback identity are never combined into one
+/// query (see <c>CustomerHistoryAppService</c>'s remarks for why: a phone
+/// number is not a trusted unique customer identity, so it must never widen
+/// a verified customer's own history). <see cref="TicketIds"/> is the
+/// fallback path's pre-resolved set — the ticket ids linked from an
+/// IntakeRecord recorded against the same phone number
+/// (<c>IIntakeRecordRepository.ListLinkedTicketIdsByPhoneNumberAsync</c>) —
+/// kept out of this repository so it never needs to join across the
+/// IntakeRecord aggregate itself.
+/// </summary>
+public sealed record CustomerHistoryQuery(
+    IReadOnlyCollection<int>? VisibleDepartmentIds,
+    int? CrmBuyerCustomerId,
+    IReadOnlyCollection<long>? TicketIds,
+    long? ExcludeTicketId,
+    int Limit);
+
+/// <summary>
+/// <see cref="Tickets"/> is the newest-first page (bounded by
+/// <see cref="CustomerHistoryQuery.Limit"/>); <see cref="TotalCount"/>/
+/// <see cref="OpenCount"/>/<see cref="ClosedCount"/> are computed over every
+/// matching row, not just the returned page — "Total Tickets: 6, Open: 2,
+/// Closed: 4" must count the customer's whole history even when only the 5
+/// most recent rows are shown.
+/// </summary>
+public sealed record CustomerHistoryQueryResult(
+    IReadOnlyList<Ticket> Tickets, int TotalCount, int OpenCount, int ClosedCount);
+
 public interface ITicketRepository
 {
     Task<Ticket?> GetByIdAsync(long ticketId, CancellationToken cancellationToken = default);
@@ -49,6 +81,16 @@ public interface ITicketRepository
 
     /// <summary>The ticket queue (MVP-API-Contracts.md §3.2) — paginated, sorted, department-visibility-scoped.</summary>
     Task<TicketQueryResult> SearchAsync(TicketQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Customer History — every ticket for one customer identity (Section
+    /// "Customer → Previous Ticket History", this increment), newest first,
+    /// filtered and limited entirely in the query (never loaded in full and
+    /// filtered in memory). <see cref="CustomerHistoryQuery.VisibleDepartmentIds"/>
+    /// applies the exact same department-visibility scoping as
+    /// <see cref="SearchAsync"/> — never client-supplied.
+    /// </summary>
+    Task<CustomerHistoryQueryResult> SearchCustomerHistoryAsync(CustomerHistoryQuery query, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Primes EF Core's concurrency check: the client-supplied `If-Match`
