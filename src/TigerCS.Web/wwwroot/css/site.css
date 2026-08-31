@@ -387,13 +387,18 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-contact:checked ~ .tabs-body #panel-contact,
 #tab-units:checked ~ .tabs-body #panel-units { display: block; }
 
-/* Page-level Details/Previous Tickets tabs (Ticket Details) — same
-   mechanism as the tabs above, one level up: wraps the whole detail-layout
-   (including its own inner Activity/Audit History tabs-card) as "Details",
-   with Customer History moved out to its own tab so it never visually
-   competes with the primary ticket information. */
+/* Page-level tabs (Ticket Details' Details/Previous Tickets, Customer
+   Profile's Overview/Contact/Units/Previous Tickets) — same mechanism as
+   the tabs above, one level up. Page-level panels carry their own
+   .tab-panel--page class instead of the generic .tab-panel on purpose
+   (blank-Details regression fix): if a browser ever pairs new markup with
+   a stale cached stylesheet again, an unknown class means the panels
+   simply default to visible stacked content — degraded, but never a blank
+   page — whereas the generic .tab-panel's display:none exists in every
+   older stylesheet and would hide the whole page. The reveal rules above
+   select by id, so they apply to these panels unchanged. */
 .tabs-card--page > .tabs-body { padding: 0 var(--space-4) var(--space-4); }
-.tabs-card--page > .tabs-body > .tab-panel { padding: var(--space-4) 0 0; }
+.tab-panel--page { display: none; padding: var(--space-4) 0 0; }
 
 /* activity timeline */
 

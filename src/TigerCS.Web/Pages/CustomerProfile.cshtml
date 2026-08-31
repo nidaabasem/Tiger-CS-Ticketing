@@ -59,7 +59,7 @@ else
                 <label class="tab-label" for="tab-history">Previous Tickets@(history is not null ? $" ({history.TotalTickets})" : "")</label>
 
                 <div class="tabs-body">
-                    <div class="tab-panel" id="panel-overview">
+                    <div class="tab-panel--page" id="panel-overview">
                         @if (profile.Status != "Found")
                         {
                             <div class="alert alert-info" role="status"><span>@TicketDisplay.CustomerProfileStatusMessage(profile.Status)</span></div>
@@ -74,7 +74,7 @@ else
                         </dl>
                     </div>
 
-                    <div class="tab-panel" id="panel-contact">
+                    <div class="tab-panel--page" id="panel-contact">
                         @if (profile.Status != "Found")
                         {
                             <div class="alert alert-info" role="status"><span>@TicketDisplay.CustomerProfileStatusMessage(profile.Status)</span></div>
@@ -88,7 +88,7 @@ else
                         </dl>
                     </div>
 
-                    <div class="tab-panel" id="panel-units">
+                    <div class="tab-panel--page" id="panel-units">
                         @if (profile.Status != "Found")
                         {
                             <div class="alert alert-info" role="status"><span>@TicketDisplay.CustomerProfileStatusMessage(profile.Status)</span></div>
@@ -127,7 +127,7 @@ else
                         }
                     </div>
 
-                    <div class="tab-panel" id="panel-history">
+                    <div class="tab-panel--page" id="panel-history">
                         @if (history is null)
                         {
                             <div class="empty-state"><p>Customer history is unavailable right now.</p></div>

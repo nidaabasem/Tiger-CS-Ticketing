@@ -52,6 +52,21 @@ public sealed class CustomerProfileTests
     }
 
     [Fact]
+    public void View_PageLevelPanels_UseTheStaleCssSafeTabPanelPageClass()
+    {
+        // Same blank-page defense as Ticket Details (see
+        // TicketDetailsCustomerHistoryTests): page-level panels never carry
+        // the generic .tab-panel class an older cached stylesheet would hide.
+        var html = ViewHtml();
+
+        foreach (var panelId in new[] { "panel-overview", "panel-contact", "panel-units", "panel-history" })
+        {
+            Assert.Contains($"<div class=\"tab-panel--page\" id=\"{panelId}\">", html);
+            Assert.DoesNotContain($"<div class=\"tab-panel\" id=\"{panelId}\">", html);
+        }
+    }
+
+    [Fact]
     public void View_OverviewTabIsSelectedByDefault()
     {
         var html = ViewHtml();

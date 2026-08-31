@@ -30,6 +30,94 @@ public sealed class TicketDetailsCustomerHistoryTests
     private static string TicketsApiClientSource() =>
         File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Services", "Api", "TicketsApiClient.cs")));
 
+    private static string LayoutHtml() =>
+        File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Shared", "_Layout.cshtml")));
+
+    private static string SiteCss() =>
+        File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "wwwroot", "css", "site.css")));
+
+    // ---- Blank-Details regression (route /Tickets/{id} rendered an empty
+    // Details tab): the panel must contain every pre-existing Ticket Details
+    // section, the page-level panels must not depend on the generic
+    // .tab-panel class an older cached stylesheet would hide, and the
+    // stylesheet link must be versioned so new markup can never pair with a
+    // stale cached site.css again. ----
+
+    [Fact]
+    public void View_DetailsPanelContainsAllExistingTicketDetailsSections()
+    {
+        var html = TicketDetailsViewHtml();
+
+        var detailsStart = html.IndexOf("id=\"panel-details\"", StringComparison.Ordinal);
+        var historyStart = html.IndexOf("id=\"panel-history\"", StringComparison.Ordinal);
+        Assert.True(detailsStart > 0);
+        Assert.True(historyStart > detailsStart);
+        var detailsPanel = html[detailsStart..historyStart];
+
+        // Every section that belonged to Ticket Details before the tab
+        // conversion must render inside the Details panel.
+        Assert.Contains("detail-layout", detailsPanel);
+        Assert.Contains("id=\"tab-activity\"", detailsPanel);     // Activity/Audit History tabs + note composer
+        Assert.Contains("facts-panel", detailsPanel);
+        Assert.Contains("Ticket Information", detailsPanel);      // ticket metadata
+        Assert.Contains("Verification &amp; Unit", detailsPanel); // customer/verification + unit information
+        Assert.Contains("SLA Information", detailsPanel);
+    }
+
+    [Fact]
+    public void View_PageLevelPanels_DoNotUseTheGenericTabPanelClass_StaleCssCanNeverBlankThem()
+    {
+        // The regression's mechanism: an older cached site.css knows the
+        // generic .tab-panel class (display:none) but not the new page-level
+        // reveal rules, hiding the whole page. Page-level panels therefore
+        // carry their own .tab-panel--page class — unknown to any older
+        // stylesheet, so the worst-case degradation is visible stacked
+        // content, never a blank page.
+        var html = TicketDetailsViewHtml();
+
+        Assert.Contains("<div class=\"tab-panel--page\" id=\"panel-details\">", html);
+        Assert.Contains("<div class=\"tab-panel--page\" id=\"panel-history\">", html);
+        Assert.DoesNotContain("<div class=\"tab-panel\" id=\"panel-details\">", html);
+        Assert.DoesNotContain("<div class=\"tab-panel\" id=\"panel-history\">", html);
+    }
+
+    [Fact]
+    public void Css_PageLevelPanelsAreHiddenByDefault_AndRevealedById()
+    {
+        var css = SiteCss();
+
+        Assert.Contains(".tab-panel--page { display: none;", css);
+        Assert.Contains("#tab-details:checked ~ .tabs-body #panel-details", css);
+        Assert.Contains("#tab-history:checked ~ .tabs-body #panel-history", css);
+    }
+
+    [Fact]
+    public void Layout_VersionsTheStylesheetLink_SoMarkupAndCssAlwaysDeployInLockstep()
+    {
+        var layout = LayoutHtml();
+
+        var linkStart = layout.IndexOf("~/css/site.css", StringComparison.Ordinal);
+        Assert.True(linkStart > 0);
+        var lineEnd = layout.IndexOf("/>", linkStart, StringComparison.Ordinal);
+        Assert.Contains("asp-append-version=\"true\"", layout[linkStart..lineEnd]);
+    }
+
+    [Fact]
+    public void View_ViewCustomerProfileLink_GatedOnCrmBuyerCustomerId()
+    {
+        var html = TicketDetailsViewHtml();
+
+        var guardIndex = html.IndexOf("@if (t.CrmBuyerCustomerId is not null)", StringComparison.Ordinal);
+        var linkIndex = html.IndexOf("View Customer Profile", StringComparison.Ordinal);
+        Assert.True(guardIndex > 0, "The View Customer Profile link must be guarded by t.CrmBuyerCustomerId is not null.");
+        Assert.True(linkIndex > guardIndex, "The View Customer Profile link must render inside its CrmBuyerCustomerId guard.");
+
+        // And inside the Verification & Unit section (before the SLA section).
+        var verificationSectionIndex = html.IndexOf("Verification &amp; Unit", StringComparison.Ordinal);
+        var slaSectionIndex = html.IndexOf("SLA Information", StringComparison.Ordinal);
+        Assert.True(linkIndex > verificationSectionIndex && linkIndex < slaSectionIndex);
+    }
+
     [Fact]
     public void View_RendersAPreviousTicketsSection()
     {
