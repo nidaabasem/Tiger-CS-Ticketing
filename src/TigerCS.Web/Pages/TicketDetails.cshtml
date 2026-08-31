@@ -238,7 +238,15 @@ else
             }
         </section>
 
-        <div class="detail-layout">
+        <div class="tabs-card tabs-card--page">
+            <input type="radio" name="pageTab" id="tab-details" class="tab-input" checked />
+            <label class="tab-label" for="tab-details">Details</label>
+            <input type="radio" name="pageTab" id="tab-history" class="tab-input" />
+            <label class="tab-label" for="tab-history">Previous Tickets@(Model.CustomerHistory is not null ? $" ({Model.CustomerHistory.TotalTickets})" : "")</label>
+
+            <div class="tabs-body">
+                <div class="tab-panel" id="panel-details">
+                    <div class="detail-layout">
             <div>
                 <div class="tabs-card">
                     <input type="radio" name="ticketTab" id="tab-activity" class="tab-input" checked />
@@ -357,51 +365,6 @@ else
                 </div>
 
                 <div class="facts-section">
-                    <div class="facts-section__title">Customer History</div>
-                    @if (Model.CustomerHistory is null)
-                    {
-                        <p class="text-secondary">Customer history is unavailable right now.</p>
-                    }
-                    else
-                    {
-                        var history = Model.CustomerHistory;
-                        @if (history.VerificationType == "Unverified")
-                        {
-                            <p class="badge badge-verification-unverified">Unverified Customer History</p>
-                        }
-                        <dl>
-                            @if (!string.IsNullOrEmpty(history.CustomerDisplayName))
-                            {
-                                <div class="facts-row"><dt>Customer</dt><dd>@history.CustomerDisplayName</dd></div>
-                            }
-                            <div class="facts-row"><dt>Total tickets</dt><dd>@history.TotalTickets</dd></div>
-                            <div class="facts-row"><dt>Open</dt><dd>@history.OpenTickets</dd></div>
-                            <div class="facts-row"><dt>Closed</dt><dd>@history.ClosedTickets</dd></div>
-                        </dl>
-
-                        @if (history.Tickets.Count == 0)
-                        {
-                            <p class="text-secondary">No previous tickets found for this customer.</p>
-                        }
-                        else
-                        {
-                            <div class="entry-list">
-                                @foreach (var row in history.Tickets)
-                                {
-                                    <div class="entry-row">
-                                        <span class="entry-row__field">
-                                            <a href="/Tickets/@row.TicketId">@row.TicketNumber</a>
-                                            — @(row.ProjectName ?? "—") / @(row.UnitNumber ?? "—") — @TicketDisplay.TicketStatusLabel(row.TicketStatus)
-                                        </span>
-                                        <span class="text-secondary">@row.CreatedAtUtc.ToLocalTime().ToString("d MMM yyyy")</span>
-                                    </div>
-                                }
-                            </div>
-                        }
-                    }
-                </div>
-
-                <div class="facts-section">
                     <div class="facts-section__title">SLA Information</div>
                     @if (Model.Sla is null)
                     {
@@ -418,6 +381,79 @@ else
                     }
                 </div>
             </aside>
+                    </div>
+                </div>
+
+                <div class="tab-panel" id="panel-history">
+                    @if (Model.CustomerHistory is null)
+                    {
+                        <div class="empty-state"><p>Customer history is unavailable right now.</p></div>
+                    }
+                    else
+                    {
+                        var history = Model.CustomerHistory;
+                        @if (history.VerificationType == "Unverified")
+                        {
+                            <p class="badge badge-verification-unverified">Unverified Customer History</p>
+                        }
+                        <p class="text-secondary">
+                            @if (!string.IsNullOrEmpty(history.CustomerDisplayName))
+                            {
+                                <span>Customer: <strong>@history.CustomerDisplayName</strong> · </span>
+                            }
+                            Total: @history.TotalTickets · Open: @history.OpenTickets · Closed: @history.ClosedTickets
+                        </p>
+
+                        @if (history.Tickets.Count == 0)
+                        {
+                            <div class="empty-state"><p>No previous tickets found for this customer.</p></div>
+                        }
+                        else
+                        {
+                            <div class="table-scroll">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Ticket</th>
+                                            <th>Category</th>
+                                            <th>Department</th>
+                                            <th>Status</th>
+                                            <th>Priority</th>
+                                            <th>Created</th>
+                                            <th>Closed</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var row in history.Tickets)
+                                        {
+                                            <tr>
+                                                <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
+                                                <td><span class="id-fallback">Category #@row.CategoryId</span></td>
+                                                <td>
+                                                    @if (Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId) is { } departmentName)
+                                                    {
+                                                        @departmentName
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="id-fallback">Department #@row.CurrentDepartmentId</span>
+                                                    }
+                                                </td>
+                                                <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
+                                                <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>
+                                                <td class="text-secondary text-mono">@row.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")</td>
+                                                <td class="text-secondary text-mono">—</td>
+                                                <td><a class="btn btn-sm" href="/Tickets/@row.TicketId">Open</a></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
         </div>
     </div>
 }

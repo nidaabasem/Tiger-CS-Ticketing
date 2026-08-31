@@ -50,9 +50,11 @@ public sealed record CrmBuyerUnitDto(
 
 /// <summary>
 /// One CRM customer matched by phone, plus every valid Buyer unit they own.
-/// A single phone number can resolve to multiple <see cref="CrmBuyerMatchDto"/>
-/// entries (CRM does not guarantee a phone number is unique), and a single
-/// customer can own multiple units — neither is ever collapsed or
-/// auto-selected here.
+/// Business rule: a CRM phone number belongs to exactly one customer, so
+/// <c>CrmBuyerLookupResult.Buyers</c> carries at most one of these
+/// (<c>CrmBuyerLookupAppService</c> consolidates to a single customer even if
+/// CRM's own response does not honor that). A single customer can still own
+/// multiple units, and none of them is ever auto-selected — the agent always
+/// picks the relevant one.
 /// </summary>
 public sealed record CrmBuyerMatchDto(CrmCustomerDto Customer, IReadOnlyList<CrmBuyerUnitDto> Units);

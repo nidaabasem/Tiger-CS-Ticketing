@@ -76,8 +76,15 @@ public sealed class NewTicketModel(
     public string? CrmBuyerProjectName { get; private set; }
     public string? CrmBuyerUnitNumber { get; private set; }
 
-    /// <summary>Every Buyer <c>GET /api/crm/buyers?phoneNumber=</c> matched (0..N), each with 0..N eligible Sold/Contract units — never auto-selected. Null until Step 2 has actually run a lookup.</summary>
-    public IReadOnlyList<CrmBuyerMatchDto>? CrmBuyerMatches { get; private set; }
+    /// <summary>
+    /// The one CRM customer <c>GET /api/crm/buyers?phoneNumber=</c> matched —
+    /// business rule: a CRM phone number belongs to exactly one customer, so
+    /// this page is built for exactly one, never a list to disambiguate
+    /// between. Carries every eligible Sold/Contract unit that customer owns
+    /// — never auto-selected. Null until Step 2 has actually run a lookup, or
+    /// when it found no match.
+    /// </summary>
+    public CrmBuyerMatchDto? CrmBuyerMatch { get; private set; }
 
     /// <summary>True when CRM Buyer Lookup itself could not be reached/answered (outage, timeout, misconfiguration) rather than answering with zero matches — same "Project/Unit Number required" consequence as NotFound, but a different message.</summary>
     public bool CrmBuyerLookupUnavailable { get; private set; }
@@ -161,16 +168,21 @@ public sealed class NewTicketModel(
         var result = await crmBuyerLookupClient.SearchByPhoneAsync(PhoneNumber!, cancellationToken);
         if (result.IsSuccess && result.Value is not null)
         {
-            CrmBuyerMatches = result.Value;
+            // Business rule: a CRM phone number belongs to exactly one
+            // customer — CrmBuyerLookupAppService (TigerCS.Api) already
+            // consolidates to at most one entry. Taking the first element is
+            // defensive only (never trust a contract further than the wire),
+            // not a "pick among several customers" decision this page makes.
+            CrmBuyerMatch = result.Value.Count > 0 ? result.Value[0] : null;
         }
         else if (result.Outcome == ApiOutcome.NotFound)
         {
-            CrmBuyerMatches = [];
+            CrmBuyerMatch = null;
         }
         else
         {
             CrmBuyerLookupUnavailable = true;
-            CrmBuyerMatches = [];
+            CrmBuyerMatch = null;
         }
     }
 
