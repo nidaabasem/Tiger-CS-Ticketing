@@ -59,6 +59,16 @@ public static class TicketDisplay
         _ => verificationStatus
     };
 
+    /// <summary>Customer Details/Profile's CustomerProfileDto.Status — only "Found" means live CRM data actually populated the Overview/Contact Info/Units tabs.</summary>
+    public static string CustomerProfileStatusMessage(string status) => status switch
+    {
+        "NotCrmVerified" => "This ticket is not CRM-verified — there is no customer profile to show.",
+        "CrmUnavailable" => "Live CRM data is unavailable right now.",
+        "AmbiguousCustomerMatch" => "Multiple CRM customer records were found for this phone number — profile details are unavailable.",
+        "NotFoundInCrm" => "CRM no longer has a matching record for this customer.",
+        _ => "Customer profile is unavailable right now."
+    };
+
     public static string SlaStateLabel(string slaState) => slaState switch
     {
         "Running" => "Running",

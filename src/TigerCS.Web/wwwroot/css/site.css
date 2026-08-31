@@ -382,7 +382,10 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-activity:checked ~ .tabs-body #panel-activity,
 #tab-audit:checked ~ .tabs-body #panel-audit,
 #tab-details:checked ~ .tabs-body #panel-details,
-#tab-history:checked ~ .tabs-body #panel-history { display: block; }
+#tab-history:checked ~ .tabs-body #panel-history,
+#tab-overview:checked ~ .tabs-body #panel-overview,
+#tab-contact:checked ~ .tabs-body #panel-contact,
+#tab-units:checked ~ .tabs-body #panel-units { display: block; }
 
 /* Page-level Details/Previous Tickets tabs (Ticket Details) — same
    mechanism as the tabs above, one level up: wraps the whole detail-layout

@@ -33,6 +33,7 @@ public static class OpenApiTags
     public const string CustomerLookup = "Customer Lookup";
     public const string Tickets = "Tickets";
     public const string CustomerHistory = "Customer History";
+    public const string CustomerProfile = "Customer Profile";
     public const string Assignment = "Assignment";
     public const string Transfer = "Transfer";
     public const string TicketLifecycle = "Ticket Lifecycle";
@@ -64,6 +65,10 @@ public static class OpenApiTags
             "Customer -> previous ticket history, sourced entirely from the Tickets table (never a live CRM call). "
             + "Verified history is keyed by the exact CrmBuyerCustomerId the agent selected; unverified history falls back "
             + "to the persisted phone-number snapshot and is always labelled as such."),
+        (CustomerProfile,
+            "Ticket-anchored, live CRM Customer Details/Profile (Overview/Contact Info/Units) for the exact "
+            + "CrmBuyerCustomerId the ticket was verified against, via the same CRM Buyer Lookup service the New "
+            + "Ticket wizard uses. Previous Tickets on that page reuses the Customer History endpoint above unchanged."),
         (Assignment, "Assigning a ticket to an employee."),
         (Transfer, "Transferring a ticket to another department."),
         (TicketLifecycle, "Status changes, resolution, and closing."),

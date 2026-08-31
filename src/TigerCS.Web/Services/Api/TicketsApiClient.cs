@@ -68,4 +68,8 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
 
         return GetAsync<CustomerHistoryDto>($"api/tickets/{ticketId}/customer-history?{query}", cancellationToken);
     }
+
+    /// <summary>Customer Details/Profile (Overview/Contact Info/Units) for this ticket's customer — live CRM data via the same CRM Buyer Lookup the New Ticket wizard uses.</summary>
+    public Task<ApiResult<CustomerProfileDto>> GetCustomerProfileAsync(long ticketId, CancellationToken cancellationToken) =>
+        GetAsync<CustomerProfileDto>($"api/tickets/{ticketId}/customer-profile", cancellationToken);
 }

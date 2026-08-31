@@ -97,6 +97,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/notes",
         "GET /api/tickets/{ticketId}/notes",
         "GET /api/tickets/{ticketId}/customer-history",
+        "GET /api/tickets/{ticketId}/customer-profile",
 
         "GET /api/customers/crm/{crmCustomerId}/ticket-history",
 

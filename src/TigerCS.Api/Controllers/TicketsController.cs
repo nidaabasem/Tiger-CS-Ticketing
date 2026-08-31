@@ -30,7 +30,8 @@ public class TicketsController(
     TicketLifecycleAppService ticketLifecycleAppService,
     TicketNoteAppService ticketNoteAppService,
     TicketReconciliationAppService ticketReconciliationAppService,
-    CustomerHistoryAppService customerHistoryAppService) : ControllerBase
+    CustomerHistoryAppService customerHistoryAppService,
+    CustomerProfileAppService customerProfileAppService) : ControllerBase
 {
     /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
@@ -159,6 +160,40 @@ public class TicketsController(
         {
             CustomerHistoryOutcome.Success => Ok(result.Response),
             CustomerHistoryOutcome.Forbidden => Forbid(),
+            _ => NotFound()
+        };
+    }
+
+    /// <summary>Customer Details/Profile — live CRM Overview/Contact Info/Units for this ticket's customer.</summary>
+    /// <remarks>
+    /// Ticket-anchored exactly like <see cref="GetCustomerHistory"/>: the
+    /// identity (CrmBuyerCustomerId) and the department-visibility check both
+    /// come from the ticket itself. Delegates the actual CRM search to the
+    /// same CrmBuyerLookupAppService the New Ticket wizard uses — this
+    /// endpoint duplicates no CRM logic. Previous Tickets on the Customer
+    /// Profile page reuses <see cref="GetCustomerHistory"/> unchanged; this
+    /// endpoint carries none of that.
+    /// </remarks>
+    /// <param name="ticketId">The ticket whose customer's profile to fetch.</param>
+    /// <response code="200">The customer's profile. <c>status</c> is one of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm" — only "Found" populates name/mobile/email/units.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    [HttpGet("{ticketId:long}/customer-profile")]
+    [Tags(OpenApiTags.CustomerProfile)]
+    [ProducesResponseType<CustomerProfileDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetCustomerProfile(long ticketId, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await customerProfileAppService.GetForTicketAsync(employeeId.Value, GetRoles(), ticketId, cancellationToken);
+        return result.Outcome switch
+        {
+            CustomerProfileOutcome.Success => Ok(result.Response),
+            CustomerProfileOutcome.Forbidden => Forbid(),
             _ => NotFound()
         };
     }
