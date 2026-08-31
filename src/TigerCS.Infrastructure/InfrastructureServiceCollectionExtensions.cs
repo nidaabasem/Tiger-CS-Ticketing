@@ -161,6 +161,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<TicketNoteAppService>();
         services.AddScoped<TicketReconciliationAppService>();
         services.AddScoped<CustomerHistoryAppService>();
+        services.AddScoped<CustomerProfileAppService>();
 
         // SLA and Escalation (ADR-0009/0010/0011/0014/0015). No policy,
         // controller or role list here names the System Administrator role:

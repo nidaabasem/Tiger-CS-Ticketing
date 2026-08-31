@@ -60,6 +60,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/tickets/{ticketId:long}/notes"] = nameof(SystemAdministratorEndpointAuthorizationTests.AddAndListTicketNotes_Return201And200),
         ["GET /api/tickets/{ticketId:long}/notes"] = nameof(SystemAdministratorEndpointAuthorizationTests.AddAndListTicketNotes_Return201And200),
         ["GET /api/tickets/{ticketId:long}/customer-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketCustomerHistory_Returns200),
+        ["GET /api/tickets/{ticketId:long}/customer-profile"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketCustomerProfile_Returns200),
 
         ["GET /api/customers/crm/{crmCustomerId:int}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCrmCustomerTicketHistory_Returns200),
 

@@ -448,6 +448,20 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
+    public async Task GetTicketCustomerProfile_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateCrmBuyerVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/tickets/{ticket.TicketId}/customer-profile");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var profile = await response.Content.ReadFromJsonAsync<CustomerProfileDto>();
+        Assert.Equal("Found", profile!.Status);
+        Assert.Equal(ticket.CrmBuyerCustomerId, profile.CrmBuyerCustomerId);
+    }
+
+    [Fact]
     public async Task GetCrmCustomerTicketHistory_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();
