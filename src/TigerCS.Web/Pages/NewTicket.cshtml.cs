@@ -86,6 +86,17 @@ public sealed class NewTicketModel(
     /// </summary>
     public CrmBuyerMatchDto? CrmBuyerMatch { get; private set; }
 
+    /// <summary>
+    /// True when CRM answered with more than one distinct customer for this
+    /// phone number (409 Conflict) — a CRM data-integrity conflict
+    /// (<c>CrmBuyerLookupAppService.GetBuyerByPhoneAsync</c>'s
+    /// <c>AmbiguousCustomerMatch</c> outcome), not "no match". No customer or
+    /// unit is ever auto-selected for this case; the agent falls back to
+    /// manual Project/Unit Number entry exactly as for no match, but sees a
+    /// distinct message naming the conflict.
+    /// </summary>
+    public bool CrmBuyerAmbiguousMatch { get; private set; }
+
     /// <summary>True when CRM Buyer Lookup itself could not be reached/answered (outage, timeout, misconfiguration) rather than answering with zero matches — same "Project/Unit Number required" consequence as NotFound, but a different message.</summary>
     public bool CrmBuyerLookupUnavailable { get; private set; }
 
@@ -158,10 +169,13 @@ public sealed class NewTicketModel(
     /// <summary>
     /// The one and only CRM search this wizard ever runs — phone number
     /// only, never Unit Number/Project/Tower. Found (200), NotFound (404),
-    /// and every other outcome (401/400/502/network-unreachable — CRM
-    /// outage or misconfiguration) are all handled here without blocking the
-    /// wizard: only <see cref="CrmBuyerLookupUnavailable"/> distinguishes the
-    /// message shown, not what the agent is allowed to do next.
+    /// an ambiguous multi-customer conflict (409), and every other outcome
+    /// (401/400/502/network-unreachable — CRM outage or misconfiguration)
+    /// are all handled here without blocking the wizard: only
+    /// <see cref="CrmBuyerAmbiguousMatch"/>/<see cref="CrmBuyerLookupUnavailable"/>
+    /// distinguish the message shown, not what the agent is allowed to do
+    /// next — every one of these falls back to the same manual Project/Unit
+    /// Number path on Step 3.
     /// </summary>
     private async Task RunCrmBuyerLookupAsync(CancellationToken cancellationToken)
     {
@@ -177,6 +191,17 @@ public sealed class NewTicketModel(
         }
         else if (result.Outcome == ApiOutcome.NotFound)
         {
+            CrmBuyerMatch = null;
+        }
+        else if (result.Outcome == ApiOutcome.Conflict)
+        {
+            // CrmBuyerLookupAppService's AmbiguousCustomerMatch outcome (409):
+            // CRM named more than one distinct customer for this phone
+            // number — a data-integrity conflict, not "no match". Never
+            // auto-selects a customer/unit; the agent still falls back to
+            // manual Project/Unit Number entry, but sees a message naming
+            // the conflict rather than "not found".
+            CrmBuyerAmbiguousMatch = true;
             CrmBuyerMatch = null;
         }
         else

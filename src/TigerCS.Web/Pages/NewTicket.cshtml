@@ -115,6 +115,12 @@
                     </form>
                 </div>
             }
+            else if (Model.CrmBuyerAmbiguousMatch)
+            {
+                <div class="alert alert-info" role="status">
+                    <span>Multiple CRM customer records were found for this phone number. Continue with manual verification.</span>
+                </div>
+            }
             else if (Model.CrmBuyerLookupUnavailable)
             {
                 <div class="alert alert-info" role="status">

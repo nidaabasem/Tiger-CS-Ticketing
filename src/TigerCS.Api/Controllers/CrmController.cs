@@ -144,12 +144,14 @@ public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService, CrmB
     /// <response code="400">phoneNumber was missing or blank, or CRM rejected/could not parse the request.</response>
     /// <response code="401">CRM rejected the configured Crm:SecretKey.</response>
     /// <response code="404">No matching Buyer for this phone number.</response>
+    /// <response code="409">CRM returned more than one distinct customer for this phone number — a CRM data-integrity conflict. No customer/unit was selected; fall back to manual Project/Unit Number entry.</response>
     /// <response code="502">Tiger CRM could not be reached.</response>
     [HttpGet("buyers")]
     [ProducesResponseType<IReadOnlyList<CrmBuyerMatchDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
     public async Task<IActionResult> GetBuyerByPhone([FromQuery] string phoneNumber, CancellationToken cancellationToken)
     {
@@ -175,6 +177,11 @@ public class CrmController(CrmUnitLookupAppService crmUnitLookupAppService, CrmB
                 type: "https://tigercs.internal/problems/crm-invalid-response",
                 title: "CRM rejected or returned an unusable response for this request",
                 statusCode: StatusCodes.Status400BadRequest),
+            CrmBuyerLookupOutcome.AmbiguousCustomerMatch => Problem(
+                type: "https://tigercs.internal/problems/crm-buyer-ambiguous-customer-match",
+                title: "Multiple CRM customer records were found for this phone number",
+                detail: "CRM returned more than one distinct customer for this phone number. Continue with manual verification.",
+                statusCode: StatusCodes.Status409Conflict),
             _ => Problem(
                 type: "https://tigercs.internal/problems/crm-unavailable",
                 title: "CRM is currently unavailable",

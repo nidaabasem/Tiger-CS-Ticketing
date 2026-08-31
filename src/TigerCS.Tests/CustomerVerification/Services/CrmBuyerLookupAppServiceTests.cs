@@ -184,11 +184,12 @@ public class CrmBuyerLookupAppServiceTests
     }
 
     [Fact]
-    public async Task GetBuyerByPhoneAsync_CrmUnexpectedlyReturnsTwoDistinctCustomers_ResilientlyKeepsTheFirstOnly()
+    public async Task GetBuyerByPhoneAsync_CrmReturnsTwoDistinctCustomers_ReturnsAmbiguousCustomerMatch_NeverThrows()
     {
         // The genuinely anomalous case the business rule says should never
-        // happen — this service must not throw, and must never hand a caller
-        // built for "one customer" an ambiguous multi-customer result.
+        // happen — a CRM data-integrity conflict. This service must not
+        // throw, and must never guess which of the two customers is
+        // correct: no Success result, no customer picked.
         var gateway = new FakeCrmBuyerLookupGateway().Returns(
             CrmBuyerLookupResult.Success(
             [
@@ -199,11 +200,29 @@ public class CrmBuyerLookupAppServiceTests
 
         var result = await service.GetBuyerByPhoneAsync("+971500000000");
 
-        Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
-        var buyer = Assert.Single(result.Buyers!);
-        Assert.Equal(1, buyer.Customer.CustomerId);
-        Assert.Equal(2, buyer.Units.Count);
-        Assert.DoesNotContain(buyer.Units, u => u.UnitId == 600);
+        Assert.Equal(CrmBuyerLookupOutcome.AmbiguousCustomerMatch, result.Outcome);
+    }
+
+    [Fact]
+    public async Task GetBuyerByPhoneAsync_AmbiguousCustomerMatch_NeverAutoSelectsACustomerOrUnit()
+    {
+        // Explicit "no auto-selection" assertion, independent of the outcome
+        // check above: Buyers must be null (this service's own contract for
+        // every non-Success outcome — see CrmBuyerLookupResult's remarks),
+        // so nothing downstream could accidentally pick a candidate customer
+        // or unit out of a payload that should not exist.
+        var gateway = new FakeCrmBuyerLookupGateway().Returns(
+            CrmBuyerLookupResult.Success(
+            [
+                new CrmBuyerMatchDto(Customer(1), [Unit(unitId: 500)]),
+                new CrmBuyerMatchDto(Customer(2), [Unit(unitId: 600)]),
+                new CrmBuyerMatchDto(Customer(3), [Unit(unitId: 700)])
+            ]));
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
+
+        var result = await service.GetBuyerByPhoneAsync("+971500000000");
+
+        Assert.Null(result.Buyers);
     }
 
     [Fact]
