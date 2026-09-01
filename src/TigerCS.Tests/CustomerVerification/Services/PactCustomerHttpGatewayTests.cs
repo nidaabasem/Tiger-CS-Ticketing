@@ -132,7 +132,7 @@ public class PactCustomerHttpGatewayTests
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_SendsApiKeyHeaderAndUrlEncodedMobileInPath()
+    public async Task SearchByMobileAsync_SendsApiKeyHeaderAndUrlEncodedNormalizedMobileInPath()
     {
         var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
         var gateway = CreateGateway(handler);
@@ -142,9 +142,62 @@ public class PactCustomerHttpGatewayTests
         Assert.NotNull(handler.LastRequest);
         Assert.Equal(ApiKey, Assert.Single(handler.LastRequest!.Headers.GetValues("X-API-KEY")));
         Assert.StartsWith("/v1/contracts/", handler.LastRequest.RequestUri!.PathAndQuery);
-        // '+' and spaces must be percent-encoded, never sent literally.
-        Assert.DoesNotContain("+971 50", handler.LastRequest.RequestUri.PathAndQuery);
-        Assert.Contains(Uri.EscapeDataString("+971 50 000 0002"), handler.LastRequest.RequestUri.PathAndQuery);
+        // PACT normalization strips the '+' (PACT stores numbers without it);
+        // what remains is percent-encoded, never sent literally.
+        Assert.DoesNotContain("+", handler.LastRequest.RequestUri.PathAndQuery);
+        Assert.DoesNotContain("%2B", handler.LastRequest.RequestUri.PathAndQuery, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Uri.EscapeDataString("971 50 000 0002"), handler.LastRequest.RequestUri.PathAndQuery);
+    }
+
+    // ---- PACT-only phone normalization: trim + remove '+', at this gateway
+    // boundary and nowhere else (CRM keeps the number exactly as entered —
+    // see CrmBuyerHttpGatewayTests' own URL assertion). ----
+
+    [Fact]
+    public async Task SearchByMobileAsync_PlusPrefixedMobile_PactReceivesItWithoutThePlus()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        await gateway.SearchByMobileAsync("+971501234567");
+
+        Assert.Equal("/v1/contracts/971501234567", handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_AlreadyNormalizedMobile_IsSentUnchanged()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        await gateway.SearchByMobileAsync("971501234567");
+
+        Assert.Equal("/v1/contracts/971501234567", handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_SurroundingWhitespace_IsTrimmedBeforeTheCall()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        await gateway.SearchByMobileAsync("  +971501234567  ");
+
+        Assert.Equal("/v1/contracts/971501234567", handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_OnlyPlusSigns_ReturnsNotFoundWithoutCallingPact()
+    {
+        // '+' alone normalizes to nothing searchable — and an empty path
+        // segment would hit a different PACT route entirely.
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+");
+
+        Assert.Equal(PactCustomerLookupOutcome.NotFound, result.Outcome);
+        Assert.Equal(0, handler.CallCount);
     }
 
     [Fact]
@@ -232,7 +285,9 @@ public class PactCustomerHttpGatewayTests
         Assert.Equal("Owner", Assert.Single(result.Customers!).CustomerType);
         Assert.Equal(2, requestPaths.Count);
         Assert.EndsWith("/customer-type", requestPaths[1]);
-        Assert.Contains(Uri.EscapeDataString("+971500000002"), requestPaths[1]);
+        // The fallback call uses the same PACT-normalized number — no '+'.
+        Assert.Contains("971500000002", requestPaths[1]);
+        Assert.DoesNotContain("%2B", requestPaths[1], StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
