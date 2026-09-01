@@ -19,8 +19,8 @@ public enum CustomerLookupSourceStatus
 /// is never assumed to have exactly one unit — this is one entry in that
 /// customer's 0..N units. Only the fields the source's own gateway actually
 /// exposes are populated; a field the source doesn't have on file is left
-/// null rather than fabricated (e.g. Pact/Tasleeh never populate any of
-/// these beyond what their own match already carries — see
+/// null rather than fabricated (e.g. only Crm ever populates the local
+/// reference ids, and Tasleeh exposes no unit data at all — see
 /// <see cref="CustomerLookupCustomerDto.Units"/>'s remarks).
 /// </summary>
 /// <param name="ExternalUnitId">The source's own immutable identifier for the unit — for Crm, its CrmUnitId.</param>
@@ -49,7 +49,7 @@ public sealed record CustomerLookupUnitDto(
 /// <param name="PhoneNumber">The customer's phone number, when the source has one on file.</param>
 /// <param name="Email">The customer's email, when the source has one on file.</param>
 /// <param name="CustomerType">The customer's source-recorded customer type (e.g. "Buyer"), when the source has one on file.</param>
-/// <param name="Units">Every unit (0..N) this source associates with the customer by its own ownership/relationship rules. Empty — never fabricated — for a source that exposes no unit/tenancy data at all (Pact, Tasleeh today) or for a customer the source has on file with no eligible unit.</param>
+/// <param name="Units">Every unit (0..N) this source associates with the customer by its own ownership/relationship rules. Empty — never fabricated — for a source that exposes no unit/tenancy data at all (Tasleeh today) or for a customer the source has on file with no eligible unit. Pact units carry PACT's contract/unit data but never the local reference ids (no cache table exists for PACT) — display enrichment only, never linked to a Ticket by id.</param>
 public sealed record CustomerLookupCustomerDto(
     string ExternalCustomerId,
     string? DisplayName,

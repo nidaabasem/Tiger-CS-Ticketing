@@ -44,7 +44,32 @@ public sealed class TicketDetailsCrmUnitDisplayTests
 
         Assert.Contains("t.ManualProjectName", html);
         Assert.Contains("t.ManualUnitNumber", html);
-        Assert.Contains("Not Verified / Not Found", html);
+        // Manual entry is exactly that — not externally verified — but it is
+        // never conflated with an external-lookup verification (see
+        // View_DistinguishesExternalVerificationFromManualEntry below).
+        Assert.Contains("Manual entry / Not externally verified", html);
+    }
+
+    [Fact]
+    public void View_DistinguishesExternalVerificationFromManualEntry()
+    {
+        // A PACT/Tasleeh-verified ticket (CustomerVerificationSource set at
+        // creation) shows "Verified via {source}" with the source's own
+        // customer/unit ids — never the manual-entry wording, and never
+        // "not verified": the customer WAS verified, against that source.
+        var html = TicketDetailsViewHtml();
+
+        Assert.Contains("hasExternalVerification", html);
+        Assert.Contains("Verified via", html);
+        Assert.Contains("t.CustomerVerificationSource", html);
+        Assert.Contains("t.ExternalCustomerId", html);
+        Assert.Contains("t.ExternalUnitId", html);
+
+        // The external branch outranks the manual branch, so a ticket
+        // carrying both the identity and the snapshot renders as verified.
+        var externalBranchIndex = html.IndexOf("if (hasExternalVerification)", StringComparison.Ordinal);
+        var manualBranchIndex = html.IndexOf("else if (hasManualUnit)", StringComparison.Ordinal);
+        Assert.True(externalBranchIndex > 0 && externalBranchIndex < manualBranchIndex);
     }
 
     [Fact]
@@ -67,16 +92,18 @@ public sealed class TicketDetailsCrmUnitDisplayTests
     }
 
     [Fact]
-    public void View_DisplayPriorityIsCrmBuyerThenManualThenLegacy()
+    public void View_DisplayPriorityIsCrmBuyerThenExternalThenManualThenLegacy()
     {
         var html = TicketDetailsViewHtml();
 
         var crmCheckIndex = html.IndexOf("hasCrmBuyer = t.CrmBuyerUnitId is not null", StringComparison.Ordinal);
-        var manualCheckIndex = html.IndexOf("hasManualUnit = !hasCrmBuyer", StringComparison.Ordinal);
-        var legacyCheckIndex = html.IndexOf("hasLegacyReference = !hasCrmBuyer && !hasManualUnit", StringComparison.Ordinal);
+        var externalCheckIndex = html.IndexOf("hasExternalVerification = !hasCrmBuyer", StringComparison.Ordinal);
+        var manualCheckIndex = html.IndexOf("hasManualUnit = !hasCrmBuyer && !hasExternalVerification", StringComparison.Ordinal);
+        var legacyCheckIndex = html.IndexOf("hasLegacyReference = !hasCrmBuyer && !hasExternalVerification && !hasManualUnit", StringComparison.Ordinal);
 
         Assert.True(crmCheckIndex > 0);
-        Assert.True(manualCheckIndex > crmCheckIndex);
+        Assert.True(externalCheckIndex > crmCheckIndex);
+        Assert.True(manualCheckIndex > externalCheckIndex);
         Assert.True(legacyCheckIndex > manualCheckIndex);
     }
 

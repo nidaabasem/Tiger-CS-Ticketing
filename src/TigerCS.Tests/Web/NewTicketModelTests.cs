@@ -29,22 +29,26 @@ namespace TigerCS.Tests.Web;
 /// real dependency boundary (here, HTTP).
 ///
 /// <para>
-/// Business-rule change: this wizard's phone search calls the real CRM Buyer
-/// Lookup endpoint only — never the generic CRM/PACT/Tasleeh
-/// <c>CustomerLookupApiClient</c>, and never a Unit Number/Project search.
+/// The wizard's Step 2 is department-aware: the generic
+/// <c>CustomerLookupApiClient</c> response decides which sources participate
+/// (per <c>DepartmentCustomerLookupSources</c>) and carries the PACT/Tasleeh
+/// results; the real CRM Buyer Lookup endpoint still performs the CRM leg
+/// itself, phone-number-only, exactly as before — see the "Department-aware
+/// customer lookup" section below and <c>NewTicketModel</c>'s own remarks.
 /// </para>
 /// </summary>
 public sealed class NewTicketModelTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    private static (NewTicketModel Model, FakeApiHandler Intake, FakeApiHandler CrmBuyerLookup, FakeApiHandler Departments, FakeApiHandler Categories, FakeApiHandler Tickets, FakeApiHandler CustomerHistory) CreateModel(
+    private static (NewTicketModel Model, FakeApiHandler Intake, FakeApiHandler CrmBuyerLookup, FakeApiHandler Departments, FakeApiHandler Categories, FakeApiHandler Tickets, FakeApiHandler CustomerHistory, FakeApiHandler CustomerLookup) CreateModel(
         Func<HttpRequestMessage, string?, HttpResponseMessage>? intakeResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? crmBuyerLookupResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? departmentsResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? categoriesResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? ticketsResponder = null,
-        Func<HttpRequestMessage, string?, HttpResponseMessage>? customerHistoryResponder = null)
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? customerHistoryResponder = null,
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? customerLookupResponder = null)
     {
         var intakeHandler = new FakeApiHandler(intakeResponder ?? ((_, _) => throw new InvalidOperationException("Intake API not expected to be called.")));
         var crmBuyerLookupHandler = new FakeApiHandler(crmBuyerLookupResponder ?? ((_, _) => throw new InvalidOperationException("CRM Buyer Lookup API not expected to be called.")));
@@ -58,6 +62,15 @@ public sealed class NewTicketModelTests
         // only the tests that actually care about it supply a responder.
         var customerHistoryHandler = new FakeApiHandler(customerHistoryResponder ?? (
             (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerHistoryDto("Verified", null, null, null, 0, 0, 0, []))));
+        // Department-aware customer lookup default: the no-department shape —
+        // all three sources searched, nothing found — so every pre-existing
+        // CRM-focused test keeps its old behavior (Crm participates, the real
+        // CRM Buyer Lookup runs) without supplying a responder.
+        var customerLookupHandler = new FakeApiHandler(customerLookupResponder ?? (
+            (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+", [
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.NotFound("Pact"),
+                CustomerLookupSourceResultDto.NotFound("Tasleeh")]))));
 
         var intakeClient = new IntakeRecordsApiClient(
             new HttpClient(intakeHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<IntakeRecordsApiClient>.Instance);
@@ -71,10 +84,22 @@ public sealed class NewTicketModelTests
             new HttpClient(ticketsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<TicketsApiClient>.Instance);
         var customerHistoryClient = new CustomerHistoryApiClient(
             new HttpClient(customerHistoryHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CustomerHistoryApiClient>.Instance);
+        var customerLookupClient = new CustomerLookupApiClient(
+            new HttpClient(customerLookupHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CustomerLookupApiClient>.Instance);
 
-        var model = new NewTicketModel(intakeClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient);
-        return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler);
+        var model = new NewTicketModel(intakeClient, customerLookupClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient);
+        return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler, customerLookupHandler);
     }
+
+    private static Func<HttpRequestMessage, string?, HttpResponseMessage> CustomerLookupReturning(params CustomerLookupSourceResultDto[] sources) =>
+        (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+", sources));
+
+    private static CustomerLookupCustomerDto PactCustomerWithTwoUnits() => new(
+        "7001", "Fatima Noor", "+971509990002", "fatima@example.test", CustomerType: "2",
+        [
+            new CustomerLookupUnitDto("700", "2304", "Tiger Marina Residences", null, "Residential", null, null),
+            new CustomerLookupUnitDto("701", "1105", "Tiger Bay Towers", null, "Commercial", null, null)
+        ]);
 
     private static Func<HttpRequestMessage, string?, HttpResponseMessage> CategoriesReturning(params CategoryDto[] categories) =>
         (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, categories);
@@ -118,11 +143,11 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_IntakeStep_LoadsDepartmentDirectory_ForTheDropdown()
     {
-        var (model, _, _, departments, _, _, _) = CreateModel(departmentsResponder: DepartmentsReturning(
+        var (model, _, _, departments, _, _, _, _) = CreateModel(departmentsResponder: DepartmentsReturning(
             new DepartmentDto(7, "Facilities Management"),
             new DepartmentDto(2, "Customer Service")));
 
-        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Single(departments.Requests);
         Assert.Equal(2, model.Departments.Count);
@@ -132,7 +157,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostIntakeAsync_Failure_ReloadsDepartmentDirectory_ForRedisplay()
     {
-        var (model, _, _, departments, _, _, _) = CreateModel(
+        var (model, _, _, departments, _, _, _, _) = CreateModel(
             intakeResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway),
             departmentsResponder: DepartmentsReturning(new DepartmentDto(7, "Facilities Management")));
         model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567" };
@@ -148,7 +173,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostIntakeAsync_SendsPhoneNumberAndDepartmentIdToIntakeApi()
     {
-        var (model, intake, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+        var (model, intake, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.Created, new IntakeRecordResponseDto(
                 42, "Phone", DateTime.UtcNow, "+15551234567", 7, true, null, null, "Unverified", null)));
         model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567", DepartmentId = 7 };
@@ -166,7 +191,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostIntakeAsync_Success_RedirectsToLookupStep_CarryingIntakeRecordIdPhoneNumberAndDepartment()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.Created, new IntakeRecordResponseDto(
                 42, "Phone", DateTime.UtcNow, "+15551234567", 7, false, null, null, "Unverified", null)));
         model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567", DepartmentId = 7 };
@@ -186,9 +211,9 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_LookupStep_CallsRealCrmBuyerLookupApi_ByPhoneNumberOnly()
     {
-        var (model, _, crmBuyerLookup, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound());
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound());
 
-        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var sent = Assert.Single(crmBuyerLookup.Requests);
         Assert.Equal(HttpMethod.Get, sent.Method);
@@ -201,9 +226,9 @@ public sealed class NewTicketModelTests
         // Business rule: CRM is searched by phone number only, never Unit
         // Number/Project/Tower. A structural guard on the actual outgoing
         // request, not just on the client's method signature.
-        var (model, _, crmBuyerLookup, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound());
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound());
 
-        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var sent = Assert.Single(crmBuyerLookup.Requests);
         Assert.DoesNotContain("unitNumber", sent.RequestUri, StringComparison.OrdinalIgnoreCase);
@@ -216,10 +241,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_Lookup_OneBuyerOneUnit_PopulatesCrmBuyerMatch()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(
             SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", leadId: 900, unitId: 100, projectId: 10, unitNumber: "5001", projectName: "Tiger Sky Tower")));
 
-        await model.OnGetAsync("lookup", 42, "+971509990001", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+971509990001", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.False(model.CrmBuyerLookupUnavailable);
         var match = model.CrmBuyerMatch;
@@ -242,9 +267,9 @@ public sealed class NewTicketModelTests
                 new CrmBuyerUnitDto(901, 8, "Sold", 101, "1205", 1, 1, 4, 10, "Tiger Sky Tower", null, 1, "Buyer"),
                 new CrmBuyerUnitDto(902, 9, "Contract", 102, "1403", 1, 1, 6, 10, "Tiger Sky Tower", null, 1, "Buyer")
             ]);
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(buyer));
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(buyer));
 
-        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var match = model.CrmBuyerMatch;
         Assert.NotNull(match);
@@ -266,11 +291,11 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_Lookup_ApiUnexpectedlyReturnsMultipleCustomers_WebLayerDefensivelyUsesTheFirstOnly()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound(
             SingleUnitBuyer(5001, "Ahmed Ali", "+971501234567", 901, 101, 10, "1205", "Tiger Sky Tower"),
             SingleUnitBuyer(5002, "Ahmad Ali Hassan", "+971501234567", 903, 103, 10, "2004", "Tiger Sky Tower")));
 
-        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.NotNull(model.CrmBuyerMatch);
         Assert.Equal(5001, model.CrmBuyerMatch!.Customer.CustomerId);
@@ -285,10 +310,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_Lookup_CrmAmbiguousCustomerMatch_FlagsAmbiguous_NeverAutoSelectsACustomer()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.Conflict));
 
-        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+971501234567", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.True(model.CrmBuyerAmbiguousMatch);
         Assert.Null(model.CrmBuyerMatch);
@@ -303,26 +328,26 @@ public sealed class NewTicketModelTests
         // agent can still continue the wizard through the existing
         // unverified/manual Project+Unit-Number path — exactly like a plain
         // "not found" — and ticket creation is never blocked.
-        var (model, _, _, _, _, tickets, _) = CreateModel(
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
             crmBuyerLookupResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.Conflict),
             categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")),
             ticketsResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
                 301, "TG-FM-20260827-0003", 2, 2, null, null, 2, 3, "Open", "Unverified", "None", "Running", "x", DateTime.UtcNow, "AAAA")));
 
-        await model.OnGetAsync("lookup", 42, "+971501234567", 2, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+971501234567", 2, null, null, null, null, null, null, null, null, CancellationToken.None);
         Assert.True(model.CrmBuyerAmbiguousMatch);
 
         var continueResult = model.OnPostContinueWithoutMatch(42, "+971501234567", 2);
         var createRoute = RouteValues(Assert.IsType<RedirectToPageResult>(continueResult));
 
-        await model.OnGetAsync("create", 42, "+971501234567", (int?)createRoute["departmentId"], null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("create", 42, "+971501234567", (int?)createRoute["departmentId"], null, null, null, null, null, null, null, null, CancellationToken.None);
 
         model.CreateStep = new NewTicketModel.CreateStepInput
         {
             CategoryId = model.Categories.Single().CategoryId, PriorityId = 3, RequestSummary = "x",
             ManualProjectName = "Tiger Tower A", ManualUnitNumber = "1204"
         };
-        var createResult = await model.OnPostCreateAsync(42, "+971501234567", 2, null, null, null, null, null, null, null, CancellationToken.None);
+        var createResult = await model.OnPostCreateAsync(42, "+971501234567", 2, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToPageResult>(createResult);
         Assert.Equal("/TicketDetails", redirect.PageName);
@@ -337,10 +362,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_Lookup_NoCrmMatch_EmptyMatches_NotFlaggedUnavailable()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.NotFound));
 
-        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Null(model.CrmBuyerMatch);
         Assert.False(model.CrmBuyerLookupUnavailable);
@@ -351,10 +376,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_Lookup_CrmUnavailable_EmptyMatches_FlaggedUnavailable()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.BadGateway));
 
-        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Null(model.CrmBuyerMatch);
         Assert.True(model.CrmBuyerLookupUnavailable);
@@ -364,10 +389,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_Lookup_CrmNetworkUnreachable_TreatedAsUnavailable_NeverThrows()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: (_, _) =>
             throw new HttpRequestException("Connection refused"));
 
-        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Null(model.CrmBuyerMatch);
         Assert.True(model.CrmBuyerLookupUnavailable);
@@ -378,7 +403,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public void OnPostUseCrmBuyerUnit_CarriesAllFourCrmIdsAndSnapshotText_ToCreateStep()
     {
-        var (model, _, _, _, _, _, _) = CreateModel();
+        var (model, _, _, _, _, _, _, _) = CreateModel();
         var packed = string.Join(':', 5001, 901, 101, 10,
             Uri.EscapeDataString("Ahmed Ali"), Uri.EscapeDataString("Tiger Sky Tower"), Uri.EscapeDataString("1205"));
 
@@ -402,7 +427,7 @@ public sealed class NewTicketModelTests
         // A Buyer with multiple units must be able to carry forward whichever
         // specific unit the agent actually selected — never defaulting to
         // the first one.
-        var (model, _, _, _, _, _, _) = CreateModel();
+        var (model, _, _, _, _, _, _, _) = CreateModel();
         var packed = string.Join(':', 5001, 902, 102, 10,
             Uri.EscapeDataString("Ahmed Ali"), Uri.EscapeDataString("Tiger Sky Tower"), Uri.EscapeDataString("1403"));
 
@@ -419,7 +444,7 @@ public sealed class NewTicketModelTests
         // Uri.EscapeDataString encodes a literal ':' as %3A, so splitting the
         // packed value on ':' is safe even when display text itself
         // contains one.
-        var (model, _, _, _, _, _, _) = CreateModel();
+        var (model, _, _, _, _, _, _, _) = CreateModel();
         var packed = string.Join(':', 5001, 901, 101, 10,
             Uri.EscapeDataString("Ahmed: Ali"), Uri.EscapeDataString("Tower: Sky"), Uri.EscapeDataString("12:05"));
 
@@ -434,7 +459,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public void OnPostContinueWithoutMatch_ProceedsWithNoCrmBuyerSelected()
     {
-        var (model, _, _, _, _, _, _) = CreateModel();
+        var (model, _, _, _, _, _, _, _) = CreateModel();
 
         var result = model.OnPostContinueWithoutMatch(42, "+9613040922", 7);
 
@@ -450,13 +475,13 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_CreateStep_WithDepartment_RequestsCategoriesFilteredByThatDepartment()
     {
-        var (model, _, _, _, categories, _, _) = CreateModel(categoriesResponder: (_, _) =>
+        var (model, _, _, _, categories, _, _, _) = CreateModel(categoriesResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.OK, new[]
             {
                 new CategoryDto(2, "Corrective Maintenance", 7, "Facilities Management")
             }));
 
-        await model.OnGetAsync("create", 42, "+15551234567", 7, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("create", 42, "+15551234567", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var sent = Assert.Single(categories.Requests);
         Assert.Equal("http://localhost/api/categories?departmentId=7", sent.RequestUri);
@@ -467,10 +492,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_CreateStep_CategoriesApiFails_SetsCategoriesErrorMessage_NoNumericFallback()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(categoriesResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(categoriesResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.BadGateway));
 
-        await model.OnGetAsync("create", 42, "+15551234567", null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("create", 42, "+15551234567", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.NotNull(model.CategoriesErrorMessage);
         Assert.Empty(model.Categories);
@@ -479,11 +504,11 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_CreateStep_CarriesCrmBuyerSelectionForward()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
+        var (model, _, _, _, _, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
             new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
 
         await model.OnGetAsync(
-            "create", 42, "+971501234567", 2, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", CancellationToken.None);
+            "create", 42, "+971501234567", 2, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", null, CancellationToken.None);
 
         Assert.Equal(5001, model.CrmBuyerCustomerId);
         Assert.Equal(101, model.CrmBuyerUnitId);
@@ -500,14 +525,14 @@ public sealed class NewTicketModelTests
         // Two buyers matched the phone search (5001 first, 5002 second) — the
         // agent selected the second one's unit, so the preview must query
         // history for 5002, never 5001.
-        var (model, _, _, _, _, _, customerHistory) = CreateModel(
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
             categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")),
             customerHistoryResponder: (_, _) => FakeApiHandler.JsonResponse(
                 HttpStatusCode.OK, new CustomerHistoryDto("Verified", 5002, null, "Ahmad Ali Hassan", 2, 1, 1,
                 [new CustomerHistoryTicketDto(50, "TG-CS-20260810-0001", DateTime.UtcNow.AddDays(-5), "Closed", 3, 2, 2, "Tiger Sky Tower", "2004", "Verified")])));
 
         await model.OnGetAsync(
-            "create", 42, "+971501234567", 2, 5002, 903, 103, 10, "Ahmad Ali Hassan", "Tiger Sky Tower", "2004", CancellationToken.None);
+            "create", 42, "+971501234567", 2, 5002, 903, 103, 10, "Ahmad Ali Hassan", "Tiger Sky Tower", "2004", null, CancellationToken.None);
 
         var sent = Assert.Single(customerHistory.Requests);
         Assert.Contains("/api/customers/crm/5002/ticket-history", sent.RequestUri);
@@ -519,10 +544,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_CreateStep_NoCrmBuyerSelected_NeverCallsCustomerHistoryApi()
     {
-        var (model, _, _, _, _, _, customerHistory) = CreateModel(categoriesResponder: CategoriesReturning(
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(categoriesResponder: CategoriesReturning(
             new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
 
-        await model.OnGetAsync("create", 42, "+9613040922", 2, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("create", 42, "+9613040922", 2, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Empty(customerHistory.Requests);
         Assert.Null(model.PreviousTickets);
@@ -531,11 +556,11 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_CreateStep_LimitsThePreviewToFiveTickets()
     {
-        var (model, _, _, _, _, _, customerHistory) = CreateModel(
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
             categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
 
         await model.OnGetAsync(
-            "create", 42, "+971501234567", 2, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", CancellationToken.None);
+            "create", 42, "+971501234567", 2, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", null, CancellationToken.None);
 
         var sent = Assert.Single(customerHistory.Requests);
         Assert.Contains("limit=5", sent.RequestUri);
@@ -561,7 +586,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostCreateAsync_NoPrioritySelected_RejectedWithoutCallingTheTicketsApi()
     {
-        var (model, _, _, _, categories, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
+        var (model, _, _, _, categories, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
             new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
         model.CreateStep = new NewTicketModel.CreateStepInput
         {
@@ -569,7 +594,7 @@ public sealed class NewTicketModelTests
             ManualProjectName = "Tiger Sky Tower", ManualUnitNumber = "1205"
         };
 
-        var result = await model.OnPostCreateAsync(42, "+15551234567", null, null, null, null, null, null, null, null, CancellationToken.None);
+        var result = await model.OnPostCreateAsync(42, "+15551234567", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.IsType<PageResult>(result);
         Assert.NotNull(model.ErrorMessage);
@@ -581,7 +606,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostCreateAsync_NoCrmMatch_ManualProjectMissing_RejectedWithoutCallingTheTicketsApi()
     {
-        var (model, _, _, _, categories, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
+        var (model, _, _, _, categories, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
             new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
         model.CreateStep = new NewTicketModel.CreateStepInput
         {
@@ -589,7 +614,7 @@ public sealed class NewTicketModelTests
             ManualProjectName = null, ManualUnitNumber = "1205"
         };
 
-        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.IsType<PageResult>(result);
         Assert.Equal("Customer not found in CRM. Project and Unit Number are required.", model.ErrorMessage);
@@ -599,7 +624,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostCreateAsync_NoCrmMatch_ManualUnitNumberMissing_RejectedWithoutCallingTheTicketsApi()
     {
-        var (model, _, _, _, categories, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
+        var (model, _, _, _, categories, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
             new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
         model.CreateStep = new NewTicketModel.CreateStepInput
         {
@@ -607,7 +632,7 @@ public sealed class NewTicketModelTests
             ManualProjectName = "Tiger Sky Tower", ManualUnitNumber = null
         };
 
-        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.IsType<PageResult>(result);
         Assert.Equal("Customer not found in CRM. Project and Unit Number are required.", model.ErrorMessage);
@@ -617,7 +642,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostCreateAsync_NoCrmMatch_BothManualFieldsSupplied_CreatesTicket_NeverRunningAnotherCrmLookup()
     {
-        var (model, _, crmBuyerLookup, _, _, tickets, _) = CreateModel(ticketsResponder: (_, _) =>
+        var (model, _, crmBuyerLookup, _, _, tickets, _, _) = CreateModel(ticketsResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
                 100, "TG-CS-20260827-0001", 7, 7, null, null, 2, 3, "Open", "Unverified", "None", "Running", "Summary", DateTime.UtcNow, "AAAA")));
         model.CreateStep = new NewTicketModel.CreateStepInput
@@ -626,7 +651,7 @@ public sealed class NewTicketModelTests
             ManualProjectName = "Tiger Sky Tower", ManualUnitNumber = "1205"
         };
 
-        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToPageResult>(result);
         Assert.Equal("/TicketDetails", redirect.PageName);
@@ -644,13 +669,13 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostCreateAsync_CrmMatchSelected_SendsAllFourCrmIdsAndSnapshot_NoManualFieldsRequired()
     {
-        var (model, _, _, _, _, tickets, _) = CreateModel(ticketsResponder: (_, _) =>
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(ticketsResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
                 100, "TG-CS-20260827-0001", 7, 7, null, null, 2, 3, "Open", "Verified", "None", "Running", "Summary", DateTime.UtcNow, "AAAA")));
         model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = 2, PriorityId = 3, RequestSummary = "Summary" };
 
         var result = await model.OnPostCreateAsync(
-            42, "+971501234567", null, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", CancellationToken.None);
+            42, "+971501234567", null, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", null, CancellationToken.None);
 
         Assert.IsType<RedirectToPageResult>(result);
         using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
@@ -668,7 +693,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostCreateAsync_NoCategorySelected_RejectedWithoutCallingTheTicketsApi()
     {
-        var (model, _, _, _, categories, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
+        var (model, _, _, _, categories, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
             new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
         model.CreateStep = new NewTicketModel.CreateStepInput
         {
@@ -676,7 +701,7 @@ public sealed class NewTicketModelTests
             ManualProjectName = "Tiger Sky Tower", ManualUnitNumber = "1205"
         };
 
-        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, CancellationToken.None);
+        var result = await model.OnPostCreateAsync(42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.IsType<PageResult>(result);
         Assert.NotNull(model.ErrorMessage);
@@ -688,7 +713,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task FullFlow_IntakeLookupSelectCrmBuyerUnitCreate_StillSucceeds()
     {
-        var (model, _, _, _, _, tickets, _) = CreateModel(
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
             intakeResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new IntakeRecordResponseDto(
                 42, "Phone", DateTime.UtcNow, "+971501234567", 2, false, null, null, "Unverified", null)),
             crmBuyerLookupResponder: CrmBuyersFound(
@@ -703,7 +728,7 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync(
             "lookup", (long)lookupRoute["intakeRecordId"]!, (string?)lookupRoute["phoneNumber"], (int?)lookupRoute["departmentId"],
-            null, null, null, null, null, null, null, CancellationToken.None);
+            null, null, null, null, null, null, null, null, CancellationToken.None);
         var match = model.CrmBuyerMatch;
         Assert.NotNull(match);
         var unit = Assert.Single(match.Units);
@@ -717,7 +742,7 @@ public sealed class NewTicketModelTests
             "create", 42, "+971501234567", (int?)createRoute["departmentId"],
             (int?)createRoute["crmBuyerCustomerId"], (int?)createRoute["crmBuyerLeadId"], (int?)createRoute["crmBuyerUnitId"],
             (int?)createRoute["crmBuyerProjectId"], (string?)createRoute["crmBuyerCustomerName"],
-            (string?)createRoute["crmBuyerProjectName"], (string?)createRoute["crmBuyerUnitNumber"], CancellationToken.None);
+            (string?)createRoute["crmBuyerProjectName"], (string?)createRoute["crmBuyerUnitNumber"], null, CancellationToken.None);
         Assert.Single(model.Categories);
 
         model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = model.Categories.Single().CategoryId, PriorityId = 3, RequestSummary = "x" };
@@ -725,7 +750,7 @@ public sealed class NewTicketModelTests
             42, "+971501234567", 2,
             (int?)createRoute["crmBuyerCustomerId"], (int?)createRoute["crmBuyerLeadId"], (int?)createRoute["crmBuyerUnitId"],
             (int?)createRoute["crmBuyerProjectId"], (string?)createRoute["crmBuyerCustomerName"],
-            (string?)createRoute["crmBuyerProjectName"], (string?)createRoute["crmBuyerUnitNumber"], CancellationToken.None);
+            (string?)createRoute["crmBuyerProjectName"], (string?)createRoute["crmBuyerUnitNumber"], null, CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToPageResult>(createResult);
         Assert.Equal("/TicketDetails", redirect.PageName);
@@ -739,7 +764,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task FullFlow_IntakeLookupNoMatchContinueManualProjectUnit_StillSucceeds()
     {
-        var (model, _, _, _, _, tickets, _) = CreateModel(
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
             intakeResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new IntakeRecordResponseDto(
                 42, "Phone", DateTime.UtcNow, "+9613040922", 2, false, null, null, "Unverified", null)),
             crmBuyerLookupResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.NotFound),
@@ -753,13 +778,13 @@ public sealed class NewTicketModelTests
 
         await model.OnGetAsync(
             "lookup", (long)lookupRoute["intakeRecordId"]!, (string?)lookupRoute["phoneNumber"], (int?)lookupRoute["departmentId"],
-            null, null, null, null, null, null, null, CancellationToken.None);
+            null, null, null, null, null, null, null, null, CancellationToken.None);
         Assert.Null(model.CrmBuyerMatch);
 
         var continueResult = model.OnPostContinueWithoutMatch(42, "+9613040922", 2);
         var createRoute = RouteValues(Assert.IsType<RedirectToPageResult>(continueResult));
 
-        await model.OnGetAsync("create", 42, "+9613040922", (int?)createRoute["departmentId"], null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync("create", 42, "+9613040922", (int?)createRoute["departmentId"], null, null, null, null, null, null, null, null, CancellationToken.None);
         Assert.Single(model.Categories);
 
         model.CreateStep = new NewTicketModel.CreateStepInput
@@ -767,13 +792,252 @@ public sealed class NewTicketModelTests
             CategoryId = model.Categories.Single().CategoryId, PriorityId = 3, RequestSummary = "x",
             ManualProjectName = "Tiger Tower A", ManualUnitNumber = "1204"
         };
-        var createResult = await model.OnPostCreateAsync(42, "+9613040922", 2, null, null, null, null, null, null, null, CancellationToken.None);
+        var createResult = await model.OnPostCreateAsync(42, "+9613040922", 2, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToPageResult>(createResult);
         Assert.Equal("/TicketDetails", redirect.PageName);
         using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
         Assert.Equal("Tiger Tower A", body.RootElement.GetProperty("manualProjectName").GetString());
         Assert.Equal("1204", body.RootElement.GetProperty("manualUnitNumber").GetString());
+    }
+
+    // ---- Department-aware customer lookup: the generic response decides which
+    // sources participate (per DepartmentCustomerLookupSources) and carries
+    // PACT/Tasleeh results; the real CRM Buyer Lookup still performs the CRM
+    // leg itself. ----
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_CallsGenericCustomerLookup_ByIntakeRecordId()
+    {
+        var (model, _, _, _, _, _, _, customerLookup) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound());
+
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        var sent = Assert.Single(customerLookup.Requests);
+        Assert.Equal("http://localhost/api/intake-records/42/customer-lookup", sent.RequestUri);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_PactEnabledDepartment_ShowsPactResults_AllUnits_NoneAutoSelected_CrmNotSearched()
+    {
+        // Department scoped to Pact only — the response carries no Crm entry,
+        // so the real CRM Buyer Lookup must not run (its default responder
+        // throws if called), and the PACT customer's units all appear with
+        // nothing pre-selected.
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(customerLookupResponder: CustomerLookupReturning(
+            CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])));
+
+        await model.OnGetAsync("lookup", 42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.False(model.CrmParticipates);
+        Assert.Empty(crmBuyerLookup.Requests);
+        var pactSource = Assert.Single(model.ExternalLookupSources);
+        Assert.Equal("Pact", pactSource.Source);
+        Assert.Equal("Found", pactSource.Status);
+        var customer = Assert.Single(pactSource.Customers);
+        Assert.Equal("7001", customer.ExternalCustomerId);
+        Assert.Equal(2, customer.Units.Count);
+        Assert.Contains(customer.Units, u => u is { UnitNumber: "2304", PropertyName: "Tiger Marina Residences" });
+        Assert.Contains(customer.Units, u => u is { UnitNumber: "1105", PropertyName: "Tiger Bay Towers" });
+        // Nothing auto-selected: the external selection stays unset until the
+        // agent explicitly posts OnPostUseExternalUnit.
+        Assert.Null(model.ExternalSelection);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_PactNotConfiguredForDepartment_ShowsNoPactResults_CrmStillSearched()
+    {
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(),
+            customerLookupResponder: CustomerLookupReturning(CustomerLookupSourceResultDto.NotFound("Crm")));
+
+        await model.OnGetAsync("lookup", 42, "+9613040922", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.True(model.CrmParticipates);
+        Assert.Single(crmBuyerLookup.Requests);
+        Assert.Empty(model.ExternalLookupSources);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_CrmAndPactBothConfigured_ResultsCoexist()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990002", 900, 100, 10, "5001", "Tiger Sky Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])));
+
+        await model.OnGetAsync("lookup", 42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        // Both sources' results are shown together — the real CRM Buyer match
+        // AND the PACT customer, neither hiding the other.
+        Assert.NotNull(model.CrmBuyerMatch);
+        Assert.Equal("Sami Nasser", model.CrmBuyerMatch!.Customer.FullNameEnglish);
+        var pactSource = Assert.Single(model.ExternalLookupSources);
+        Assert.Equal("Found", pactSource.Status);
+        Assert.Equal(2, Assert.Single(pactSource.Customers).Units.Count);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_PactFailed_DoesNotHideCrmResults_NeverBlocks()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990002", 900, 100, 10, "5001", "Tiger Sky Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Failed("Pact")));
+
+        await model.OnGetAsync("lookup", 42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.NotNull(model.CrmBuyerMatch);
+        var pactSource = Assert.Single(model.ExternalLookupSources);
+        Assert.Equal("Failed", pactSource.Status);
+        Assert.Null(model.ErrorMessage); // a failed source is a state on its card, never a blocking error
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_GenericLookupUnavailable_FailsOpenToCrmOnly_NeverBlocks()
+    {
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(),
+            customerLookupResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway));
+
+        await model.OnGetAsync("lookup", 42, "+9613040922", null, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.True(model.CustomerLookupUnavailable);
+        Assert.True(model.CrmParticipates); // fail-open: the real CRM lookup still ran
+        Assert.Single(crmBuyerLookup.Requests);
+        Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_DepartmentWithNoConfiguredSources_ShowsThatState_SearchesNothing()
+    {
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(customerLookupResponder: CustomerLookupReturning());
+
+        await model.OnGetAsync("lookup", 42, "+9613040922", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.True(model.NoLookupSourcesConfigured);
+        Assert.False(model.CrmParticipates);
+        Assert.Empty(crmBuyerLookup.Requests);
+        Assert.Empty(model.ExternalLookupSources);
+    }
+
+    [Fact]
+    public void OnPostUseExternalUnit_CarriesTheSelectionToCreateStep()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel();
+        var packed = string.Join(':',
+            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("701"),
+            Uri.EscapeDataString("Fatima Noor"), Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
+
+        var result = model.OnPostUseExternalUnit(42, "+971509990002", 7, packed);
+
+        var values = RouteValues(Assert.IsType<RedirectToPageResult>(result));
+        Assert.Equal("create", values["step"]);
+        Assert.Equal(packed, values["externalSelection"]);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_CreateStep_SecondPactUnitSelected_PrefillsManualFieldsFromThatUnit_NotTheFirst()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(categoriesResponder: CategoriesReturning(
+            new CategoryDto(2, "Tenancy Inquiry", 7, "Leasing")));
+        // The agent picked the SECOND of the PACT customer's two units.
+        var packed = string.Join(':',
+            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("701"),
+            Uri.EscapeDataString("Fatima Noor"), Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
+
+        await model.OnGetAsync("create", 42, "+971509990002", 7, null, null, null, null, null, null, null, packed, CancellationToken.None);
+
+        Assert.Equal("Pact", model.ExternalSource);
+        Assert.Equal("7001", model.ExternalCustomerId);
+        Assert.Equal("701", model.ExternalUnitId);
+        Assert.Equal("Fatima Noor", model.ExternalCustomerName);
+        Assert.Equal("Tiger Bay Towers", model.CreateStep.ManualProjectName);
+        Assert.Equal("1105", model.CreateStep.ManualUnitNumber);
+    }
+
+    [Fact]
+    public async Task FullFlow_PactOnlyDepartment_SelectSecondPactUnit_TicketPersistsThatUnitViaManualSnapshot()
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])),
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Tenancy Inquiry", 7, "Leasing")),
+            ticketsResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
+                400, "TG-LS-20260901-0001", 7, 7, null, null, 2, 3, "Open", "Unverified", "None", "Running", "x", DateTime.UtcNow, "AAAA")));
+
+        await model.OnGetAsync("lookup", 42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+        var pactCustomer = Assert.Single(Assert.Single(model.ExternalLookupSources).Customers);
+        var secondUnit = pactCustomer.Units[1];
+
+        var packed = string.Join(':',
+            Uri.EscapeDataString("Pact"), Uri.EscapeDataString(pactCustomer.ExternalCustomerId),
+            Uri.EscapeDataString(secondUnit.ExternalUnitId), Uri.EscapeDataString(pactCustomer.DisplayName!),
+            Uri.EscapeDataString(secondUnit.PropertyName!), Uri.EscapeDataString(secondUnit.UnitNumber!));
+        var selectResult = model.OnPostUseExternalUnit(42, "+971509990002", 7, packed);
+        var createRoute = RouteValues(Assert.IsType<RedirectToPageResult>(selectResult));
+
+        await model.OnGetAsync(
+            "create", 42, "+971509990002", 7, null, null, null, null, null, null, null,
+            (string?)createRoute["externalSelection"], CancellationToken.None);
+        Assert.Equal("Tiger Bay Towers", model.CreateStep.ManualProjectName);
+
+        model.CreateStep.CategoryId = model.Categories.Single().CategoryId;
+        model.CreateStep.PriorityId = 3;
+        model.CreateStep.RequestSummary = "AC fault";
+        var createResult = await model.OnPostCreateAsync(
+            42, "+971509990002", 7, null, null, null, null, null, null, null,
+            (string?)createRoute["externalSelection"], CancellationToken.None);
+
+        // The SELECTED (second) PACT unit persisted through the existing
+        // manual Project/Unit snapshot — never the first unit, and never any
+        // CRM identifier.
+        Assert.Equal("/TicketDetails", Assert.IsType<RedirectToPageResult>(createResult).PageName);
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        Assert.Equal("Tiger Bay Towers", body.RootElement.GetProperty("manualProjectName").GetString());
+        Assert.Equal("1105", body.RootElement.GetProperty("manualUnitNumber").GetString());
+        // ...and the generic external verification identity travels with it.
+        Assert.Equal("Pact", body.RootElement.GetProperty("customerVerificationSource").GetString());
+        Assert.Equal("7001", body.RootElement.GetProperty("externalCustomerId").GetString());
+        Assert.Equal("701", body.RootElement.GetProperty("externalUnitId").GetString());
+        Assert.True(body.RootElement.GetProperty("crmBuyerCustomerId").ValueKind == JsonValueKind.Null);
+        Assert.True(body.RootElement.GetProperty("crmBuyerUnitId").ValueKind == JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task FullFlow_PactUnavailable_ManualTicketCreationStillSucceeds()
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            customerLookupResponder: CustomerLookupReturning(CustomerLookupSourceResultDto.Failed("Pact")),
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Tenancy Inquiry", 7, "Leasing")),
+            ticketsResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
+                401, "TG-LS-20260901-0002", 7, 7, null, null, 2, 3, "Open", "Unverified", "None", "Running", "x", DateTime.UtcNow, "AAAA")));
+
+        await model.OnGetAsync("lookup", 42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+        Assert.Equal("Failed", Assert.Single(model.ExternalLookupSources).Status);
+
+        var continueResult = model.OnPostContinueWithoutMatch(42, "+971509990002", 7);
+        Assert.IsType<RedirectToPageResult>(continueResult);
+
+        await model.OnGetAsync("create", 42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+        model.CreateStep = new NewTicketModel.CreateStepInput
+        {
+            CategoryId = 2, PriorityId = 3, RequestSummary = "x",
+            ManualProjectName = "Tiger Marina Residences", ManualUnitNumber = "0000"
+        };
+        var createResult = await model.OnPostCreateAsync(42, "+971509990002", 7, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Equal("/TicketDetails", Assert.IsType<RedirectToPageResult>(createResult).PageName);
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        Assert.Equal("0000", body.RootElement.GetProperty("manualUnitNumber").GetString());
+        // Plain manual entry is never presented as externally verified.
+        Assert.True(body.RootElement.GetProperty("customerVerificationSource").ValueKind == JsonValueKind.Null);
+        Assert.True(body.RootElement.GetProperty("externalCustomerId").ValueKind == JsonValueKind.Null);
+        Assert.True(body.RootElement.GetProperty("externalUnitId").ValueKind == JsonValueKind.Null);
     }
 
     private static IDictionary<string, object?> RouteValues(RedirectToPageResult redirect) =>
@@ -792,10 +1056,10 @@ public sealed class NewTicketModelTests
         // An empty-bodied 401 (the default ASP.NET Core auth challenge response,
         // no ProblemDetails "detail"/"title") is exactly what a missing/expired
         // bearer token from TigerCS.Web produces against a protected endpoint.
-        var (model, _, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.Unauthorized));
 
-        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Empty(model.Departments);
         Assert.NotNull(model.DepartmentsErrorMessage);
@@ -805,10 +1069,10 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnGetAsync_IntakeStep_DepartmentsApi403_SetsPredictableAuthMessage_NotGenericFallback()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.Forbidden));
 
-        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Empty(model.Departments);
         Assert.NotNull(model.DepartmentsErrorMessage);
@@ -821,10 +1085,10 @@ public sealed class NewTicketModelTests
         // Simulates TigerCS.Web pointed at an address nothing is listening on
         // (the actual root cause of "Unable to load the department list") —
         // HttpClient surfaces this as HttpRequestException, never a status code.
-        var (model, _, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(departmentsResponder: (_, _) =>
             throw new HttpRequestException("Connection refused"));
 
-        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
+        await model.OnGetAsync(null, null, null, null, null, null, null, null, null, null, null, null, CancellationToken.None);
 
         Assert.Empty(model.Departments);
         Assert.NotNull(model.DepartmentsErrorMessage);
@@ -836,7 +1100,7 @@ public sealed class NewTicketModelTests
         // A 400 from POST /api/intake-records carries a ProblemDetails body —
         // its "detail" must reach the page verbatim rather than being masked
         // by the page's own generic "Could not record this interaction." text.
-        var (model, _, _, departments, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+        var (model, _, _, departments, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
             FakeApiHandler.JsonResponse(HttpStatusCode.BadRequest, new { detail = "Customer phone number is invalid." }));
         model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "not-a-phone-number" };
 
@@ -850,7 +1114,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostIntakeAsync_ApiUnreachable_SetsControlledFailureMessage_NoUnhandledException()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
             throw new HttpRequestException("No connection could be made because the target machine actively refused it."));
         model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567" };
 
@@ -863,7 +1127,7 @@ public sealed class NewTicketModelTests
     [Fact]
     public async Task OnPostIntakeAsync_ApiUnauthorized_SetsPredictableAuthMessage_NotGenericFallback()
     {
-        var (model, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+        var (model, _, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
             new HttpResponseMessage(HttpStatusCode.Unauthorized));
         model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+15551234567" };
 

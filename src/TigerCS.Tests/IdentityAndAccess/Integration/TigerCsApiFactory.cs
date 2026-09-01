@@ -34,6 +34,17 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
 {
     public readonly string DatabaseName = Guid.NewGuid().ToString();
 
+    /// <summary>
+    /// Extra configuration applied on top of this factory's test defaults,
+    /// set at construction (before the host is built). Lets an end-to-end
+    /// test re-point a real integration at a local stub — e.g.
+    /// <c>Pact:Provider=Http</c> plus a stub PACT server's
+    /// <c>PactApi:BaseUrl</c>/<c>PactApi:ApiKey</c>
+    /// (<c>PactHttpLookupEndToEndTests</c>) — without touching any committed
+    /// appsettings file.
+    /// </summary>
+    public Dictionary<string, string?> ExtraConfiguration { get; init; } = [];
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // Explicit, deterministic environment name — distinct from "Development"
@@ -70,6 +81,11 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 ["Jwt:SigningKey"] = "test-only-signing-key-at-least-32-characters-long-1234567890",
                 ["Jwt:ExpirationMinutes"] = "60"
             });
+
+            if (ExtraConfiguration.Count > 0)
+            {
+                config.AddInMemoryCollection(ExtraConfiguration);
+            }
         });
 
         builder.ConfigureServices(services =>

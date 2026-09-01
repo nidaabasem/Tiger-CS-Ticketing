@@ -1,11 +1,14 @@
 namespace TigerCS.Integrations.Modules.PactIntegration;
 
 /// <summary>
-/// Governs which <see cref="TigerCS.Application.Modules.CustomerVerification.CustomerLookup.IPactGateway"/>
-/// implementation is wired up. Only "Mock" is implemented at this pilot
-/// phase — no real PACT endpoint details were available to build against.
-/// See <see cref="MockPactGateway"/>'s own remarks: it is never
-/// production-ready.
+/// The "Pact" configuration section — governs which
+/// <see cref="TigerCS.Application.Modules.CustomerVerification.PactIntegration.IPactCustomerLookupGateway"/>
+/// implementation is wired up: "Mock" (<see cref="MockPactGateway"/>,
+/// fixture-backed, the default so dev/tests stay deterministic and offline)
+/// or "Http" (<see cref="PactCustomerHttpGateway"/>, the real PACT
+/// integration, which additionally needs the <see cref="PactApiOptions"/>
+/// "PactApi" section configured). Same provider-switch shape as
+/// <c>Crm:Provider</c>.
 /// </summary>
 public sealed class PactGatewayOptions
 {

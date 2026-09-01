@@ -135,6 +135,48 @@ application. This is also why local development works without a real CRM
 connection: the endpoint simply reports CRM as unavailable until you opt in
 by setting the two values above.
 
+## 3b. Configure PACT customer lookup (`Pact:Provider` / `PactApi:BaseUrl` / `PactApi:ApiKey`)
+
+The PACT customer/contract lookup (`PactCustomerHttpGateway`, the Pact leg of
+`GET /api/intake-records/{id}/customer-lookup`) calls PACT's
+`GET v1/contracts/{mobile}` and `GET v1/contracts/{mobile}/customer-type`
+endpoints. Unlike CRM Buyer Lookup it sits behind a provider switch:
+
+- **`Pact:Provider`** — `"Mock"` (the default: `MockPactGateway`'s fixture
+  data, deterministic and offline — what dev and the test suite use) or
+  `"Http"` (the real PACT integration).
+
+With `"Http"` selected, two values under the `PactApi` section:
+
+- **`PactApi:BaseUrl`** — PACT's base URL. Not a secret: safe to commit per
+  environment in `appsettings.{Environment}.json`, same as `Crm:BaseUrl`.
+- **`PactApi:ApiKey`** — the API key PACT validates via the `X-API-KEY`
+  request header. **Never committed** — configure it the same way as
+  `Crm:SecretKey` above.
+
+**Development** (user-secrets, from `src/TigerCS.Api`):
+
+```bash
+dotnet user-secrets set "Pact:Provider" "Http"
+dotnet user-secrets set "PactApi:BaseUrl" "http://pact-dev.tigergroup.internal:5020/"
+dotnet user-secrets set "PactApi:ApiKey" "<the API key PACT issued for this system>"
+```
+
+**UAT / Production** (environment variables, same `__` separator):
+
+```bash
+export Pact__Provider="Http"
+export PactApi__BaseUrl="http://pact-uat.tigergroup.internal:5020/"
+export PactApi__ApiKey="<the API key PACT issued for this system>"
+```
+
+If `PactApi:ApiKey` (or `PactApi:BaseUrl`) is left unconfigured while
+`Pact:Provider` is `"Http"`, nothing crashes or fails startup —
+`PactCustomerHttpGateway` reports `PactCustomerLookupOutcome.Unavailable`,
+which customer lookup surfaces as a `Failed` Pact source entry; ticket
+creation is never blocked and the agent falls back to manual customer/unit
+entry, consistent with every other lookup source.
+
 ## 4. Apply the database migration
 
 From `src/`:

@@ -88,6 +88,9 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="CrmBuyerUnitNumber">Ticket-time display snapshot of the matched unit's number, or null.</param>
 /// <param name="ManualProjectName">The agent-entered Project name, when no CRM Buyer match was linked at creation.</param>
 /// <param name="ManualUnitNumber">The agent-entered Unit Number, when no CRM Buyer match was linked at creation.</param>
+/// <param name="CustomerVerificationSource">The external lookup source that verified the customer at creation ("Pact"/"Tasleeh"), or null for CRM Buyer tickets and plain manual entry.</param>
+/// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, never a local reference.</param>
+/// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — an external identifier only.</param>
 public sealed record TicketDetailDto(
     long TicketId,
     string TicketNumber,
@@ -116,7 +119,10 @@ public sealed record TicketDetailDto(
     string? CrmBuyerProjectName = null,
     string? CrmBuyerUnitNumber = null,
     string? ManualProjectName = null,
-    string? ManualUnitNumber = null);
+    string? ManualUnitNumber = null,
+    string? CustomerVerificationSource = null,
+    string? ExternalCustomerId = null,
+    string? ExternalUnitId = null);
 
 public enum TicketQueryOutcome
 {

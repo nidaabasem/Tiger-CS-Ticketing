@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
+using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Integrations.Modules.PactIntegration;
@@ -94,22 +95,51 @@ public static class IntegrationsServiceCollectionExtensions
         });
     }
 
-    /// <summary>Business-rule change: PACT phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>
+    /// <summary>
+    /// PACT mobile-based customer/contract lookup — a provider switch like
+    /// <c>Crm:Provider</c> above, but with a real implementation available:
+    /// "Mock" (default — <see cref="MockPactGateway"/>, so dev/tests stay
+    /// deterministic and offline) or "Http"
+    /// (<see cref="PactCustomerHttpGateway"/>, PACT's real
+    /// <c>v1/contracts/{mobile}</c>/<c>…/customer-type</c> endpoints).
+    ///
+    /// <para>
+    /// The HTTP implementation follows <see cref="AddCrmBuyerLookupGateway"/>'s
+    /// typed-HttpClient shape exactly: base address read lazily from
+    /// <see cref="PactApiOptions.BaseUrl"/> (never at startup, so a missing/
+    /// blank value never prevents the host from starting —
+    /// <c>PactCustomerHttpGateway</c> turns that into an <c>Unavailable</c>
+    /// outcome on first use instead), and the API key applied per request by
+    /// the gateway itself, never baked into the client.
+    /// </para>
+    /// </summary>
     private static void AddPactGateway(IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<PactGatewayOptions>(configuration.GetSection(PactGatewayOptions.SectionName));
+        services.Configure<PactApiOptions>(configuration.GetSection(PactApiOptions.SectionName));
 
-        services.AddScoped<IPactGateway>(sp =>
+        services.AddHttpClient<PactCustomerHttpGateway>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<PactApiOptions>>().Value;
+            if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            {
+                client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+
+        services.AddScoped<IPactCustomerLookupGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<PactGatewayOptions>>().Value;
             return options.Provider switch
             {
                 "Mock" => new MockPactGateway(),
+                "Http" => sp.GetRequiredService<PactCustomerHttpGateway>(),
                 _ => throw new NotSupportedException(
-                    $"Pact:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
-                    "pilot phase — no real PACT endpoint details were available to build against. See " +
-                    "MockPactGateway's own remarks: it must never be described as production-ready, and a real " +
-                    "IPactGateway implementation is required before any other provider value can be used.")
+                    $"Pact:Provider '{options.Provider}' is not supported. Use 'Http' (the real PACT integration, " +
+                    "PactCustomerHttpGateway — requires the PactApi section) or 'Mock' (MockPactGateway, " +
+                    "fixture-backed; see its remarks — it must never be described as production-ready).")
             };
         });
     }

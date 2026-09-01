@@ -12,8 +12,9 @@ namespace TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 ///
 /// <para>
 /// <b>Every implementation must fail closed, never block.</b> A source that
-/// cannot be reached throws its own <c>*GatewayUnavailableException</c>;
-/// <c>CustomerLookupAppService</c> catches each source independently so one
+/// cannot be reached throws its own <c>*GatewayUnavailableException</c> (or,
+/// for PACT's outcome-wrapped port, returns a non-Success outcome);
+/// <c>CustomerLookupAppService</c> handles each source independently so one
 /// source's outage never affects another's result, and none of the three
 /// ever prevents a ticket from being created.
 /// </para>
@@ -66,16 +67,13 @@ public sealed record CrmCustomerUnitMatch(string CrmUnitId, string CrmContactId)
 public sealed class CrmCustomerLookupGatewayUnavailableException(string message, Exception? innerException = null)
     : Exception(message, innerException);
 
-/// <summary>PACT read-only customer search by phone — 0..N customers, same multiplicity rule as CRM. No local reference/cache table exists for PACT — a match is pure display enrichment for the agent, never linked to a Ticket by id, and PACT exposes no unit/tenancy data today (units are represented in the normalized DTO as an empty list, never fabricated).</summary>
-public interface IPactGateway
-{
-    Task<IReadOnlyList<PactCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default);
-}
-
-public sealed record PactCustomerMatch(string PactCustomerId, string? DisplayName, string PhoneNumber);
-
-public sealed class PactGatewayUnavailableException(string message, Exception? innerException = null)
-    : Exception(message, innerException);
+// PACT's port lives in Modules/CustomerVerification/PactIntegration
+// (IPactCustomerLookupGateway) — unlike the two ports in this file it is a
+// real HTTP-backed integration with an outcome-wrapped result (mirroring
+// ICrmBuyerLookupGateway) rather than a throws-when-unavailable search, and
+// it does expose the customer's contracts/units. The fail-closed/never-block
+// rule above applies to it identically: no PACT outcome ever prevents a
+// ticket from being created.
 
 /// <summary>Tasleeh read-only customer search by phone — 0..N customers, same multiplicity rule as CRM. No local reference/cache table exists for Tasleeh — a match is pure display enrichment for the agent, never linked to a Ticket by id, and Tasleeh exposes no asset/unit data today (units are represented in the normalized DTO as an empty list, never fabricated).</summary>
 public interface ITasleehGateway

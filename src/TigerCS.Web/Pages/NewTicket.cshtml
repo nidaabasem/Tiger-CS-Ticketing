@@ -69,13 +69,34 @@
         }
         else if (Model.Step == "lookup")
         {
-            <div class="section-card__title">Step 2 — CRM Buyer lookup</div>
+            <div class="section-card__title">Step 2 — Customer lookup</div>
             @if (!string.IsNullOrEmpty(Model.PhoneNumber))
             {
                 <p class="text-secondary">Phone number on file: <strong>@Model.PhoneNumber</strong></p>
             }
             <p class="text-secondary">
-                Searching Tiger CRM by phone number only (never by Unit Number or Project) for Buyer records with a Sold or Contract lead.
+                Searching by phone number only, across the source(s) configured for the selected Department
+                (all sources when no Department was selected). Results are listed per source — select the customer/unit that applies,
+                or continue without a match.
+            </p>
+
+            @if (Model.CustomerLookupUnavailable)
+            {
+                <div class="alert alert-info" role="status">
+                    <span>The department lookup configuration could not be loaded — searching Tiger CRM only for now. This does not block ticket creation.</span>
+                </div>
+            }
+            else if (Model.NoLookupSourcesConfigured)
+            {
+                <div class="alert alert-info" role="status">
+                    <span>No customer lookup sources are configured for this Department, so nothing was searched. You can continue; Project and Unit Number will be required.</span>
+                </div>
+            }
+
+            @if (Model.CrmParticipates)
+            {
+            <p class="text-secondary">
+                <strong>Tiger CRM</strong> — Buyer records with a Sold or Contract lead.
                 A phone number belongs to exactly one CRM customer; that customer may own multiple eligible units — select the one that applies.
             </p>
 
@@ -133,6 +154,76 @@
                     <span>Customer not found in CRM. You can still continue creating the ticket; Project and Unit Number will be required.</span>
                 </div>
             }
+            }
+
+            @* PACT/Tasleeh results — straight from the department-aware lookup
+               response, one card per participating source with its own
+               Matched / Not found / Unavailable state. A failed source never
+               hides another source's results and never blocks the wizard.
+               The source's customer-type code is deliberately NOT rendered:
+               PACT returns a raw numeric code whose table is not yet
+               published, and a bare "1"/"2" would mislead as a label. *@
+            @foreach (var source in Model.ExternalLookupSources)
+            {
+                var sourceLabel = TicketDisplay.LookupSourceLabel(source.Source);
+                <div class="customer-card">
+                    <div><strong>@sourceLabel</strong></div>
+                    @if (source.Status == "Found")
+                    {
+                        @foreach (var externalCustomer in source.Customers)
+                        {
+                            <div><strong>@(externalCustomer.DisplayName ?? "(no name on file)")</strong></div>
+                            <div class="text-secondary">
+                                @(externalCustomer.PhoneNumber is null ? "" : externalCustomer.PhoneNumber)
+                                @(externalCustomer.Email is null ? "" : $"· {externalCustomer.Email}")
+                            </div>
+                            @if (externalCustomer.Units.Count > 0)
+                            {
+                                <form method="post" asp-page-handler="UseExternalUnit">
+                                    <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                    <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                    <input type="hidden" name="departmentId" value="@Model.DepartmentId" />
+                                    <div class="unit-options">
+                                        <p class="text-secondary">Select Unit — every unit/contract on file is listed; none is pre-selected.</p>
+                                        @foreach (var unit in externalCustomer.Units)
+                                        {
+                                            var unitLabel = $"{unit.PropertyName ?? "Project"} / Unit {unit.UnitNumber ?? unit.ExternalUnitId}";
+                                            var packedValue = string.Join(':',
+                                                Uri.EscapeDataString(source.Source),
+                                                Uri.EscapeDataString(externalCustomer.ExternalCustomerId),
+                                                Uri.EscapeDataString(unit.ExternalUnitId),
+                                                Uri.EscapeDataString(externalCustomer.DisplayName ?? string.Empty),
+                                                Uri.EscapeDataString(unit.PropertyName ?? string.Empty),
+                                                Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
+                                            <label class="checkbox-field">
+                                                <input type="radio" name="selectedExternalUnit" value="@packedValue" required />
+                                                @unitLabel
+                                            </label>
+                                        }
+                                    </div>
+                                    <button type="submit" class="btn btn-sm">Use this customer/unit</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <p class="text-secondary">No units/contracts on file for this customer.</p>
+                            }
+                        }
+                    }
+                    else if (source.Status == "NotFound")
+                    {
+                        <div class="alert alert-info" role="status">
+                            <span>No match found in @sourceLabel.</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-info" role="status">
+                            <span>@sourceLabel is temporarily unavailable — you can still continue creating the ticket; this does not block anything.</span>
+                        </div>
+                    }
+                </div>
+            }
 
             <form method="post" asp-page-handler="ContinueWithoutMatch">
                 <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
@@ -155,6 +246,20 @@
                     <div class="text-secondary">@(Model.CrmBuyerCustomerName ?? "(no name on file)")</div>
                     <div><strong>Unit</strong></div>
                     <div class="text-secondary">@(Model.CrmBuyerProjectName ?? "Project") / Unit @Model.CrmBuyerUnitNumber</div>
+                }
+                else if (Model.ExternalSelection is not null)
+                {
+                    @* A matched external customer IS verified — against that
+                       source. What it lacks is a local reference id, so the
+                       unit also persists via the manual Project/Unit fields
+                       below, prefilled from the selection and still editable,
+                       alongside the source/tenant/unit identity ticket
+                       creation records. *@
+                    <div><strong>Customer (verified via @TicketDisplay.LookupSourceLabel(Model.ExternalSource ?? "lookup"))</strong></div>
+                    <div class="text-secondary">@(Model.ExternalCustomerName ?? "(no name on file)")</div>
+                    <div><strong>Unit</strong></div>
+                    <div class="text-secondary">@(Model.ExternalProjectName ?? "Project") / Unit @Model.ExternalUnitNumber</div>
+                    <div class="text-secondary">Project and Unit Number below are prefilled from this selection — adjust them if needed.</div>
                 }
                 else
                 {
@@ -239,6 +344,7 @@
                     <input type="hidden" name="crmBuyerCustomerName" value="@Model.CrmBuyerCustomerName" />
                     <input type="hidden" name="crmBuyerProjectName" value="@Model.CrmBuyerProjectName" />
                     <input type="hidden" name="crmBuyerUnitNumber" value="@Model.CrmBuyerUnitNumber" />
+                    <input type="hidden" name="externalSelection" value="@Model.ExternalSelection" />
 
                     @if (Model.CrmBuyerUnitId is null)
                     {

@@ -1,44 +1,58 @@
-using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
+using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 
 namespace TigerCS.Integrations.Modules.PactIntegration;
 
 /// <summary>
-/// Deterministic, in-memory fake implementing <see cref="IPactGateway"/> —
-/// a read-only, phone-search-only customer directory port. Holds no
+/// Deterministic, in-memory fake implementing <see cref="IPactCustomerLookupGateway"/> —
+/// a read-only, mobile-search-only customer/contract directory port. Holds no
 /// verification state and makes no verification decision, matching
-/// <see cref="IPactGateway"/>'s own documented boundary.
+/// <see cref="IPactCustomerLookupGateway"/>'s own documented boundary.
 ///
 /// <para>
-/// <b>NOT PRODUCTION-READY.</b> No real PACT endpoint details were available
-/// to build against — this fixture-backed double exists solely so
-/// <c>CustomerLookupAppService</c> can be built and tested end to end. It
-/// must be replaced by a real HTTP-backed <see cref="IPactGateway"/>
-/// implementation before any non-pilot use. Never describe validation
-/// against this fixture as production/PACT-integration-tested in any status
-/// update or go-live communication (mirrors <c>MockCrmGateway</c>'s own
-/// disclaimer).
+/// <b>NOT PRODUCTION-READY — and no longer the only implementation.</b>
+/// This fixture-backed double exists so <c>CustomerLookupAppService</c> and
+/// the Ticketing integration tests run deterministically with no network;
+/// the real HTTP-backed implementation is <see cref="PactCustomerHttpGateway"/>,
+/// selected with <c>Pact:Provider = "Http"</c> plus the <c>PactApi</c>
+/// configuration section. Never describe validation against this fixture as
+/// production/PACT-integration-tested in any status update or go-live
+/// communication (mirrors <c>MockCrmGateway</c>'s own disclaimer).
 /// </para>
 /// </summary>
-public sealed class MockPactGateway : IPactGateway
+public sealed class MockPactGateway : IPactCustomerLookupGateway
 {
     /// <summary>Any input containing this token simulates a PACT outage — Failed-source testing.</summary>
     public const string OutageTrigger = "OUTAGE";
 
-    private static readonly IReadOnlyDictionary<string, PactCustomerMatch> Fixtures =
-        new Dictionary<string, PactCustomerMatch>(StringComparer.OrdinalIgnoreCase)
+    private static readonly IReadOnlyDictionary<string, PactCustomerMatchDto> Fixtures =
+        new Dictionary<string, PactCustomerMatchDto>(StringComparer.OrdinalIgnoreCase)
         {
-            ["+971500000002"] = new PactCustomerMatch("PACT-CUST-3001", "Fatima Noor", "+971500000002")
+            // Shaped like the real PactCustomerHttpGateway mapping: the ids
+            // are PACT's numeric tenantID/unitID/contractID as strings, and
+            // CustomerType is the raw customerBuyerType CODE (never display
+            // text — see PactCustomerMatchDto.CustomerType's remarks).
+            ["+971500000002"] = new PactCustomerMatchDto(
+                "3001",
+                "Fatima Noor",
+                "+971500000002",
+                Email: null,
+                CustomerType: "2",
+                Contracts:
+                [
+                    new PactContractDto("41230", "88001", "0304", "Tiger Marina Residences", "Residential")
+                ])
         };
 
-    public Task<IReadOnlyList<PactCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<PactCustomerLookupResult> SearchByMobileAsync(string mobileNumber, CancellationToken cancellationToken = default)
     {
-        if (phoneNumber.Contains(OutageTrigger, StringComparison.OrdinalIgnoreCase))
+        if (mobileNumber.Contains(OutageTrigger, StringComparison.OrdinalIgnoreCase))
         {
-            throw new PactGatewayUnavailableException(
-                $"Simulated PACT outage triggered by '{phoneNumber}' (MockPactGateway — a test double, never a real PACT failure).");
+            return Task.FromResult(PactCustomerLookupResult.Unavailable(
+                $"Simulated PACT outage triggered by '{mobileNumber}' (MockPactGateway — a test double, never a real PACT failure)."));
         }
 
-        return Task.FromResult<IReadOnlyList<PactCustomerMatch>>(
-            Fixtures.TryGetValue(phoneNumber, out var match) ? [match] : []);
+        return Task.FromResult(Fixtures.TryGetValue(mobileNumber, out var match)
+            ? PactCustomerLookupResult.Success([match])
+            : PactCustomerLookupResult.NotFound());
     }
 }

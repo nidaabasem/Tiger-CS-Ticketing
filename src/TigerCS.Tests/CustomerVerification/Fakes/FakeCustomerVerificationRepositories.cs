@@ -2,6 +2,7 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
+using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Domain.Modules.CustomerVerification;
 
 namespace TigerCS.Tests.CustomerVerification.Fakes;
@@ -240,35 +241,46 @@ public sealed class FakeCrmCustomerLookupGateway : ICrmCustomerLookupGateway
     }
 }
 
-public sealed class FakePactGateway : IPactGateway
+/// <summary>
+/// PACT fake for CustomerLookupAppService's Pact leg. Unlike the two throwing
+/// fakes around it, IPactCustomerLookupGateway is outcome-wrapped and never
+/// throws — so a forced failure is expressed as a forced non-Success outcome
+/// (Unavailable/Unauthorized/InvalidResponse), exactly what the real
+/// PactCustomerHttpGateway would return.
+/// </summary>
+public sealed class FakePactCustomerLookupGateway : IPactCustomerLookupGateway
 {
-    public bool ThrowUnavailable { get; set; }
+    /// <summary>When set, every search returns this outcome (with no customers) instead of consulting the fixtures.</summary>
+    public PactCustomerLookupOutcome? ForcedOutcome { get; set; }
+
     public int SearchCallCount { get; private set; }
 
-    private readonly Dictionary<string, List<PactCustomerMatch>> _fixtures = [];
+    private readonly Dictionary<string, List<PactCustomerMatchDto>> _fixtures = [];
 
-    /// <summary>Seeds one more customer match for this phone number — call again for the same phone to seed multiple customers.</summary>
-    public FakePactGateway Seed(string phoneNumber, PactCustomerMatch match)
+    /// <summary>Seeds one more customer match for this mobile number — call again for the same mobile to seed multiple customers.</summary>
+    public FakePactCustomerLookupGateway Seed(string mobileNumber, PactCustomerMatchDto match)
     {
-        if (!_fixtures.TryGetValue(phoneNumber, out var matches))
+        if (!_fixtures.TryGetValue(mobileNumber, out var matches))
         {
             matches = [];
-            _fixtures[phoneNumber] = matches;
+            _fixtures[mobileNumber] = matches;
         }
 
         matches.Add(match);
         return this;
     }
 
-    public Task<IReadOnlyList<PactCustomerMatch>> SearchByPhoneAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public Task<PactCustomerLookupResult> SearchByMobileAsync(string mobileNumber, CancellationToken cancellationToken = default)
     {
         SearchCallCount++;
-        if (ThrowUnavailable)
+        if (ForcedOutcome is { } outcome)
         {
-            throw new PactGatewayUnavailableException("Simulated PACT outage.");
+            return Task.FromResult(new PactCustomerLookupResult(outcome, Message: "Forced by FakePactCustomerLookupGateway."));
         }
 
-        return Task.FromResult<IReadOnlyList<PactCustomerMatch>>(_fixtures.TryGetValue(phoneNumber, out var matches) ? matches : []);
+        return Task.FromResult(_fixtures.TryGetValue(mobileNumber, out var matches)
+            ? PactCustomerLookupResult.Success(matches)
+            : PactCustomerLookupResult.NotFound());
     }
 }
 

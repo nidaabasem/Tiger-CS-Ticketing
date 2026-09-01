@@ -498,6 +498,30 @@ public class TicketsController(
             detail: "This Category routes to a Department that is missing or deactivated.",
             statusCode: StatusCodes.Status404NotFound),
 
+        TicketCreationOutcome.CrmBuyerReferenceMismatch => Problem(
+            type: "https://tigercs.internal/problems/crm-buyer-reference-mismatch",
+            title: "CRM Buyer identifiers mismatch",
+            detail: "CrmBuyerCustomerId, CrmBuyerLeadId, CrmBuyerUnitId, and CrmBuyerProjectId must all be supplied or all be omitted.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.CrmBuyerAndManualProjectUnitBothSupplied => Problem(
+            type: "https://tigercs.internal/problems/crm-buyer-and-manual-project-unit-both-supplied",
+            title: "CRM Buyer match and manual Project/Unit both supplied",
+            detail: "A ticket carries a CRM Buyer match or a manually-entered Project/Unit Number, never both.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.CrmBuyerAndExternalVerificationBothSupplied => Problem(
+            type: "https://tigercs.internal/problems/crm-buyer-and-external-verification-both-supplied",
+            title: "CRM Buyer match and external verification both supplied",
+            detail: "A ticket carries a CRM Buyer match or an external-lookup verification (CustomerVerificationSource), never both.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.ExternalVerificationSourceMissing => Problem(
+            type: "https://tigercs.internal/problems/external-verification-source-missing",
+            title: "External identifiers supplied without a source",
+            detail: "ExternalCustomerId/ExternalUnitId require CustomerVerificationSource.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketCreationOutcome.TicketNumberCollision => Problem(
             type: "https://tigercs.internal/problems/ticket-number-collision",
             title: "Ticket number collision",

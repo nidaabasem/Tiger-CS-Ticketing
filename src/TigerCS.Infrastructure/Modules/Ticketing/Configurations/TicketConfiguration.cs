@@ -51,6 +51,18 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.Property(t => t.ManualProjectName).HasMaxLength(200);
         builder.Property(t => t.ManualUnitNumber).HasMaxLength(50);
 
+        // External-lookup verification identity (PACT/Tasleeh — generic, so
+        // a future source needs no schema change). Same no-FK discipline as
+        // the CrmBuyer* columns above: these are the external system's own
+        // identifiers, never a local cache table's key — no PACT cache table
+        // exists, deliberately. Indexed by external customer so "this
+        // tenant's previous tickets" is answerable without a scan.
+        builder.Property(t => t.CustomerVerificationSource).HasMaxLength(32);
+        builder.Property(t => t.ExternalCustomerId).HasMaxLength(64);
+        builder.Property(t => t.ExternalUnitId).HasMaxLength(64);
+        builder.HasIndex(t => new { t.CustomerVerificationSource, t.ExternalCustomerId })
+            .HasFilter("[ExternalCustomerId] IS NOT NULL");
+
         // MVP-Data-Dictionary.md §2.10 — optimistic concurrency for the
         // assignment/transfer/status-change/resolve/close/reconciliation
         // operations this increment adds (S-13). Deferred by the prior

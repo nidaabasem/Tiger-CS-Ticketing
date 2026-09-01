@@ -78,6 +78,33 @@ public class Ticket
     public string? ManualProjectName { get; private set; }
     public string? ManualUnitNumber { get; private set; }
 
+    /// <summary>
+    /// Which external customer-lookup source verified the customer identity
+    /// this ticket was created against, when it was not the real CRM Buyer
+    /// Lookup — e.g. "Pact" (a <c>CustomerLookupSource</c> name, stored as a
+    /// string so future sources need no schema change). A matched PACT/
+    /// Tasleeh customer IS verified — against that source — even though no
+    /// local UnitReference/ContactReference exists for it; what stays
+    /// CRM-scoped is <see cref="VerificationStatus"/> (see
+    /// <see cref="CreateFromExternalLookup"/>'s remarks). Null for CRM Buyer
+    /// tickets (their source is the CrmBuyer* fields themselves) and for
+    /// plain manual entry.
+    /// </summary>
+    public string? CustomerVerificationSource { get; private set; }
+
+    /// <summary>
+    /// The source's own identifier for the verified customer (for PACT, its
+    /// tenantID) — an external identifier only, stored for auditability,
+    /// reconciliation, and finding this customer's other tickets; never a
+    /// foreign key, and never resolved through a local cache table (none
+    /// exists for these sources). Travels with
+    /// <see cref="CustomerVerificationSource"/>, never alone.
+    /// </summary>
+    public string? ExternalCustomerId { get; private set; }
+
+    /// <summary>The source's own identifier for the selected unit (for PACT, its unitID) — same external-identifier-only discipline as <see cref="ExternalCustomerId"/>.</summary>
+    public string? ExternalUnitId { get; private set; }
+
     public TicketStatus TicketStatus { get; private set; }
     public CrmVerificationStatus VerificationStatus { get; private set; }
     public EscalationLevel EscalationLevel { get; private set; }
@@ -202,6 +229,56 @@ public class Ticket
         ticket.CrmBuyerUnitNumber = crmBuyerUnitNumber;
         ticket.VerificationStatus = CrmVerificationStatus.Verified;
         ticket.SlaState = SlaState.Running;
+        return ticket;
+    }
+
+    /// <summary>
+    /// The external-lookup path: the agent explicitly selected one customer's
+    /// one unit from a matched PACT/Tasleeh result in the department-aware
+    /// customer lookup. The customer identity IS verified — against that
+    /// external source — and this factory records exactly which source and
+    /// which of its own customer/unit identifiers
+    /// (<see cref="CustomerVerificationSource"/>/<see cref="ExternalCustomerId"/>/
+    /// <see cref="ExternalUnitId"/> — external identifiers only, never
+    /// foreign keys and never a local cache row), alongside the same
+    /// human-readable Project/Unit snapshot the manual path stores.
+    ///
+    /// <para>
+    /// <see cref="VerificationStatus"/> deliberately stays
+    /// <see cref="CrmVerificationStatus.Unverified"/>: that enum is the
+    /// CRM-named concept the rest of the system keys on (reconciliation
+    /// still may link a local CRM Unit/Contact reference later; a PACT match
+    /// carries no such pair), so external verification is expressed by the
+    /// source fields — display and reporting derive "Verified via PACT" from
+    /// them — rather than by widening a CRM-scoped status.
+    /// </para>
+    /// </summary>
+    public static Ticket CreateFromExternalLookup(
+        string ticketNumber,
+        int departmentId,
+        string customerVerificationSource,
+        string? externalCustomerId,
+        string? externalUnitId,
+        string? manualProjectName,
+        string? manualUnitNumber,
+        int categoryId,
+        byte priorityId,
+        string requestSummary,
+        DateTime createdAtUtc)
+    {
+        if (string.IsNullOrWhiteSpace(customerVerificationSource))
+        {
+            throw new ArgumentException(
+                "CustomerVerificationSource is required — external identifiers never travel without their source.",
+                nameof(customerVerificationSource));
+        }
+
+        var ticket = CreateUnverified(
+            ticketNumber, departmentId, categoryId, priorityId, requestSummary, createdAtUtc,
+            manualProjectName, manualUnitNumber);
+        ticket.CustomerVerificationSource = customerVerificationSource;
+        ticket.ExternalCustomerId = externalCustomerId;
+        ticket.ExternalUnitId = externalUnitId;
         return ticket;
     }
 
