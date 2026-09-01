@@ -10,11 +10,16 @@ namespace TigerCS.Tests.CustomerVerification.Services;
 /// <summary>
 /// <see cref="PactCustomerHttpGateway"/>'s HTTP contract with PACT's
 /// <c>GET v1/contracts/{mobile}</c> / <c>GET v1/contracts/{mobile}/customer-type</c>
-/// endpoints — request shape (X-API-KEY header, URL-encoded mobile in the
-/// path), the conditional customer-type call, and every documented response
-/// case (found, multiple contracts, not found, bad request, unauthorized/
-/// forbidden, timeout, network failure, server error, malformed/empty body,
-/// missing configuration). Mirrors <see cref="CrmBuyerHttpGatewayTests"/>.
+/// endpoints, against PACT's REAL response shape: a flat <c>data</c> array of
+/// per-contract rows (never a customer object with a nested contracts array).
+/// Covers the request shape (X-API-KEY header, URL-encoded mobile in the
+/// path), tenantID grouping (one contract, multiple contracts for the same
+/// tenant, multiple tenants), the full real field mapping,
+/// <c>customerBuyerType</c> as the authoritative type with the customer-type
+/// endpoint strictly a fallback, and every documented failure case (empty
+/// data array, null/missing data, bad request, unauthorized/forbidden,
+/// timeout, network failure, server error, malformed/empty body, missing
+/// configuration). Mirrors <see cref="CrmBuyerHttpGatewayTests"/>.
 /// </summary>
 public class PactCustomerHttpGatewayTests
 {
@@ -44,64 +49,83 @@ public class PactCustomerHttpGatewayTests
                 : contractsResponse());
         });
 
-    private const string TenantWithTypeAndContractsJson = """
+    // The real wire shape: a flat data array, one row per contract, with the
+    // customer/tenant fields repeated on every row — including the financial
+    // fields the gateway deliberately does not model or map.
+    private const string SingleContractJson = """
         {
-          "tenantId": "PACT-TNT-7001",
-          "tenantName": "Fatima Noor",
-          "mobile": "+971500000002",
-          "email": "fatima@example.com",
-          "customerType": "Tenant",
-          "contracts": [
+          "data": [
             {
-              "tenantId": "PACT-TNT-7001",
-              "contractNumber": "PACT-CNT-88001",
-              "unitCode": "MAR-A-0304",
-              "unitNumber": "0304",
+              "tenantID": 7001,
+              "companyID": 3,
+              "projectCode": "MAR",
               "projectName": "Tiger Marina Residences",
-              "unitType": "Residential"
+              "unitID": 41230,
+              "unitCode": "MAR-A-0304",
+              "unitType": "Residential",
+              "unitNumber": "0304",
+              "unitStatus": "Occupied",
+              "contractID": 88001,
+              "contractStartDate": "2025-01-01T00:00:00",
+              "contractEndDate": "2026-01-01T00:00:00",
+              "contractNetAmount": 52000.50,
+              "contractDiscountAmount": 0,
+              "contractServicesNetAmount": 1200.00,
+              "contractServicesDiscountAmount": 0,
+              "customerMobile": "+971500000002",
+              "customerName": "Fatima Noor",
+              "customerEmail": "fatima@example.com",
+              "customerBuyerType": 2,
+              "grossArea": 120.5,
+              "netArea": 98.2
             }
           ]
         }
         """;
 
-    private const string TenantWithoutTypeJson = """
+    private const string SingleContractNoBuyerTypeJson = """
         {
-          "tenantId": "PACT-TNT-7001",
-          "tenantName": "Fatima Noor",
-          "mobile": "+971500000002",
-          "email": null,
-          "customerType": null,
-          "contracts": [
+          "data": [
             {
-              "tenantId": "PACT-TNT-7001",
-              "contractNumber": "PACT-CNT-88001",
-              "unitCode": "MAR-A-0304",
-              "unitNumber": "0304",
+              "tenantID": 7001,
+              "companyID": 3,
+              "projectCode": "MAR",
               "projectName": "Tiger Marina Residences",
-              "unitType": "Residential"
+              "unitID": 41230,
+              "unitCode": "MAR-A-0304",
+              "unitType": "Residential",
+              "unitNumber": "0304",
+              "unitStatus": "Occupied",
+              "contractID": 88001,
+              "customerMobile": "+971500000002",
+              "customerName": "Fatima Noor",
+              "customerEmail": null,
+              "customerBuyerType": null
             }
           ]
         }
         """;
 
     [Fact]
-    public async Task SearchByMobileAsync_CustomerFound_ReturnsSuccessWithMappedFields()
+    public async Task SearchByMobileAsync_SingleContract_ReturnsSuccessWithAllRealFieldsMapped()
     {
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, TenantWithTypeAndContractsJson)));
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
         var gateway = CreateGateway(handler);
 
         var result = await gateway.SearchByMobileAsync("+971500000002");
 
         Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
         var customer = Assert.Single(result.Customers!);
-        Assert.Equal("PACT-TNT-7001", customer.PactCustomerId);
+        // tenantID is the primary external PACT customer/tenant identifier.
+        Assert.Equal("7001", customer.PactCustomerId);
         Assert.Equal("Fatima Noor", customer.DisplayName);
         Assert.Equal("+971500000002", customer.PhoneNumber);
         Assert.Equal("fatima@example.com", customer.Email);
-        Assert.Equal("Tenant", customer.CustomerType);
+        // customerBuyerType from the contracts response itself — authoritative.
+        Assert.Equal("2", customer.CustomerType);
         var contract = Assert.Single(customer.Contracts);
         Assert.Equal("MAR-A-0304", contract.ExternalUnitId);
-        Assert.Equal("PACT-CNT-88001", contract.ContractNumber);
+        Assert.Equal("88001", contract.ContractNumber);
         Assert.Equal("0304", contract.UnitNumber);
         Assert.Equal("Tiger Marina Residences", contract.ProjectName);
         Assert.Equal("Residential", contract.UnitType);
@@ -110,7 +134,7 @@ public class PactCustomerHttpGatewayTests
     [Fact]
     public async Task SearchByMobileAsync_SendsApiKeyHeaderAndUrlEncodedMobileInPath()
     {
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, TenantWithTypeAndContractsJson)));
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
         var gateway = CreateGateway(handler);
 
         await gateway.SearchByMobileAsync("+971 50 000 0002");
@@ -124,25 +148,81 @@ public class PactCustomerHttpGatewayTests
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_ContractsResponseCarriesCustomerType_NeverCallsCustomerTypeEndpoint()
+    public async Task SearchByMobileAsync_MultipleContractsForSameTenant_GroupsIntoOneCustomerWithAllUnits()
     {
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, TenantWithTypeAndContractsJson)));
+        const string json = """
+            {
+              "data": [
+                { "tenantID": 7001, "companyID": 3, "projectCode": "MAR", "projectName": "Tiger Marina Residences", "unitID": 41230, "unitCode": "MAR-A-0304", "unitType": "Residential", "unitNumber": "0304", "unitStatus": "Occupied", "contractID": 88001, "customerMobile": "+971500000002", "customerName": "Fatima Noor", "customerEmail": "fatima@example.com", "customerBuyerType": 2 },
+                { "tenantID": 7001, "companyID": 3, "projectCode": "BAY", "projectName": "Tiger Bay Towers", "unitID": 52110, "unitCode": "BAY-B-1105", "unitType": "Commercial", "unitNumber": "1105", "unitStatus": "Occupied", "contractID": 88002, "customerMobile": "+971500000002", "customerName": "Fatima Noor", "customerEmail": "fatima@example.com", "customerBuyerType": 2 }
+              ]
+            }
+            """;
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
         var gateway = CreateGateway(handler);
 
         var result = await gateway.SearchByMobileAsync("+971500000002");
 
         Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
-        // "When required" only — the type was already on the contracts response.
+        // Two rows, one tenantID — one customer match with ALL of that
+        // tenant's contracts/units, never just the first row and never an
+        // auto-selected one.
+        var customer = Assert.Single(result.Customers!);
+        Assert.Equal("7001", customer.PactCustomerId);
+        Assert.Equal(2, customer.Contracts.Count);
+        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "MAR-A-0304" && c.ContractNumber == "88001");
+        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "BAY-B-1105" && c.ContractNumber == "88002");
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_MultipleTenants_ReturnsOneCustomerPerTenantWithTheirOwnContracts()
+    {
+        const string json = """
+            {
+              "data": [
+                { "tenantID": 7001, "companyID": 3, "projectCode": "MAR", "projectName": "Tiger Marina Residences", "unitID": 41230, "unitCode": "MAR-A-0304", "unitType": "Residential", "unitNumber": "0304", "unitStatus": "Occupied", "contractID": 88001, "customerMobile": "+971500000002", "customerName": "Fatima Noor", "customerEmail": "fatima@example.com", "customerBuyerType": 2 },
+                { "tenantID": 7002, "companyID": 3, "projectCode": "BAY", "projectName": "Tiger Bay Towers", "unitID": 52110, "unitCode": "BAY-B-1105", "unitType": "Commercial", "unitNumber": "1105", "unitStatus": "Occupied", "contractID": 88002, "customerMobile": "+971500000002", "customerName": "Youssef Noor", "customerEmail": null, "customerBuyerType": 1 }
+              ]
+            }
+            """;
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+971500000002");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        Assert.Equal(2, result.Customers!.Count);
+        var fatima = Assert.Single(result.Customers, c => c.PactCustomerId == "7001");
+        Assert.Equal("Fatima Noor", fatima.DisplayName);
+        Assert.Equal("2", fatima.CustomerType);
+        Assert.Equal("MAR-A-0304", Assert.Single(fatima.Contracts).ExternalUnitId);
+        var youssef = Assert.Single(result.Customers, c => c.PactCustomerId == "7002");
+        Assert.Equal("Youssef Noor", youssef.DisplayName);
+        Assert.Equal("1", youssef.CustomerType);
+        Assert.Equal("BAY-B-1105", Assert.Single(youssef.Contracts).ExternalUnitId);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_BuyerTypePresent_NeverCallsCustomerTypeEndpoint()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+971500000002");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        // customerBuyerType came on the contracts response — the customer-type
+        // endpoint is a fallback only and must not be called.
         Assert.Equal(1, handler.CallCount);
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_CustomerTypeMissing_FetchesItFromCustomerTypeEndpoint()
+    public async Task SearchByMobileAsync_BuyerTypeNull_FallsBackToCustomerTypeEndpoint()
     {
         var requestPaths = new List<string>();
         var handler = RoutedHandler(
-            () => JsonResponse(HttpStatusCode.OK, TenantWithoutTypeJson),
-            () => JsonResponse(HttpStatusCode.OK, """{ "tenantId": "PACT-TNT-7001", "customerType": "Owner" }"""),
+            () => JsonResponse(HttpStatusCode.OK, SingleContractNoBuyerTypeJson),
+            () => JsonResponse(HttpStatusCode.OK, """{ "tenantId": "7001", "customerType": "Owner" }"""),
             requestPaths);
         var gateway = CreateGateway(handler);
 
@@ -159,58 +239,33 @@ public class PactCustomerHttpGatewayTests
     [InlineData(HttpStatusCode.InternalServerError, "irrelevant")]
     [InlineData(HttpStatusCode.NotFound, "irrelevant")]
     [InlineData(HttpStatusCode.OK, "{ not valid json")]
-    public async Task SearchByMobileAsync_CustomerTypeCallFails_LookupStillSucceedsWithNullType(
+    public async Task SearchByMobileAsync_CustomerTypeFallbackFails_LookupStillSucceedsWithNullType(
         HttpStatusCode customerTypeStatus, string customerTypeBody)
     {
         var handler = RoutedHandler(
-            () => JsonResponse(HttpStatusCode.OK, TenantWithoutTypeJson),
+            () => JsonResponse(HttpStatusCode.OK, SingleContractNoBuyerTypeJson),
             () => JsonResponse(customerTypeStatus, customerTypeBody));
         var gateway = CreateGateway(handler);
 
         var result = await gateway.SearchByMobileAsync("+971500000002");
 
-        // The secondary call is best-effort: its failure never degrades the
+        // The fallback call is best-effort: its failure never degrades the
         // already-successful contracts lookup.
         Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
         Assert.Null(Assert.Single(result.Customers!).CustomerType);
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_MultipleContracts_ReturnsAllOfThem_NeverJustTheFirst()
+    public async Task SearchByMobileAsync_RowWithNoUnitIdentifiers_IsDroppedNotFabricated()
     {
+        // First row carries no unitCode/unitID/contractID/unitNumber at all —
+        // dropped. Second row has only a contractID, which becomes the
+        // external id fallback.
         const string json = """
             {
-              "tenantId": "PACT-TNT-7001",
-              "tenantName": "Fatima Noor",
-              "mobile": "1",
-              "customerType": "Tenant",
-              "contracts": [
-                { "tenantId": "PACT-TNT-7001", "contractNumber": "C-1", "unitCode": "U-100", "unitNumber": "101", "projectName": "P1", "unitType": "Residential" },
-                { "tenantId": "PACT-TNT-7001", "contractNumber": "C-2", "unitCode": "U-200", "unitNumber": "201", "projectName": "P2", "unitType": "Commercial" }
-              ]
-            }
-            """;
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
-        var gateway = CreateGateway(handler);
-
-        var result = await gateway.SearchByMobileAsync("1");
-
-        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
-        var customer = Assert.Single(result.Customers!);
-        Assert.Equal(2, customer.Contracts.Count);
-    }
-
-    [Fact]
-    public async Task SearchByMobileAsync_ContractRowWithNoIdentifiers_IsDroppedNotFabricated()
-    {
-        const string json = """
-            {
-              "tenantId": "PACT-TNT-7001",
-              "tenantName": "Fatima Noor",
-              "customerType": "Tenant",
-              "contracts": [
-                { "tenantId": "PACT-TNT-7001", "contractNumber": null, "unitCode": null, "unitNumber": null, "projectName": "P1", "unitType": null },
-                { "tenantId": "PACT-TNT-7001", "contractNumber": "C-2", "unitCode": null, "unitNumber": null, "projectName": "P2", "unitType": null }
+              "data": [
+                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P1", "unitID": null, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": null, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 },
+                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P2", "unitID": null, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": 99, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 }
               ]
             }
             """;
@@ -221,30 +276,14 @@ public class PactCustomerHttpGatewayTests
 
         Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
         var contract = Assert.Single(Assert.Single(result.Customers!).Contracts);
-        // The second row falls back to its contract number as the external id.
-        Assert.Equal("C-2", contract.ExternalUnitId);
+        Assert.Equal("99", contract.ExternalUnitId);
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_TenantWithNoContracts_StillSuccessWithEmptyContractsList()
+    public async Task SearchByMobileAsync_EmptyDataArray_ReturnsNotFound()
     {
-        const string json = """{ "tenantId": "PACT-TNT-7001", "tenantName": "Fatima Noor", "customerType": "Tenant", "contracts": [] }""";
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
-        var gateway = CreateGateway(handler);
-
-        var result = await gateway.SearchByMobileAsync("+971500000002");
-
-        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
-        Assert.Empty(Assert.Single(result.Customers!).Contracts);
-    }
-
-    [Fact]
-    public async Task SearchByMobileAsync_EmptyMatchBody_ReturnsNotFound()
-    {
-        // A 200 whose body carries no tenant identity and no contracts is
-        // PACT answering "nothing on file", not an error.
-        const string json = """{ "tenantId": null, "tenantName": null, "mobile": null, "contracts": [] }""";
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
+        // An empty data array is PACT answering "nothing on file", not an error.
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, """{ "data": [] }""")));
         var gateway = CreateGateway(handler);
 
         var result = await gateway.SearchByMobileAsync("+971500000000");
@@ -252,6 +291,19 @@ public class PactCustomerHttpGatewayTests
         Assert.Equal(PactCustomerLookupOutcome.NotFound, result.Outcome);
         Assert.Null(result.Customers);
         Assert.Equal(1, handler.CallCount); // no pointless customer-type call for a non-match
+    }
+
+    [Theory]
+    [InlineData("""{ "data": null }""")]
+    [InlineData("{ }")]
+    public async Task SearchByMobileAsync_NullOrMissingDataArray_ReturnsInvalidResponse(string json)
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+971500000000");
+
+        Assert.Equal(PactCustomerLookupOutcome.InvalidResponse, result.Outcome);
     }
 
     [Fact]
@@ -353,7 +405,7 @@ public class PactCustomerHttpGatewayTests
     [Fact]
     public async Task SearchByMobileAsync_MissingApiKey_ReturnsUnavailableWithoutCallingPact()
     {
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, TenantWithTypeAndContractsJson)));
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
         var gateway = CreateGateway(handler, apiKey: null);
 
         var result = await gateway.SearchByMobileAsync("+971500000000");
@@ -368,7 +420,7 @@ public class PactCustomerHttpGatewayTests
         // Typed HttpClient with no BaseAddress rejects the relative URI with
         // an InvalidOperationException — collapsed to Unavailable, never an
         // unhandled exception or a startup failure.
-        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, TenantWithTypeAndContractsJson)));
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
         var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
         var gateway = new PactCustomerHttpGateway(
             httpClient, Options.Create(new PactApiOptions { BaseUrl = null, ApiKey = ApiKey }), NullLogger<PactCustomerHttpGateway>.Instance);

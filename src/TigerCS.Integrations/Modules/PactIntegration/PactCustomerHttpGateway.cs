@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -9,9 +10,16 @@ namespace TigerCS.Integrations.Modules.PactIntegration;
 
 /// <summary>
 /// Real HTTP-backed <see cref="IPactCustomerLookupGateway"/> — calls PACT's
-/// <c>GET v1/contracts/{mobile}</c> for the customer's contracts/units and,
-/// only when that response carries no customer type,
-/// <c>GET v1/contracts/{mobile}/customer-type</c> for it. Registered as a
+/// <c>GET v1/contracts/{mobile}</c>, whose real body is a flat <c>data</c>
+/// array of per-contract rows (see <see cref="PactContractsHttpResponse"/>'s
+/// remarks): rows are grouped by <c>tenantID</c> so one customer match
+/// carries ALL of that tenant's contracts/units — never just the first row,
+/// and never an auto-selected one. The contracts response's own
+/// <c>customerBuyerType</c> is the authoritative customer type;
+/// <c>GET v1/contracts/{mobile}/customer-type</c> is called only as a
+/// fallback when every row for a tenant came back with it null/absent (the
+/// integration spec requires the customer type to accompany a match when
+/// PACT can supply one). Registered as a
 /// typed <see cref="HttpClient"/> (<c>IntegrationsServiceCollectionExtensions</c>)
 /// with its base address bound from <see cref="PactApiOptions.BaseUrl"/> —
 /// the same shape as <c>CrmBuyerHttpGateway</c>, deliberately.
@@ -137,58 +145,76 @@ public sealed class PactCustomerHttpGateway(
             return PactCustomerLookupResult.InvalidResponse("PACT returned a malformed response body.");
         }
 
-        if (payload is null)
+        if (payload?.Data is null)
         {
-            return PactCustomerLookupResult.InvalidResponse("PACT returned an empty response body.");
+            return PactCustomerLookupResult.InvalidResponse(
+                "PACT returned a body without the documented 'data' array.");
         }
 
-        var contracts = MapContracts(payload.Contracts);
-        var tenantId = FirstNonBlank(payload.TenantId, payload.Contracts?.Select(c => c.TenantId).FirstOrDefault(id => !string.IsNullOrWhiteSpace(id)));
-        if (tenantId is null && string.IsNullOrWhiteSpace(payload.TenantName) && contracts.Count == 0)
+        if (payload.Data.Count == 0)
         {
-            // A 200 that carries no customer identity and no contracts is
-            // PACT's way of answering "nothing on file" with an empty body.
+            // An empty data array is PACT answering "nothing on file" — a
+            // data-not-found result, never an error.
             return PactCustomerLookupResult.NotFound();
         }
 
-        // "Retrieve customer type when required": only when the contracts
-        // response didn't already carry one. Its failure never degrades the
-        // main result — the type just stays null.
-        var customerType = FirstNonBlank(payload.CustomerType)
-            ?? await TryGetCustomerTypeAsync(mobileNumber, apiKey, cancellationToken);
+        // The real body is one flat row per contract; the same tenant appears
+        // once per contract. Group by tenantID — the primary external PACT
+        // customer/tenant identifier — so each customer match carries ALL of
+        // that tenant's contracts/units and nothing is ever auto-selected.
+        // A row PACT sent without a tenantID falls back to the searched
+        // mobile number as the group key rather than being dropped.
+        var matches = payload.Data
+            .GroupBy(row => row.TenantID?.ToString(CultureInfo.InvariantCulture) ?? mobileNumber)
+            .Select(tenantRows => new PactCustomerMatchDto(
+                tenantRows.Key,
+                FirstNonBlank(tenantRows.Select(row => row.CustomerName).ToArray()),
+                FirstNonBlank(tenantRows.Select(row => row.CustomerMobile).ToArray()) ?? mobileNumber,
+                FirstNonBlank(tenantRows.Select(row => row.CustomerEmail).ToArray()),
+                tenantRows
+                    .Select(row => row.CustomerBuyerType)
+                    .FirstOrDefault(buyerType => buyerType is not null)
+                    ?.ToString(CultureInfo.InvariantCulture),
+                MapContracts(tenantRows)))
+            .ToList();
 
-        var match = new PactCustomerMatchDto(
-            // The mobile number itself is the identifier PACT was searched
-            // by — used only when PACT sent no tenant id of its own, so a
-            // match is never dropped for lacking one.
-            tenantId ?? mobileNumber,
-            FirstNonBlank(payload.TenantName),
-            FirstNonBlank(payload.Mobile) ?? mobileNumber,
-            FirstNonBlank(payload.Email),
-            customerType,
-            contracts);
-        return PactCustomerLookupResult.Success([match]);
+        // customerBuyerType on the contracts response is authoritative. The
+        // customer-type endpoint is a fallback only — called once, and only
+        // when a tenant's rows all lacked it (the integration spec requires
+        // the customer type to accompany a match when PACT can supply one).
+        // Its failure never degrades the main result — the type stays null.
+        if (matches.Any(match => match.CustomerType is null)
+            && await TryGetCustomerTypeAsync(mobileNumber, apiKey, cancellationToken) is { } fallbackType)
+        {
+            matches = matches
+                .Select(match => match.CustomerType is null ? match with { CustomerType = fallbackType } : match)
+                .ToList();
+        }
+
+        return PactCustomerLookupResult.Success(matches);
     }
 
-    private static IReadOnlyList<PactContractDto> MapContracts(List<PactContractHttpDto>? contracts) =>
-        contracts is null
-            ? []
-            : contracts
-                .Select(contract => new
-                {
-                    Contract = contract,
-                    ExternalUnitId = FirstNonBlank(contract.UnitCode, contract.ContractNumber, contract.UnitNumber)
-                })
-                // A row with no unit code, contract number, or unit number
-                // identifies nothing — dropped rather than fabricating an id.
-                .Where(row => row.ExternalUnitId is not null)
-                .Select(row => new PactContractDto(
-                    row.ExternalUnitId!,
-                    FirstNonBlank(row.Contract.ContractNumber),
-                    FirstNonBlank(row.Contract.UnitNumber),
-                    FirstNonBlank(row.Contract.ProjectName),
-                    FirstNonBlank(row.Contract.UnitType)))
-                .ToList();
+    private static IReadOnlyList<PactContractDto> MapContracts(IEnumerable<PactContractRowHttpDto> rows) =>
+        rows
+            .Select(row => new
+            {
+                Row = row,
+                ExternalUnitId = FirstNonBlank(
+                    row.UnitCode,
+                    row.UnitID?.ToString(CultureInfo.InvariantCulture),
+                    row.ContractID?.ToString(CultureInfo.InvariantCulture),
+                    row.UnitNumber)
+            })
+            // A row with no unit code, unit id, contract id, or unit number
+            // identifies nothing — dropped rather than fabricating an id.
+            .Where(row => row.ExternalUnitId is not null)
+            .Select(row => new PactContractDto(
+                row.ExternalUnitId!,
+                row.Row.ContractID?.ToString(CultureInfo.InvariantCulture),
+                FirstNonBlank(row.Row.UnitNumber),
+                FirstNonBlank(row.Row.ProjectName),
+                FirstNonBlank(row.Row.UnitType)))
+            .ToList();
 
     /// <summary>
     /// Best-effort secondary call — any failure (unreachable, non-200,
