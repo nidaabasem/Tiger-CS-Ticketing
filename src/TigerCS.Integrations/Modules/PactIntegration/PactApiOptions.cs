@@ -28,4 +28,20 @@ public sealed class PactApiOptions
     /// exactly like <c>Crm:SecretKey</c> (docs/DEV-SETUP.md §3a/§3b).
     /// </summary>
     public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// <see cref="BaseUrl"/> as the typed HttpClient's base address, with a
+    /// trailing '/' guaranteed. Without it, .NET's relative-URI resolution
+    /// silently DROPS the last path segment of the base address —
+    /// "http://pact:5020/api" + "v1/contracts/9715…" resolves to
+    /// "http://pact:5020/v1/contracts/9715…", losing "/api" — and PACT's 404
+    /// for the unknown route surfaces as a NotFound lookup ("customer not
+    /// found") with nothing visibly wrong. Null when no BaseUrl is
+    /// configured, which the gateway turns into an Unavailable outcome on
+    /// first use.
+    /// </summary>
+    public Uri? ResolveBaseAddress() =>
+        string.IsNullOrWhiteSpace(BaseUrl)
+            ? null
+            : new Uri(BaseUrl.EndsWith('/') ? BaseUrl : BaseUrl + "/", UriKind.Absolute);
 }

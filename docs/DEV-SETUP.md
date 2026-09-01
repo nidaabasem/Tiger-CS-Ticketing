@@ -177,6 +177,46 @@ which customer lookup surfaces as a `Failed` Pact source entry; ticket
 creation is never blocked and the agent falls back to manual customer/unit
 entry, consistent with every other lookup source.
 
+### Troubleshooting: PACT says "no match" for a customer that exists
+
+`PactCustomerHttpGateway` sends PACT the mobile number trimmed and with
+every `+` removed (`NormalizePactPhone` — PACT-request-side only; the
+stored intake/ticket number is never changed). If a known customer still
+comes back not-found, capture the gateway's Debug diagnostics — they show
+the exact absolute URL sent and the raw status, which separates the three
+realistic causes:
+
+```jsonc
+// appsettings.{Environment}.json (or user-secrets) — temporary, remove after
+"Logging": { "LogLevel": { "TigerCS.Integrations": "Debug" } }
+```
+
+- `GET http://…/v1/contracts/9715… -> HTTP 200` + "EMPTY data array":
+  the route is right; PACT matched nothing for the number **as sent** —
+  a number-format mismatch (see the curl matrix below).
+- `-> HTTP 404`: the customer might not exist, **or the URL is wrong** —
+  check the absolute URL in the same line. A `PactApi:BaseUrl` carrying a
+  path prefix must survive into the URL (`ResolveBaseAddress` guarantees
+  the trailing `/` that relative-URI resolution needs).
+- `-> HTTP 401/403`: the API key — surfaces as a Failed source, never as
+  "no match".
+
+To determine the exact number format PACT expects, run this matrix from a
+machine inside the Tiger network against the current PACT base URL with a
+mobile known to exist in PACT, and see which variant returns rows:
+
+```bash
+BASE="<current PactApi BaseUrl>"; KEY="<current PactApi ApiKey>"
+for m in 971501234567 00971501234567 0501234567 +971501234567; do
+  echo "== $m =="
+  curl -sS -H "X-API-KEY: $KEY" "${BASE%/}/v1/contracts/$m" | head -c 300; echo
+done
+```
+
+Whichever variant returns the customer defines the target format;
+`NormalizePactPhone` is the single place to adjust (PACT-only — CRM and
+persistence are untouched by design).
+
 ## 4. Apply the database migration
 
 From `src/`:

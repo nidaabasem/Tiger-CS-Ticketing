@@ -495,6 +495,45 @@ public class PactCustomerHttpGatewayTests
         Assert.Equal(0, handler.CallCount);
     }
 
+    // ---- Base-address resolution: a slashless BaseUrl with a path prefix
+    // must not silently lose the prefix (relative-URI resolution drops the
+    // last path segment of a slashless base, turning every lookup into a
+    // 404 -> "customer not found"). ----
+
+    [Theory]
+    [InlineData("https://pact.example.test/", "https://pact.example.test/")]
+    [InlineData("https://pact.example.test", "https://pact.example.test/")]
+    [InlineData("https://pact.example.test/api", "https://pact.example.test/api/")]
+    [InlineData("https://pact.example.test/api/", "https://pact.example.test/api/")]
+    public void ResolveBaseAddress_AlwaysEndsWithASlash(string configured, string expected)
+    {
+        var options = new PactApiOptions { BaseUrl = configured };
+
+        Assert.Equal(new Uri(expected), options.ResolveBaseAddress());
+    }
+
+    [Fact]
+    public void ResolveBaseAddress_PathPrefix_SurvivesRelativeUriResolution()
+    {
+        // The exact failure mode being prevented: without the trailing
+        // slash, "…/api" + "v1/contracts/…" resolves to "…/v1/contracts/…",
+        // silently dropping "/api".
+        var baseAddress = new PactApiOptions { BaseUrl = "https://pact.example.test/api" }.ResolveBaseAddress();
+
+        var resolved = new Uri(baseAddress!, "v1/contracts/971501234567");
+
+        Assert.Equal("/api/v1/contracts/971501234567", resolved.AbsolutePath);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveBaseAddress_MissingBaseUrl_ReturnsNull(string? configured)
+    {
+        Assert.Null(new PactApiOptions { BaseUrl = configured }.ResolveBaseAddress());
+    }
+
     [Fact]
     public async Task SearchByMobileAsync_MissingBaseUrl_ReturnsUnavailable()
     {
