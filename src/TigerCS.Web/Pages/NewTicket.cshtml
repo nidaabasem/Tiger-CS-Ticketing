@@ -165,7 +165,7 @@
                published, and a bare "1"/"2" would mislead as a label. *@
             @foreach (var source in Model.ExternalLookupSources)
             {
-                var sourceLabel = NewTicketModel.SourceDisplayName(source.Source);
+                var sourceLabel = TicketDisplay.LookupSourceLabel(source.Source);
                 <div class="customer-card">
                     <div><strong>@sourceLabel</strong></div>
                     @if (source.Status == "Found")
@@ -191,6 +191,7 @@
                                             var packedValue = string.Join(':',
                                                 Uri.EscapeDataString(source.Source),
                                                 Uri.EscapeDataString(externalCustomer.ExternalCustomerId),
+                                                Uri.EscapeDataString(unit.ExternalUnitId),
                                                 Uri.EscapeDataString(externalCustomer.DisplayName ?? string.Empty),
                                                 Uri.EscapeDataString(unit.PropertyName ?? string.Empty),
                                                 Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
@@ -248,11 +249,13 @@
                 }
                 else if (Model.ExternalSelection is not null)
                 {
-                    @* A PACT/Tasleeh selection is not CRM-verified and has no
-                       local reference ids — it persists via the manual
-                       Project/Unit fields below, prefilled from the selection
-                       and still editable. *@
-                    <div><strong>Customer (from @NewTicketModel.SourceDisplayName(Model.ExternalSource ?? "lookup") — not verified)</strong></div>
+                    @* A matched external customer IS verified — against that
+                       source. What it lacks is a local reference id, so the
+                       unit also persists via the manual Project/Unit fields
+                       below, prefilled from the selection and still editable,
+                       alongside the source/tenant/unit identity ticket
+                       creation records. *@
+                    <div><strong>Customer (verified via @TicketDisplay.LookupSourceLabel(Model.ExternalSource ?? "lookup"))</strong></div>
                     <div class="text-secondary">@(Model.ExternalCustomerName ?? "(no name on file)")</div>
                     <div><strong>Unit</strong></div>
                     <div class="text-secondary">@(Model.ExternalProjectName ?? "Project") / Unit @Model.ExternalUnitNumber</div>

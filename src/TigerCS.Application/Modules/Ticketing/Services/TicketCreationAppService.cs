@@ -116,6 +116,26 @@ public sealed class TicketCreationAppService(
             return TicketCreationResult.Failure(TicketCreationOutcome.CrmBuyerAndManualProjectUnitBothSupplied);
         }
 
+        // External-lookup verification (PACT/Tasleeh): the source name and
+        // its own customer/unit identifiers travel together — identifiers
+        // without a source are meaningless for audit/reconciliation and are
+        // rejected rather than stored orphaned. Mutually exclusive with a
+        // CRM Buyer match (a ticket records one verified identity), but the
+        // manual Project/Unit snapshot deliberately accompanies it — that
+        // pair is the human-readable snapshot for a unit with no local
+        // reference.
+        var hasExternalVerification = !string.IsNullOrWhiteSpace(request.CustomerVerificationSource);
+        if (!hasExternalVerification
+            && (!string.IsNullOrWhiteSpace(request.ExternalCustomerId) || !string.IsNullOrWhiteSpace(request.ExternalUnitId)))
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.ExternalVerificationSourceMissing);
+        }
+
+        if (hasCrmBuyerMatch && hasExternalVerification)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.CrmBuyerAndExternalVerificationBothSupplied);
+        }
+
         // The New Ticket wizard's own "Project and Unit Number are required
         // when no CRM Buyer match was selected" business rule is enforced in
         // NewTicketModel.OnPostCreateAsync (TigerCS.Web), not here: Ticket
@@ -142,15 +162,20 @@ public sealed class TicketCreationAppService(
         try
         {
             var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
-            ticket = (unitReference, contactReference, hasCrmBuyerMatch) switch
+            ticket = (unitReference, contactReference, hasCrmBuyerMatch, hasExternalVerification) switch
             {
-                (not null, not null, _) => Ticket.CreateVerified(
+                (not null, not null, _, _) => Ticket.CreateVerified(
                     ticketNumber, category.DepartmentId, unitReference!.UnitReferenceId, contactReference!.ContactReferenceId,
                     category.CategoryId, priority.PriorityId, request.RequestSummary, now),
-                (_, _, true) => Ticket.CreateVerifiedFromCrmBuyer(
+                (_, _, true, _) => Ticket.CreateVerifiedFromCrmBuyer(
                     ticketNumber, category.DepartmentId,
                     request.CrmBuyerCustomerId!.Value, request.CrmBuyerLeadId!.Value, request.CrmBuyerUnitId!.Value, request.CrmBuyerProjectId!.Value,
                     request.CrmBuyerCustomerName, request.CrmBuyerProjectName, request.CrmBuyerUnitNumber,
+                    category.CategoryId, priority.PriorityId, request.RequestSummary, now),
+                (_, _, _, true) => Ticket.CreateFromExternalLookup(
+                    ticketNumber, category.DepartmentId,
+                    request.CustomerVerificationSource!, request.ExternalCustomerId, request.ExternalUnitId,
+                    request.ManualProjectName, request.ManualUnitNumber,
                     category.CategoryId, priority.PriorityId, request.RequestSummary, now),
                 _ => Ticket.CreateUnverified(
                     ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now,
@@ -400,5 +425,8 @@ public sealed class TicketCreationAppService(
         ticket.CrmBuyerProjectName,
         ticket.CrmBuyerUnitNumber,
         ticket.ManualProjectName,
-        ticket.ManualUnitNumber);
+        ticket.ManualUnitNumber,
+        ticket.CustomerVerificationSource,
+        ticket.ExternalCustomerId,
+        ticket.ExternalUnitId);
 }

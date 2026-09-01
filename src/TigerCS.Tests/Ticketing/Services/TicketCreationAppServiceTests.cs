@@ -311,6 +311,111 @@ public class TicketCreationAppServiceTests
         Assert.Null(result.Response.CrmBuyerCustomerId);
     }
 
+    // --- External-lookup verification (PACT/Tasleeh): generic source + external ids persist alongside the manual snapshot ---
+
+    [Fact]
+    public async Task CreateAsync_ExternalVerification_PersistsSourceExternalIdsAndSnapshotOnTheTicket()
+    {
+        // The agent selected a matched PACT customer/unit: the ticket records
+        // the generic external verification identity (source, the source's
+        // own tenant/unit ids — external identifiers only, no local cache
+        // row) plus the human-readable Project/Unit snapshot. The CRM-scoped
+        // VerificationStatus stays Unverified (see
+        // Ticket.CreateFromExternalLookup's remarks) — "Verified via PACT" is
+        // derived from the source fields, never from that enum.
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC fault",
+                ManualProjectName: "Tiger Bay Towers", ManualUnitNumber: "1105",
+                CustomerVerificationSource: "Pact", ExternalCustomerId: "7001", ExternalUnitId: "701"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Pact", result.Response!.CustomerVerificationSource);
+        Assert.Equal("7001", result.Response.ExternalCustomerId);
+        Assert.Equal("701", result.Response.ExternalUnitId);
+        Assert.Equal("Tiger Bay Towers", result.Response.ManualProjectName);
+        Assert.Equal("1105", result.Response.ManualUnitNumber);
+        Assert.Equal("Unverified", result.Response.VerificationStatus);
+        Assert.Null(result.Response.CrmBuyerCustomerId);
+        Assert.Null(result.Response.UnitReferenceId);
+
+        // Persisted on the domain entity itself, not just echoed back.
+        var stored = Assert.Single(f.Tickets.All);
+        Assert.Equal("Pact", stored.CustomerVerificationSource);
+        Assert.Equal("7001", stored.ExternalCustomerId);
+        Assert.Equal("701", stored.ExternalUnitId);
+        Assert.Equal("Tiger Bay Towers", stored.ManualProjectName);
+        Assert.Equal("1105", stored.ManualUnitNumber);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ExternalIdsWithoutSource_Rejected()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "x",
+                ExternalCustomerId: "7001", ExternalUnitId: "701"));
+
+        // External identifiers never travel without their source — orphaned
+        // ids are useless for audit/reconciliation and are rejected.
+        Assert.Equal(TicketCreationOutcome.ExternalVerificationSourceMissing, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_CrmBuyerMatchAndExternalVerificationBothSupplied_Rejected()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "x",
+                CrmBuyerCustomerId: 5001, CrmBuyerLeadId: 901, CrmBuyerUnitId: 101, CrmBuyerProjectId: 10,
+                CustomerVerificationSource: "Pact", ExternalCustomerId: "7001"));
+
+        // A ticket records one verified identity — a CRM Buyer match or an
+        // external-lookup verification, never both.
+        Assert.Equal(TicketCreationOutcome.CrmBuyerAndExternalVerificationBothSupplied, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ManualEntryWithoutExternalIds_StoresNoVerificationSource()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "x",
+                ManualProjectName: "Tiger Tower A", ManualUnitNumber: "1204"));
+
+        // Plain manual entry is not externally verified — no source, no ids.
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Null(result.Response!.CustomerVerificationSource);
+        Assert.Null(result.Response.ExternalCustomerId);
+        Assert.Null(result.Response.ExternalUnitId);
+    }
+
     // --- Customer not found / non-unit / lookup failed: none of these ever block creation ---
 
     [Fact]

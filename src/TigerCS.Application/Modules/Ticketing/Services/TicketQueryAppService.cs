@@ -129,5 +129,8 @@ public sealed class TicketQueryAppService(
         ticket.CrmBuyerProjectName,
         ticket.CrmBuyerUnitNumber,
         ticket.ManualProjectName,
-        ticket.ManualUnitNumber);
+        ticket.ManualUnitNumber,
+        ticket.CustomerVerificationSource,
+        ticket.ExternalCustomerId,
+        ticket.ExternalUnitId);
 }

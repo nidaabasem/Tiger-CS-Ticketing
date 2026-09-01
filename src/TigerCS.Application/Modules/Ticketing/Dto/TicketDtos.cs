@@ -41,6 +41,9 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
 /// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
 /// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
+/// <param name="CustomerVerificationSource">The external lookup source that verified the customer ("Pact"/"Tasleeh") when the agent selected a matched external customer/unit. Mutually exclusive with the CrmBuyer* identifiers; accompanies (never replaces) the manual Project/Unit snapshot.</param>
+/// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, stored for audit/reconciliation; requires <paramref name="CustomerVerificationSource"/>.</param>
+/// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — same rule as <paramref name="ExternalCustomerId"/>.</param>
 public sealed record CreateTicketRequestDto(
     long IntakeRecordId,
     int? UnitReferenceId,
@@ -56,7 +59,10 @@ public sealed record CreateTicketRequestDto(
     string? CrmBuyerProjectName = null,
     string? CrmBuyerUnitNumber = null,
     string? ManualProjectName = null,
-    string? ManualUnitNumber = null);
+    string? ManualUnitNumber = null,
+    string? CustomerVerificationSource = null,
+    string? ExternalCustomerId = null,
+    string? ExternalUnitId = null);
 
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>
@@ -83,6 +89,9 @@ public sealed record CreateTicketRequestDto(
 /// <param name="CrmBuyerUnitNumber">Ticket-time display snapshot of the matched unit's number, or null.</param>
 /// <param name="ManualProjectName">The agent-entered Project name, when no CRM Buyer match was linked at creation.</param>
 /// <param name="ManualUnitNumber">The agent-entered Unit Number, when no CRM Buyer match was linked at creation.</param>
+/// <param name="CustomerVerificationSource">The external lookup source that verified the customer at creation ("Pact"/"Tasleeh"), or null for CRM Buyer tickets and plain manual entry.</param>
+/// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only.</param>
+/// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — an external identifier only.</param>
 public sealed record TicketResponseDto(
     long TicketId,
     string TicketNumber,
@@ -107,7 +116,10 @@ public sealed record TicketResponseDto(
     string? CrmBuyerProjectName = null,
     string? CrmBuyerUnitNumber = null,
     string? ManualProjectName = null,
-    string? ManualUnitNumber = null);
+    string? ManualUnitNumber = null,
+    string? CustomerVerificationSource = null,
+    string? ExternalCustomerId = null,
+    string? ExternalUnitId = null);
 
 public enum TicketCreationOutcome
 {
@@ -130,6 +142,12 @@ public enum TicketCreationOutcome
 
     /// <summary>A ticket may carry a real CRM Buyer match (CrmBuyerUnitId) or a manually-entered Project/Unit Number, never both.</summary>
     CrmBuyerAndManualProjectUnitBothSupplied,
+
+    /// <summary>A ticket may carry a real CRM Buyer match or an external-lookup verification (CustomerVerificationSource — PACT/Tasleeh), never both.</summary>
+    CrmBuyerAndExternalVerificationBothSupplied,
+
+    /// <summary>ExternalCustomerId/ExternalUnitId were supplied without a CustomerVerificationSource — external identifiers never travel without their source.</summary>
+    ExternalVerificationSourceMissing,
 
     /// <summary>Ticket Category is required for every ticket.</summary>
     CategoryNotFound,

@@ -51,14 +51,17 @@ namespace TigerCS.Web.Pages;
 /// </para>
 ///
 /// <para>
-/// <b>A PACT/Tasleeh selection persists through the existing manual
-/// Project/Unit snapshot.</b> Those sources have no local UnitReference/
-/// ContactReference cache and Tickets carry no PACT/Tasleeh columns, so the
-/// selected unit's Project and Unit Number prefill Step 3's manual fields
-/// (still editable) and are stored exactly like an agent-typed manual entry;
-/// the source name and external customer id/name are display/carry-forward
-/// only and are not persisted — reported and accepted, rather than new
-/// Ticket columns invented here.
+/// <b>A PACT/Tasleeh selection is a verified external identity, and it
+/// persists.</b> A matched customer WAS verified — against that source — so
+/// Step 3 presents it as "Verified via PACT", never as "not verified"
+/// (manual entry, by contrast, is not externally verified). The selection
+/// persists two ways on the created Ticket: the generic external
+/// verification identity (<c>CustomerVerificationSource</c>/
+/// <c>ExternalCustomerId</c>/<c>ExternalUnitId</c> — for PACT, the source
+/// name, tenantID, and unitID; external identifiers only, no local cache
+/// table and no foreign keys) plus the same human-readable Project/Unit
+/// snapshot the manual path stores, prefilling Step 3's still-editable
+/// manual fields.
 /// </para>
 ///
 /// State is carried step-to-step via the query string (GET) and hidden
@@ -172,10 +175,12 @@ public sealed class NewTicketModel(
     /// </summary>
     public string? ExternalSelection { get; private set; }
 
-    /// <summary>"Pact" or "Tasleeh" — which source the Step 2 selection came from.</summary>
+    /// <summary>"Pact" or "Tasleeh" — which source verified the Step 2 selection; persisted as the Ticket's CustomerVerificationSource.</summary>
     public string? ExternalSource { get; private set; }
-    /// <summary>The source's own customer identifier (for PACT, its tenantID). Display only — no local reference table exists to link it to a Ticket.</summary>
+    /// <summary>The source's own customer identifier (for PACT, its tenantID) — persisted on the Ticket as ExternalCustomerId (an external identifier only, never a local reference).</summary>
     public string? ExternalCustomerId { get; private set; }
+    /// <summary>The source's own identifier for the selected unit (for PACT, its unitID) — persisted on the Ticket as ExternalUnitId.</summary>
+    public string? ExternalUnitId { get; private set; }
     public string? ExternalCustomerName { get; private set; }
     public string? ExternalProjectName { get; private set; }
     public string? ExternalUnitNumber { get; private set; }
@@ -431,13 +436,14 @@ public sealed class NewTicketModel(
     /// The agent explicitly selected one PACT/Tasleeh customer's one unit
     /// from the department-aware lookup results — the same packed-radio shape
     /// as <see cref="OnPostUseCrmBuyerUnit"/>, packing
-    /// "{escaped source}:{escaped external customer id}:{escaped customer
-    /// name}:{escaped project name}:{escaped unit number}" so ids and the
-    /// display text the agent saw always travel together. Carried onward as
-    /// one <c>externalSelection</c> value; Step 3 prefills the manual
-    /// Project/Unit fields from it (see <see cref="OnGetAsync"/>) — the
-    /// existing manual snapshot path is how the selection persists, since
-    /// these sources have no local reference ids to link.
+    /// "{escaped source}:{escaped external customer id}:{escaped external
+    /// unit id}:{escaped customer name}:{escaped project name}:{escaped unit
+    /// number}" so ids and the display text the agent saw always travel
+    /// together. Carried onward as one <c>externalSelection</c> value; Step 3
+    /// prefills the manual Project/Unit fields from it (see
+    /// <see cref="OnGetAsync"/>) and ticket creation persists the source/
+    /// customer/unit identifiers as the Ticket's generic external
+    /// verification identity (see this type's remarks).
     /// </summary>
     public IActionResult OnPostUseExternalUnit(
         long intakeRecordId, string? phoneNumber, int? departmentId, string selectedExternalUnit) =>
@@ -458,22 +464,14 @@ public sealed class NewTicketModel(
             return;
         }
 
-        var parts = ExternalSelection.Split(':', 5);
+        var parts = ExternalSelection.Split(':', 6);
         ExternalSource = UnescapeOrNull(parts, 0);
         ExternalCustomerId = UnescapeOrNull(parts, 1);
-        ExternalCustomerName = UnescapeOrNull(parts, 2);
-        ExternalProjectName = UnescapeOrNull(parts, 3);
-        ExternalUnitNumber = UnescapeOrNull(parts, 4);
+        ExternalUnitId = UnescapeOrNull(parts, 2);
+        ExternalCustomerName = UnescapeOrNull(parts, 3);
+        ExternalProjectName = UnescapeOrNull(parts, 4);
+        ExternalUnitNumber = UnescapeOrNull(parts, 5);
     }
-
-    /// <summary>User-facing name for a lookup source key — never the raw enum-ish value alone in a heading.</summary>
-    public static string SourceDisplayName(string source) => source switch
-    {
-        "Crm" => "Tiger CRM",
-        "Pact" => "PACT",
-        "Tasleeh" => "Tasleeh",
-        _ => source
-    };
 
     /// <summary>
     /// No CRM Buyer unit selected — CRM found no match, CRM was unavailable,
@@ -538,6 +536,13 @@ public sealed class NewTicketModel(
             return Page();
         }
 
+        // A PACT/Tasleeh selection persists both ways: the generic external
+        // verification identity (source + the source's own customer/unit
+        // ids) AND the human-readable manual Project/Unit snapshot below —
+        // mutually exclusive with a CRM Buyer match, exactly as the Api
+        // re-validates server-side.
+        var hasExternalSelection = !hasCrmBuyerMatch && ExternalSelection is not null;
+
         var request = new CreateTicketRequestDto(
             IntakeRecordId: intakeRecordId,
             UnitReferenceId: null,
@@ -553,7 +558,10 @@ public sealed class NewTicketModel(
             CrmBuyerProjectName: hasCrmBuyerMatch ? crmBuyerProjectName : null,
             CrmBuyerUnitNumber: hasCrmBuyerMatch ? crmBuyerUnitNumber : null,
             ManualProjectName: hasCrmBuyerMatch ? null : CreateStep.ManualProjectName,
-            ManualUnitNumber: hasCrmBuyerMatch ? null : CreateStep.ManualUnitNumber);
+            ManualUnitNumber: hasCrmBuyerMatch ? null : CreateStep.ManualUnitNumber,
+            CustomerVerificationSource: hasExternalSelection ? ExternalSource : null,
+            ExternalCustomerId: hasExternalSelection ? ExternalCustomerId : null,
+            ExternalUnitId: hasExternalSelection ? ExternalUnitId : null);
 
         var result = await ticketsClient.CreateAsync(request, cancellationToken);
         if (!result.IsSuccess || result.Value is null)

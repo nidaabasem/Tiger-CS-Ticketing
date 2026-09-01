@@ -59,6 +59,19 @@ public sealed class WebFrontEndCleanupTests
         Assert.DoesNotContain("CustomerType", html);
     }
 
+    [Fact]
+    public void NewTicketView_PresentsAnExternalSelectionAsVerifiedViaItsSource_NeverAsNotVerified()
+    {
+        // A matched PACT/Tasleeh customer WAS verified — against that source.
+        // Step 3 must say "verified via {source}"; "not verified" wording is
+        // reserved for manual entry (which the Ticket Details page labels
+        // "Manual entry / Not externally verified").
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.Contains("verified via", html);
+        Assert.DoesNotContain("not verified", html, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- Category directory: the manual numeric CategoryId textbox and its temporary help text are gone ----
 
     [Fact]

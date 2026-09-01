@@ -930,8 +930,8 @@ public sealed class NewTicketModelTests
     {
         var (model, _, _, _, _, _, _, _) = CreateModel();
         var packed = string.Join(':',
-            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("Fatima Noor"),
-            Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
+            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("701"),
+            Uri.EscapeDataString("Fatima Noor"), Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
 
         var result = model.OnPostUseExternalUnit(42, "+971509990002", 7, packed);
 
@@ -947,13 +947,14 @@ public sealed class NewTicketModelTests
             new CategoryDto(2, "Tenancy Inquiry", 7, "Leasing")));
         // The agent picked the SECOND of the PACT customer's two units.
         var packed = string.Join(':',
-            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("Fatima Noor"),
-            Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
+            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("701"),
+            Uri.EscapeDataString("Fatima Noor"), Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
 
         await model.OnGetAsync("create", 42, "+971509990002", 7, null, null, null, null, null, null, null, packed, CancellationToken.None);
 
         Assert.Equal("Pact", model.ExternalSource);
         Assert.Equal("7001", model.ExternalCustomerId);
+        Assert.Equal("701", model.ExternalUnitId);
         Assert.Equal("Fatima Noor", model.ExternalCustomerName);
         Assert.Equal("Tiger Bay Towers", model.CreateStep.ManualProjectName);
         Assert.Equal("1105", model.CreateStep.ManualUnitNumber);
@@ -975,7 +976,7 @@ public sealed class NewTicketModelTests
 
         var packed = string.Join(':',
             Uri.EscapeDataString("Pact"), Uri.EscapeDataString(pactCustomer.ExternalCustomerId),
-            Uri.EscapeDataString(pactCustomer.DisplayName!),
+            Uri.EscapeDataString(secondUnit.ExternalUnitId), Uri.EscapeDataString(pactCustomer.DisplayName!),
             Uri.EscapeDataString(secondUnit.PropertyName!), Uri.EscapeDataString(secondUnit.UnitNumber!));
         var selectResult = model.OnPostUseExternalUnit(42, "+971509990002", 7, packed);
         var createRoute = RouteValues(Assert.IsType<RedirectToPageResult>(selectResult));
@@ -999,6 +1000,10 @@ public sealed class NewTicketModelTests
         using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
         Assert.Equal("Tiger Bay Towers", body.RootElement.GetProperty("manualProjectName").GetString());
         Assert.Equal("1105", body.RootElement.GetProperty("manualUnitNumber").GetString());
+        // ...and the generic external verification identity travels with it.
+        Assert.Equal("Pact", body.RootElement.GetProperty("customerVerificationSource").GetString());
+        Assert.Equal("7001", body.RootElement.GetProperty("externalCustomerId").GetString());
+        Assert.Equal("701", body.RootElement.GetProperty("externalUnitId").GetString());
         Assert.True(body.RootElement.GetProperty("crmBuyerCustomerId").ValueKind == JsonValueKind.Null);
         Assert.True(body.RootElement.GetProperty("crmBuyerUnitId").ValueKind == JsonValueKind.Null);
     }
@@ -1029,6 +1034,10 @@ public sealed class NewTicketModelTests
         Assert.Equal("/TicketDetails", Assert.IsType<RedirectToPageResult>(createResult).PageName);
         using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
         Assert.Equal("0000", body.RootElement.GetProperty("manualUnitNumber").GetString());
+        // Plain manual entry is never presented as externally verified.
+        Assert.True(body.RootElement.GetProperty("customerVerificationSource").ValueKind == JsonValueKind.Null);
+        Assert.True(body.RootElement.GetProperty("externalCustomerId").ValueKind == JsonValueKind.Null);
+        Assert.True(body.RootElement.GetProperty("externalUnitId").ValueKind == JsonValueKind.Null);
     }
 
     private static IDictionary<string, object?> RouteValues(RedirectToPageResult redirect) =>

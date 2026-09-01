@@ -171,10 +171,11 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         Assert.DoesNotContain(_stubRequests, r => r.PathAndQuery.EndsWith("/customer-type", StringComparison.Ordinal));
 
         // The agent deliberately selects the SECOND unit (proving no
-        // first-result bias anywhere) and continues ticket creation. PACT has
-        // no local UnitReference/ContactReference cache, so the selection is
-        // carried as the agent-entered Manual Project/Unit snapshot — the
-        // same fields Ticket Details renders for a manually-entered unit.
+        // first-result bias anywhere) and continues ticket creation. The
+        // selection persists two ways: the generic external verification
+        // identity (source + PACT's own tenantID/unitID — external
+        // identifiers only) and the Manual Project/Unit snapshot the Ticket
+        // Details page renders for a unit with no local reference.
         var selectedUnit = bayUnit;
         var ticketResponse = await client.PostAsJsonAsync(
             "/api/tickets",
@@ -182,28 +183,42 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
                 intake.IntakeRecordId, UnitReferenceId: null, ContactReferenceId: null, categoryId, PriorityId: 3,
                 RequestSummary: $"AC fault reported by PACT tenant {customer.DisplayName} (PACT tenant 7001, unit {selectedUnit.UnitNumber})",
                 ManualProjectName: selectedUnit.PropertyName,
-                ManualUnitNumber: selectedUnit.UnitNumber));
+                ManualUnitNumber: selectedUnit.UnitNumber,
+                CustomerVerificationSource: "Pact",
+                ExternalCustomerId: customer.ExternalCustomerId,
+                ExternalUnitId: selectedUnit.ExternalUnitId));
         Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
 
-        // The selected PACT unit persisted onto the ticket (as the manual
-        // project/unit snapshot) and the intake is linked.
+        // The selected PACT unit persisted onto the ticket — snapshot AND
+        // external verification identity — and the intake is linked.
         Assert.Equal("Tiger Bay Towers", ticket!.ManualProjectName);
         Assert.Equal("1105", ticket.ManualUnitNumber);
+        Assert.Equal("Pact", ticket.CustomerVerificationSource);
+        Assert.Equal("7001", ticket.ExternalCustomerId);
+        Assert.Equal("701", ticket.ExternalUnitId);
         Assert.Equal("Unverified", ticket.VerificationStatus);
         Assert.Null(ticket.UnitReferenceId);
         Assert.Null(ticket.ContactReferenceId);
 
-        var storedIntake = await _factory.GetTicketAsync(ticket.TicketId);
-        Assert.NotNull(storedIntake);
+        // Stored on the ticket row itself, not just echoed in the response.
+        var storedTicket = await _factory.GetTicketAsync(ticket.TicketId);
+        Assert.NotNull(storedTicket);
+        Assert.Equal("Pact", storedTicket!.CustomerVerificationSource);
+        Assert.Equal("7001", storedTicket.ExternalCustomerId);
+        Assert.Equal("701", storedTicket.ExternalUnitId);
 
         // Ticket detail (what the Ticket Details page renders) reads the
-        // selection back.
+        // selection back — enough to display "Verified via PACT" with the
+        // tenant/unit ids, distinct from a plain manual entry.
         var detailResponse = await client.GetAsync($"/api/tickets/{ticket.TicketId}");
         Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
         var detail = await detailResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
         Assert.Equal("Tiger Bay Towers", detail!.ManualProjectName);
         Assert.Equal("1105", detail.ManualUnitNumber);
+        Assert.Equal("Pact", detail.CustomerVerificationSource);
+        Assert.Equal("7001", detail.ExternalCustomerId);
+        Assert.Equal("701", detail.ExternalUnitId);
         Assert.Contains("unit 1105", detail.RequestSummary);
     }
 
@@ -237,6 +252,10 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
         Assert.Equal("Unverified", ticket!.VerificationStatus);
         Assert.Equal("0000", ticket.ManualUnitNumber);
+        // Manual entry carries no external verification identity.
+        Assert.Null(ticket.CustomerVerificationSource);
+        Assert.Null(ticket.ExternalCustomerId);
+        Assert.Null(ticket.ExternalUnitId);
     }
 
     [Fact]

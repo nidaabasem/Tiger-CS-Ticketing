@@ -30,6 +30,20 @@ public static class TicketDisplay
         _ => "medium"
     };
 
+    /// <summary>
+    /// User-facing name for a customer-lookup source key ("Crm"/"Pact"/
+    /// "Tasleeh" — CustomerLookupSource names, the same closed set the Api's
+    /// customer-lookup DTOs document). Used both by the New Ticket wizard's
+    /// source cards and by Ticket Details' "Verified via …" line.
+    /// </summary>
+    public static string LookupSourceLabel(string source) => source switch
+    {
+        "Crm" => "Tiger CRM",
+        "Pact" => "PACT",
+        "Tasleeh" => "Tasleeh",
+        _ => source
+    };
+
     public static string TicketStatusLabel(string ticketStatus) => ticketStatus switch
     {
         "Open" => "Open",
