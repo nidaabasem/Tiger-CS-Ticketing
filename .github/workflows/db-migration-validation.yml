@@ -274,6 +274,14 @@ jobs:
           # pair (Ticket.CreateVerifiedFromCrmBuyer/CreateUnverified) — a
           # distinct identifier space from UnitReferenceId/ContactReferenceId,
           # all optional since a ticket carries at most one of the two paths.
+          #
+          # External-lookup verification (PACT/Tasleeh — the department-aware
+          # customer lookup) adds three more nullable Tickets columns:
+          # CustomerVerificationSource plus the source's own ExternalCustomerId/
+          # ExternalUnitId (Ticket.CreateFromExternalLookup,
+          # AddExternalCustomerVerificationToTickets). External identifiers
+          # only — deliberately no FK and no local cache table — and all
+          # optional since only an external-lookup ticket carries them.
           actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
             -Q "SET NOCOUNT ON; SELECT TABLE_NAME + '.' + COLUMN_NAME + '=' + IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ('Tickets','IntakeRecords') ORDER BY TABLE_NAME, COLUMN_NAME;" | sed '/^$/d' | tr -d ' ')
           echo "--- actual nullability ---"
@@ -292,7 +300,8 @@ jobs:
             "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" "Tickets.RowVersion=NO" \
             "Tickets.CrmBuyerCustomerId=YES" "Tickets.CrmBuyerLeadId=YES" "Tickets.CrmBuyerUnitId=YES" \
             "Tickets.CrmBuyerProjectId=YES" "Tickets.CrmBuyerCustomerName=YES" "Tickets.CrmBuyerProjectName=YES" \
-            "Tickets.CrmBuyerUnitNumber=YES" "Tickets.ManualProjectName=YES" "Tickets.ManualUnitNumber=YES" | sort)
+            "Tickets.CrmBuyerUnitNumber=YES" "Tickets.ManualProjectName=YES" "Tickets.ManualUnitNumber=YES" \
+            "Tickets.CustomerVerificationSource=YES" "Tickets.ExternalCustomerId=YES" "Tickets.ExternalUnitId=YES" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- expected nullability ---"
           echo "$expected"
@@ -301,7 +310,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (41 columns)."
+          echo "Column nullability matches the confirmed design exactly (44 columns)."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |
