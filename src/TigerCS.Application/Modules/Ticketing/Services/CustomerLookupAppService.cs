@@ -1,5 +1,6 @@
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
@@ -54,7 +55,7 @@ public sealed class CustomerLookupAppService(
     IIntakeRecordRepository intakeRecordRepository,
     IDepartmentCustomerLookupSourceRepository departmentSourceRepository,
     ICrmCustomerLookupGateway crmCustomerLookupGateway,
-    IPactGateway pactGateway,
+    IPactCustomerLookupGateway pactCustomerLookupGateway,
     ITasleehGateway tasleehGateway,
     CrmUnitLookupAppService crmUnitLookupAppService)
 {
@@ -171,29 +172,55 @@ public sealed class CustomerLookupAppService(
         return CustomerLookupSourceResultDto.Found(sourceName, customers);
     }
 
+    /// <summary>
+    /// PACT's outcome-wrapped port never throws (see
+    /// <see cref="IPactCustomerLookupGateway"/>'s remarks): NotFound maps to
+    /// a NotFound source entry, and every other non-Success outcome
+    /// (Unavailable, Unauthorized, InvalidResponse) collapses to Failed —
+    /// the same "reported, never blocking" treatment the throwing sources
+    /// get from their catch blocks. PACT contracts/units carry no local
+    /// UnitReferenceId/ContactReferenceId (no cache table exists for PACT),
+    /// so every unit is display enrichment for the agent — all of them are
+    /// returned and none is ever auto-selected.
+    /// </summary>
     private async Task<CustomerLookupSourceResultDto> SearchPactAsync(string phoneNumber, CancellationToken cancellationToken)
     {
         var sourceName = CustomerLookupSource.Pact.ToString();
-        try
-        {
-            var matches = await pactGateway.SearchByPhoneAsync(phoneNumber, cancellationToken);
-            if (matches.Count == 0)
-            {
-                return CustomerLookupSourceResultDto.NotFound(sourceName);
-            }
 
-            // Pact exposes no unit/tenancy data today — Units is an empty
-            // list, never fabricated (see CustomerLookupCustomerDto's remarks).
-            var customers = matches
-                .Select(match => new CustomerLookupCustomerDto(
-                    match.PactCustomerId, match.DisplayName, match.PhoneNumber, Email: null, CustomerType: null, Units: []))
-                .ToList();
-            return CustomerLookupSourceResultDto.Found(sourceName, customers);
+        var result = await pactCustomerLookupGateway.SearchByMobileAsync(phoneNumber, cancellationToken);
+        if (result.Outcome == PactCustomerLookupOutcome.NotFound)
+        {
+            return CustomerLookupSourceResultDto.NotFound(sourceName);
         }
-        catch (PactGatewayUnavailableException)
+
+        if (result.Outcome != PactCustomerLookupOutcome.Success || result.Customers is not { Count: > 0 })
         {
             return CustomerLookupSourceResultDto.Failed(sourceName);
         }
+
+        var customers = result.Customers
+            .Select(match => new CustomerLookupCustomerDto(
+                match.PactCustomerId,
+                match.DisplayName,
+                match.PhoneNumber,
+                match.Email,
+                match.CustomerType,
+                // Distinct by ExternalUnitId for the same reason as the CRM
+                // leg: a duplicate contract row for the same unit must never
+                // surface as two units for the same customer.
+                match.Contracts
+                    .DistinctBy(contract => contract.ExternalUnitId)
+                    .Select(contract => new CustomerLookupUnitDto(
+                        contract.ExternalUnitId,
+                        contract.UnitNumber,
+                        contract.ProjectName,
+                        TowerName: null,
+                        contract.UnitType,
+                        UnitReferenceId: null,
+                        ContactReferenceId: null))
+                    .ToList()))
+            .ToList();
+        return CustomerLookupSourceResultDto.Found(sourceName, customers);
     }
 
     private async Task<CustomerLookupSourceResultDto> SearchTasleehAsync(string phoneNumber, CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
+using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -31,7 +32,7 @@ public class CustomerLookupAppServiceTests
         FakeIntakeRecordRepository IntakeRecords,
         FakeDepartmentCustomerLookupSourceRepository DepartmentSources,
         FakeCrmCustomerLookupGateway Crm,
-        FakePactGateway Pact,
+        FakePactCustomerLookupGateway Pact,
         FakeTasleehGateway Tasleeh,
         FakeCrmGateway CrmUnitGateway);
 
@@ -40,7 +41,7 @@ public class CustomerLookupAppServiceTests
         var intakeRecords = new FakeIntakeRecordRepository();
         var departmentSources = new FakeDepartmentCustomerLookupSourceRepository();
         var crmLookup = new FakeCrmCustomerLookupGateway();
-        var pact = new FakePactGateway();
+        var pact = new FakePactCustomerLookupGateway();
         var tasleeh = new FakeTasleehGateway();
 
         // CustomerLookupAppService resolves a CRM phone match's local
@@ -214,7 +215,7 @@ public class CustomerLookupAppServiceTests
         var f = CreateService();
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
         f.Crm.ThrowUnavailable = true;
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
@@ -228,7 +229,7 @@ public class CustomerLookupAppServiceTests
     {
         var f = CreateService();
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
@@ -244,8 +245,8 @@ public class CustomerLookupAppServiceTests
     {
         var f = CreateService();
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-2", "Youssef Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-2", "Youssef Noor", Phone, Email: null, CustomerType: null, Contracts: []));
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
@@ -256,14 +257,79 @@ public class CustomerLookupAppServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_PactMatchWithContracts_ReturnsAllUnitsWithoutLocalReferenceIds()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, "fatima@example.com", "Tenant",
+            [
+                new PactContractDto("PACT-UNIT-A-0304", "PACT-CNT-88001", "0304", "Tiger Marina Residences", "Residential"),
+                new PactContractDto("PACT-UNIT-B-1105", "PACT-CNT-88002", "1105", "Tiger Bay Towers", "Commercial")
+            ]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = Assert.Single(result.Response!.Sources, s => s.Source == "Pact");
+        Assert.Equal("Found", pactResult.Status);
+        var customer = Assert.Single(pactResult.Customers);
+        Assert.Equal("fatima@example.com", customer.Email);
+        Assert.Equal("Tenant", customer.CustomerType);
+        // All of PACT's contracts/units come back — never just the first one
+        // (no automatic selection; only the CS agent chooses).
+        Assert.Equal(2, customer.Units.Count);
+        Assert.Contains(customer.Units, u => u.UnitNumber == "0304" && u.PropertyName == "Tiger Marina Residences");
+        Assert.Contains(customer.Units, u => u.UnitNumber == "1105" && u.PropertyName == "Tiger Bay Towers");
+        // PACT has no local UnitReference/ContactReference cache — display
+        // enrichment only, never linkable to a Ticket by id.
+        Assert.All(customer.Units, u =>
+        {
+            Assert.Null(u.UnitReferenceId);
+            Assert.Null(u.ContactReferenceId);
+        });
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactMatchHasDuplicateContractRows_DoesNotDuplicateUnitsInResult()
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        var contract = new PactContractDto("PACT-UNIT-A-0304", "PACT-CNT-88001", "0304", "Tiger Marina Residences", "Residential");
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: [contract, contract]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var customer = Assert.Single(Assert.Single(result.Response!.Sources, s => s.Source == "Pact").Customers);
+        Assert.Single(customer.Units);
+    }
+
+    [Fact]
     public async Task SearchAsync_PactUnavailable_ReturnsFailed()
     {
         var f = CreateService();
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
-        f.Pact.ThrowUnavailable = true;
+        f.Pact.ForcedOutcome = PactCustomerLookupOutcome.Unavailable;
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
+        Assert.Equal("Failed", Assert.Single(result.Response!.Sources, s => s.Source == "Pact").Status);
+    }
+
+    [Theory]
+    [InlineData(PactCustomerLookupOutcome.Unauthorized)]
+    [InlineData(PactCustomerLookupOutcome.InvalidResponse)]
+    public async Task SearchAsync_PactNonSuccessOutcome_ReturnsFailed_NeverThrowsAndNeverBlocks(PactCustomerLookupOutcome outcome)
+    {
+        var f = CreateService();
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.ForcedOutcome = outcome;
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        // A misconfigured key or a garbage PACT body is reported exactly like
+        // an outage: Failed — enrichment only, never a ticket-creation gate.
+        Assert.Equal(CustomerLookupOutcome.Success, result.Outcome);
         Assert.Equal("Failed", Assert.Single(result.Response!.Sources, s => s.Source == "Pact").Status);
     }
 
@@ -304,7 +370,7 @@ public class CustomerLookupAppServiceTests
         f.CrmUnitGateway.Seed(unit, contact);
         f.Crm.Seed(Phone, new CrmCustomerMatch(
             "CRM-CUST-9001", contact.DisplayName, Phone, null, "Buyer", [new CrmCustomerUnitMatch(unit.CrmUnitId, contact.CrmContactId)]));
-        f.Pact.ThrowUnavailable = true;
+        f.Pact.ForcedOutcome = PactCustomerLookupOutcome.Unavailable;
         // Tasleeh has no fixture for this phone number — NotFound.
 
         var result = await f.Service.SearchAsync(intakeRecordId);
@@ -322,7 +388,7 @@ public class CustomerLookupAppServiceTests
         var f = CreateService();
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords, departmentId: null);
         f.Crm.ThrowUnavailable = true;
-        f.Pact.ThrowUnavailable = true;
+        f.Pact.ForcedOutcome = PactCustomerLookupOutcome.Unavailable;
         f.Tasleeh.ThrowUnavailable = true;
 
         var result = await f.Service.SearchAsync(intakeRecordId);
@@ -340,7 +406,7 @@ public class CustomerLookupAppServiceTests
     {
         var f = CreateService();
         f.DepartmentSources.Seed(DepartmentId, CustomerLookupSource.Crm);
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
         f.Tasleeh.Seed(Phone, new TasleehCustomerMatch("TSL-CUST-1", "Omar Khalid", Phone));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords, departmentId: DepartmentId);
 
@@ -358,7 +424,7 @@ public class CustomerLookupAppServiceTests
     {
         var f = CreateService();
         f.DepartmentSources.Seed(DepartmentId, CustomerLookupSource.Pact);
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords, departmentId: DepartmentId);
 
         var result = await f.Service.SearchAsync(intakeRecordId);
@@ -415,7 +481,7 @@ public class CustomerLookupAppServiceTests
         // CRM has no fixture for this phone number (NotFound). PACT/Tasleeh
         // have matches seeded, but the Department is scoped to CRM only —
         // never an automatic fallback to the other sources.
-        f.Pact.Seed(Phone, new PactCustomerMatch("PACT-CUST-1", "Fatima Noor", Phone));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
         f.Tasleeh.Seed(Phone, new TasleehCustomerMatch("TSL-CUST-1", "Omar Khalid", Phone));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords, departmentId: DepartmentId);
 
