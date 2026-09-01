@@ -27,15 +27,19 @@ public sealed class MockPactGateway : IPactCustomerLookupGateway
     private static readonly IReadOnlyDictionary<string, PactCustomerMatchDto> Fixtures =
         new Dictionary<string, PactCustomerMatchDto>(StringComparer.OrdinalIgnoreCase)
         {
+            // Shaped like the real PactCustomerHttpGateway mapping: the ids
+            // are PACT's numeric tenantID/unitID/contractID as strings, and
+            // CustomerType is the raw customerBuyerType CODE (never display
+            // text — see PactCustomerMatchDto.CustomerType's remarks).
             ["+971500000002"] = new PactCustomerMatchDto(
-                "PACT-CUST-3001",
+                "3001",
                 "Fatima Noor",
                 "+971500000002",
                 Email: null,
-                CustomerType: "Tenant",
+                CustomerType: "2",
                 Contracts:
                 [
-                    new PactContractDto("PACT-UNIT-A-0304", "PACT-CNT-88001", "0304", "Tiger Marina Residences", "Residential")
+                    new PactContractDto("41230", "88001", "0304", "Tiger Marina Residences", "Residential")
                 ])
         };
 

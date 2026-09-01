@@ -93,7 +93,7 @@ public sealed record PactCustomerLookupResult(
 /// <param name="DisplayName">The customer's name, when PACT has one on file.</param>
 /// <param name="PhoneNumber">The customer's mobile number, when PACT echoes one back.</param>
 /// <param name="Email">The customer's email, when PACT has one on file.</param>
-/// <param name="CustomerType">The PACT-recorded customer type (e.g. "Tenant"/"Owner"), from the contracts response when it carries one, otherwise from <c>GET v1/contracts/{mobile}/customer-type</c> — null when neither has it.</param>
+/// <param name="CustomerType">PACT's raw customer-type value — for the real HTTP gateway this is the numeric <c>customerBuyerType</c> CODE as a string (e.g. "1"/"2"; PACT's code table is not published), taken from the contracts response when it carries one, otherwise from <c>GET v1/contracts/{mobile}/customer-type</c>; null when neither has it. <b>Not display text</b>: no UI may present this raw code as a customer-type label until the PACT code table is confirmed and translated.</param>
 /// <param name="Contracts">Every contract/unit (0..N) PACT associates with this customer — never assumed to be exactly one, and never auto-selected.</param>
 public sealed record PactCustomerMatchDto(
     string PactCustomerId,
@@ -109,7 +109,7 @@ public sealed record PactCustomerMatchDto(
 /// nothing here ever resolves to a local id (contrast
 /// <c>CrmCustomerUnitMatch</c>).
 /// </summary>
-/// <param name="ExternalUnitId">PACT's own identifier for the contract's unit (its unit code), falling back to the contract number when PACT sent no unit code.</param>
+/// <param name="ExternalUnitId">PACT's own identifier for the unit — its numeric <c>unitID</c>, as a string. Falls back to PACT's unit code, then unit number, only for a row PACT sent without a <c>unitID</c>; never derived from a contract id (a contract identifier is not a unit identifier — it is carried as <see cref="ContractNumber"/> instead).</param>
 /// <param name="ContractNumber">The PACT contract number, when on file.</param>
 /// <param name="UnitNumber">The unit number, when on file.</param>
 /// <param name="ProjectName">The project/property the unit belongs to, when on file.</param>

@@ -199,14 +199,19 @@ public sealed class PactCustomerHttpGateway(
             .Select(row => new
             {
                 Row = row,
+                // unitID is PACT's own identifier for the unit — the primary
+                // ExternalUnitId. unitCode ("104-2304") and unitNumber are
+                // display codes, used only as fallbacks for a row PACT sent
+                // without a unitID. contractID is deliberately NOT in this
+                // chain: it identifies the contract (carried as
+                // ContractNumber below), never the unit.
                 ExternalUnitId = FirstNonBlank(
-                    row.UnitCode,
                     row.UnitID?.ToString(CultureInfo.InvariantCulture),
-                    row.ContractID?.ToString(CultureInfo.InvariantCulture),
+                    row.UnitCode,
                     row.UnitNumber)
             })
-            // A row with no unit code, unit id, contract id, or unit number
-            // identifies nothing — dropped rather than fabricating an id.
+            // A row with no unit id, unit code, or unit number identifies no
+            // unit — dropped rather than fabricating an id from its contract.
             .Where(row => row.ExternalUnitId is not null)
             .Select(row => new PactContractDto(
                 row.ExternalUnitId!,

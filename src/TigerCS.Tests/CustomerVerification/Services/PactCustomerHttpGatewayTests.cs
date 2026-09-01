@@ -124,7 +124,7 @@ public class PactCustomerHttpGatewayTests
         // customerBuyerType from the contracts response itself — authoritative.
         Assert.Equal("2", customer.CustomerType);
         var contract = Assert.Single(customer.Contracts);
-        Assert.Equal("MAR-A-0304", contract.ExternalUnitId);
+        Assert.Equal("41230", contract.ExternalUnitId);
         Assert.Equal("88001", contract.ContractNumber);
         Assert.Equal("0304", contract.UnitNumber);
         Assert.Equal("Tiger Marina Residences", contract.ProjectName);
@@ -170,8 +170,8 @@ public class PactCustomerHttpGatewayTests
         var customer = Assert.Single(result.Customers!);
         Assert.Equal("7001", customer.PactCustomerId);
         Assert.Equal(2, customer.Contracts.Count);
-        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "MAR-A-0304" && c.ContractNumber == "88001");
-        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "BAY-B-1105" && c.ContractNumber == "88002");
+        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "41230" && c.ContractNumber == "88001");
+        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "52110" && c.ContractNumber == "88002");
     }
 
     [Fact]
@@ -195,11 +195,11 @@ public class PactCustomerHttpGatewayTests
         var fatima = Assert.Single(result.Customers, c => c.PactCustomerId == "7001");
         Assert.Equal("Fatima Noor", fatima.DisplayName);
         Assert.Equal("2", fatima.CustomerType);
-        Assert.Equal("MAR-A-0304", Assert.Single(fatima.Contracts).ExternalUnitId);
+        Assert.Equal("41230", Assert.Single(fatima.Contracts).ExternalUnitId);
         var youssef = Assert.Single(result.Customers, c => c.PactCustomerId == "7002");
         Assert.Equal("Youssef Noor", youssef.DisplayName);
         Assert.Equal("1", youssef.CustomerType);
-        Assert.Equal("BAY-B-1105", Assert.Single(youssef.Contracts).ExternalUnitId);
+        Assert.Equal("52110", Assert.Single(youssef.Contracts).ExternalUnitId);
     }
 
     [Fact]
@@ -256,16 +256,42 @@ public class PactCustomerHttpGatewayTests
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_RowWithNoUnitIdentifiers_IsDroppedNotFabricated()
+    public async Task SearchByMobileAsync_UnitIdMissing_FallsBackToUnitCodeThenUnitNumber()
     {
-        // First row carries no unitCode/unitID/contractID/unitNumber at all —
-        // dropped. Second row has only a contractID, which becomes the
-        // external id fallback.
+        // unitID is the primary ExternalUnitId; unitCode and unitNumber are
+        // fallbacks, in that order, for rows PACT sent without a unitID.
         const string json = """
             {
               "data": [
-                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P1", "unitID": null, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": null, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 },
-                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P2", "unitID": null, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": 99, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 }
+                { "tenantID": 7001, "companyID": 3, "projectCode": "MAR", "projectName": "P1", "unitID": null, "unitCode": "104-2304", "unitType": null, "unitNumber": "2304", "unitStatus": null, "contractID": 88001, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 },
+                { "tenantID": 7001, "companyID": 3, "projectCode": "MAR", "projectName": "P2", "unitID": null, "unitCode": null, "unitType": null, "unitNumber": "1105", "unitStatus": null, "contractID": 88002, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 }
+              ]
+            }
+            """;
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("1");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        var customer = Assert.Single(result.Customers!);
+        Assert.Equal(2, customer.Contracts.Count);
+        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "104-2304");
+        Assert.Contains(customer.Contracts, c => c.ExternalUnitId == "1105");
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_RowWithNoUnitIdentifiers_IsDroppedNotFabricated()
+    {
+        // First row carries no unitID/unitCode/unitNumber at all — its
+        // contractID alone never stands in as a unit identifier (a contract
+        // id identifies the contract, not the unit), so the row is dropped.
+        // Second row keeps its unitID as normal.
+        const string json = """
+            {
+              "data": [
+                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P1", "unitID": null, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": 99, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 },
+                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P2", "unitID": 41230, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": 88001, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 }
               ]
             }
             """;
@@ -276,7 +302,7 @@ public class PactCustomerHttpGatewayTests
 
         Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
         var contract = Assert.Single(Assert.Single(result.Customers!).Contracts);
-        Assert.Equal("99", contract.ExternalUnitId);
+        Assert.Equal("41230", contract.ExternalUnitId);
     }
 
     [Fact]
