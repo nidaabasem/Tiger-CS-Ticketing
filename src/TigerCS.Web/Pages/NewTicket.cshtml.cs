@@ -10,31 +10,55 @@ using TigerCS.Web.Services.Api;
 namespace TigerCS.Web.Pages;
 
 /// <summary>
-/// "+ New Ticket": Intake → real CRM Buyer Lookup → ticket creation, wired
-/// to the real endpoints (POST /api/intake-records,
+/// "+ New Ticket": Intake → department-aware customer lookup (CRM/PACT/
+/// Tasleeh) → ticket creation, wired to the real endpoints
+/// (POST /api/intake-records, GET /api/intake-records/{id}/customer-lookup,
 /// GET /api/crm/buyers?phoneNumber={phoneNumber}, GET /api/departments,
 /// POST /api/tickets).
 ///
 /// <para>
-/// <b>Business-rule change: this wizard's phone search calls the real CRM
-/// Buyer Lookup only.</b> Step 2 calls <see cref="CrmBuyerLookupApiClient"/> —
-/// <c>CrmController</c> → <c>CrmBuyerLookupAppService</c> →
-/// <c>CrmBuyerHttpGateway</c> → the legacy CRM's own <c>GetBuyerByPhone</c> —
-/// by phone number only. It never calls the generic CRM/PACT/Tasleeh
-/// <c>CustomerLookupApiClient</c>/<c>CustomerLookupController</c> path (still
-/// used elsewhere, not by this page), and it never searches CRM by Unit
-/// Number or Project. <c>Crm:SecretKey</c> stays server-to-server inside
+/// <b>Step 2 is driven by the department-aware customer lookup.</b>
+/// <see cref="CustomerLookupApiClient"/> (<c>CustomerLookupController</c> →
+/// <c>CustomerLookupAppService</c>) is the authoritative source for which
+/// integrations participate: it searches only the source(s) the intake's
+/// Department enables via <c>DepartmentCustomerLookupSources</c> (all three
+/// when no Department was selected; none when a Department has none
+/// configured) — never an <c>if (department == X)</c> branch in this page.
+/// PACT/Tasleeh results are rendered straight from that response. For the
+/// Crm source, this page keeps calling the real CRM Buyer Lookup
+/// (<see cref="CrmBuyerLookupApiClient"/> → <c>CrmController</c> →
+/// <c>CrmBuyerLookupAppService</c> → <c>CrmBuyerHttpGateway</c> → the legacy
+/// CRM's own <c>GetBuyerByPhone</c>) exactly as before — the generic
+/// response's Crm entry decides only WHETHER CRM participates, because that
+/// generic Crm leg is still backed by the fixture provider
+/// (<c>Crm:Provider=Mock</c>) while Buyer Lookup is the real, verified CRM
+/// integration; the CRM search itself stays phone-number-only, and
+/// <c>Crm:SecretKey</c> stays server-to-server inside
 /// <c>CrmBuyerHttpGateway</c> — this page, and the browser, never see it.
+/// If the generic lookup itself cannot be reached, the page fails open to
+/// the previous CRM-only behavior rather than losing CRM lookup entirely.
 /// </para>
 ///
 /// <para>
-/// <b>Customer lookup no longer gates ticket creation.</b> A CRM match
-/// (Found), no match (NotFound), and a CRM outage (Unavailable) are all
-/// treated the same way for ticket creation: none of them block it. Found
-/// means the agent explicitly selects one Buyer's one eligible unit — never
-/// auto-selected. NotFound/Unavailable both require the agent to manually
-/// enter Project and Unit Number on Step 3 instead, and neither of those
-/// manual fields is ever used to run another CRM lookup.
+/// <b>Customer lookup no longer gates ticket creation.</b> For every source,
+/// a match (Found), no match (NotFound), and an outage (Failed/Unavailable)
+/// are all treated the same way for ticket creation: none of them block it,
+/// and one source's failure never hides another source's results. Found
+/// means the agent explicitly selects one customer's one unit — never
+/// auto-selected. With no selection, Step 3 requires manually entered
+/// Project and Unit Number instead, and no manual field is ever used to run
+/// another lookup.
+/// </para>
+///
+/// <para>
+/// <b>A PACT/Tasleeh selection persists through the existing manual
+/// Project/Unit snapshot.</b> Those sources have no local UnitReference/
+/// ContactReference cache and Tickets carry no PACT/Tasleeh columns, so the
+/// selected unit's Project and Unit Number prefill Step 3's manual fields
+/// (still editable) and are stored exactly like an agent-typed manual entry;
+/// the source name and external customer id/name are display/carry-forward
+/// only and are not persisted — reported and accepted, rather than new
+/// Ticket columns invented here.
 /// </para>
 ///
 /// State is carried step-to-step via the query string (GET) and hidden
@@ -49,6 +73,7 @@ namespace TigerCS.Web.Pages;
 /// </summary>
 public sealed class NewTicketModel(
     IntakeRecordsApiClient intakeClient,
+    CustomerLookupApiClient customerLookupClient,
     CrmBuyerLookupApiClient crmBuyerLookupClient,
     DepartmentsApiClient departmentsClient,
     CategoriesApiClient categoriesClient,
@@ -101,6 +126,61 @@ public sealed class NewTicketModel(
     public bool CrmBuyerLookupUnavailable { get; private set; }
 
     /// <summary>
+    /// The department-aware customer lookup response — one entry per source
+    /// the intake's Department actually enables (see
+    /// <see cref="RunCustomerLookupAsync"/>), each independently Found/
+    /// NotFound/Failed so one source's outage never hides another's result.
+    /// Null until Step 2 has run, or when the lookup call itself failed
+    /// (<see cref="CustomerLookupUnavailable"/>).
+    /// </summary>
+    public CustomerLookupResultDto? CustomerLookup { get; private set; }
+
+    /// <summary>True when the generic customer-lookup call itself failed — the page fails open to the previous CRM-only behavior (<see cref="CrmParticipates"/> stays true) rather than losing CRM lookup, and never blocks the wizard.</summary>
+    public bool CustomerLookupUnavailable { get; private set; }
+
+    /// <summary>
+    /// Whether the Crm source participates for this intake — read from the
+    /// department-aware lookup response, never from a hard-coded department
+    /// check. Fails open to true when that response is unavailable, so the
+    /// real CRM Buyer Lookup never silently disappears on a lookup-config
+    /// outage.
+    /// </summary>
+    public bool CrmParticipates { get; private set; } = true;
+
+    /// <summary>
+    /// The non-CRM source entries (PACT/Tasleeh) to render, straight from the
+    /// department-aware response. The response's own Crm entry is used only
+    /// as the participation signal for the real CRM Buyer Lookup — its
+    /// customers are not rendered, because that generic Crm leg is still
+    /// fixture-backed (Crm:Provider=Mock) while Buyer Lookup is the real CRM
+    /// integration (see this type's remarks).
+    /// </summary>
+    public IReadOnlyList<CustomerLookupSourceResultDto> ExternalLookupSources =>
+        CustomerLookup?.Sources.Where(s => !string.Equals(s.Source, "Crm", StringComparison.Ordinal)).ToList() ?? [];
+
+    /// <summary>True when the Department has zero lookup sources configured — nothing was searched (never a silent fall-back to "search everything"), and the agent continues with manual entry.</summary>
+    public bool NoLookupSourcesConfigured => CustomerLookup is { Sources.Count: 0 };
+
+    /// <summary>
+    /// The PACT/Tasleeh customer+unit the agent selected on Step 2, packed
+    /// exactly like the CRM radio value (see <see cref="OnPostUseExternalUnit"/>)
+    /// and carried step-to-step via query string/hidden field like every
+    /// other wizard value. Unpacked into the External* properties below.
+    /// Display/carry-forward only past Step 3's prefill — the persisted
+    /// record of the selection is the manual Project/Unit snapshot (see this
+    /// type's remarks).
+    /// </summary>
+    public string? ExternalSelection { get; private set; }
+
+    /// <summary>"Pact" or "Tasleeh" — which source the Step 2 selection came from.</summary>
+    public string? ExternalSource { get; private set; }
+    /// <summary>The source's own customer identifier (for PACT, its tenantID). Display only — no local reference table exists to link it to a Ticket.</summary>
+    public string? ExternalCustomerId { get; private set; }
+    public string? ExternalCustomerName { get; private set; }
+    public string? ExternalProjectName { get; private set; }
+    public string? ExternalUnitNumber { get; private set; }
+
+    /// <summary>
     /// The Department directory Step 1's dropdown renders — real, existing
     /// Departments only, never a hard-coded or manually-typed id. Populated
     /// on Step 1 only (<see cref="LoadDepartmentsAsync"/>).
@@ -135,6 +215,7 @@ public sealed class NewTicketModel(
         string? step, long? intakeRecordId, string? phoneNumber, int? departmentId,
         int? crmBuyerCustomerId, int? crmBuyerLeadId, int? crmBuyerUnitId, int? crmBuyerProjectId,
         string? crmBuyerCustomerName, string? crmBuyerProjectName, string? crmBuyerUnitNumber,
+        string? externalSelection,
         CancellationToken cancellationToken)
     {
         Step = step ?? "intake";
@@ -148,13 +229,30 @@ public sealed class NewTicketModel(
         CrmBuyerCustomerName = crmBuyerCustomerName;
         CrmBuyerProjectName = crmBuyerProjectName;
         CrmBuyerUnitNumber = crmBuyerUnitNumber;
+        ApplyExternalSelection(externalSelection);
 
         if (Step == "lookup" && !string.IsNullOrWhiteSpace(PhoneNumber))
         {
-            await RunCrmBuyerLookupAsync(cancellationToken);
+            // The department-aware lookup decides which sources participate
+            // (and carries the PACT/Tasleeh results); the real CRM Buyer
+            // Lookup then runs only when the Crm source is in scope.
+            await RunCustomerLookupAsync(cancellationToken);
+            if (CrmParticipates)
+            {
+                await RunCrmBuyerLookupAsync(cancellationToken);
+            }
         }
         else if (Step == "create")
         {
+            // A PACT/Tasleeh selection prefills the (still editable, still
+            // required) manual Project/Unit fields — the existing manual
+            // snapshot path is exactly how such a selection persists.
+            if (CrmBuyerUnitId is null && ExternalSelection is not null)
+            {
+                CreateStep.ManualProjectName ??= ExternalProjectName;
+                CreateStep.ManualUnitNumber ??= ExternalUnitNumber;
+            }
+
             await LoadCategoriesAsync(cancellationToken);
             await LoadPreviousTicketsAsync(cancellationToken);
         }
@@ -164,6 +262,39 @@ public sealed class NewTicketModel(
         }
 
         return Page();
+    }
+
+    /// <summary>
+    /// The department-aware customer lookup
+    /// (<c>GET /api/intake-records/{id}/customer-lookup</c>) — the
+    /// authoritative answer to which sources participate for this intake,
+    /// straight from <c>DepartmentCustomerLookupSources</c> server-side:
+    /// only the Department's configured source(s) when one was selected, all
+    /// three when none was, zero when the Department configures none. Its own
+    /// failure never blocks the wizard: <see cref="CustomerLookupUnavailable"/>
+    /// is flagged and <see cref="CrmParticipates"/> stays true, so the page
+    /// fails open to the previous CRM-only behavior.
+    /// </summary>
+    private async Task RunCustomerLookupAsync(CancellationToken cancellationToken)
+    {
+        if (IntakeRecordId is not { } intakeRecordId)
+        {
+            // Deep-linked without an intake id — nothing to look up against;
+            // fail open to the CRM-only behavior.
+            CustomerLookupUnavailable = true;
+            return;
+        }
+
+        var result = await customerLookupClient.SearchAsync(intakeRecordId, cancellationToken);
+        if (result.IsSuccess && result.Value is not null)
+        {
+            CustomerLookup = result.Value;
+            CrmParticipates = result.Value.Sources.Any(s => string.Equals(s.Source, "Crm", StringComparison.Ordinal));
+        }
+        else
+        {
+            CustomerLookupUnavailable = true;
+        }
     }
 
     /// <summary>
@@ -297,6 +428,54 @@ public sealed class NewTicketModel(
     }
 
     /// <summary>
+    /// The agent explicitly selected one PACT/Tasleeh customer's one unit
+    /// from the department-aware lookup results — the same packed-radio shape
+    /// as <see cref="OnPostUseCrmBuyerUnit"/>, packing
+    /// "{escaped source}:{escaped external customer id}:{escaped customer
+    /// name}:{escaped project name}:{escaped unit number}" so ids and the
+    /// display text the agent saw always travel together. Carried onward as
+    /// one <c>externalSelection</c> value; Step 3 prefills the manual
+    /// Project/Unit fields from it (see <see cref="OnGetAsync"/>) — the
+    /// existing manual snapshot path is how the selection persists, since
+    /// these sources have no local reference ids to link.
+    /// </summary>
+    public IActionResult OnPostUseExternalUnit(
+        long intakeRecordId, string? phoneNumber, int? departmentId, string selectedExternalUnit) =>
+        RedirectToPage(new
+        {
+            step = "create",
+            intakeRecordId,
+            phoneNumber,
+            departmentId,
+            externalSelection = selectedExternalUnit
+        });
+
+    private void ApplyExternalSelection(string? externalSelection)
+    {
+        ExternalSelection = string.IsNullOrWhiteSpace(externalSelection) ? null : externalSelection;
+        if (ExternalSelection is null)
+        {
+            return;
+        }
+
+        var parts = ExternalSelection.Split(':', 5);
+        ExternalSource = UnescapeOrNull(parts, 0);
+        ExternalCustomerId = UnescapeOrNull(parts, 1);
+        ExternalCustomerName = UnescapeOrNull(parts, 2);
+        ExternalProjectName = UnescapeOrNull(parts, 3);
+        ExternalUnitNumber = UnescapeOrNull(parts, 4);
+    }
+
+    /// <summary>User-facing name for a lookup source key — never the raw enum-ish value alone in a heading.</summary>
+    public static string SourceDisplayName(string source) => source switch
+    {
+        "Crm" => "Tiger CRM",
+        "Pact" => "PACT",
+        "Tasleeh" => "Tasleeh",
+        _ => source
+    };
+
+    /// <summary>
     /// No CRM Buyer unit selected — CRM found no match, CRM was unavailable,
     /// or the agent chose to proceed without using a match CRM did find.
     /// None of those blocks ticket creation; Step 3 requires the agent to
@@ -309,6 +488,7 @@ public sealed class NewTicketModel(
         long intakeRecordId, string? phoneNumber, int? departmentId,
         int? crmBuyerCustomerId, int? crmBuyerLeadId, int? crmBuyerUnitId, int? crmBuyerProjectId,
         string? crmBuyerCustomerName, string? crmBuyerProjectName, string? crmBuyerUnitNumber,
+        string? externalSelection,
         CancellationToken cancellationToken)
     {
         Step = "create";
@@ -322,6 +502,7 @@ public sealed class NewTicketModel(
         CrmBuyerCustomerName = crmBuyerCustomerName;
         CrmBuyerProjectName = crmBuyerProjectName;
         CrmBuyerUnitNumber = crmBuyerUnitNumber;
+        ApplyExternalSelection(externalSelection);
 
         var hasCrmBuyerMatch = CrmBuyerUnitId is not null;
 

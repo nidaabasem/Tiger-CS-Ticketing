@@ -45,6 +45,20 @@ public sealed class WebFrontEndCleanupTests
         Assert.Contains("Continue to Ticket", html);
     }
 
+    // ---- Department-aware lookup: PACT's raw numeric customer-type code must never render as a label ----
+
+    [Fact]
+    public void NewTicketView_NeverRendersTheRawCustomerTypeCode()
+    {
+        // PACT's customerBuyerType reaches the Web layer as a raw numeric
+        // code ("1"/"2") whose code table is not published — presenting it as
+        // a customer-type label would mislead, so the New Ticket view must
+        // not reference the CustomerType field at all.
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        Assert.DoesNotContain("CustomerType", html);
+    }
+
     // ---- Category directory: the manual numeric CategoryId textbox and its temporary help text are gone ----
 
     [Fact]
@@ -195,15 +209,19 @@ public sealed class WebFrontEndCleanupTests
     }
 
     [Fact]
-    public void NewTicketModel_NoLongerDependsOnTheGenericCustomerLookupApiClient()
+    public void NewTicketModel_DependsOnBothTheGenericCustomerLookupAndTheRealCrmBuyerLookupClients()
     {
-        // Business-rule change: the wizard's phone search must never fall
-        // back to the generic CRM/PACT/Tasleeh CustomerLookupController path
-        // — it calls the real CRM Buyer Lookup endpoint only.
+        // Business-rule change (reversing this guard's earlier direction):
+        // Step 2 is department-aware, so the wizard now consumes the generic
+        // CRM/PACT/Tasleeh CustomerLookupApiClient — the authoritative answer
+        // to which sources participate (DepartmentCustomerLookupSources) and
+        // the carrier of PACT/Tasleeh results — while the real CRM Buyer
+        // Lookup client still performs the CRM leg itself (its generic Crm
+        // entry is fixture-backed; see NewTicketModel's remarks).
         var constructor = Assert.Single(typeof(TigerCsWeb::TigerCS.Web.Pages.NewTicketModel).GetConstructors());
-        var parameterTypeNames = constructor.GetParameters().Select(p => p.ParameterType.Name);
+        var parameterTypeNames = constructor.GetParameters().Select(p => p.ParameterType.Name).ToList();
 
-        Assert.DoesNotContain("CustomerLookupApiClient", parameterTypeNames);
+        Assert.Contains("CustomerLookupApiClient", parameterTypeNames);
         Assert.Contains("CrmBuyerLookupApiClient", parameterTypeNames);
     }
 
