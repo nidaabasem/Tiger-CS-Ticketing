@@ -15,4 +15,8 @@
     <InternalsVisibleTo Include="TigerCS.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="wwwroot\img\" />
+  </ItemGroup>
+
 </Project>
