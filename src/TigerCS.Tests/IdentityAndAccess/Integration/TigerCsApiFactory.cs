@@ -79,7 +79,18 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 ["Jwt:Issuer"] = "TigerCS.Tests",
                 ["Jwt:Audience"] = "TigerCS.Tests.Client",
                 ["Jwt:SigningKey"] = "test-only-signing-key-at-least-32-characters-long-1234567890",
-                ["Jwt:ExpirationMinutes"] = "60"
+                ["Jwt:ExpirationMinutes"] = "60",
+                // Deterministic, offline test defaults regardless of what
+                // the deployable appsettings.json ships (production now sets
+                // Pact:Provider=Http with a real internal PACT address —
+                // unreachable from CI, where it would turn every Pact
+                // lookup into a 15s timeout reported as Failed). Tests that
+                // exercise the real HTTP path (PactHttpLookupEndToEndTests)
+                // override these via ExtraConfiguration, which is applied
+                // after and therefore wins.
+                ["Pact:Provider"] = "Mock",
+                ["PactApi:BaseUrl"] = "",
+                ["PactApi:ApiKey"] = ""
             });
 
             if (ExtraConfiguration.Count > 0)
