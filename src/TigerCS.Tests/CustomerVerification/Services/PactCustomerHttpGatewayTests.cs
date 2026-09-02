@@ -106,6 +106,59 @@ public class PactCustomerHttpGatewayTests
         }
         """;
 
+    /// <summary>The full real-shape row with the contract dates in a caller-chosen format — every field PACT actually sends, financials included.</summary>
+    private static string RealShapeRowJson(string contractStartDate, string contractEndDate) => $$"""
+        {
+          "data": [
+            {
+              "tenantID": 7001, "companyID": 3,
+              "projectCode": "104", "projectName": "TIGER 3",
+              "unitID": 700, "unitCode": "104-2304", "unitType": "Residential", "unitNumber": "2304", "unitStatus": "Occupied",
+              "contractID": 88001,
+              "contractStartDate": {{contractStartDate}}, "contractEndDate": {{contractEndDate}},
+              "contractNetAmount": 52000.50, "contractDiscountAmount": 0,
+              "contractServicesNetAmount": 1200.00, "contractServicesDiscountAmount": 0,
+              "customerMobile": "971501234567", "customerName": "Fatima Noor", "customerEmail": null,
+              "customerBuyerType": 2, "grossArea": 120.5, "netArea": 98.2
+            }
+          ]
+        }
+        """;
+
+    // Regression for the found-customer-reported-as-unavailable bug: PACT's
+    // contract dates are not guaranteed ISO-8601 (the original
+    // PactService.cs carried a custom NullableDateTimeConverter for exactly
+    // this), and binding them as DateTime? made the ENTIRE 200 response
+    // throw JsonException — a real, matched customer collapsed into
+    // InvalidResponse ("PACT unavailable"). The dates are consumed by
+    // nothing, so the wire DTO no longer binds them and every format below
+    // must parse to the same successful customer.
+    [Theory]
+    [InlineData("\"2025-01-01T00:00:00\"", "\"2026-01-01T00:00:00\"")] // ISO-8601
+    [InlineData("\"2025-01-01 00:00:00\"", "\"2026-01-01 00:00:00\"")] // SQL-style, space separator
+    [InlineData("\"\\/Date(1735689600000)\\/\"", "\"\\/Date(1767225600000)\\/\"")] // legacy ASP.NET epoch wrapper
+    [InlineData("\"01/01/2025\"", "\"01/01/2026\"")] // d/M/y display format
+    [InlineData("null", "null")]
+    public async Task SearchByMobileAsync_RealShapeRow_AnyContractDateFormat_StillReturnsTheCustomer(
+        string contractStartDate, string contractEndDate)
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(JsonResponse(HttpStatusCode.OK, RealShapeRowJson(contractStartDate, contractEndDate))));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+971501234567");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        var customer = Assert.Single(result.Customers!);
+        Assert.Equal("7001", customer.PactCustomerId);
+        Assert.Equal("Fatima Noor", customer.DisplayName);
+        Assert.Equal("2", customer.CustomerType);
+        var contract = Assert.Single(customer.Contracts);
+        Assert.Equal("700", contract.ExternalUnitId);
+        Assert.Equal("2304", contract.UnitNumber);
+        Assert.Equal("TIGER 3", contract.ProjectName);
+    }
+
     [Fact]
     public async Task SearchByMobileAsync_SingleContract_ReturnsSuccessWithAllRealFieldsMapped()
     {
