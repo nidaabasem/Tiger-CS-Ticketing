@@ -24,6 +24,20 @@ namespace TigerCS.Integrations.Modules.PactIntegration;
 /// </para>
 ///
 /// <para>
+/// <b><c>contractStartDate</c>/<c>contractEndDate</c> are deliberately NOT
+/// modeled either — as a hard bug fix, not just parsimony.</b> Nothing past
+/// the gateway consumes them, and binding them as <c>DateTime?</c> made the
+/// WHOLE 200 response unparseable whenever PACT emitted a non-ISO-8601 date
+/// (e.g. <c>"2025-01-01 00:00:00"</c> or legacy <c>"/Date(1735689600000)/"</c>
+/// — the original PactService.cs needed a custom
+/// <c>NullableDateTimeConverter</c> for exactly this), collapsing a found
+/// customer into <c>InvalidResponse</c>/"PACT unavailable". Unmodeled, the
+/// deserializer skips them regardless of format. If a future feature needs
+/// these dates, bind them as <c>string</c> (or add a tolerant converter) —
+/// never as bare <c>DateTime?</c>.
+/// </para>
+///
+/// <para>
 /// Never referenced outside <see cref="PactCustomerHttpGateway"/> —
 /// everything past the gateway sees only the mapped
 /// <c>TigerCS.Application.Modules.CustomerVerification.PactIntegration</c>
@@ -43,8 +57,6 @@ internal sealed record PactContractRowHttpDto(
     string? UnitNumber,
     string? UnitStatus,
     long? ContractID,
-    DateTime? ContractStartDate,
-    DateTime? ContractEndDate,
     string? CustomerMobile,
     string? CustomerName,
     string? CustomerEmail,

@@ -46,12 +46,15 @@ namespace TigerCS.Integrations.Modules.PactIntegration;
 /// </para>
 ///
 /// <para>
-/// <b>The mobile number is sent exactly as the agent entered it</b> —
-/// trimmed and percent-encoded into the path, nothing more. This reuses the
-/// codebase's existing phone-handling convention (see
-/// <c>IIntakeRecordRepository</c>'s remarks: no phone-normalization
-/// convention exists to apply, and <c>IntakeRecord.PhoneNumber</c> is
-/// preserved verbatim), exactly as <c>CrmBuyerHttpGateway</c> does for CRM.
+/// <b>The mobile number is normalized for PACT only</b> — trimmed, with
+/// every '+' removed, before it goes into either request path
+/// (<see cref="NormalizePactPhone"/>): PACT does not expect the '+' prefix,
+/// and sending "+971501234567" instead of "971501234567" makes an existing
+/// customer come back not-found. This normalization lives here, at the PACT
+/// integration boundary, and nowhere else: the caller's value is untouched
+/// (<c>IntakeRecord.PhoneNumber</c> stays verbatim per
+/// <c>IIntakeRecordRepository</c>'s remarks), and <c>CrmBuyerHttpGateway</c>
+/// keeps sending CRM the number exactly as entered.
 /// </para>
 /// </summary>
 public sealed class PactCustomerHttpGateway(
@@ -68,7 +71,13 @@ public sealed class PactCustomerHttpGateway(
     public async Task<PactCustomerLookupResult> SearchByMobileAsync(string mobileNumber, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mobileNumber);
-        mobileNumber = mobileNumber.Trim();
+        mobileNumber = NormalizePactPhone(mobileNumber);
+        if (mobileNumber.Length == 0)
+        {
+            // The input was only '+'/whitespace — nothing searchable remains,
+            // and an empty path segment would call a different PACT route.
+            return PactCustomerLookupResult.NotFound("Mobile number contained no searchable characters after PACT normalization.");
+        }
 
         var apiKey = options.Value.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -104,13 +113,30 @@ public sealed class PactCustomerHttpGateway(
 
         using (response)
         {
+            // Debug-level diagnostic: the ABSOLUTE request URL (revealing
+            // BaseUrl resolution problems — e.g. a path prefix silently
+            // dropped by relative-URI resolution) and the raw status. The
+            // URL contains the full normalized mobile number on purpose:
+            // diagnosing a PACT number-format mismatch requires seeing the
+            // exact value sent, and Debug is off at the default production
+            // log level — every Warning+ line above/below still masks.
+            logger.LogDebug(
+                "PACT contracts lookup: GET {AbsoluteRequestUri} -> HTTP {StatusCode}.",
+                response.RequestMessage?.RequestUri, (int)response.StatusCode);
+
             switch (response.StatusCode)
             {
                 case HttpStatusCode.OK:
                     return await ParseSuccessResponseAsync(response, mobileNumber, apiKey, cancellationToken);
                 case HttpStatusCode.NotFound:
                     // PACT answered and simply has no customer on file — a
-                    // data-not-found result, never an error.
+                    // data-not-found result, never an error. NOTE for
+                    // diagnosis: a wrong PactApi:BaseUrl (unknown route)
+                    // also produces a 404 and lands here — the Debug line
+                    // above shows which of the two it is via the absolute URL.
+                    logger.LogDebug(
+                        "PACT contracts lookup answered 404 for {MaskedMobileNumber} — no customer on file, OR an unknown route (check the absolute URL in the previous Debug line).",
+                        Mask(mobileNumber));
                     return PactCustomerLookupResult.NotFound();
                 case HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden:
                     logger.LogWarning(
@@ -154,9 +180,20 @@ public sealed class PactCustomerHttpGateway(
         if (payload.Data.Count == 0)
         {
             // An empty data array is PACT answering "nothing on file" — a
-            // data-not-found result, never an error.
+            // data-not-found result, never an error. Distinct from the 404
+            // case in the Debug trail: 200-with-empty-data means the route
+            // was right and PACT genuinely matched no customer for the
+            // number AS SENT — the primary signal of a number-format
+            // mismatch when the customer is known to exist.
+            logger.LogDebug(
+                "PACT contracts lookup answered 200 with an EMPTY data array for {MaskedMobileNumber} — the route resolved but no customer matched the number as sent.",
+                Mask(mobileNumber));
             return PactCustomerLookupResult.NotFound();
         }
+
+        logger.LogDebug(
+            "PACT contracts lookup answered 200 with {RowCount} contract row(s) for {MaskedMobileNumber}.",
+            payload.Data.Count, Mask(mobileNumber));
 
         // The real body is one flat row per contract; the same tenant appears
         // once per contract. Group by tenantID — the primary external PACT
@@ -233,6 +270,10 @@ public sealed class PactCustomerHttpGateway(
         try
         {
             using var response = await httpClient.SendAsync(request, cancellationToken);
+            // Same Debug-level absolute-URL diagnostic as the contracts call.
+            logger.LogDebug(
+                "PACT customer-type fallback: GET {AbsoluteRequestUri} -> HTTP {StatusCode}.",
+                response.RequestMessage?.RequestUri, (int)response.StatusCode);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 logger.LogWarning(
@@ -259,6 +300,26 @@ public sealed class PactCustomerHttpGateway(
         var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
         request.Headers.TryAddWithoutValidation(ApiKeyHeaderName, apiKey);
         return request;
+    }
+
+    /// <summary>
+    /// PACT-only phone normalization: trim surrounding whitespace and remove
+    /// every '+' — PACT stores/matches numbers without the '+' prefix, so
+    /// "+971501234567" must reach it as "971501234567" or an existing
+    /// customer returns not-found. Applied to nothing but the two PACT
+    /// request paths this gateway builds; the number the caller holds (and
+    /// everything CRM/Tasleeh/persistence see) stays exactly as entered.
+    /// </summary>
+    private static string NormalizePactPhone(string phoneNumber)
+    {
+        if (string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            return string.Empty;
+        }
+
+        return phoneNumber
+            .Trim()
+            .Replace("+", "");
     }
 
     private static string? FirstNonBlank(params string?[] values) =>

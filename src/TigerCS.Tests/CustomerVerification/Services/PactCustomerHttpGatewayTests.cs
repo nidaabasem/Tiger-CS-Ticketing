@@ -106,6 +106,59 @@ public class PactCustomerHttpGatewayTests
         }
         """;
 
+    /// <summary>The full real-shape row with the contract dates in a caller-chosen format — every field PACT actually sends, financials included.</summary>
+    private static string RealShapeRowJson(string contractStartDate, string contractEndDate) => $$"""
+        {
+          "data": [
+            {
+              "tenantID": 7001, "companyID": 3,
+              "projectCode": "104", "projectName": "TIGER 3",
+              "unitID": 700, "unitCode": "104-2304", "unitType": "Residential", "unitNumber": "2304", "unitStatus": "Occupied",
+              "contractID": 88001,
+              "contractStartDate": {{contractStartDate}}, "contractEndDate": {{contractEndDate}},
+              "contractNetAmount": 52000.50, "contractDiscountAmount": 0,
+              "contractServicesNetAmount": 1200.00, "contractServicesDiscountAmount": 0,
+              "customerMobile": "971501234567", "customerName": "Fatima Noor", "customerEmail": null,
+              "customerBuyerType": 2, "grossArea": 120.5, "netArea": 98.2
+            }
+          ]
+        }
+        """;
+
+    // Regression for the found-customer-reported-as-unavailable bug: PACT's
+    // contract dates are not guaranteed ISO-8601 (the original
+    // PactService.cs carried a custom NullableDateTimeConverter for exactly
+    // this), and binding them as DateTime? made the ENTIRE 200 response
+    // throw JsonException — a real, matched customer collapsed into
+    // InvalidResponse ("PACT unavailable"). The dates are consumed by
+    // nothing, so the wire DTO no longer binds them and every format below
+    // must parse to the same successful customer.
+    [Theory]
+    [InlineData("\"2025-01-01T00:00:00\"", "\"2026-01-01T00:00:00\"")] // ISO-8601
+    [InlineData("\"2025-01-01 00:00:00\"", "\"2026-01-01 00:00:00\"")] // SQL-style, space separator
+    [InlineData("\"\\/Date(1735689600000)\\/\"", "\"\\/Date(1767225600000)\\/\"")] // legacy ASP.NET epoch wrapper
+    [InlineData("\"01/01/2025\"", "\"01/01/2026\"")] // d/M/y display format
+    [InlineData("null", "null")]
+    public async Task SearchByMobileAsync_RealShapeRow_AnyContractDateFormat_StillReturnsTheCustomer(
+        string contractStartDate, string contractEndDate)
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(JsonResponse(HttpStatusCode.OK, RealShapeRowJson(contractStartDate, contractEndDate))));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+971501234567");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        var customer = Assert.Single(result.Customers!);
+        Assert.Equal("7001", customer.PactCustomerId);
+        Assert.Equal("Fatima Noor", customer.DisplayName);
+        Assert.Equal("2", customer.CustomerType);
+        var contract = Assert.Single(customer.Contracts);
+        Assert.Equal("700", contract.ExternalUnitId);
+        Assert.Equal("2304", contract.UnitNumber);
+        Assert.Equal("TIGER 3", contract.ProjectName);
+    }
+
     [Fact]
     public async Task SearchByMobileAsync_SingleContract_ReturnsSuccessWithAllRealFieldsMapped()
     {
@@ -132,7 +185,7 @@ public class PactCustomerHttpGatewayTests
     }
 
     [Fact]
-    public async Task SearchByMobileAsync_SendsApiKeyHeaderAndUrlEncodedMobileInPath()
+    public async Task SearchByMobileAsync_SendsApiKeyHeaderAndUrlEncodedNormalizedMobileInPath()
     {
         var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
         var gateway = CreateGateway(handler);
@@ -142,9 +195,62 @@ public class PactCustomerHttpGatewayTests
         Assert.NotNull(handler.LastRequest);
         Assert.Equal(ApiKey, Assert.Single(handler.LastRequest!.Headers.GetValues("X-API-KEY")));
         Assert.StartsWith("/v1/contracts/", handler.LastRequest.RequestUri!.PathAndQuery);
-        // '+' and spaces must be percent-encoded, never sent literally.
-        Assert.DoesNotContain("+971 50", handler.LastRequest.RequestUri.PathAndQuery);
-        Assert.Contains(Uri.EscapeDataString("+971 50 000 0002"), handler.LastRequest.RequestUri.PathAndQuery);
+        // PACT normalization strips the '+' (PACT stores numbers without it);
+        // what remains is percent-encoded, never sent literally.
+        Assert.DoesNotContain("+", handler.LastRequest.RequestUri.PathAndQuery);
+        Assert.DoesNotContain("%2B", handler.LastRequest.RequestUri.PathAndQuery, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Uri.EscapeDataString("971 50 000 0002"), handler.LastRequest.RequestUri.PathAndQuery);
+    }
+
+    // ---- PACT-only phone normalization: trim + remove '+', at this gateway
+    // boundary and nowhere else (CRM keeps the number exactly as entered —
+    // see CrmBuyerHttpGatewayTests' own URL assertion). ----
+
+    [Fact]
+    public async Task SearchByMobileAsync_PlusPrefixedMobile_PactReceivesItWithoutThePlus()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        await gateway.SearchByMobileAsync("+971501234567");
+
+        Assert.Equal("/v1/contracts/971501234567", handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_AlreadyNormalizedMobile_IsSentUnchanged()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        await gateway.SearchByMobileAsync("971501234567");
+
+        Assert.Equal("/v1/contracts/971501234567", handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_SurroundingWhitespace_IsTrimmedBeforeTheCall()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        await gateway.SearchByMobileAsync("  +971501234567  ");
+
+        Assert.Equal("/v1/contracts/971501234567", handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_OnlyPlusSigns_ReturnsNotFoundWithoutCallingPact()
+    {
+        // '+' alone normalizes to nothing searchable — and an empty path
+        // segment would hit a different PACT route entirely.
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, SingleContractJson)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+");
+
+        Assert.Equal(PactCustomerLookupOutcome.NotFound, result.Outcome);
+        Assert.Equal(0, handler.CallCount);
     }
 
     [Fact]
@@ -232,7 +338,9 @@ public class PactCustomerHttpGatewayTests
         Assert.Equal("Owner", Assert.Single(result.Customers!).CustomerType);
         Assert.Equal(2, requestPaths.Count);
         Assert.EndsWith("/customer-type", requestPaths[1]);
-        Assert.Contains(Uri.EscapeDataString("+971500000002"), requestPaths[1]);
+        // The fallback call uses the same PACT-normalized number — no '+'.
+        Assert.Contains("971500000002", requestPaths[1]);
+        Assert.DoesNotContain("%2B", requestPaths[1], StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -438,6 +546,45 @@ public class PactCustomerHttpGatewayTests
 
         Assert.Equal(PactCustomerLookupOutcome.Unavailable, result.Outcome);
         Assert.Equal(0, handler.CallCount);
+    }
+
+    // ---- Base-address resolution: a slashless BaseUrl with a path prefix
+    // must not silently lose the prefix (relative-URI resolution drops the
+    // last path segment of a slashless base, turning every lookup into a
+    // 404 -> "customer not found"). ----
+
+    [Theory]
+    [InlineData("https://pact.example.test/", "https://pact.example.test/")]
+    [InlineData("https://pact.example.test", "https://pact.example.test/")]
+    [InlineData("https://pact.example.test/api", "https://pact.example.test/api/")]
+    [InlineData("https://pact.example.test/api/", "https://pact.example.test/api/")]
+    public void ResolveBaseAddress_AlwaysEndsWithASlash(string configured, string expected)
+    {
+        var options = new PactApiOptions { BaseUrl = configured };
+
+        Assert.Equal(new Uri(expected), options.ResolveBaseAddress());
+    }
+
+    [Fact]
+    public void ResolveBaseAddress_PathPrefix_SurvivesRelativeUriResolution()
+    {
+        // The exact failure mode being prevented: without the trailing
+        // slash, "…/api" + "v1/contracts/…" resolves to "…/v1/contracts/…",
+        // silently dropping "/api".
+        var baseAddress = new PactApiOptions { BaseUrl = "https://pact.example.test/api" }.ResolveBaseAddress();
+
+        var resolved = new Uri(baseAddress!, "v1/contracts/971501234567");
+
+        Assert.Equal("/api/v1/contracts/971501234567", resolved.AbsolutePath);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveBaseAddress_MissingBaseUrl_ReturnsNull(string? configured)
+    {
+        Assert.Null(new PactApiOptions { BaseUrl = configured }.ResolveBaseAddress());
     }
 
     [Fact]

@@ -659,6 +659,19 @@ public sealed class NewTicketModel(
     {
         [Required]
         public string ChannelId { get; set; } = "Phone";
+
+        /// <summary>
+        /// Free-form string, deliberately: a leading '+' (e.g.
+        /// "+971501234567") is valid and the value is preserved EXACTLY as
+        /// entered through UI → PageModel → API → IntakeRecord — no format
+        /// annotation ([RegularExpression]/[Phone]/[DataType]), no HTML
+        /// pattern/type restriction, and no reformatting anywhere upstream
+        /// may be added (guarded by NewTicketModelTests/
+        /// WebFrontEndCleanupTests). The one permitted transformation lives
+        /// at the PACT integration boundary only
+        /// (PactCustomerHttpGateway.NormalizePactPhone strips the '+' for
+        /// PACT requests); CRM receives the number exactly as entered.
+        /// </summary>
         [Required]
         public string PhoneNumber { get; set; } = string.Empty;
         /// <summary>

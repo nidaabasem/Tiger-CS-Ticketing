@@ -124,6 +124,9 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
             "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", KnownMobile, departmentId, false, null, null));
         Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
         var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        // The persisted intake keeps the number exactly as entered — the
+        // '+'-stripping is PACT-request-side only, never the stored value.
+        Assert.Equal(KnownMobile, intake!.PhoneNumber);
 
         // Customer lookup → the real PactCustomerHttpGateway calls the stub
         // PACT server over real HTTP.
@@ -167,7 +170,10 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         // never called.
         var stubRequest = Assert.Single(_stubRequests, r => r.PathAndQuery.StartsWith("/v1/contracts/", StringComparison.Ordinal));
         Assert.Equal(_apiKey, stubRequest.ApiKey);
-        Assert.Contains(Uri.EscapeDataString(KnownMobile), stubRequest.PathAndQuery);
+        // PACT received the normalized number: '+' stripped, digits intact.
+        Assert.Contains(KnownMobile.Replace("+", ""), stubRequest.PathAndQuery);
+        Assert.DoesNotContain("+", stubRequest.PathAndQuery);
+        Assert.DoesNotContain("%2B", stubRequest.PathAndQuery, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(_stubRequests, r => r.PathAndQuery.EndsWith("/customer-type", StringComparison.Ordinal));
 
         // The agent deliberately selects the SECOND unit (proving no
@@ -341,12 +347,21 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
             return (401, null);
         }
 
-        if (pathAndQuery.Contains(Uri.EscapeDataString(ServerErrorMobile), StringComparison.Ordinal))
+        // The real PACT stores numbers WITHOUT the '+' prefix — a number
+        // sent as "+9715..." does not match an existing customer. The stub
+        // mirrors that: only the normalized digits match, so this whole test
+        // fails if the gateway ever sends the '+' again.
+        if (pathAndQuery.Contains("%2B", StringComparison.OrdinalIgnoreCase) || pathAndQuery.Contains('+'))
+        {
+            return (200, """{ "data": [] }""");
+        }
+
+        if (pathAndQuery.Contains(ServerErrorMobile.Replace("+", ""), StringComparison.Ordinal))
         {
             return (500, null);
         }
 
-        if (pathAndQuery.Contains(Uri.EscapeDataString(KnownMobile), StringComparison.Ordinal))
+        if (pathAndQuery.Contains(KnownMobile.Replace("+", ""), StringComparison.Ordinal))
         {
             return (200, KnownMobileContractsJson);
         }

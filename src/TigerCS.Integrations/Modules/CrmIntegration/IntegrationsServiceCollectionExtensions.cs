@@ -121,9 +121,13 @@ public static class IntegrationsServiceCollectionExtensions
         services.AddHttpClient<PactCustomerHttpGateway>((sp, client) =>
         {
             var options = sp.GetRequiredService<IOptions<PactApiOptions>>().Value;
-            if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            // ResolveBaseAddress guarantees the trailing '/' — see its
+            // remarks: without it a BaseUrl carrying a path prefix loses
+            // that prefix to relative-URI resolution and every lookup
+            // becomes a silent 404 -> "customer not found".
+            if (options.ResolveBaseAddress() is { } baseAddress)
             {
-                client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+                client.BaseAddress = baseAddress;
             }
 
             client.Timeout = TimeSpan.FromSeconds(15);

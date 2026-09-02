@@ -45,6 +45,26 @@ public sealed class WebFrontEndCleanupTests
         Assert.Contains("Continue to Ticket", html);
     }
 
+    // ---- The phone input must accept a leading '+': no HTML pattern, numeric
+    // type, or length cap may reject "+971501234567" client-side ----
+
+    [Fact]
+    public void NewTicketView_PhoneInput_HasNoPatternTypeOrLengthRestriction()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+        var inputLine = html.Split('\n').Single(line => line.Contains("asp-for=\"Intake.PhoneNumber\"") && line.Contains("<input"));
+
+        // A plain text input: the tag helper renders type="text" for an
+        // unannotated string, and nothing here may narrow what the browser
+        // lets the agent type or submit.
+        Assert.DoesNotContain("pattern=", inputLine);
+        Assert.DoesNotContain("type=\"number\"", inputLine);
+        Assert.DoesNotContain("type=\"tel\"", inputLine);
+        Assert.DoesNotContain("maxlength", inputLine, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("inputmode", inputLine, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- Department-aware lookup: PACT's raw numeric customer-type code must never render as a label ----
 
     [Fact]

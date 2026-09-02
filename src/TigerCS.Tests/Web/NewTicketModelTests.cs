@@ -129,6 +129,69 @@ public sealed class NewTicketModelTests
         Assert.Contains(results, r => r.MemberNames.Contains(nameof(NewTicketModel.IntakeInput.PhoneNumber)));
     }
 
+    // ---- A leading '+' is a valid phone number and is preserved exactly as
+    // entered — no layer of the New Ticket flow may reject or reformat it;
+    // only the PACT gateway (NormalizePactPhone) transforms it, PACT-side. ----
+
+    [Theory]
+    [InlineData("+971501234567")]
+    [InlineData("971501234567")]
+    public void IntakeInput_PhoneNumber_AcceptsPlusPrefixedAndPlainDigits(string phoneNumber)
+    {
+        var input = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = phoneNumber };
+        var results = new List<ValidationResult>();
+
+        var isValid = Validator.TryValidateObject(input, new ValidationContext(input), results, validateAllProperties: true);
+
+        Assert.True(isValid);
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public void IntakeInput_PhoneNumber_CarriesNoFormatRestrictingAnnotations()
+    {
+        // The phone is a free-form string: no [RegularExpression], no
+        // [Phone], no [DataType], no [StringLength] may creep in — any of
+        // them could reject the leading '+' or drive the input tag helper
+        // to a restrictive HTML type.
+        var property = typeof(NewTicketModel.IntakeInput).GetProperty(nameof(NewTicketModel.IntakeInput.PhoneNumber))!;
+
+        Assert.Equal(typeof(string), property.PropertyType);
+        var attributeNames = property.GetCustomAttributes(inherit: true).Select(a => a.GetType().Name).ToList();
+        Assert.Equal(["RequiredAttribute"], attributeNames);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_PlusPrefixedPhone_SentVerbatimToIntakeApi_AndCarriedVerbatimToLookupStep()
+    {
+        var (model, intake, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.Created, new IntakeRecordResponseDto(
+                42, "Phone", DateTime.UtcNow, "+971501234567", 7, false, null, null, "Unverified", null)));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "+971501234567", DepartmentId = 7 };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        // The '+' survives into the API request body exactly as entered…
+        using var body = JsonDocument.Parse(Assert.Single(intake.Requests).Body!);
+        Assert.Equal("+971501234567", body.RootElement.GetProperty("phoneNumber").GetString());
+        // …and into the step-2 carry-forward unchanged (RedirectToPage
+        // percent-encodes '+' as %2B in the generated URL, so it binds back
+        // intact — verified empirically; the route value here is the raw one).
+        var values = RouteValues(Assert.IsType<RedirectToPageResult>(result));
+        Assert.Equal("+971501234567", values["phoneNumber"]);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_Lookup_PlainDigitsPhone_StillSearchesNormally()
+    {
+        var (model, _, crmBuyerLookup, _, _, _, _, _) = CreateModel(crmBuyerLookupResponder: CrmBuyersFound());
+
+        await model.OnGetAsync("lookup", 42, "971501234567", null, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        var sent = Assert.Single(crmBuyerLookup.Requests);
+        Assert.Equal("http://localhost/api/crm/buyers?phoneNumber=971501234567", sent.RequestUri);
+    }
+
     [Fact]
     public void IntakeInput_DepartmentId_IsOptional()
     {
