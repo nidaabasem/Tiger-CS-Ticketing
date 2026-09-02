@@ -125,6 +125,24 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Null(ticket.ContactReferenceId);
     }
 
+    [Theory]
+    [InlineData("+971501234567")]
+    [InlineData("971501234567")]
+    public async Task CreateIntakeRecord_PlusPrefixedOrPlainDigitsPhone_Accepted_StoredVerbatim(string phoneNumber)
+    {
+        // A leading '+' is a valid phone number: the API accepts it and the
+        // IntakeRecord stores the EXACT value entered — no layer reformats
+        // it (only PactCustomerHttpGateway transforms it, PACT-request-side).
+        var client = await CreateAuthenticatedClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", phoneNumber, null, false, null, null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var intake = await response.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.Equal(phoneNumber, intake!.PhoneNumber);
+    }
+
     [Fact]
     public async Task CreateIntakeRecord_BlankPhoneNumber_Returns400_RecordNotCreated()
     {
