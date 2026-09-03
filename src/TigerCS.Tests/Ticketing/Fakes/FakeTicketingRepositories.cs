@@ -177,9 +177,14 @@ public sealed class FakeTicketRepository : ITicketRepository
     {
     }
 
+    /// <summary>How many times <see cref="SearchCustomerHistoryAsync"/> ran — the no-N+1 assertion for related-ticket/history reads (one scoped query per request, never one per row).</summary>
+    public int SearchCustomerHistoryCallCount { get; private set; }
+
     public Task<CustomerHistoryQueryResult> SearchCustomerHistoryAsync(
         CustomerHistoryQuery query, CancellationToken cancellationToken = default)
     {
+        SearchCustomerHistoryCallCount++;
+
         IEnumerable<Ticket> filtered;
         if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
         {
@@ -209,9 +214,18 @@ public sealed class FakeTicketRepository : ITicketRepository
             filtered = filtered.Where(t => t.TicketId != excludeTicketId);
         }
 
+        if (query.UnitNumber is { } unitNumber)
+        {
+            filtered = filtered.Where(t => t.CrmBuyerUnitNumber == unitNumber || t.ManualUnitNumber == unitNumber);
+        }
+
         var all = filtered.ToList();
         var closedCount = all.Count(t => t.TicketStatus is TicketStatus.Resolved or TicketStatus.Closed);
-        var items = all.OrderByDescending(t => t.CreatedAtUtc).Take(query.Limit).ToList();
+        var ordered = query.OrderActiveFirst
+            ? all.OrderBy(t => t.TicketStatus is TicketStatus.Resolved or TicketStatus.Closed ? 1 : 0)
+                .ThenByDescending(t => t.CreatedAtUtc)
+            : all.OrderByDescending(t => t.CreatedAtUtc);
+        var items = ordered.Take(query.Limit).ToList();
 
         return Task.FromResult(new CustomerHistoryQueryResult(items, all.Count, all.Count - closedCount, closedCount));
     }

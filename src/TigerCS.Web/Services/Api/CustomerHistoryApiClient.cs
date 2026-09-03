@@ -21,23 +21,32 @@ public sealed class CustomerHistoryApiClient(HttpClient httpClient, ILogger<Cust
         GetAsync<CustomerSearchResultDto>(
             $"api/customers/search?phoneNumber={Uri.EscapeDataString(phoneNumber)}", cancellationToken);
 
-    public Task<ApiResult<CustomerHistoryDto>> GetByCrmCustomerIdAsync(int crmBuyerCustomerId, int? limit, CancellationToken cancellationToken)
+    /// <summary><paramref name="unitNumber"/>/<paramref name="orderActiveFirst"/> are Phase E's related-tickets narrowing — same endpoint, one scoped query server-side.</summary>
+    public Task<ApiResult<CustomerHistoryDto>> GetByCrmCustomerIdAsync(
+        int crmBuyerCustomerId, int? limit, CancellationToken cancellationToken,
+        string? unitNumber = null, bool orderActiveFirst = false)
     {
-        var query = HttpUtility.ParseQueryString(string.Empty);
-        if (limit is int l) query["limit"] = l.ToString();
-
+        var query = BuildHistoryQuery(limit, unitNumber, orderActiveFirst);
         return GetAsync<CustomerHistoryDto>($"api/customers/crm/{crmBuyerCustomerId}/ticket-history?{query}", cancellationToken);
     }
 
     /// <summary>History for an externally-verified customer (PACT/Tasleeh) — keyed by the persisted source + external customer id pair, never by name or phone.</summary>
     public Task<ApiResult<CustomerHistoryDto>> GetByExternalIdentityAsync(
-        string source, string externalCustomerId, int? limit, CancellationToken cancellationToken)
+        string source, string externalCustomerId, int? limit, CancellationToken cancellationToken,
+        string? unitNumber = null, bool orderActiveFirst = false)
     {
-        var query = HttpUtility.ParseQueryString(string.Empty);
-        if (limit is int l) query["limit"] = l.ToString();
-
+        var query = BuildHistoryQuery(limit, unitNumber, orderActiveFirst);
         return GetAsync<CustomerHistoryDto>(
             $"api/customers/external/{Uri.EscapeDataString(source)}/{Uri.EscapeDataString(externalCustomerId)}/ticket-history?{query}",
             cancellationToken);
+    }
+
+    private static string BuildHistoryQuery(int? limit, string? unitNumber, bool orderActiveFirst)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (limit is int l) query["limit"] = l.ToString();
+        if (!string.IsNullOrWhiteSpace(unitNumber)) query["unitNumber"] = unitNumber;
+        if (orderActiveFirst) query["orderActiveFirst"] = "true";
+        return query.ToString() ?? string.Empty;
     }
 }

@@ -68,10 +68,14 @@ public class CustomerHistoryController(
     /// </remarks>
     /// <param name="crmCustomerId">The CRM Buyer's customer id, as selected from <c>GET /api/crm/buyers</c>.</param>
     /// <param name="limit">Maximum tickets to return, newest first. Defaults to 5; capped at 50.</param>
+    /// <param name="unitNumber">Optional. Narrows the history to tickets whose unit-number snapshot exactly matches — the New Ticket wizard's same-customer/same-unit related-tickets check (Phase E). Advisory only; never blocks creation.</param>
+    /// <param name="orderActiveFirst">Optional. Sorts currently-active tickets ahead of Resolved/Closed ones (newest first within each group) — used with <paramref name="unitNumber"/> so the most actionable related tickets surface within the limit.</param>
     /// <response code="200">The customer's ticket-count summary and its most recent tickets (possibly empty).</response>
     [HttpGet("crm/{crmCustomerId:int}/ticket-history")]
     [ProducesResponseType<CustomerHistoryDto>(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetCrmCustomerHistory(int crmCustomerId, [FromQuery] int? limit, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetCrmCustomerHistory(
+        int crmCustomerId, [FromQuery] int? limit, [FromQuery] string? unitNumber, [FromQuery] bool orderActiveFirst,
+        CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
         if (employeeId is null)
@@ -80,7 +84,7 @@ public class CustomerHistoryController(
         }
 
         var result = await customerHistoryAppService.GetByCrmCustomerIdAsync(
-            employeeId.Value, GetRoles(), crmCustomerId, excludeTicketId: null, limit, cancellationToken);
+            employeeId.Value, GetRoles(), crmCustomerId, excludeTicketId: null, limit, unitNumber, orderActiveFirst, cancellationToken);
         return Ok(result);
     }
 
@@ -95,11 +99,14 @@ public class CustomerHistoryController(
     /// <param name="source">The verification source, e.g. "Pact" or "Tasleeh".</param>
     /// <param name="externalCustomerId">The source's own customer identifier (for PACT, its tenantID).</param>
     /// <param name="limit">Maximum tickets to return, newest first. Defaults to 5; capped at 50.</param>
+    /// <param name="unitNumber">Optional. Same-unit narrowing for the related-tickets check — see the CRM history endpoint above.</param>
+    /// <param name="orderActiveFirst">Optional. Active-tickets-first ordering for the related-tickets check — see the CRM history endpoint above.</param>
     /// <response code="200">The customer's ticket-count summary and its most recent tickets (possibly empty).</response>
     [HttpGet("external/{source}/{externalCustomerId}/ticket-history")]
     [ProducesResponseType<CustomerHistoryDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetExternalCustomerHistory(
-        string source, string externalCustomerId, [FromQuery] int? limit, CancellationToken cancellationToken)
+        string source, string externalCustomerId, [FromQuery] int? limit, [FromQuery] string? unitNumber,
+        [FromQuery] bool orderActiveFirst, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
         if (employeeId is null)
@@ -108,7 +115,8 @@ public class CustomerHistoryController(
         }
 
         var result = await customerHistoryAppService.GetByExternalIdentityAsync(
-            employeeId.Value, GetRoles(), source, externalCustomerId, excludeTicketId: null, limit, cancellationToken);
+            employeeId.Value, GetRoles(), source, externalCustomerId, excludeTicketId: null, limit, unitNumber, orderActiveFirst,
+            cancellationToken);
         return Ok(result);
     }
 

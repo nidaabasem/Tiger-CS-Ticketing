@@ -216,6 +216,19 @@ public sealed class NewTicketModel(
     /// </summary>
     public CustomerHistoryDto? PreviousTickets { get; private set; }
 
+    /// <summary>
+    /// Phase E — duplicate-ticket awareness: the selected customer's recent
+    /// tickets for the selected unit (same verified identity, same unit
+    /// snapshot, active tickets first), shown as an advisory "Related
+    /// tickets found" panel on Step 3. Advisory only — creation is never
+    /// blocked; the agent always keeps "Continue with New Ticket". Null when
+    /// there is no verified identity to key on (plain manual entry — a
+    /// manual customer must never be associated with someone else's
+    /// tickets) or when the lookup itself failed; a failure never blocks
+    /// the wizard.
+    /// </summary>
+    public CustomerHistoryDto? RelatedTickets { get; private set; }
+
     public async Task<IActionResult> OnGetAsync(
         string? step, long? intakeRecordId, string? phoneNumber, int? departmentId,
         int? crmBuyerCustomerId, int? crmBuyerLeadId, int? crmBuyerUnitId, int? crmBuyerProjectId,
@@ -260,6 +273,7 @@ public sealed class NewTicketModel(
 
             await LoadCategoriesAsync(cancellationToken);
             await LoadPreviousTicketsAsync(cancellationToken);
+            await LoadRelatedTicketsAsync(cancellationToken);
         }
         else
         {
@@ -528,6 +542,7 @@ public sealed class NewTicketModel(
             ErrorMessage = "Customer not found in CRM. Project and Unit Number are required.";
             await LoadCategoriesAsync(cancellationToken);
             await LoadPreviousTicketsAsync(cancellationToken);
+            await LoadRelatedTicketsAsync(cancellationToken);
             return Page();
         }
 
@@ -544,6 +559,7 @@ public sealed class NewTicketModel(
                 : "Select a priority before creating the ticket.";
             await LoadCategoriesAsync(cancellationToken);
             await LoadPreviousTicketsAsync(cancellationToken);
+            await LoadRelatedTicketsAsync(cancellationToken);
             return Page();
         }
 
@@ -580,6 +596,7 @@ public sealed class NewTicketModel(
             ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not create the ticket.");
             await LoadCategoriesAsync(cancellationToken);
             await LoadPreviousTicketsAsync(cancellationToken);
+            await LoadRelatedTicketsAsync(cancellationToken);
             return Page();
         }
 
@@ -650,6 +667,38 @@ public sealed class NewTicketModel(
 
         var result = await customerHistoryClient.GetByCrmCustomerIdAsync(crmBuyerCustomerId, limit: 5, cancellationToken);
         PreviousTickets = result.IsSuccess ? result.Value : null;
+    }
+
+    /// <summary>
+    /// Phase E — the Step 3 related-tickets check: one scoped history query
+    /// keyed by the exact verified identity the agent selected (CRM Buyer
+    /// customer id, or the PACT/Tasleeh source + external customer id),
+    /// narrowed to the selected unit's number snapshot, active tickets
+    /// first, capped at 5. Deterministic by design: no fuzzy/text matching,
+    /// no display-name matching, and no phone fallback — a plain manual
+    /// entry has no verified identity, so no related check runs at all
+    /// rather than risking another customer's tickets. Advisory only: a
+    /// failed call leaves <see cref="RelatedTickets"/> null and the wizard
+    /// proceeds exactly as before.
+    /// </summary>
+    private async Task LoadRelatedTicketsAsync(CancellationToken cancellationToken)
+    {
+        if (CrmBuyerCustomerId is { } crmBuyerCustomerId)
+        {
+            var result = await customerHistoryClient.GetByCrmCustomerIdAsync(
+                crmBuyerCustomerId, limit: 5, cancellationToken,
+                unitNumber: CrmBuyerUnitNumber, orderActiveFirst: true);
+            RelatedTickets = result.IsSuccess ? result.Value : null;
+            return;
+        }
+
+        if (ExternalSource is { } externalSource && ExternalCustomerId is { } externalCustomerId)
+        {
+            var result = await customerHistoryClient.GetByExternalIdentityAsync(
+                externalSource, externalCustomerId, limit: 5, cancellationToken,
+                unitNumber: ExternalUnitNumber, orderActiveFirst: true);
+            RelatedTickets = result.IsSuccess ? result.Value : null;
+        }
     }
 
     /// <summary>

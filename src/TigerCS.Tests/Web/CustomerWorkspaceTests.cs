@@ -320,6 +320,59 @@ public sealed class CustomerWorkspaceTests
         Assert.Contains("cell-truncate", html);
     }
 
+    private static string NewTicketViewHtml() =>
+        File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+
+    [Fact]
+    public void NewTicketView_RelatedTicketsPanel_RendersOnlyWhenRelatedTicketsExist()
+    {
+        var html = NewTicketViewHtml();
+
+        Assert.Contains("Related tickets found", html);
+        Assert.Contains("Model.RelatedTickets is not null && Model.RelatedTickets.Tickets.Count > 0", html);
+    }
+
+    [Fact]
+    public void NewTicketView_RelatedTicketsPanel_ShowsOneLineSummaries_NeverAFullDescription()
+    {
+        var html = NewTicketViewHtml();
+        var panelStart = html.IndexOf("related-tickets", StringComparison.Ordinal);
+        var panelEnd = html.IndexOf("Previous Tickets", panelStart, StringComparison.Ordinal);
+        var panel = html[panelStart..panelEnd];
+
+        Assert.Contains("cell-truncate", panel);
+        Assert.Contains("row.RequestSummary", panel);
+    }
+
+    [Fact]
+    public void NewTicketView_RelatedTicketsPanel_ContinueWithNewTicket_IsAlwaysAvailable()
+    {
+        var html = NewTicketViewHtml();
+
+        // The advisory panel links down to the creation form — creation is
+        // never blocked by a related ticket.
+        Assert.Contains(">Continue with New Ticket</a>", html);
+        Assert.Contains("href=\"#new-ticket-form\"", html);
+        Assert.Contains("id=\"new-ticket-form\"", html);
+    }
+
+    [Fact]
+    public void NewTicketView_RelatedTicketsPanel_ActionsFollowStatusAndReopenPolicy()
+    {
+        var html = NewTicketViewHtml();
+        var panelStart = html.IndexOf("related-tickets", StringComparison.Ordinal);
+        var panelEnd = html.IndexOf("Previous Tickets", panelStart, StringComparison.Ordinal);
+        var panel = html[panelStart..panelEnd];
+
+        // View for finished tickets, Open for active ones — same link, honest label.
+        Assert.Contains("@(isFinished ? \"View\" : \"Open\")", panel);
+        // Reopen renders only from the server-computed ReopenPolicy flag +
+        // the CS-layer role check — no eligibility re-derived in the page.
+        Assert.Contains("row.IsReopenEligible && viewerCanReopen", panel);
+        Assert.Contains("?reopen=1", panel);
+        Assert.DoesNotContain("ReopenWindow", panel);
+    }
+
     [Fact]
     public void TicketDetailsView_ReopenControl_IsGatedOnServerEligibilityAndViewerRole()
     {

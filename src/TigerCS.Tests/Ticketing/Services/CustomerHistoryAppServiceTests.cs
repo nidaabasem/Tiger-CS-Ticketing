@@ -412,4 +412,92 @@ public class CustomerHistoryAppServiceTests
         ticket.ChangeStatus(TicketStatus.InProgress);
         ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
     }
+
+    // ---------------------------------------------------------------
+    // Phase E — duplicate-ticket awareness: the same history query,
+    // narrowed to one unit and ordered active-first. Deterministic
+    // identity + unit matching only; one repository query per call.
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task RelatedTickets_SameCrmCustomerAndUnit_AreReturned_OtherUnitsAndCustomersAreNot()
+    {
+        var f = CreateService();
+        var sameUnit = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "1506", DateTime.UtcNow.AddDays(-2));
+        // Same customer, different unit — must not surface as a same-unit match.
+        await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "1204", DateTime.UtcNow.AddDays(-1));
+        // Different customer, same unit number — a different real customer.
+        await SeedCrmBuyerTicketAsync(f.Tickets, 2, 999999, "1506", DateTime.UtcNow);
+
+        var result = await f.Service.GetByCrmCustomerIdAsync(
+            Guid.NewGuid(), [Roles.CsManager], 493575, unitNumber: "1506", orderActiveFirst: true);
+
+        var row = Assert.Single(result.Tickets);
+        Assert.Equal(sameUnit.TicketId, row.TicketId);
+        Assert.Equal(1, f.Tickets.SearchCustomerHistoryCallCount);
+    }
+
+    [Fact]
+    public async Task RelatedTickets_PactIdentityPlusUnit_MatchesOnlyThatCustomersUnitTickets()
+    {
+        var f = CreateService();
+        var mine = await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1506", DateTime.UtcNow.AddDays(-3));
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1204", DateTime.UtcNow.AddDays(-2));
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-2", "1506", DateTime.UtcNow.AddDays(-1));
+
+        var result = await f.Service.GetByExternalIdentityAsync(
+            Guid.NewGuid(), [Roles.CsManager], "Pact", "PACT-CUST-1", unitNumber: "1506", orderActiveFirst: true);
+
+        var row = Assert.Single(result.Tickets);
+        Assert.Equal(mine.TicketId, row.TicketId);
+    }
+
+    [Fact]
+    public async Task RelatedTickets_TasleehIdentity_WorksThroughTheSamePersistedIdentityPair()
+    {
+        var f = CreateService();
+        var mine = await SeedExternalTicketAsync(f.Tickets, "Tasleeh", "TAS-CUST-9", "1802", DateTime.UtcNow.AddDays(-1));
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "TAS-CUST-9", "1802", DateTime.UtcNow);
+
+        var result = await f.Service.GetByExternalIdentityAsync(
+            Guid.NewGuid(), [Roles.CsManager], "Tasleeh", "TAS-CUST-9", unitNumber: "1802", orderActiveFirst: true);
+
+        var row = Assert.Single(result.Tickets);
+        Assert.Equal(mine.TicketId, row.TicketId);
+    }
+
+    [Fact]
+    public async Task RelatedTickets_ActiveTicketsComeBeforeNewerResolvedOnes()
+    {
+        var f = CreateService();
+        var resolvedNewer = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "1506", DateTime.UtcNow.AddDays(-1));
+        MoveToResolved(resolvedNewer);
+        var activeOlder = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "1506", DateTime.UtcNow.AddDays(-5));
+
+        var result = await f.Service.GetByCrmCustomerIdAsync(
+            Guid.NewGuid(), [Roles.CsManager], 493575, unitNumber: "1506", orderActiveFirst: true);
+
+        Assert.Equal([activeOlder.TicketId, resolvedNewer.TicketId], result.Tickets.Select(t => t.TicketId));
+        // The default (non-related) ordering stays newest-first, unchanged.
+        var plain = await f.Service.GetByCrmCustomerIdAsync(Guid.NewGuid(), [Roles.CsManager], 493575);
+        Assert.Equal([resolvedNewer.TicketId, activeOlder.TicketId], plain.Tickets.Select(t => t.TicketId));
+    }
+
+    [Fact]
+    public async Task RelatedTickets_UnitFilter_MatchesTheManualUnitSnapshotToo()
+    {
+        // An external-lookup ticket persists its unit as the manual snapshot
+        // — the same-unit rule must still find it (exact match, no fuzz).
+        var f = CreateService();
+        var external = await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1506", DateTime.UtcNow);
+
+        var result = await f.Service.GetByExternalIdentityAsync(
+            Guid.NewGuid(), [Roles.CsManager], "Pact", "PACT-CUST-1", unitNumber: "1506");
+
+        Assert.Equal(external.TicketId, Assert.Single(result.Tickets).TicketId);
+
+        var noMatch = await f.Service.GetByExternalIdentityAsync(
+            Guid.NewGuid(), [Roles.CsManager], "Pact", "PACT-CUST-1", unitNumber: "15");
+        Assert.Empty(noMatch.Tickets);
+    }
 }

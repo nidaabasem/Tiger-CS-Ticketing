@@ -54,6 +54,17 @@ public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCou
 /// pair always travels together, and external history is never matched by
 /// display name or phone number — two customers sharing a phone must never
 /// share a history.
+///
+/// <para>
+/// Duplicate-ticket awareness (Phase E) adds two refinements, both applied
+/// inside this same single query — never a per-row follow-up:
+/// <see cref="UnitNumber"/> narrows the identity's history to one unit
+/// (exact match on the ticket's CRM Buyer or manual unit-number snapshot —
+/// deterministic, no fuzzy matching), and <see cref="OrderActiveFirst"/>
+/// sorts currently-active tickets ahead of Resolved/Closed ones (newest
+/// first within each group), so the most actionable related tickets
+/// surface within the limit.
+/// </para>
 /// </remarks>
 public sealed record CustomerHistoryQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds,
@@ -62,7 +73,9 @@ public sealed record CustomerHistoryQuery(
     long? ExcludeTicketId,
     int Limit,
     string? ExternalSource = null,
-    string? ExternalCustomerId = null);
+    string? ExternalCustomerId = null,
+    string? UnitNumber = null,
+    bool OrderActiveFirst = false);
 
 /// <summary>
 /// <see cref="Tickets"/> is the newest-first page (bounded by

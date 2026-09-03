@@ -118,6 +118,14 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             filtered = filtered.Where(t => t.TicketId != excludeTicketId);
         }
 
+        if (query.UnitNumber is { } unitNumber)
+        {
+            // Exact match on the ticket's own unit-number snapshot (CRM Buyer
+            // or manual) — the deterministic same-unit rule of Phase E's
+            // duplicate awareness; no fuzzy matching.
+            filtered = filtered.Where(t => t.CrmBuyerUnitNumber == unitNumber || t.ManualUnitNumber == unitNumber);
+        }
+
         var statusCounts = await filtered
             .GroupBy(t => t.TicketStatus)
             .Select(g => new { Status = g.Key, Count = g.Count() })
@@ -128,8 +136,13 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             .Sum(s => s.Count);
         var totalCount = statusCounts.Sum(s => s.Count);
 
-        var items = await filtered
-            .OrderByDescending(t => t.CreatedAtUtc)
+        var ordered = query.OrderActiveFirst
+            ? filtered
+                .OrderBy(t => t.TicketStatus == TicketStatus.Resolved || t.TicketStatus == TicketStatus.Closed ? 1 : 0)
+                .ThenByDescending(t => t.CreatedAtUtc)
+            : filtered.OrderByDescending(t => t.CreatedAtUtc);
+
+        var items = await ordered
             .Take(query.Limit)
             .ToListAsync(cancellationToken);
 

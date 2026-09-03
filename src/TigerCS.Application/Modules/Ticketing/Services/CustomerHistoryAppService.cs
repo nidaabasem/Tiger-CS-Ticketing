@@ -54,6 +54,14 @@ public sealed class CustomerHistoryAppService(
     /// once the agent has explicitly selected a CRM Buyer — the identity
     /// queried is always the one the agent selected, never inferred from
     /// the raw phone search results.
+    ///
+    /// <para>
+    /// <paramref name="unitNumber"/>/<paramref name="orderActiveFirst"/> are
+    /// Phase E's duplicate-ticket awareness knobs: the wizard's
+    /// related-tickets check narrows this same identity's history to the
+    /// selected unit and surfaces active tickets first — one scoped
+    /// repository query either way, never a per-row follow-up.
+    /// </para>
     /// </summary>
     public async Task<CustomerHistoryDto> GetByCrmCustomerIdAsync(
         Guid callerEmployeeId,
@@ -61,13 +69,17 @@ public sealed class CustomerHistoryAppService(
         int crmBuyerCustomerId,
         long? excludeTicketId = null,
         int? limit = null,
+        string? unitNumber = null,
+        bool orderActiveFirst = false,
         CancellationToken cancellationToken = default)
     {
         var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
             callerEmployeeId, callerRoles, cancellationToken);
 
         var result = await ticketRepository.SearchCustomerHistoryAsync(
-            new CustomerHistoryQuery(visibleDepartmentIds, crmBuyerCustomerId, TicketIds: null, excludeTicketId, NormalizeLimit(limit)),
+            new CustomerHistoryQuery(
+                visibleDepartmentIds, crmBuyerCustomerId, TicketIds: null, excludeTicketId, NormalizeLimit(limit),
+                UnitNumber: NormalizeUnitNumber(unitNumber), OrderActiveFirst: orderActiveFirst),
             cancellationToken);
 
         return await ToDtoAsync("Verified", crmBuyerCustomerId, phoneNumberSnapshot: null, result,
@@ -90,6 +102,8 @@ public sealed class CustomerHistoryAppService(
         string externalCustomerId,
         long? excludeTicketId = null,
         int? limit = null,
+        string? unitNumber = null,
+        bool orderActiveFirst = false,
         CancellationToken cancellationToken = default)
     {
         var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
@@ -98,7 +112,8 @@ public sealed class CustomerHistoryAppService(
         var result = await ticketRepository.SearchCustomerHistoryAsync(
             new CustomerHistoryQuery(
                 visibleDepartmentIds, CrmBuyerCustomerId: null, TicketIds: null, excludeTicketId, NormalizeLimit(limit),
-                ExternalSource: externalSource, ExternalCustomerId: externalCustomerId),
+                ExternalSource: externalSource, ExternalCustomerId: externalCustomerId,
+                UnitNumber: NormalizeUnitNumber(unitNumber), OrderActiveFirst: orderActiveFirst),
             cancellationToken);
 
         return await ToDtoAsync("ExternalVerified", crmBuyerCustomerId: null, phoneNumberSnapshot: null, result,
@@ -187,6 +202,9 @@ public sealed class CustomerHistoryAppService(
     }
 
     private static int NormalizeLimit(int? limit) => limit is null or <= 0 || limit > MaxLimit ? DefaultLimit : limit.Value;
+
+    private static string? NormalizeUnitNumber(string? unitNumber) =>
+        string.IsNullOrWhiteSpace(unitNumber) ? null : unitNumber.Trim();
 
     private async Task<CustomerHistoryDto> ToDtoAsync(
         string verificationType,
