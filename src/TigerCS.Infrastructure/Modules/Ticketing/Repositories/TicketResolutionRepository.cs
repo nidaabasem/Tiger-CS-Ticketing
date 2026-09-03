@@ -10,6 +10,15 @@ public sealed class TicketResolutionRepository(TigerCsDbContext dbContext) : ITi
     public Task<TicketResolution?> GetCurrentAsync(long ticketId, CancellationToken cancellationToken = default) =>
         dbContext.TicketResolutions.FirstOrDefaultAsync(r => r.TicketId == ticketId && r.IsCurrent, cancellationToken);
 
+    public async Task<IReadOnlyDictionary<long, TicketResolution>> ListCurrentByTicketIdsAsync(
+        IReadOnlyCollection<long> ticketIds, CancellationToken cancellationToken = default)
+    {
+        var rows = await dbContext.TicketResolutions
+            .Where(r => r.IsCurrent && ticketIds.Contains(r.TicketId))
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(r => r.TicketId);
+    }
+
     public async Task AddAsync(TicketResolution resolution, CancellationToken cancellationToken = default) =>
         await dbContext.TicketResolutions.AddAsync(resolution, cancellationToken);
 }

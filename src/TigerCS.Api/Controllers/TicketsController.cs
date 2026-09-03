@@ -354,6 +354,48 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
+    /// <summary>Reopen a resolved/closed ticket. CS Agent/CS Supervisor/CS Manager only.</summary>
+    /// <remarks>
+    /// MVP-API-Contracts.md §3.11 / FR-RES-04: Reopen is a domain event, not
+    /// a status value — the ticket returns to InProgress, its ReopenCount
+    /// increments, and the prior resolution is archived (never deleted).
+    /// Only allowed within ISSUE-011's reopen window (7 days from the
+    /// current resolution, configurable); past it, create a new linked
+    /// ticket instead. The action is audited with the actor, the prior and
+    /// new status, and the caller's reason.
+    /// </remarks>
+    /// <param name="ticketId">The ticket to reopen.</param>
+    /// <param name="request">Why the ticket is being reopened, and the ticket's current rowVersion.</param>
+    /// <response code="200">The reopened ticket, back InProgress.</response>
+    /// <response code="400">The request body was malformed, or Reason was missing/blank.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The ticket is not Resolved/Closed, or the reopen window has passed.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [HttpPost("{ticketId:long}/reopen")]
+    [Tags(OpenApiTags.TicketLifecycle)]
+    public async Task<IActionResult> Reopen(long ticketId, [FromBody] ReopenTicketRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            ModelState.AddModelError(nameof(request.Reason), "Reason is required.");
+            return ValidationProblem();
+        }
+
+        var result = await ticketLifecycleAppService.ReopenAsync(employeeId.Value, GetRoles(), ticketId, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
     /// <summary>Link a confirmed CRM match onto a ticket that did not have one at creation. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
     /// See TicketReconciliationAppService's remarks. Scoped to CS Agent/CS
@@ -591,6 +633,18 @@ public class TicketsController(
             type: "https://tigercs.internal/problems/not-yet-resolved",
             title: "Ticket has not been resolved yet",
             statusCode: StatusCodes.Status409Conflict),
+
+        TicketMutationOutcome.NotEligibleForReopen => Problem(
+            type: "https://tigercs.internal/problems/not-eligible-for-reopen",
+            title: "Ticket is not eligible for reopening",
+            detail: "Reopen is only valid on a Resolved or Closed ticket.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.ReopenWindowExpired => Problem(
+            type: "https://tigercs.internal/problems/reopen-window-expired",
+            title: "The reopen window has passed",
+            detail: "This ticket's reopen window has expired — create a new ticket for the customer instead.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.DuplicateChainNotAllowed => Problem(
             type: "https://tigercs.internal/problems/duplicate-chain-not-allowed",

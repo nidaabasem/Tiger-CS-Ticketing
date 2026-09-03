@@ -34,17 +34,18 @@
     });
   });
 
-  // Filter form: auto-submit on select change, so a mouse/keyboard user
+  // Filter forms: auto-submit on select change, so a mouse/keyboard user
   // doesn't need to also press the Apply button. The button still works
-  // (and is the only way to apply filters) without this script.
-  var filterForm = document.getElementById("ticketFilters");
-  if (filterForm) {
-    filterForm.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
-      el.addEventListener("change", function () {
-        filterForm.requestSubmit();
-      });
+  // (and is the only way to apply filters) without this script. Applies to
+  // any select marked data-autosubmit (the ticket queue's filters, the
+  // customer workspace's unit filter).
+  document.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
+    el.addEventListener("change", function () {
+      if (el.form) {
+        el.form.requestSubmit();
+      }
     });
-  }
+  });
 
   // Prevent duplicate submission: disable a form's submit button(s) the
   // moment it submits, so a double-click can't fire the request twice.

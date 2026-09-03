@@ -218,6 +218,21 @@ public sealed class NewTicketModelTests
     }
 
     [Fact]
+    public async Task OnGetAsync_IntakeStep_WithCarriedPhoneNumber_PrefillsTheIntakeForm_ExactlyAsGiven()
+    {
+        // Customer Workspace carry-forward: "+ New Ticket" from a selected
+        // customer must not make the agent re-type or re-search the same
+        // customer — the phone arrives via the query string and lands in the
+        // intake form unmodified ('+' preserved), still fully editable.
+        var (model, _, _, _, _, _, _, _) = CreateModel();
+
+        await model.OnGetAsync(null, null, "+971501112233", null, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Equal("intake", model.Step);
+        Assert.Equal("+971501112233", model.Intake.PhoneNumber);
+    }
+
+    [Fact]
     public async Task OnPostIntakeAsync_Failure_ReloadsDepartmentDirectory_ForRedisplay()
     {
         var (model, _, _, departments, _, _, _, _) = CreateModel(

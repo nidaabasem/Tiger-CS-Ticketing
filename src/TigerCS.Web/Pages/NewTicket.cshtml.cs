@@ -263,6 +263,17 @@ public sealed class NewTicketModel(
         }
         else
         {
+            // Customer Workspace carry-forward: "+ New Ticket" from a
+            // selected/searched customer arrives with ?phoneNumber=… — the
+            // intake form is prefilled (still free-form and editable, value
+            // preserved exactly) so the agent never re-types or re-searches
+            // the same customer; Step 2 then re-verifies through the exact
+            // same department-aware lookup as always.
+            if (!string.IsNullOrWhiteSpace(PhoneNumber))
+            {
+                Intake.PhoneNumber = PhoneNumber;
+            }
+
             await LoadDepartmentsAsync(cancellationToken);
         }
 

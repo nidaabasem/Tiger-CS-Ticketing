@@ -45,12 +45,24 @@ public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCou
 /// kept out of this repository so it never needs to join across the
 /// IntakeRecord aggregate itself.
 /// </summary>
+/// <remarks>
+/// The Customer Workspace phase adds a third identity:
+/// <see cref="ExternalSource"/> + <see cref="ExternalCustomerId"/> — the
+/// persisted external verification identity a PACT/Tasleeh ticket carries
+/// (<c>Ticket.CustomerVerificationSource</c>/<c>Ticket.ExternalCustomerId</c>).
+/// Exactly one of the three identities is ever set per query; the external
+/// pair always travels together, and external history is never matched by
+/// display name or phone number — two customers sharing a phone must never
+/// share a history.
+/// </remarks>
 public sealed record CustomerHistoryQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds,
     int? CrmBuyerCustomerId,
     IReadOnlyCollection<long>? TicketIds,
     long? ExcludeTicketId,
-    int Limit);
+    int Limit,
+    string? ExternalSource = null,
+    string? ExternalCustomerId = null);
 
 /// <summary>
 /// <see cref="Tickets"/> is the newest-first page (bounded by
@@ -62,6 +74,49 @@ public sealed record CustomerHistoryQuery(
 /// </summary>
 public sealed record CustomerHistoryQueryResult(
     IReadOnlyList<Ticket> Tickets, int TotalCount, int OpenCount, int ClosedCount);
+
+/// <summary>
+/// The Dashboard's one aggregate read (Customer Workspace phase).
+/// <see cref="VisibleDepartmentIds"/> follows <see cref="TicketQuery"/>'s
+/// rule exactly: resolved server-side from the caller's roles/department
+/// membership, never client-supplied — every count and every attention row
+/// is scoped by it at the query itself. "Active" throughout means
+/// TicketStatus Open/InProgress/PendingCustomer/PendingThirdParty.
+/// </summary>
+/// <param name="VisibleDepartmentIds">Null = no restriction (cross-department view role); otherwise the caller's own departments.</param>
+/// <param name="CallerEmployeeId">For the My Tickets count.</param>
+/// <param name="NowUtc">The evaluation instant — passed in so the query is deterministic under test.</param>
+/// <param name="ResolvedTodayStartUtc">Start of "today" for the Resolved Today count, in UTC.</param>
+/// <param name="AtRiskWindow">How far ahead of a pending SLA deadline counts as "at risk".</param>
+/// <param name="AttentionLimit">Maximum attention rows to return.</param>
+public sealed record DashboardSnapshotQuery(
+    IReadOnlyCollection<int>? VisibleDepartmentIds,
+    Guid CallerEmployeeId,
+    DateTime NowUtc,
+    DateTime ResolvedTodayStartUtc,
+    TimeSpan AtRiskWindow,
+    int AttentionLimit);
+
+/// <summary>One "requiring attention" row: the ticket plus its current SLA period's pending resolution deadline (null when no current period or the resolution clock already breached).</summary>
+public sealed record DashboardAttentionTicket(Ticket Ticket, DateTime? SlaDueAtUtc);
+
+/// <summary>
+/// Every dashboard count, computed server-side over the caller's visible
+/// scope — never assembled from per-status queue pages. Counts that depend
+/// on data the caller's scope cannot see are simply smaller; nothing is
+/// ever fabricated.
+/// </summary>
+public sealed record DashboardSnapshot(
+    int OpenTickets,
+    int Unassigned,
+    int SlaAtRisk,
+    int SlaBreached,
+    int CriticalOrHigh,
+    int PendingCustomer,
+    int ResolvedToday,
+    int Reopened,
+    int MyTickets,
+    IReadOnlyList<DashboardAttentionTicket> AttentionTickets);
 
 public interface ITicketRepository
 {
@@ -91,6 +146,14 @@ public interface ITicketRepository
     /// <see cref="SearchAsync"/> — never client-supplied.
     /// </summary>
     Task<CustomerHistoryQueryResult> SearchCustomerHistoryAsync(CustomerHistoryQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The Dashboard's operational counts and Tickets Requiring Attention
+    /// rows, in one scoped aggregate read — never assembled client-side from
+    /// per-status queue pages. Same department-visibility discipline as
+    /// <see cref="SearchAsync"/>.
+    /// </summary>
+    Task<DashboardSnapshot> GetDashboardSnapshotAsync(DashboardSnapshotQuery query, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Primes EF Core's concurrency check: the client-supplied `If-Match`

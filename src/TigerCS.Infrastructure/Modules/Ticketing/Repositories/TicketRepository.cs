@@ -92,6 +92,13 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
         {
             filtered = dbContext.Tickets.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
         }
+        else if (query is { ExternalSource: { } externalSource, ExternalCustomerId: { } externalCustomerId })
+        {
+            // The persisted external verification identity pair — exact
+            // match on both fields, never widened by display name or phone.
+            filtered = dbContext.Tickets.Where(t =>
+                t.CustomerVerificationSource == externalSource && t.ExternalCustomerId == externalCustomerId);
+        }
         else if (query.TicketIds is { Count: > 0 } ticketIds)
         {
             filtered = dbContext.Tickets.Where(t => ticketIds.Contains(t.TicketId));
@@ -127,5 +134,91 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             .ToListAsync(cancellationToken);
 
         return new CustomerHistoryQueryResult(items, totalCount, totalCount - closedCount, closedCount);
+    }
+
+    public async Task<DashboardSnapshot> GetDashboardSnapshotAsync(
+        DashboardSnapshotQuery query, CancellationToken cancellationToken = default)
+    {
+        var visible = dbContext.Tickets.AsQueryable();
+        if (query.VisibleDepartmentIds is not null)
+        {
+            visible = visible.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
+        }
+
+        var active = visible.Where(t =>
+            t.TicketStatus == TicketStatus.Open
+            || t.TicketStatus == TicketStatus.InProgress
+            || t.TicketStatus == TicketStatus.PendingCustomer
+            || t.TicketStatus == TicketStatus.PendingThirdParty);
+
+        var atRiskUntil = query.NowUtc + query.AtRiskWindow;
+        var currentSla = dbContext.TicketSlaInstances.Where(s => s.PeriodEndAtUtc == null);
+
+        var openTickets = await active.CountAsync(cancellationToken);
+        var unassigned = await active.CountAsync(t => t.CurrentOwnerEmployeeId == null, cancellationToken);
+        var slaBreached = await active.CountAsync(t => t.SlaState == SlaState.Breached, cancellationToken);
+        var criticalOrHigh = await active.CountAsync(t => t.PriorityId <= 2, cancellationToken);
+        var pendingCustomer = await visible.CountAsync(t => t.TicketStatus == TicketStatus.PendingCustomer, cancellationToken);
+        var reopened = await active.CountAsync(t => t.ReopenCount > 0, cancellationToken);
+        var myTickets = await active.CountAsync(t => t.CurrentOwnerEmployeeId == query.CallerEmployeeId, cancellationToken);
+
+        // At risk: a pending, unbreached deadline on the current SLA period
+        // falls due within the window — either clock; a First Response
+        // deadline only counts while no first human response is recorded.
+        var slaAtRisk = await active
+            .Join(currentSla, t => t.TicketId, s => s.TicketId, (t, s) => new { t, s })
+            .Where(x =>
+                (!x.s.ResolutionBreached && x.s.ResolutionDueAtUtc > query.NowUtc && x.s.ResolutionDueAtUtc <= atRiskUntil)
+                || (!x.s.FirstResponseBreached && x.t.FirstHumanResponseAtUtc == null
+                    && x.s.FirstResponseDueAtUtc > query.NowUtc && x.s.FirstResponseDueAtUtc <= atRiskUntil))
+            .Select(x => x.t.TicketId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
+        var resolvedToday = await visible
+            .Join(
+                dbContext.TicketResolutions.Where(r => r.IsCurrent && r.ResolvedAtUtc >= query.ResolvedTodayStartUtc),
+                t => t.TicketId, r => r.TicketId, (t, r) => t.TicketId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
+        // Tickets Requiring Attention: breached first, then due-soon, then
+        // critical, high, unassigned — a bounded, deterministic ranking over
+        // active tickets left-joined to their current SLA period.
+        var attentionRows = await active
+            .GroupJoin(currentSla, t => t.TicketId, s => s.TicketId, (t, slas) => new { t, slas })
+            .SelectMany(x => x.slas.DefaultIfEmpty(), (x, s) => new
+            {
+                Ticket = x.t,
+                SlaDueAtUtc = s != null && !s.ResolutionBreached ? s.ResolutionDueAtUtc : (DateTime?)null
+            })
+            .Where(x =>
+                x.Ticket.SlaState == SlaState.Breached
+                || x.Ticket.PriorityId <= 2
+                || x.Ticket.CurrentOwnerEmployeeId == null
+                || (x.SlaDueAtUtc != null && x.SlaDueAtUtc <= atRiskUntil))
+            .OrderBy(x =>
+                x.Ticket.SlaState == SlaState.Breached ? 0
+                : x.SlaDueAtUtc != null && x.SlaDueAtUtc <= atRiskUntil ? 1
+                : x.Ticket.PriorityId == 1 ? 2
+                : x.Ticket.PriorityId == 2 ? 3
+                : 4)
+            .ThenBy(x => x.SlaDueAtUtc ?? DateTime.MaxValue)
+            .ThenBy(x => x.Ticket.PriorityId)
+            .ThenBy(x => x.Ticket.CreatedAtUtc)
+            .Take(query.AttentionLimit)
+            .ToListAsync(cancellationToken);
+
+        return new DashboardSnapshot(
+            openTickets,
+            unassigned,
+            slaAtRisk,
+            slaBreached,
+            criticalOrHigh,
+            pendingCustomer,
+            resolvedToday,
+            reopened,
+            myTickets,
+            attentionRows.Select(x => new DashboardAttentionTicket(x.Ticket, x.SlaDueAtUtc)).ToList());
     }
 }

@@ -85,4 +85,15 @@ public static class TicketRoleSets
 
     /// <summary>Close: CS Agent/CS Supervisor/CS Manager only (ISSUE-022, Management-Decisions.md — task's explicit instruction). Cross-department — CS is inherently cross-department (Security-Architecture.md §3).</summary>
     public static readonly IReadOnlyCollection<string> Close = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
+
+    /// <summary>
+    /// Reopen: the same CS-layer roles as Close (ISSUE-022's approved
+    /// decision — "Geyness Agent/Supervisor/CS Manager closes … and
+    /// reopens"; Solution-Analysis.md §5.6's transition table names the same
+    /// three for Closed → In Progress). Cross-department for the same
+    /// Security-Architecture.md §3 reason as Close. A distinct set rather
+    /// than an alias of <see cref="Close"/>, so the two actions' authority
+    /// can diverge later without a call-site hunt.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> Reopen = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
 }

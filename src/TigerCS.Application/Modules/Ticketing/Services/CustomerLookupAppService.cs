@@ -80,6 +80,29 @@ public sealed class CustomerLookupAppService(
         return CustomerLookupResult.Success(new CustomerLookupResultDto(intakeRecordId, intakeRecord.PhoneNumber, results));
     }
 
+    /// <summary>
+    /// Customer Workspace search (no IntakeRecord yet): the same PACT and
+    /// Tasleeh legs the intake-anchored <see cref="SearchAsync"/> runs,
+    /// exposed for a raw phone number so the Dashboard's customer search can
+    /// reuse them without creating an intake record first. CRM is
+    /// deliberately not part of this method — the workspace's CRM identity
+    /// comes from the real CRM Buyer Lookup (<c>CrmBuyerLookupAppService</c>),
+    /// exactly as the New Ticket wizard already does; running the
+    /// fixture-backed generic CRM leg here would only duplicate it. All
+    /// department-source configuration stays intake-scoped: a pre-intake
+    /// search has no department, so both external sources are always asked.
+    /// </summary>
+    public async Task<IReadOnlyList<CustomerLookupSourceResultDto>> SearchExternalSourcesByPhoneAsync(
+        string phoneNumber, CancellationToken cancellationToken = default)
+    {
+        var tasks = new[]
+        {
+            SearchPactAsync(phoneNumber, cancellationToken),
+            SearchTasleehAsync(phoneNumber, cancellationToken)
+        };
+        return await Task.WhenAll(tasks);
+    }
+
     private Task<CustomerLookupSourceResultDto> SearchSourceAsync(
         CustomerLookupSource source, string phoneNumber, CancellationToken cancellationToken) => source switch
     {

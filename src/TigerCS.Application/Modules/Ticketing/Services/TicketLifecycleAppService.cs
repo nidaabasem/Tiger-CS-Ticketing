@@ -12,16 +12,13 @@ using TigerCS.Domain.Modules.Ticketing;
 namespace TigerCS.Application.Modules.Ticketing.Services;
 
 /// <summary>
-/// Core ticket lifecycle (this increment's item 4): status change (§3.7),
-/// resolve (§3.9), and close (§3.10) — three deliberately distinct
-/// operations, per ISSUE-022's approved Resolve/Department-Employee vs.
-/// Close/CS-layer split. Reopen (§3.11) is not implemented — it is not
-/// explicitly named in MVP-Implementation-Backlog.md S-16's acceptance
-/// criteria/test requirements/Definition of Done (only Resolve/Close are),
-/// so per this increment's own instruction ("do not implement Reopen unless
-/// explicitly included in the approved MVP backlog"), it is left out and
-/// flagged in the PR description rather than silently built or silently
-/// assumed out.
+/// Core ticket lifecycle: status change (§3.7), resolve (§3.9), close
+/// (§3.10) — three deliberately distinct operations, per ISSUE-022's
+/// approved Resolve/Department-Employee vs. Close/CS-layer split — and, as
+/// of the Customer Workspace phase, reopen (§3.11, FR-RES-04): the CS-layer
+/// exit from Resolved/Closed back to InProgress, within ISSUE-011's
+/// configurable window (<see cref="ReopenPolicy"/>), archiving — never
+/// deleting — the prior resolution.
 /// </summary>
 public sealed class TicketLifecycleAppService(
     ITicketRepository ticketRepository,
@@ -31,7 +28,8 @@ public sealed class TicketLifecycleAppService(
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     SlaBreachProcessor breachProcessor,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ReopenPolicy reopenPolicy)
 {
     public async Task<TicketMutationResult> ChangeStatusAsync(
         Guid callerEmployeeId,
@@ -300,6 +298,110 @@ public sealed class TicketLifecycleAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "Close", "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(), afterValue: TicketStatus.Closed.ToString(), correlationId, cancellationToken);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (TicketConcurrentlyModifiedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
+    }
+
+    /// <summary>
+    /// Reopen (MVP-API-Contracts.md §3.11, FR-RES-04). Follows
+    /// <see cref="CloseAsync"/>'s shape exactly: role gate → pre-transaction
+    /// eligibility guards → RowVersion → one transaction carrying the domain
+    /// transition, the archived resolution, the status-history row (with the
+    /// caller's reason as its note), and the audit entry, all under one
+    /// correlation id. The window check (ISSUE-011 — <see cref="ReopenPolicy"/>,
+    /// 7 days configurable, measured from the current resolution's
+    /// ResolvedAtUtc) runs here, not in the domain: the domain owns the
+    /// status rule, the service owns the clock/config-dependent business
+    /// rule, same division as every other lifecycle guard above.
+    ///
+    /// <para>
+    /// No new SLA period is opened on reopen — MVP-API-Contracts.md §3.11
+    /// flags "reopen restarts the resolution SLA clock" as an explicit
+    /// business-rule <c>[ASSUMPTION]</c>, not a requirement, so the sticky
+    /// SlaState and the closed SLA instance are left untouched until that
+    /// rule is actually decided.
+    /// </para>
+    /// </summary>
+    public async Task<TicketMutationResult> ReopenAsync(
+        Guid callerEmployeeId,
+        IReadOnlyCollection<string> callerRoles,
+        long ticketId,
+        ReopenTicketRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
+        }
+
+        // ISSUE-022: Reopen is CS-layer, cross-department — same authority
+        // shape as Close (TicketRoleSets.Reopen), with the ADR-0024 System
+        // Administrator override applied by the gate, never inline.
+        if (!AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.Reopen.Contains)))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
+        }
+
+        if (ticket.TicketStatus is not (TicketStatus.Resolved or TicketStatus.Closed))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
+        }
+
+        // A Resolved/Closed ticket always has a current resolution; a
+        // missing one would be data damage — treated as not eligible rather
+        // than crashing, since there is no outcome to archive.
+        var currentResolution = await ticketResolutionRepository.GetCurrentAsync(ticketId, cancellationToken);
+        if (currentResolution is null)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
+        }
+
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (!reopenPolicy.IsWithinWindow(currentResolution.ResolvedAtUtc, now))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ReopenWindowExpired);
+        }
+
+        ticketRepository.SetRowVersion(ticket, request.RowVersion);
+
+        var oldStatus = ticket.TicketStatus;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            ticket.Reopen();
+        }
+        catch (TicketNotEligibleForReopenException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
+        }
+
+        currentResolution.Archive();
+
+        var correlationId = Guid.NewGuid();
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.InProgress,
+                callerEmployeeId, actorIsSystem: false, note: request.Reason, correlationId, now),
+            cancellationToken);
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId, "Reopen", "Ticket", ticketId.ToString(),
+            beforeValue: $"{oldStatus};ResolutionOutcome={currentResolution.ResolutionOutcome}",
+            afterValue: $"{TicketStatus.InProgress};ReopenCount={ticket.ReopenCount}",
+            correlationId, cancellationToken);
 
         try
         {

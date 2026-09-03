@@ -15,7 +15,10 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// </summary>
 public sealed class TicketQueryAppService(
     ITicketRepository ticketRepository,
-    IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository)
+    IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
+    ITicketResolutionRepository ticketResolutionRepository,
+    ReopenPolicy reopenPolicy,
+    TimeProvider timeProvider)
 {
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
@@ -64,7 +67,23 @@ public sealed class TicketQueryAppService(
             return TicketQueryResultDto<TicketDetailDto>.Failure(TicketQueryOutcome.Forbidden);
         }
 
-        return TicketQueryResultDto<TicketDetailDto>.Success(ToDetailDto(ticket));
+        // Reopen display eligibility (FR-RES-04/ISSUE-011) rides on the
+        // detail read so the UI never re-derives the window rule: the same
+        // ReopenPolicy that gates TicketLifecycleAppService.ReopenAsync
+        // computes the flag here. Lifecycle only — roles are enforced at the
+        // Reopen endpoint, never predicted on a read.
+        var currentResolution = ticket.TicketStatus is TicketStatus.Resolved or TicketStatus.Closed
+            ? await ticketResolutionRepository.GetCurrentAsync(ticketId, cancellationToken)
+            : null;
+
+        var detail = ToDetailDto(ticket) with
+        {
+            ResolvedAtUtc = currentResolution?.ResolvedAtUtc,
+            IsReopenEligible = reopenPolicy.IsReopenEligible(
+                ticket.TicketStatus, currentResolution?.ResolvedAtUtc, timeProvider.GetUtcNow().UtcDateTime)
+        };
+
+        return TicketQueryResultDto<TicketDetailDto>.Success(detail);
     }
 
     /// <summary>Null means "no restriction" (cross-department view role, or the ADR-0024 override) — never client-supplied, always resolved from the caller's own roles/department membership.</summary>

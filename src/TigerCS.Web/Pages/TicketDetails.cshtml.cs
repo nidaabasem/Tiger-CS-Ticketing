@@ -59,12 +59,20 @@ public sealed class TicketDetailsModel(
     [BindProperty] public StatusInput Status { get; set; } = new();
     [BindProperty] public ResolveInput Resolve { get; set; } = new();
     [BindProperty] public RowVersionInput Close { get; set; } = new();
+    [BindProperty] public ReopenInput Reopen { get; set; } = new();
     [BindProperty] public EscalateInput Escalate { get; set; } = new();
     [BindProperty] public NoteInput Note { get; set; } = new();
 
-    public async Task<IActionResult> OnGetAsync(long id, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnGetAsync(long id, int? reopen, CancellationToken cancellationToken)
     {
         TicketId = id;
+        // ?reopen=1 arrives from a customer-workspace "Reopen" link — open
+        // the reopen panel so the agent lands directly on the action.
+        if (reopen == 1)
+        {
+            OpenSection = "reopen";
+        }
+
         await LoadAsync(cancellationToken);
         if (Ticket is null && Outcome == ApiOutcome.NotFound)
         {
@@ -136,6 +144,23 @@ public sealed class TicketDetailsModel(
 
         var result = await ticketsApiClient.CloseAsync(id, new CloseTicketRequestDto(rowVersion), cancellationToken);
         return await HandleMutationAsync(result, "close", "Ticket closed.", cancellationToken);
+    }
+
+    public async Task<IActionResult> OnPostReopenAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        if (string.IsNullOrWhiteSpace(Reopen.Reason))
+        {
+            return await ReloadWithErrorAsync("reopen", "Enter a reason before reopening.", cancellationToken);
+        }
+
+        if (!TryDecodeRowVersion(Reopen.RowVersionBase64, out var rowVersion))
+        {
+            return await ReloadWithErrorAsync("reopen", "Could not read the ticket's current version. Reloading.", cancellationToken);
+        }
+
+        var result = await ticketsApiClient.ReopenAsync(id, new ReopenTicketRequestDto(Reopen.Reason, rowVersion), cancellationToken);
+        return await HandleMutationAsync(result, "reopen", "Ticket reopened — it is In Progress again.", cancellationToken);
     }
 
     public async Task<IActionResult> OnPostEscalateAsync(long id, CancellationToken cancellationToken)
@@ -282,6 +307,7 @@ public sealed class TicketDetailsModel(
         Status = new StatusInput { RowVersionBase64 = Ticket.RowVersion, NewStatus = Ticket.TicketStatus };
         Resolve = new ResolveInput { RowVersionBase64 = Ticket.RowVersion, ResolutionOutcome = "Resolved" };
         Close = new RowVersionInput { RowVersionBase64 = Ticket.RowVersion };
+        Reopen = new ReopenInput { RowVersionBase64 = Ticket.RowVersion };
         Escalate = new EscalateInput { RowVersionBase64 = Ticket.RowVersion, Level = NextEscalationLevel(Ticket.EscalationLevel) };
     }
 
@@ -365,6 +391,13 @@ public sealed class TicketDetailsModel(
 
     public sealed class RowVersionInput
     {
+        public string? RowVersionBase64 { get; set; }
+    }
+
+    public sealed class ReopenInput
+    {
+        [Required]
+        public string Reason { get; set; } = string.Empty;
         public string? RowVersionBase64 { get; set; }
     }
 

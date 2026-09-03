@@ -185,6 +185,11 @@ public sealed class FakeTicketRepository : ITicketRepository
         {
             filtered = _tickets.Values.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
         }
+        else if (query is { ExternalSource: { } externalSource, ExternalCustomerId: { } externalCustomerId })
+        {
+            filtered = _tickets.Values.Where(t =>
+                t.CustomerVerificationSource == externalSource && t.ExternalCustomerId == externalCustomerId);
+        }
         else if (query.TicketIds is { Count: > 0 } ticketIds)
         {
             filtered = _tickets.Values.Where(t => ticketIds.Contains(t.TicketId));
@@ -209,6 +214,56 @@ public sealed class FakeTicketRepository : ITicketRepository
         var items = all.OrderByDescending(t => t.CreatedAtUtc).Take(query.Limit).ToList();
 
         return Task.FromResult(new CustomerHistoryQueryResult(items, all.Count, all.Count - closedCount, closedCount));
+    }
+
+    /// <summary>
+    /// In-memory dashboard aggregate over the fake's tickets. SLA-derived
+    /// values (at-risk count, attention due dates) come back empty — the
+    /// fake holds no TicketSlaInstances; wire <see cref="Resolutions"/> to
+    /// the test's FakeTicketResolutionRepository for a ResolvedToday count.
+    /// </summary>
+    public FakeTicketResolutionRepository? Resolutions { get; set; }
+
+    public Task<DashboardSnapshot> GetDashboardSnapshotAsync(
+        DashboardSnapshotQuery query, CancellationToken cancellationToken = default)
+    {
+        var visible = _tickets.Values.AsEnumerable();
+        if (query.VisibleDepartmentIds is not null)
+        {
+            visible = visible.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
+        }
+
+        var visibleList = visible.ToList();
+        var active = visibleList
+            .Where(t => t.TicketStatus is TicketStatus.Open or TicketStatus.InProgress
+                or TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty)
+            .ToList();
+
+        var resolvedToday = Resolutions is null
+            ? 0
+            : visibleList.Count(t => Resolutions.Added.Any(r =>
+                r.TicketId == t.TicketId && r.IsCurrent && r.ResolvedAtUtc >= query.ResolvedTodayStartUtc));
+
+        var attention = active
+            .Where(t => t.SlaState == SlaState.Breached || t.PriorityId <= 2 || t.CurrentOwnerEmployeeId == null)
+            .OrderBy(t => t.SlaState == SlaState.Breached ? 0 : t.PriorityId == 1 ? 2 : t.PriorityId == 2 ? 3 : 4)
+            .ThenBy(t => t.PriorityId)
+            .ThenBy(t => t.CreatedAtUtc)
+            .Take(query.AttentionLimit)
+            .Select(t => new DashboardAttentionTicket(t, SlaDueAtUtc: null))
+            .ToList();
+
+        return Task.FromResult(new DashboardSnapshot(
+            active.Count,
+            active.Count(t => t.CurrentOwnerEmployeeId == null),
+            SlaAtRisk: 0,
+            active.Count(t => t.SlaState == SlaState.Breached),
+            active.Count(t => t.PriorityId <= 2),
+            visibleList.Count(t => t.TicketStatus == TicketStatus.PendingCustomer),
+            resolvedToday,
+            active.Count(t => t.ReopenCount > 0),
+            active.Count(t => t.CurrentOwnerEmployeeId == query.CallerEmployeeId),
+            attention));
     }
 }
 
@@ -258,6 +313,13 @@ public sealed class FakeTicketResolutionRepository : ITicketResolutionRepository
 
     public Task<TicketResolution?> GetCurrentAsync(long ticketId, CancellationToken cancellationToken = default) =>
         Task.FromResult(Added.LastOrDefault(r => r.TicketId == ticketId && r.IsCurrent));
+
+    public Task<IReadOnlyDictionary<long, TicketResolution>> ListCurrentByTicketIdsAsync(
+        IReadOnlyCollection<long> ticketIds, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<long, TicketResolution>>(
+            Added.Where(r => r.IsCurrent && ticketIds.Contains(r.TicketId))
+                .GroupBy(r => r.TicketId)
+                .ToDictionary(g => g.Key, g => g.Last()));
 
     public Task AddAsync(TicketResolution resolution, CancellationToken cancellationToken = default)
     {

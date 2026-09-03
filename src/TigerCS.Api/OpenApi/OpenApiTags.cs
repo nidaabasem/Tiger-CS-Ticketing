@@ -31,6 +31,8 @@ public static class OpenApiTags
     public const string CustomerVerification = "Customer Verification";
     public const string Intake = "Intake";
     public const string CustomerLookup = "Customer Lookup";
+    public const string CustomerSearch = "Customer Search";
+    public const string Dashboard = "Dashboard";
     public const string Tickets = "Tickets";
     public const string CustomerHistory = "Customer History";
     public const string CustomerProfile = "Customer Profile";
@@ -60,6 +62,13 @@ public static class OpenApiTags
         (CustomerLookup,
             "Searches CRM, PACT, and Tasleeh for the intake's phone number and returns whatever each source found. "
             + "Enrichment/identification only — a NotFound or Failed source never blocks ticket creation."),
+        (CustomerSearch,
+            "The Customer Workspace's standalone customer search by phone number — the same CRM Buyer and "
+            + "PACT/Tasleeh lookups the New Ticket wizard uses, before any intake record exists. Read-only and "
+            + "side-effect free."),
+        (Dashboard,
+            "The operational dashboard: KPI counts and the Tickets Requiring Attention list, computed over the "
+            + "caller's own visible-department scope."),
         (Tickets, "Ticket creation and ticket queries (queue and detail)."),
         (CustomerHistory,
             "Customer -> previous ticket history, sourced entirely from the Tickets table (never a live CRM call). "

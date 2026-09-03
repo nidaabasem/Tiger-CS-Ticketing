@@ -91,6 +91,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="CustomerVerificationSource">The external lookup source that verified the customer at creation ("Pact"/"Tasleeh"), or null for CRM Buyer tickets and plain manual entry.</param>
 /// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, never a local reference.</param>
 /// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — an external identifier only.</param>
+/// <param name="ResolvedAtUtc">When the current resolution was recorded, in UTC — null while the ticket has no current resolution. Populated on detail reads (<c>GET /api/tickets/{id}</c>); write responses leave it null and clients re-read.</param>
+/// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Resolved/Closed and within the ISSUE-011 window. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen. Populated on detail reads; false on write responses.</param>
 public sealed record TicketDetailDto(
     long TicketId,
     string TicketNumber,
@@ -122,7 +124,9 @@ public sealed record TicketDetailDto(
     string? ManualUnitNumber = null,
     string? CustomerVerificationSource = null,
     string? ExternalCustomerId = null,
-    string? ExternalUnitId = null);
+    string? ExternalUnitId = null,
+    DateTime? ResolvedAtUtc = null,
+    bool IsReopenEligible = false);
 
 public enum TicketQueryOutcome
 {
@@ -175,6 +179,12 @@ public enum TicketMutationOutcome
     NotYetResolved,
     DuplicateChainNotAllowed,
 
+    /// <summary>FR-RES-04: Reopen is only valid from Resolved or Closed.</summary>
+    NotEligibleForReopen,
+
+    /// <summary>ISSUE-011/BR-020: the reopen window has passed — create a new linked ticket instead.</summary>
+    ReopenWindowExpired,
+
     /// <summary>Reconciliation-specific: the session's raw unit context doesn't match the ticket's originating raw unit number.</summary>
     ReconciliationUnitMismatch,
 
@@ -213,6 +223,11 @@ public sealed record ResolveTicketRequestDto(
 /// <summary>Close a resolved ticket (MVP-API-Contracts.md §3.10).</summary>
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
 public sealed record CloseTicketRequestDto(byte[] RowVersion);
+
+/// <summary>Reopen a resolved/closed ticket (MVP-API-Contracts.md §3.11, FR-RES-04).</summary>
+/// <param name="Reason">Required. Why the ticket is being reopened — recorded on the status-history row.</param>
+/// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
+public sealed record ReopenTicketRequestDto(string Reason, byte[] RowVersion);
 
 // ---- Notes (MVP-API-Contracts.md §4.1/§4.2) ----
 

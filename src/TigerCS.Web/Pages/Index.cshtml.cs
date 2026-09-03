@@ -6,5 +6,5 @@ namespace TigerCS.Web.Pages;
 public sealed class IndexModel : PageModel
 {
     public IActionResult OnGet() =>
-        User.Identity?.IsAuthenticated == true ? RedirectToPage("/Tickets") : RedirectToPage("/Login");
+        User.Identity?.IsAuthenticated == true ? RedirectToPage("/Dashboard") : RedirectToPage("/Login");
 }

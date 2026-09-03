@@ -10,11 +10,15 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// a live CRM call — so history is available even when CRM is offline.
 ///
 /// <para>
-/// <b>Two identities, never combined.</b> A CRM-verified customer's identity
-/// is <c>Ticket.CrmBuyerCustomerId</c> — a phone number may match more than
-/// one CRM customer, so history for a verified customer is always scoped by
-/// the exact selected <c>CrmBuyerCustomerId</c>, never widened by phone.
-/// Only when a ticket has no <c>CrmBuyerCustomerId</c> at all does this
+/// <b>Three identities, never combined.</b> A CRM-verified customer's
+/// identity is <c>Ticket.CrmBuyerCustomerId</c> — a phone number may match
+/// more than one CRM customer, so history for a verified customer is always
+/// scoped by the exact selected <c>CrmBuyerCustomerId</c>, never widened by
+/// phone. An externally-verified customer's identity (PACT/Tasleeh) is the
+/// persisted <c>Ticket.CustomerVerificationSource</c> +
+/// <c>Ticket.ExternalCustomerId</c> pair — never a display-name or phone
+/// match, so two different customers sharing similar contact data can never
+/// share a history. Only when a ticket carries neither identity does this
 /// service fall back to the persisted <c>IntakeRecord.PhoneNumber</c>
 /// snapshot linked to that ticket — a weaker identity (one phone number can
 /// belong to more than one real customer), so that result is always labelled
@@ -25,16 +29,20 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// <para>
 /// <b>Authorization: identical department visibility to the ticket
 /// queue/detail (TicketQueryAppService), never widened.</b> Knowing a CRM
-/// customer id or a ticket id never grants access to a ticket the caller
-/// could not otherwise see — every query here is scoped by the caller's own
-/// visible departments, and the ticket-anchored lookup additionally checks
-/// the anchor ticket's own department visibility before running anything.
+/// customer id, an external customer id, or a ticket id never grants access
+/// to a ticket the caller could not otherwise see — every query here is
+/// scoped by the caller's own visible departments, and the ticket-anchored
+/// lookup additionally checks the anchor ticket's own department visibility
+/// before running anything.
 /// </para>
 /// </summary>
 public sealed class CustomerHistoryAppService(
     ITicketRepository ticketRepository,
     IIntakeRecordRepository intakeRecordRepository,
-    TicketQueryAppService ticketQueryAppService)
+    ITicketResolutionRepository ticketResolutionRepository,
+    TicketQueryAppService ticketQueryAppService,
+    ReopenPolicy reopenPolicy,
+    TimeProvider timeProvider)
 {
     /// <summary>The New Ticket preview's default page size — a "reasonable latest-ticket limit", never the customer's unbounded history.</summary>
     public const int DefaultLimit = 5;
@@ -42,9 +50,10 @@ public sealed class CustomerHistoryAppService(
 
     /// <summary>
     /// Verified path: <c>GET /api/customers/crm/{crmCustomerId}/ticket-history</c>.
-    /// Used by the New Ticket wizard once the agent has explicitly selected a
-    /// CRM Buyer/unit — the identity queried is always the one the agent
-    /// selected, never inferred from the raw phone search results.
+    /// Used by the New Ticket wizard's preview and the Customer Workspace
+    /// once the agent has explicitly selected a CRM Buyer — the identity
+    /// queried is always the one the agent selected, never inferred from
+    /// the raw phone search results.
     /// </summary>
     public async Task<CustomerHistoryDto> GetByCrmCustomerIdAsync(
         Guid callerEmployeeId,
@@ -61,16 +70,49 @@ public sealed class CustomerHistoryAppService(
             new CustomerHistoryQuery(visibleDepartmentIds, crmBuyerCustomerId, TicketIds: null, excludeTicketId, NormalizeLimit(limit)),
             cancellationToken);
 
-        return ToDto("Verified", crmBuyerCustomerId, phoneNumberSnapshot: null, result);
+        return await ToDtoAsync("Verified", crmBuyerCustomerId, phoneNumberSnapshot: null, result,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// External-identity path (Customer Workspace):
+    /// <c>GET /api/customers/external/{source}/{externalCustomerId}/ticket-history</c>.
+    /// Keyed by the persisted external verification identity a PACT/Tasleeh
+    /// ticket already carries (<c>CustomerVerificationSource</c> +
+    /// <c>ExternalCustomerId</c>) — never by display name and never by phone,
+    /// so an external customer's history can never absorb a different
+    /// customer's manual or CRM tickets.
+    /// </summary>
+    public async Task<CustomerHistoryDto> GetByExternalIdentityAsync(
+        Guid callerEmployeeId,
+        IReadOnlyCollection<string> callerRoles,
+        string externalSource,
+        string externalCustomerId,
+        long? excludeTicketId = null,
+        int? limit = null,
+        CancellationToken cancellationToken = default)
+    {
+        var visibleDepartmentIds = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(
+            callerEmployeeId, callerRoles, cancellationToken);
+
+        var result = await ticketRepository.SearchCustomerHistoryAsync(
+            new CustomerHistoryQuery(
+                visibleDepartmentIds, CrmBuyerCustomerId: null, TicketIds: null, excludeTicketId, NormalizeLimit(limit),
+                ExternalSource: externalSource, ExternalCustomerId: externalCustomerId),
+            cancellationToken);
+
+        return await ToDtoAsync("ExternalVerified", crmBuyerCustomerId: null, phoneNumberSnapshot: null, result,
+            externalSource: externalSource, externalCustomerId: externalCustomerId, cancellationToken: cancellationToken);
     }
 
     /// <summary>
     /// Ticket-anchored path: <c>GET /api/tickets/{ticketId}/customer-history</c>.
     /// The only entry point Ticket Details uses — it derives the customer
     /// identity from the ticket itself (CrmBuyerCustomerId when present,
-    /// otherwise the linked IntakeRecord's phone snapshot), so callers never
-    /// supply a raw phone number or CRM id directly. The current ticket is
-    /// always excluded from its own history.
+    /// then the persisted external verification identity, otherwise the
+    /// linked IntakeRecord's phone snapshot), so callers never supply a raw
+    /// phone number or customer id directly. The current ticket is always
+    /// excluded from its own history.
     /// </summary>
     public async Task<CustomerHistoryResult> GetForTicketAsync(
         Guid callerEmployeeId,
@@ -101,10 +143,27 @@ public sealed class CustomerHistoryAppService(
                 cancellationToken);
 
             return CustomerHistoryResult.Success(
-                ToDto("Verified", crmBuyerCustomerId, phoneNumberSnapshot: null, verifiedResult, ticket.CrmBuyerCustomerName));
+                await ToDtoAsync("Verified", crmBuyerCustomerId, phoneNumberSnapshot: null, verifiedResult,
+                    ticket.CrmBuyerCustomerName, cancellationToken: cancellationToken));
         }
 
-        // Fallback path — no CrmBuyerCustomerId on this ticket at all. The
+        // Externally-verified anchor (PACT/Tasleeh): the persisted external
+        // identity pair is a real identity — use it, never the phone
+        // fallback, so external history stays exactly this customer's.
+        if (ticket.CustomerVerificationSource is { } anchorSource && ticket.ExternalCustomerId is { } anchorExternalId)
+        {
+            var externalResult = await ticketRepository.SearchCustomerHistoryAsync(
+                new CustomerHistoryQuery(
+                    visibleDepartmentIds, CrmBuyerCustomerId: null, TicketIds: null, ticketId, boundedLimit,
+                    ExternalSource: anchorSource, ExternalCustomerId: anchorExternalId),
+                cancellationToken);
+
+            return CustomerHistoryResult.Success(
+                await ToDtoAsync("ExternalVerified", crmBuyerCustomerId: null, phoneNumberSnapshot: null, externalResult,
+                    externalSource: anchorSource, externalCustomerId: anchorExternalId, cancellationToken: cancellationToken));
+        }
+
+        // Fallback path — no verified identity on this ticket at all. The
         // phone number is read from the IntakeRecord this ticket was
         // promoted from (never a live CRM call, never caller-supplied), and
         // ListLinkedTicketIdsByPhoneNumberAsync resolves the matching ticket
@@ -112,7 +171,9 @@ public sealed class CustomerHistoryAppService(
         var intakeRecord = await intakeRecordRepository.GetByLinkedTicketIdAsync(ticketId, cancellationToken);
         if (intakeRecord is null)
         {
-            return CustomerHistoryResult.Success(ToDto("Unverified", null, null, new CustomerHistoryQueryResult([], 0, 0, 0)));
+            return CustomerHistoryResult.Success(
+                await ToDtoAsync("Unverified", null, null, new CustomerHistoryQueryResult([], 0, 0, 0),
+                    cancellationToken: cancellationToken));
         }
 
         var linkedTicketIds = await intakeRecordRepository.ListLinkedTicketIdsByPhoneNumberAsync(intakeRecord.PhoneNumber, cancellationToken);
@@ -120,18 +181,37 @@ public sealed class CustomerHistoryAppService(
             new CustomerHistoryQuery(visibleDepartmentIds, CrmBuyerCustomerId: null, linkedTicketIds, ticketId, boundedLimit),
             cancellationToken);
 
-        return CustomerHistoryResult.Success(ToDto("Unverified", null, intakeRecord.PhoneNumber, unverifiedResult));
+        return CustomerHistoryResult.Success(
+            await ToDtoAsync("Unverified", null, intakeRecord.PhoneNumber, unverifiedResult,
+                cancellationToken: cancellationToken));
     }
 
     private static int NormalizeLimit(int? limit) => limit is null or <= 0 || limit > MaxLimit ? DefaultLimit : limit.Value;
 
-    private static CustomerHistoryDto ToDto(
+    private async Task<CustomerHistoryDto> ToDtoAsync(
         string verificationType,
         int? crmBuyerCustomerId,
         string? phoneNumberSnapshot,
         CustomerHistoryQueryResult result,
-        string? customerDisplayName = null) =>
-        new(
+        string? customerDisplayName = null,
+        string? externalSource = null,
+        string? externalCustomerId = null,
+        CancellationToken cancellationToken = default)
+    {
+        // One batched lookup stamps ResolvedAtUtc/reopen-eligibility onto
+        // the returned page — the same ReopenPolicy the Reopen action
+        // enforces, so a "Reopen" affordance in a history list can never
+        // disagree with the endpoint's own rule.
+        var resolvedTicketIds = result.Tickets
+            .Where(t => t.TicketStatus is TicketStatus.Resolved or TicketStatus.Closed)
+            .Select(t => t.TicketId)
+            .ToList();
+        var currentResolutions = resolvedTicketIds.Count > 0
+            ? await ticketResolutionRepository.ListCurrentByTicketIdsAsync(resolvedTicketIds, cancellationToken)
+            : new Dictionary<long, TicketResolution>();
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        return new(
             verificationType,
             crmBuyerCustomerId,
             phoneNumberSnapshot,
@@ -139,17 +219,31 @@ public sealed class CustomerHistoryAppService(
             result.TotalCount,
             result.OpenCount,
             result.ClosedCount,
-            result.Tickets.Select(ToTicketDto).ToList());
+            result.Tickets.Select(t => ToTicketDto(t, currentResolutions, nowUtc)).ToList(),
+            externalSource,
+            externalCustomerId);
+    }
 
-    private static CustomerHistoryTicketDto ToTicketDto(Ticket ticket) => new(
-        ticket.TicketId,
-        ticket.TicketNumber,
-        ticket.CreatedAtUtc,
-        ticket.TicketStatus.ToString(),
-        ticket.PriorityId,
-        ticket.CategoryId,
-        ticket.CurrentDepartmentId,
-        ticket.CrmBuyerProjectName ?? ticket.ManualProjectName,
-        ticket.CrmBuyerUnitNumber ?? ticket.ManualUnitNumber,
-        ticket.VerificationStatus.ToString());
+    private CustomerHistoryTicketDto ToTicketDto(
+        Ticket ticket, IReadOnlyDictionary<long, TicketResolution> currentResolutions, DateTime nowUtc)
+    {
+        var resolvedAtUtc = currentResolutions.TryGetValue(ticket.TicketId, out var resolution)
+            ? resolution.ResolvedAtUtc
+            : (DateTime?)null;
+
+        return new(
+            ticket.TicketId,
+            ticket.TicketNumber,
+            ticket.CreatedAtUtc,
+            ticket.TicketStatus.ToString(),
+            ticket.PriorityId,
+            ticket.CategoryId,
+            ticket.CurrentDepartmentId,
+            ticket.CrmBuyerProjectName ?? ticket.ManualProjectName,
+            ticket.CrmBuyerUnitNumber ?? ticket.ManualUnitNumber,
+            ticket.VerificationStatus.ToString(),
+            ticket.RequestSummary,
+            resolvedAtUtc,
+            reopenPolicy.IsReopenEligible(ticket.TicketStatus, resolvedAtUtc, nowUtc));
+    }
 }

@@ -20,16 +20,22 @@ public class CustomerHistoryAppServiceTests
         CustomerHistoryAppService Service,
         FakeTicketRepository Tickets,
         FakeIntakeRecordRepository IntakeRecords,
-        FakeUserDepartmentAssignmentRepository DepartmentAssignments);
+        FakeUserDepartmentAssignmentRepository DepartmentAssignments,
+        FakeTicketResolutionRepository Resolutions);
 
-    private static Fixture CreateService()
+    private static Fixture CreateService(TimeProvider? timeProvider = null)
     {
         var tickets = new FakeTicketRepository();
         var intakeRecords = new FakeIntakeRecordRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
-        var queryService = new TicketQueryAppService(tickets, departmentAssignments);
+        var resolutions = new FakeTicketResolutionRepository();
+        var clock = timeProvider ?? TimeProvider.System;
+        var queryService = new TicketQueryAppService(
+            tickets, departmentAssignments, resolutions, ReopenPolicy.Default, clock);
         return new Fixture(
-            new CustomerHistoryAppService(tickets, intakeRecords, queryService), tickets, intakeRecords, departmentAssignments);
+            new CustomerHistoryAppService(
+                tickets, intakeRecords, resolutions, queryService, ReopenPolicy.Default, clock),
+            tickets, intakeRecords, departmentAssignments, resolutions);
     }
 
     private static async Task<Ticket> SeedCrmBuyerTicketAsync(
@@ -282,5 +288,128 @@ public class CustomerHistoryAppServiceTests
         var result = await f.Service.GetForTicketAsync(Guid.NewGuid(), [Roles.CsManager], 999);
 
         Assert.Equal(CustomerHistoryOutcome.NotFound, result.Outcome);
+    }
+
+    // ---------------------------------------------------------------
+    // External-identity history (Customer Workspace phase): PACT/Tasleeh
+    // customers are keyed by the persisted CustomerVerificationSource +
+    // ExternalCustomerId pair — never by display name or phone.
+    // ---------------------------------------------------------------
+
+    private static async Task<Ticket> SeedExternalTicketAsync(
+        FakeTicketRepository repo, string source, string externalCustomerId, string unitNumber,
+        DateTime createdAtUtc, int departmentId = 2, string summary = "AC issue")
+    {
+        var ticket = Ticket.CreateFromExternalLookup(
+            $"TG-CS-{createdAtUtc:yyyyMMdd}-{Guid.NewGuid():N}"[..24], departmentId,
+            customerVerificationSource: source, externalCustomerId: externalCustomerId, externalUnitId: $"U-{unitNumber}",
+            manualProjectName: "Nobles Tower", manualUnitNumber: unitNumber,
+            categoryId: 5, priorityId: (byte)PriorityLevel.Medium, requestSummary: summary, createdAtUtc);
+        await repo.AddAsync(ticket);
+        return ticket;
+    }
+
+    [Fact]
+    public async Task GetByExternalIdentityAsync_ReturnsOnlyTicketsCarryingThatExactSourceAndExternalId()
+    {
+        var f = CreateService();
+        var mine = await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1506", DateTime.UtcNow.AddDays(-2));
+        // Same source, different customer id — a different real customer.
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-2", "1506", DateTime.UtcNow.AddDays(-1));
+        // Same external id under a different source — never merged.
+        await SeedExternalTicketAsync(f.Tickets, "Tasleeh", "PACT-CUST-1", "1506", DateTime.UtcNow);
+        // A plain manual ticket must never attach to an externally-verified customer.
+        var manual = Ticket.CreateUnverified(
+            "TG-CS-20260901-0001", 2, 5, (byte)PriorityLevel.Low, "Manual entry", DateTime.UtcNow,
+            manualProjectName: "Nobles Tower", manualUnitNumber: "1506");
+        await f.Tickets.AddAsync(manual);
+
+        var result = await f.Service.GetByExternalIdentityAsync(Guid.NewGuid(), [Roles.CsManager], "Pact", "PACT-CUST-1");
+
+        Assert.Equal("ExternalVerified", result.VerificationType);
+        Assert.Equal("Pact", result.ExternalSource);
+        Assert.Equal("PACT-CUST-1", result.ExternalCustomerId);
+        var row = Assert.Single(result.Tickets);
+        Assert.Equal(mine.TicketId, row.TicketId);
+    }
+
+    [Fact]
+    public async Task GetByExternalIdentityAsync_IsScopedByTheCallersVisibleDepartments()
+    {
+        var f = CreateService();
+        var caller = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(caller, 2, true, DateTime.UtcNow, null));
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1506", DateTime.UtcNow.AddDays(-2), departmentId: 2);
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1204", DateTime.UtcNow.AddDays(-1), departmentId: 9);
+
+        var result = await f.Service.GetByExternalIdentityAsync(caller, [Roles.DepartmentEmployee], "Pact", "PACT-CUST-1");
+
+        var row = Assert.Single(result.Tickets);
+        Assert.Equal("1506", row.UnitNumber);
+    }
+
+    [Fact]
+    public async Task GetForTicketAsync_ExternallyVerifiedAnchor_UsesTheExternalIdentity_NeverThePhoneFallback()
+    {
+        var f = CreateService();
+        var anchor = await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1506", DateTime.UtcNow.AddDays(-3));
+        var sibling = await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1204", DateTime.UtcNow.AddDays(-2));
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-2", "1802", DateTime.UtcNow.AddDays(-1));
+
+        var result = await f.Service.GetForTicketAsync(Guid.NewGuid(), [Roles.CsManager], anchor.TicketId);
+
+        Assert.Equal(CustomerHistoryOutcome.Success, result.Outcome);
+        Assert.Equal("ExternalVerified", result.Response!.VerificationType);
+        var row = Assert.Single(result.Response.Tickets);
+        Assert.Equal(sibling.TicketId, row.TicketId);
+    }
+
+    // ---------------------------------------------------------------
+    // Reopen-eligibility stamping (Customer Workspace phase): the same
+    // ReopenPolicy that gates the Reopen action computes each row's flag.
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task History_StampsReopenEligibility_FromTheCurrentResolutionAndTheWindow()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+
+        var recentlyResolved = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2508", now.AddDays(-10));
+        MoveToResolved(recentlyResolved);
+        await f.Resolutions.AddAsync(new TicketResolution(
+            recentlyResolved.TicketId, ResolutionOutcome.Resolved, "Fixed.", null, null, Guid.NewGuid(), now.AddDays(-2)));
+
+        var longResolved = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2608", now.AddDays(-40));
+        MoveToResolved(longResolved);
+        await f.Resolutions.AddAsync(new TicketResolution(
+            longResolved.TicketId, ResolutionOutcome.Resolved, "Fixed long ago.", null, null, Guid.NewGuid(), now.AddDays(-30)));
+
+        var stillOpen = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2810", now.AddDays(-1));
+
+        var result = await f.Service.GetByCrmCustomerIdAsync(Guid.NewGuid(), [Roles.CsManager], 493575, limit: 10);
+
+        Assert.True(result.Tickets.Single(t => t.TicketId == recentlyResolved.TicketId).IsReopenEligible);
+        Assert.False(result.Tickets.Single(t => t.TicketId == longResolved.TicketId).IsReopenEligible);
+        Assert.False(result.Tickets.Single(t => t.TicketId == stillOpen.TicketId).IsReopenEligible);
+        Assert.Equal(now.AddDays(-2), result.Tickets.Single(t => t.TicketId == recentlyResolved.TicketId).ResolvedAtUtc);
+    }
+
+    [Fact]
+    public async Task History_CarriesTheRequestSummary_ForListScanning()
+    {
+        var f = CreateService();
+        await SeedExternalTicketAsync(f.Tickets, "Pact", "PACT-CUST-1", "1506", DateTime.UtcNow, summary: "Water leak in kitchen");
+
+        var result = await f.Service.GetByExternalIdentityAsync(Guid.NewGuid(), [Roles.CsManager], "Pact", "PACT-CUST-1");
+
+        Assert.Equal("Water leak in kitchen", Assert.Single(result.Tickets).RequestSummary);
+    }
+
+    private static void MoveToResolved(Ticket ticket)
+    {
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
     }
 }
