@@ -359,8 +359,16 @@ public sealed class NewTicketModel(
     /// </summary>
     public async Task<IActionResult> OnPostIntakeAsync(CancellationToken cancellationToken)
     {
-        if (!ModelState.IsValid)
+        // Deliberately NOT `ModelState.IsValid`: CreateStep is a co-bound
+        // [BindProperty] whose [Required] members (CategoryId/PriorityId/
+        // RequestSummary) the Search form never posts, so the page-wide
+        // ModelState is invalid on every Step 1 POST and a global gate
+        // would silently re-render an empty Step 1 for a perfectly valid
+        // phone search. Validate only what this form actually submits, and
+        // report the failure visibly — this step never fails silently.
+        if (string.IsNullOrWhiteSpace(Intake.ChannelId) || string.IsNullOrWhiteSpace(Intake.PhoneNumber))
         {
+            ErrorMessage = "Enter a phone number to search.";
             Step = StepCustomer;
             return Page();
         }

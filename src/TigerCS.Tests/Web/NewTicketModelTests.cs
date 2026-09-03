@@ -247,6 +247,25 @@ public sealed class NewTicketModelTests
     }
 
     [Fact]
+    public async Task OnPostIntakeAsync_EmptyPhone_RedisplaysStep1WithAVisibleError_AndNeverCallsTheApi()
+    {
+        // The empty-search guard validates only what the Search form posts —
+        // NEVER the page-wide ModelState, which the co-bound CreateStep's
+        // [Required] members make invalid on every Step 1 POST in the real
+        // pipeline (the silent-empty-Step-1 regression; the full-pipeline
+        // proof lives in NewTicketWizardHttpFlowTests).
+        var (model, handler, _, _, _, _, _, _) = CreateModel();
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "Phone", PhoneNumber = "  " };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal(NewTicketModel.StepCustomer, model.Step);
+        Assert.Equal("Enter a phone number to search.", model.ErrorMessage);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task OnPostIntakeAsync_ApiUnreachable_SetsControlledFailureMessage_NoUnhandledException()
     {
         var (model, _, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
