@@ -9,6 +9,7 @@ using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
+using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Seed;
 using TigerCS.Infrastructure.Persistence;
 
 namespace TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
@@ -38,6 +39,7 @@ public static class DevSeedData
         await SeedCategoriesAsync(dbContext, logger, cancellationToken);
         await SeedDepartmentCustomerLookupSourcesAsync(dbContext, logger, cancellationToken);
         await SeedSlaReferenceDataAsync(dbContext, logger, cancellationToken);
+        await SeedWorkflowReferenceDataAsync(dbContext, logger, cancellationToken);
         await SeedDevAdministratorAsync(dbContext, userManager, configuration, logger, cancellationToken);
     }
 
@@ -87,6 +89,21 @@ public static class DevSeedData
 
         await SlaReferenceData.SeedAsync(dbContext, cancellationToken);
         logger.LogInformation("Seeded SLA policies and the default business calendar (ISSUE-017 Option A: Sat-Thu, 08:00-18:00).");
+    }
+
+    /// <summary>
+    /// The Workflow/SLA Configuration phase-1 reference data (templates,
+    /// SLA-document departments, request types, per-(request type, priority)
+    /// SLA rows, department workflow settings). Delegates to
+    /// <see cref="WorkflowReferenceData"/> for the same one-source-of-truth
+    /// reason as <see cref="SeedSlaReferenceDataAsync"/>; the seed itself is
+    /// idempotent per table, so no pre-check is needed here.
+    /// </summary>
+    private static async Task SeedWorkflowReferenceDataAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        await WorkflowReferenceData.SeedAsync(dbContext, cancellationToken);
+        logger.LogInformation(
+            "Seeded workflow configuration reference data (templates, request types, request-type SLA rows, department workflow settings).");
     }
 
     private static async Task SeedCategoriesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)

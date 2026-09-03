@@ -19,6 +19,8 @@ using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
+using TigerCS.Application.Modules.WorkflowConfiguration.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.BackgroundJobs;
@@ -30,6 +32,7 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
 using TigerCS.Infrastructure.Modules.Notifications.Repositories;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Repositories;
 using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
+using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Repositories;
 using TigerCS.Infrastructure.Persistence;
 
 namespace TigerCS.Infrastructure;
@@ -198,6 +201,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<SlaQueryAppService>();
         services.AddScoped<SlaFirstResponseAppService>();
         services.AddScoped<TicketEscalationAppService>();
+
+        // Workflow/SLA Configuration (phase 1) — the Department → Request
+        // Type → Workflow Template → SLA configuration layer. Read-only at
+        // this phase; configuration is seeded/database-driven.
+        services.AddScoped<IWorkflowTemplateRepository, WorkflowTemplateRepository>();
+        services.AddScoped<IRequestTypeRepository, RequestTypeRepository>();
+        services.AddScoped<IRequestTypeSlaPolicyRepository, RequestTypeSlaPolicyRepository>();
+        services.AddScoped<IDepartmentWorkflowSettingsRepository, DepartmentWorkflowSettingsRepository>();
+        services.AddScoped<WorkflowConfigurationQueryService>();
 
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).
