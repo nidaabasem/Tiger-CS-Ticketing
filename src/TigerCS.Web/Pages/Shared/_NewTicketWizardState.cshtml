@@ -1,0 +1,20 @@
+@model TigerCS.Web.Pages.NewTicketModel
+@*
+    The wizard's carried state as hidden fields, for the Issue/Review/Create
+    POST forms — the POST-side twin of the GET query-string carry. Names
+    match the handler parameter names exactly. Display/carry-forward only:
+    POST /api/tickets re-validates everything server-side.
+*@
+<input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+<input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+<input type="hidden" name="customer" value="@Model.CustomerKey" />
+<input type="hidden" name="crmBuyerCustomerId" value="@Model.CrmBuyerCustomerId" />
+<input type="hidden" name="crmBuyerLeadId" value="@Model.CrmBuyerLeadId" />
+<input type="hidden" name="crmBuyerUnitId" value="@Model.CrmBuyerUnitId" />
+<input type="hidden" name="crmBuyerProjectId" value="@Model.CrmBuyerProjectId" />
+<input type="hidden" name="crmBuyerCustomerName" value="@Model.CrmBuyerCustomerName" />
+<input type="hidden" name="crmBuyerProjectName" value="@Model.CrmBuyerProjectName" />
+<input type="hidden" name="crmBuyerUnitNumber" value="@Model.CrmBuyerUnitNumber" />
+<input type="hidden" name="externalSelection" value="@Model.ExternalSelection" />
+<input type="hidden" name="manualProjectName" value="@Model.ManualProjectName" />
+<input type="hidden" name="manualUnitNumber" value="@Model.ManualUnitNumber" />

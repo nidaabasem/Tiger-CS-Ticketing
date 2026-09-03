@@ -323,22 +323,28 @@ public sealed class CustomerWorkspaceTests
     private static string NewTicketViewHtml() =>
         File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
+    private static string NewTicketRelatedPanel()
+    {
+        var html = NewTicketViewHtml();
+        var panelStart = html.IndexOf("Related tickets for this unit", StringComparison.Ordinal);
+        Assert.True(panelStart > 0, "Expected the related-tickets advisory panel on the Property step.");
+        var panelEnd = html.IndexOf("wizard-actions", panelStart, StringComparison.Ordinal);
+        return html[panelStart..panelEnd];
+    }
+
     [Fact]
     public void NewTicketView_RelatedTicketsPanel_RendersOnlyWhenRelatedTicketsExist()
     {
         var html = NewTicketViewHtml();
 
-        Assert.Contains("Related tickets found", html);
+        Assert.Contains("Related tickets for this unit", html);
         Assert.Contains("Model.RelatedTickets is not null && Model.RelatedTickets.Tickets.Count > 0", html);
     }
 
     [Fact]
     public void NewTicketView_RelatedTicketsPanel_ShowsOneLineSummaries_NeverAFullDescription()
     {
-        var html = NewTicketViewHtml();
-        var panelStart = html.IndexOf("related-tickets", StringComparison.Ordinal);
-        var panelEnd = html.IndexOf("Previous Tickets", panelStart, StringComparison.Ordinal);
-        var panel = html[panelStart..panelEnd];
+        var panel = NewTicketRelatedPanel();
 
         Assert.Contains("cell-truncate", panel);
         Assert.Contains("row.RequestSummary", panel);
@@ -347,22 +353,19 @@ public sealed class CustomerWorkspaceTests
     [Fact]
     public void NewTicketView_RelatedTicketsPanel_ContinueWithNewTicket_IsAlwaysAvailable()
     {
+        // The advisory panel never blocks: once a unit is selected, the
+        // step's primary action continues onward — labelled "Continue with
+        // New Ticket" exactly when related tickets are showing.
         var html = NewTicketViewHtml();
 
-        // The advisory panel links down to the creation form — creation is
-        // never blocked by a related ticket.
-        Assert.Contains(">Continue with New Ticket</a>", html);
-        Assert.Contains("href=\"#new-ticket-form\"", html);
-        Assert.Contains("id=\"new-ticket-form\"", html);
+        Assert.Contains("Continue with New Ticket", html);
+        Assert.Contains("Continue to Issue", html);
     }
 
     [Fact]
     public void NewTicketView_RelatedTicketsPanel_ActionsFollowStatusAndReopenPolicy()
     {
-        var html = NewTicketViewHtml();
-        var panelStart = html.IndexOf("related-tickets", StringComparison.Ordinal);
-        var panelEnd = html.IndexOf("Previous Tickets", panelStart, StringComparison.Ordinal);
-        var panel = html[panelStart..panelEnd];
+        var panel = NewTicketRelatedPanel();
 
         // View for finished tickets, Open for active ones — same link, honest label.
         Assert.Contains("@(isFinished ? \"View\" : \"Open\")", panel);

@@ -1,0 +1,19 @@
+@model TigerCS.Web.Pages.NewTicketModel
+@*
+    The manual property path — required together, never used to run another
+    lookup, and carrying no external identity (a manual customer must never
+    be associated with another customer's verified records).
+*@
+<form method="post" asp-page-handler="UseManualUnit">
+    <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+    <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+    <div class="form-group">
+        <label class="form-label" asp-for="CreateStep.ManualProjectName">Project *</label>
+        <input class="form-control" asp-for="CreateStep.ManualProjectName" />
+    </div>
+    <div class="form-group">
+        <label class="form-label" asp-for="CreateStep.ManualUnitNumber">Unit Number *</label>
+        <input class="form-control" asp-for="CreateStep.ManualUnitNumber" />
+    </div>
+    <button type="submit" class="btn btn-gold">Use this property</button>
+</form>

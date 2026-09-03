@@ -33,16 +33,17 @@ public sealed class WebFrontEndCleanupTests
     }
 
     [Fact]
-    public void NewTicketView_NoMatchAndCrmUnavailableCases_OfferContinueRatherThanDeadEnd()
+    public void NewTicketView_NoMatchAndUnavailableCases_OfferContinueRatherThanDeadEnd()
     {
-        // Business-rule change: CRM Buyer Lookup no longer gates ticket
-        // creation — a NotFound or Unavailable outcome both still show
-        // "Customer not found in CRM." and a Continue path onward, never a
-        // dead end.
+        // Customer lookup never gates ticket creation — "not found" is a
+        // friendly state with a manual path onward (never a dead end), and a
+        // source outage is said distinctly ("temporarily unavailable"),
+        // never presented as a missing customer.
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Customer not found in CRM.", html);
-        Assert.Contains("Continue to Ticket", html);
+        Assert.Contains("Customer not found", html);
+        Assert.Contains("Continue with Manual Entry", html);
+        Assert.Contains("temporarily unavailable", html);
     }
 
     // ---- The phone input must accept a leading '+': no HTML pattern, numeric
@@ -102,7 +103,9 @@ public sealed class WebFrontEndCleanupTests
         Assert.DoesNotContain("Category ID", html);
         Assert.DoesNotContain("No category directory endpoint exists yet", html);
         Assert.DoesNotContain("numeric category id", html, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("asp-for=\"CreateStep.CategoryId\" />", html);
+        // The dropdown is the only visible way to pick a Request Type — the
+        // review step's hidden carry field is not a typed input.
+        Assert.DoesNotContain("<input class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
     }
 
     [Fact]
@@ -110,7 +113,7 @@ public sealed class WebFrontEndCleanupTests
     {
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Category *", html);
+        Assert.Contains("Request Type *", html);
         Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
         Assert.Contains("category.Name", html);
     }
@@ -151,8 +154,10 @@ public sealed class WebFrontEndCleanupTests
     {
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Department (optional)", html);
-        Assert.Contains("<select class=\"form-control\" asp-for=\"Intake.DepartmentId\"", html);
+        // The redesign moves Department to the Issue step, narrowing the
+        // Request Type list — still a real-name dropdown, never a typed id.
+        Assert.Contains(">Department</label>", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.DepartmentId\"", html);
         Assert.Contains("department.Name", html);
         Assert.Contains("department.DepartmentId", html);
     }
@@ -178,32 +183,39 @@ public sealed class WebFrontEndCleanupTests
     [Fact]
     public void NewTicketView_UnitIsSelectedFromCrmBuyerLookupResults_NeverAutomatically()
     {
-        // The actual Ticket Unit is a radio choice inside a matched CRM
-        // Buyer's own eligible units — never a manually-typed number, and
-        // never pre-checked (no customer or unit is ever auto-selected).
+        // The actual Ticket Unit is an explicit per-unit selection inside a
+        // matched CRM Buyer's own eligible units — the packed value keeps
+        // ids and display text together, and nothing is ever pre-selected
+        // (the selected state exists only after the agent's own POST).
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Select Unit", html);
-        Assert.Contains("type=\"radio\" name=\"selectedCrmBuyerUnit\"", html);
+        Assert.Contains("Select property", html);
+        Assert.Contains("name=\"selectedCrmBuyerUnit\"", html);
         Assert.DoesNotContain("checked", html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void NewTicketView_Step3_ShowsCrmBuyerCustomerAndUnitSummary_WithPriorityRequired()
+    public void NewTicketView_SummaryPanel_ShowsTheSelectedCustomerAndUnit_WithPriorityRequired()
     {
+        // The sticky summary panel keeps the selected customer/unit visible
+        // on every step (with "Not selected yet" placeholders before that).
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Model.CrmBuyerCustomerName", html);
-        Assert.Contains("Model.CrmBuyerUnitNumber", html);
+        Assert.Contains("Model.SummaryCustomerName", html);
+        Assert.Contains("Model.SummaryUnitNumber", html);
+        Assert.Contains("Not selected yet", html);
         Assert.Contains("Priority *", html);
         Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.PriorityId\"", html);
         Assert.Contains("Select Priority", html);
     }
 
     [Fact]
-    public void NewTicketView_Step3_RequiresManualProjectAndUnitNumber_WhenNoCrmBuyerMatchSelected()
+    public void NewTicketView_ManualPath_RequiresManualProjectAndUnitNumber_WhenNoVerifiedUnitSelected()
     {
-        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+        // The manual property form lives in its own partial (rendered by the
+        // Property step's manual/no-units paths) — both fields required,
+        // real inputs bound to the same CreateStep fields as always.
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Shared", "_NewTicketManualUnitForm.cshtml")));
 
         Assert.Contains("Project *", html);
         Assert.Contains("Unit Number *", html);
