@@ -22,7 +22,7 @@ public class TicketLifecycleAppServiceTests
         FakeTicketingUnitOfWork UnitOfWork,
         SlaServiceFixture Sla);
 
-    private static Fixture CreateService()
+    private static Fixture CreateService(TimeProvider? timeProvider = null, ReopenPolicy? reopenPolicy = null)
     {
         var tickets = new FakeTicketRepository();
         var resolutions = new FakeTicketResolutionRepository();
@@ -37,7 +37,8 @@ public class TicketLifecycleAppServiceTests
         var sla = new SlaServiceFixture(tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork);
 
         var service = new TicketLifecycleAppService(
-            tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor, TimeProvider.System);
+            tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
+            timeProvider ?? TimeProvider.System, reopenPolicy ?? ReopenPolicy.Default);
 
         return new Fixture(service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla);
     }
@@ -322,5 +323,192 @@ public class TicketLifecycleAppServiceTests
         Assert.Equal(TicketMutationOutcome.TicketClosed, result.Outcome);
         Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
         Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+    }
+
+    // ---- Reopen (MVP-API-Contracts.md §3.11, FR-RES-04, ISSUE-011/ISSUE-022) ----
+
+    /// <summary>Resolved (or closed) ticket with its current TicketResolutions row recorded at <paramref name="resolvedAtUtc"/> — the timestamp the reopen window is measured from.</summary>
+    private static async Task<(Ticket Ticket, Guid Owner)> SeedResolvedTicketAsync(
+        Fixture f, DateTime resolvedAtUtc, bool close = false)
+    {
+        var owner = Guid.NewGuid();
+        var ticket = await SeedInProgressTicketAsync(f.Tickets, owner);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        await f.Resolutions.AddAsync(new TicketResolution(
+            ticket.TicketId, ResolutionOutcome.Resolved, "Replaced the compressor.", null, null, owner, resolvedAtUtc));
+        if (close)
+        {
+            ticket.Close();
+        }
+
+        return (ticket, owner);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_ByCsAgent_OnResolvedTicket_ReturnsToInProgress_ArchivesResolution_WritesHistoryAndAudit()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, _) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-2));
+        var agent = Guid.NewGuid();
+
+        var result = await f.Service.ReopenAsync(
+            agent, [Roles.CsAgent], ticket.TicketId,
+            new ReopenTicketRequestDto("Customer called back — issue persists.", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Equal(1, ticket.ReopenCount);
+        Assert.Null(ticket.ResolutionOutcome);
+
+        // FR-RES-04: the prior resolution is archived — never deleted.
+        var resolution = Assert.Single(f.Resolutions.Added);
+        Assert.False(resolution.IsCurrent);
+
+        var history = Assert.Single(f.StatusHistory.Added);
+        Assert.Equal((byte)TicketStatus.Resolved, history.OldValue);
+        Assert.Equal((byte)TicketStatus.InProgress, history.NewValue);
+        Assert.Equal("Customer called back — issue persists.", history.Note);
+        Assert.Equal(agent, history.ActorEmployeeId);
+
+        var audit = Assert.Single(f.Audit.Entries, w => w.Action == "Reopen");
+        Assert.Equal(agent, audit.ActorEmployeeId);
+        Assert.Contains("Resolved", audit.BeforeValue);
+        Assert.Contains("ReopenCount=1", audit.AfterValue);
+        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_OnClosedTicket_Succeeds_ClosedImmutabilityHasExactlyThisOneExit()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, _) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-1), close: true);
+
+        var result = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.CsSupervisor], ticket.TicketId,
+            new ReopenTicketRequestDto("Reopened after customer escalation call.", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Equal(1, ticket.ReopenCount);
+    }
+
+    [Theory]
+    [InlineData(Roles.DepartmentEmployee)]
+    [InlineData(Roles.DepartmentHead)]
+    [InlineData(Roles.GeneralManager)]
+    [InlineData(Roles.ReportingUser)]
+    public async Task ReopenAsync_ByNonCsLayerRole_ReturnsForbidden_NoStateChange(string role)
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, owner) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-1));
+
+        var result = await f.Service.ReopenAsync(
+            owner, [role], ticket.TicketId, new ReopenTicketRequestDto("Trying to reopen.", []));
+
+        Assert.Equal(TicketMutationOutcome.Forbidden, result.Outcome);
+        Assert.Equal(TicketStatus.Resolved, ticket.TicketStatus);
+        Assert.Equal(0, ticket.ReopenCount);
+        Assert.True(Assert.Single(f.Resolutions.Added).IsCurrent);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_BySystemAdministrator_SucceedsThroughTheOverride()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, _) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-1));
+
+        var result = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.SystemAdministrator], ticket.TicketId,
+            new ReopenTicketRequestDto("ADR-0024 override check.", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_OnActivelyWorkedTicket_ReturnsNotEligibleForReopen()
+    {
+        var f = CreateService();
+        var owner = Guid.NewGuid();
+        var ticket = await SeedInProgressTicketAsync(f.Tickets, owner);
+
+        var result = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Nothing to reopen.", []));
+
+        Assert.Equal(TicketMutationOutcome.NotEligibleForReopen, result.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_OutsideTheWindow_ReturnsReopenWindowExpired_NoStateChange()
+    {
+        // ISSUE-011: 7 days. Resolved 8 days ago — a new ticket must be
+        // created instead (BR-020), so the outcome is the distinct
+        // window-expired one, not a generic ineligibility.
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, _) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-8), close: true);
+
+        var result = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId, new ReopenTicketRequestDto("Too late.", []));
+
+        Assert.Equal(TicketMutationOutcome.ReopenWindowExpired, result.Outcome);
+        Assert.Equal(TicketStatus.Closed, ticket.TicketStatus);
+        Assert.Equal(0, ticket.ReopenCount);
+        Assert.True(Assert.Single(f.Resolutions.Added).IsCurrent);
+        Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_ExactlyAtTheWindowBoundary_StillSucceeds()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, _) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-7));
+
+        var result = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Last allowed day.", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_WindowIsConfigurable_NotHardcodedToSevenDays()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now), new ReopenPolicy(WindowDays: 14));
+        var (ticket, _) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-10));
+
+        var result = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Within the widened window.", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task ReopenAsync_ThenResolveAgain_CreatesASecondCurrentResolution_HistoryPreserved()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var (ticket, owner) = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-1));
+
+        var reopen = await f.Service.ReopenAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Issue persists.", []));
+        Assert.Equal(TicketMutationOutcome.Success, reopen.Outcome);
+
+        var resolveAgain = await f.Service.ResolveAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ResolveTicketRequestDto("Resolved", "Replaced the whole unit this time.", null, null, []));
+        Assert.Equal(TicketMutationOutcome.Success, resolveAgain.Outcome);
+
+        Assert.Equal(2, f.Resolutions.Added.Count);
+        Assert.False(f.Resolutions.Added[0].IsCurrent);
+        Assert.True(f.Resolutions.Added[1].IsCurrent);
+        Assert.Equal(1, ticket.ReopenCount);
     }
 }

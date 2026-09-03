@@ -219,6 +219,28 @@ else
                             <button type="submit" class="btn btn-gold btn-sm">Close ticket</button>
                         </form>
                     }
+
+                    @* Reopen (FR-RES-04): rendered only where the lifecycle
+                       allows it — the server-computed IsReopenEligible flag
+                       (Resolved/Closed, inside the reopen window) — and only
+                       for CS-layer roles; the Api still enforces both. *@
+                    @if (t.IsReopenEligible && TicketActions.CanReopen(Model.Viewer?.Roles))
+                    {
+                        <details class="disclosure" open="@(Model.OpenSection == "reopen" ? "open" : null)">
+                            <summary class="btn @(isClosed ? "btn-gold btn-sm" : "btn-sm")">Reopen</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="Reopen" class="action-form">
+                                    <input type="hidden" asp-for="Reopen.RowVersionBase64" />
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Reopen.Reason">Reason</label>
+                                        <textarea class="form-control" asp-for="Reopen.Reason" rows="2" required placeholder="Why is this ticket being reopened?"></textarea>
+                                        <span class="field-hint">Returns the ticket to In Progress. The current resolution is kept as history.</span>
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reopen ticket</button></div>
+                                </form>
+                            </div>
+                        </details>
+                    }
                 </div>
             </div>
 
@@ -226,7 +248,7 @@ else
             {
                 <div class="status-banner status-banner--closed">
                     <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="16" height="10" rx="1.6" stroke="currentColor" stroke-width="1.6" /><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.6" /></svg>
-                    This ticket is closed and read-only. Resolution: @TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome).
+                    This ticket is closed and read-only. Resolution: @TicketDisplay.ResolutionOutcomeLabel(t.ResolutionOutcome).@(t.IsReopenEligible ? " It is still within the reopen window." : "")
                 </div>
             }
             else if (slaBadge?.CssKey == "breached")

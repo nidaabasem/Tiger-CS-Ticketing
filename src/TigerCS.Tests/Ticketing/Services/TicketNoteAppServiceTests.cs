@@ -22,7 +22,8 @@ public class TicketNoteAppServiceTests
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
-        var query = new TicketQueryAppService(tickets, departmentAssignments);
+        var query = new TicketQueryAppService(
+            tickets, departmentAssignments, new FakeTicketResolutionRepository(), ReopenPolicy.Default, TimeProvider.System);
 
         return new Fixture(
             new TicketNoteAppService(tickets, notes, query, unitOfWork, audit, TimeProvider.System),

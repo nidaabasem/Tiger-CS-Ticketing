@@ -54,7 +54,7 @@ public class SlaResolutionBreachTests
 
         var service = new TicketLifecycleAppService(
             sla.Tickets, sla.Resolutions, sla.StatusHistory, sla.DepartmentAssignments,
-            sla.UnitOfWork, sla.Audit, sla.BreachProcessor, new FakeTimeProvider(nowUtc));
+            sla.UnitOfWork, sla.Audit, sla.BreachProcessor, new FakeTimeProvider(nowUtc), ReopenPolicy.Default);
 
         return new Harness(sla, service, ticket, ownerId);
     }

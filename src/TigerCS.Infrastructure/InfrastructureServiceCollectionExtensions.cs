@@ -163,6 +163,22 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<CustomerHistoryAppService>();
         services.AddScoped<CustomerProfileAppService>();
 
+        // Customer Workspace phase: standalone customer search (composes the
+        // existing CRM Buyer + PACT/Tasleeh lookups), the Dashboard
+        // aggregate, and ISSUE-011's reopen window — 7 days unless
+        // configuration overrides it (Ticketing:ReopenWindowDays), validated
+        // here so a nonsensical value fails at startup, not mid-request.
+        services.AddScoped<CustomerSearchAppService>();
+        services.AddScoped<DashboardAppService>();
+        var reopenWindowDays = configuration.GetValue("Ticketing:ReopenWindowDays", ReopenPolicy.DefaultWindowDays);
+        if (reopenWindowDays < 1)
+        {
+            throw new InvalidOperationException(
+                $"Ticketing:ReopenWindowDays must be at least 1 (got {reopenWindowDays}).");
+        }
+
+        services.AddSingleton(new ReopenPolicy(reopenWindowDays));
+
         // SLA and Escalation (ADR-0009/0010/0011/0014/0015). No policy,
         // controller or role list here names the System Administrator role:
         // every service below routes its resource-scoped decisions through

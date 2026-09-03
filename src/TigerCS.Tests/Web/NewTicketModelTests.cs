@@ -218,6 +218,21 @@ public sealed class NewTicketModelTests
     }
 
     [Fact]
+    public async Task OnGetAsync_IntakeStep_WithCarriedPhoneNumber_PrefillsTheIntakeForm_ExactlyAsGiven()
+    {
+        // Customer Workspace carry-forward: "+ New Ticket" from a selected
+        // customer must not make the agent re-type or re-search the same
+        // customer — the phone arrives via the query string and lands in the
+        // intake form unmodified ('+' preserved), still fully editable.
+        var (model, _, _, _, _, _, _, _) = CreateModel();
+
+        await model.OnGetAsync(null, null, "+971501112233", null, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Equal("intake", model.Step);
+        Assert.Equal("+971501112233", model.Intake.PhoneNumber);
+    }
+
+    [Fact]
     public async Task OnPostIntakeAsync_Failure_ReloadsDepartmentDirectory_ForRedisplay()
     {
         var (model, _, _, departments, _, _, _, _) = CreateModel(
@@ -597,8 +612,12 @@ public sealed class NewTicketModelTests
         await model.OnGetAsync(
             "create", 42, "+971501234567", 2, 5002, 903, 103, 10, "Ahmad Ali Hassan", "Tiger Sky Tower", "2004", null, CancellationToken.None);
 
-        var sent = Assert.Single(customerHistory.Requests);
+        // Two fixed calls per create-step render (never per-row): the
+        // customer-wide Previous Tickets preview and Phase E's unit-scoped
+        // related-tickets check — both keyed by the selected customer 5002.
+        var sent = Assert.Single(customerHistory.Requests, r => !r.RequestUri.Contains("unitNumber"));
         Assert.Contains("/api/customers/crm/5002/ticket-history", sent.RequestUri);
+        Assert.All(customerHistory.Requests, r => Assert.Contains("/api/customers/crm/5002/ticket-history", r.RequestUri));
         Assert.NotNull(model.PreviousTickets);
         Assert.Equal(2, model.PreviousTickets!.TotalTickets);
         Assert.Equal(50, Assert.Single(model.PreviousTickets.Tickets).TicketId);
@@ -625,8 +644,84 @@ public sealed class NewTicketModelTests
         await model.OnGetAsync(
             "create", 42, "+971501234567", 2, 5001, 901, 101, 10, "Ahmed Ali", "Tiger Sky Tower", "1205", null, CancellationToken.None);
 
+        Assert.NotEmpty(customerHistory.Requests);
+        Assert.All(customerHistory.Requests, r => Assert.Contains("limit=5", r.RequestUri));
+    }
+
+    // ---- Related tickets (Phase E, Step 3): same identity + same unit, advisory only ----
+
+    [Fact]
+    public async Task OnGetAsync_CreateStep_CrmSelection_RunsTheRelatedTicketsCheck_ForTheSelectedUnitActiveFirst()
+    {
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")),
+            customerHistoryResponder: (request, _) => request.RequestUri!.Query.Contains("unitNumber")
+                ? FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerHistoryDto("Verified", 5002, null, "Ahmad Ali Hassan", 1, 1, 0,
+                    [new CustomerHistoryTicketDto(61, "TG-CS-20260830-0002", DateTime.UtcNow.AddDays(-1), "InProgress", 2, 2, 2, "Tiger Sky Tower", "2004", "Verified", "Water leakage")]))
+                : FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerHistoryDto("Verified", 5002, null, "Ahmad Ali Hassan", 0, 0, 0, [])));
+
+        await model.OnGetAsync(
+            "create", 42, "+971501234567", 2, 5002, 903, 103, 10, "Ahmad Ali Hassan", "Tiger Sky Tower", "2004", null, CancellationToken.None);
+
+        // One scoped related-tickets query — same identity (5002), the
+        // selected unit, active tickets first. Never a call per row.
+        var related = Assert.Single(customerHistory.Requests, r => r.RequestUri.Contains("unitNumber"));
+        Assert.Contains("/api/customers/crm/5002/ticket-history", related.RequestUri);
+        Assert.Contains("unitNumber=2004", related.RequestUri);
+        Assert.Contains("orderActiveFirst=true", related.RequestUri);
+        Assert.Equal(2, customerHistory.Requests.Count);
+
+        Assert.NotNull(model.RelatedTickets);
+        var row = Assert.Single(model.RelatedTickets!.Tickets);
+        Assert.Equal("Water leakage", row.RequestSummary);
+        Assert.Equal("InProgress", row.TicketStatus);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_CreateStep_ExternalSelection_RunsTheRelatedTicketsCheck_ByThePersistedExternalIdentity()
+    {
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
+        var externalSelection = string.Join(':', "Pact", "PACT-CUST-77", "PU-1", "Aisha Rahman", "Marina Heights", "1506");
+
+        await model.OnGetAsync(
+            "create", 42, "+971509990002", 2, null, null, null, null, null, null, null, externalSelection, CancellationToken.None);
+
+        // The external identity pair keys the check — never the display name
+        // and never a phone fallback; the previous-tickets preview (a
+        // CRM-only feature) does not run at all here.
         var sent = Assert.Single(customerHistory.Requests);
-        Assert.Contains("limit=5", sent.RequestUri);
+        Assert.Contains("/api/customers/external/Pact/PACT-CUST-77/ticket-history", sent.RequestUri);
+        Assert.Contains("unitNumber=1506", sent.RequestUri);
+        Assert.Contains("orderActiveFirst=true", sent.RequestUri);
+        Assert.NotNull(model.RelatedTickets);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_CreateStep_ManualOnlyEntry_RunsNoRelatedCheck_NoIdentityMeansNoAssociation()
+    {
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")));
+
+        await model.OnGetAsync("create", 42, "+9613040922", 2, null, null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.Empty(customerHistory.Requests);
+        Assert.Null(model.RelatedTickets);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_CreateStep_RelatedCheckFailure_NeverBlocksTheWizard()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(2, "Corrective Maintenance", 2, "Facilities Management")),
+            customerHistoryResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway));
+
+        await model.OnGetAsync(
+            "create", 42, "+971501234567", 2, 5002, 903, 103, 10, "Ahmad Ali Hassan", "Tiger Sky Tower", "2004", null, CancellationToken.None);
+
+        Assert.Null(model.RelatedTickets);
+        Assert.Null(model.ErrorMessage);
+        Assert.Equal("create", model.Step);
     }
 
     // ---- Priority required in Step 3 ----

@@ -399,6 +399,76 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
     }
 
     [Fact]
+    public async Task Reopen_Lifecycle_DepartmentEmployeeIsForbidden_CsAgentSucceeds_AndEligibilityRidesTheDetail()
+    {
+        var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, departmentId, initialRowVersion) = await CreateVerifiedTicketAsync(agentClient);
+
+        // Drive to Resolved through the normal lifecycle actors.
+        var (workerUsername, workerPassword, workerId) = await _factory.SeedEmployeeAsync(Roles.DepartmentEmployee);
+        await _factory.AssignPrimaryDepartmentAsync(workerId, departmentId);
+        var workerClient = _factory.CreateClient();
+        var login = await (await workerClient.PostAsJsonAsync(
+            "/api/auth/login", new LoginRequestDto(workerUsername, workerPassword))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        workerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+
+        var (deptHeadUsername, deptHeadPassword, deptHeadId) = await _factory.SeedEmployeeAsync(Roles.DepartmentHead);
+        await _factory.AssignPrimaryDepartmentAsync(deptHeadId, departmentId);
+        var deptHeadClient = _factory.CreateClient();
+        var deptHeadLogin = await (await deptHeadClient.PostAsJsonAsync(
+            "/api/auth/login", new LoginRequestDto(deptHeadUsername, deptHeadPassword))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        deptHeadClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deptHeadLogin!.AccessToken);
+
+        var afterAssign = await (await deptHeadClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(workerId, initialRowVersion)))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var afterStatus = await (await workerClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/status", new ChangeStatusRequestDto("InProgress", Convert.FromBase64String(afterAssign!.RowVersion))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var afterResolve = await (await workerClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/resolution",
+                new ResolveTicketRequestDto("Resolved", "Fixed the AC unit.", null, null, Convert.FromBase64String(afterStatus!.RowVersion))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        // The detail read now carries lifecycle eligibility for the UI —
+        // freshly resolved, well inside ISSUE-011's 7-day window.
+        var detail = await (await agentClient.GetAsync($"/api/tickets/{ticketId}"))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.True(detail!.IsReopenEligible);
+        Assert.NotNull(detail.ResolvedAtUtc);
+
+        // ISSUE-022: Reopen is CS-layer only — the Department Employee (and
+        // Head) who worked the ticket cannot reopen it.
+        var forbiddenReopen = await workerClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/reopen",
+            new ReopenTicketRequestDto("Trying to reopen my own work.", Convert.FromBase64String(afterResolve!.RowVersion)));
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenReopen.StatusCode);
+
+        // A blank reason is rejected before any state changes.
+        var blankReason = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/reopen",
+            new ReopenTicketRequestDto("   ", Convert.FromBase64String(afterResolve.RowVersion)));
+        Assert.Equal(HttpStatusCode.BadRequest, blankReason.StatusCode);
+
+        // The CS Agent reopens: back to InProgress, ReopenCount incremented,
+        // live resolution outcome cleared.
+        var reopenResponse = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/reopen",
+            new ReopenTicketRequestDto("Customer called back — still not cooling.", Convert.FromBase64String(afterResolve.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, reopenResponse.StatusCode);
+        var reopened = await reopenResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("InProgress", reopened!.TicketStatus);
+        Assert.Equal(1, reopened.ReopenCount);
+        Assert.Null(reopened.ResolutionOutcome);
+
+        // An actively-worked ticket has nothing to reopen.
+        var secondReopen = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/reopen",
+            new ReopenTicketRequestDto("Already reopened.", Convert.FromBase64String(reopened.RowVersion)));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, secondReopen.StatusCode);
+    }
+
+    [Fact]
     public async Task Assign_ByDepartmentHeadOfADifferentDepartment_Returns403_PreventsCrossDepartmentAssignment()
     {
         var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);

@@ -10,13 +10,21 @@ namespace TigerCS.Tests.Ticketing.Services;
 
 public class TicketQueryAppServiceTests
 {
-    private sealed record Fixture(TicketQueryAppService Service, FakeTicketRepository Tickets, FakeUserDepartmentAssignmentRepository DepartmentAssignments);
+    private sealed record Fixture(
+        TicketQueryAppService Service,
+        FakeTicketRepository Tickets,
+        FakeUserDepartmentAssignmentRepository DepartmentAssignments,
+        FakeTicketResolutionRepository Resolutions);
 
-    private static Fixture CreateService()
+    private static Fixture CreateService(TimeProvider? timeProvider = null)
     {
         var tickets = new FakeTicketRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
-        return new Fixture(new TicketQueryAppService(tickets, departmentAssignments), tickets, departmentAssignments);
+        var resolutions = new FakeTicketResolutionRepository();
+        return new Fixture(
+            new TicketQueryAppService(
+                tickets, departmentAssignments, resolutions, ReopenPolicy.Default, timeProvider ?? TimeProvider.System),
+            tickets, departmentAssignments, resolutions);
     }
 
     private static async Task<Ticket> SeedTicketAsync(FakeTicketRepository repo, int departmentId)
@@ -182,5 +190,64 @@ public class TicketQueryAppServiceTests
         Assert.Null(dto.ManualUnitNumber);
         Assert.Null(dto.UnitReferenceId);
         Assert.Null(dto.ContactReferenceId);
+    }
+
+    // ---------------------------------------------------------------
+    // Reopen display eligibility (Customer Workspace phase): the detail
+    // read stamps IsReopenEligible from the same ReopenPolicy the Reopen
+    // action enforces — lifecycle only, never a permission prediction.
+    // ---------------------------------------------------------------
+
+    private async Task<Ticket> SeedResolvedTicketAsync(Fixture f, DateTime resolvedAtUtc, bool close = false)
+    {
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        await f.Resolutions.AddAsync(new TicketResolution(
+            ticket.TicketId, ResolutionOutcome.Resolved, "Fixed.", null, null, Guid.NewGuid(), resolvedAtUtc));
+        if (close)
+        {
+            ticket.Close();
+        }
+
+        return ticket;
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_ResolvedWithinTheWindow_IsReopenEligible_AndCarriesResolvedAtUtc()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var ticket = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-2), close: true);
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.True(result.Response!.IsReopenEligible);
+        Assert.Equal(now.AddDays(-2), result.Response.ResolvedAtUtc);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_ResolvedOutsideTheWindow_IsNotReopenEligible()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var ticket = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-8));
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.False(result.Response!.IsReopenEligible);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_ActivelyWorkedTicket_IsNotReopenEligible()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.False(result.Response!.IsReopenEligible);
+        Assert.Null(result.Response.ResolvedAtUtc);
     }
 }

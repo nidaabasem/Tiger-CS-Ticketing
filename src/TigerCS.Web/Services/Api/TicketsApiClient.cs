@@ -43,6 +43,9 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
     public Task<ApiResult<TicketDetailDto>> CloseAsync(long ticketId, CloseTicketRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<CloseTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/close", request, cancellationToken);
 
+    public Task<ApiResult<TicketDetailDto>> ReopenAsync(long ticketId, ReopenTicketRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<ReopenTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/reopen", request, cancellationToken);
+
     public Task<ApiResult<TicketNoteResponseDto>> AddNoteAsync(long ticketId, CreateNoteRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<CreateNoteRequestDto, TicketNoteResponseDto>($"api/tickets/{ticketId}/notes", request, cancellationToken);
 

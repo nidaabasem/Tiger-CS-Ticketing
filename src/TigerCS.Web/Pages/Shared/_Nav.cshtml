@@ -3,6 +3,8 @@
     var currentUser = CurrentUser.FromPrincipal(User);
     (string Key, string Label, string Href)[] items =
     [
+        ("dashboard", "Dashboard", "/Dashboard"),
+        ("customers", "Customers", "/Customers"),
         ("queue", "Queue", "/Tickets"),
         ("my", "My Tickets", currentUser is null ? "/Tickets" : $"/Tickets?ownerEmployeeId={currentUser.EmployeeId}"),
         ("pendingcrm", "Pending CRM", "/Tickets?verificationStatus=PendingCrmVerification"),

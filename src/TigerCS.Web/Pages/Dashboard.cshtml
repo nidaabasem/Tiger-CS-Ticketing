@@ -1,0 +1,140 @@
+@page "/Dashboard"
+@model TigerCS.Web.Pages.DashboardModel
+@{
+    ViewData["Title"] = "Dashboard";
+    ViewData["ActiveNav"] = "dashboard";
+    Layout = "_Layout";
+    var nowUtc = DateTime.UtcNow;
+}
+
+<div class="page">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Dashboard</h1>
+        </div>
+        <a class="btn btn-gold" href="/NewTicket">+ New Ticket</a>
+    </div>
+
+    <section class="workspace-search" aria-label="Customer search">
+        <form action="/Customers" method="get" class="workspace-search__form" role="search">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" /><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+            <input type="search" name="phoneNumber" class="workspace-search__input"
+                   placeholder="Search customer by phone number…" aria-label="Search customer by phone number" required />
+            <button type="submit" class="btn btn-gold">Search Customer</button>
+        </form>
+        <p class="workspace-search__hint">Find the customer first — see their units, open tickets and history before deciding to open, reopen, or create a ticket.</p>
+    </section>
+
+    @if (Model.Summary is null)
+    {
+        <div class="panel">
+            <div class="error-state">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+                <p>
+                    @(Model.Outcome switch
+                    {
+                        ApiOutcome.Unauthorized => "Your session is no longer valid. Sign in again.",
+                        ApiOutcome.Unreachable or ApiOutcome.BadGateway => "Tiger Ticketing System could not reach the ticketing service.",
+                        _ => "The dashboard could not be loaded right now."
+                    })
+                </p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <section class="kpi-grid" aria-label="Operational counters">
+            @foreach (var card in Model.Cards)
+            {
+                if (card.Href is not null)
+                {
+                    <a class="kpi-card @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")" href="@card.Href">
+                        <strong>@card.Value</strong>
+                        <span>@card.Label</span>
+                    </a>
+                }
+                else
+                {
+                    <div class="kpi-card @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")">
+                        <strong>@card.Value</strong>
+                        <span>@card.Label</span>
+                    </div>
+                }
+            }
+        </section>
+
+        <section class="panel" aria-label="Tickets requiring attention">
+            <div class="panel__header">
+                <span class="panel__title">Tickets Requiring Attention</span>
+                <a class="link-muted" href="/Tickets">View full queue</a>
+            </div>
+            @if (Model.AttentionRows.Count == 0)
+            {
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    <p>Nothing needs attention right now.</p>
+                </div>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Ticket</th>
+                                <th scope="col" class="col-subject">Issue</th>
+                                <th scope="col">Customer</th>
+                                <th scope="col">Unit</th>
+                                <th scope="col">Priority</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">SLA</th>
+                                <th scope="col">Assigned To</th>
+                                <th scope="col">Created</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (ticket, ownerName) in Model.AttentionRows)
+                            {
+                                <tr>
+                                    <td><a class="ticket-id-link" href="/Tickets/@ticket.TicketId">@ticket.TicketNumber</a></td>
+                                    <td class="col-subject"><span class="cell-truncate">@ticket.RequestSummary</span></td>
+                                    <td>@(string.IsNullOrWhiteSpace(ticket.CustomerName) ? "—" : ticket.CustomerName)</td>
+                                    <td>@(string.IsNullOrWhiteSpace(ticket.UnitNumber) ? "—" : ticket.UnitNumber)</td>
+                                    <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(ticket.PriorityId)">@TicketDisplay.PriorityLabel(ticket.PriorityId)</span></td>
+                                    <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(ticket.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(ticket.TicketStatus)</span></td>
+                                    <td>
+                                        @if (ticket.SlaState == "Breached")
+                                        {
+                                            <span class="badge badge-sla-breached">Breached</span>
+                                        }
+                                        else if (ticket.SlaDueAtUtc is DateTime due)
+                                        {
+                                            <span class="badge badge-sla-@(due < nowUtc ? "breached" : "running")">
+                                                @(due < nowUtc ? $"Overdue {TicketDisplay.FormatDuration(nowUtc - due)}" : $"Due in {TicketDisplay.FormatDuration(due - nowUtc)}")
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-sla-@TicketDisplay.SlaStateCssKey(ticket.SlaState)">@TicketDisplay.SlaStateLabel(ticket.SlaState)</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (ticket.CurrentOwnerEmployeeId is null)
+                                        {
+                                            <span class="id-fallback">Unassigned</span>
+                                        }
+                                        else
+                                        {
+                                            @(ownerName ?? $"Employee #{ticket.CurrentOwnerEmployeeId.Value.ToString()[..8]}")
+                                        }
+                                    </td>
+                                    <td>@ticket.CreatedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+</div>

@@ -67,6 +67,14 @@ public sealed class TicketClosedException(long ticketId)
     public long TicketId { get; } = ticketId;
 }
 
+/// <summary>FR-RES-04 / MVP-API-Contracts.md §3.11: Reopen is only valid from Resolved or Closed — an actively-worked ticket has nothing to reopen.</summary>
+public sealed class TicketNotEligibleForReopenException(long ticketId, TicketStatus actualStatus)
+    : TicketException($"Ticket {ticketId} cannot be reopened from TicketStatus {actualStatus}.")
+{
+    public long TicketId { get; } = ticketId;
+    public TicketStatus ActualStatus { get; } = actualStatus;
+}
+
 /// <summary>
 /// <c>Ticket.AcknowledgementSentAtUtc</c> is write-once (MVP-Data-Dictionary.md
 /// §2.10). Thrown when a redelivered <c>TicketCreated</c> Outbox message

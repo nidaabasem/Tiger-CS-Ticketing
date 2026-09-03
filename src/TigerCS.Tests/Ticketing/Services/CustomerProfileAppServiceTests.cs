@@ -36,7 +36,8 @@ public class CustomerProfileAppServiceTests
         var crmGateway = new FakeCrmBuyerLookupGateway();
         var crmBuyerLookupAppService = new CrmBuyerLookupAppService(crmGateway, NullLogger<CrmBuyerLookupAppService>.Instance);
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
-        var queryService = new TicketQueryAppService(tickets, departmentAssignments);
+        var queryService = new TicketQueryAppService(
+            tickets, departmentAssignments, new FakeTicketResolutionRepository(), ReopenPolicy.Default, TimeProvider.System);
         return new Fixture(
             new CustomerProfileAppService(tickets, intakeRecords, crmBuyerLookupAppService, queryService),
             tickets, intakeRecords, crmGateway, departmentAssignments);

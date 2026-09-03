@@ -93,6 +93,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/status",
         "POST /api/tickets/{ticketId}/resolution",
         "POST /api/tickets/{ticketId}/close",
+        "POST /api/tickets/{ticketId}/reopen",
         "POST /api/tickets/{ticketId}/reconciliation",
         "POST /api/tickets/{ticketId}/notes",
         "GET /api/tickets/{ticketId}/notes",
@@ -100,6 +101,10 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/tickets/{ticketId}/customer-profile",
 
         "GET /api/customers/crm/{crmCustomerId}/ticket-history",
+        "GET /api/customers/external/{source}/{externalCustomerId}/ticket-history",
+        "GET /api/customers/search",
+
+        "GET /api/dashboard",
 
         // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
         // Automatic Level 2 escalation on breach has no entry here on

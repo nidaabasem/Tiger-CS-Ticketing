@@ -455,6 +455,41 @@ public class Ticket
     }
 
     /// <summary>
+    /// FR-RES-04 / MVP-API-Contracts.md §3.11 — Reopen is a domain event,
+    /// not a status value: a Resolved or Closed ticket returns to
+    /// InProgress, <see cref="ReopenCount"/> increments, and the live
+    /// <see cref="ResolutionOutcome"/>/<see cref="DuplicateOfTicketId"/>
+    /// return to unset (Solution-Analysis.md §5's "the field returns to
+    /// unset until the ticket is resolved/closed again"). The prior outcome
+    /// is preserved as history on its TicketResolutions row — flipping that
+    /// row's IsCurrent, writing status history and audit are the calling
+    /// application service's job, done in the same transaction (same bare
+    /// state-transition division of responsibility as <see cref="Resolve"/>/
+    /// <see cref="Close"/>).
+    ///
+    /// <para>
+    /// Deliberately <i>not</i> gated on <see cref="EnsureNotClosed"/>:
+    /// Reopen is the single sanctioned exit from closed-ticket immutability
+    /// (System-Architecture.md's <c>Closed → InProgress: Reopen (within
+    /// window)</c> transition). The reopen window itself (ISSUE-011 — 7
+    /// days, configurable) is a business-rule check owned by the
+    /// application service; this method carries no clock.
+    /// </para>
+    /// </summary>
+    public void Reopen()
+    {
+        if (TicketStatus is not (TicketStatus.Resolved or TicketStatus.Closed))
+        {
+            throw new TicketNotEligibleForReopenException(TicketId, TicketStatus);
+        }
+
+        TicketStatus = TicketStatus.InProgress;
+        ResolutionOutcome = null;
+        DuplicateOfTicketId = null;
+        ReopenCount++;
+    }
+
+    /// <summary>
     /// Records that the <b>automated</b> acknowledgement (FR-NOT-01) was
     /// delivered.
     ///

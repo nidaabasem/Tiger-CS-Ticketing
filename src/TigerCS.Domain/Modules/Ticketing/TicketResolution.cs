@@ -8,11 +8,10 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// <summary>
 /// MVP-ERD.md §2.14 / MVP-Data-Dictionary.md §2.14 — one row per resolve
 /// cycle (BR-011: <see cref="ResolutionNote"/> is mandatory regardless of
-/// outcome). Reopen is out of scope for this increment (see PR notes), so
-/// <see cref="IsCurrent"/> is always true for the single row this increment
-/// ever creates per ticket — the flag exists now because the column is part
-/// of the approved schema (MVP-ERD.md §2.14's Reopen-driven history model),
-/// not because this increment flips it.
+/// outcome). On Reopen (FR-RES-04), the current row's <see cref="IsCurrent"/>
+/// flips to false via <see cref="Archive"/> — history preserved, never
+/// deleted — and a new row is created on the next resolution, never
+/// overwriting the old one (MVP-ERD.md §2.14's Reopen-driven history model).
 /// </summary>
 public class TicketResolution
 {
@@ -27,6 +26,13 @@ public class TicketResolution
     public bool IsCurrent { get; private set; }
 
     private TicketResolution() { }
+
+    /// <summary>
+    /// Reopen (FR-RES-04): this resolution is no longer the ticket's live
+    /// outcome — it becomes history, never deleted. One-way by design; the
+    /// next resolve cycle creates a new row rather than reviving this one.
+    /// </summary>
+    public void Archive() => IsCurrent = false;
 
     public TicketResolution(
         long ticketId,

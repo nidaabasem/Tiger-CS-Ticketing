@@ -385,7 +385,10 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-history:checked ~ .tabs-body #panel-history,
 #tab-overview:checked ~ .tabs-body #panel-overview,
 #tab-contact:checked ~ .tabs-body #panel-contact,
-#tab-units:checked ~ .tabs-body #panel-units { display: block; }
+#tab-units:checked ~ .tabs-body #panel-units,
+#tab-cust-tickets:checked ~ .tabs-body #panel-cust-tickets,
+#tab-cust-units:checked ~ .tabs-body #panel-cust-units,
+#tab-cust-info:checked ~ .tabs-body #panel-cust-info { display: block; }
 
 /* Page-level Details/Previous Tickets tabs (Ticket Details) — same
    mechanism as the tabs above, one level up: wraps the whole detail-layout
@@ -454,6 +457,85 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 
 .customer-card { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
 .unit-options { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) 0; }
+
+/* ---------- Customer workspace (Dashboard + Customers) ---------- */
+
+/* The Dashboard's prominent customer search — the page's primary action. */
+.workspace-search {
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-4); margin-bottom: var(--space-4);
+}
+.workspace-search__form { display: flex; align-items: center; gap: var(--space-2); }
+.workspace-search__form svg { width: 18px; height: 18px; flex: none; color: var(--color-text-secondary); }
+.workspace-search__input {
+  flex: 1; min-width: 0; height: 40px; padding: 0 var(--space-3); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); background: var(--color-surface); font-size: 14px; color: var(--color-text);
+}
+.workspace-search__input:focus { border-color: var(--color-gold); outline: none; }
+.workspace-search__hint { margin-top: var(--space-2); font-size: 11.5px; color: var(--color-text-secondary); }
+
+/* KPI cards — quiet by default; emphasis only where a number needs action. */
+.kpi-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.kpi-card {
+  display: flex; flex-direction: column; gap: 2px; padding: var(--space-3) var(--space-4);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  color: var(--color-text);
+}
+.kpi-card strong { font-size: 22px; font-weight: 700; line-height: 1.2; }
+.kpi-card span { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-secondary); }
+.kpi-card--attention strong { color: var(--color-gold-dark); }
+.kpi-card--critical strong { color: var(--color-critical); }
+a.kpi-card:hover { border-color: var(--color-text-secondary); }
+
+/* One-line, ellipsized table cell for request summaries — long
+   descriptions never render in lists. */
+.cell-truncate { display: inline-block; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+
+/* Customer search: per-source outcome line, candidate picker, summary. */
+.source-status-line { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: 11.5px; color: var(--color-text-secondary); margin-bottom: var(--space-3); }
+.source-status-line strong { color: var(--color-text); font-weight: 600; }
+
+.candidate-list { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
+.candidate-card {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+.candidate-card__name { font-size: 13.5px; font-weight: 700; }
+.candidate-card__meta { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
+
+.customer-summary {
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-4); margin-bottom: var(--space-4);
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap;
+}
+.customer-summary__name { font-size: 17px; font-weight: 700; }
+.customer-summary__meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); font-size: 12.5px; color: var(--color-text-secondary); margin-top: var(--space-1); }
+.customer-summary__meta strong { color: var(--color-text); font-weight: 600; }
+.customer-summary__counts { display: flex; gap: var(--space-5); margin-top: var(--space-3); font-size: 12px; color: var(--color-text-secondary); }
+.customer-summary__counts strong { display: block; font-size: 17px; font-weight: 700; color: var(--color-text); line-height: 1.2; }
+.customer-summary__actions { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+
+/* Related tickets (duplicate-ticket awareness) — a quiet, inline advisory
+   card on New Ticket Step 3; warns, never blocks. */
+.related-tickets {
+  background: var(--color-gold-pale); border: 1px solid #E9D9AF; border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4); margin-top: var(--space-3);
+}
+.related-tickets__title { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-gold-dark); }
+.related-tickets__hint { font-size: 12px; color: var(--color-text-secondary); margin: var(--space-1) 0 var(--space-2); }
+.related-ticket-row {
+  display: flex; flex-direction: column; gap: 4px; padding: var(--space-2) 0;
+  border-top: 1px solid #E9D9AF;
+}
+.related-ticket-row__main { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; font-size: 12.5px; }
+.related-ticket-row__main .cell-truncate { max-width: 100%; flex: 1; }
+.related-ticket-row__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 11.5px; color: var(--color-text-secondary); }
+.related-ticket-row__actions { display: flex; gap: var(--space-1); }
+.related-tickets__continue { margin-top: var(--space-2); }
 
 /* ---------- Responsive ---------- */
 

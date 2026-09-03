@@ -274,6 +274,57 @@
                 </p>
             </div>
 
+            @* Phase E — duplicate-ticket awareness: same verified customer
+               identity + same selected unit, active tickets first, straight
+               from the server-side history query. Advisory only — the
+               creation form below stays available ("Continue with New
+               Ticket"), and Reopen renders only from the server-computed
+               ReopenPolicy flag, never re-derived here. One-line summaries
+               only; full descriptions stay on Ticket Details. *@
+            @if (Model.RelatedTickets is not null && Model.RelatedTickets.Tickets.Count > 0)
+            {
+                var related = Model.RelatedTickets;
+                var viewerCanReopen = TicketActions.CanReopen(CurrentUser.FromPrincipal(User)?.Roles);
+                var relatedNowUtc = DateTime.UtcNow;
+                <aside class="related-tickets" aria-label="Related tickets found">
+                    <div class="related-tickets__title">Related tickets found</div>
+                    <p class="related-tickets__hint">This customer already has recent tickets for this unit. Check whether one of them covers the same issue before creating a new ticket.</p>
+                    @foreach (var row in related.Tickets)
+                    {
+                        var isFinished = row.TicketStatus is "Resolved" or "Closed";
+                        <div class="related-ticket-row">
+                            <div class="related-ticket-row__main">
+                                <a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a>
+                                <span class="cell-truncate">@(string.IsNullOrWhiteSpace(row.RequestSummary) ? "—" : row.RequestSummary)</span>
+                            </div>
+                            <div class="related-ticket-row__meta">
+                                @if (!string.IsNullOrWhiteSpace(row.UnitNumber))
+                                {
+                                    <span>Unit @row.UnitNumber</span>
+                                }
+                                <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span>
+                                <span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span>
+                                <span>
+                                    @(row.ResolvedAtUtc is DateTime resolvedAt
+                                        ? $"Resolved {TicketDisplay.FormatDuration(relatedNowUtc - resolvedAt)} ago"
+                                        : $"Created {row.CreatedAtUtc.ToLocalTime():d MMM yyyy}")
+                                </span>
+                            </div>
+                            <div class="related-ticket-row__actions">
+                                <a class="btn btn-sm" href="/Tickets/@row.TicketId">@(isFinished ? "View" : "Open")</a>
+                                @if (row.IsReopenEligible && viewerCanReopen)
+                                {
+                                    <a class="btn btn-sm" href="/Tickets/@row.TicketId?reopen=1">Reopen</a>
+                                }
+                            </div>
+                        </div>
+                    }
+                    <p class="related-tickets__continue">
+                        <a class="btn btn-gold btn-sm" href="#new-ticket-form">Continue with New Ticket</a>
+                    </p>
+                </aside>
+            }
+
             @if (Model.CrmBuyerCustomerId is not null)
             {
                 <details class="disclosure">
@@ -333,7 +384,7 @@
             }
             else
             {
-                <form method="post" asp-page-handler="Create">
+                <form method="post" asp-page-handler="Create" id="new-ticket-form">
                     <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
                     <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
                     <input type="hidden" name="departmentId" value="@Model.DepartmentId" />

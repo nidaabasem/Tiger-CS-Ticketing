@@ -592,6 +592,63 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal("Closed", closed!.TicketStatus);
     }
 
+    [Fact]
+    public async Task ReopenTicket_Returns200()
+    {
+        // Reopen is CS-layer only (ISSUE-022, TicketRoleSets.Reopen) — the
+        // administrator performs it purely through the ADR-0024 override.
+        var (client, adminEmployeeId) = await CreateAdministratorAsync();
+        var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
+
+        await _factory.AssignPrimaryDepartmentAsync(adminEmployeeId, ticket.CurrentDepartmentId);
+
+        var assigned = await (await client.PostAsJsonAsync(
+                $"/api/tickets/{ticket.TicketId}/assignment", new AssignTicketRequestDto(adminEmployeeId, RowVersionOf(ticket))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var inProgress = await (await client.PostAsJsonAsync(
+                $"/api/tickets/{ticket.TicketId}/status", new ChangeStatusRequestDto("InProgress", RowVersionOf(assigned!))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var resolved = await (await client.PostAsJsonAsync(
+                $"/api/tickets/{ticket.TicketId}/resolution",
+                new ResolveTicketRequestDto("Resolved", "Fixed the AC unit.", null, null, RowVersionOf(inProgress!))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        var reopenResponse = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/reopen",
+            new ReopenTicketRequestDto("Customer called back — still not cooling.", RowVersionOf(resolved!)));
+        Assert.Equal(HttpStatusCode.OK, reopenResponse.StatusCode);
+        var reopened = await reopenResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("InProgress", reopened!.TicketStatus);
+        Assert.Equal(1, reopened.ReopenCount);
+    }
+
+    [Fact]
+    public async Task SearchCustomers_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/customers/search?phoneNumber=%2B971509990001");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetExternalCustomerHistory_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/customers/external/Pact/PACT-CUST-1/ticket-history");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDashboard_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/dashboard");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     // ---------------------------------------------------------------
     // Notes
     // ---------------------------------------------------------------
