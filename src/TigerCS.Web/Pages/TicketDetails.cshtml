@@ -154,6 +154,11 @@ else
                                             }
                                         </select>
                                     </div>
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="Status.PendingReason">Pending reason</label>
+                                        <textarea class="form-control" asp-for="Status.PendingReason" rows="2"></textarea>
+                                        <span class="field-hint">Required when moving to Pending Customer or Pending Internal — e.g. "Missing documents", "Waiting for Accounting Approval".</span>
+                                    </div>
                                     <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Update status</button></div>
                                 </form>
                             </div>
@@ -421,6 +426,131 @@ else
                         </dl>
                     }
                 </div>
+
+                @* Approvals / Dependencies (Workflow/Automation phase 3).
+                   Rendered only when there is something to show; action
+                   buttons appear only for callers the API says may act —
+                   no disabled buttons for non-approvers. Approval state is
+                   separate from Ticket Status by design. *@
+                @{
+                    var approvalsView = Model.Approvals;
+                    static string ApprovalLabel(string type) => type switch
+                    {
+                        "AccountingApproval" => "Accounting Approval",
+                        "CustomerServiceApproval" => "Customer Service Approval",
+                        _ => type
+                    };
+                    var showApprovals = approvalsView is not null
+                        && (approvalsView.Approvals.Count > 0
+                            || approvalsView.RequestableApprovals.Count > 0
+                            || approvalsView.MaintenanceState is not null
+                            || approvalsView.PrerequisitesCompletedAtUtc is not null);
+                }
+                @if (showApprovals)
+                {
+                    <div class="facts-section">
+                        <div class="facts-section__title">Approvals &amp; Dependencies</div>
+
+                        @foreach (var approval in approvalsView!.Approvals.Where(a => a.IsCurrent))
+                        {
+                            <dl>
+                                <div class="facts-row"><dt>@ApprovalLabel(approval.ApprovalType)</dt><dd>@approval.Status</dd></div>
+                                <div class="facts-row"><dt>Requested</dt><dd>@approval.RequestedAtUtc.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd></div>
+                                @if (approval.DecisionAtUtc is { } decidedAt)
+                                {
+                                    <div class="facts-row"><dt>Decided</dt><dd>@decidedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd></div>
+                                }
+                                @if (!string.IsNullOrEmpty(approval.DecisionComment))
+                                {
+                                    <div class="facts-row"><dt>Comment</dt><dd>@approval.DecisionComment</dd></div>
+                                }
+                                <div class="facts-row"><dt>Decided by</dt><dd>@approval.TargetSummary</dd></div>
+                            </dl>
+                            @if (approval.CallerCanDecide)
+                            {
+                                <form method="post" asp-page-handler="DecideApproval" class="action-form">
+                                    <input type="hidden" name="ApprovalDecision.ApprovalId" value="@approval.TicketApprovalId" />
+                                    <div class="field-group">
+                                        <textarea class="form-control" name="ApprovalDecision.Comment" rows="2" placeholder="Comment — required to reject"></textarea>
+                                    </div>
+                                    <div class="action-form__footer">
+                                        <button type="submit" class="btn btn-gold btn-sm" name="ApprovalDecision.Decision" value="Approve">Approve</button>
+                                        <button type="submit" class="btn btn-critical btn-sm" name="ApprovalDecision.Decision" value="Reject">Reject</button>
+                                    </div>
+                                </form>
+                            }
+                        }
+
+                        @foreach (var requestable in approvalsView.RequestableApprovals)
+                        {
+                            <dl>
+                                <div class="facts-row"><dt>@ApprovalLabel(requestable.ApprovalType)</dt><dd>Not requested</dd></div>
+                                <div class="facts-row"><dt>Decided by</dt><dd>@requestable.TargetSummary</dd></div>
+                            </dl>
+                            @if (requestable.CallerCanRequest)
+                            {
+                                <form method="post" asp-page-handler="RequestApproval" class="action-form">
+                                    <input type="hidden" name="ApprovalRequest.ApprovalType" value="@requestable.ApprovalType" />
+                                    <div class="field-group">
+                                        <textarea class="form-control" name="ApprovalRequest.Comment" rows="2" placeholder="Request comment (optional)"></textarea>
+                                    </div>
+                                    <div class="action-form__footer">
+                                        <button type="submit" class="btn btn-gold btn-sm">Request @ApprovalLabel(requestable.ApprovalType)</button>
+                                    </div>
+                                </form>
+                            }
+                        }
+
+                        <dl>
+                            @if (approvalsView.MaintenanceState is { } maintenanceState)
+                            {
+                                <div class="facts-row"><dt>Maintenance</dt><dd>@(maintenanceState switch
+                                {
+                                    "Required" => "Required — Pending",
+                                    "NotRequired" => "Not Required",
+                                    "Completed" => "Completed",
+                                    _ => maintenanceState
+                                })</dd></div>
+                            }
+                            @if (approvalsView.PrerequisitesCompletedAtUtc is { } prereqAt)
+                            {
+                                <div class="facts-row"><dt>Prerequisites</dt><dd>Completed @prereqAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd></div>
+                            }
+                        </dl>
+
+                        @if (approvalsView.CallerCanRecordEvents)
+                        {
+                            <form method="post" asp-page-handler="RecordEvent" class="action-form">
+                                <div class="field-group">
+                                    <select class="field-select" name="WorkflowEvent.EventType">
+                                        @if (approvalsView.PrerequisitesCompletedAtUtc is null)
+                                        {
+                                            <option value="PrerequisitesCompleted">Prerequisites completed</option>
+                                        }
+                                        @if (approvalsView.MaintenanceState is null)
+                                        {
+                                            <option value="MaintenanceRequired">Maintenance required</option>
+                                            <option value="MaintenanceNotRequired">Maintenance not required</option>
+                                        }
+                                        else if (approvalsView.MaintenanceState == "Required")
+                                        {
+                                            <option value="MaintenanceCompleted">Maintenance completed</option>
+                                            <option value="MaintenanceNotRequired">Maintenance not required</option>
+                                        }
+                                        else if (approvalsView.MaintenanceState == "NotRequired")
+                                        {
+                                            <option value="MaintenanceRequired">Maintenance required</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="field-group">
+                                    <input class="form-control" name="WorkflowEvent.Note" placeholder="Note (optional)" />
+                                </div>
+                                <div class="action-form__footer"><button type="submit" class="btn btn-sm">Record</button></div>
+                            </form>
+                        }
+                    </div>
+                }
             </aside>
                     </div>
                 </div>

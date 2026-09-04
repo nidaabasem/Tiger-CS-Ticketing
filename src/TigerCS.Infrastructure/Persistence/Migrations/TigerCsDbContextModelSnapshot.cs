@@ -1048,6 +1048,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
+                    b.Property<int?>("RequestTypeId")
+                        .HasColumnType("int");
+
                     b.Property<byte?>("ResolutionOutcome")
                         .HasColumnType("tinyint");
 
@@ -1090,6 +1093,8 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PriorityId");
 
+                    b.HasIndex("RequestTypeId");
+
                     b.HasIndex("TicketNumber")
                         .IsUnique();
 
@@ -1099,6 +1104,83 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasFilter("[ExternalCustomerId] IS NOT NULL");
 
                     b.ToTable("Tickets", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>
+                {
+                    b.Property<long>("TicketApprovalId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketApprovalId"));
+
+                    b.Property<byte>("ApprovalType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("DecidedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("DecisionAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DecisionComment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("RequestComment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("RequestedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int?>("TargetDepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("TargetEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("TargetKind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("TargetRoleName")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketApprovalId");
+
+                    b.HasIndex("DecidedByEmployeeId");
+
+                    b.HasIndex("RequestedByEmployeeId");
+
+                    b.HasIndex("TargetDepartmentId");
+
+                    b.HasIndex("TargetEmployeeId");
+
+                    b.HasIndex(new[] { "TicketId", "ApprovalType" }, "UX_TicketApprovals_OneCurrentPerType")
+                        .IsUnique()
+                        .HasFilter("[IsCurrent] = 1");
+
+                    b.HasIndex(new[] { "TicketId", "ApprovalType" }, "UX_TicketApprovals_OnePendingPerType")
+                        .IsUnique()
+                        .HasFilter("[Status] = 1");
+
+                    b.ToTable("TicketApprovals", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketAssignment", b =>
@@ -1142,6 +1224,79 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("TicketAssignments", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteraction", b =>
+                {
+                    b.Property<long>("TicketInteractionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketInteractionId"));
+
+                    b.Property<string>("CalledNumber")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<byte>("ChannelId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CustomerPhone")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Direction")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("GenesysAgentId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("GenesysAgentName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("GenesysConversationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("GenesysQueueId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("GenesysQueueName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("InteractionStartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsOriginatingInteraction")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("Source")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketInteractionId");
+
+                    b.HasIndex("GenesysConversationId")
+                        .HasFilter("[GenesysConversationId] IS NOT NULL");
+
+                    b.HasIndex(new[] { "TicketId" }, "IX_TicketInteractions_TicketId");
+
+                    b.HasIndex(new[] { "TicketId" }, "UX_TicketInteractions_OneOriginatingPerTicket")
+                        .IsUnique()
+                        .HasFilter("[IsOriginatingInteraction] = 1");
+
+                    b.ToTable("TicketInteractions", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketNote", b =>
                 {
                     b.Property<long>("TicketNoteId")
@@ -1171,6 +1326,57 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasIndex("TicketId");
 
                     b.ToTable("TicketNotes", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketPendingRecord", b =>
+                {
+                    b.Property<long>("TicketPendingRecordId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketPendingRecordId"));
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("Kind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("PreviousStatus")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ResumedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ResumedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("StartedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketPendingRecordId");
+
+                    b.HasIndex("ResumedByEmployeeId");
+
+                    b.HasIndex("StartedByEmployeeId");
+
+                    b.HasIndex("TicketId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TicketPendingRecords_OpenPerTicket")
+                        .HasFilter("[ResumedAtUtc] IS NULL");
+
+                    b.ToTable("TicketPendingRecords", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketRequesterSnapshot", b =>
@@ -1301,6 +1507,368 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasIndex("TicketId");
 
                     b.ToTable("TicketStatusHistory", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketWorkflowEvent", b =>
+                {
+                    b.Property<long>("TicketWorkflowEventId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketWorkflowEventId"));
+
+                    b.Property<Guid?>("ActorEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("EventType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("TicketApprovalId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketWorkflowEventId");
+
+                    b.HasIndex("ActorEmployeeId");
+
+                    b.HasIndex("TicketApprovalId");
+
+                    b.HasIndex("TicketId", "EventType");
+
+                    b.ToTable("TicketWorkflowEvents", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings", b =>
+                {
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("AllowAssignment")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowInternalReassignment")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowTransferToOtherDepartments")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("HeadRoleName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SupervisorRoleName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("DepartmentId");
+
+                    b.ToTable("DepartmentWorkflowSettings", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", b =>
+                {
+                    b.Property<int>("RequestTypeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("RequestTypeId"));
+
+                    b.Property<bool>("AllowAgentPriorityChange")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowPendingCustomer")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowPendingInternal")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowReopen")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("DefaultPriorityId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("RequiredFieldsJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<int>("WorkflowTemplateId")
+                        .HasColumnType("int");
+
+                    b.HasKey("RequestTypeId");
+
+                    b.HasIndex("DefaultPriorityId");
+
+                    b.HasIndex("WorkflowTemplateId");
+
+                    b.HasIndex("DepartmentId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("RequestTypes", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement", b =>
+                {
+                    b.Property<int>("RequestTypeApprovalRequirementId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("RequestTypeApprovalRequirementId"));
+
+                    b.Property<byte>("ApprovalType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<bool>("BlocksWorkUntilApproved")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("RequestTypeId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("TargetDepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("TargetEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("TargetKind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("TargetRoleName")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("RequestTypeApprovalRequirementId");
+
+                    b.HasIndex("TargetDepartmentId");
+
+                    b.HasIndex("TargetEmployeeId");
+
+                    b.HasIndex("RequestTypeId", "ApprovalType")
+                        .IsUnique();
+
+                    b.ToTable("RequestTypeApprovalRequirements", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule", b =>
+                {
+                    b.Property<int>("RequestTypeAssignmentRuleId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("RequestTypeAssignmentRuleId"));
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("Mode")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid?>("PrimaryEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("RequestTypeId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TeamName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("RequestTypeAssignmentRuleId");
+
+                    b.HasIndex("PrimaryEmployeeId");
+
+                    b.HasIndex("RequestTypeId")
+                        .IsUnique();
+
+                    b.ToTable("RequestTypeAssignmentRules", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRuleMember", b =>
+                {
+                    b.Property<int>("RequestTypeAssignmentRuleMemberId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("RequestTypeAssignmentRuleMemberId"));
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("RequestTypeAssignmentRuleId")
+                        .HasColumnType("int");
+
+                    b.HasKey("RequestTypeAssignmentRuleMemberId");
+
+                    b.HasIndex("EmployeeId");
+
+                    b.HasIndex("RequestTypeAssignmentRuleId", "EmployeeId")
+                        .IsUnique();
+
+                    b.ToTable("RequestTypeAssignmentRuleMembers", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy", b =>
+                {
+                    b.Property<int>("RequestTypeSlaPolicyId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("RequestTypeSlaPolicyId"));
+
+                    b.Property<byte?>("ClockBasis")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int?>("FirstResponseMaximumValue")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("FirstResponseTargetValue")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsImmediate")
+                        .HasColumnType("bit");
+
+                    b.Property<bool?>("PausesOnPendingCustomer")
+                        .HasColumnType("bit");
+
+                    b.Property<bool?>("PausesOnPendingInternal")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("PriorityId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("RequestTypeId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("ResolutionMaximumValue")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("ResolutionTargetValue")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Trigger")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("Unit")
+                        .HasColumnType("tinyint");
+
+                    b.Property<decimal?>("WarningThresholdPercent")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.HasKey("RequestTypeSlaPolicyId");
+
+                    b.HasIndex("PriorityId");
+
+                    b.HasIndex("RequestTypeId", "PriorityId")
+                        .IsUnique();
+
+                    b.ToTable("RequestTypeSlaPolicies", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", b =>
+                {
+                    b.Property<int>("WorkflowTemplateId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("WorkflowTemplateId"));
+
+                    b.Property<bool>("AllowsPendingCustomer")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowsPendingInternal")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("RequiresApproval")
+                        .HasColumnType("bit");
+
+                    b.HasKey("WorkflowTemplateId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("WorkflowTemplates", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep", b =>
+                {
+                    b.Property<int>("WorkflowTemplateStepId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("WorkflowTemplateStepId"));
+
+                    b.Property<bool>("IsOptional")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("Kind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<byte>("Sequence")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("WorkflowTemplateId")
+                        .HasColumnType("int");
+
+                    b.HasKey("WorkflowTemplateStepId");
+
+                    b.HasIndex("WorkflowTemplateId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("WorkflowTemplateSteps", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Infrastructure.Identity.ApplicationRole", b =>
@@ -1694,10 +2262,45 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", null)
+                        .WithMany()
+                        .HasForeignKey("RequestTypeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("TigerCS.Domain.Modules.CustomerVerification.UnitReference", null)
                         .WithMany()
                         .HasForeignKey("UnitReferenceId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("DecidedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("TargetDepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("TargetEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketAssignment", b =>
@@ -1726,6 +2329,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteraction", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketNote", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
@@ -1738,6 +2350,26 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TicketId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketPendingRecord", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("ResumedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("StartedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -1784,6 +2416,131 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketWorkflowEvent", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("ActorEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.TicketApproval", null)
+                        .WithMany()
+                        .HasForeignKey("TicketApprovalId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithOne()
+                        .HasForeignKey("TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings", "DepartmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
+                        .WithMany()
+                        .HasForeignKey("DefaultPriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("WorkflowTemplateId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", null)
+                        .WithMany()
+                        .HasForeignKey("RequestTypeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("TargetDepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("TargetEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("PrimaryEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", null)
+                        .WithOne()
+                        .HasForeignKey("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule", "RequestTypeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRuleMember", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule", "Rule")
+                        .WithMany("Members")
+                        .HasForeignKey("RequestTypeAssignmentRuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Rule");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
+                        .WithMany()
+                        .HasForeignKey("PriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", null)
+                        .WithMany()
+                        .HasForeignKey("RequestTypeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", "WorkflowTemplate")
+                        .WithMany("Steps")
+                        .HasForeignKey("WorkflowTemplateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("WorkflowTemplate");
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.UnitReference", b =>
                 {
                     b.Navigation("Contacts");
@@ -1792,6 +2549,16 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TigerCS.Domain.Modules.IdentityAndAccess.Employee", b =>
                 {
                     b.Navigation("DepartmentAssignments");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule", b =>
+                {
+                    b.Navigation("Members");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", b =>
+                {
+                    b.Navigation("Steps");
                 });
 #pragma warning restore 612, 618
         }

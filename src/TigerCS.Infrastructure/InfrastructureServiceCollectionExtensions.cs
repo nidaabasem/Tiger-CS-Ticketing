@@ -19,6 +19,8 @@ using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
+using TigerCS.Application.Modules.WorkflowConfiguration.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.BackgroundJobs;
@@ -30,6 +32,7 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
 using TigerCS.Infrastructure.Modules.Notifications.Repositories;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Repositories;
 using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
+using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Repositories;
 using TigerCS.Infrastructure.Persistence;
 
 namespace TigerCS.Infrastructure;
@@ -198,6 +201,31 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<SlaQueryAppService>();
         services.AddScoped<SlaFirstResponseAppService>();
         services.AddScoped<TicketEscalationAppService>();
+
+        // Workflow/SLA Configuration (phase 1) — the Department → Request
+        // Type → Workflow Template → SLA configuration layer. Read-only at
+        // this phase; configuration is seeded/database-driven.
+        services.AddScoped<IWorkflowTemplateRepository, WorkflowTemplateRepository>();
+        services.AddScoped<IRequestTypeRepository, RequestTypeRepository>();
+        services.AddScoped<IRequestTypeSlaPolicyRepository, RequestTypeSlaPolicyRepository>();
+        services.AddScoped<IDepartmentWorkflowSettingsRepository, DepartmentWorkflowSettingsRepository>();
+        services.AddScoped<WorkflowConfigurationQueryService>();
+
+        // Workflow/Automation (phase 2) — assignment rules, structured
+        // pending, and the interaction-context record behind the Genesys
+        // boundary (no Genesys API client exists yet — only the context
+        // Ticketing persists).
+        services.AddScoped<IRequestTypeAssignmentRuleRepository, RequestTypeAssignmentRuleRepository>();
+        services.AddScoped<ITicketPendingRecordRepository, TicketPendingRecordRepository>();
+        services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
+        services.AddScoped<TicketAutoAssignmentService>();
+
+        // Workflow/Automation (phase 3) — approvals, approval requirements,
+        // and the typed workflow event store phase 4's SLA triggers read.
+        services.AddScoped<ITicketApprovalRepository, TicketApprovalRepository>();
+        services.AddScoped<ITicketWorkflowEventRepository, TicketWorkflowEventRepository>();
+        services.AddScoped<IRequestTypeApprovalRequirementRepository, RequestTypeApprovalRequirementRepository>();
+        services.AddScoped<TicketApprovalAppService>();
 
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).

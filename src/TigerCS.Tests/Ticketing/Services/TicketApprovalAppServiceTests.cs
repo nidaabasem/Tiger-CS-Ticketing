@@ -1,0 +1,480 @@
+using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Domain.Modules.WorkflowConfiguration;
+using TigerCS.Tests.CustomerVerification.Fakes;
+using TigerCS.Tests.IdentityAndAccess.Fakes;
+using TigerCS.Tests.Ticketing.Fakes;
+
+namespace TigerCS.Tests.Ticketing.Services;
+
+/// <summary>
+/// The phase-3 approval/dependency service against the SLA document's two
+/// supported cases: Collections / Send Receipts (Accounting approval →
+/// ApprovalReceived) and Handover (Customer Service approval →
+/// CustomerServiceApproved), plus Registration's PrerequisitesCompleted and
+/// the Handover maintenance dependency. No SLA deadline is computed anywhere
+/// here — only trustworthy typed trigger events.
+/// </summary>
+public class TicketApprovalAppServiceTests
+{
+    private const int CollectionsDepartmentId = 3;
+    private const int AccountingDepartmentId = 6;
+    private static readonly DateTime Now = new(2026, 9, 4, 10, 15, 0, DateTimeKind.Utc);
+
+    private sealed record Fixture(
+        TicketApprovalAppService Service,
+        FakeTicketRepository Tickets,
+        FakeTicketApprovalRepository Approvals,
+        FakeTicketWorkflowEventRepository Events,
+        FakeRequestTypeApprovalRequirementRepository Requirements,
+        FakeUserDepartmentAssignmentRepository DepartmentAssignments,
+        FakeDepartmentRepository Departments,
+        FakeAuditEntryWriter Audit,
+        FakeTicketingUnitOfWork UnitOfWork,
+        FakeRequestTypeRepository RequestTypes);
+
+    private static Fixture CreateService()
+    {
+        var tickets = new FakeTicketRepository();
+        var approvals = new FakeTicketApprovalRepository();
+        var events = new FakeTicketWorkflowEventRepository();
+        var requirements = new FakeRequestTypeApprovalRequirementRepository();
+        var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
+        var departments = new FakeDepartmentRepository();
+        var audit = new FakeAuditEntryWriter();
+        var unitOfWork = new FakeTicketingUnitOfWork();
+        var requestTypes = new FakeRequestTypeRepository();
+
+        var service = new TicketApprovalAppService(
+            tickets, approvals, events, requirements, departmentAssignments, departments,
+            unitOfWork, audit, TimeProvider.System);
+
+        return new Fixture(
+            service, tickets, approvals, events, requirements, departmentAssignments, departments,
+            audit, unitOfWork, requestTypes);
+    }
+
+    /// <summary>A Collections / Send Receipts ticket owned by a Collections employee, whose request type requires Accounting approval targeting the Accounting department.</summary>
+    private static async Task<(Ticket Ticket, Guid Owner, int RequestTypeId)> SeedSendReceiptsTicketAsync(Fixture f)
+    {
+        var requestTypeId = 71;
+        f.Requirements.Add(RequestTypeApprovalRequirement.ForDepartment(
+            requestTypeId, ApprovalType.AccountingApproval, AccountingDepartmentId));
+
+        var owner = Guid.NewGuid();
+        var ticket = Ticket.CreateUnverified(
+            "TG-COL-20260904-0001", CollectionsDepartmentId, categoryId: 5,
+            (byte)PriorityLevel.Medium, "Send the receipt", Now);
+        await f.Tickets.AddAsync(ticket);
+        ticket.ClassifyRequestType(requestTypeId);
+        ticket.AssignTo(owner);
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        return (ticket, owner, requestTypeId);
+    }
+
+    private static Guid SeedAccountingApprover(Fixture f)
+    {
+        var approver = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(approver, AccountingDepartmentId, isPrimary: true, Now, assignedByEmployeeId: null));
+        return approver;
+    }
+
+    // ---- Send Receipts / Accounting approval ----
+
+    [Fact]
+    public async Task SendReceipts_RequestAccountingApproval_OpensPendingCycle_WithEventAndAudit()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        var result = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RequestApprovalRequestDto("AccountingApproval", "Receipt for unit 1204"));
+
+        Assert.Equal(ApprovalMutationOutcome.Success, result.Outcome);
+        var approval = Assert.Single(f.Approvals.All);
+        Assert.Equal(ApprovalStatus.Pending, approval.Status);
+        Assert.Equal(owner, approval.RequestedByEmployeeId);
+        Assert.Equal(AccountingDepartmentId, approval.TargetDepartmentId);
+
+        // The ApprovalRequested event, the approval, and the audit entry
+        // share one correlation id — one auditable action.
+        var requestedEvent = Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalRequested);
+        Assert.Equal(approval.TicketApprovalId, requestedEvent.TicketApprovalId);
+        Assert.Equal(approval.CorrelationId, requestedEvent.CorrelationId);
+        var audit = Assert.Single(f.Audit.Entries, e => e.Action == "RequestApproval");
+        Assert.Equal(approval.CorrelationId, audit.CorrelationId);
+
+        // The SLA trigger event does NOT exist yet — the 1-day clock has
+        // nothing to start from until Accounting actually approves.
+        Assert.DoesNotContain(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalReceived);
+    }
+
+    [Fact]
+    public async Task RequestApproval_OnATypeTheRequestTypeDoesNotConfigure_IsRejected()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        var result = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RequestApprovalRequestDto("CustomerServiceApproval"));
+
+        Assert.Equal(ApprovalMutationOutcome.ApprovalNotConfigured, result.Outcome);
+        Assert.Empty(f.Approvals.All);
+    }
+
+    [Fact]
+    public async Task DuplicateActiveApproval_IsPrevented()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        var first = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        Assert.Equal(ApprovalMutationOutcome.Success, first.Outcome);
+
+        var second = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        Assert.Equal(ApprovalMutationOutcome.DuplicateActiveApproval, second.Outcome);
+        Assert.Single(f.Approvals.All);
+    }
+
+    [Fact]
+    public async Task AccountingApprove_RecordsDecision_AndEmitsApprovalReceived_OnlyAfterApproval()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+        var approver = SeedAccountingApprover(f);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        var approval = Assert.Single(f.Approvals.All);
+
+        var result = await f.Service.DecideAsync(
+            approver, [Roles.DepartmentEmployee], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Approve", "Payment verified"));
+
+        Assert.Equal(ApprovalMutationOutcome.Success, result.Outcome);
+        Assert.Equal(ApprovalStatus.Approved, approval.Status);
+        Assert.Equal(approver, approval.DecidedByEmployeeId);
+        Assert.NotNull(approval.DecisionAtUtc);
+
+        // The typed ApprovalReceived event — phase 4's Send Receipts trigger
+        // source — exists exactly once, timestamped at the decision.
+        var received = Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalReceived);
+        Assert.Equal(approval.DecisionAtUtc, received.OccurredAtUtc);
+        Assert.Equal(approver, received.ActorEmployeeId);
+
+        Assert.Single(f.Audit.Entries, e => e.Action == "ApproveApproval");
+
+        // No SLA deadline of any kind was computed — that is phase 4.
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public async Task AccountingReject_RequiresAReason_AndNeverResolvesOrClosesTheTicket()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+        var approver = SeedAccountingApprover(f);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        var approval = Assert.Single(f.Approvals.All);
+
+        var withoutReason = await f.Service.DecideAsync(
+            approver, [Roles.DepartmentEmployee], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Reject"));
+        Assert.Equal(ApprovalMutationOutcome.ReasonRequired, withoutReason.Outcome);
+        Assert.Equal(ApprovalStatus.Pending, approval.Status);
+
+        var rejected = await f.Service.DecideAsync(
+            approver, [Roles.DepartmentEmployee], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Reject", "No matching payment"));
+        Assert.Equal(ApprovalMutationOutcome.Success, rejected.Outcome);
+        Assert.Equal(ApprovalStatus.Rejected, approval.Status);
+
+        Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalRejected);
+        Assert.DoesNotContain(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalReceived);
+        Assert.Single(f.Audit.Entries, e => e.Action == "RejectApproval");
+
+        // Rejection decides the approval, never the ticket — the next
+        // operational action stays explicit.
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public async Task ReRequestAfterRejection_OpensANewCycle_AndPreservesTheRejectedOne()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+        var approver = SeedAccountingApprover(f);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        var firstCycle = Assert.Single(f.Approvals.All);
+        await f.Service.DecideAsync(
+            approver, [Roles.DepartmentEmployee], ticket.TicketId, firstCycle.TicketApprovalId,
+            new DecideApprovalRequestDto("Reject", "Wrong amount"));
+
+        var reRequest = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RequestApprovalRequestDto("AccountingApproval", "Amount corrected"));
+
+        Assert.Equal(ApprovalMutationOutcome.Success, reRequest.Outcome);
+        Assert.Equal(2, f.Approvals.All.Count);
+        Assert.Equal(ApprovalStatus.Rejected, firstCycle.Status);
+        Assert.False(firstCycle.IsCurrent);
+        Assert.Equal("Wrong amount", firstCycle.DecisionComment);
+        var secondCycle = f.Approvals.All.Single(a => a.IsCurrent);
+        Assert.Equal(ApprovalStatus.Pending, secondCycle.Status);
+    }
+
+    [Fact]
+    public async Task ReRequestOverAnApprovedCycle_IsRefused_TheGrantIsNeverSilentlySuperseded()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+        var approver = SeedAccountingApprover(f);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        var cycle = Assert.Single(f.Approvals.All);
+        await f.Service.DecideAsync(
+            approver, [Roles.DepartmentEmployee], ticket.TicketId, cycle.TicketApprovalId,
+            new DecideApprovalRequestDto("Approve"));
+
+        var reRequest = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+
+        Assert.Equal(ApprovalMutationOutcome.DuplicateActiveApproval, reRequest.Outcome);
+        Assert.True(cycle.IsCurrent);
+    }
+
+    // ---- Authorization ----
+
+    [Fact]
+    public async Task NonAccountingActor_CannotDecideTheAccountingApproval()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        var approval = Assert.Single(f.Approvals.All);
+
+        // The Collections owner (right department roles, wrong department)
+        // and a CS agent (no department membership at all) are both refused.
+        var byOwner = await f.Service.DecideAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Approve"));
+        Assert.Equal(ApprovalMutationOutcome.Forbidden, byOwner.Outcome);
+
+        var byCsAgent = await f.Service.DecideAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Approve"));
+        Assert.Equal(ApprovalMutationOutcome.Forbidden, byCsAgent.Outcome);
+
+        Assert.Equal(ApprovalStatus.Pending, approval.Status);
+        Assert.DoesNotContain(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalReceived);
+    }
+
+    [Fact]
+    public async Task StrangerCannotRequestAnApproval()
+    {
+        var f = CreateService();
+        var (ticket, _, _) = await SeedSendReceiptsTicketAsync(f);
+
+        var result = await f.Service.RequestApprovalAsync(
+            Guid.NewGuid(), [Roles.DepartmentEmployee], ticket.TicketId,
+            new RequestApprovalRequestDto("AccountingApproval"));
+
+        Assert.Equal(ApprovalMutationOutcome.Forbidden, result.Outcome);
+        Assert.Empty(f.Approvals.All);
+    }
+
+    // ---- Handover / Customer Service approval ----
+
+    [Fact]
+    public async Task HandoverCsApproval_ByTheConfiguredRole_EmitsCustomerServiceApproved()
+    {
+        var f = CreateService();
+        const int handoverRequestTypeId = 81;
+        f.Requirements.Add(RequestTypeApprovalRequirement.ForRole(
+            handoverRequestTypeId, ApprovalType.CustomerServiceApproval, Roles.CsSupervisor));
+
+        var owner = Guid.NewGuid();
+        var ticket = Ticket.CreateUnverified(
+            "TG-HO-20260904-0001", 4, 5, (byte)PriorityLevel.Medium, "Key handover", Now);
+        await f.Tickets.AddAsync(ticket);
+        ticket.ClassifyRequestType(handoverRequestTypeId);
+        ticket.AssignTo(owner);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("CustomerServiceApproval"));
+        var approval = Assert.Single(f.Approvals.All);
+
+        // A CS Agent is not the configured role; a CS Supervisor is.
+        var byAgent = await f.Service.DecideAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Approve"));
+        Assert.Equal(ApprovalMutationOutcome.Forbidden, byAgent.Outcome);
+
+        var bySupervisor = await f.Service.DecideAsync(
+            Guid.NewGuid(), [Roles.CsSupervisor], ticket.TicketId, approval.TicketApprovalId,
+            new DecideApprovalRequestDto("Approve"));
+        Assert.Equal(ApprovalMutationOutcome.Success, bySupervisor.Outcome);
+
+        // The typed CustomerServiceApproved event — Handover's phase-4
+        // trigger source — exists exactly once, at the decision timestamp.
+        var approved = Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.CustomerServiceApproved);
+        Assert.Equal(approval.DecisionAtUtc, approved.OccurredAtUtc);
+        Assert.DoesNotContain(f.Events.All, e => e.EventType == WorkflowEventType.ApprovalReceived);
+    }
+
+    // ---- Handover maintenance dependency ----
+
+    [Fact]
+    public async Task Maintenance_RequiredThenCompleted_RecordsBothTimestamps_NoDurationAnywhere()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        var required = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("MaintenanceRequired", "AC repair pending"));
+        Assert.Equal(ApprovalMutationOutcome.Success, required.Outcome);
+
+        var completed = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("MaintenanceCompleted"));
+        Assert.Equal(ApprovalMutationOutcome.Success, completed.Outcome);
+
+        Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.MaintenanceRequired);
+        Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.MaintenanceCompleted);
+
+        // Once completed, the maintenance state is settled.
+        var again = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("MaintenanceRequired"));
+        Assert.Equal(ApprovalMutationOutcome.EventNotApplicable, again.Outcome);
+    }
+
+    [Fact]
+    public async Task MaintenanceCompleted_WithoutMaintenanceRequired_IsNotApplicable()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        var completed = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("MaintenanceCompleted"));
+        Assert.Equal(ApprovalMutationOutcome.EventNotApplicable, completed.Outcome);
+
+        // The no-maintenance path is its own explicit record.
+        var notRequired = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("MaintenanceNotRequired"));
+        Assert.Equal(ApprovalMutationOutcome.Success, notRequired.Outcome);
+        Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.MaintenanceNotRequired);
+    }
+
+    // ---- Registration prerequisites ----
+
+    [Fact]
+    public async Task PrerequisitesCompleted_IsExplicit_OnceOnly_AndNeverInferred()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        // Nothing emits the trigger until an authorized actor records it.
+        Assert.DoesNotContain(f.Events.All, e => e.EventType == WorkflowEventType.PrerequisitesCompleted);
+
+        var recorded = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("PrerequisitesCompleted", "Documents complete"));
+        Assert.Equal(ApprovalMutationOutcome.Success, recorded.Outcome);
+        var prereqEvent = Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.PrerequisitesCompleted);
+        Assert.Equal(owner, prereqEvent.ActorEmployeeId);
+
+        // The FIRST timestamp is the trigger — a repeat is refused, not
+        // silently shifted.
+        var repeat = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("PrerequisitesCompleted"));
+        Assert.Equal(ApprovalMutationOutcome.EventAlreadyRecorded, repeat.Outcome);
+        Assert.Single(f.Events.All, e => e.EventType == WorkflowEventType.PrerequisitesCompleted);
+
+        // Approval events are never recordable through this path.
+        var approvalEvent = await f.Service.RecordWorkflowEventAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new RecordWorkflowEventRequestDto("ApprovalReceived"));
+        Assert.Equal(ApprovalMutationOutcome.InvalidInput, approvalEvent.Outcome);
+    }
+
+    // ---- Cancel + view ----
+
+    [Fact]
+    public async Task Cancel_KeepsTheCycleAsHistory_AndAllowsANewCycle()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        var cycle = Assert.Single(f.Approvals.All);
+
+        var cancelled = await f.Service.CancelAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, cycle.TicketApprovalId,
+            new CancelApprovalRequestDto("Raised in error"));
+        Assert.Equal(ApprovalMutationOutcome.Success, cancelled.Outcome);
+        Assert.Equal(ApprovalStatus.Cancelled, cycle.Status);
+        Assert.Single(f.Audit.Entries, e => e.Action == "CancelApproval");
+
+        var reRequest = await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+        Assert.Equal(ApprovalMutationOutcome.Success, reRequest.Outcome);
+        Assert.Equal(2, f.Approvals.All.Count);
+    }
+
+    [Fact]
+    public async Task ApprovalsView_ShowsPerCallerCapabilities_AndDerivedStates()
+    {
+        var f = CreateService();
+        var (ticket, owner, _) = await SeedSendReceiptsTicketAsync(f);
+        var approver = SeedAccountingApprover(f);
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(owner, CollectionsDepartmentId, isPrimary: true, Now, assignedByEmployeeId: null));
+
+        // Before any request: the requirement is offered as requestable to
+        // the owner, and nothing is decidable.
+        var ownerView = await f.Service.GetApprovalsViewAsync(owner, [Roles.DepartmentEmployee], ticket.TicketId);
+        Assert.Equal(TicketQueryOutcome.Success, ownerView.Outcome);
+        var requestable = Assert.Single(ownerView.Response!.RequestableApprovals);
+        Assert.Equal("AccountingApproval", requestable.ApprovalType);
+        Assert.True(requestable.CallerCanRequest);
+        Assert.Null(ownerView.Response.MaintenanceState);
+        Assert.Null(ownerView.Response.PrerequisitesCompletedAtUtc);
+
+        await f.Service.RequestApprovalAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new RequestApprovalRequestDto("AccountingApproval"));
+
+        // The Accounting approver sees the decision capability; the owner
+        // does not.
+        var approverView = await f.Service.GetApprovalsViewAsync(approver, [Roles.DepartmentEmployee], ticket.TicketId);
+        Assert.True(Assert.Single(approverView.Response!.Approvals).CallerCanDecide);
+
+        var ownerViewAfter = await f.Service.GetApprovalsViewAsync(owner, [Roles.DepartmentEmployee], ticket.TicketId);
+        Assert.False(Assert.Single(ownerViewAfter.Response!.Approvals).CallerCanDecide);
+        Assert.Empty(ownerViewAfter.Response.RequestableApprovals);
+
+        // A member of an unrelated department cannot see the view at all.
+        var strangerView = await f.Service.GetApprovalsViewAsync(Guid.NewGuid(), [Roles.DepartmentEmployee], ticket.TicketId);
+        Assert.Equal(TicketQueryOutcome.Forbidden, strangerView.Outcome);
+    }
+}

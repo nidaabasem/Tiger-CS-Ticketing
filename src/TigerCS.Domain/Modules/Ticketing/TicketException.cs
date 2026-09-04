@@ -88,3 +88,11 @@ public sealed class AcknowledgementAlreadySentException(long ticketId, DateTime 
     public long TicketId { get; } = ticketId;
     public DateTime SentAtUtc { get; } = sentAtUtc;
 }
+
+/// <summary>Workflow/SLA Configuration phase 2: a ticket's request type is write-once — re-classification is not a supported operation in this phase.</summary>
+public sealed class TicketRequestTypeAlreadySetException(long ticketId, int requestTypeId)
+    : TicketException($"Ticket {ticketId} is already classified as RequestType {requestTypeId} — the classification is write-once.")
+{
+    public long TicketId { get; } = ticketId;
+    public int RequestTypeId { get; } = requestTypeId;
+}

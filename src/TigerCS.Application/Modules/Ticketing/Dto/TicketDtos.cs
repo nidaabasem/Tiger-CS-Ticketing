@@ -44,6 +44,8 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="CustomerVerificationSource">The external lookup source that verified the customer ("Pact"/"Tasleeh") when the agent selected a matched external customer/unit. Mutually exclusive with the CrmBuyer* identifiers; accompanies (never replaces) the manual Project/Unit snapshot.</param>
 /// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, stored for audit/reconciliation; requires <paramref name="CustomerVerificationSource"/>.</param>
 /// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — same rule as <paramref name="ExternalCustomerId"/>.</param>
+/// <param name="RequestTypeId">Optional (Workflow/Automation phase 2): the configured Request Type this ticket follows. Must be an active request type of the department the ticket routes to; when present it drives the workflow capabilities and the automatic assignment rule.</param>
+/// <param name="GenesysContext">Optional (Workflow/Automation phase 2): the Genesys-provided interaction context, persisted verbatim for traceability. Absent for Face-to-Face and every other locally-created interaction.</param>
 public sealed record CreateTicketRequestDto(
     long IntakeRecordId,
     int? UnitReferenceId,
@@ -62,7 +64,9 @@ public sealed record CreateTicketRequestDto(
     string? ManualUnitNumber = null,
     string? CustomerVerificationSource = null,
     string? ExternalCustomerId = null,
-    string? ExternalUnitId = null);
+    string? ExternalUnitId = null,
+    int? RequestTypeId = null,
+    GenesysIntegration.Dto.GenesysInteractionContextDto? GenesysContext = null);
 
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>
@@ -160,7 +164,16 @@ public enum TicketCreationOutcome
     CategoryDepartmentMismatch,
 
     /// <summary>A same-department, same-day TicketNumber collision (real DB unique-index race) — nothing else was touched; retrying the whole request is always correct.</summary>
-    TicketNumberCollision
+    TicketNumberCollision,
+
+    /// <summary>Workflow/Automation phase 2: RequestTypeId did not resolve to an active request type.</summary>
+    RequestTypeNotFound,
+
+    /// <summary>Workflow/Automation phase 2: the request type belongs to a different department than the one the ticket routes to — request types are never offered across departments.</summary>
+    RequestTypeDepartmentMismatch,
+
+    /// <summary>Workflow/Automation phase 2: a Genesys interaction context was supplied without its conversation id — the one field a Genesys-sourced context cannot lack, because it is the traceability link.</summary>
+    GenesysConversationIdRequired
 }
 
 public sealed record TicketCreationResult(TicketCreationOutcome Outcome, TicketResponseDto? Response = null)

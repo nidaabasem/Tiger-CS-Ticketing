@@ -195,7 +195,16 @@ public enum TicketMutationOutcome
     VerificationSessionForbidden,
     VerificationSessionNotConfirmed,
     VerificationSessionAlreadyConsumed,
-    VerificationSessionExpired
+    VerificationSessionExpired,
+
+    /// <summary>Workflow/Automation phase 2: the target Pending status needs a PendingReason and none was supplied — a ticket is never pending without a recorded why.</summary>
+    PendingReasonRequired,
+
+    /// <summary>Workflow/Automation phase 2: the ticket's request-type workflow configuration does not allow this action (e.g. Pending Customer on a request type whose template forbids it, or Reopen where the request type disables it).</summary>
+    NotAllowedForRequestType,
+
+    /// <summary>Workflow/Automation phase 2: the department's workflow settings disable this operation (assignment, internal reassignment, or transfer out) for the ticket's current department.</summary>
+    DisabledByDepartmentSettings
 }
 
 public sealed record TicketMutationResult(TicketMutationOutcome Outcome, TicketDetailDto? Response = null)
@@ -209,7 +218,8 @@ public sealed record TicketMutationResult(TicketMutationOutcome Outcome, TicketD
 /// <summary>Move a ticket within the working sub-machine (MVP-API-Contracts.md §3.7).</summary>
 /// <param name="NewStatus">Required. One of Open, InProgress, PendingCustomer, PendingThirdParty. Resolved and Closed are reached through their own endpoints.</param>
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
-public sealed record ChangeStatusRequestDto(string NewStatus, byte[] RowVersion);
+/// <param name="PendingReason">Required when NewStatus is PendingCustomer or PendingThirdParty — a ticket is never pending without a recorded why. Ignored for other targets.</param>
+public sealed record ChangeStatusRequestDto(string NewStatus, byte[] RowVersion, string? PendingReason = null);
 
 /// <summary>Resolve a ticket (MVP-API-Contracts.md §3.9).</summary>
 /// <param name="ResolutionOutcome">Required. One of Resolved, Cancelled, Rejected, Duplicate.</param>

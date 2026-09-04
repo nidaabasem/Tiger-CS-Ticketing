@@ -31,7 +31,8 @@ public class TicketsController(
     TicketNoteAppService ticketNoteAppService,
     TicketReconciliationAppService ticketReconciliationAppService,
     CustomerHistoryAppService customerHistoryAppService,
-    CustomerProfileAppService customerProfileAppService) : ControllerBase
+    CustomerProfileAppService customerProfileAppService,
+    TicketApprovalAppService ticketApprovalAppService) : ControllerBase
 {
     /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
@@ -396,6 +397,145 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
+    /// <summary>The ticket's Approvals / Dependencies view: approval cycles (full history), still-requestable configured approvals, typed workflow events, and the derived maintenance/prerequisite states.</summary>
+    /// <param name="ticketId">The ticket.</param>
+    /// <response code="200">The approvals/dependencies view, with per-caller request/decide capability flags.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    [ProducesResponseType<TicketApprovalsViewDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [HttpGet("{ticketId:long}/approvals")]
+    [Tags(OpenApiTags.Approvals)]
+    public async Task<IActionResult> GetApprovals(long ticketId, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketApprovalAppService.GetApprovalsViewAsync(employeeId.Value, GetRoles(), ticketId, cancellationToken);
+        return result.Outcome switch
+        {
+            TicketQueryOutcome.Success => Ok(result.Response),
+            TicketQueryOutcome.Forbidden => NotFound(),
+            _ => NotFound()
+        };
+    }
+
+    /// <summary>Open a new approval cycle. Restricted to the ticket's operational actors; the approval type must be configured for the ticket's request type.</summary>
+    /// <param name="ticketId">The ticket.</param>
+    /// <param name="request">The approval type (e.g. AccountingApproval) and an optional request comment.</param>
+    /// <response code="200">The opened approval cycle.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket.</response>
+    /// <response code="409">An active cycle of this type already exists.</response>
+    /// <response code="422">The approval type is not configured for this ticket's request type, or the ticket is closed.</response>
+    [ProducesResponseType<TicketApprovalDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [HttpPost("{ticketId:long}/approvals")]
+    [Tags(OpenApiTags.Approvals)]
+    public async Task<IActionResult> RequestApproval(
+        long ticketId, [FromBody] RequestApprovalRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketApprovalAppService.RequestApprovalAsync(
+            employeeId.Value, GetRoles(), ticketId, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    /// <summary>Decide a pending approval cycle — Approve, or Reject with a mandatory reason. Restricted to the cycle's configured approval target.</summary>
+    /// <param name="ticketId">The ticket.</param>
+    /// <param name="approvalId">The approval cycle to decide.</param>
+    /// <param name="request">The decision ("Approve"/"Reject") and comment — required for a rejection.</param>
+    /// <response code="200">The decided approval cycle.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket/approval.</response>
+    /// <response code="409">The cycle is already decided.</response>
+    /// <response code="422">A rejection was sent without its reason.</response>
+    [ProducesResponseType<TicketApprovalDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [HttpPost("{ticketId:long}/approvals/{approvalId:long}/decision")]
+    [Tags(OpenApiTags.Approvals)]
+    public async Task<IActionResult> DecideApproval(
+        long ticketId, long approvalId, [FromBody] DecideApprovalRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketApprovalAppService.DecideAsync(
+            employeeId.Value, GetRoles(), ticketId, approvalId, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    /// <summary>Withdraw a still-pending approval cycle (kept as history). Restricted to the ticket's operational actors.</summary>
+    /// <param name="ticketId">The ticket.</param>
+    /// <param name="approvalId">The pending approval cycle to cancel.</param>
+    /// <param name="request">An optional cancellation comment.</param>
+    /// <response code="200">The cancelled approval cycle.</response>
+    /// <response code="404">No such ticket/approval.</response>
+    /// <response code="409">The cycle is already decided.</response>
+    [ProducesResponseType<TicketApprovalDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [HttpPost("{ticketId:long}/approvals/{approvalId:long}/cancellation")]
+    [Tags(OpenApiTags.Approvals)]
+    public async Task<IActionResult> CancelApproval(
+        long ticketId, long approvalId, [FromBody] CancelApprovalRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketApprovalAppService.CancelAsync(
+            employeeId.Value, GetRoles(), ticketId, approvalId, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    /// <summary>Record a typed dependency event: PrerequisitesCompleted, MaintenanceRequired, MaintenanceNotRequired, or MaintenanceCompleted. Restricted to the ticket's operational actors; approval events are produced only by approval actions.</summary>
+    /// <param name="ticketId">The ticket.</param>
+    /// <param name="request">The event type and an optional note.</param>
+    /// <response code="204">The event was recorded.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket.</response>
+    /// <response code="409">The event was already recorded and is not repeatable.</response>
+    /// <response code="422">The event does not apply in the ticket's current dependency state, or the ticket is closed.</response>
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [HttpPost("{ticketId:long}/workflow-events")]
+    [Tags(OpenApiTags.Approvals)]
+    public async Task<IActionResult> RecordWorkflowEvent(
+        long ticketId, [FromBody] RecordWorkflowEventRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketApprovalAppService.RecordWorkflowEventAsync(
+            employeeId.Value, GetRoles(), ticketId, request, cancellationToken);
+        return result.Outcome == ApprovalMutationOutcome.Success ? NoContent() : ToActionResult(result);
+    }
+
     /// <summary>Link a confirmed CRM match onto a ticket that did not have one at creation. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
     /// See TicketReconciliationAppService's remarks. Scoped to CS Agent/CS
@@ -570,6 +710,24 @@ public class TicketsController(
             detail: "A concurrent request generated the same ticket number for this department/day — retry the request.",
             statusCode: StatusCodes.Status409Conflict),
 
+        TicketCreationOutcome.RequestTypeNotFound => Problem(
+            type: "https://tigercs.internal/problems/request-type-not-found",
+            title: "Request type not found",
+            detail: "RequestTypeId did not resolve to an active request type.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.RequestTypeDepartmentMismatch => Problem(
+            type: "https://tigercs.internal/problems/request-type-department-mismatch",
+            title: "Request type belongs to another department",
+            detail: "The selected request type does not belong to the department this ticket routes to.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.GenesysConversationIdRequired => Problem(
+            type: "https://tigercs.internal/problems/genesys-conversation-id-required",
+            title: "Genesys conversation id required",
+            detail: "A Genesys interaction context requires its ConversationId.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };
 
@@ -685,6 +843,78 @@ public class TicketsController(
             type: "https://tigercs.internal/problems/verification-session-expired",
             title: "Verification session expired",
             statusCode: StatusCodes.Status410Gone),
+
+        TicketMutationOutcome.PendingReasonRequired => Problem(
+            type: "https://tigercs.internal/problems/pending-reason-required",
+            title: "Pending reason required",
+            detail: "Moving a ticket to PendingCustomer or PendingThirdParty requires a PendingReason.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.NotAllowedForRequestType => Problem(
+            type: "https://tigercs.internal/problems/not-allowed-for-request-type",
+            title: "Not allowed for this request type",
+            detail: "The ticket's request-type workflow configuration does not allow this action.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.DisabledByDepartmentSettings => Problem(
+            type: "https://tigercs.internal/problems/disabled-by-department-settings",
+            title: "Disabled by department workflow settings",
+            detail: "The department's workflow settings disable this operation.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
+    };
+
+    private IActionResult ToActionResult(ApprovalMutationResult result) => result.Outcome switch
+    {
+        ApprovalMutationOutcome.Success => Ok(result.Response),
+
+        ApprovalMutationOutcome.TicketNotFound or ApprovalMutationOutcome.ApprovalNotFound => NotFound(),
+
+        ApprovalMutationOutcome.Forbidden => Forbid(),
+
+        ApprovalMutationOutcome.TicketClosed => Problem(
+            type: "https://tigercs.internal/problems/ticket-closed",
+            title: "Ticket is closed",
+            detail: "This ticket is Closed and no longer accepts approval or dependency actions.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        ApprovalMutationOutcome.ApprovalNotConfigured => Problem(
+            type: "https://tigercs.internal/problems/approval-not-configured",
+            title: "Approval not configured",
+            detail: "This ticket's request type has no active requirement of this approval type.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        ApprovalMutationOutcome.DuplicateActiveApproval => Problem(
+            type: "https://tigercs.internal/problems/duplicate-active-approval",
+            title: "An active approval of this type already exists",
+            statusCode: StatusCodes.Status409Conflict),
+
+        ApprovalMutationOutcome.ApprovalAlreadyDecided => Problem(
+            type: "https://tigercs.internal/problems/approval-already-decided",
+            title: "Approval already decided",
+            detail: "Decisions are write-once — open a new approval cycle instead.",
+            statusCode: StatusCodes.Status409Conflict),
+
+        ApprovalMutationOutcome.ReasonRequired => Problem(
+            type: "https://tigercs.internal/problems/rejection-reason-required",
+            title: "A rejection requires a reason",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        ApprovalMutationOutcome.InvalidInput => Problem(
+            type: "https://tigercs.internal/problems/invalid-approval-input",
+            title: "Unsupported approval type, decision, or event type",
+            statusCode: StatusCodes.Status400BadRequest),
+
+        ApprovalMutationOutcome.EventAlreadyRecorded => Problem(
+            type: "https://tigercs.internal/problems/workflow-event-already-recorded",
+            title: "This event was already recorded",
+            statusCode: StatusCodes.Status409Conflict),
+
+        ApprovalMutationOutcome.EventNotApplicable => Problem(
+            type: "https://tigercs.internal/problems/workflow-event-not-applicable",
+            title: "This event does not apply in the ticket's current dependency state",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
 
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };

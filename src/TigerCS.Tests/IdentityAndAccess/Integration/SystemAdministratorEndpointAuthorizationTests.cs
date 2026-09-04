@@ -836,9 +836,12 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
 
         // Open -> PendingCustomer is not in the transition table, and an
-        // unassigned Open ticket cannot go InProgress either.
+        // unassigned Open ticket cannot go InProgress either. A reason is
+        // supplied so this exercises the transition table, not the separate
+        // pending-reason-required guard.
         var response = await client.PostAsJsonAsync(
-            $"/api/tickets/{ticket.TicketId}/status", new ChangeStatusRequestDto("PendingCustomer", RowVersionOf(ticket)));
+            $"/api/tickets/{ticket.TicketId}/status",
+            new ChangeStatusRequestDto("PendingCustomer", RowVersionOf(ticket), "Awaiting documents"));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
@@ -969,5 +972,75 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/roles")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,
             (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971500000001", null, true, "1204", null))).StatusCode);
+    }
+
+    /// <summary>Creates a ticket classified with a request type that requires an Accounting-style approval (targeted at its own department, for test simplicity — the admin decides through the override anyway).</summary>
+    private async Task<TicketDetailDto> CreateTicketWithApprovalRequirementAsync(HttpClient client)
+    {
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync(
+            "Collections " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Send Receipts", departmentId);
+        var requestTypeId = await _factory.CreateRequestTypeAsync(
+            "Send Receipts", departmentId, TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType.AccountingApproval);
+
+        var intakeResponse = await client.PostAsJsonAsync(
+            "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "+971509990001", null, false, null, null));
+        intakeResponse.EnsureSuccessStatusCode();
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+
+        var ticketResponse = await client.PostAsJsonAsync(
+            "/api/tickets",
+            new CreateTicketRequestDto(
+                intake!.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Medium, "Send the receipt",
+                RequestTypeId: requestTypeId));
+        Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
+        var created = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+
+        var detailResponse = await client.GetAsync($"/api/tickets/{created!.TicketId}");
+        detailResponse.EnsureSuccessStatusCode();
+        return (await detailResponse.Content.ReadFromJsonAsync<TicketDetailDto>())!;
+    }
+
+    [Fact]
+    public async Task ApprovalWorkflowEndpoints_AuthorizedThroughTheOverride()
+    {
+        // Approval request/decision/cancel/event authorization is target- and
+        // operational-actor-based; the administrator holds none of those and
+        // acts purely through the ADR-0024 override.
+        var (client, _) = await CreateAdministratorAsync();
+
+        // Ticket 1: request -> approve -> view (with the recorded cycle/event).
+        var ticket = await CreateTicketWithApprovalRequirementAsync(client);
+
+        var requestResponse = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/approvals", new RequestApprovalRequestDto("AccountingApproval", "Please approve"));
+        Assert.Equal(HttpStatusCode.OK, requestResponse.StatusCode);
+        var approval = await requestResponse.Content.ReadFromJsonAsync<TicketApprovalDto>();
+
+        var decideResponse = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/approvals/{approval!.TicketApprovalId}/decision",
+            new DecideApprovalRequestDto("Approve", "Verified"));
+        Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
+
+        var eventResponse = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/workflow-events", new RecordWorkflowEventRequestDto("PrerequisitesCompleted"));
+        Assert.Equal(HttpStatusCode.NoContent, eventResponse.StatusCode);
+
+        var viewResponse = await client.GetAsync($"/api/tickets/{ticket.TicketId}/approvals");
+        Assert.Equal(HttpStatusCode.OK, viewResponse.StatusCode);
+        var view = await viewResponse.Content.ReadFromJsonAsync<TicketApprovalsViewDto>();
+        Assert.Contains(view!.Approvals, a => a.Status == "Approved");
+        Assert.Contains(view.Events, e => e.EventType == "ApprovalReceived");
+
+        // Ticket 2: request -> cancellation.
+        var second = await CreateTicketWithApprovalRequirementAsync(client);
+        var secondApproval = await (await client.PostAsJsonAsync(
+                $"/api/tickets/{second.TicketId}/approvals", new RequestApprovalRequestDto("AccountingApproval")))
+            .Content.ReadFromJsonAsync<TicketApprovalDto>();
+        var cancelResponse = await client.PostAsJsonAsync(
+            $"/api/tickets/{second.TicketId}/approvals/{secondApproval!.TicketApprovalId}/cancellation",
+            new CancelApprovalRequestDto("Raised in error"));
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
     }
 }

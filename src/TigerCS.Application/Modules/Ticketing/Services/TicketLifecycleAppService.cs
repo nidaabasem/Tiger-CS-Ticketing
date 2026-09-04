@@ -5,9 +5,11 @@ using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
 
@@ -29,7 +31,10 @@ public sealed class TicketLifecycleAppService(
     IAuditEntryWriter auditWriter,
     SlaBreachProcessor breachProcessor,
     TimeProvider timeProvider,
-    ReopenPolicy reopenPolicy)
+    ReopenPolicy reopenPolicy,
+    ITicketPendingRecordRepository pendingRecordRepository,
+    IRequestTypeRepository requestTypeRepository,
+    IWorkflowTemplateRepository workflowTemplateRepository)
 {
     public async Task<TicketMutationResult> ChangeStatusAsync(
         Guid callerEmployeeId,
@@ -62,6 +67,37 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
 
+        // Workflow/Automation phase 2 — structured pending. Entering a
+        // Pending status always requires a reason (a ticket is never pending
+        // without a recorded why), and, where the ticket carries a request
+        // type, the target Pending kind must be allowed by its workflow
+        // configuration. The configuration can only narrow the existing
+        // status machine — a ticket with no request type keeps the exact
+        // pre-phase-2 behavior.
+        var targetPendingKind = newStatus switch
+        {
+            TicketStatus.PendingCustomer => PendingKind.Customer,
+            TicketStatus.PendingThirdParty => PendingKind.InternalOrThirdParty,
+            _ => (PendingKind?)null
+        };
+
+        if (targetPendingKind is not null)
+        {
+            if (string.IsNullOrWhiteSpace(request.PendingReason))
+            {
+                return TicketMutationResult.Failure(TicketMutationOutcome.PendingReasonRequired);
+            }
+
+            var capabilities = await ResolveCapabilitiesAsync(ticket, cancellationToken);
+            var pendingAllowed = targetPendingKind == PendingKind.Customer
+                ? capabilities?.CanGoPendingCustomer
+                : capabilities?.CanGoPendingInternal;
+            if (pendingAllowed is false)
+            {
+                return TicketMutationResult.Failure(TicketMutationOutcome.NotAllowedForRequestType);
+            }
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -87,15 +123,36 @@ public sealed class TicketLifecycleAppService(
         }
 
         var correlationId = Guid.NewGuid();
+
+        // The pending record and the resume are written in the same
+        // transaction as the status change itself, under the same
+        // correlation id, so "went pending"/"resumed" is one auditable event
+        // with its structured reason — not a status flip plus a detached
+        // note.
+        if (targetPendingKind is { } enteringKind)
+        {
+            await pendingRecordRepository.AddAsync(
+                new TicketPendingRecord(
+                    ticketId, enteringKind, request.PendingReason!, oldStatus, callerEmployeeId, now, correlationId),
+                cancellationToken);
+        }
+        else if (oldStatus is TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty)
+        {
+            var openPending = await pendingRecordRepository.GetOpenAsync(ticketId, cancellationToken);
+            openPending?.Resume(callerEmployeeId, now);
+        }
+
         await statusHistoryRepository.AddAsync(
             new TicketStatusHistory(
                 ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)newStatus,
-                callerEmployeeId, actorIsSystem: false, note: null, correlationId, now),
+                callerEmployeeId, actorIsSystem: false, note: request.PendingReason, correlationId, now),
             cancellationToken);
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "ChangeStatus", "Ticket", ticketId.ToString(),
-            beforeValue: oldStatus.ToString(), afterValue: newStatus.ToString(), correlationId, cancellationToken);
+            beforeValue: oldStatus.ToString(),
+            afterValue: targetPendingKind is not null ? $"{newStatus};PendingReason={request.PendingReason}" : newStatus.ToString(),
+            correlationId, cancellationToken);
 
         try
         {
@@ -170,6 +227,15 @@ public sealed class TicketLifecycleAppService(
         catch (TicketNotEligibleForResolutionException)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForResolution);
+        }
+
+        // Resolving directly out of a Pending status ends that pending
+        // period — the pause window must close so the record never dangles
+        // open on a Resolved ticket.
+        if (oldStatus is TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty)
+        {
+            var openPending = await pendingRecordRepository.GetOpenAsync(ticketId, cancellationToken);
+            openPending?.Resume(callerEmployeeId, now);
         }
 
         await ticketResolutionRepository.AddAsync(
@@ -358,6 +424,16 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
         }
 
+        // Workflow/Automation phase 2 — a request type may switch Reopen off
+        // entirely. This gate only ever narrows: where reopen stays allowed
+        // (or the ticket has no request type), the existing ReopenPolicy
+        // below remains the final enforcement point, exactly as before.
+        var capabilities = await ResolveCapabilitiesAsync(ticket, cancellationToken);
+        if (capabilities is { CanReopen: false })
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotAllowedForRequestType);
+        }
+
         // A Resolved/Closed ticket always has a current resolution; a
         // missing one would be data damage — treated as not eligible rather
         // than crashing, since there is no outcome to archive.
@@ -414,6 +490,29 @@ public sealed class TicketLifecycleAppService(
 
         await transaction.CommitAsync(cancellationToken);
         return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
+    }
+
+    /// <summary>
+    /// The ticket's effective workflow capabilities, or null when the ticket
+    /// carries no request type — null means "no workflow configuration
+    /// applies", never "everything forbidden": enforcement in this service
+    /// only narrows the existing status machine where configuration exists.
+    /// </summary>
+    private async Task<WorkflowCapabilities?> ResolveCapabilitiesAsync(Ticket ticket, CancellationToken cancellationToken)
+    {
+        if (ticket.RequestTypeId is not { } requestTypeId)
+        {
+            return null;
+        }
+
+        var requestType = await requestTypeRepository.GetByIdAsync(requestTypeId, cancellationToken);
+        if (requestType is null)
+        {
+            return null;
+        }
+
+        var template = await workflowTemplateRepository.GetByIdAsync(requestType.WorkflowTemplateId, cancellationToken);
+        return template is null ? null : WorkflowCapabilities.Resolve(template, requestType);
     }
 
     private Task<bool> IsCurrentOwnerOrDepartmentAuthorityAsync(

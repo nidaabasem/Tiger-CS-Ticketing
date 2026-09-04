@@ -97,6 +97,11 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/reconciliation",
         "POST /api/tickets/{ticketId}/notes",
         "GET /api/tickets/{ticketId}/notes",
+        "GET /api/tickets/{ticketId}/approvals",
+        "POST /api/tickets/{ticketId}/approvals",
+        "POST /api/tickets/{ticketId}/approvals/{approvalId}/decision",
+        "POST /api/tickets/{ticketId}/approvals/{approvalId}/cancellation",
+        "POST /api/tickets/{ticketId}/workflow-events",
         "GET /api/tickets/{ticketId}/customer-history",
         "GET /api/tickets/{ticketId}/customer-profile",
 

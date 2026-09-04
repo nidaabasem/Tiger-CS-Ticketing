@@ -37,6 +37,22 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
     public Task<ApiResult<TicketDetailDto>> ChangeStatusAsync(long ticketId, ChangeStatusRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<ChangeStatusRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/status", request, cancellationToken);
 
+    public Task<ApiResult<TicketApprovalsViewDto>> GetApprovalsAsync(long ticketId, CancellationToken cancellationToken) =>
+        GetAsync<TicketApprovalsViewDto>($"api/tickets/{ticketId}/approvals", cancellationToken);
+
+    public Task<ApiResult<TicketApprovalDto>> RequestApprovalAsync(
+        long ticketId, RequestApprovalRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<RequestApprovalRequestDto, TicketApprovalDto>($"api/tickets/{ticketId}/approvals", request, cancellationToken);
+
+    public Task<ApiResult<TicketApprovalDto>> DecideApprovalAsync(
+        long ticketId, long approvalId, DecideApprovalRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<DecideApprovalRequestDto, TicketApprovalDto>(
+            $"api/tickets/{ticketId}/approvals/{approvalId}/decision", request, cancellationToken);
+
+    public Task<ApiResult> RecordWorkflowEventAsync(
+        long ticketId, RecordWorkflowEventRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync($"api/tickets/{ticketId}/workflow-events", request, cancellationToken);
+
     public Task<ApiResult<TicketDetailDto>> ResolveAsync(long ticketId, ResolveTicketRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<ResolveTicketRequestDto, TicketDetailDto>($"api/tickets/{ticketId}/resolution", request, cancellationToken);
 

@@ -33,7 +33,14 @@ public class TicketCreationAppServiceTests
         FakeAuditEntryWriter Audit,
         FakeTicketingUnitOfWork UnitOfWork,
         SlaServiceFixture Sla,
-        FakeOutboxWriter Outbox);
+        FakeOutboxWriter Outbox,
+        FakeRequestTypeRepository RequestTypes,
+        FakeWorkflowTemplateRepository WorkflowTemplates,
+        FakeTicketInteractionRepository Interactions,
+        FakeRequestTypeAssignmentRuleRepository AssignmentRules,
+        FakeDepartmentWorkflowSettingsRepository WorkflowSettings,
+        FakeUserDepartmentAssignmentRepository DepartmentAssignments,
+        FakeTicketAssignmentRepository TicketAssignments);
 
     private static Fixture CreateService()
     {
@@ -60,13 +67,26 @@ public class TicketCreationAppServiceTests
         // so the SLA services are always part of this harness.
         var sla = new SlaServiceFixture(tickets, statusHistory: statusHistory, audit: audit, unitOfWork: unitOfWork);
 
+        var requestTypes = new FakeRequestTypeRepository();
+        var workflowTemplates = new FakeWorkflowTemplateRepository();
+        var interactions = new FakeTicketInteractionRepository();
+        var assignmentRules = new FakeRequestTypeAssignmentRuleRepository();
+        var workflowSettings = new FakeDepartmentWorkflowSettingsRepository();
+        var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
+        var ticketAssignments = new FakeTicketAssignmentRepository();
+        var autoAssignment = new TicketAutoAssignmentService(
+            assignmentRules, workflowSettings, departmentAssignments, ticketAssignments, audit);
+
         var service = new TicketCreationAppService(
             intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
-            tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System);
+            tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System,
+            requestTypes, interactions, autoAssignment);
 
         return new Fixture(
             service, intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
-            tickets, snapshots, statusHistory, audit, unitOfWork, sla, outbox);
+            tickets, snapshots, statusHistory, audit, unitOfWork, sla, outbox,
+            requestTypes, workflowTemplates, interactions, assignmentRules, workflowSettings,
+            departmentAssignments, ticketAssignments);
     }
 
     private static async Task<(TigerCS.Domain.Modules.Ticketing.IntakeRecord Record, Guid AgentId)> SeedIntakeAsync(
@@ -687,5 +707,186 @@ public class TicketCreationAppServiceTests
         Assert.Equal(1, f.UnitOfWork.TransactionsBegun);
         Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
         Assert.Equal(0, f.UnitOfWork.TransactionsRolledBack);
+    }
+
+    // ---- Workflow/Automation phase 2: request type, interaction context, auto-assignment ----
+
+    private TigerCS.Domain.Modules.WorkflowConfiguration.RequestType SeedRequestType(
+        Fixture f, int departmentId, string name = "AC Issue")
+    {
+        var template = f.WorkflowTemplates.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate(
+            "PENDING", "Request With Pending", null, true, true, false));
+        return f.RequestTypes.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.RequestType(
+            departmentId, name, template.WorkflowTemplateId, (byte)PriorityLevel.Medium,
+            allowAgentPriorityChange: false, allowPendingCustomer: true, allowPendingInternal: true, allowReopen: true));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithRequestTypeAndRule_ClassifiesAndAutoAssigns()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var requestType = SeedRequestType(f, department.DepartmentId);
+
+        var acAgent = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new TigerCS.Domain.Modules.IdentityAndAccess.UserDepartmentAssignment(
+            acAgent, department.DepartmentId, isPrimary: true, DateTime.UtcNow, assignedByEmployeeId: null));
+        f.AssignmentRules.Add(TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule.ForSpecificEmployee(
+            requestType.RequestTypeId, acAgent));
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC not cooling",
+                RequestTypeId: requestType.RequestTypeId));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        Assert.Equal(requestType.RequestTypeId, ticket.RequestTypeId);
+        Assert.Equal(acAgent, ticket.CurrentOwnerEmployeeId);
+
+        // The automatic assignment is recorded as a system action.
+        var assignment = Assert.Single(f.TicketAssignments.Added);
+        Assert.Null(assignment.AssigningActorEmployeeId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithRequestTypeButNoRule_StaysInTheDepartmentQueue()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var requestType = SeedRequestType(f, department.DepartmentId);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC not cooling",
+                RequestTypeId: requestType.RequestTypeId));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+        Assert.Empty(f.TicketAssignments.Added);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RequestTypeFromAnotherDepartment_IsRejected()
+    {
+        var f = CreateService();
+        var facilities = f.Departments.AddDepartment("Facility Management", "FM");
+        var collections = f.Departments.AddDepartment("Collections", "COL");
+        var category = f.Categories.Seed(facilities.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+        var foreignRequestType = SeedRequestType(f, collections.DepartmentId, "Send Receipts");
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC not cooling",
+                RequestTypeId: foreignRequestType.RequestTypeId));
+
+        Assert.Equal(TicketCreationOutcome.RequestTypeDepartmentMismatch, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_UnknownRequestType_IsRejected()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC not cooling",
+                RequestTypeId: 999));
+
+        Assert.Equal(TicketCreationOutcome.RequestTypeNotFound, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithGenesysContext_PersistsAGenesysSourcedInteractionContext()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "Complaint",
+                GenesysContext: new TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysInteractionContextDto(
+                    ConversationId: "conv-8842", CalledNumber: "+97142223333",
+                    QueueId: "q-77", QueueName: "CS Main Queue", AgentId: "ga-5", AgentName: "Line Agent")));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        var context = await f.Interactions.GetOriginatingAsync(ticket.TicketId);
+
+        Assert.NotNull(context);
+        Assert.True(context.IsOriginatingInteraction);
+        Assert.Equal(InteractionContextSource.Genesys, context.Source);
+        Assert.Equal("conv-8842", context.GenesysConversationId);
+        Assert.Equal("q-77", context.GenesysQueueId);
+        Assert.Equal(intake.PhoneNumber, context.CustomerPhone);
+        Assert.Equal(intake.ChannelId, context.ChannelId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutGenesysContext_PersistsALocalContext_FaceToFaceStyle()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+
+        // A Face-to-Face walk-in: local channel, phone captured by the agent
+        // (still the CRM/PACT/Tasleeh verification input), no Genesys at all.
+        var agentId = Guid.NewGuid();
+        var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            Channel.FaceToFaceKiosk, "+971500000009", null, false, null, null, agentId, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC issue"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        var context = await f.Interactions.GetOriginatingAsync(ticket.TicketId);
+
+        Assert.NotNull(context);
+        Assert.True(context.IsOriginatingInteraction);
+        Assert.Equal(InteractionContextSource.Ticketing, context.Source);
+        Assert.Equal(Channel.FaceToFaceKiosk, context.ChannelId);
+        Assert.Equal("+971500000009", context.CustomerPhone);
+        Assert.Null(context.GenesysConversationId);
+        Assert.Null(context.GenesysQueueId);
+        Assert.Null(context.CalledNumber);
+    }
+
+    [Fact]
+    public async Task CreateAsync_GenesysContextWithoutConversationId_IsRejected()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "Complaint",
+                GenesysContext: new TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysInteractionContextDto(" ")));
+
+        Assert.Equal(TicketCreationOutcome.GenesysConversationIdRequired, result.Outcome);
+        Assert.Empty(f.Tickets.All);
     }
 }

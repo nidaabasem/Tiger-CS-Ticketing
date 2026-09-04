@@ -47,6 +47,19 @@ public class Ticket
     public byte PriorityId { get; private set; }
 
     /// <summary>
+    /// Workflow/SLA Configuration phase 2 — which configured
+    /// <c>RequestType</c> this ticket follows, resolving its workflow
+    /// template, capabilities, assignment rule, and request-type SLA layer.
+    /// Nullable on purpose: tickets created before this phase (and callers
+    /// that don't yet classify) carry null and keep the exact pre-phase-2
+    /// behavior — workflow capabilities are only enforced when a request
+    /// type is present, never guessed. Set once at creation via
+    /// <see cref="ClassifyRequestType"/>; validation that it belongs to the
+    /// ticket's department is the creating application service's job.
+    /// </summary>
+    public int? RequestTypeId { get; private set; }
+
+    /// <summary>
     /// Business-rule change: the real CRM Buyer Lookup match the agent
     /// selected (<c>GET /api/crm/buyers</c> — phone search only, never a
     /// Unit/Project search). A different identifier space from
@@ -347,6 +360,23 @@ public class Ticket
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
         VerificationStatus = CrmVerificationStatus.Verified;
+    }
+
+    /// <summary>
+    /// Records which configured RequestType this ticket follows — write-once,
+    /// at creation, by the creating application service (the same bare
+    /// state-transition division of responsibility as
+    /// <see cref="ReconcileVerification"/>: department/active validation
+    /// happens before this is called).
+    /// </summary>
+    public void ClassifyRequestType(int requestTypeId)
+    {
+        if (RequestTypeId is not null)
+        {
+            throw new TicketRequestTypeAlreadySetException(TicketId, RequestTypeId.Value);
+        }
+
+        RequestTypeId = requestTypeId;
     }
 
     /// <summary>MVP-API-Contracts.md §3.5 / §2.12 — sets the current owner and appends a superseding <see cref="TicketAssignment"/> row is the caller's job (this method only updates the ticket's own denormalized pointer).</summary>

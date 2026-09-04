@@ -114,5 +114,14 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
             .HasForeignKey(t => t.DuplicateOfTicketId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Workflow/Automation phase 2 — optional request-type classification.
+        // Restrict, not cascade: a request type referenced by tickets is
+        // deactivated, never deleted (same rule as Departments/Categories).
+        builder.HasOne<TigerCS.Domain.Modules.WorkflowConfiguration.RequestType>()
+            .WithMany()
+            .HasForeignKey(t => t.RequestTypeId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

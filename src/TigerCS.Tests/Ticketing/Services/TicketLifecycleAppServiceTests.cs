@@ -20,7 +20,10 @@ public class TicketLifecycleAppServiceTests
         FakeUserDepartmentAssignmentRepository DepartmentAssignments,
         FakeAuditEntryWriter Audit,
         FakeTicketingUnitOfWork UnitOfWork,
-        SlaServiceFixture Sla);
+        SlaServiceFixture Sla,
+        FakeTicketPendingRecordRepository PendingRecords,
+        FakeRequestTypeRepository RequestTypes,
+        FakeWorkflowTemplateRepository WorkflowTemplates);
 
     private static Fixture CreateService(TimeProvider? timeProvider = null, ReopenPolicy? reopenPolicy = null)
     {
@@ -30,6 +33,9 @@ public class TicketLifecycleAppServiceTests
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
+        var pendingRecords = new FakeTicketPendingRecordRepository();
+        var requestTypes = new FakeRequestTypeRepository();
+        var workflowTemplates = new FakeWorkflowTemplateRepository();
 
         // Resolving is the Resolution SLA's achievement event, so this
         // service now finalizes the breach flags through the same processor
@@ -38,9 +44,12 @@ public class TicketLifecycleAppServiceTests
 
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
-            timeProvider ?? TimeProvider.System, reopenPolicy ?? ReopenPolicy.Default);
+            timeProvider ?? TimeProvider.System, reopenPolicy ?? ReopenPolicy.Default,
+            pendingRecords, requestTypes, workflowTemplates);
 
-        return new Fixture(service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla);
+        return new Fixture(
+            service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla,
+            pendingRecords, requestTypes, workflowTemplates);
     }
 
     private static async Task<Ticket> SeedInProgressTicketAsync(FakeTicketRepository repo, Guid ownerEmployeeId, int departmentId = 2)
@@ -63,7 +72,7 @@ public class TicketLifecycleAppServiceTests
 
         var result = await f.Service.ChangeStatusAsync(
             owner, [Roles.DepartmentEmployee], ticket.TicketId,
-            new ChangeStatusRequestDto("PendingCustomer", []));
+            new ChangeStatusRequestDto("PendingCustomer", [], PendingReason: "Awaiting customer documents"));
 
         Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
         Assert.Equal(TicketStatus.PendingCustomer, ticket.TicketStatus);

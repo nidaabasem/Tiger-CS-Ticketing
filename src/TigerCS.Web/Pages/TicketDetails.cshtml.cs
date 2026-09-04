@@ -41,6 +41,9 @@ public sealed class TicketDetailsModel(
     /// successful "no previous tickets" result. Never a live CRM call.
     /// </summary>
     public CustomerHistoryDto? CustomerHistory { get; private set; }
+
+    /// <summary>Approvals / Dependencies (Workflow/Automation phase 3) — cycles, requestable requirements, and the derived maintenance/prerequisite states. Null when the call failed; a view with empty lists is the normal "nothing configured" result and renders no section.</summary>
+    public TicketApprovalsViewDto? Approvals { get; private set; }
     public string? DepartmentName { get; private set; }
     public string? OwnerName { get; private set; }
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
@@ -62,6 +65,9 @@ public sealed class TicketDetailsModel(
     [BindProperty] public ReopenInput Reopen { get; set; } = new();
     [BindProperty] public EscalateInput Escalate { get; set; } = new();
     [BindProperty] public NoteInput Note { get; set; } = new();
+    [BindProperty] public ApprovalRequestInput ApprovalRequest { get; set; } = new();
+    [BindProperty] public ApprovalDecisionInput ApprovalDecision { get; set; } = new();
+    [BindProperty] public WorkflowEventInput WorkflowEvent { get; set; } = new();
 
     public async Task<IActionResult> OnGetAsync(long id, int? reopen, CancellationToken cancellationToken)
     {
@@ -115,8 +121,54 @@ public sealed class TicketDetailsModel(
             return await ReloadWithErrorAsync("status", "Could not read the ticket's current version. Reloading.", cancellationToken);
         }
 
-        var result = await ticketsApiClient.ChangeStatusAsync(id, new ChangeStatusRequestDto(Status.NewStatus, rowVersion), cancellationToken);
+        // The pending reason travels with the status change (required by the
+        // API for either Pending target since the structured-pending phase).
+        var result = await ticketsApiClient.ChangeStatusAsync(
+            id, new ChangeStatusRequestDto(Status.NewStatus, rowVersion, Status.PendingReason), cancellationToken);
         return await HandleMutationAsync(result, "status", "Status updated.", cancellationToken);
+    }
+
+    public async Task<IActionResult> OnPostRequestApprovalAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        var result = await ticketsApiClient.RequestApprovalAsync(
+            id, new RequestApprovalRequestDto(ApprovalRequest.ApprovalType, ApprovalRequest.Comment), cancellationToken);
+        return await HandleApprovalActionAsync(result.IsSuccess, result.Outcome, result.Detail, "Approval requested.", cancellationToken);
+    }
+
+    public async Task<IActionResult> OnPostDecideApprovalAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        var result = await ticketsApiClient.DecideApprovalAsync(
+            id, ApprovalDecision.ApprovalId,
+            new DecideApprovalRequestDto(ApprovalDecision.Decision, ApprovalDecision.Comment), cancellationToken);
+        var message = string.Equals(ApprovalDecision.Decision, "Reject", StringComparison.OrdinalIgnoreCase)
+            ? "Approval rejected."
+            : "Approval granted.";
+        return await HandleApprovalActionAsync(result.IsSuccess, result.Outcome, result.Detail, message, cancellationToken);
+    }
+
+    public async Task<IActionResult> OnPostRecordEventAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        var result = await ticketsApiClient.RecordWorkflowEventAsync(
+            id, new RecordWorkflowEventRequestDto(WorkflowEvent.EventType, WorkflowEvent.Note), cancellationToken);
+        return await HandleApprovalActionAsync(result.IsSuccess, result.Outcome, result.Detail, "Recorded.", cancellationToken);
+    }
+
+    private async Task<IActionResult> HandleApprovalActionAsync(
+        bool isSuccess, ApiOutcome outcome, string? detail, string successMessage, CancellationToken cancellationToken)
+    {
+        if (isSuccess)
+        {
+            ActionSuccess = successMessage;
+            return RedirectToPage(new { id = TicketId });
+        }
+
+        ActionError = DescribeError(outcome, detail);
+        OpenSection = "approvals";
+        await LoadAsync(cancellationToken);
+        return Page();
     }
 
     public async Task<IActionResult> OnPostResolveAsync(long id, CancellationToken cancellationToken)
@@ -284,9 +336,11 @@ public sealed class TicketDetailsModel(
         var escalationsTask = slaApiClient.GetEscalationsAsync(TicketId, cancellationToken);
         var assignableTask = usersApiClient.GetDepartmentUsersAsync(Ticket.CurrentDepartmentId, 1, 100, cancellationToken);
         var customerHistoryTask = ticketsApiClient.GetCustomerHistoryAsync(TicketId, limit: 10, cancellationToken);
+        var approvalsTask = ticketsApiClient.GetApprovalsAsync(TicketId, cancellationToken);
 
-        await Task.WhenAll(slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask);
+        await Task.WhenAll(slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask, approvalsTask);
 
+        Approvals = approvalsTask.Result.IsSuccess ? approvalsTask.Result.Value : null;
         Sla = slaTask.Result.IsSuccess ? slaTask.Result.Value : null;
         Notes = notesTask.Result.IsSuccess && notesTask.Result.Value is not null ? notesTask.Result.Value.Items : [];
         Escalations = escalationsTask.Result.IsSuccess && escalationsTask.Result.Value is not null ? escalationsTask.Result.Value : [];
@@ -369,6 +423,9 @@ public sealed class TicketDetailsModel(
         [Required]
         public string NewStatus { get; set; } = "Open";
         public string? RowVersionBase64 { get; set; }
+
+        /// <summary>Required by the API when NewStatus is PendingCustomer/PendingThirdParty — a ticket is never pending without a recorded why.</summary>
+        public string? PendingReason { get; set; }
     }
 
     public sealed class ResolveInput
@@ -404,5 +461,26 @@ public sealed class TicketDetailsModel(
     public sealed class NoteInput
     {
         public string NoteText { get; set; } = string.Empty;
+    }
+
+    public sealed class ApprovalRequestInput
+    {
+        public string ApprovalType { get; set; } = string.Empty;
+        public string? Comment { get; set; }
+    }
+
+    public sealed class ApprovalDecisionInput
+    {
+        public long ApprovalId { get; set; }
+        public string Decision { get; set; } = "Approve";
+
+        /// <summary>Optional on approval; the API requires it on rejection.</summary>
+        public string? Comment { get; set; }
+    }
+
+    public sealed class WorkflowEventInput
+    {
+        public string EventType { get; set; } = string.Empty;
+        public string? Note { get; set; }
     }
 }

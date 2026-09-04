@@ -3,6 +3,7 @@ using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -19,7 +20,8 @@ public sealed class TicketAssignmentAppService(
     IDepartmentRepository departmentRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository)
 {
     /// <summary>
     /// PR correction — the caller's role alone decides Assign authority now;
@@ -57,6 +59,23 @@ public sealed class TicketAssignmentAppService(
         if (ticket.TicketStatus == TicketStatus.Closed)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+
+        // Workflow/Automation phase 2 — department workflow settings can
+        // only NARROW what the role sets above already allow (fail-safe
+        // rule: a provisional "allowed" seed never grants anything; existing
+        // approved authorization stays authoritative). A department with no
+        // settings row behaves exactly as before.
+        var settings = await departmentWorkflowSettingsRepository.GetByDepartmentIdAsync(
+            ticket.CurrentDepartmentId, cancellationToken);
+        if (settings is { AllowAssignment: false })
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.DisabledByDepartmentSettings);
+        }
+
+        if (ticket.CurrentOwnerEmployeeId is not null && settings is { AllowInternalReassignment: false })
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.DisabledByDepartmentSettings);
         }
 
         // MVP-API-Contracts.md §3.5's own validation: AssignedEmployeeId
@@ -131,6 +150,17 @@ public sealed class TicketAssignmentAppService(
         if (request.TargetDepartmentId == ticket.CurrentDepartmentId)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.AlreadyInTargetDepartment);
+        }
+
+        // Workflow/Automation phase 2 — same narrowing-only rule as
+        // AssignAsync: the SOURCE department's settings may disable
+        // transferring tickets out of it; nothing here widens the CS-Manager
+        // role gate above.
+        var sourceSettings = await departmentWorkflowSettingsRepository.GetByDepartmentIdAsync(
+            ticket.CurrentDepartmentId, cancellationToken);
+        if (sourceSettings is { AllowTransferToOtherDepartments: false })
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.DisabledByDepartmentSettings);
         }
 
         var targetDepartment = await departmentRepository.GetByIdAsync(request.TargetDepartmentId, cancellationToken);

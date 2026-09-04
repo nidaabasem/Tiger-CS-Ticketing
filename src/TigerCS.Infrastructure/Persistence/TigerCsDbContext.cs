@@ -8,6 +8,7 @@ using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Notifications;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Domain.Modules.WorkflowConfiguration;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.ClassificationAndRouting.Configurations;
@@ -16,6 +17,7 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Configurations;
 using TigerCS.Infrastructure.Modules.Notifications.Configurations;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Configurations;
 using TigerCS.Infrastructure.Modules.Ticketing.Configurations;
+using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Configurations;
 using TigerCS.Infrastructure.Persistence.Configurations;
 
 namespace TigerCS.Infrastructure.Persistence;
@@ -96,6 +98,30 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<Notification> Notifications => Set<Notification>();
 
+    public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
+
+    public DbSet<WorkflowTemplateStep> WorkflowTemplateSteps => Set<WorkflowTemplateStep>();
+
+    public DbSet<RequestType> RequestTypes => Set<RequestType>();
+
+    public DbSet<RequestTypeSlaPolicy> RequestTypeSlaPolicies => Set<RequestTypeSlaPolicy>();
+
+    public DbSet<DepartmentWorkflowSettings> DepartmentWorkflowSettings => Set<DepartmentWorkflowSettings>();
+
+    public DbSet<RequestTypeAssignmentRule> RequestTypeAssignmentRules => Set<RequestTypeAssignmentRule>();
+
+    public DbSet<RequestTypeAssignmentRuleMember> RequestTypeAssignmentRuleMembers => Set<RequestTypeAssignmentRuleMember>();
+
+    public DbSet<TicketPendingRecord> TicketPendingRecords => Set<TicketPendingRecord>();
+
+    public DbSet<TicketInteraction> TicketInteractions => Set<TicketInteraction>();
+
+    public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
+
+    public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
+
+    public DbSet<RequestTypeApprovalRequirement> RequestTypeApprovalRequirements => Set<RequestTypeApprovalRequirement>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -131,6 +157,19 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new IdempotencyRecordConfiguration());
         builder.ApplyConfiguration(new OutboxMessageConfiguration());
         builder.ApplyConfiguration(new NotificationConfiguration());
+
+        builder.ApplyConfiguration(new WorkflowTemplateConfiguration());
+        builder.ApplyConfiguration(new WorkflowTemplateStepConfiguration());
+        builder.ApplyConfiguration(new RequestTypeConfiguration());
+        builder.ApplyConfiguration(new RequestTypeSlaPolicyConfiguration());
+        builder.ApplyConfiguration(new DepartmentWorkflowSettingsConfiguration());
+        builder.ApplyConfiguration(new RequestTypeAssignmentRuleConfiguration());
+        builder.ApplyConfiguration(new RequestTypeAssignmentRuleMemberConfiguration());
+        builder.ApplyConfiguration(new TicketPendingRecordConfiguration());
+        builder.ApplyConfiguration(new TicketInteractionConfiguration());
+        builder.ApplyConfiguration(new TicketApprovalConfiguration());
+        builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
+        builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a
