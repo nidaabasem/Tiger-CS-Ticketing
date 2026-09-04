@@ -61,7 +61,7 @@ public sealed class TicketCreationAppService(
     SlaDueDateService slaDueDateService,
     TimeProvider timeProvider,
     IRequestTypeRepository requestTypeRepository,
-    ITicketInteractionContextRepository interactionContextRepository,
+    ITicketInteractionRepository interactionRepository,
     TicketAutoAssignmentService autoAssignmentService)
 {
     public async Task<TicketCreationResult> CreateAsync(
@@ -255,21 +255,25 @@ public sealed class TicketCreationAppService(
 
         var correlationId = Guid.NewGuid();
 
-        // Workflow/Automation phase 2 — persist the interaction context the
-        // ticket was created from. Channel and customer phone come from the
-        // intake record (the phone stays the verification identity input);
-        // a supplied Genesys context marks the row Genesys-sourced and is
-        // stored verbatim for traceability — Ticketing never re-derives
-        // routing from it. Face-to-Face and every other locally-created
-        // interaction records a Ticketing-sourced row with all Genesys
-        // fields null.
-        var interactionContext = request.GenesysContext is { } genesys
-            ? TicketInteractionContext.CreateFromGenesys(
+        // Workflow/Automation phase 2 — record the ORIGINATING interaction
+        // the ticket was created from (a ticket accumulates further
+        // interaction rows over its lifetime; this first one carries
+        // IsOriginatingInteraction). Channel and customer phone come from
+        // the intake record (the phone stays the verification identity
+        // input); a supplied Genesys context marks the row Genesys-sourced
+        // and is stored verbatim for traceability — Ticketing never
+        // re-derives routing from it. Face-to-Face and every other
+        // locally-created interaction records a Ticketing-sourced row with
+        // all Genesys fields null.
+        var originatingInteraction = request.GenesysContext is { } genesys
+            ? TicketInteraction.CreateFromGenesys(
                 ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber,
                 genesys.ConversationId, genesys.CalledNumber, genesys.QueueId, genesys.QueueName,
-                genesys.AgentId, genesys.AgentName, genesys.InteractionStartedAtUtc, genesys.Direction, now)
-            : TicketInteractionContext.CreateLocal(ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now);
-        await interactionContextRepository.AddAsync(interactionContext, cancellationToken);
+                genesys.AgentId, genesys.AgentName, genesys.InteractionStartedAtUtc, genesys.Direction, now,
+                isOriginatingInteraction: true)
+            : TicketInteraction.CreateLocal(
+                ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now, isOriginatingInteraction: true);
+        await interactionRepository.AddAsync(originatingInteraction, cancellationToken);
 
         // Workflow/Automation phase 2 — Department + Request Type resolve
         // the configured assignment rule; no rule (or any invalid target)

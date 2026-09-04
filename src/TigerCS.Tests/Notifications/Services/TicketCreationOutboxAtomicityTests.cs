@@ -58,7 +58,7 @@ public class TicketCreationOutboxAtomicityTests
         var service = new TicketCreationAppService(
             intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
             tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System,
-            new FakeRequestTypeRepository(), new FakeTicketInteractionContextRepository(), autoAssignment);
+            new FakeRequestTypeRepository(), new FakeTicketInteractionRepository(), autoAssignment);
 
         return new Fixture(service, intakeRecords, unitReferences, contactReferences, categories, departments, tickets, audit, unitOfWork, outbox);
     }

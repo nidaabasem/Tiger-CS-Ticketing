@@ -14,10 +14,19 @@ public interface ITicketPendingRecordRepository
     Task AddAsync(TicketPendingRecord record, CancellationToken cancellationToken = default);
 }
 
-/// <summary>The interaction context a ticket was created from (Workflow/Automation phase 2) — at most one row per ticket, write-once.</summary>
-public interface ITicketInteractionContextRepository
+/// <summary>
+/// A ticket's customer interactions (Workflow/Automation phase 2, hardened
+/// to one-to-many pre-phase-3) — append-only; a ticket accumulates
+/// interactions over its lifetime, exactly one of which is the originating
+/// one.
+/// </summary>
+public interface ITicketInteractionRepository
 {
-    Task<TicketInteractionContext?> GetByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default);
+    /// <summary>The interaction the ticket was created from, or null for tickets predating this model.</summary>
+    Task<TicketInteraction?> GetOriginatingAsync(long ticketId, CancellationToken cancellationToken = default);
 
-    Task AddAsync(TicketInteractionContext context, CancellationToken cancellationToken = default);
+    /// <summary>All of a ticket's interactions, oldest first.</summary>
+    Task<IReadOnlyList<TicketInteraction>> ListByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default);
+
+    Task AddAsync(TicketInteraction interaction, CancellationToken cancellationToken = default);
 }

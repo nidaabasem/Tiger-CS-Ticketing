@@ -36,7 +36,7 @@ public class TicketCreationAppServiceTests
         FakeOutboxWriter Outbox,
         FakeRequestTypeRepository RequestTypes,
         FakeWorkflowTemplateRepository WorkflowTemplates,
-        FakeTicketInteractionContextRepository InteractionContexts,
+        FakeTicketInteractionRepository Interactions,
         FakeRequestTypeAssignmentRuleRepository AssignmentRules,
         FakeDepartmentWorkflowSettingsRepository WorkflowSettings,
         FakeUserDepartmentAssignmentRepository DepartmentAssignments,
@@ -69,7 +69,7 @@ public class TicketCreationAppServiceTests
 
         var requestTypes = new FakeRequestTypeRepository();
         var workflowTemplates = new FakeWorkflowTemplateRepository();
-        var interactionContexts = new FakeTicketInteractionContextRepository();
+        var interactions = new FakeTicketInteractionRepository();
         var assignmentRules = new FakeRequestTypeAssignmentRuleRepository();
         var workflowSettings = new FakeDepartmentWorkflowSettingsRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
@@ -80,12 +80,12 @@ public class TicketCreationAppServiceTests
         var service = new TicketCreationAppService(
             intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
             tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System,
-            requestTypes, interactionContexts, autoAssignment);
+            requestTypes, interactions, autoAssignment);
 
         return new Fixture(
             service, intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
             tickets, snapshots, statusHistory, audit, unitOfWork, sla, outbox,
-            requestTypes, workflowTemplates, interactionContexts, assignmentRules, workflowSettings,
+            requestTypes, workflowTemplates, interactions, assignmentRules, workflowSettings,
             departmentAssignments, ticketAssignments);
     }
 
@@ -829,9 +829,10 @@ public class TicketCreationAppServiceTests
 
         Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
         var ticket = Assert.Single(f.Tickets.All);
-        var context = await f.InteractionContexts.GetByTicketIdAsync(ticket.TicketId);
+        var context = await f.Interactions.GetOriginatingAsync(ticket.TicketId);
 
         Assert.NotNull(context);
+        Assert.True(context.IsOriginatingInteraction);
         Assert.Equal(InteractionContextSource.Genesys, context.Source);
         Assert.Equal("conv-8842", context.GenesysConversationId);
         Assert.Equal("q-77", context.GenesysQueueId);
@@ -859,9 +860,10 @@ public class TicketCreationAppServiceTests
 
         Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
         var ticket = Assert.Single(f.Tickets.All);
-        var context = await f.InteractionContexts.GetByTicketIdAsync(ticket.TicketId);
+        var context = await f.Interactions.GetOriginatingAsync(ticket.TicketId);
 
         Assert.NotNull(context);
+        Assert.True(context.IsOriginatingInteraction);
         Assert.Equal(InteractionContextSource.Ticketing, context.Source);
         Assert.Equal(Channel.FaceToFaceKiosk, context.ChannelId);
         Assert.Equal("+971500000009", context.CustomerPhone);

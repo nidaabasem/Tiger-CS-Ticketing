@@ -217,7 +217,7 @@ public static class InfrastructureServiceCollectionExtensions
         // Ticketing persists).
         services.AddScoped<IRequestTypeAssignmentRuleRepository, RequestTypeAssignmentRuleRepository>();
         services.AddScoped<ITicketPendingRecordRepository, TicketPendingRecordRepository>();
-        services.AddScoped<ITicketInteractionContextRepository, TicketInteractionContextRepository>();
+        services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
 
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,

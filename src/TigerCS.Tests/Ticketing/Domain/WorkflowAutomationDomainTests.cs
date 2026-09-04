@@ -18,7 +18,7 @@ public class WorkflowAutomationDomainTests
     [Fact]
     public void GenesysContext_CanCarryTheFullInteractionContext()
     {
-        var context = TicketInteractionContext.CreateFromGenesys(
+        var context = TicketInteraction.CreateFromGenesys(
             ticketId: 1, Channel.Phone, "+971500000001",
             genesysConversationId: "conv-8842", calledNumber: "+97142223333",
             genesysQueueId: "q-77", genesysQueueName: "CS Main Queue",
@@ -38,7 +38,7 @@ public class WorkflowAutomationDomainTests
     {
         // The exact Genesys contract is not finalized — only the
         // conversation id (the traceability link) is mandatory.
-        var context = TicketInteractionContext.CreateFromGenesys(
+        var context = TicketInteraction.CreateFromGenesys(
             ticketId: 1, Channel.Phone, "+971500000001",
             genesysConversationId: "conv-1", calledNumber: null,
             genesysQueueId: null, genesysQueueName: null,
@@ -50,7 +50,7 @@ public class WorkflowAutomationDomainTests
         Assert.Null(context.GenesysAgentId);
         Assert.Null(context.CalledNumber);
 
-        Assert.Throws<ArgumentException>(() => TicketInteractionContext.CreateFromGenesys(
+        Assert.Throws<ArgumentException>(() => TicketInteraction.CreateFromGenesys(
             1, Channel.Phone, "+971500000001",
             genesysConversationId: " ", null, null, null, null, null, null, null, Now));
     }
@@ -58,7 +58,7 @@ public class WorkflowAutomationDomainTests
     [Fact]
     public void FaceToFaceContext_NeverCarriesGenesysFields_ButStillRequiresCustomerPhone()
     {
-        var context = TicketInteractionContext.CreateLocal(1, Channel.FaceToFaceKiosk, "+971500000001", Now);
+        var context = TicketInteraction.CreateLocal(1, Channel.FaceToFaceKiosk, "+971500000001", Now);
 
         Assert.Equal(InteractionContextSource.Ticketing, context.Source);
         Assert.Equal(Channel.FaceToFaceKiosk, context.ChannelId);
@@ -72,7 +72,37 @@ public class WorkflowAutomationDomainTests
 
         // The phone stays mandatory — it is the CRM/PACT/Tasleeh
         // verification identity input, Genesys or not.
-        Assert.Throws<ArgumentException>(() => TicketInteractionContext.CreateLocal(1, Channel.FaceToFaceKiosk, " ", Now));
+        Assert.Throws<ArgumentException>(() => TicketInteraction.CreateLocal(1, Channel.FaceToFaceKiosk, " ", Now));
+    }
+
+    [Fact]
+    public async Task ATicket_AccumulatesManyInteractions_WithExactlyOneOriginating()
+    {
+        var repo = new Fakes.FakeTicketInteractionRepository();
+
+        // The originating inbound call, a follow-up inbound Genesys call,
+        // and a Face-to-Face follow-up — three independent rows on one
+        // ticket, each retaining its own context.
+        await repo.AddAsync(TicketInteraction.CreateFromGenesys(
+            1, Channel.Phone, "+971500000001", "conv-1", null, "q-1", null, null, null, null, "Inbound",
+            Now, isOriginatingInteraction: true));
+        await repo.AddAsync(TicketInteraction.CreateFromGenesys(
+            1, Channel.Phone, "+971500000001", "conv-2", null, "q-1", null, null, null, null, "Inbound",
+            Now.AddDays(1)));
+        await repo.AddAsync(TicketInteraction.CreateLocal(1, Channel.FaceToFaceKiosk, "+971500000001", Now.AddDays(2)));
+
+        var interactions = await repo.ListByTicketIdAsync(1);
+        Assert.Equal(3, interactions.Count);
+        Assert.Equal(["conv-1", "conv-2", null], interactions.Select(i => i.GenesysConversationId));
+
+        var originating = await repo.GetOriginatingAsync(1);
+        Assert.NotNull(originating);
+        Assert.Equal("conv-1", originating.GenesysConversationId);
+
+        // At most one originating interaction per ticket — the fake mirrors
+        // the database's filtered unique index.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repo.AddAsync(
+            TicketInteraction.CreateLocal(1, Channel.Phone, "+971500000001", Now.AddDays(3), isOriginatingInteraction: true)));
     }
 
     // ---- Request-type classification ----

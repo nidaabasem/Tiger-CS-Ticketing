@@ -1,13 +1,26 @@
 namespace TigerCS.Domain.Modules.Ticketing;
 
 /// <summary>
-/// The interaction context a ticket was created from — one optional row per
-/// ticket (Workflow/Automation phase 2), persisted for audit, history,
-/// reporting, and Ticket ↔ Genesys conversation traceability. This is a
-/// <b>record of what Genesys (or the agent) said</b>, never routing logic:
-/// Ticketing does not reproduce Called Number → Queue mapping, and none of
-/// this data drives department routing inside Ticketing (Category/Request
-/// Type do that, exactly as before).
+/// One customer interaction associated with a ticket — a ticket accumulates
+/// <b>many</b> of these over its lifetime (the original inbound Genesys
+/// call, a follow-up inbound call, an outbound call, another Genesys
+/// conversation, a future WhatsApp exchange, a Face-to-Face follow-up), each
+/// independently retaining its source, channel, customer phone, and — where
+/// Genesys handled it — the Genesys context, verbatim. Persisted for audit,
+/// history, reporting, and Ticket ↔ Genesys conversation traceability. This
+/// is a <b>record of what Genesys (or the agent) said</b>, never routing
+/// logic: Ticketing does not reproduce Called Number → Queue mapping, and
+/// none of this data drives department routing inside Ticketing
+/// (Category/Request Type do that, exactly as before).
+///
+/// <para>
+/// <b>Exactly one interaction per ticket is the originating one</b>
+/// (<see cref="IsOriginatingInteraction"/>) — the interaction the ticket
+/// was created from, written by ticket creation in the same transaction. A
+/// filtered unique index enforces at-most-one at the database. Later
+/// interactions (recorded by future phases) are appended with the flag
+/// false and never touch the originating row.
+/// </para>
 ///
 /// <para>
 /// <b>Every Genesys field is nullable by design.</b> The exact Genesys API
@@ -23,23 +36,26 @@ namespace TigerCS.Domain.Modules.Ticketing;
 ///
 /// <para>
 /// <b>CustomerPhone here is the customer's identity input</b> (the number
-/// CRM/PACT/Tasleeh verification searches with, copied from the intake),
-/// distinct from <see cref="CalledNumber"/> — the Tiger number the customer
-/// dialed, meaningful only on the Genesys side. Genesys identifiers are
-/// external identifiers stored as strings, never foreign keys, and are for
+/// CRM/PACT/Tasleeh verification searches with), distinct from
+/// <see cref="CalledNumber"/> — the Tiger number the customer dialed,
+/// meaningful only on the Genesys side. Genesys identifiers are external
+/// identifiers stored as strings, never foreign keys, and are for
 /// audit/support/integration surfaces — not for prominent display in the
 /// main CS UI.
 /// </para>
 /// </summary>
-public class TicketInteractionContext
+public class TicketInteraction
 {
-    /// <summary>Also the primary key — at most one context per ticket.</summary>
+    public long TicketInteractionId { get; private set; }
     public long TicketId { get; private set; }
+
+    /// <summary>True on the one interaction the ticket was created from — at most one per ticket (filtered unique index). Set at construction, never mutated.</summary>
+    public bool IsOriginatingInteraction { get; private set; }
 
     public InteractionContextSource Source { get; private set; }
     public Channel ChannelId { get; private set; }
 
-    /// <summary>The customer's phone number as captured at intake — the identity input for customer verification, preserved here for interaction reporting.</summary>
+    /// <summary>The customer's phone number for this interaction — the identity input for customer verification, preserved per interaction for reporting.</summary>
     public string CustomerPhone { get; private set; } = string.Empty;
 
     /// <summary>The company/destination number the interaction arrived on (Genesys side), or null — never used by Ticketing for routing.</summary>
@@ -57,11 +73,14 @@ public class TicketInteractionContext
     /// <summary>Interaction direction as reported by Genesys (e.g. "Inbound"), where available. Free text until the integration contract fixes an enumeration.</summary>
     public string? Direction { get; private set; }
 
+    /// <summary>When this row was recorded by Ticketing (creation/audit timestamp), as distinct from <see cref="InteractionStartedAtUtc"/> — Genesys' own clock.</summary>
     public DateTime CreatedAtUtc { get; private set; }
 
-    private TicketInteractionContext() { }
+    private TicketInteraction() { }
 
-    private TicketInteractionContext(long ticketId, InteractionContextSource source, Channel channelId, string customerPhone, DateTime createdAtUtc)
+    private TicketInteraction(
+        long ticketId, bool isOriginatingInteraction, InteractionContextSource source,
+        Channel channelId, string customerPhone, DateTime createdAtUtc)
     {
         if (string.IsNullOrWhiteSpace(customerPhone))
         {
@@ -70,22 +89,24 @@ public class TicketInteractionContext
         }
 
         TicketId = ticketId;
+        IsOriginatingInteraction = isOriginatingInteraction;
         Source = source;
         ChannelId = channelId;
         CustomerPhone = customerPhone;
         CreatedAtUtc = createdAtUtc;
     }
 
-    /// <summary>The Face-to-Face / locally-created context: channel and phone the agent entered; every Genesys field stays null, by construction.</summary>
-    public static TicketInteractionContext CreateLocal(long ticketId, Channel channelId, string customerPhone, DateTime createdAtUtc) =>
-        new(ticketId, InteractionContextSource.Ticketing, channelId, customerPhone, createdAtUtc);
+    /// <summary>A Face-to-Face / locally-created interaction: channel and phone the agent entered; every Genesys field stays null, by construction.</summary>
+    public static TicketInteraction CreateLocal(
+        long ticketId, Channel channelId, string customerPhone, DateTime createdAtUtc, bool isOriginatingInteraction = false) =>
+        new(ticketId, isOriginatingInteraction, InteractionContextSource.Ticketing, channelId, customerPhone, createdAtUtc);
 
     /// <summary>
-    /// A Genesys-provided context. Only the conversation id is mandatory —
+    /// A Genesys-provided interaction. Only the conversation id is mandatory —
     /// every other field is optional until the Genesys API contract is
     /// finalized, and absent values are stored as null rather than guessed.
     /// </summary>
-    public static TicketInteractionContext CreateFromGenesys(
+    public static TicketInteraction CreateFromGenesys(
         long ticketId,
         Channel channelId,
         string customerPhone,
@@ -97,16 +118,18 @@ public class TicketInteractionContext
         string? genesysAgentName,
         DateTime? interactionStartedAtUtc,
         string? direction,
-        DateTime createdAtUtc)
+        DateTime createdAtUtc,
+        bool isOriginatingInteraction = false)
     {
         if (string.IsNullOrWhiteSpace(genesysConversationId))
         {
             throw new ArgumentException(
-                "GenesysConversationId is required for a Genesys-sourced context — without it the ticket cannot link back to the interaction.",
+                "GenesysConversationId is required for a Genesys-sourced interaction — without it the row cannot link back to the conversation.",
                 nameof(genesysConversationId));
         }
 
-        var context = new TicketInteractionContext(ticketId, InteractionContextSource.Genesys, channelId, customerPhone, createdAtUtc)
+        return new TicketInteraction(
+            ticketId, isOriginatingInteraction, InteractionContextSource.Genesys, channelId, customerPhone, createdAtUtc)
         {
             GenesysConversationId = genesysConversationId,
             CalledNumber = calledNumber,
@@ -117,6 +140,5 @@ public class TicketInteractionContext
             InteractionStartedAtUtc = interactionStartedAtUtc,
             Direction = direction
         };
-        return context;
     }
 }

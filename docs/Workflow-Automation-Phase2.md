@@ -21,11 +21,16 @@ lifecycle, SLA, escalation). Nothing in this phase re-implements routing:
   — conversation id (required), called number, queue id/name, agent
   id/name, interaction start, direction (all optional). Its XML doc records
   what Genesys is expected to provide later.
-- Ticketing persists the context verbatim in `TicketInteractionContexts`
-  (one optional row per ticket) for audit/history/reporting and
-  Ticket ↔ Genesys conversation traceability — indexed by conversation id,
-  external identifiers stored as strings, never foreign keys, and not for
-  prominent CS-UI display.
+- Ticketing persists the context verbatim in `TicketInteractions` —
+  **one-to-many** (hardened pre-phase-3): a ticket accumulates interactions
+  over its lifetime (original inbound call, follow-up inbound, outbound,
+  another Genesys conversation, future WhatsApp, Face-to-Face follow-up),
+  each row independently retaining source, channel, customer phone, and the
+  nullable Genesys context. Exactly one row per ticket carries
+  `IsOriginatingInteraction` (filtered unique index enforces at-most-one);
+  indexed by TicketId and by GenesysConversationId. External identifiers
+  stored as strings, never foreign keys, and not for prominent CS-UI
+  display.
 - No `Phone Number → Channel → Queue` table exists in Ticketing, and none
   will be added unless business explicitly asks for a fallback.
 - The future reverse direction (Ticketing → Genesys: ticket number/id,

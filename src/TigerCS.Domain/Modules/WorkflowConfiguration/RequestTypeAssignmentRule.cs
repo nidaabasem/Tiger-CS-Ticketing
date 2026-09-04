@@ -24,6 +24,22 @@ namespace TigerCS.Domain.Modules.WorkflowConfiguration;
 /// owner) plus further members as configured participants — never several
 /// ambiguous owners.
 /// </para>
+///
+/// <para>
+/// <b>Extensibility (reviewed pre-phase-3, deliberately not implemented):</b>
+/// today exactly one rule per request type exists (unique index on
+/// RequestTypeId) and the resolver takes only the request type. If the
+/// business later needs conditional routing — e.g. by Project or Priority —
+/// the path is purely additive: nullable condition columns (ProjectId,
+/// PriorityId, …meaning "matches any" when null) plus a specificity/order
+/// column on this same table, the unique index relaxed to cover the
+/// condition columns, and the repository lookup widened to a resolve-by-
+/// context that picks the most specific active match with the
+/// unconditional rule as its fallback. No column here changes meaning, no
+/// data migrates destructively, and <see cref="AssignmentMode"/> values
+/// stay additive — which is why no speculative condition columns are added
+/// now.
+/// </para>
 /// </summary>
 public class RequestTypeAssignmentRule
 {

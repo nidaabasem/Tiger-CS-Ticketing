@@ -29,19 +29,35 @@ public sealed class FakeTicketPendingRecordRepository : ITicketPendingRecordRepo
     }
 }
 
-/// <summary>In-memory interaction-context store — at most one per ticket, like the real table's primary key.</summary>
-public sealed class FakeTicketInteractionContextRepository : ITicketInteractionContextRepository
+/// <summary>In-memory interaction store — many per ticket, mirroring the real table's at-most-one-originating rule.</summary>
+public sealed class FakeTicketInteractionRepository : ITicketInteractionRepository
 {
-    private readonly Dictionary<long, TicketInteractionContext> _contexts = [];
+    private readonly List<TicketInteraction> _interactions = [];
+    private long _nextId = 1;
 
-    public IReadOnlyCollection<TicketInteractionContext> All => _contexts.Values;
+    /// <summary>Test assertion helper — every interaction added so far, in insertion order.</summary>
+    public IReadOnlyList<TicketInteraction> All => _interactions;
 
-    public Task<TicketInteractionContext?> GetByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_contexts.GetValueOrDefault(ticketId));
+    public Task<TicketInteraction?> GetOriginatingAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_interactions.FirstOrDefault(i => i.TicketId == ticketId && i.IsOriginatingInteraction));
 
-    public Task AddAsync(TicketInteractionContext context, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TicketInteraction>> ListByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketInteraction>>(
+            _interactions.Where(i => i.TicketId == ticketId).OrderBy(i => i.CreatedAtUtc).ToList());
+
+    public Task AddAsync(TicketInteraction interaction, CancellationToken cancellationToken = default)
     {
-        _contexts.Add(context.TicketId, context);
+        // Mirror the database's filtered unique index so a test can never
+        // pass while violating the one-originating-per-ticket invariant.
+        if (interaction.IsOriginatingInteraction
+            && _interactions.Any(i => i.TicketId == interaction.TicketId && i.IsOriginatingInteraction))
+        {
+            throw new InvalidOperationException(
+                $"Ticket {interaction.TicketId} already has an originating interaction.");
+        }
+
+        typeof(TicketInteraction).GetProperty(nameof(TicketInteraction.TicketInteractionId))!.SetValue(interaction, _nextId++);
+        _interactions.Add(interaction);
         return Task.CompletedTask;
     }
 }

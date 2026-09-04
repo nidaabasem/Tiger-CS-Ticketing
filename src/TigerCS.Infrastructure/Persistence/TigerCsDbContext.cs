@@ -114,7 +114,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketPendingRecord> TicketPendingRecords => Set<TicketPendingRecord>();
 
-    public DbSet<TicketInteractionContext> TicketInteractionContexts => Set<TicketInteractionContext>();
+    public DbSet<TicketInteraction> TicketInteractions => Set<TicketInteraction>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -160,7 +160,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new RequestTypeAssignmentRuleConfiguration());
         builder.ApplyConfiguration(new RequestTypeAssignmentRuleMemberConfiguration());
         builder.ApplyConfiguration(new TicketPendingRecordConfiguration());
-        builder.ApplyConfiguration(new TicketInteractionContextConfiguration());
+        builder.ApplyConfiguration(new TicketInteractionConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a

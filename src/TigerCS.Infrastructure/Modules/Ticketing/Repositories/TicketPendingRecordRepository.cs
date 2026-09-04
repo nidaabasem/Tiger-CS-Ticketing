@@ -23,11 +23,20 @@ public sealed class TicketPendingRecordRepository(TigerCsDbContext dbContext) : 
         await dbContext.TicketPendingRecords.AddAsync(record, cancellationToken);
 }
 
-public sealed class TicketInteractionContextRepository(TigerCsDbContext dbContext) : ITicketInteractionContextRepository
+public sealed class TicketInteractionRepository(TigerCsDbContext dbContext) : ITicketInteractionRepository
 {
-    public Task<TicketInteractionContext?> GetByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
-        dbContext.TicketInteractionContexts.FirstOrDefaultAsync(c => c.TicketId == ticketId, cancellationToken);
+    public Task<TicketInteraction?> GetOriginatingAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        dbContext.TicketInteractions.FirstOrDefaultAsync(
+            i => i.TicketId == ticketId && i.IsOriginatingInteraction, cancellationToken);
 
-    public async Task AddAsync(TicketInteractionContext context, CancellationToken cancellationToken = default) =>
-        await dbContext.TicketInteractionContexts.AddAsync(context, cancellationToken);
+    public async Task<IReadOnlyList<TicketInteraction>> ListByTicketIdAsync(
+        long ticketId, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketInteractions
+            .Where(i => i.TicketId == ticketId)
+            .OrderBy(i => i.CreatedAtUtc)
+            .ThenBy(i => i.TicketInteractionId)
+            .ToListAsync(cancellationToken);
+
+    public async Task AddAsync(TicketInteraction interaction, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketInteractions.AddAsync(interaction, cancellationToken);
 }
