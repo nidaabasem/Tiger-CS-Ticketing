@@ -19,6 +19,7 @@ public class DepartmentWorkflowSettingsConfiguration : IEntityTypeConfiguration<
         builder.Property(s => s.AllowInternalReassignment).IsRequired();
         builder.Property(s => s.AllowTransferToOtherDepartments).IsRequired();
         builder.Property(s => s.HeadRoleName).HasMaxLength(64).IsRequired();
+        builder.Property(s => s.SupervisorRoleName).HasMaxLength(64).IsRequired();
 
         builder.HasOne<Department>()
             .WithOne()

@@ -18,7 +18,8 @@ public class TicketAssignmentAppServiceTests
         FakeUserDepartmentAssignmentRepository DepartmentAssignments,
         FakeDepartmentRepository Departments,
         FakeAuditEntryWriter Audit,
-        FakeTicketingUnitOfWork UnitOfWork);
+        FakeTicketingUnitOfWork UnitOfWork,
+        FakeDepartmentWorkflowSettingsRepository WorkflowSettings);
 
     private static Fixture CreateService()
     {
@@ -28,11 +29,13 @@ public class TicketAssignmentAppServiceTests
         var departments = new FakeDepartmentRepository();
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
+        var workflowSettings = new FakeDepartmentWorkflowSettingsRepository();
 
         var service = new TicketAssignmentAppService(
-            tickets, assignments, departmentAssignments, departments, unitOfWork, audit, TimeProvider.System);
+            tickets, assignments, departmentAssignments, departments, unitOfWork, audit, TimeProvider.System,
+            workflowSettings);
 
-        return new Fixture(service, tickets, assignments, departmentAssignments, departments, audit, unitOfWork);
+        return new Fixture(service, tickets, assignments, departmentAssignments, departments, audit, unitOfWork, workflowSettings);
     }
 
     private static async Task<Ticket> SeedTicketAsync(FakeTicketRepository repo, int departmentId = 2)
@@ -376,5 +379,90 @@ public class TicketAssignmentAppServiceTests
         Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
         Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
         Assert.DoesNotContain(f.Audit.Written, w => w.Action == "Transfer");
+    }
+
+    // ---- Workflow/Automation phase 2: department workflow settings narrow, never widen ----
+
+    private static (Guid Caller, Guid Target) SeedAuthorizedAssignPair(Fixture f, Ticket ticket)
+    {
+        var caller = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(caller, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(target, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+        return (caller, target);
+    }
+
+    [Fact]
+    public async Task AssignAsync_DepartmentSettingsDisableAssignment_RejectsEvenAnAuthorizedRole()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var (caller, target) = SeedAuthorizedAssignPair(f, ticket);
+        f.WorkflowSettings.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings(
+            ticket.CurrentDepartmentId, allowAssignment: false, allowInternalReassignment: true, allowTransferToOtherDepartments: true));
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.DisabledByDepartmentSettings, result.Outcome);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task AssignAsync_DepartmentSettingsDisableReassignment_FirstAssignmentStillWorks_ReassignmentRejected()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var (caller, target) = SeedAuthorizedAssignPair(f, ticket);
+        f.WorkflowSettings.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings(
+            ticket.CurrentDepartmentId, allowAssignment: true, allowInternalReassignment: false, allowTransferToOtherDepartments: true));
+
+        var first = await f.Service.AssignAsync(
+            caller, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(target, []));
+        Assert.Equal(TicketMutationOutcome.Success, first.Outcome);
+
+        var second = await f.Service.AssignAsync(
+            caller, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(caller, []));
+        Assert.Equal(TicketMutationOutcome.DisabledByDepartmentSettings, second.Outcome);
+        Assert.Equal(target, ticket.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task AssignAsync_NoSettingsRow_BehavesExactlyAsBeforeThePhase()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var (caller, target) = SeedAuthorizedAssignPair(f, ticket);
+
+        var result = await f.Service.AssignAsync(
+            caller, [Roles.CsSupervisor], ticket.TicketId, new AssignTicketRequestDto(target, []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(target, ticket.CurrentOwnerEmployeeId);
+
+        // Manual (re)assignment stays audited with the human actor — never
+        // as a system action.
+        var audit = Assert.Single(f.Audit.Written, w => w.Action == "Assign");
+        Assert.Equal(caller, audit.ActorEmployeeId);
+    }
+
+    [Fact]
+    public async Task TransferAsync_SourceDepartmentSettingsDisableTransferOut_Rejected()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var caller = Guid.NewGuid();
+        var target = f.Departments.AddDepartment("Collections", "COL");
+        f.WorkflowSettings.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.DepartmentWorkflowSettings(
+            ticket.CurrentDepartmentId, allowAssignment: true, allowInternalReassignment: true, allowTransferToOtherDepartments: false));
+
+        var result = await f.Service.TransferAsync(
+            caller, [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(target.DepartmentId, "Belongs to Collections", []));
+
+        Assert.Equal(TicketMutationOutcome.DisabledByDepartmentSettings, result.Outcome);
+        Assert.Equal(ticket.OriginatingDepartmentId, ticket.CurrentDepartmentId);
     }
 }

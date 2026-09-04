@@ -43,6 +43,20 @@ public class DepartmentWorkflowSettings
     /// </summary>
     public string HeadRoleName { get; private set; } = Roles.DepartmentHead;
 
+    /// <summary>
+    /// The role acting as this department's operational supervisor — the
+    /// level between agent/team and department head in the Agent → Supervisor
+    /// → Head → higher-authority escalation ladder. A name from the existing
+    /// fixed <see cref="Roles"/> set; the fixed set has no dedicated
+    /// "Department Supervisor" role, so the provisional default is
+    /// <see cref="Roles.DepartmentHead"/> (the department-scoped supervisory
+    /// authority that exists today) until the business decides whether a
+    /// distinct supervisor role is introduced. Supervisor <i>visibility</i>
+    /// stays governed by the existing department-scoped authorization —
+    /// this configuration never widens it.
+    /// </summary>
+    public string SupervisorRoleName { get; private set; } = Roles.DepartmentHead;
+
     private DepartmentWorkflowSettings() { }
 
     public DepartmentWorkflowSettings(
@@ -50,24 +64,29 @@ public class DepartmentWorkflowSettings
         bool allowAssignment,
         bool allowInternalReassignment,
         bool allowTransferToOtherDepartments,
-        string? headRoleName = null)
+        string? headRoleName = null,
+        string? supervisorRoleName = null)
     {
-        var resolvedHeadRole = headRoleName ?? Roles.DepartmentHead;
-        if (string.IsNullOrWhiteSpace(resolvedHeadRole))
-        {
-            throw new ArgumentException("HeadRoleName is required.", nameof(headRoleName));
-        }
-
-        if (!Roles.All.Contains(resolvedHeadRole))
-        {
-            throw new ArgumentException(
-                $"HeadRoleName '{resolvedHeadRole}' is not one of the fixed roles.", nameof(headRoleName));
-        }
-
         DepartmentId = departmentId;
         AllowAssignment = allowAssignment;
         AllowInternalReassignment = allowInternalReassignment;
         AllowTransferToOtherDepartments = allowTransferToOtherDepartments;
-        HeadRoleName = resolvedHeadRole;
+        HeadRoleName = ValidateRole(headRoleName ?? Roles.DepartmentHead, nameof(headRoleName));
+        SupervisorRoleName = ValidateRole(supervisorRoleName ?? Roles.DepartmentHead, nameof(supervisorRoleName));
+    }
+
+    private static string ValidateRole(string roleName, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(roleName))
+        {
+            throw new ArgumentException("A role name is required.", parameterName);
+        }
+
+        if (!Roles.All.Contains(roleName))
+        {
+            throw new ArgumentException($"Role '{roleName}' is not one of the fixed roles.", parameterName);
+        }
+
+        return roleName;
     }
 }

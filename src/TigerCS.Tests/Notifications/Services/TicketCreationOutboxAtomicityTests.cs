@@ -49,9 +49,16 @@ public class TicketCreationOutboxAtomicityTests
 
         var sla = new SlaServiceFixture(tickets, statusHistory: statusHistory, audit: audit, unitOfWork: unitOfWork);
 
+        var assignmentRules = new FakeRequestTypeAssignmentRuleRepository();
+        var workflowSettings = new FakeDepartmentWorkflowSettingsRepository();
+        var autoAssignment = new TicketAutoAssignmentService(
+            assignmentRules, workflowSettings, new FakeUserDepartmentAssignmentRepository(),
+            new FakeTicketAssignmentRepository(), audit);
+
         var service = new TicketCreationAppService(
             intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
-            tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System);
+            tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System,
+            new FakeRequestTypeRepository(), new FakeTicketInteractionContextRepository(), autoAssignment);
 
         return new Fixture(service, intakeRecords, unitReferences, contactReferences, categories, departments, tickets, audit, unitOfWork, outbox);
     }

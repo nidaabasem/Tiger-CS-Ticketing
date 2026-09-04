@@ -50,3 +50,11 @@ public sealed class DepartmentWorkflowSettingsRepository(TigerCsDbContext dbCont
         int departmentId, CancellationToken cancellationToken = default) =>
         dbContext.DepartmentWorkflowSettings.FirstOrDefaultAsync(s => s.DepartmentId == departmentId, cancellationToken);
 }
+
+public sealed class RequestTypeAssignmentRuleRepository(TigerCsDbContext dbContext) : IRequestTypeAssignmentRuleRepository
+{
+    // Members are AutoInclude'd by the rule's configuration.
+    public Task<RequestTypeAssignmentRule?> GetByRequestTypeIdAsync(
+        int requestTypeId, CancellationToken cancellationToken = default) =>
+        dbContext.RequestTypeAssignmentRules.FirstOrDefaultAsync(r => r.RequestTypeId == requestTypeId, cancellationToken);
+}

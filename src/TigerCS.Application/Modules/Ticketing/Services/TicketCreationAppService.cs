@@ -6,10 +6,12 @@ using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
 
@@ -57,7 +59,10 @@ public sealed class TicketCreationAppService(
     IAuditEntryWriter auditWriter,
     IOutboxWriter outboxWriter,
     SlaDueDateService slaDueDateService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IRequestTypeRepository requestTypeRepository,
+    ITicketInteractionContextRepository interactionContextRepository,
+    TicketAutoAssignmentService autoAssignmentService)
 {
     public async Task<TicketCreationResult> CreateAsync(
         Guid callerEmployeeId, CreateTicketRequestDto request, CancellationToken cancellationToken = default)
@@ -154,6 +159,32 @@ public sealed class TicketCreationAppService(
         var category = routing.Category!;
         var priority = routing.Priority!;
         var department = routing.Department!;
+
+        // Workflow/Automation phase 2 — optional request-type classification.
+        // When supplied it must be an active request type of the department
+        // the ticket routes to (request types are never offered across
+        // departments); when absent, everything below behaves exactly as
+        // before this phase.
+        RequestType? requestType = null;
+        if (request.RequestTypeId is { } requestTypeId)
+        {
+            requestType = await requestTypeRepository.GetByIdAsync(requestTypeId, cancellationToken);
+            if (requestType is null || !requestType.IsActive)
+            {
+                return TicketCreationResult.Failure(TicketCreationOutcome.RequestTypeNotFound);
+            }
+
+            if (requestType.DepartmentId != category.DepartmentId)
+            {
+                return TicketCreationResult.Failure(TicketCreationOutcome.RequestTypeDepartmentMismatch);
+            }
+        }
+
+        if (request.GenesysContext is { } genesysContext && string.IsNullOrWhiteSpace(genesysContext.ConversationId))
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.GenesysConversationIdRequired);
+        }
+
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
@@ -181,6 +212,11 @@ public sealed class TicketCreationAppService(
                     ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now,
                     request.ManualProjectName, request.ManualUnitNumber)
             };
+
+            if (requestType is not null)
+            {
+                ticket.ClassifyRequestType(requestType.RequestTypeId);
+            }
 
             await ticketRepository.AddAsync(ticket, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -218,6 +254,29 @@ public sealed class TicketCreationAppService(
         await SeedStatusHistoryAsync(ticket, callerEmployeeId, now, cancellationToken);
 
         var correlationId = Guid.NewGuid();
+
+        // Workflow/Automation phase 2 — persist the interaction context the
+        // ticket was created from. Channel and customer phone come from the
+        // intake record (the phone stays the verification identity input);
+        // a supplied Genesys context marks the row Genesys-sourced and is
+        // stored verbatim for traceability — Ticketing never re-derives
+        // routing from it. Face-to-Face and every other locally-created
+        // interaction records a Ticketing-sourced row with all Genesys
+        // fields null.
+        var interactionContext = request.GenesysContext is { } genesys
+            ? TicketInteractionContext.CreateFromGenesys(
+                ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber,
+                genesys.ConversationId, genesys.CalledNumber, genesys.QueueId, genesys.QueueName,
+                genesys.AgentId, genesys.AgentName, genesys.InteractionStartedAtUtc, genesys.Direction, now)
+            : TicketInteractionContext.CreateLocal(ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now);
+        await interactionContextRepository.AddAsync(interactionContext, cancellationToken);
+
+        // Workflow/Automation phase 2 — Department + Request Type resolve
+        // the configured assignment rule; no rule (or any invalid target)
+        // leaves the ticket in the department queue, audited as a system
+        // action. Runs in this same transaction, before the SLA period and
+        // creation audit commit with it.
+        await autoAssignmentService.ApplyAsync(ticket, now, correlationId, cancellationToken);
 
         // Backlog S-08's corrected acceptance criterion: ticket creation
         // opens the ticket's initial TicketSlaInstances row with computed due

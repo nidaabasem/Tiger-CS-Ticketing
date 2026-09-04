@@ -108,6 +108,14 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<DepartmentWorkflowSettings> DepartmentWorkflowSettings => Set<DepartmentWorkflowSettings>();
 
+    public DbSet<RequestTypeAssignmentRule> RequestTypeAssignmentRules => Set<RequestTypeAssignmentRule>();
+
+    public DbSet<RequestTypeAssignmentRuleMember> RequestTypeAssignmentRuleMembers => Set<RequestTypeAssignmentRuleMember>();
+
+    public DbSet<TicketPendingRecord> TicketPendingRecords => Set<TicketPendingRecord>();
+
+    public DbSet<TicketInteractionContext> TicketInteractionContexts => Set<TicketInteractionContext>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -149,6 +157,10 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new RequestTypeConfiguration());
         builder.ApplyConfiguration(new RequestTypeSlaPolicyConfiguration());
         builder.ApplyConfiguration(new DepartmentWorkflowSettingsConfiguration());
+        builder.ApplyConfiguration(new RequestTypeAssignmentRuleConfiguration());
+        builder.ApplyConfiguration(new RequestTypeAssignmentRuleMemberConfiguration());
+        builder.ApplyConfiguration(new TicketPendingRecordConfiguration());
+        builder.ApplyConfiguration(new TicketInteractionContextConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a

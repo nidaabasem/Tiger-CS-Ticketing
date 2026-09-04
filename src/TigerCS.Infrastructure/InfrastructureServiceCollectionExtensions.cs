@@ -211,6 +211,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IDepartmentWorkflowSettingsRepository, DepartmentWorkflowSettingsRepository>();
         services.AddScoped<WorkflowConfigurationQueryService>();
 
+        // Workflow/Automation (phase 2) — assignment rules, structured
+        // pending, and the interaction-context record behind the Genesys
+        // boundary (no Genesys API client exists yet — only the context
+        // Ticketing persists).
+        services.AddScoped<IRequestTypeAssignmentRuleRepository, RequestTypeAssignmentRuleRepository>();
+        services.AddScoped<ITicketPendingRecordRepository, TicketPendingRecordRepository>();
+        services.AddScoped<ITicketInteractionContextRepository, TicketInteractionContextRepository>();
+        services.AddScoped<TicketAutoAssignmentService>();
+
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).
         //

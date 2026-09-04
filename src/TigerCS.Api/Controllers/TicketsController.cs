@@ -570,6 +570,24 @@ public class TicketsController(
             detail: "A concurrent request generated the same ticket number for this department/day — retry the request.",
             statusCode: StatusCodes.Status409Conflict),
 
+        TicketCreationOutcome.RequestTypeNotFound => Problem(
+            type: "https://tigercs.internal/problems/request-type-not-found",
+            title: "Request type not found",
+            detail: "RequestTypeId did not resolve to an active request type.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.RequestTypeDepartmentMismatch => Problem(
+            type: "https://tigercs.internal/problems/request-type-department-mismatch",
+            title: "Request type belongs to another department",
+            detail: "The selected request type does not belong to the department this ticket routes to.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketCreationOutcome.GenesysConversationIdRequired => Problem(
+            type: "https://tigercs.internal/problems/genesys-conversation-id-required",
+            title: "Genesys conversation id required",
+            detail: "A Genesys interaction context requires its ConversationId.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };
 
@@ -685,6 +703,24 @@ public class TicketsController(
             type: "https://tigercs.internal/problems/verification-session-expired",
             title: "Verification session expired",
             statusCode: StatusCodes.Status410Gone),
+
+        TicketMutationOutcome.PendingReasonRequired => Problem(
+            type: "https://tigercs.internal/problems/pending-reason-required",
+            title: "Pending reason required",
+            detail: "Moving a ticket to PendingCustomer or PendingThirdParty requires a PendingReason.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.NotAllowedForRequestType => Problem(
+            type: "https://tigercs.internal/problems/not-allowed-for-request-type",
+            title: "Not allowed for this request type",
+            detail: "The ticket's request-type workflow configuration does not allow this action.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.DisabledByDepartmentSettings => Problem(
+            type: "https://tigercs.internal/problems/disabled-by-department-settings",
+            title: "Disabled by department workflow settings",
+            detail: "The department's workflow settings disable this operation.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
 
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };

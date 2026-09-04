@@ -34,3 +34,9 @@ public interface IDepartmentWorkflowSettingsRepository
 {
     Task<DepartmentWorkflowSettings?> GetByDepartmentIdAsync(int departmentId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Reads the per-request-type assignment rule (Workflow/Automation phase 2). At most one rule per request type; absence means department queue.</summary>
+public interface IRequestTypeAssignmentRuleRepository
+{
+    Task<RequestTypeAssignmentRule?> GetByRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default);
+}

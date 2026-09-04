@@ -836,9 +836,12 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
 
         // Open -> PendingCustomer is not in the transition table, and an
-        // unassigned Open ticket cannot go InProgress either.
+        // unassigned Open ticket cannot go InProgress either. A reason is
+        // supplied so this exercises the transition table, not the separate
+        // pending-reason-required guard.
         var response = await client.PostAsJsonAsync(
-            $"/api/tickets/{ticket.TicketId}/status", new ChangeStatusRequestDto("PendingCustomer", RowVersionOf(ticket)));
+            $"/api/tickets/{ticket.TicketId}/status",
+            new ChangeStatusRequestDto("PendingCustomer", RowVersionOf(ticket), "Awaiting documents"));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
