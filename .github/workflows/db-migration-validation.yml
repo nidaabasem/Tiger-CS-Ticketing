@@ -88,7 +88,7 @@ jobs:
           path: src/idempotent-migration.sql
           retention-days: 30
 
-      - name: Apply migrations (all pending — InitialIdentityAndAccess, AddCustomerVerification, AddTicketing, AddTicketOperations, AddSlaAndEscalation, AddNotificationsAndOutbox)
+      - name: Apply migrations (all pending — through AddWorkflowConfiguration, AddWorkflowAutomation, ReplaceInteractionContextWithTicketInteractions, AddApprovalWorkflow)
         working-directory: src
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
@@ -136,6 +136,12 @@ jobs:
             "TicketSlaInstances" "TicketEscalations" "IdempotencyRecords" \
             "OutboxMessages" "Notifications" \
             "DepartmentCustomerLookupSources" \
+            "WorkflowTemplates" "WorkflowTemplateSteps" "RequestTypes" \
+            "RequestTypeSlaPolicies" "DepartmentWorkflowSettings" \
+            "RequestTypeAssignmentRules" "RequestTypeAssignmentRuleMembers" \
+            "RequestTypeApprovalRequirements" \
+            "TicketPendingRecords" "TicketInteractions" \
+            "TicketApprovals" "TicketWorkflowEvents" \
             "__EFMigrationsHistory" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- actual tables ---"
@@ -143,11 +149,11 @@ jobs:
           echo "--- expected tables ---"
           echo "$expected"
           if [ "$actual_sorted" != "$expected" ]; then
-            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing + SLA and Escalation + Notifications schema exactly."
+            echo "::error::Table list does not match the expected Identity and Access + CRM Verification + Ticketing + SLA and Escalation + Notifications + Workflow/Automation schema exactly."
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 34 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables. DepartmentCustomerLookupSources maps a Department to the customer-lookup source(s) CustomerLookupAppService searches for it."
+          echo "Table list matches exactly: 46 tables. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables (the Genesys context lives as nullable columns on TicketInteractions, not tables of its own). TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -301,7 +307,8 @@ jobs:
             "Tickets.CrmBuyerCustomerId=YES" "Tickets.CrmBuyerLeadId=YES" "Tickets.CrmBuyerUnitId=YES" \
             "Tickets.CrmBuyerProjectId=YES" "Tickets.CrmBuyerCustomerName=YES" "Tickets.CrmBuyerProjectName=YES" \
             "Tickets.CrmBuyerUnitNumber=YES" "Tickets.ManualProjectName=YES" "Tickets.ManualUnitNumber=YES" \
-            "Tickets.CustomerVerificationSource=YES" "Tickets.ExternalCustomerId=YES" "Tickets.ExternalUnitId=YES" | sort)
+            "Tickets.CustomerVerificationSource=YES" "Tickets.ExternalCustomerId=YES" "Tickets.ExternalUnitId=YES" \
+            "Tickets.RequestTypeId=YES" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- expected nullability ---"
           echo "$expected"
@@ -310,7 +317,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (44 columns)."
+          echo "Column nullability matches the confirmed design exactly (45 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |
@@ -366,8 +373,10 @@ jobs:
             echo "$non_no_action"
             exit 1
           fi
-          if [ "$fk_count" -ne 27 ]; then
-            echo "::error::Expected exactly 27 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes/DepartmentCustomerLookupSources, found $fk_count."
+          # 28 = the original 27 plus Tickets->RequestTypes (the nullable
+          # Workflow/Automation classification FK, Restrict like the rest).
+          if [ "$fk_count" -ne 28 ]; then
+            echo "::error::Expected exactly 28 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes/DepartmentCustomerLookupSources, found $fk_count."
             exit 1
           fi
           echo "All foreign keys on the new Ticketing tables are NO_ACTION (Restrict), as required."
@@ -643,6 +652,36 @@ jobs:
             exit 1
           fi
           echo "All three foreign keys are present and NO_ACTION (Restrict), as required."
+
+      - name: Verify schema — filtered unique indexes on the Workflow/Automation tables
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # The four load-bearing invariants the Workflow/Automation phases
+          # added, each a database guarantee the EF Core InMemory provider
+          # used by the test suite cannot verify (it ignores filtered
+          # indexes entirely — the same reason every other filtered-index
+          # check in this job exists):
+          #   - one originating interaction per ticket (TicketInteractions)
+          #   - one open pending record per ticket (TicketPendingRecords)
+          #   - one Pending approval cycle per (ticket, type) (TicketApprovals)
+          #   - one current approval cycle per (ticket, type) (TicketApprovals)
+          declare -A expected_filters=(
+            ["UX_TicketInteractions_OneOriginatingPerTicket"]="([IsOriginatingInteraction]=(1))"
+            ["UX_TicketPendingRecords_OpenPerTicket"]="([ResumedAtUtc]ISNULL)"
+            ["UX_TicketApprovals_OnePendingPerType"]="([Status]=(1))"
+            ["UX_TicketApprovals_OneCurrentPerType"]="([IsCurrent]=(1))"
+          )
+          for index_name in "${!expected_filters[@]}"; do
+            filter=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
+              -Q "SET NOCOUNT ON; SELECT filter_definition FROM sys.indexes WHERE name = '$index_name' AND is_unique = 1;")
+            filter_trimmed=$(echo "$filter" | tr -d '[:space:]')
+            echo "$index_name filter_definition = '$filter_trimmed'"
+            if [ "$filter_trimmed" != "${expected_filters[$index_name]}" ]; then
+              echo "::error::$index_name filter_definition was '$filter_trimmed', expected '${expected_filters[$index_name]}' (missing, not unique, or the filter changed)."
+              exit 1
+            fi
+          done
+          echo "All four Workflow/Automation filtered unique indexes are present with the expected filters."
 
       - name: Verify no schema drift (no-op probe migration)
         working-directory: src
