@@ -93,7 +93,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var (ticket, ownerName) in Model.AttentionRows)
+                            @foreach (var (ticket, departmentName, ownerName) in Model.AttentionRows)
                             {
                                 <tr>
                                     <td><a class="ticket-id-link" href="/Tickets/@ticket.TicketId">@ticket.TicketNumber</a></td>
@@ -119,13 +119,13 @@
                                         }
                                     </td>
                                     <td>
-                                        @if (ticket.CurrentOwnerEmployeeId is null)
+                                        @if (TicketDisplay.IsDepartmentQueue(ticket.CurrentOwnerEmployeeId))
                                         {
-                                            <span class="id-fallback">Unassigned</span>
+                                            <span class="text-secondary">@TicketDisplay.AssignedToLabel(ticket.CurrentOwnerEmployeeId, ownerName, ticket.CurrentDepartmentId, departmentName)</span>
                                         }
                                         else
                                         {
-                                            @(ownerName ?? $"Employee #{ticket.CurrentOwnerEmployeeId.Value.ToString()[..8]}")
+                                            @(ownerName ?? $"Employee #{ticket.CurrentOwnerEmployeeId!.Value.ToString()[..8]}")
                                         }
                                     </td>
                                     <td>@ticket.CreatedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</td>
