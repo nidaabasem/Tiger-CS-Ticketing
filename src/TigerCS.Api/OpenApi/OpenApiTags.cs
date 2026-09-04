@@ -40,6 +40,7 @@ public static class OpenApiTags
     public const string Transfer = "Transfer";
     public const string TicketLifecycle = "Ticket Lifecycle";
     public const string Notes = "Notes";
+    public const string Approvals = "Approvals and Dependencies";
     public const string CrmReconciliation = "CRM Reconciliation";
     public const string SlaAndEscalation = "SLA and Escalation";
 
@@ -82,6 +83,10 @@ public static class OpenApiTags
         (Transfer, "Transferring a ticket to another department."),
         (TicketLifecycle, "Status changes, resolution, and closing."),
         (Notes, "Ticket notes."),
+        (Approvals,
+            "Approval cycles (request/approve/reject/cancel) and typed dependency events (prerequisites, maintenance) "
+            + "— approval state is separate from TicketStatus; decisions produce the typed trigger events the SLA "
+            + "phase reads."),
         (CrmReconciliation, "Linking a confirmed CRM match onto a ticket that did not have one at creation."),
         (SlaAndEscalation,
             "SLA due dates and breach state, recording the First Human Response, and manual escalation. "

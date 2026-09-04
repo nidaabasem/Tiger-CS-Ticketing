@@ -58,3 +58,18 @@ public sealed class RequestTypeAssignmentRuleRepository(TigerCsDbContext dbConte
         int requestTypeId, CancellationToken cancellationToken = default) =>
         dbContext.RequestTypeAssignmentRules.FirstOrDefaultAsync(r => r.RequestTypeId == requestTypeId, cancellationToken);
 }
+
+public sealed class RequestTypeApprovalRequirementRepository(TigerCsDbContext dbContext) : IRequestTypeApprovalRequirementRepository
+{
+    public async Task<IReadOnlyList<RequestTypeApprovalRequirement>> ListActiveByRequestTypeIdAsync(
+        int requestTypeId, CancellationToken cancellationToken = default) =>
+        await dbContext.RequestTypeApprovalRequirements
+            .Where(r => r.RequestTypeId == requestTypeId && r.IsActive)
+            .OrderBy(r => r.ApprovalType)
+            .ToListAsync(cancellationToken);
+
+    public Task<RequestTypeApprovalRequirement?> GetActiveAsync(
+        int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default) =>
+        dbContext.RequestTypeApprovalRequirements.FirstOrDefaultAsync(
+            r => r.RequestTypeId == requestTypeId && r.ApprovalType == approvalType && r.IsActive, cancellationToken);
+}

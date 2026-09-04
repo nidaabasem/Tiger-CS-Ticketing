@@ -40,3 +40,13 @@ public interface IRequestTypeAssignmentRuleRepository
 {
     Task<RequestTypeAssignmentRule?> GetByRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Reads the per-request-type approval requirements (Workflow/Automation phase 3). At most one per (request type, approval type); absence means no approval is required.</summary>
+public interface IRequestTypeApprovalRequirementRepository
+{
+    Task<IReadOnlyList<RequestTypeApprovalRequirement>> ListActiveByRequestTypeIdAsync(
+        int requestTypeId, CancellationToken cancellationToken = default);
+
+    Task<RequestTypeApprovalRequirement?> GetActiveAsync(
+        int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default);
+}

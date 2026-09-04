@@ -116,6 +116,12 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketInteraction> TicketInteractions => Set<TicketInteraction>();
 
+    public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
+
+    public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
+
+    public DbSet<RequestTypeApprovalRequirement> RequestTypeApprovalRequirements => Set<RequestTypeApprovalRequirement>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -161,6 +167,9 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new RequestTypeAssignmentRuleMemberConfiguration());
         builder.ApplyConfiguration(new TicketPendingRecordConfiguration());
         builder.ApplyConfiguration(new TicketInteractionConfiguration());
+        builder.ApplyConfiguration(new TicketApprovalConfiguration());
+        builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
+        builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a

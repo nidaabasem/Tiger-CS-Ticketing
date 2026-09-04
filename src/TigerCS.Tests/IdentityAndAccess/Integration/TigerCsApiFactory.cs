@@ -222,6 +222,43 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Creates a request type in the given department (with its own workflow
+    /// template) and, when an approval type is given, an active approval
+    /// requirement for it targeting the given department — direct test
+    /// setup for the phase-3 approval flow, bypassing the app services.
+    /// </summary>
+    public async Task<int> CreateRequestTypeAsync(
+        string name, int departmentId, TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType? requiredApproval = null,
+        int? approvalTargetDepartmentId = null)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+
+        var template = new TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate(
+            Guid.NewGuid().ToString("N")[..12], "Test Approval Template", null,
+            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: requiredApproval is not null);
+        db.WorkflowTemplates.Add(template);
+        await db.SaveChangesAsync();
+
+        var requestType = new TigerCS.Domain.Modules.WorkflowConfiguration.RequestType(
+            departmentId, name, template.WorkflowTemplateId,
+            (byte)TigerCS.Domain.Modules.SlaAndEscalation.PriorityLevel.Medium,
+            allowAgentPriorityChange: false, allowPendingCustomer: true, allowPendingInternal: true, allowReopen: true);
+        db.RequestTypes.Add(requestType);
+        await db.SaveChangesAsync();
+
+        if (requiredApproval is { } approvalType)
+        {
+            db.RequestTypeApprovalRequirements.Add(
+                TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement.ForDepartment(
+                    requestType.RequestTypeId, approvalType, approvalTargetDepartmentId ?? departmentId));
+            await db.SaveChangesAsync();
+        }
+
+        return requestType.RequestTypeId;
+    }
+
     /// <summary>Creates a category routed to the given department (bypassing the app services — test setup, not the thing under test).</summary>
     public async Task<int> CreateCategoryAsync(string name, int departmentId, bool isActive = true)
     {

@@ -245,6 +245,33 @@ public static class WorkflowReferenceData
         [CustomerServiceCode, CollectionsCode, RegistrationCode, HandoverCode, CallCenterCode, AccountingCode];
 
     /// <summary>
+    /// The provisional role that decides Handover's Customer Service
+    /// approval (phase 3). The business has not confirmed the exact CS
+    /// approval role — CS Supervisor is the narrowest CS supervisory role in
+    /// the fixed set, chosen fail-safe over broader grants, and changing it
+    /// is a configuration edit.
+    /// </summary>
+    public const string ProvisionalCustomerServiceApproverRole = Roles.CsSupervisor;
+
+    /// <summary>
+    /// The approval requirements the SLA document supports — and only those
+    /// (Workflow/Automation phase 3): Collections / Send Receipts depends on
+    /// Accounting approval (target: the provisionally seeded Accounting
+    /// department — whether Accounting is a full Ticketing department, an
+    /// approval role, or an external provider remains an open business
+    /// decision, and re-pointing this row resolves it); Handover Request
+    /// depends on Customer Service approval (target:
+    /// <see cref="ProvisionalCustomerServiceApproverRole"/>). Registration
+    /// deliberately gets NO approval requirement — the source defines none,
+    /// only the PrerequisitesCompleted trigger.
+    /// </summary>
+    public static IReadOnlyList<(string DepartmentCode, string RequestTypeName, ApprovalType ApprovalType)> ApprovalRequirements() =>
+    [
+        (CollectionsCode, "Send Receipts", ApprovalType.AccountingApproval),
+        (HandoverCode, "Handover Request", ApprovalType.CustomerServiceApproval)
+    ];
+
+    /// <summary>
     /// Seeds templates, departments, request types, SLA rows, and department
     /// workflow settings. Idempotent per table/row and safe on every startup;
     /// existing rows are never modified (configuration changes are
@@ -308,6 +335,29 @@ public static class WorkflowReferenceData
                         sla.ResolutionMaximum,
                         sla.IsImmediate));
                 }
+            }
+        }
+
+        if (!await dbContext.RequestTypeApprovalRequirements.AnyAsync(cancellationToken))
+        {
+            foreach (var (departmentCode, requestTypeName, approvalType) in ApprovalRequirements())
+            {
+                var requestType = await dbContext.RequestTypes.FirstOrDefaultAsync(
+                    r => r.Name == requestTypeName && r.DepartmentId == departmentIdsByCode[departmentCode],
+                    cancellationToken);
+                if (requestType is null)
+                {
+                    continue;
+                }
+
+                dbContext.RequestTypeApprovalRequirements.Add(approvalType switch
+                {
+                    ApprovalType.AccountingApproval => RequestTypeApprovalRequirement.ForDepartment(
+                        requestType.RequestTypeId, approvalType, departmentIdsByCode[AccountingCode]),
+                    ApprovalType.CustomerServiceApproval => RequestTypeApprovalRequirement.ForRole(
+                        requestType.RequestTypeId, approvalType, ProvisionalCustomerServiceApproverRole),
+                    _ => throw new InvalidOperationException($"Unseeded approval type {approvalType}.")
+                });
             }
         }
 

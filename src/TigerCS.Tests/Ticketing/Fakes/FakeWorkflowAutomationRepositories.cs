@@ -131,3 +131,101 @@ public sealed class FakeDepartmentWorkflowSettingsRepository : IDepartmentWorkfl
     public Task<DepartmentWorkflowSettings?> GetByDepartmentIdAsync(int departmentId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_settings.GetValueOrDefault(departmentId));
 }
+
+/// <summary>In-memory approval store — append-plus-supersede, mirroring the real table's one-pending-per-type filtered index.</summary>
+public sealed class FakeTicketApprovalRepository : ITicketApprovalRepository
+{
+    private readonly List<TicketApproval> _approvals = [];
+    private long _nextId = 1;
+
+    public IReadOnlyList<TicketApproval> All => _approvals;
+
+    public Task<TicketApproval?> GetByIdAsync(long ticketApprovalId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_approvals.FirstOrDefault(a => a.TicketApprovalId == ticketApprovalId));
+
+    public Task<TicketApproval?> GetPendingAsync(long ticketId, ApprovalType approvalType, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_approvals.FirstOrDefault(
+            a => a.TicketId == ticketId && a.ApprovalType == approvalType && a.Status == ApprovalStatus.Pending));
+
+    public Task<TicketApproval?> GetCurrentAsync(long ticketId, ApprovalType approvalType, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_approvals.FirstOrDefault(
+            a => a.TicketId == ticketId && a.ApprovalType == approvalType && a.IsCurrent));
+
+    public Task<IReadOnlyList<TicketApproval>> ListByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketApproval>>(
+            _approvals.Where(a => a.TicketId == ticketId).OrderBy(a => a.RequestedAtUtc).ThenBy(a => a.TicketApprovalId).ToList());
+
+    public Task AddAsync(TicketApproval approval, CancellationToken cancellationToken = default)
+    {
+        // Mirror the database's filtered unique index so no test can pass
+        // while two Pending cycles of one type coexist.
+        if (approval.Status == ApprovalStatus.Pending
+            && _approvals.Any(a => a.TicketId == approval.TicketId && a.ApprovalType == approval.ApprovalType && a.Status == ApprovalStatus.Pending))
+        {
+            throw new InvalidOperationException(
+                $"Ticket {approval.TicketId} already has a pending {approval.ApprovalType} cycle.");
+        }
+
+        typeof(TicketApproval).GetProperty(nameof(TicketApproval.TicketApprovalId))!.SetValue(approval, _nextId++);
+        _approvals.Add(approval);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>In-memory typed workflow event store — append-only.</summary>
+public sealed class FakeTicketWorkflowEventRepository : ITicketWorkflowEventRepository
+{
+    private readonly List<TicketWorkflowEvent> _events = [];
+    private long _nextId = 1;
+
+    public IReadOnlyList<TicketWorkflowEvent> All => _events;
+
+    public Task<TicketWorkflowEvent?> GetFirstAsync(long ticketId, WorkflowEventType eventType, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_events
+            .Where(e => e.TicketId == ticketId && e.EventType == eventType)
+            .OrderBy(e => e.OccurredAtUtc).ThenBy(e => e.TicketWorkflowEventId)
+            .FirstOrDefault());
+
+    public Task<TicketWorkflowEvent?> GetLatestAsync(
+        long ticketId, IReadOnlyCollection<WorkflowEventType> eventTypes, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_events
+            .Where(e => e.TicketId == ticketId && eventTypes.Contains(e.EventType))
+            .OrderByDescending(e => e.OccurredAtUtc).ThenByDescending(e => e.TicketWorkflowEventId)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<TicketWorkflowEvent>> ListByTicketIdAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketWorkflowEvent>>(
+            _events.Where(e => e.TicketId == ticketId).OrderBy(e => e.OccurredAtUtc).ThenBy(e => e.TicketWorkflowEventId).ToList());
+
+    public Task AddAsync(TicketWorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
+    {
+        typeof(TicketWorkflowEvent).GetProperty(nameof(TicketWorkflowEvent.TicketWorkflowEventId))!.SetValue(workflowEvent, _nextId++);
+        _events.Add(workflowEvent);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>In-memory approval requirement configuration — one per (request type, approval type).</summary>
+public sealed class FakeRequestTypeApprovalRequirementRepository : IRequestTypeApprovalRequirementRepository
+{
+    private readonly List<RequestTypeApprovalRequirement> _requirements = [];
+    private int _nextId = 1;
+
+    public RequestTypeApprovalRequirement Add(RequestTypeApprovalRequirement requirement)
+    {
+        typeof(RequestTypeApprovalRequirement).GetProperty(nameof(RequestTypeApprovalRequirement.RequestTypeApprovalRequirementId))!
+            .SetValue(requirement, _nextId++);
+        _requirements.Add(requirement);
+        return requirement;
+    }
+
+    public Task<IReadOnlyList<RequestTypeApprovalRequirement>> ListActiveByRequestTypeIdAsync(
+        int requestTypeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RequestTypeApprovalRequirement>>(
+            _requirements.Where(r => r.RequestTypeId == requestTypeId && r.IsActive).OrderBy(r => r.ApprovalType).ToList());
+
+    public Task<RequestTypeApprovalRequirement?> GetActiveAsync(
+        int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_requirements.FirstOrDefault(
+            r => r.RequestTypeId == requestTypeId && r.ApprovalType == approvalType && r.IsActive));
+}

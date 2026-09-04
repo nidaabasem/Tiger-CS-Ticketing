@@ -204,6 +204,43 @@ public class WorkflowReferenceDataSeedTests
     }
 
     [Fact]
+    public async Task Approval_requirements_mirror_the_source_document_and_nothing_more()
+    {
+        await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+
+        var departmentIdsByCode = await db.Departments.ToDictionaryAsync(d => d.Code, d => d.DepartmentId);
+        var requirements = await db.RequestTypeApprovalRequirements.ToListAsync();
+        Assert.Equal(2, requirements.Count);
+
+        // Collections / Send Receipts depends on Accounting Approval —
+        // targeted at the provisionally seeded Accounting department.
+        var sendReceipts = await db.RequestTypes.SingleAsync(
+            r => r.Name == "Send Receipts" && r.DepartmentId == departmentIdsByCode[WorkflowReferenceData.CollectionsCode]);
+        var accounting = requirements.Single(r => r.RequestTypeId == sendReceipts.RequestTypeId);
+        Assert.Equal(ApprovalType.AccountingApproval, accounting.ApprovalType);
+        Assert.Equal(ApprovalTargetKind.Department, accounting.TargetKind);
+        Assert.Equal(departmentIdsByCode[WorkflowReferenceData.AccountingCode], accounting.TargetDepartmentId);
+        Assert.True(accounting.BlocksWorkUntilApproved);
+
+        // Handover Request depends on Customer Service approval — a role
+        // target, provisional until business names the exact CS role.
+        var handover = await db.RequestTypes.SingleAsync(
+            r => r.Name == "Handover Request" && r.DepartmentId == departmentIdsByCode[WorkflowReferenceData.HandoverCode]);
+        var csApproval = requirements.Single(r => r.RequestTypeId == handover.RequestTypeId);
+        Assert.Equal(ApprovalType.CustomerServiceApproval, csApproval.ApprovalType);
+        Assert.Equal(ApprovalTargetKind.Role, csApproval.TargetKind);
+        Assert.Equal(WorkflowReferenceData.ProvisionalCustomerServiceApproverRole, csApproval.TargetRoleName);
+
+        // Registration gets NO invented approval dependency — the source
+        // defines none, only the PrerequisitesCompleted trigger.
+        var registrationTypeIds = await db.RequestTypes
+            .Where(r => r.DepartmentId == departmentIdsByCode[WorkflowReferenceData.RegistrationCode])
+            .Select(r => r.RequestTypeId)
+            .ToListAsync();
+        Assert.DoesNotContain(requirements, r => registrationTypeIds.Contains(r.RequestTypeId));
+    }
+
+    [Fact]
     public async Task Reseeding_is_idempotent()
     {
         await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();

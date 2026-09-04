@@ -220,6 +220,13 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
 
+        // Workflow/Automation (phase 3) — approvals, approval requirements,
+        // and the typed workflow event store phase 4's SLA triggers read.
+        services.AddScoped<ITicketApprovalRepository, TicketApprovalRepository>();
+        services.AddScoped<ITicketWorkflowEventRepository, TicketWorkflowEventRepository>();
+        services.AddScoped<IRequestTypeApprovalRequirementRepository, RequestTypeApprovalRequirementRepository>();
+        services.AddScoped<TicketApprovalAppService>();
+
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).
         //
