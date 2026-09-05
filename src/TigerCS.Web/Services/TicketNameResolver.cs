@@ -11,9 +11,13 @@ namespace TigerCS.Web.Services;
 /// contract-guaranteed fact — never a guess:
 ///
 /// <list type="bullet">
-/// <item>Department names are known only for the signed-in caller's own
-/// memberships (<c>GET /api/users/me</c> is the only endpoint that ever
-/// returns a department name). Any other department id is shown as-is.</item>
+/// <item>Department names come from the Department directory
+/// (<c>GET /api/departments?activeOnly=false</c>, viewable by any
+/// authenticated staff member), so every department a ticket can belong to
+/// — including one deactivated since — resolves to its name; the caller's
+/// own memberships (<c>GET /api/users/me</c>) are merged in as well. A raw
+/// department id is never the normal display; only a failed directory call
+/// leaves a name unresolved, and callers then degrade to neutral wording.</item>
 /// <item>An assigned owner is guaranteed by the Assign endpoint's own
 /// business rule to be an active member of the ticket's current department
 /// (<c>EmployeeNotInDepartment</c> outcome), so paging that department's
@@ -33,11 +37,65 @@ namespace TigerCS.Web.Services;
 /// display up to the same endpoint is a separate follow-up, not done here.
 /// Registered scoped, so its per-request caches live for one page render.
 /// </summary>
-public sealed class TicketNameResolver(UsersApiClient usersApiClient)
+public sealed class TicketNameResolver(UsersApiClient usersApiClient, DepartmentsApiClient departmentsApiClient)
 {
     private readonly Dictionary<int, string> _departmentNames = new();
     private readonly Dictionary<(int DepartmentId, Guid EmployeeId), string?> _employeeNames = new();
     private bool _ownDepartmentsLoaded;
+    private bool _directoryLoaded;
+    private IReadOnlyCollection<DepartmentDto>? _activeDepartments;
+
+    /// <summary>
+    /// False only when the directory call itself failed (or has not been
+    /// primed) — the signal for a page to say "department list unavailable"
+    /// rather than silently offering nothing.
+    /// </summary>
+    public bool DepartmentDirectoryAvailable { get; private set; }
+
+    /// <summary>
+    /// Loads the full Department directory (deactivated departments included,
+    /// so any department a ticket already sits in gets its name) into the
+    /// id→name map. Failure is tolerated: names fall back per the display
+    /// helpers, never to an exception on a read page.
+    /// </summary>
+    public async Task PrimeDepartmentDirectoryAsync(CancellationToken cancellationToken)
+    {
+        if (_directoryLoaded)
+        {
+            return;
+        }
+
+        _directoryLoaded = true;
+        ApplyDirectory(await departmentsApiClient.GetDepartmentsAsync(activeOnly: false, cancellationToken));
+    }
+
+    /// <summary>
+    /// The ACTIVE departments only — the set a Transfer picker may offer,
+    /// mirroring the Api's own TargetDepartmentInactive rule so the UI never
+    /// offers a destination the transfer would reject. Null when the call
+    /// failed. Ordered by name, as the directory returns it.
+    /// </summary>
+    public async Task<IReadOnlyCollection<DepartmentDto>?> GetActiveDepartmentsAsync(CancellationToken cancellationToken)
+    {
+        if (_activeDepartments is not null)
+        {
+            return _activeDepartments;
+        }
+
+        var result = await departmentsApiClient.GetDepartmentsAsync(activeOnly: true, cancellationToken);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            return null;
+        }
+
+        _activeDepartments = result.Value;
+        foreach (var department in result.Value)
+        {
+            _departmentNames.TryAdd(department.DepartmentId, department.Name);
+        }
+
+        return _activeDepartments;
+    }
 
     /// <summary>The caller's own department memberships — the only set of department id→name pairs the Api exposes.</summary>
     public IReadOnlyCollection<DepartmentMembershipDto> OwnDepartments { get; private set; } = [];
@@ -50,8 +108,37 @@ public sealed class TicketNameResolver(UsersApiClient usersApiClient)
         }
 
         _ownDepartmentsLoaded = true;
+        ApplyOwnDepartments(await usersApiClient.GetMeAsync(cancellationToken));
+    }
 
-        var me = await usersApiClient.GetMeAsync(cancellationToken);
+    /// <summary>
+    /// Both department sources at once — the caller's memberships and the
+    /// full directory — for the pages that display department names. The two
+    /// HTTP calls run concurrently; the results are merged into the name map
+    /// one after the other, so the (unsynchronized) cache is only ever
+    /// written from a single continuation. Pages must use this rather than
+    /// awaiting the two individual primes under Task.WhenAll.
+    /// </summary>
+    public async Task PrimeDepartmentsAsync(CancellationToken cancellationToken)
+    {
+        var ownTask = _ownDepartmentsLoaded ? null : usersApiClient.GetMeAsync(cancellationToken);
+        var directoryTask = _directoryLoaded ? null : departmentsApiClient.GetDepartmentsAsync(activeOnly: false, cancellationToken);
+        _ownDepartmentsLoaded = true;
+        _directoryLoaded = true;
+
+        if (ownTask is not null)
+        {
+            ApplyOwnDepartments(await ownTask);
+        }
+
+        if (directoryTask is not null)
+        {
+            ApplyDirectory(await directoryTask);
+        }
+    }
+
+    private void ApplyOwnDepartments(ApiResult<CurrentUserResponseDto> me)
+    {
         if (!me.IsSuccess || me.Value is null)
         {
             return;
@@ -64,7 +151,21 @@ public sealed class TicketNameResolver(UsersApiClient usersApiClient)
         }
     }
 
-    /// <summary>The department's name if known (the caller's own department), otherwise null.</summary>
+    private void ApplyDirectory(ApiResult<IReadOnlyCollection<DepartmentDto>> directory)
+    {
+        if (!directory.IsSuccess || directory.Value is null)
+        {
+            return;
+        }
+
+        DepartmentDirectoryAvailable = true;
+        foreach (var department in directory.Value)
+        {
+            _departmentNames[department.DepartmentId] = department.Name;
+        }
+    }
+
+    /// <summary>The department's name if the directory (or the caller's own memberships) resolved it, otherwise null — callers render neutral wording, never the raw id.</summary>
     public string? TryGetDepartmentName(int departmentId) =>
         _departmentNames.GetValueOrDefault(departmentId);
 

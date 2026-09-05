@@ -59,7 +59,9 @@ public sealed class TicketsModel(TicketsApiClient ticketsApiClient, TicketSlaApi
         PageNumber = page < 1 ? 1 : page;
         PageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
 
-        await nameResolver.PrimeOwnDepartmentsAsync(cancellationToken);
+        // Own memberships drive the "my departments" filter; the directory
+        // puts a name on every row's department, member or not.
+        await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var statsTask = LoadStatsAsync(cancellationToken);
 

@@ -1,3 +1,4 @@
+using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 
 namespace TigerCS.Web.Models;
@@ -24,4 +25,16 @@ public static class TicketActions
 
     public static bool CanReopen(IReadOnlyCollection<string>? viewerRoles) =>
         viewerRoles is not null && viewerRoles.Any(ReopenRoles.Contains);
+
+    /// <summary>
+    /// Whether a Transfer control — and the department picker inside it —
+    /// is worth rendering. Reads the Api's own <see cref="TicketRoleSets.Transfer"/>
+    /// (CS Manager only) rather than a local copy, so the UI can never offer
+    /// transfer destinations to a role the Api would refuse; plus the
+    /// System Administrator override (ADR-0024) the Api honors through its
+    /// AuthorizationGate. Enforcement stays server-side.
+    /// </summary>
+    public static bool CanTransfer(IReadOnlyCollection<string>? viewerRoles) =>
+        viewerRoles is not null
+        && (viewerRoles.Any(TicketRoleSets.Transfer.Contains) || viewerRoles.Contains(Roles.SystemAdministrator));
 }

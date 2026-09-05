@@ -115,30 +115,39 @@ else
                             </div>
                         </details>
 
-                        <details class="disclosure" open="@(Model.OpenSection == "transfer" ? "open" : null)">
-                            <summary class="btn btn-sm">Transfer</summary>
-                            <div class="disclosure__panel">
-                                <form method="post" asp-page-handler="Transfer" class="action-form">
-                                    <input type="hidden" asp-for="Transfer.RowVersionBase64" />
-                                    <div class="field-group">
-                                        <label class="field-label" asp-for="Transfer.TargetDepartmentId">Target department ID</label>
-                                        <input class="form-control" asp-for="Transfer.TargetDepartmentId" list="myDepartments" />
-                                        <datalist id="myDepartments">
-                                            @foreach (var d in Model.NameResolver.OwnDepartments)
+                        @if (Model.CanTransfer)
+                        {
+                            <details class="disclosure" open="@(Model.OpenSection == "transfer" ? "open" : null)">
+                                <summary class="btn btn-sm">Transfer</summary>
+                                <div class="disclosure__panel">
+                                    <form method="post" asp-page-handler="Transfer" class="action-form">
+                                        <input type="hidden" asp-for="Transfer.RowVersionBase64" />
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Transfer.TargetDepartmentId">Transfer to department</label>
+                                            <select class="field-select" asp-for="Transfer.TargetDepartmentId">
+                                                @foreach (var d in Model.TransferTargets)
+                                                {
+                                                    <option value="@d.DepartmentId">@d.Name</option>
+                                                }
+                                            </select>
+                                            @if (Model.TransferTargetsUnavailable)
                                             {
-                                                <option value="@d.DepartmentId">@d.Name</option>
+                                                <span class="field-hint">The department list could not be loaded. Please try again.</span>
                                             }
-                                        </datalist>
-                                        <span class="field-hint">No department directory endpoint exists yet — enter the numeric department id (your own memberships are suggested above).</span>
-                                    </div>
-                                    <div class="field-group">
-                                        <label class="field-label" asp-for="Transfer.Reason">Reason</label>
-                                        <textarea class="form-control" asp-for="Transfer.Reason" rows="2"></textarea>
-                                    </div>
-                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Transfer</button></div>
-                                </form>
-                            </div>
-                        </details>
+                                            else if (Model.TransferTargets.Count == 0)
+                                            {
+                                                <span class="field-hint">No other active department is available to transfer to.</span>
+                                            }
+                                        </div>
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Transfer.Reason">Reason</label>
+                                            <textarea class="form-control" asp-for="Transfer.Reason" rows="2"></textarea>
+                                        </div>
+                                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm" disabled="@(Model.TransferTargets.Count == 0 ? "disabled" : null)">Transfer</button></div>
+                                    </form>
+                                </div>
+                            </details>
+                        }
 
                         <details class="disclosure" open="@(Model.OpenSection == "status" ? "open" : null)">
                             <summary class="btn @(isResolved ? "btn-sm" : "btn-gold btn-sm")">Change Status</summary>
@@ -601,16 +610,7 @@ else
                                             <tr>
                                                 <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
                                                 <td><span class="id-fallback">Category #@row.CategoryId</span></td>
-                                                <td>
-                                                    @if (Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId) is { } departmentName)
-                                                    {
-                                                        @departmentName
-                                                    }
-                                                    else
-                                                    {
-                                                        <span class="id-fallback">Department #@row.CurrentDepartmentId</span>
-                                                    }
-                                                </td>
+                                                <td>@TicketDisplay.AssignedDepartmentLabel(row.CurrentDepartmentId, Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId))</td>
                                                 <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
                                                 <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>
                                                 <td class="text-secondary text-mono">@row.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")</td>

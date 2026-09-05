@@ -56,14 +56,16 @@ public class DepartmentPrimaryAssignmentTests
     [Fact]
     public void AssignedToLabel_NeverProducesUnassigned_EvenWithoutAResolvedDepartmentName()
     {
-        // Worst case: the department name could not be resolved. The label
-        // still names a queue — degraded to the id, never "Unassigned".
+        // Worst case: the department directory could not put a name on the
+        // department. The label still names a queue — neutrally, never
+        // "Unassigned" and never a raw "Department #id" masquerading as a name.
         var label = TicketDisplay.AssignedToLabel(
             currentOwnerEmployeeId: null, ownerName: null,
             currentDepartmentId: FacilityManagementId, departmentName: null);
 
-        Assert.Equal("Department #7 Queue", label);
+        Assert.Equal("Department queue", label);
         Assert.DoesNotContain("Unassigned", label, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("#", label, StringComparison.Ordinal);
     }
 
     // ---- Employee assignment is secondary: it never moves the department ----
