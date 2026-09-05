@@ -17,6 +17,16 @@
     <td>
         @if (TicketDisplay.IsDepartmentQueue(t.CurrentOwnerEmployeeId))
         {
+            @Model.DepartmentName
+        }
+        else
+        {
+            <span class="id-fallback">Department #@t.CurrentDepartmentId</span>
+        }
+    </td>
+    <td>
+        @if (TicketDisplay.IsDepartmentQueue(t.CurrentOwnerEmployeeId))
+        {
             <span class="text-secondary">@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</span>
         }
         else if (Model.OwnerName is not null)

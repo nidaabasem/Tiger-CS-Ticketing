@@ -12,19 +12,13 @@ namespace TigerCS.Web.Models;
 /// </summary>
 public static class TicketDisplay
 {
-    /// <summary>Shown when the Department directory could not put a name on a department — a neutral, honest state, never a raw id dressed up as a name.</summary>
-    public const string UnknownDepartmentLabel = "Unknown department";
-
     /// <summary>
     /// The responsible department — the ticket's PRIMARY assignment. Every
     /// operational ticket always has one, so this never renders a "none"
-    /// state. The name comes from the Department directory; only when that
-    /// lookup failed does this degrade to <see cref="UnknownDepartmentLabel"/>.
-    /// A raw "Department #id" is deliberately never produced: operational
-    /// users work in department names, and an id is not a name.
+    /// state; only the human-readable name can be missing.
     /// </summary>
     public static string AssignedDepartmentLabel(int currentDepartmentId, string? departmentName)
-        => departmentName ?? UnknownDepartmentLabel;
+        => departmentName ?? $"Department #{currentDepartmentId}";
 
     /// <summary>
     /// Who the ticket is assigned to — the SECONDARY assignment. A null
@@ -32,14 +26,12 @@ public static class TicketDisplay
     /// employee holds it, never that the ticket is ownerless: it falls back to
     /// the responsible department's queue ("Facility Management Queue"), which
     /// is a real, accountable destination. "Unassigned" is deliberately never
-    /// produced here — it misrepresents a queued ticket as having no owner —
-    /// and neither is a raw department id: an unresolved name reads
-    /// "Department queue".
+    /// produced here — it misrepresents a queued ticket as having no owner.
     /// </summary>
     public static string AssignedToLabel(
         Guid? currentOwnerEmployeeId, string? ownerName, int currentDepartmentId, string? departmentName)
         => currentOwnerEmployeeId is not { } ownerId
-            ? departmentName is null ? "Department queue" : $"{departmentName} Queue"
+            ? $"{AssignedDepartmentLabel(currentDepartmentId, departmentName)} Queue"
             : ownerName ?? $"Employee #{ownerId.ToString()[..8]}";
 
     /// <summary>True when the ticket sits in its department queue rather than with a named employee — for styling only, never for the label text.</summary>
