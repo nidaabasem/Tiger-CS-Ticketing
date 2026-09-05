@@ -2,31 +2,30 @@
    Locked palette; do not introduce colours outside these variables. */
 
 :root {
-  --color-bg: #F7F7F5;
-  --color-surface: #FFFFFF;
-  --color-text: #1C1C1A;
-  --color-text-secondary: #66645F;
-  --color-border: #E4E3DF;
-  --color-gold: #B8922E;
-  --color-gold-dark: #96751E;
-  --color-gold-pale: #F5EEDC;
-  --color-critical: #B3261E;
-  --color-critical-pale: #F8E6E4;
-  --color-success: #3F6B4E;
-  --color-success-pale: #E8EFE9;
-  --color-note-bubble: #F1EFE7;
-
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
-
-  --radius-sm: 5px;
-  --radius-md: 6px;
-
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
+    --color-bg: #F7F7F5;
+    --color-surface: #FFFFFF;
+    --color-text: #1C1C1A;
+    --color-text-login: #F7F7F5;
+    --color-text-secondary: #66645F;
+    --color-border: #E4E3DF;
+    --color-gold: #e7b95e;
+    --color-gold-dark: #e7b95e;
+    --color-gold-pale: #f8f8f8;
+    --color-critical: #B3261E;
+    --color-critical-pale: #F8E6E4;
+    --color-success: #3F6B4E;
+    --color-success-pale: #E8EFE9;
+    --color-note-bubble: #F1EFE7;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    --radius-sm: 5px;
+    --radius-md: 6px;
+    --radius-md-login: 16px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -135,8 +134,8 @@ table { border-collapse: collapse; width: 100%; }
 }
 .app-header__brand { display: flex; align-items: center; gap: var(--space-2); flex: none; }
 .brand-mark {
-  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
-  border-radius: var(--radius-md); background: #1B2A3C; color: var(--color-gold);
+  display: inline-flex; align-items: center; justify-content: center; width: 35px; height: 35px;
+  border-radius: var(--radius-md); /*background: #1B2A3C;*/ color: var(--color-gold);
 }
 .brand-mark svg { width: 15px; height: 15px; }
 .brand-name { font-size: 14.5px; font-weight: 700; letter-spacing: 0.01em; }
@@ -292,26 +291,40 @@ table { border-collapse: collapse; width: 100%; }
 
 /* ---------- Login ---------- */
 
-.login-shell { min-height: 100vh; position: relative; overflow: hidden; background: var(--color-bg); }
-.login-corner {
-  position: absolute; top: 0; right: 0; width: 46%; height: 360px;
-  background: linear-gradient(160deg, var(--color-gold-pale) 0%, var(--color-bg) 72%);
-  clip-path: polygon(100% 0, 100% 100%, 0 0);
+.login-shell {
+    min-height: 100vh;
+    position: relative;
+    overflow: hidden;
+    background: url("../img/bg.png") no-repeat center center;
+    background-size: cover;
+    width: 100%;
 }
-.login-corner .band { position: absolute; top: 40px; right: 64px; width: 220px; height: 3px; background: var(--color-gold); opacity: .55; transform: rotate(-18deg); }
+.login-corner {
+/*  position: absolute; top: 0; right: 0; width: 46%; height: 360px;
+  background: linear-gradient(160deg, var(--color-gold-pale) 0%, var(--color-bg) 72%);
+  clip-path: polygon(100% 0, 100% 100%, 0 0);*/
+}
+/*.login-corner .band { position: absolute; top: 40px; right: 64px; width: 220px; height: 3px; background: var(--color-gold); opacity: .55; transform: rotate(-18deg); }
 .login-corner .band2 { position: absolute; top: 62px; right: 44px; width: 160px; height: 3px; background: #1B2A3C; opacity: .18; transform: rotate(-18deg); }
 .login-corner .tag { position: absolute; top: 92px; right: 68px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--color-text-secondary); }
-
+*/
 .login-stack { position: relative; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: var(--space-5); }
-.login-card { width: 100%; max-width: 420px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-6) var(--space-5); }
+.login-card {
+    width: 100%;
+    max-width: 420px;
+    background: #040d14;
+    border: 0px solid var(--color-border);
+    border-radius: var(--radius-md-login);
+    padding: var(--space-6) var(--space-5);
+}
 .login-brand { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: var(--space-5); }
 .login-brand .brand-mark { width: 44px; height: 44px; border-radius: var(--radius-md); margin-bottom: var(--space-3); }
 .login-brand .brand-mark svg { width: 24px; height: 24px; }
-.login-brand__product { font-size: 17px; font-weight: 700; color: var(--color-text); }
+.login-brand__product { font-size: 17px; font-weight: 700; color: var(--color-text-login); }
 .login-brand__subtitle { font-size: 12px; color: var(--color-text-secondary); margin-top: 4px; }
 
 .form-group { margin-bottom: var(--space-4); }
-.form-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--color-text); }
+.form-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--color-text-login); }
 .form-control {
   width: 100%; height: 38px; padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   background: var(--color-surface); font-size: 13.5px;
