@@ -409,7 +409,12 @@ public sealed class CustomerWorkspaceTests
         await model.OnGetAsync(CancellationToken.None);
 
         var labels = model.Cards.Select(c => c.Label).ToArray();
-        Assert.Contains("Unassigned", labels);
+        Assert.Contains("In Department Queue", labels);
+
+        // The old label claimed these tickets had no owner at all; they are
+        // queued to a responsible department, and the card must never say
+        // otherwise.
+        Assert.DoesNotContain("Unassigned", labels);
         Assert.Contains("SLA Breached", labels);
         Assert.Contains("Reopened", labels);
         Assert.DoesNotContain("My Tickets", labels);

@@ -74,8 +74,8 @@ else
                     <div class="ticket-header__id">@t.TicketNumber</div>
                     <h1 class="ticket-header__title">@t.RequestSummary</h1>
                     <div class="ticket-header__meta">
-                        <span><strong>Department:</strong> @(Model.DepartmentName ?? $"Department #{t.CurrentDepartmentId}")</span>
-                        <span><strong>Owner:</strong> @(t.CurrentOwnerEmployeeId is null ? "Unassigned" : Model.OwnerName ?? $"Employee #{t.CurrentOwnerEmployeeId.Value.ToString()[..8]}")</span>
+                        <span><strong>Assigned Department:</strong> @TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</span>
+                        <span><strong>Assigned To:</strong> @TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</span>
                         <span><strong>Category:</strong> #@t.CategoryId</span>
                     </div>
                     <div class="ticket-header__badges">
@@ -359,8 +359,8 @@ else
                         <div class="facts-row"><dt>Status</dt><dd>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</dd></div>
                         <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.PriorityId)</dd></div>
                         <div class="facts-row"><dt>Category</dt><dd class="id-fallback">#@t.CategoryId</dd></div>
-                        <div class="facts-row"><dt>Department</dt><dd>@(Model.DepartmentName ?? $"#{t.CurrentDepartmentId}")</dd></div>
-                        <div class="facts-row"><dt>Owner</dt><dd>@(t.CurrentOwnerEmployeeId is null ? "Unassigned" : Model.OwnerName ?? $"#{t.CurrentOwnerEmployeeId.Value.ToString()[..8]}")</dd></div>
+                        <div class="facts-row"><dt>Assigned Department</dt><dd>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
+                        <div class="facts-row"><dt>Assigned To</dt><dd>@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
                         <div class="facts-row"><dt>Escalation level</dt><dd>@TicketDisplay.EscalationLevelLabel(t.EscalationLevel)</dd></div>
                         <div class="facts-row"><dt>Reopen count</dt><dd>@t.ReopenCount</dd></div>
                         @if (t.ResolutionOutcome is not null)

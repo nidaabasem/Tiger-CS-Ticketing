@@ -29,6 +29,22 @@ public enum AutoAssignmentOutcome
     AssignedToPrimary
 }
 
+/// <summary>
+/// Why the automation ran. The department is the primary assignment and the
+/// employee only the secondary one, so the same rule evaluation happens both
+/// when a ticket first gets its department and when a transfer moves it to a
+/// new one — the audit trail must still say which of the two produced the
+/// outcome.
+/// </summary>
+public enum AutoAssignmentTrigger
+{
+    /// <summary>The ticket was just created with its department and request type known.</summary>
+    TicketCreated,
+
+    /// <summary>A department transfer moved the ticket; the rule is re-evaluated against the NEW responsible department.</summary>
+    DepartmentTransfer
+}
+
 /// <summary>The outcome plus what was assigned, for the caller's response/logging. <paramref name="TeamMemberEmployeeIds"/> carries the configured team members (excluding the primary) for a team rule.</summary>
 public sealed record AutoAssignmentResult(
     AutoAssignmentOutcome Outcome,
@@ -74,7 +90,11 @@ public sealed class TicketAutoAssignmentService(
     /// the caller commits or rolls everything back together.
     /// </summary>
     public async Task<AutoAssignmentResult> ApplyAsync(
-        Ticket ticket, DateTime nowUtc, Guid correlationId, CancellationToken cancellationToken = default)
+        Ticket ticket,
+        DateTime nowUtc,
+        Guid correlationId,
+        AutoAssignmentTrigger trigger = AutoAssignmentTrigger.TicketCreated,
+        CancellationToken cancellationToken = default)
     {
         if (ticket.RequestTypeId is not { } requestTypeId)
         {
@@ -86,20 +106,20 @@ public sealed class TicketAutoAssignmentService(
         if (settings is { AllowAssignment: false })
         {
             return await QueueAsync(ticket, AutoAssignmentOutcome.AssignmentDisabledForDepartment,
-                "Department workflow settings disable assignment", correlationId, cancellationToken);
+                "Department workflow settings disable assignment", trigger, correlationId, cancellationToken);
         }
 
         var rule = await assignmentRuleRepository.GetByRequestTypeIdAsync(requestTypeId, cancellationToken);
         if (rule is null || !rule.IsActive)
         {
             return await QueueAsync(ticket, AutoAssignmentOutcome.NoRuleConfigured,
-                "No active assignment rule configured", correlationId, cancellationToken);
+                "No active assignment rule configured", trigger, correlationId, cancellationToken);
         }
 
         if (rule.Mode == AssignmentMode.DepartmentQueue || rule.PrimaryEmployeeId is not { } primaryEmployeeId)
         {
             return await QueueAsync(ticket, AutoAssignmentOutcome.DepartmentQueueByRule,
-                $"Rule {rule.RequestTypeAssignmentRuleId} routes to the department queue", correlationId, cancellationToken);
+                $"Rule {rule.RequestTypeAssignmentRuleId} routes to the department queue", trigger, correlationId, cancellationToken);
         }
 
         // The configured target is re-validated at assignment time against
@@ -109,7 +129,7 @@ public sealed class TicketAutoAssignmentService(
         {
             return await QueueAsync(ticket, AutoAssignmentOutcome.ConfiguredAssigneeNotInDepartment,
                 $"Rule {rule.RequestTypeAssignmentRuleId}'s primary assignee is not an active member of department {ticket.CurrentDepartmentId}",
-                correlationId, cancellationToken);
+                trigger, correlationId, cancellationToken);
         }
 
         var previousOwnerEmployeeId = ticket.CurrentOwnerEmployeeId;
@@ -132,7 +152,7 @@ public sealed class TicketAutoAssignmentService(
             actorEmployeeId: null,
             "AutoAssign", "Ticket", ticket.TicketId.ToString(),
             beforeValue: previousOwnerEmployeeId?.ToString(),
-            afterValue: $"AssignedEmployeeId={primaryEmployeeId};Mode={rule.Mode};RuleId={rule.RequestTypeAssignmentRuleId}"
+            afterValue: $"AssignedEmployeeId={primaryEmployeeId};DepartmentId={ticket.CurrentDepartmentId};Mode={rule.Mode};RuleId={rule.RequestTypeAssignmentRuleId};Trigger={trigger}"
                 + (rule.TeamName is { } teamName ? $";Team={teamName}" : string.Empty),
             correlationId, cancellationToken);
 
@@ -141,13 +161,18 @@ public sealed class TicketAutoAssignmentService(
 
     /// <summary>The safe fallback — the ticket stays unassigned in its department queue, and the why is audited as a system action so the queue outcome is as traceable as an assignment.</summary>
     private async Task<AutoAssignmentResult> QueueAsync(
-        Ticket ticket, AutoAssignmentOutcome outcome, string reason, Guid correlationId, CancellationToken cancellationToken)
+        Ticket ticket,
+        AutoAssignmentOutcome outcome,
+        string reason,
+        AutoAssignmentTrigger trigger,
+        Guid correlationId,
+        CancellationToken cancellationToken)
     {
         await auditWriter.WriteAsync(
             actorEmployeeId: null,
             "AutoAssign", "Ticket", ticket.TicketId.ToString(),
             beforeValue: ticket.CurrentOwnerEmployeeId?.ToString(),
-            afterValue: $"DepartmentQueue;DepartmentId={ticket.CurrentDepartmentId};Reason={reason}",
+            afterValue: $"DepartmentQueue;DepartmentId={ticket.CurrentDepartmentId};Trigger={trigger};Reason={reason}",
             correlationId, cancellationToken);
 
         return new AutoAssignmentResult(outcome);

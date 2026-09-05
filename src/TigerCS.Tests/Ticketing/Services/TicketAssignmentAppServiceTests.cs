@@ -3,6 +3,7 @@ using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Domain.Modules.WorkflowConfiguration;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.IdentityAndAccess.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
@@ -19,7 +20,8 @@ public class TicketAssignmentAppServiceTests
         FakeDepartmentRepository Departments,
         FakeAuditEntryWriter Audit,
         FakeTicketingUnitOfWork UnitOfWork,
-        FakeDepartmentWorkflowSettingsRepository WorkflowSettings);
+        FakeDepartmentWorkflowSettingsRepository WorkflowSettings,
+        FakeRequestTypeAssignmentRuleRepository Rules);
 
     private static Fixture CreateService()
     {
@@ -30,12 +32,18 @@ public class TicketAssignmentAppServiceTests
         var audit = new FakeAuditEntryWriter();
         var unitOfWork = new FakeTicketingUnitOfWork();
         var workflowSettings = new FakeDepartmentWorkflowSettingsRepository();
+        var rules = new FakeRequestTypeAssignmentRuleRepository();
+
+        // Transfer re-runs the real automation against the NEW department, so
+        // the fixture wires the real service over fakes rather than a stub.
+        var autoAssignment = new TicketAutoAssignmentService(
+            rules, workflowSettings, departmentAssignments, assignments, audit);
 
         var service = new TicketAssignmentAppService(
             tickets, assignments, departmentAssignments, departments, unitOfWork, audit, TimeProvider.System,
-            workflowSettings);
+            workflowSettings, autoAssignment);
 
-        return new Fixture(service, tickets, assignments, departmentAssignments, departments, audit, unitOfWork, workflowSettings);
+        return new Fixture(service, tickets, assignments, departmentAssignments, departments, audit, unitOfWork, workflowSettings, rules);
     }
 
     private static async Task<Ticket> SeedTicketAsync(FakeTicketRepository repo, int departmentId = 2)
@@ -334,6 +342,149 @@ public class TicketAssignmentAppServiceTests
         Assert.Equal(targetDepartment.DepartmentId, ticket.CurrentDepartmentId);
         Assert.Null(ticket.CurrentOwnerEmployeeId);
         Assert.Contains(f.Audit.Written, w => w.Action == "Transfer");
+    }
+
+    // ---- Transfer re-runs the assignment automation for the NEW department ----
+    // Department first, then Department + Request Type → rule. Every
+    // non-assignable case lands in the NEW department's queue; a random
+    // employee is never chosen.
+
+    [Fact]
+    public async Task TransferAsync_ReEvaluatesAssignment_AndAssignsTheNewDepartmentsConfiguredEmployee()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.ClassifyRequestType(requestTypeId: 10);
+        ticket.AssignTo(Guid.NewGuid());
+        var departmentC = f.Departments.AddDepartment("Facility Management", "FM");
+
+        // The rule's primary is a member of department C — the department the
+        // ticket is moving to, not the one it came from.
+        var ahmed = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(ahmed, departmentC.DepartmentId, isPrimary: true, DateTime.UtcNow, assignedByEmployeeId: null));
+        f.Rules.Add(RequestTypeAssignmentRule.ForSpecificEmployee(10, ahmed));
+
+        var result = await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Misrouted", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(departmentC.DepartmentId, ticket.CurrentDepartmentId);
+        Assert.Equal(ahmed, ticket.CurrentOwnerEmployeeId);
+
+        // The automatic assignment is recorded as a SYSTEM action against the
+        // NEW department, and names the transfer as its trigger.
+        var autoAssign = Assert.Single(f.Audit.Entries, e => e.Action == "AutoAssign");
+        Assert.Null(autoAssign.ActorEmployeeId);
+        Assert.Contains($"DepartmentId={departmentC.DepartmentId}", autoAssign.AfterValue);
+        Assert.Contains("Trigger=DepartmentTransfer", autoAssign.AfterValue);
+
+        var assignment = Assert.Single(f.Assignments.Added);
+        Assert.Null(assignment.AssigningActorEmployeeId);
+        Assert.Equal(departmentC.DepartmentId, assignment.AssignedDepartmentId);
+    }
+
+    [Fact]
+    public async Task TransferAsync_ChangesTheDepartmentBeforeReEvaluatingTheAssignment()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.ClassifyRequestType(requestTypeId: 10);
+        var departmentC = f.Departments.AddDepartment("Facility Management", "FM");
+
+        await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Misrouted", []));
+
+        // Ordering is the rule, not an accident: the Transfer entry (the
+        // department change) is written before the re-evaluation entry, and
+        // the re-evaluation already sees department C.
+        var transferIndex = f.Audit.Entries.FindIndex(e => e.Action == "Transfer");
+        var autoAssignIndex = f.Audit.Entries.FindIndex(e => e.Action == "AutoAssign");
+        Assert.True(transferIndex >= 0 && autoAssignIndex > transferIndex,
+            "the department transfer must be audited before the assignment re-evaluation");
+
+        var autoAssign = f.Audit.Entries[autoAssignIndex];
+        Assert.Contains($"DepartmentId={departmentC.DepartmentId}", autoAssign.AfterValue);
+
+        // Both entries share one correlation id — one operation in history.
+        var transfer = f.Audit.Entries[transferIndex];
+        Assert.Equal(transfer.CorrelationId, autoAssign.CorrelationId);
+    }
+
+    [Fact]
+    public async Task TransferAsync_WhenTheRuleTargetsSomeoneOutsideTheNewDepartment_FallsBackToTheNewDepartmentQueue()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.ClassifyRequestType(requestTypeId: 10);
+        var departmentC = f.Departments.AddDepartment("Facility Management", "FM");
+
+        // The configured primary belongs to the OLD department only — stale
+        // for department C.
+        var oldDepartmentEmployee = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(oldDepartmentEmployee, 2, isPrimary: true, DateTime.UtcNow, assignedByEmployeeId: null));
+        f.Rules.Add(RequestTypeAssignmentRule.ForSpecificEmployee(10, oldDepartmentEmployee));
+
+        var result = await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Misrouted", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(departmentC.DepartmentId, ticket.CurrentDepartmentId);
+
+        // No employee is guessed: the ticket sits in department C's queue,
+        // and the reason is audited.
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+        Assert.Empty(f.Assignments.Added);
+
+        var autoAssign = Assert.Single(f.Audit.Entries, e => e.Action == "AutoAssign");
+        Assert.Contains("DepartmentQueue", autoAssign.AfterValue);
+        Assert.Contains($"DepartmentId={departmentC.DepartmentId}", autoAssign.AfterValue);
+        Assert.Contains("Trigger=DepartmentTransfer", autoAssign.AfterValue);
+    }
+
+    [Fact]
+    public async Task TransferAsync_WithNoRuleForTheRequestType_LeavesTheTicketInTheNewDepartmentQueue()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.ClassifyRequestType(requestTypeId: 10);
+        var departmentC = f.Departments.AddDepartment("Facility Management", "FM");
+
+        var result = await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Misrouted", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(departmentC.DepartmentId, ticket.CurrentDepartmentId);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+        Assert.Empty(f.Assignments.Added);
+
+        var autoAssign = Assert.Single(f.Audit.Entries, e => e.Action == "AutoAssign");
+        Assert.Contains("No active assignment rule configured", autoAssign.AfterValue);
+    }
+
+    [Fact]
+    public async Task TransferAsync_OnATicketWithoutARequestType_KeepsExactPrePhaseBehavior()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        var departmentC = f.Departments.AddDepartment("Facility Management", "FM");
+
+        var result = await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Misrouted", []));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(departmentC.DepartmentId, ticket.CurrentDepartmentId);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+
+        // No request type => no automation ran at all, exactly as before.
+        Assert.DoesNotContain(f.Audit.Entries, e => e.Action == "AutoAssign");
+        Assert.Empty(f.Assignments.Added);
     }
 
     [Fact]

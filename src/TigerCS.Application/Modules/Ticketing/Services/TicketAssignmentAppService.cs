@@ -21,7 +21,8 @@ public sealed class TicketAssignmentAppService(
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider,
-    IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository)
+    IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository,
+    TicketAutoAssignmentService autoAssignmentService)
 {
     /// <summary>
     /// PR correction — the caller's role alone decides Assign authority now;
@@ -172,16 +173,36 @@ public sealed class TicketAssignmentAppService(
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var previousDepartmentId = ticket.CurrentDepartmentId;
+        var previousOwnerEmployeeId = ticket.CurrentOwnerEmployeeId;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        // One correlation id ties the transfer audit entry to the
+        // re-evaluation entry the automation writes below, so the two read as
+        // one operation in history.
+        var correlationId = Guid.NewGuid();
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
+        // Department FIRST — the responsible department is the primary
+        // assignment, and TransferToDepartment also clears the employee owner
+        // (the previous department's employee cannot stay accountable). The
+        // ticket is therefore never without a responsible department: it moves
+        // straight from department B to department C.
         ticket.TransferToDepartment(request.TargetDepartmentId);
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "Transfer", "Ticket", ticketId.ToString(),
-            beforeValue: $"DepartmentId={previousDepartmentId}",
+            beforeValue: $"DepartmentId={previousDepartmentId};AssignedEmployeeId={previousOwnerEmployeeId?.ToString() ?? "DepartmentQueue"}",
             afterValue: $"DepartmentId={request.TargetDepartmentId};Reason={request.Reason}",
-            Guid.NewGuid(), cancellationToken);
+            correlationId, cancellationToken);
+
+        // ...THEN re-evaluate the assignment automation against the new
+        // department + the ticket's request type. Every non-assignable case
+        // (no rule, rule targets someone outside department C, settings
+        // disable assignment) leaves the ticket in the NEW department's
+        // queue — audited, and never a randomly picked employee.
+        await autoAssignmentService.ApplyAsync(
+            ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
 
         try
         {

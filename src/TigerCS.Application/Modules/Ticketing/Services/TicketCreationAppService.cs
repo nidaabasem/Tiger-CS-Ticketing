@@ -280,7 +280,8 @@ public sealed class TicketCreationAppService(
         // leaves the ticket in the department queue, audited as a system
         // action. Runs in this same transaction, before the SLA period and
         // creation audit commit with it.
-        await autoAssignmentService.ApplyAsync(ticket, now, correlationId, cancellationToken);
+        await autoAssignmentService.ApplyAsync(
+            ticket, now, correlationId, AutoAssignmentTrigger.TicketCreated, cancellationToken);
 
         // Backlog S-08's corrected acceptance criterion: ticket creation
         // opens the ticket's initial TicketSlaInstances row with computed due
@@ -294,7 +295,7 @@ public sealed class TicketCreationAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
             beforeValue: null,
-            afterValue: $"TicketNumber={ticket.TicketNumber};VerificationStatus={ticket.VerificationStatus}",
+            afterValue: $"TicketNumber={ticket.TicketNumber};DepartmentId={ticket.CurrentDepartmentId};VerificationStatus={ticket.VerificationStatus}",
             correlationId, cancellationToken);
 
         await EnqueueTicketCreatedAsync(ticket, callerEmployeeId, correlationId, now, cancellationToken);

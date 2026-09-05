@@ -24,9 +24,9 @@
         }
     </td>
     <td>
-        @if (t.CurrentOwnerEmployeeId is null)
+        @if (TicketDisplay.IsDepartmentQueue(t.CurrentOwnerEmployeeId))
         {
-            <span class="text-secondary">Unassigned</span>
+            <span class="text-secondary">@TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</span>
         }
         else if (Model.OwnerName is not null)
         {
@@ -34,7 +34,7 @@
         }
         else
         {
-            <span class="id-fallback" title="@t.CurrentOwnerEmployeeId">Employee #@t.CurrentOwnerEmployeeId.Value.ToString()[..8]</span>
+            <span class="id-fallback" title="@t.CurrentOwnerEmployeeId">Employee #@t.CurrentOwnerEmployeeId!.Value.ToString()[..8]</span>
         }
     </td>
     <td><span class="badge badge-verification-@t.VerificationStatus.ToLowerInvariant()">@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</span></td>

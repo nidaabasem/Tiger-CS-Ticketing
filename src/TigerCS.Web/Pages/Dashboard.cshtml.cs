@@ -33,7 +33,7 @@ public sealed class DashboardModel(
     public DashboardSummaryDto? Summary { get; private set; }
     public ApiOutcome Outcome { get; private set; }
     public IReadOnlyList<KpiCard> Cards { get; private set; } = [];
-    public IReadOnlyList<(DashboardAttentionTicketDto Ticket, string? OwnerName)> AttentionRows { get; private set; } = [];
+    public IReadOnlyList<(DashboardAttentionTicketDto Ticket, string? DepartmentName, string? OwnerName)> AttentionRows { get; private set; } = [];
     public TicketNameResolver NameResolver => nameResolver;
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
@@ -51,13 +51,17 @@ public sealed class DashboardModel(
         Summary = result.Value;
         Cards = BuildCards(Summary, Viewer);
 
-        var rows = new List<(DashboardAttentionTicketDto, string?)>();
+        var rows = new List<(DashboardAttentionTicketDto, string?, string?)>();
         foreach (var ticket in Summary.AttentionTickets)
         {
+            // The responsible department is resolved for every row, assigned
+            // or not: an employee-less ticket still shows its department
+            // queue as the accountable destination.
+            var departmentName = nameResolver.TryGetDepartmentName(ticket.CurrentDepartmentId);
             var ownerName = ticket.CurrentOwnerEmployeeId is Guid ownerId
                 ? await nameResolver.ResolveOwnerNameAsync(ticket.CurrentDepartmentId, ownerId, cancellationToken)
                 : null;
-            rows.Add((ticket, ownerName));
+            rows.Add((ticket, departmentName, ownerName));
         }
 
         AttentionRows = rows;
@@ -79,7 +83,11 @@ public sealed class DashboardModel(
             return
             [
                 new KpiCard("Open Tickets", s.OpenTickets),
-                new KpiCard("Unassigned", s.Unassigned, s.Unassigned > 0 ? "attention" : null),
+                // Label only — the count is unchanged: tickets that have a
+                // responsible department but no CurrentOwnerEmployeeId. Those
+                // tickets are not ownerless; they sit in their department's
+                // queue, so the card is named for where they actually are.
+                new KpiCard("In Department Queue", s.Unassigned, s.Unassigned > 0 ? "attention" : null),
                 new KpiCard("SLA At Risk", s.SlaAtRisk, s.SlaAtRisk > 0 ? "attention" : null),
                 new KpiCard("SLA Breached", s.SlaBreached, s.SlaBreached > 0 ? "critical" : null),
                 new KpiCard("Critical / High", s.CriticalOrHigh),
