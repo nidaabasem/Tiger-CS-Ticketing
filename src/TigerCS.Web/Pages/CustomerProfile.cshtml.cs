@@ -36,7 +36,7 @@ public sealed class CustomerProfileModel(TicketsApiClient ticketsApiClient, Tick
     public async Task<IActionResult> OnGetAsync(long ticketId, CancellationToken cancellationToken)
     {
         TicketId = ticketId;
-        await nameResolver.PrimeOwnDepartmentsAsync(cancellationToken);
+        await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var profileTask = ticketsApiClient.GetCustomerProfileAsync(ticketId, cancellationToken);
         var historyTask = ticketsApiClient.GetCustomerHistoryAsync(ticketId, PreviousTicketsLimit, cancellationToken);

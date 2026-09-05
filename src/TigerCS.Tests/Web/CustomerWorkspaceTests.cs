@@ -57,8 +57,10 @@ public sealed class CustomerWorkspaceTests
         // users/me failing is a normal, tolerated outcome for the resolver —
         // names simply fall back to id text.
         var usersHandler = new FakeApiHandler((_, _) => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-        return new TicketNameResolver(new UsersApiClient(
-            new HttpClient(usersHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<UsersApiClient>.Instance));
+        var departmentsHandler = new FakeApiHandler((_, _) => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        return new TicketNameResolver(
+            new UsersApiClient(new HttpClient(usersHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<UsersApiClient>.Instance),
+            new DepartmentsApiClient(new HttpClient(departmentsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<DepartmentsApiClient>.Instance));
     }
 
     private static (CustomersModel Model, FakeApiHandler Customers) CreateCustomersModel(

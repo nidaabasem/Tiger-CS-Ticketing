@@ -13,8 +13,9 @@
     <td><a class="ticket-id-link" href="/Tickets/@t.TicketId">@t.TicketNumber</a></td>
     <td class="col-subject">@t.RequestSummary</td>
     <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(t.PriorityId)">@TicketDisplay.PriorityLabel(t.PriorityId)</span></td>
+    <td>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</td>
     <td>
-        @if (Model.DepartmentName is not null)
+        @if (TicketDisplay.IsDepartmentQueue(t.CurrentOwnerEmployeeId))
         {
             @Model.DepartmentName
         }

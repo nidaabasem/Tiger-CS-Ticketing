@@ -47,6 +47,26 @@ public sealed class TicketDetailsModel(
     public string? DepartmentName { get; private set; }
     public string? OwnerName { get; private set; }
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
+
+    /// <summary>
+    /// Whether the viewer holds transfer authority (the Api's own CS Manager
+    /// role set, or the System Administrator override) — the only case in
+    /// which a Transfer control, and any department to transfer to, is shown.
+    /// </summary>
+    public bool CanTransfer { get; private set; }
+
+    /// <summary>
+    /// The departments the Transfer picker offers, by name: the ACTIVE
+    /// directory minus the ticket's current department (the Api rejects both
+    /// an inactive target and a no-op transfer), and only ever populated for a
+    /// viewer who <see cref="CanTransfer"/>. The picker binds each name to its
+    /// existing DepartmentId, so nobody types a number and the transfer
+    /// contract is unchanged.
+    /// </summary>
+    public IReadOnlyList<DepartmentDto> TransferTargets { get; private set; } = [];
+
+    /// <summary>True when the viewer may transfer but the department directory could not be loaded — the form says so instead of offering an empty picker.</summary>
+    public bool TransferTargetsUnavailable { get; private set; }
     public CurrentUser? Viewer { get; private set; }
     public TicketNameResolver NameResolver => nameResolver;
     public IReadOnlyList<ActivityEntry> ActivityFeed { get; private set; } = [];
@@ -319,7 +339,7 @@ public sealed class TicketDetailsModel(
     private async Task LoadAsync(CancellationToken cancellationToken)
     {
         Viewer = CurrentUser.FromPrincipal(User);
-        await nameResolver.PrimeOwnDepartmentsAsync(cancellationToken);
+        await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var detailResult = await ticketsApiClient.GetByIdAsync(TicketId, cancellationToken);
         Outcome = detailResult.Outcome;
@@ -352,17 +372,52 @@ public sealed class TicketDetailsModel(
             ? await nameResolver.ResolveOwnerNameAsync(Ticket.CurrentDepartmentId, ownerId, cancellationToken)
             : null;
 
+        await LoadTransferTargetsAsync(Ticket, cancellationToken);
+
         ActivityFeed = BuildActivityFeed(Ticket, Notes, Escalations, Viewer);
 
         // Pre-fill the RowVersion the forms will post back, and default the
         // employee/status pickers so an untouched form still submits something valid.
         Assign = new AssignInput { RowVersionBase64 = Ticket.RowVersion, AssignedEmployeeId = Ticket.CurrentOwnerEmployeeId ?? Guid.Empty };
-        Transfer = new TransferInput { RowVersionBase64 = Ticket.RowVersion, TargetDepartmentId = Ticket.CurrentDepartmentId };
+        Transfer = new TransferInput { RowVersionBase64 = Ticket.RowVersion, TargetDepartmentId = TransferTargets.FirstOrDefault()?.DepartmentId ?? 0 };
         Status = new StatusInput { RowVersionBase64 = Ticket.RowVersion, NewStatus = Ticket.TicketStatus };
         Resolve = new ResolveInput { RowVersionBase64 = Ticket.RowVersion, ResolutionOutcome = "Resolved" };
         Close = new RowVersionInput { RowVersionBase64 = Ticket.RowVersion };
         Reopen = new ReopenInput { RowVersionBase64 = Ticket.RowVersion };
         Escalate = new EscalateInput { RowVersionBase64 = Ticket.RowVersion, Level = NextEscalationLevel(Ticket.EscalationLevel) };
+    }
+
+    /// <summary>
+    /// Authorization first, then the directory: a viewer without transfer
+    /// authority is offered no departments at all (not even their own), and
+    /// an authorized viewer is offered only real, active departments other
+    /// than the one the ticket is already in. The active-only directory call
+    /// is skipped entirely for viewers who cannot transfer.
+    /// </summary>
+    private async Task LoadTransferTargetsAsync(TicketDetailDto ticket, CancellationToken cancellationToken)
+    {
+        CanTransfer = TicketActions.CanTransfer(Viewer?.Roles);
+        TransferTargets = [];
+        TransferTargetsUnavailable = false;
+
+        if (!CanTransfer)
+        {
+            return;
+        }
+
+        var active = await nameResolver.GetActiveDepartmentsAsync(cancellationToken);
+        if (active is null)
+        {
+            TransferTargetsUnavailable = true;
+            return;
+        }
+
+        TransferTargets =
+        [
+            .. active
+                .Where(d => d.DepartmentId != ticket.CurrentDepartmentId)
+                .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+        ];
     }
 
     private static IReadOnlyList<ActivityEntry> BuildActivityFeed(

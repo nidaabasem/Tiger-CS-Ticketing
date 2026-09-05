@@ -39,7 +39,7 @@ public sealed class DashboardModel(
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         Viewer = CurrentUser.FromPrincipal(User);
-        await nameResolver.PrimeOwnDepartmentsAsync(cancellationToken);
+        await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var result = await dashboardApiClient.GetSummaryAsync(cancellationToken);
         Outcome = result.Outcome;
