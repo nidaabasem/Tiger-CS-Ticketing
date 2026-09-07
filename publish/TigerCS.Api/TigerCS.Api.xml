@@ -1,0 +1,1128 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>TigerCS.Api</name>
+    </assembly>
+    <members>
+        <member name="T:TigerCS.Api.Controllers.AuthController">
+            <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AuthController.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService)">
+            <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AuthController.Login(TigerCS.Application.Modules.IdentityAndAccess.Dto.LoginRequestDto,System.Threading.CancellationToken)">
+            <summary>Sign in and obtain a JWT access token.</summary>
+            <remarks>
+            The only endpoint besides <c>GET /health</c> that does not require an
+            access token. Copy <c>accessToken</c> from a 200 response into
+            Swagger UI's <b>Authorize</b> box to call the rest of the API.
+            </remarks>
+            <param name="request">Username and password. Both are required and must be non-blank.</param>
+            <response code="200">Signed in. Returns the access token, its UTC expiry, and the caller's identity, roles, and primary department.</response>
+            <response code="400">Username or password was missing or blank.</response>
+            <response code="401">The username/password combination was not accepted.</response>
+            <response code="423">The account is locked.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AuthController.Logout(System.Threading.CancellationToken)">
+            <summary>Sign out the current user.</summary>
+            <remarks>Succeeds with 204 whether or not the token carried a resolvable employee id.</remarks>
+            <response code="204">Signed out.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CategoriesController.List(System.Nullable{System.Int32},System.Threading.CancellationToken)">
+            <summary>
+            The active Ticket Categories an agent may route a ticket to.
+            <c>departmentId</c> narrows the list to that Department's own
+            Categories only; omitted, every active Category across every
+            Department is returned. A Department with none configured (or an
+            unknown <c>departmentId</c>) returns an empty list, not an error —
+            the caller decides how to present that.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.CrmController">
+             <summary>
+             A thin passthrough onto Tiger CRM's read-only data-access port
+             (<c>ICrmGateway</c>) — unit lookup by unit number, and the contacts/
+             owners/tenants/authorized representatives linked to a unit
+             (MVP-API-Contracts.md §2.1-§2.3). This controller makes no verification
+             decision of its own; it exists so an agent (or the verification-session
+             flow below) has something to look up and select from. See
+             <c>CrmUnitLookupAppService</c>'s and <c>VerificationSessionAppService</c>'s
+             remarks for the full ownership boundary between Tiger CRM (read-only)
+             and Tiger CS Ticketing (owns the verification decision).
+            
+             <para>
+             Scoped to CS Agent/CS Supervisor only (PolicyNames.CustomerVerification)
+             — not the contract's literal "Agent and above" wording, and not the
+             global AuthenticatedStaff fallback. See
+             PolicyNames.CustomerVerification's remarks for why: Solution-Analysis.md
+             §4.1's Permission Matrix grants ticket-Create to only these two roles,
+             and customer/requester verification exists solely to gate ticket
+             creation. Reporting User, Department Employee, Department Head, CS
+             Manager, GM, Chairman/CEO, and System Administrator are all denied —
+             confirmed, not guessed.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CrmController.#ctor(TigerCS.Application.Modules.CustomerVerification.Services.CrmUnitLookupAppService,TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService)">
+             <summary>
+             A thin passthrough onto Tiger CRM's read-only data-access port
+             (<c>ICrmGateway</c>) — unit lookup by unit number, and the contacts/
+             owners/tenants/authorized representatives linked to a unit
+             (MVP-API-Contracts.md §2.1-§2.3). This controller makes no verification
+             decision of its own; it exists so an agent (or the verification-session
+             flow below) has something to look up and select from. See
+             <c>CrmUnitLookupAppService</c>'s and <c>VerificationSessionAppService</c>'s
+             remarks for the full ownership boundary between Tiger CRM (read-only)
+             and Tiger CS Ticketing (owns the verification decision).
+            
+             <para>
+             Scoped to CS Agent/CS Supervisor only (PolicyNames.CustomerVerification)
+             — not the contract's literal "Agent and above" wording, and not the
+             global AuthenticatedStaff fallback. See
+             PolicyNames.CustomerVerification's remarks for why: Solution-Analysis.md
+             §4.1's Permission Matrix grants ticket-Create to only these two roles,
+             and customer/requester verification exists solely to gate ticket
+             creation. Reporting User, Department Employee, Department Head, CS
+             Manager, GM, Chairman/CEO, and System Administrator are all denied —
+             confirmed, not guessed.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CrmController.GetUnit(System.String,System.Threading.CancellationToken)">
+            <summary>Look a single CRM unit up by its CRM identifier.</summary>
+            <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.1.</remarks>
+            <param name="crmUnitId">The unit's Tiger CRM identifier.</param>
+            <response code="200">The unit, with the number of contacts linked to it.</response>
+            <response code="404">No unit with that CRM identifier.</response>
+            <response code="502">Tiger CRM could not be reached.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CrmController.SearchUnits(System.String,System.String,System.Threading.CancellationToken)">
+            <summary>Search CRM units by unit number, optionally narrowed by property name.</summary>
+            <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.2.</remarks>
+            <param name="unitNumber">Required. The unit number to search for.</param>
+            <param name="propertyName">Optional. Narrows the search to one property.</param>
+            <response code="200">The matching units — an empty array when nothing matched.</response>
+            <response code="400">unitNumber was missing or blank.</response>
+            <response code="502">Tiger CRM could not be reached.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CrmController.GetContacts(System.String,System.Threading.CancellationToken)">
+            <summary>The contacts linked to a CRM unit — owners, tenants, and authorized representatives.</summary>
+            <remarks>Read-only passthrough onto Tiger CRM. MVP-API-Contracts.md §2.3.</remarks>
+            <param name="crmUnitId">The unit's Tiger CRM identifier.</param>
+            <response code="200">The unit's contacts. contactType is one of Owner, Tenant, Representative.</response>
+            <response code="404">No unit with that CRM identifier.</response>
+            <response code="502">Tiger CRM could not be reached.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CrmController.GetBuyerByPhone(System.String,System.Threading.CancellationToken)">
+            <summary>
+            CRM Buyer Lookup: search Tiger CRM by phone number for Buyer records
+            (Lead status Sold or Contract). Read-only passthrough onto CRM's own
+            <c>GET /TicketingSystem/GetBuyerByPhone</c> endpoint.
+            </summary>
+            <remarks>
+            Business rule: a CRM phone number belongs to exactly one customer, so
+            this endpoint returns at most one entry (<c>CrmBuyerLookupAppService</c>
+            consolidates to a single customer even if CRM's own response does
+            not honor that). A buyer is not assumed to own only one unit — every
+            eligible (Sold/Contract, Buyer) unit that customer owns is returned,
+            and this endpoint never selects one for the caller; that selection is
+            left to the CS agent in the New Ticket UI.
+            </remarks>
+            <param name="phoneNumber">Required. The phone number to search CRM for.</param>
+            <response code="200">The matching buyer (at most one), with the units they own that are eligible (Sold/Contract, Buyer).</response>
+            <response code="400">phoneNumber was missing or blank, or CRM rejected/could not parse the request.</response>
+            <response code="401">CRM rejected the configured Crm:SecretKey.</response>
+            <response code="404">No matching Buyer for this phone number.</response>
+            <response code="409">CRM returned more than one distinct customer for this phone number — a CRM data-integrity conflict. No customer/unit was selected; fall back to manual Project/Unit Number entry.</response>
+            <response code="502">Tiger CRM could not be reached.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.CustomerHistoryController">
+            <summary>
+            Customer → Previous Ticket History for a CRM-verified customer, keyed by
+            the exact <c>CrmBuyerCustomerId</c> the agent selected on the New Ticket
+            wizard's CRM Buyer Lookup step (<c>GET /api/crm/buyers</c>) — never by
+            phone number, since one phone number may match more than one CRM
+            customer. Sourced entirely from the existing Tickets table; this
+            controller never calls CRM (<see cref="T:TigerCS.Api.Controllers.CrmController"/>) itself, so
+            history remains available even when CRM is offline. Department
+            visibility is resolved server-side from the caller's own roles/
+            department membership, exactly as the ticket queue does
+            (<see cref="M:TigerCS.Api.Controllers.TicketsController.GetQueue(TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto,System.Threading.CancellationToken)"/>) — a caller who happens to know
+            a valid CrmBuyerCustomerId never sees a ticket outside their own visible
+            departments.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerHistoryController.#ctor(TigerCS.Application.Modules.Ticketing.Services.CustomerHistoryAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerSearchAppService)">
+            <summary>
+            Customer → Previous Ticket History for a CRM-verified customer, keyed by
+            the exact <c>CrmBuyerCustomerId</c> the agent selected on the New Ticket
+            wizard's CRM Buyer Lookup step (<c>GET /api/crm/buyers</c>) — never by
+            phone number, since one phone number may match more than one CRM
+            customer. Sourced entirely from the existing Tickets table; this
+            controller never calls CRM (<see cref="T:TigerCS.Api.Controllers.CrmController"/>) itself, so
+            history remains available even when CRM is offline. Department
+            visibility is resolved server-side from the caller's own roles/
+            department membership, exactly as the ticket queue does
+            (<see cref="M:TigerCS.Api.Controllers.TicketsController.GetQueue(TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto,System.Threading.CancellationToken)"/>) — a caller who happens to know
+            a valid CrmBuyerCustomerId never sees a ticket outside their own visible
+            departments.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerHistoryController.SearchCustomers(System.String,System.Threading.CancellationToken)">
+            <summary>Search every integrated verification source for a customer by phone number. CS Agent/CS Supervisor only.</summary>
+            <remarks>
+            The Dashboard/Customer Workspace's search: the real CRM Buyer Lookup
+            plus the PACT and Tasleeh lookups, each reporting Found/NotFound/
+            Failed independently — the same sources, gateways, and verification
+            semantics as the New Ticket wizard, with no intake record created.
+            Phone number is the only supported search key: no integrated source
+            searches customers by name or unit number today. Scoped to
+            PolicyNames.CustomerVerification, matching every other customer
+            lookup surface.
+            </remarks>
+            <param name="phoneNumber">Required. The phone number to search for.</param>
+            <response code="200">Each source's outcome and matched customers — possibly none.</response>
+            <response code="400">phoneNumber was missing or blank.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerHistoryController.GetCrmCustomerHistory(System.Int32,System.Nullable{System.Int32},System.String,System.Boolean,System.Threading.CancellationToken)">
+            <summary>Previous tickets for a CRM-verified customer, newest first.</summary>
+            <remarks>
+            Used by the New Ticket wizard's Step 3 preview, right after the agent
+            selects a CRM Buyer/unit — always the selected customer, never the
+            first raw phone-search result. Never a live CRM call.
+            </remarks>
+            <param name="crmCustomerId">The CRM Buyer's customer id, as selected from <c>GET /api/crm/buyers</c>.</param>
+            <param name="limit">Maximum tickets to return, newest first. Defaults to 5; capped at 50.</param>
+            <param name="unitNumber">Optional. Narrows the history to tickets whose unit-number snapshot exactly matches — the New Ticket wizard's same-customer/same-unit related-tickets check (Phase E). Advisory only; never blocks creation.</param>
+            <param name="orderActiveFirst">Optional. Sorts currently-active tickets ahead of Resolved/Closed ones (newest first within each group) — used with <paramref name="unitNumber"/> so the most actionable related tickets surface within the limit.</param>
+            <response code="200">The customer's ticket-count summary and its most recent tickets (possibly empty).</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerHistoryController.GetExternalCustomerHistory(System.String,System.String,System.Nullable{System.Int32},System.String,System.Boolean,System.Threading.CancellationToken)">
+            <summary>Previous tickets for an externally-verified customer (PACT/Tasleeh), newest first.</summary>
+            <remarks>
+            Keyed by the persisted external verification identity the customer's
+            tickets already carry (CustomerVerificationSource + ExternalCustomerId)
+            — never by display name and never by phone number, so two customers
+            with similar contact data can never share a history. Same
+            department-visibility scoping as the CRM history endpoint above.
+            </remarks>
+            <param name="source">The verification source, e.g. "Pact" or "Tasleeh".</param>
+            <param name="externalCustomerId">The source's own customer identifier (for PACT, its tenantID).</param>
+            <param name="limit">Maximum tickets to return, newest first. Defaults to 5; capped at 50.</param>
+            <param name="unitNumber">Optional. Same-unit narrowing for the related-tickets check — see the CRM history endpoint above.</param>
+            <param name="orderActiveFirst">Optional. Active-tickets-first ordering for the related-tickets check — see the CRM history endpoint above.</param>
+            <response code="200">The customer's ticket-count summary and its most recent tickets (possibly empty).</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.CustomerLookupController">
+            <summary>
+            Business-rule change: searches by the intake's own phone number and
+            returns whatever each searched source found — enrichment/identification
+            for the agent, never a Ticket creation gate. Which sources are searched
+            depends on the intake's DepartmentId: when set, only that Department's
+            configured source(s) (<see cref="T:TigerCS.Domain.Modules.Ticketing.DepartmentCustomerLookupSource"/>)
+            are searched — never all three by default, and never falling back to an
+            unconfigured source; when absent, all of CRM, PACT, and Tasleeh are
+            searched. Scoped to CS Agent/CS Supervisor only
+            (PolicyNames.CustomerVerification), same rationale as
+            IntakeRecordsController/CrmController: this is a step of the same
+            intake-then-create sequence those endpoints belong to.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerLookupController.#ctor(TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService)">
+            <summary>
+            Business-rule change: searches by the intake's own phone number and
+            returns whatever each searched source found — enrichment/identification
+            for the agent, never a Ticket creation gate. Which sources are searched
+            depends on the intake's DepartmentId: when set, only that Department's
+            configured source(s) (<see cref="T:TigerCS.Domain.Modules.Ticketing.DepartmentCustomerLookupSource"/>)
+            are searched — never all three by default, and never falling back to an
+            unconfigured source; when absent, all of CRM, PACT, and Tasleeh are
+            searched. Scoped to CS Agent/CS Supervisor only
+            (PolicyNames.CustomerVerification), same rationale as
+            IntakeRecordsController/CrmController: this is a step of the same
+            intake-then-create sequence those endpoints belong to.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomerLookupController.Search(System.Int64,System.Threading.CancellationToken)">
+            <summary>Search the intake's Department-configured source(s) — or all of CRM/PACT/Tasleeh if no Department was selected — for its phone number.</summary>
+            <remarks>
+            Always 200, with one entry per source actually searched — unsearched
+            sources (because the intake's Department is not configured for them)
+            have no entry at all, never a fake NotFound. A searched source that
+            found nothing (NotFound) or could not be reached (Failed) never hides
+            another source's match, and this call never blocks or gates ticket
+            creation (<c>POST /api/tickets</c>). A Found source carries 0..N
+            matched customers, each with 0..N units — pass whichever unit's
+            unitReferenceId/contactReferenceId the agent selected straight to
+            ticket creation to link it; PACT/Tasleeh matches are display-only
+            (their units list is always empty).
+            </remarks>
+            <param name="intakeRecordId">The intake record whose phone number (and optional DepartmentId, to narrow which sources are searched) to search with.</param>
+            <response code="200">Each source actually searched, one entry per source, each Found/NotFound/Failed.</response>
+            <response code="404">No such intake record.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.DashboardController">
+            <summary>
+            The operational Dashboard (Customer Workspace phase): KPI counts and the
+            Tickets Requiring Attention list. One read-only aggregate — every number
+            is computed server-side over the caller's own visible-department scope,
+            resolved from their roles/department membership exactly as the ticket
+            queue resolves it (<see cref="M:TigerCS.Api.Controllers.TicketsController.GetQueue(TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto,System.Threading.CancellationToken)"/>), never from
+            anything client-supplied. Open to all authenticated staff: the response
+            only ever summarizes tickets the caller could already list.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.DashboardController.#ctor(TigerCS.Application.Modules.Ticketing.Services.DashboardAppService)">
+            <summary>
+            The operational Dashboard (Customer Workspace phase): KPI counts and the
+            Tickets Requiring Attention list. One read-only aggregate — every number
+            is computed server-side over the caller's own visible-department scope,
+            resolved from their roles/department membership exactly as the ticket
+            queue resolves it (<see cref="M:TigerCS.Api.Controllers.TicketsController.GetQueue(TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto,System.Threading.CancellationToken)"/>), never from
+            anything client-supplied. Open to all authenticated staff: the response
+            only ever summarizes tickets the caller could already list.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.DashboardController.GetSummary(System.Threading.CancellationToken)">
+            <summary>The caller's operational dashboard: KPI counts and Tickets Requiring Attention, scoped to their visible departments.</summary>
+            <response code="200">The dashboard summary. Counts cover only tickets the caller may view.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.DepartmentsController.List(System.Boolean,System.Threading.CancellationToken)">
+            <summary>
+            The Department directory — every Department a Department dropdown may
+            offer, so no UI ever asks anyone to type a raw <c>DepartmentId</c>.
+            Any authenticated staff member may view.
+            </summary>
+            <param name="activeOnly">When true (the default), excludes deactivated departments.</param>
+            <response code="200">The Department directory, ordered by name.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.DepartmentsController.GetUsers(System.Int32,System.Boolean,System.Int32,System.Int32,System.Threading.CancellationToken)">
+            <summary>List the users assigned to a department. Any authenticated staff member may view.</summary>
+            <remarks>MVP-API-Contracts.md §1.4.</remarks>
+            <param name="departmentId">The department to list.</param>
+            <param name="activeOnly">When true (the default), excludes deactivated users.</param>
+            <param name="page">1-based page number. Values below 1 are raised to 1.</param>
+            <param name="pageSize">Page size. Clamped to the range 1-100.</param>
+            <response code="200">A page of department members, with the total count.</response>
+            <response code="404">No such department.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.IntakeRecordsController">
+            <summary>
+            Item 1 of this increment's scope: capture every customer interaction as
+            an IntakeRecord before any verification is attempted (MVP-ERD.md §2.9),
+            so no request — unit-related or not (item 2) — is ever silently lost.
+            Scoped to CS Agent/CS Supervisor only (PolicyNames.CustomerVerification),
+            same rationale as VerificationSessionsController/CrmController: this is
+            the first step of the same verify-then-create sequence those endpoints
+            gate, and no role that cannot go on to create a ticket has a documented
+            need to record an intake either.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.IntakeRecordsController.#ctor(TigerCS.Application.Modules.Ticketing.Services.IntakeRecordAppService)">
+            <summary>
+            Item 1 of this increment's scope: capture every customer interaction as
+            an IntakeRecord before any verification is attempted (MVP-ERD.md §2.9),
+            so no request — unit-related or not (item 2) — is ever silently lost.
+            Scoped to CS Agent/CS Supervisor only (PolicyNames.CustomerVerification),
+            same rationale as VerificationSessionsController/CrmController: this is
+            the first step of the same verify-then-create sequence those endpoints
+            gate, and no role that cannot go on to create a ticket has a documented
+            need to record an intake either.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.IntakeRecordsController.Create(TigerCS.Application.Modules.Ticketing.Dto.CreateIntakeRecordRequestDto,System.Threading.CancellationToken)">
+            <summary>Record a customer interaction, before any customer lookup is attempted.</summary>
+            <remarks>
+            The unconditional first step of intake (MVP-ERD.md §2.9): every
+            interaction is captured, unit-related or not, so none is silently
+            lost. The phone number captured here is what customer lookup
+            (<c>GET /api/intake-records/{intakeRecordId}/customer-lookup</c>)
+            later searches CRM/PACT/Tasleeh with.
+            </remarks>
+            <param name="request">The channel, the phone number, an optional department (narrows customer lookup to its configured source(s)), whether the request concerns a unit, and the raw unit number if the caller happened to give one.</param>
+            <response code="201">The intake record, with its initial crmVerificationStatus.</response>
+            <response code="400">
+            channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
+            SocialMediaDirectMessage, FaceToFaceKiosk; or phoneNumber was blank.
+            </response>
+            <response code="404">departmentId was supplied but does not reference a real department.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.RolesController.List(System.Threading.CancellationToken)">
+            <summary>The fixed role catalogue. System Administrator only.</summary>
+            <remarks>Not paged — the MVP role set is fixed. MVP-API-Contracts.md §1.5.</remarks>
+            <response code="200">Every role, with its high-level description.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.TicketsController">
+            <summary>
+            Items 3–8 of this increment's scope, plus a later business-rule change:
+            a single ticket-creation path for every IntakeRecord. Customer
+            information from CRM, PACT, or Tasleeh is attached when available
+            (<see cref="T:TigerCS.Api.Controllers.CustomerLookupController"/>); lack of a match never blocks
+            <see cref="M:TigerCS.Api.Controllers.TicketsController.Create(TigerCS.Application.Modules.Ticketing.Dto.CreateTicketRequestDto,System.Threading.CancellationToken)"/> — the only thing every ticket requires is a valid
+            Ticket Category. Scoped to CS Agent/CS Supervisor only
+            (PolicyNames.CustomerVerification) — same rationale as
+            VerificationSessionsController/CrmController: the Solution-Analysis.md
+            §4.1 permission matrix grants ticket-Create to exactly these two roles.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.#ctor(TigerCS.Application.Modules.Ticketing.Services.TicketCreationAppService,TigerCS.Application.Modules.Ticketing.Services.TicketQueryAppService,TigerCS.Application.Modules.Ticketing.Services.TicketAssignmentAppService,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService,TigerCS.Application.Modules.Ticketing.Services.TicketNoteAppService,TigerCS.Application.Modules.Ticketing.Services.TicketReconciliationAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerHistoryAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerProfileAppService,TigerCS.Application.Modules.Ticketing.Services.TicketApprovalAppService)">
+            <summary>
+            Items 3–8 of this increment's scope, plus a later business-rule change:
+            a single ticket-creation path for every IntakeRecord. Customer
+            information from CRM, PACT, or Tasleeh is attached when available
+            (<see cref="T:TigerCS.Api.Controllers.CustomerLookupController"/>); lack of a match never blocks
+            <see cref="M:TigerCS.Api.Controllers.TicketsController.Create(TigerCS.Application.Modules.Ticketing.Dto.CreateTicketRequestDto,System.Threading.CancellationToken)"/> — the only thing every ticket requires is a valid
+            Ticket Category. Scoped to CS Agent/CS Supervisor only
+            (PolicyNames.CustomerVerification) — same rationale as
+            VerificationSessionsController/CrmController: the Solution-Analysis.md
+            §4.1 permission matrix grants ticket-Create to exactly these two roles.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Create(TigerCS.Application.Modules.Ticketing.Dto.CreateTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
+            <remarks>
+            Create a ticket from an IntakeRecord. Customer information from CRM,
+            PACT, or Tasleeh is attached when available (see
+            <c>GET /api/intake-records/{intakeRecordId}/customer-lookup</c>);
+            lack of a match does not prevent ticket creation. Ticket Category is
+            required for every ticket. Scoped to CS Agent/CS Supervisor
+            (Solution-Analysis.md §4.1's Create column) — layered on top of the
+            class-level AuthenticatedStaff policy, not a replacement for it.
+            </remarks>
+            <param name="request">The intake record to promote, plus the matched unit/contact (if the agent selected one), category, priority, and summary.</param>
+            <response code="201">The created ticket.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">The intake record, unit reference, contact reference, category, priority, or the category's routed department was not found (or the department is inactive).</response>
+            <response code="409">The intake record was already promoted to a ticket, or a ticket-number collision occurred — retry.</response>
+            <response code="422">UnitReferenceId and ContactReferenceId were not both supplied or both omitted.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetQueue(TigerCS.Application.Modules.Ticketing.Dto.TicketListRequestDto,System.Threading.CancellationToken)">
+            <summary>The ticket queue — a filtered, sorted, paged list of tickets visible to the caller.</summary>
+            <remarks>
+            MVP-API-Contracts.md §3.2. Department visibility is resolved
+            server-side from the caller's roles and department assignments
+            (TicketQueryAppService), never from a client-supplied department
+            filter alone: <c>departmentId</c> narrows what the caller may already
+            see, it does not widen it.
+            </remarks>
+            <param name="request">
+            Filtering, sorting, and paging. All filters are optional and combine
+            with AND. <c>ticketStatus</c> is one of Open, InProgress,
+            PendingCustomer, PendingThirdParty, Resolved, Closed;
+            <c>verificationStatus</c> one of Unverified, PendingCrmVerification,
+            Verified; <c>priorityId</c> 1=Critical, 2=High, 3=Medium, 4=Low.
+            </param>
+            <response code="200">A page of ticket summaries, with the total matching count.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetDetail(System.Int64,System.Threading.CancellationToken)">
+            <summary>Full detail for one ticket.</summary>
+            <remarks>
+            MVP-API-Contracts.md §3.3. A ticket created with no customer match is
+            returned with verificationStatus Unverified and a null unit/contact —
+            never fabricated as Verified. <c>rowVersion</c> from this response is
+            what the assignment, transfer, status, resolution, close, and
+            reconciliation calls expect back.
+            </remarks>
+            <param name="ticketId">The ticket to fetch.</param>
+            <response code="200">The ticket.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetCustomerHistory(System.Int64,System.Nullable{System.Int32},System.Threading.CancellationToken)">
+            <summary>Customer History — this ticket's customer's other tickets.</summary>
+            <remarks>
+            Verified when the ticket has a CrmBuyerCustomerId (keyed by that exact
+            id, never by phone); otherwise falls back to the phone-number
+            snapshot recorded on the IntakeRecord this ticket was promoted from,
+            and is labelled "Unverified" in the response. The current ticket is
+            always excluded from its own history. Sourced entirely from the
+            Tickets table — never a live CRM call — and scoped to the same
+            department visibility as <see cref="M:TigerCS.Api.Controllers.TicketsController.GetDetail(System.Int64,System.Threading.CancellationToken)"/>.
+            </remarks>
+            <param name="ticketId">The ticket whose customer's history to fetch.</param>
+            <param name="limit">Maximum previous tickets to return, newest first. Defaults to 5; capped at 50.</param>
+            <response code="200">The customer's ticket-count summary and most recent previous tickets (possibly empty).</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetCustomerProfile(System.Int64,System.Threading.CancellationToken)">
+            <summary>Customer Details/Profile — live CRM Overview/Contact Info/Units for this ticket's customer.</summary>
+            <remarks>
+            Ticket-anchored exactly like <see cref="M:TigerCS.Api.Controllers.TicketsController.GetCustomerHistory(System.Int64,System.Nullable{System.Int32},System.Threading.CancellationToken)"/>: the
+            identity (CrmBuyerCustomerId) and the department-visibility check both
+            come from the ticket itself. Delegates the actual CRM search to the
+            same CrmBuyerLookupAppService the New Ticket wizard uses — this
+            endpoint duplicates no CRM logic. Previous Tickets on the Customer
+            Profile page reuses <see cref="M:TigerCS.Api.Controllers.TicketsController.GetCustomerHistory(System.Int64,System.Nullable{System.Int32},System.Threading.CancellationToken)"/> unchanged; this
+            endpoint carries none of that.
+            </remarks>
+            <param name="ticketId">The ticket whose customer's profile to fetch.</param>
+            <response code="200">The customer's profile. <c>status</c> is one of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm" — only "Found" populates name/mobile/email/units.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Assign(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.AssignTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Assign a ticket to an employee — self-claim or reassign.</summary>
+            <remarks>
+            MVP-API-Contracts.md §3.5. Both self-assignment and cross-department
+            reach are validated inside TicketAssignmentAppService, never trusted
+            from the request alone.
+            </remarks>
+            <param name="ticketId">The ticket to assign.</param>
+            <param name="request">The employee to assign it to, and the ticket's current rowVersion.</param>
+            <response code="200">The updated ticket.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The requested change is not valid for this ticket's current state.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Transfer(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.TransferTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Transfer a ticket to another department.</summary>
+            <remarks>
+            MVP-API-Contracts.md §3.6. Clears the current owner — the receiving
+            department must explicitly claim or assign it.
+            </remarks>
+            <param name="ticketId">The ticket to transfer.</param>
+            <param name="request">The target department, the reason, and the ticket's current rowVersion.</param>
+            <response code="200">The updated ticket.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The requested change is not valid for this ticket's current state.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.ChangeStatus(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ChangeStatusRequestDto,System.Threading.CancellationToken)">
+            <summary>Change a ticket's working status.</summary>
+            <remarks>
+            MVP-API-Contracts.md §3.7 — the "work" sub-machine only
+            (Open to InProgress, InProgress to and from PendingCustomer/
+            PendingThirdParty). Resolved and Closed are reached only via
+            <see cref="M:TigerCS.Api.Controllers.TicketsController.Resolve(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ResolveTicketRequestDto,System.Threading.CancellationToken)"/> and <see cref="M:TigerCS.Api.Controllers.TicketsController.Close(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CloseTicketRequestDto,System.Threading.CancellationToken)"/>.
+            </remarks>
+            <param name="ticketId">The ticket to update.</param>
+            <param name="request">The new status (Open, InProgress, PendingCustomer, or PendingThirdParty) and the ticket's current rowVersion.</param>
+            <response code="200">The updated ticket.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The requested change is not valid for this ticket's current state.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Resolve(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ResolveTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Resolve a ticket. Department Employee/Department Head only.</summary>
+            <remarks>MVP-API-Contracts.md §3.9, ISSUE-022's approved Resolve/Close split.</remarks>
+            <param name="ticketId">The ticket to resolve.</param>
+            <param name="request">
+            The outcome — one of Resolved, Cancelled, Rejected, Duplicate — the
+            resolution note, an optional reason code, the duplicate target when
+            the outcome is Duplicate, and the ticket's current rowVersion.
+            </param>
+            <response code="200">The resolved ticket.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The requested change is not valid for this ticket's current state.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Close(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CloseTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Close a resolved ticket. CS Agent/CS Supervisor/CS Manager only.</summary>
+            <remarks>MVP-API-Contracts.md §3.10, ISSUE-022's approved Resolve/Close split.</remarks>
+            <param name="ticketId">The ticket to close.</param>
+            <param name="request">The ticket's current rowVersion.</param>
+            <response code="200">The closed ticket.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The requested change is not valid for this ticket's current state.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Reopen(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ReopenTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Reopen a resolved/closed ticket. CS Agent/CS Supervisor/CS Manager only.</summary>
+            <remarks>
+            MVP-API-Contracts.md §3.11 / FR-RES-04: Reopen is a domain event, not
+            a status value — the ticket returns to InProgress, its ReopenCount
+            increments, and the prior resolution is archived (never deleted).
+            Only allowed within ISSUE-011's reopen window (7 days from the
+            current resolution, configurable); past it, create a new linked
+            ticket instead. The action is audited with the actor, the prior and
+            new status, and the caller's reason.
+            </remarks>
+            <param name="ticketId">The ticket to reopen.</param>
+            <param name="request">Why the ticket is being reopened, and the ticket's current rowVersion.</param>
+            <response code="200">The reopened ticket, back InProgress.</response>
+            <response code="400">The request body was malformed, or Reason was missing/blank.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The ticket is not Resolved/Closed, or the reopen window has passed.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetApprovals(System.Int64,System.Threading.CancellationToken)">
+            <summary>The ticket's Approvals / Dependencies view: approval cycles (full history), still-requestable configured approvals, typed workflow events, and the derived maintenance/prerequisite states.</summary>
+            <param name="ticketId">The ticket.</param>
+            <response code="200">The approvals/dependencies view, with per-caller request/decide capability flags.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.RequestApproval(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.RequestApprovalRequestDto,System.Threading.CancellationToken)">
+            <summary>Open a new approval cycle. Restricted to the ticket's operational actors; the approval type must be configured for the ticket's request type.</summary>
+            <param name="ticketId">The ticket.</param>
+            <param name="request">The approval type (e.g. AccountingApproval) and an optional request comment.</param>
+            <response code="200">The opened approval cycle.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket.</response>
+            <response code="409">An active cycle of this type already exists.</response>
+            <response code="422">The approval type is not configured for this ticket's request type, or the ticket is closed.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.DecideApproval(System.Int64,System.Int64,TigerCS.Application.Modules.Ticketing.Dto.DecideApprovalRequestDto,System.Threading.CancellationToken)">
+            <summary>Decide a pending approval cycle — Approve, or Reject with a mandatory reason. Restricted to the cycle's configured approval target.</summary>
+            <param name="ticketId">The ticket.</param>
+            <param name="approvalId">The approval cycle to decide.</param>
+            <param name="request">The decision ("Approve"/"Reject") and comment — required for a rejection.</param>
+            <response code="200">The decided approval cycle.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket/approval.</response>
+            <response code="409">The cycle is already decided.</response>
+            <response code="422">A rejection was sent without its reason.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.CancelApproval(System.Int64,System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CancelApprovalRequestDto,System.Threading.CancellationToken)">
+            <summary>Withdraw a still-pending approval cycle (kept as history). Restricted to the ticket's operational actors.</summary>
+            <param name="ticketId">The ticket.</param>
+            <param name="approvalId">The pending approval cycle to cancel.</param>
+            <param name="request">An optional cancellation comment.</param>
+            <response code="200">The cancelled approval cycle.</response>
+            <response code="404">No such ticket/approval.</response>
+            <response code="409">The cycle is already decided.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.RecordWorkflowEvent(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.RecordWorkflowEventRequestDto,System.Threading.CancellationToken)">
+            <summary>Record a typed dependency event: PrerequisitesCompleted, MaintenanceRequired, MaintenanceNotRequired, or MaintenanceCompleted. Restricted to the ticket's operational actors; approval events are produced only by approval actions.</summary>
+            <param name="ticketId">The ticket.</param>
+            <param name="request">The event type and an optional note.</param>
+            <response code="204">The event was recorded.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket.</response>
+            <response code="409">The event was already recorded and is not repeatable.</response>
+            <response code="422">The event does not apply in the ticket's current dependency state, or the ticket is closed.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Reconcile(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ReconcileTicketRequestDto,System.Threading.CancellationToken)">
+            <summary>Link a confirmed CRM match onto a ticket that did not have one at creation. CS Agent/CS Supervisor only.</summary>
+            <remarks>
+            See TicketReconciliationAppService's remarks. Scoped to CS Agent/CS
+            Supervisor — the same actors who own verification-session creation.
+            </remarks>
+            <param name="ticketId">The not-yet-verified ticket to reconcile.</param>
+            <param name="request">The confirmed verification session to consume, and the ticket's current rowVersion.</param>
+            <response code="200">The reconciled ticket, now verificationStatus Verified.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+            <response code="422">The requested change is not valid for this ticket's current state.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.AddNote(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CreateNoteRequestDto,System.Threading.CancellationToken)">
+            <summary>Add a note to a ticket.</summary>
+            <remarks>MVP-API-Contracts.md §4.1.</remarks>
+            <param name="ticketId">The ticket to annotate.</param>
+            <param name="request">The note text.</param>
+            <response code="201">The created note.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.ListNotes(System.Int64,System.Int32,System.Int32,System.Threading.CancellationToken)">
+            <summary>List a ticket's notes, newest page first.</summary>
+            <remarks>MVP-API-Contracts.md §4.2.</remarks>
+            <param name="ticketId">The ticket whose notes to list.</param>
+            <param name="page">1-based page number. 0 is treated as 1.</param>
+            <param name="pageSize">Page size. 0 is treated as 50.</param>
+            <response code="200">A page of notes, with the total count.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetRoles">
+            <summary>The caller's roles, from the JWT's own role claims — never client-supplied, and the app-service layer's sole source of role-based branching (Solution-Analysis.md §4.1's finer-grained per-action role sets, see TicketRoleSets).</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.TicketSlaController">
+             <summary>
+             The SLA and Escalation module's client surface (MVP-API-Contracts.md
+             §5.1, §5.2, §5.7, §5.9).
+            
+             <para>
+             <b>Automatic escalation is deliberately absent from this controller.</b>
+             §5.7 states it plainly: breach-driven escalation is "not exposed as a
+             client-callable endpoint, since it's system-triggered". It is raised by
+             the background-job path of ADR-0015, inside the same transaction as the
+             breach it responds to.
+             </para>
+            
+             <para>
+             <b>Four endpoints of §5 are not implemented, each for a stated reason.</b>
+             §5.3/§5.4 (pause/resume) are out of pilot scope
+             (MVP-Implementation-Backlog.md §0.2 — a disclosed limitation).
+             §5.5 (priority upgrade) is backlog S-14, a separate increment, and the
+             two approved documents disagree on which moment its recomputation runs
+             from — reported rather than guessed. §5.8 (respond to an escalation)
+             specifies its authorization only as "the notified role-holder ... as
+             applicable", which no approved document maps onto the fixed role set, so
+             it is reported as a contract gap rather than implemented against an
+             invented mapping. §5.6's downgrade endpoints are hard-disabled for the
+             pilot (§0). §5.10–§5.12 (business-calendar and holiday administration)
+             are stretch scope (§0.2 — "seeded configuration is committed instead").
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.#ctor(TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService,TigerCS.Application.Modules.SlaAndEscalation.Services.SlaFirstResponseAppService,TigerCS.Application.Modules.SlaAndEscalation.Services.TicketEscalationAppService)">
+             <summary>
+             The SLA and Escalation module's client surface (MVP-API-Contracts.md
+             §5.1, §5.2, §5.7, §5.9).
+            
+             <para>
+             <b>Automatic escalation is deliberately absent from this controller.</b>
+             §5.7 states it plainly: breach-driven escalation is "not exposed as a
+             client-callable endpoint, since it's system-triggered". It is raised by
+             the background-job path of ADR-0015, inside the same transaction as the
+             breach it responds to.
+             </para>
+            
+             <para>
+             <b>Four endpoints of §5 are not implemented, each for a stated reason.</b>
+             §5.3/§5.4 (pause/resume) are out of pilot scope
+             (MVP-Implementation-Backlog.md §0.2 — a disclosed limitation).
+             §5.5 (priority upgrade) is backlog S-14, a separate increment, and the
+             two approved documents disagree on which moment its recomputation runs
+             from — reported rather than guessed. §5.8 (respond to an escalation)
+             specifies its authorization only as "the notified role-holder ... as
+             applicable", which no approved document maps onto the fixed role set, so
+             it is reported as a contract gap rather than implemented against an
+             invented mapping. §5.6's downgrade endpoints are hard-disabled for the
+             pilot (§0). §5.10–§5.12 (business-calendar and holiday administration)
+             are stretch scope (§0.2 — "seeded configuration is committed instead").
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.GetSla(System.Int64,System.Threading.CancellationToken)">
+             <summary>The ticket's SLA position — due dates, breach flags, and current escalation level.</summary>
+             <remarks>
+             MVP-API-Contracts.md §5.1. Visible to any caller who can see the
+             ticket itself; department scoping is resolved server-side from the
+             caller's own roles and department membership.
+            
+             The due-date fields are null only while a provisional ticket is still
+             awaiting CRM reconciliation — an unverified ticket has not started its
+             SLA clock (FR-TKT-09), and no deadline is fabricated for it.
+            
+             `isCurrentlyPaused`, `currentPauseReason` and
+             `totalPausedMinutesThisPeriod` are part of the approved response shape
+             and always return false/null/0 in this pilot: SLA pause/resume is not
+             built (MVP-Implementation-Backlog.md §0.2).
+             </remarks>
+             <param name="ticketId">The ticket to report on.</param>
+             <param name="cancellationToken">Cancels the request.</param>
+             <response code="200">The ticket's SLA summary.</response>
+             <response code="403">The ticket is outside the caller's department visibility.</response>
+             <response code="404">No such ticket.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.RecordFirstResponse(System.Int64,TigerCS.Application.Modules.SlaAndEscalation.Dto.RecordFirstResponseRequestDto,System.Threading.CancellationToken)">
+             <summary>Record that the First Human Response has occurred.</summary>
+             <remarks>
+             MVP-API-Contracts.md §5.2 / ISSUE-019. This is the only event that
+             satisfies the First Response SLA — the automated acknowledgement never
+             does, on any channel.
+            
+             Write-once at the ticket level: a second call is answered with 409,
+             because the target is measured against the *first* engagement and a
+             later correction would silently move a contractual measurement.
+            
+             `occurredAtUtc` may legitimately precede the ticket's own creation
+             timestamp — a call answered moments before the agent finished creating
+             the ticket satisfies the SLA at the moment of actual human engagement
+             (SLA-Architecture.md §16 Example E).
+            
+             If the response landed after the deadline, this call also finalizes
+             the breach flag and raises the automatic Level 2 escalation, exactly
+             as the scheduled deadline job would have — and never twice, since both
+             paths share one idempotency key.
+             </remarks>
+             <param name="ticketId">The ticket being responded to.</param>
+             <param name="request">The source of the response and, optionally, when it occurred.</param>
+             <param name="cancellationToken">Cancels the request.</param>
+             <response code="200">The updated SLA summary.</response>
+             <response code="400">The request body was malformed, or `source` was not one of Manual/GenesysCallAnswer.</response>
+             <response code="403">The caller is neither the ticket's owner nor a role authorized to record on its behalf.</response>
+             <response code="404">No such ticket.</response>
+             <response code="409">A first response was already recorded, or the supplied `rowVersion` was stale.</response>
+             <response code="422">The ticket is Closed — a closed ticket accepts no further changes.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.Escalate(System.Int64,TigerCS.Application.Modules.SlaAndEscalation.Dto.ManualEscalationRequestDto,System.Threading.CancellationToken)">
+             <summary>Manually escalate a ticket.</summary>
+             <remarks>
+             MVP-API-Contracts.md §5.7 / FR-ESC-01.
+            
+             Escalation is an independent dimension, not a status: an escalated
+             ticket stays exactly as Open or InProgress as it was, and nothing
+             here changes `ticketStatus`, resolves, or closes the ticket
+             (ADR-0008/ADR-0011).
+            
+             Levels only rise. A request for a level at or below the ticket's
+             current one is answered with 422 rather than quietly de-escalating it.
+            
+             Level 4 (Chairman/CEO) is manual-only and restricted to CS Manager and
+             General Manager. Because `level` and `triggerType` arrive as separate
+             fields, the pair must also agree: `level: 4` requires
+             `triggerType: ManualLevel4` and vice versa, so the role gate cannot be
+             side-stepped by sending Level 4 under the ManualFlag trigger. The
+             automatic trigger types are system-only and are rejected here.
+             </remarks>
+             <param name="ticketId">The ticket to escalate.</param>
+             <param name="request">The level, trigger type, optional note, and the ticket's current `rowVersion`.</param>
+             <param name="cancellationToken">Cancels the request.</param>
+             <response code="201">The created escalation record.</response>
+             <response code="400">The request body was malformed, `triggerType` was not ManualFlag/ManualLevel4, or `level` was outside 1–4.</response>
+             <response code="403">The caller may not escalate this ticket, or requested ManualLevel4 without being a CS Manager or General Manager.</response>
+             <response code="404">No such ticket.</response>
+             <response code="409">The supplied `rowVersion` was stale.</response>
+             <response code="422">The ticket is Closed, the level is not an advance, or `level` and `triggerType` disagree about Level 4.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.GetEscalations(System.Int64,System.Threading.CancellationToken)">
+             <summary>Escalation history for a ticket, most recent first.</summary>
+             <remarks>
+             MVP-API-Contracts.md §5.9. Includes both manual escalations and the
+             automatic Level 2 raised on an SLA breach.
+            
+             `notifiedRoles` records who the approved recipient matrix says should
+             be told, and is deliberately distinct from `level` (ADR-0011): a
+             Critical breach notifying the General Manager does not, by itself,
+             make the ticket Level 3. Notification *delivery* — email, SMS,
+             in-app — is outside this pilot's scope; only the intended recipients
+             are recorded.
+            
+             `respondedAtUtc` and `respondingEmployeeId` are always null in this
+             pilot: the respond action (§5.8) is not implemented — see this
+             controller's remarks.
+             </remarks>
+             <param name="ticketId">The ticket whose escalations to list.</param>
+             <param name="cancellationToken">Cancels the request.</param>
+             <response code="200">The ticket's escalations, newest first.</response>
+             <response code="403">The ticket is outside the caller's department visibility.</response>
+             <response code="404">No such ticket.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.ToActionResult``1(TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaOperationResult{``0},System.Func{``0,Microsoft.AspNetCore.Mvc.IActionResult})">
+            <summary>Maps one outcome set to HTTP, so every endpoint in this controller answers the same condition the same way.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketSlaController.GetRoles">
+            <summary>The caller's roles, from the JWT's own validated role claims — never client-supplied.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.UsersController.Me(System.Threading.CancellationToken)">
+            <summary>The signed-in user's own profile.</summary>
+            <remarks>
+            Resolved from the access token's subject claim, never from a
+            client-supplied id. MVP-API-Contracts.md §1.3.
+            </remarks>
+            <response code="200">The caller's employee id, display name, roles, and department memberships.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.UsersController.SetActivation(System.Guid,TigerCS.Application.Modules.IdentityAndAccess.Dto.ActivationRequestDto,System.Threading.CancellationToken)">
+            <summary>Activate or deactivate a user. System Administrator only.</summary>
+            <remarks>MVP-API-Contracts.md §1.6.</remarks>
+            <param name="employeeId">The employee to activate or deactivate.</param>
+            <param name="request">The desired activation state, and an optional reason.</param>
+            <response code="200">Activation updated. Returns the new state and how many of that user's open tickets were affected.</response>
+            <response code="400">The request body was malformed.</response>
+            <response code="404">No such employee.</response>
+            <response code="409">Refused: this is the last active System Administrator.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.VerificationSessionsController">
+             <summary>
+             <b>A Tiger CS Ticketing endpoint — not a CRM endpoint.</b> Customer/
+             requester verification (selecting the requester, recording the
+             verification method/result, deciding whether ticket creation is
+             allowed, the immutable verification-time snapshot, and the audit/
+             authorization/expiry rules) is Tiger CS Ticketing's own business logic;
+             Tiger CRM is consulted only as a read-only data source via
+             <c>CrmUnitLookupAppService</c>/<c>ICrmGateway</c> before this endpoint is
+             ever called. See <c>VerificationSessionAppService</c>'s remarks for the
+             full ownership boundary — that is where this controller's logic
+             actually lives; this class stays a thin HTTP adapter over it, same as
+             every other controller in this codebase.
+            
+             <para>
+             MVP-API-Contracts.md §2.4, simplified per MVP-Implementation-Backlog.md
+             §0.2/S-07 into a single combined create+select+confirm call — see
+             VerificationSessionAppService's remarks for the full rationale. Scoped to
+             CS Agent/CS Supervisor only (PolicyNames.CustomerVerification) — see
+             CrmController's remarks for why this is narrower than the contract's
+             literal "Agent and above" wording.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.VerificationSessionsController.#ctor(TigerCS.Application.Modules.CustomerVerification.Services.VerificationSessionAppService)">
+             <summary>
+             <b>A Tiger CS Ticketing endpoint — not a CRM endpoint.</b> Customer/
+             requester verification (selecting the requester, recording the
+             verification method/result, deciding whether ticket creation is
+             allowed, the immutable verification-time snapshot, and the audit/
+             authorization/expiry rules) is Tiger CS Ticketing's own business logic;
+             Tiger CRM is consulted only as a read-only data source via
+             <c>CrmUnitLookupAppService</c>/<c>ICrmGateway</c> before this endpoint is
+             ever called. See <c>VerificationSessionAppService</c>'s remarks for the
+             full ownership boundary — that is where this controller's logic
+             actually lives; this class stays a thin HTTP adapter over it, same as
+             every other controller in this codebase.
+            
+             <para>
+             MVP-API-Contracts.md §2.4, simplified per MVP-Implementation-Backlog.md
+             §0.2/S-07 into a single combined create+select+confirm call — see
+             VerificationSessionAppService's remarks for the full rationale. Scoped to
+             CS Agent/CS Supervisor only (PolicyNames.CustomerVerification) — see
+             CrmController's remarks for why this is narrower than the contract's
+             literal "Agent and above" wording.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.VerificationSessionsController.Create(TigerCS.Application.Modules.CustomerVerification.Dto.CreateVerificationSessionRequestDto,System.String,System.Threading.CancellationToken)">
+            <summary>Create and confirm a verification session in one call.</summary>
+            <remarks>
+            The combined create+select+confirm call described in
+            MVP-Implementation-Backlog.md §0.2/S-07. The unit and contact must
+            already have been looked up through <c>GET /api/crm/units/...</c>.
+            <para>
+            Send an optional <c>Idempotency-Key</c> header so a retried request
+            does not create a second session.
+            </para>
+            </remarks>
+            <param name="request">The unit/contact selection and the confirmation.</param>
+            <response code="201">The confirmed session, including the verification-time snapshot of the unit and contact.</response>
+            <response code="400">confirmed was not true, or verificationMethod was not one of ManualAgentConfirmation, AuthenticatedDigitalUser, Otp, FaceToFaceDocumentCheck, Other.</response>
+            <response code="404">unitReferenceId/contactReferenceId do not reference an already-looked-up unit and one of its contacts.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.VerificationSessionsController.Get(System.Guid,System.Threading.CancellationToken)">
+            <summary>Fetch one verification session. Owner-only.</summary>
+            <remarks>
+            Owner-only (single-agent ownership, MVP-ERD.md §2.24) — used to
+            resume state, or to hand a confirmed session's data to ticket creation.
+            </remarks>
+            <param name="verificationSessionId">The session to fetch.</param>
+            <response code="200">The session. status is one of InProgress, Confirmed, Consumed, Expired, Abandoned.</response>
+            <response code="403">The session belongs to another agent.</response>
+            <response code="404">No such session.</response>
+        </member>
+        <member name="T:TigerCS.Api.OpenApi.OpenApiDocumentation">
+             <summary>
+             Registration and endpoint wiring for the API's Swagger/OpenAPI surface.
+            
+             <para>
+             The OpenAPI <i>document</i> is produced by the framework's own .NET 10
+             generator (<c>Microsoft.AspNetCore.OpenApi</c>); Swashbuckle contributes
+             the Swagger <i>UI</i> only. Keeping the two responsibilities split avoids
+             running two document generators over the same endpoints.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.OpenApiDocumentation.DocumentName">
+            <summary>The OpenAPI document name, and the <c>{documentName}</c> segment of the JSON route below.</summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.OpenApiDocumentation.DocumentRoute">
+            <summary>Where the generated OpenAPI JSON is served.</summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.OpenApiDocumentation.LegacyDocumentRoute">
+            <summary>
+            The route <c>MapOpenApi()</c>'s default served before Swagger UI was
+            added. Kept mapped so anything already pointed at it keeps working;
+            it serves the same document as <see cref="F:TigerCS.Api.OpenApi.OpenApiDocumentation.DocumentRoute"/>.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.OpenApiDocumentation.SwaggerUiRoutePrefix">
+            <summary>Where Swagger UI is served (as a path prefix, hence no leading slash).</summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.OpenApiDocumentation.EnabledEnvironments">
+            <summary>
+            Environments in which the Swagger UI and the OpenAPI JSON are exposed.
+            An explicit allow-list, not a "not Production" deny-list, so a future
+            environment name (a real "UAT"/"Staging") stays closed by default
+            rather than being exposed because nobody remembered to add it to a
+            deny-list — the same reasoning as
+            <c>CrmGatewaySafety.MockAllowedEnvironments</c>. "Testing" is the
+            environment name the integration-test host uses.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.OpenApi.OpenApiDocumentation.IsEnabledFor(Microsoft.Extensions.Hosting.IHostEnvironment)">
+            <summary>True when <paramref name="environment"/> is one of <see cref="F:TigerCS.Api.OpenApi.OpenApiDocumentation.EnabledEnvironments"/>.</summary>
+        </member>
+        <member name="M:TigerCS.Api.OpenApi.OpenApiDocumentation.AddTigerCsOpenApi(Microsoft.Extensions.DependencyInjection.IServiceCollection)">
+            <summary>
+            Registers the OpenAPI document generator together with this API's
+            document/operation transformers. Registration is unconditional (it
+            adds services, not endpoints); whether anything is actually reachable
+            is decided by <see cref="M:TigerCS.Api.OpenApi.OpenApiDocumentation.MapTigerCsSwagger(Microsoft.AspNetCore.Builder.WebApplication)"/>.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.OpenApi.OpenApiDocumentation.MapTigerCsSwagger(Microsoft.AspNetCore.Builder.WebApplication)">
+            <summary>
+            Maps the Swagger UI at <c>/swagger</c> and the OpenAPI JSON at
+            <c>/swagger/v1/swagger.json</c> (plus <see cref="F:TigerCS.Api.OpenApi.OpenApiDocumentation.LegacyDocumentRoute"/>)
+            — but only in <see cref="F:TigerCS.Api.OpenApi.OpenApiDocumentation.EnabledEnvironments"/>.
+            </summary>
+            <remarks>
+            Outside those environments nothing is mapped at all, rather than being
+            mapped and then refused, so the paths behave exactly like routes this
+            application does not have.
+            </remarks>
+        </member>
+        <member name="T:TigerCS.Api.OpenApi.OpenApiTags">
+             <summary>
+             The canonical Swagger/OpenAPI tag names for this API, plus the
+             description shown next to each group in Swagger UI.
+            
+             <para>
+             Tags are a <b>documentation grouping only</b>: they change nothing about
+             routing, authorization, or behaviour. They are declared here (rather than
+             as loose strings on each action) so that a tag is spelled exactly one way
+             across every controller, and so <see cref="F:TigerCS.Api.OpenApi.OpenApiTags.Ordered"/> can fix the order
+             the groups appear in — Swagger UI otherwise sorts them alphabetically,
+             which would interleave the intake/ticket flow with unrelated groups.
+             </para>
+            
+             <para>
+             Descriptions restate what the endpoints in the group already do; they
+             deliberately do not introduce business rules that are not already
+             implemented in the code they describe.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.OpenApiTags.Ordered">
+            <summary>
+            Every tag, in the order Swagger UI should render them — roughly the
+            order an agent moves through the system: sign in, look the caller up,
+            verify them, record the intake, create the ticket, then work it.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.OpenApi.TigerCsOpenApiDocumentTransformer">
+             <summary>
+             Fills in the document-level parts of the generated OpenAPI document that
+             the framework cannot infer from the endpoints themselves: the API's
+             title/version/description, the <c>Bearer</c> JWT security scheme that
+             backs Swagger UI's <b>Authorize</b> button, and the ordered tag list with
+             its group descriptions (<see cref="T:TigerCS.Api.OpenApi.OpenApiTags"/>).
+            
+             <para>
+             Documentation only — nothing here participates in request handling. The
+             security scheme <i>describes</i> the authentication Program.cs already
+             configures (JWT bearer, <c>Authorization: Bearer {token}</c>); it does
+             not define or change it.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Api.OpenApi.TigerCsOpenApiDocumentTransformer.BearerSchemeName">
+            <summary>
+            The security-scheme key. Named exactly "Bearer" so the header Swagger
+            UI sends is <c>Authorization: Bearer {token}</c> and the value the
+            user pastes into the Authorize box is the bare access token, with no
+            "Bearer " prefix of their own.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.OpenApi.TigerCsOpenApiOperationTransformer">
+             <summary>
+             Per-operation documentation: applies the <c>[Tags]</c> group an endpoint
+             declares, and — for endpoints that are not <c>[AllowAnonymous]</c> —
+             records that they require the <c>Bearer</c> scheme and can answer 401/403.
+            
+             <para>
+             The 401/403 responses are not invented: Program.cs registers JWT bearer
+             authentication and <c>AddTigerCsAuthorizationPolicies</c> sets a fallback
+             policy requiring an authenticated, active employee, so every endpoint
+             without <c>[AllowAnonymous]</c> can already return them. Documenting them
+             per-operation avoids repeating an identical
+             <c>[ProducesResponseType]</c> pair on every authenticated action.
+             </para>
+            
+             <para>Documentation only — no request handling depends on this class.</para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.OpenApi.TigerCsOpenApiOperationTransformer.ResolveTags(Microsoft.AspNetCore.Mvc.ApiExplorer.ApiDescription)">
+            <summary>
+            The endpoint's declared tag group: the action method's own
+            <c>[Tags]</c> if it has one, otherwise its controller's. Read
+            directly off the action/controller rather than by scanning
+            <c>EndpointMetadata</c>, so an action-level tag reliably wins over a
+            controller-level one without depending on the order MVC happens to
+            place attributes in that list. Minimal-API endpoints (<c>/health</c>)
+            have no controller and fall through to their endpoint metadata.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.OpenApi.TigerCsOpenApiSchemaTransformer">
+             <summary>
+             Keeps a schema's <c>required</c> list honest: a property whose type is
+             nullable is dropped from it.
+            
+             <para>
+             The generator derives <c>required</c> from a record's positional
+             constructor, so every parameter lands there — including the optional ones.
+             That contradicts what the endpoints actually accept: <c>POST
+             /api/intake-records</c>, for instance, documents
+             <c>rawUnitNumberEntered</c> as "must be omitted when isUnitRelated is
+             false", and a client generated from an unadjusted document could not
+             express that. Removing nullable properties from <c>required</c> leaves a
+             statement that holds for both directions — a nullable field may be
+             omitted from a request, and a client must not assume one is present.
+             </para>
+            
+             <para>Documentation only — model binding and validation are untouched.</para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.OpenApi.TigerCsOpenApiSchemaTransformer.IsNullable(Microsoft.OpenApi.IOpenApiSchema)">
+            <summary>
+            True when the property's declared type includes <c>null</c> — the
+            OpenAPI 3.1 spelling of a nullable field, which the generator emits as
+            e.g. <c>"type": ["null", "string"]</c>.
+            </summary>
+        </member>
+        <member name="T:Program">
+            <summary>
+            Auto-generated public partial Program class for top-level statement apps.
+            </summary>
+        </member>
+        <member name="T:HealthResponse">
+            <summary>The <c>GET /health</c> payload.</summary>
+            <remarks>A named type rather than an anonymous object purely so the response has a schema in the OpenAPI document; the JSON it serialises to is unchanged.</remarks>
+            <param name="Status">Constant literal <c>"healthy"</c>.</param>
+        </member>
+        <member name="M:HealthResponse.#ctor(System.String)">
+            <summary>The <c>GET /health</c> payload.</summary>
+            <remarks>A named type rather than an anonymous object purely so the response has a schema in the OpenAPI document; the JSON it serialises to is unchanged.</remarks>
+            <param name="Status">Constant literal <c>"healthy"</c>.</param>
+        </member>
+        <member name="P:HealthResponse.Status">
+            <summary>Constant literal <c>"healthy"</c>.</summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Type)">
+            <summary>
+            Generates a documentation comment ID for a type.
+            Example: T:Namespace.Outer+Inner`1 becomes T:Namespace.Outer.Inner`1
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Reflection.PropertyInfo)">
+            <summary>
+            Generates a documentation comment ID for a property.
+            Example: P:Namespace.ContainingType.PropertyName or for an indexer P:Namespace.ContainingType.Item(System.Int32)
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Type,System.String)">
+            <summary>
+            Generates a documentation comment ID for a property given its container type and property name.
+            Example: P:Namespace.ContainingType.PropertyName
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Reflection.MethodInfo)">
+            <summary>
+            Generates a documentation comment ID for a method (or constructor).
+            For example:
+              M:Namespace.ContainingType.MethodName(ParamType1,ParamType2)~ReturnType
+              M:Namespace.ContainingType.#ctor(ParamType)
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.GetTypeDocId(System.Type,System.Boolean,System.Boolean)">
+            <summary>
+            Generates a documentation ID string for a type.
+            This method handles nested types (replacing '+' with '.'),
+            generic types, arrays, pointers, by-ref types, and generic parameters.
+            The <paramref name="includeGenericArguments"/> flag controls whether
+            constructed generic type arguments are emitted, while <paramref name="omitGenericArity"/>
+            controls whether the generic arity marker (e.g. "`1") is appended.
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.NormalizeDocId(System.String)">
+            <summary>
+            Normalizes a documentation comment ID to match the compiler-style format.
+            Strips the return type suffix for ordinary methods but retains it for conversion operators.
+            </summary>
+            <param name="docId">The documentation comment ID to normalize.</param>
+            <returns>The normalized documentation comment ID.</returns>
+        </member>
+    </members>
+</doc>
