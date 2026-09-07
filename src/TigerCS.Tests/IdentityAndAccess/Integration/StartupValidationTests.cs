@@ -121,7 +121,12 @@ public class StartupValidationTests
     [Fact]
     public void ProductionEnvironment_WithMockCrmProvider_FailsAtStartup()
     {
-        using var factory = new ConfiguredFactory("Production", ValidConfig());
+        // Named explicitly: the committed appsettings.json no longer defaults
+        // Crm:Provider to "Mock", and this test is about the Mock guard.
+        var config = ValidConfig();
+        config["Crm:Provider"] = "Mock";
+
+        using var factory = new ConfiguredFactory("Production", config);
 
         var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
         Assert.Contains("Crm:Provider", ex.ToString());
@@ -221,6 +226,7 @@ public class StartupValidationTests
     public void UatEnvironment_WithEmailDisabled_StillRefusesMockCrmProvider()
     {
         var config = ValidConfig();
+        config["Crm:Provider"] = "Mock";
         config["Notifications:Email:Enabled"] = "false";
         config["Notifications:Email:Provider"] = "Recording";
 

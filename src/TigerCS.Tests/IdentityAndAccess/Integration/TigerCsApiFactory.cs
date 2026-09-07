@@ -71,6 +71,18 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         // execution, never job logic.
         builder.UseSetting("BackgroundJobs:Enabled", "false");
 
+        // The committed appsettings.json now names the deployment's own CRM
+        // provider ("Http" — see Crm:Provider there), which the generic
+        // ICrmGateway/ICrmCustomerLookupGateway registrations do not
+        // implement (IntegrationsServiceCollectionExtensions: only "Mock"
+        // exists for those two ports). This host must not depend on the
+        // committed deployment default: every test that touches unit/contact
+        // lookup or customer search is written against MockCrmGateway's
+        // fixture, so pin it here — the same test-double swap as the
+        // ICrmBuyerLookupGateway replacement below and the InMemory
+        // DbContext. UseSetting for the same eager-read reason as above.
+        builder.UseSetting("Crm:Provider", "Mock");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
