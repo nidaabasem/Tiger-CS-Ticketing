@@ -127,24 +127,34 @@ using (var crmStartupScope = app.Services.CreateScope())
 }
 
 // Fail fast if the recording email adapter would run outside
-// Development/Testing. Same conditional-on-provider shape as the CRM guard
-// above (EmailSenderSafety.IsUnsafe), and for a sharper reason:
+// Development/Testing while email delivery is expected. Same
+// conditional-on-provider shape as the CRM guard above
+// (EmailSenderSafety.IsUnsafe), and for a sharper reason:
 // RecordingEmailSender reports every send as successful without contacting
 // any provider, so running it for real would mark tickets acknowledged, write
 // Sent notification rows and satisfy every dashboard and audit query while no
 // customer ever received anything. A silent, total failure that looks exactly
 // like success is worse than a loud one.
+//
+// Notifications:Email:Enabled = false (EmailSenderOptions.Enabled) declares
+// that email delivery is not part of the current phase (UAT / management
+// demo), so the recording adapter cannot be mistaken for a delivering one and
+// the host may start in any environment. The flag changes this guard only —
+// the adapter wiring is untouched, so nothing is sent either way. With
+// Enabled = true the original protection applies unchanged.
 using (var emailStartupScope = app.Services.CreateScope())
 {
     var emailOptions = emailStartupScope.ServiceProvider.GetRequiredService<IOptions<EmailSenderOptions>>().Value;
-    if (EmailSenderSafety.IsUnsafe(emailOptions.Provider, app.Environment.EnvironmentName))
+    if (EmailSenderSafety.IsUnsafe(emailOptions.Enabled, emailOptions.Provider, app.Environment.EnvironmentName))
     {
         throw new InvalidOperationException(
-            $"Notifications:Email:Provider is 'Recording' in environment '{app.Environment.EnvironmentName}'. "
-            + "RecordingEmailSender never delivers anything (see its own remarks) and may only run in "
-            + $"{string.Join("/", EmailSenderSafety.RecordingAllowedEnvironments)}. No real email provider is "
-            + "confirmed for this pilot: configure a real IEmailSender implementation and set "
-            + "Notifications:Email:Provider accordingly before deploying to this environment.");
+            $"Notifications:Email:Provider is 'Recording' with Notifications:Email:Enabled = true in environment "
+            + $"'{app.Environment.EnvironmentName}'. RecordingEmailSender never delivers anything (see its own "
+            + $"remarks) and may only run in {string.Join("/", EmailSenderSafety.RecordingAllowedEnvironments)} "
+            + "when delivery is enabled. No real email provider is confirmed for this pilot: either set "
+            + "Notifications:Email:Enabled to false while email delivery is out of scope for this phase, or "
+            + "configure a real IEmailSender implementation and set Notifications:Email:Provider accordingly "
+            + "before deploying to this environment.");
     }
 }
 

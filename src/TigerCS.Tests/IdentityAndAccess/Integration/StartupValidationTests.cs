@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Infrastructure.Persistence;
+using TigerCS.Integrations.Modules.EmailIntegration;
 
 namespace TigerCS.Tests.IdentityAndAccess.Integration;
 
@@ -139,20 +141,118 @@ public class StartupValidationTests
     /// The CRM provider is set to a non-Mock value here so the failure this
     /// asserts can only be the email guard: with both at their defaults the
     /// CRM guard would fire first and the test would pass for the wrong
-    /// reason.
+    /// reason. Email delivery is switched on explicitly because the
+    /// committed <c>appsettings.json</c> sets
+    /// <c>Notifications:Email:Enabled</c> to <c>false</c> for the current
+    /// no-delivery phase (see
+    /// <see cref="UatEnvironment_WithRecordingEmailProviderAndEmailDisabled_StartsSuccessfully"/>);
+    /// the guard only fires when delivery is expected.
     /// </para>
     /// </summary>
-    [Fact]
-    public void ProductionEnvironment_WithRecordingEmailProvider_FailsAtStartup()
+    [Theory]
+    [InlineData("Production")]
+    [InlineData("UAT")]
+    public void NonDevelopmentEnvironment_WithRecordingEmailProviderAndEmailEnabled_FailsAtStartup(string environment)
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "InternalCrmGateway";
+        config["Notifications:Email:Enabled"] = "true";
+        config["Notifications:Email:Provider"] = "Recording";
 
-        using var factory = new ConfiguredFactory("Production", config);
+        using var factory = new ConfiguredFactory(environment, config);
 
         var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
         Assert.Contains("Notifications:Email:Provider", ex.ToString());
+        Assert.Contains("Notifications:Email:Enabled", ex.ToString());
         Assert.Contains("Recording", ex.ToString());
+    }
+
+    /// <summary>
+    /// Email delivery is not part of the UAT / management-demo phase and only
+    /// the recording adapter exists, so a UAT host must be able to start with
+    /// <c>Notifications:Email:Provider</c> = <c>Recording</c> once
+    /// <c>Notifications:Email:Enabled</c> is <c>false</c>. The flag relaxes
+    /// the email startup guard only: the CRM guard is still exercised (a
+    /// non-Mock provider is required for the host to start at all), and the
+    /// adapter that ends up wired is still <c>RecordingEmailSender</c>, which
+    /// contacts no provider — nothing is delivered.
+    /// </summary>
+    [Fact]
+    public void UatEnvironment_WithRecordingEmailProviderAndEmailDisabled_StartsSuccessfully()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["Notifications:Email:Enabled"] = "false";
+        config["Notifications:Email:Provider"] = "Recording";
+
+        using var factory = new ConfiguredFactory("UAT", config);
+
+        var server = factory.Server;
+
+        Assert.NotNull(server);
+        Assert.IsType<RecordingEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+    }
+
+    /// <summary>Same as the UAT case for a Production host: disabled delivery plus the recording adapter is allowed, and still delivers nothing.</summary>
+    [Fact]
+    public void ProductionEnvironment_WithRecordingEmailProviderAndEmailDisabled_StartsSuccessfully()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["Notifications:Email:Enabled"] = "false";
+        config["Notifications:Email:Provider"] = "Recording";
+
+        using var factory = new ConfiguredFactory("Production", config);
+
+        var server = factory.Server;
+
+        Assert.NotNull(server);
+        Assert.IsType<RecordingEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+    }
+
+    /// <summary>
+    /// Disabling delivery must not weaken any other startup validation: a UAT
+    /// host with <c>Notifications:Email:Enabled</c> = <c>false</c> is still
+    /// refused for the Mock CRM adapter, exactly as
+    /// <see cref="ProductionEnvironment_WithMockCrmProvider_FailsAtStartup"/>
+    /// proves for Production.
+    /// </summary>
+    [Fact]
+    public void UatEnvironment_WithEmailDisabled_StillRefusesMockCrmProvider()
+    {
+        var config = ValidConfig();
+        config["Notifications:Email:Enabled"] = "false";
+        config["Notifications:Email:Provider"] = "Recording";
+
+        using var factory = new ConfiguredFactory("UAT", config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("Crm:Provider", ex.ToString());
+        Assert.Contains("Mock", ex.ToString());
+    }
+
+    /// <summary>
+    /// Development/Testing keep working with the recording adapter whether or
+    /// not delivery is flagged as enabled — the allow-list has always
+    /// permitted it there, and the new flag must not change that.
+    /// </summary>
+    [Theory]
+    [InlineData("Development", "true")]
+    [InlineData("Development", "false")]
+    [InlineData("Testing", "true")]
+    [InlineData("Testing", "false")]
+    public void DevelopmentAndTesting_WithRecordingEmailProvider_StartSuccessfully(string environment, string emailEnabled)
+    {
+        var config = ValidConfig();
+        config["Notifications:Email:Enabled"] = emailEnabled;
+        config["Notifications:Email:Provider"] = "Recording";
+
+        using var factory = new ConfiguredFactory(environment, config);
+
+        var server = factory.Server;
+
+        Assert.NotNull(server);
+        Assert.IsType<RecordingEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
     }
 
     /// <summary>
