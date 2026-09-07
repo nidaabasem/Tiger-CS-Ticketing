@@ -134,10 +134,33 @@ using (var crmStartupScope = app.Services.CreateScope())
 // Sent notification rows and satisfy every dashboard and audit query while no
 // customer ever received anything. A silent, total failure that looks exactly
 // like success is worse than a loud one.
+//using (var emailStartupScope = app.Services.CreateScope())
+//{
+//    var emailOptions = emailStartupScope.ServiceProvider.GetRequiredService<IOptions<EmailSenderOptions>>().Value;
+//    if (EmailSenderSafety.IsUnsafe(emailOptions.Provider, app.Environment.EnvironmentName))
+//    {
+//        throw new InvalidOperationException(
+//            $"Notifications:Email:Provider is 'Recording' in environment '{app.Environment.EnvironmentName}'. "
+//            + "RecordingEmailSender never delivers anything (see its own remarks) and may only run in "
+//            + $"{string.Join("/", EmailSenderSafety.RecordingAllowedEnvironments)}. No real email provider is "
+//            + "confirmed for this pilot: configure a real IEmailSender implementation and set "
+//            + "Notifications:Email:Provider accordingly before deploying to this environment.");
+//    }
+//}
 using (var emailStartupScope = app.Services.CreateScope())
 {
-    var emailOptions = emailStartupScope.ServiceProvider.GetRequiredService<IOptions<EmailSenderOptions>>().Value;
-    if (EmailSenderSafety.IsUnsafe(emailOptions.Provider, app.Environment.EnvironmentName))
+    var emailOptions = emailStartupScope.ServiceProvider
+        .GetRequiredService<IOptions<EmailSenderOptions>>()
+        .Value;
+
+    var emailEnabled = app.Configuration.GetValue(
+        "Notifications:Email:Enabled",
+        true);
+
+    if (emailEnabled &&
+        EmailSenderSafety.IsUnsafe(
+            emailOptions.Provider,
+            app.Environment.EnvironmentName))
     {
         throw new InvalidOperationException(
             $"Notifications:Email:Provider is 'Recording' in environment '{app.Environment.EnvironmentName}'. "
