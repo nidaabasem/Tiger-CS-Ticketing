@@ -20,7 +20,15 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// </para>
 /// </summary>
 /// <param name="CrmBuyerCustomerId">The anchor ticket's own CrmBuyerCustomerId, or null when the ticket was never CRM Buyer verified.</param>
-/// <param name="Status">One of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm". Only "Found" populates the fields below.</param>
+/// <param name="Status">
+/// One of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch",
+/// "NotFoundInCrm", "NoPhoneOnRecord". Only "Found" populates the fields
+/// below. "NotFoundInCrm" also covers CRM resolving the ticket's phone to a
+/// <i>different</i> customer than <see cref="CrmBuyerCustomerId"/> — another
+/// customer's data is never shown just because the phone matches.
+/// "NoPhoneOnRecord" means the ticket has no intake phone to re-query CRM
+/// with (no linked IntakeRecord and no originating interaction).
+/// </param>
 /// <param name="FullNameEnglish">The customer's name in English, when CRM records one.</param>
 /// <param name="FullNameArabic">The customer's name in Arabic, when CRM records one.</param>
 /// <param name="MobileNumber">The customer's mobile number on file in CRM.</param>

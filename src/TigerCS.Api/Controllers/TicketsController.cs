@@ -176,7 +176,7 @@ public class TicketsController(
     /// endpoint carries none of that.
     /// </remarks>
     /// <param name="ticketId">The ticket whose customer's profile to fetch.</param>
-    /// <response code="200">The customer's profile. <c>status</c> is one of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm" — only "Found" populates name/mobile/email/units.</response>
+    /// <response code="200">The customer's profile. <c>status</c> is one of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm", "NoPhoneOnRecord" — only "Found" populates name/mobile/email/units, and only when CRM's Buyer is the ticket's own CrmBuyerCustomerId.</response>
     /// <response code="404">No such ticket, or it is not visible to the caller.</response>
     [HttpGet("{ticketId:long}/customer-profile")]
     [Tags(OpenApiTags.CustomerProfile)]
