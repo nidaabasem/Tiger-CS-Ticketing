@@ -119,6 +119,34 @@ jobs:
           sudo apt-get update -y
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
 
+      - name: Apply the generated idempotent SQL script as one batch (the deployment path)
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          # `dotnet ef database update` above sends each migration command
+          # to SQL Server separately, so it can never reproduce the failure
+          # class that broke AddWorkflowVersioning in UAT: EF Core 9+ emits
+          # the script as ONE batch per migration (BEGIN TRANSACTION ...
+          # COMMIT; GO), and SQL Server binds every DML statement of a batch
+          # before executing any of it — a raw UPDATE naming a column that an
+          # earlier statement of the same migration adds or renames fails at
+          # compile time with "Invalid column name". Running the script that
+          # the first step generated through sqlcmd (which splits on GO
+          # exactly as SSMS does) against a SEPARATE, fresh database is the
+          # deployment path itself, so a migration that only works
+          # command-by-command is caught here rather than on a UAT server.
+          # -b makes sqlcmd exit non-zero on the first SQL error.
+          sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b \
+            -Q "CREATE DATABASE [TigerCsTicketing_CI_Script];"
+          sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b \
+            -d TigerCsTicketing_CI_Script -i src/idempotent-migration.sql
+          applied=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b -d TigerCsTicketing_CI_Script -h -1 -W \
+            -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM [__EFMigrationsHistory] WHERE [MigrationId] = N'20260908054944_AddWorkflowVersioning';")
+          if [ "$applied" != "1" ]; then
+            echo "::error::The idempotent script ran but did not record AddWorkflowVersioning in __EFMigrationsHistory (got '$applied')."
+            exit 1
+          fi
+          echo "Idempotent script applied as single batches; AddWorkflowVersioning recorded."
+
       - name: Verify schema — exact table list
         run: |
           export PATH="$PATH:/opt/mssql-tools18/bin"

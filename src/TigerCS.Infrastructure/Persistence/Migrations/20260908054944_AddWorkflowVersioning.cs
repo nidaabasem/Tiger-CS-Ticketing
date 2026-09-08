@@ -36,6 +36,22 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
         ///   <item>Step configuration (<c>ApprovalType</c>), the
         ///   <c>WorkflowStepTransitions</c> table, indexes and foreign keys.</item>
         /// </list>
+        ///
+        /// <para>
+        /// <b>Every raw SQL statement below is wrapped in <c>EXEC(N'...')</c>.</b>
+        /// EF Core 9+ emits a migration script as ONE T-SQL batch
+        /// (<c>BEGIN TRANSACTION; ... COMMIT; GO</c>), and SQL Server binds
+        /// every DML statement of a batch before executing any of it. A
+        /// plain <c>UPDATE</c> naming a column that an earlier statement of
+        /// the same batch adds or renames therefore fails at compile time
+        /// with "Invalid column name" — the exact failure seen applying this
+        /// script to the pre-versioning UAT database. Dynamic SQL defers
+        /// name resolution to execution, when the preceding
+        /// <c>ALTER TABLE</c>/<c>sp_rename</c> have already run. DDL and the
+        /// generator's own <c>sys.*</c> lookups are resolved at execution
+        /// anyway and need no wrapping. <c>EXEC</c> runs inside the enclosing
+        /// transaction, so the migration stays atomic.
+        /// </para>
         /// </summary>
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -63,12 +79,18 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                 column: "Code",
                 unique: true);
 
+            // References [Workflows], created by the CreateTable above in the
+            // same batch. Today SQL Server defers this statement only because
+            // the table does not exist yet at bind time; dynamic SQL makes
+            // that explicit rather than incidental (see the type remarks).
             migrationBuilder.Sql(
                 """
+                EXEC(N'
                 INSERT INTO [Workflows] ([Code], [Name], [Description], [IsActive], [CreatedAtUtc])
                 SELECT [Code], [Name], [Description], [IsActive], SYSUTCDATETIME()
                 FROM [WorkflowTemplates]
                 ORDER BY [WorkflowTemplateId];
+                ');
                 """);
 
             // ---- 2. Templates become versions -------------------------------------
@@ -116,8 +138,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
             // Every pre-versioning template is version 1, Published (Status 2),
             // of the workflow that shares its Code. System-published: no actor.
+            //
+            // References WorkflowTemplates.WorkflowId/VersionNumber/Status/
+            // CreatedAtUtc/PublishedAtUtc, all added by the AddColumn calls
+            // above in the same batch: a plain UPDATE would not bind against
+            // the pre-versioning schema. Dynamic SQL defers resolution until
+            // the ALTER TABLE ... ADD statements have executed.
             migrationBuilder.Sql(
                 """
+                EXEC(N'
                 UPDATE t
                 SET t.[WorkflowId] = w.[WorkflowId],
                     t.[VersionNumber] = 1,
@@ -126,6 +155,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     t.[PublishedAtUtc] = SYSUTCDATETIME()
                 FROM [WorkflowTemplates] t
                 INNER JOIN [Workflows] w ON w.[Code] = t.[Code];
+                ');
                 """);
 
             migrationBuilder.AlterColumn<int>(
@@ -178,14 +208,21 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                 type: "int",
                 nullable: true);
 
+            // References Tickets.WorkflowTemplateId, added by the AddColumn
+            // directly above in the same batch. Tickets and RequestTypes both
+            // exist at bind time, so nothing defers this statement on its own:
+            // as a plain UPDATE it fails with "Invalid column name
+            // 'WorkflowTemplateId'" before the batch executes at all.
             migrationBuilder.Sql(
                 """
+                EXEC(N'
                 UPDATE tk
                 SET tk.[WorkflowTemplateId] = rt.[WorkflowTemplateId]
                 FROM [Tickets] tk
                 INNER JOIN [RequestTypes] rt ON rt.[RequestTypeId] = tk.[RequestTypeId]
                 WHERE tk.[RequestTypeId] IS NOT NULL
                   AND tk.[WorkflowTemplateId] IS NULL;
+                ');
                 """);
 
             migrationBuilder.RenameColumn(
@@ -200,12 +237,20 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
             // The renamed column still holds template ids: remap each to the
             // logical workflow of that template (the join reads the OLD value).
+            //
+            // References RequestTypes.WorkflowId (renamed by the sp_rename the
+            // RenameColumn above emits — itself dynamic, so the new name does
+            // not exist at bind time) and WorkflowTemplates.WorkflowId (added
+            // in step 2). As a plain UPDATE this fails with "Invalid column
+            // name 'WorkflowId'" before the batch executes.
             migrationBuilder.Sql(
                 """
+                EXEC(N'
                 UPDATE rt
                 SET rt.[WorkflowId] = t.[WorkflowId]
                 FROM [RequestTypes] rt
                 INNER JOIN [WorkflowTemplates] t ON t.[WorkflowTemplateId] = rt.[WorkflowId];
+                ');
                 """);
 
             // ---- 5. Step configuration, transitions, indexes, foreign keys ----------
@@ -400,6 +445,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
             // Reverse remap: point each request type back at a template id —
             // the workflow's Published version if any, else its version 1.
             // Runs while WorkflowTemplates still carries WorkflowId/Status.
+            //
+            // Not wrapped in EXEC: every column it names exists when the Down
+            // batch starts (the DropColumn/RenameColumn that remove them come
+            // AFTER this statement), and batch-time binding sees the schema
+            // as it is at batch start — so this statement binds normally.
             migrationBuilder.Sql(
                 """
                 UPDATE rt
