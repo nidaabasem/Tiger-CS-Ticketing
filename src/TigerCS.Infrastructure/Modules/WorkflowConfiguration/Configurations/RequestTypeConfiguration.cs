@@ -31,9 +31,9 @@ public class RequestTypeConfiguration : IEntityTypeConfiguration<RequestType>
             .HasForeignKey(r => r.DepartmentId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasOne<WorkflowTemplate>()
+        builder.HasOne<Workflow>()
             .WithMany()
-            .HasForeignKey(r => r.WorkflowTemplateId)
+            .HasForeignKey(r => r.WorkflowId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Priority>()

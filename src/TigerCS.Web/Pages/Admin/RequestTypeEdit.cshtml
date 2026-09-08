@@ -1,0 +1,387 @@
+@page "/Admin/RequestTypes/{id?}"
+@using TigerCS.Domain.Modules.SlaAndEscalation
+@model TigerCS.Web.Pages.Admin.RequestTypeEditModel
+@{
+    var r = Model.RequestType;
+    ViewData["Title"] = Model.IsNew ? "Add Request Type" : r?.Name ?? "Request Type";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+    var priorities = new byte[] { 1, 2, 3, 4 };
+}
+
+<div class="page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Request Types", "/Admin/RequestTypes", Model.IsNew ? "Add Request Type" : r?.Name ?? "Request Type"))
+
+    @if (!Model.IsNew && r is null)
+    {
+        <div class="panel"><div class="error-state"><p>@(Model.LoadError ?? "The request type could not be loaded.")</p></div></div>
+        return;
+    }
+
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">@(Model.IsNew ? "Add Request Type" : r!.Name)</h1>
+            @if (r is not null)
+            {
+                <p class="page-subtitle">
+                    Department: <strong>@r.DepartmentName</strong>
+                    @if (r.IsActive)
+                    {
+                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                    }
+                    else
+                    {
+                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                    }
+                    <span class="text-secondary">· @r.TicketCount ticket(s)</span>
+                </p>
+            }
+            else
+            {
+                <p class="page-subtitle">A request type belongs to one responsible department and follows one workflow's currently published version.</p>
+            }
+        </div>
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <div class="admin-grid">
+        <section class="panel admin-form-panel @(Model.IsNew ? "admin-grid__wide" : "")">
+            <div class="panel__header"><h2 class="panel__title">Details</h2></div>
+            <form method="post" asp-page-handler="@(Model.IsNew ? "Create" : "Details")" asp-route-id="@r?.RequestTypeId" class="admin-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Details.Name">Name *</label>
+                        <input class="form-control" asp-for="Details.Name" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Details.DepartmentId">Department *</label>
+                        <select class="form-control" asp-for="Details.DepartmentId" disabled="@(r is { TicketCount: > 0 } ? "disabled" : null)">
+                            @foreach (var d in Model.Departments)
+                            {
+                                <option value="@d.DepartmentId">@d.Name</option>
+                            }
+                        </select>
+                        @if (r is { TicketCount: > 0 })
+                        {
+                            <input type="hidden" asp-for="Details.DepartmentId" />
+                            <span class="field-hint">Tickets already follow this request type, so its department cannot change.</span>
+                        }
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Details.WorkflowId">Workflow *</label>
+                        <select class="form-control" asp-for="Details.WorkflowId">
+                            @foreach (var w in Model.Workflows)
+                            {
+                                <option value="@w.WorkflowId">@w.Name@(w.ActiveVersionNumber is { } v ? $" — Active V{v}" : " — no published version")</option>
+                            }
+                        </select>
+                        <span class="field-hint">New tickets are pinned to the workflow's active version at creation. Publishing a newer version never changes existing tickets.</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Details.DefaultPriorityId">Default priority *</label>
+                        <select class="form-control" asp-for="Details.DefaultPriorityId">
+                            @foreach (var p in priorities)
+                            {
+                                <option value="@p">@RequestTypeEditModel.PriorityLabel(p)</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="checkbox-grid">
+                    <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowAgentPriorityChange" /> Agent may change priority</label>
+                    <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingCustomer" /> Pending Customer allowed</label>
+                    <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingInternal" /> Pending Internal / Third Party allowed</label>
+                    <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowReopen" /> Reopen allowed (the reopen policy still applies)</label>
+                </div>
+                <div class="action-form__footer">
+                    @if (Model.IsNew)
+                    {
+                        <a class="btn" href="/Admin/RequestTypes">Cancel</a>
+                    }
+                    <button type="submit" class="btn btn-gold btn-sm">@(Model.IsNew ? "Create Request Type" : "Save Details")</button>
+                </div>
+            </form>
+        </section>
+
+        @if (r is not null)
+        {
+            <section class="panel admin-form-panel">
+                <div class="panel__header"><h2 class="panel__title">Workflow</h2></div>
+                <dl class="facts-panel">
+                    <div class="facts-row"><dt>Workflow</dt><dd>@r.Workflow.WorkflowName</dd></div>
+                    <div class="facts-row">
+                        <dt>Active version</dt>
+                        <dd>
+                            @if (r.Workflow.ActiveVersionNumber is { } av)
+                            {
+                                <span class="badge badge-version-published">V@(av) Active</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-version-draft">None published</span>
+                                <span class="field-hint">Tickets of this type cannot be created until a version is published.</span>
+                            }
+                        </dd>
+                    </div>
+                    @if (r.Workflow.DraftVersionNumber is { } dv)
+                    {
+                        <div class="facts-row"><dt>Draft</dt><dd><span class="badge badge-version-draft">V@(dv) Draft</span> <a class="link-muted" href="/Admin/Workflows/Versions/@r.Workflow.DraftVersionId">Edit draft</a></dd></div>
+                    }
+                    @if (r.Workflow.ApprovalTypesInActiveVersion.Count > 0)
+                    {
+                        <div class="facts-row"><dt>Approval steps</dt><dd>@string.Join(", ", r.Workflow.ApprovalTypesInActiveVersion.Select(ApprovalTypeLabels.Label))</dd></div>
+                    }
+                </dl>
+                <div class="action-form__footer">
+                    @if (r.Workflow.ActiveVersionId is { } avId)
+                    {
+                        <a class="btn btn-sm" href="/Admin/Workflows/Versions/@avId">View Workflow</a>
+                    }
+                    <a class="btn btn-sm" href="/Admin/Workflows/@r.Workflow.WorkflowId">All Versions</a>
+                    @if (r.Workflow.DraftVersionId is null)
+                    {
+                        <form method="post" asp-page-handler="CreateVersion" asp-route-id="@r.RequestTypeId">
+                            <button type="submit" class="btn btn-gold btn-sm">Create New Version</button>
+                        </form>
+                    }
+                </div>
+            </section>
+
+            <section class="panel admin-form-panel">
+                <div class="panel__header"><h2 class="panel__title">Assignment</h2></div>
+                <p class="field-hint">Current: <strong>@(r.AssignmentRule is null ? $"{r.DepartmentName} Queue (no rule configured)" : r.AssignmentRule.Mode switch { AssignmentMode.SpecificEmployee => r.AssignmentRule.PrimaryEmployeeName, AssignmentMode.Team => $"{r.AssignmentRule.TeamName ?? "Team"} — primary {r.AssignmentRule.PrimaryEmployeeName}", _ => $"{r.DepartmentName} Queue" })</strong></p>
+                <form method="post" asp-page-handler="Assignment" asp-route-id="@r.RequestTypeId" class="admin-form">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Assignment.Mode">Mode</label>
+                        <select class="form-control" asp-for="Assignment.Mode">
+                            <option value="@AssignmentMode.DepartmentQueue">Department Queue (department head assigns)</option>
+                            <option value="@AssignmentMode.SpecificEmployee">Specific Employee</option>
+                            <option value="@AssignmentMode.Team">Team (one primary owner plus members)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Assignment.PrimaryEmployeeId">Primary assignee (Specific Employee / Team)</label>
+                        <select class="form-control" asp-for="Assignment.PrimaryEmployeeId">
+                            <option value="">—</option>
+                            @foreach (var m in Model.DepartmentMembers)
+                            {
+                                <option value="@m.EmployeeId">@m.DisplayName</option>
+                            }
+                        </select>
+                        <span class="field-hint">Only active members of @r.DepartmentName can be configured.</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Assignment.TeamName">Team name (Team only)</label>
+                        <input class="form-control" asp-for="Assignment.TeamName" />
+                    </div>
+                    <fieldset class="form-group">
+                        <legend class="form-label">Team members (Team only)</legend>
+                        <div class="checkbox-grid">
+                            @foreach (var m in Model.DepartmentMembers)
+                            {
+                                <label class="checkbox-field">
+                                    <input type="checkbox" name="Assignment.MemberEmployeeIds" value="@m.EmployeeId" checked="@(Model.Assignment.MemberEmployeeIds.Contains(m.EmployeeId) ? "checked" : null)" />
+                                    @m.DisplayName
+                                </label>
+                            }
+                        </div>
+                    </fieldset>
+                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save Assignment</button></div>
+                </form>
+            </section>
+
+            <section class="panel admin-form-panel">
+                <div class="panel__header"><h2 class="panel__title">Approval requirements</h2></div>
+                @if (r.ApprovalRequirements.Count == 0)
+                {
+                    <div class="empty-state"><p>No approval is required for this request type.</p></div>
+                }
+                else
+                {
+                    <ul class="entry-list">
+                        @foreach (var a in r.ApprovalRequirements)
+                        {
+                            <li class="entry-row entry-row--block">
+                                <strong>@a.ApprovalTypeLabel</strong>
+                                <span class="text-secondary">
+                                    decided by
+                                    @(a.TargetKind switch
+                                    {
+                                        ApprovalTargetKind.Department => $"{a.TargetDepartmentName ?? "Unknown department"}{(a.TargetRoleName is null ? "" : $" ({a.TargetRoleName})")}",
+                                        ApprovalTargetKind.Role => a.TargetRoleName,
+                                        _ => a.TargetEmployeeName ?? "Unknown user"
+                                    })
+                                    @(a.BlocksWorkUntilApproved ? "· blocks work until approved" : "")
+                                </span>
+                                @if (!a.IsActive)
+                                {
+                                    <span class="badge badge-inactive">Inactive</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+                <form method="post" asp-page-handler="Approval" asp-route-id="@r.RequestTypeId" class="admin-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Approval.ApprovalType">Approval type</label>
+                            <select class="form-control" asp-for="Approval.ApprovalType">
+                                <option value="@ApprovalType.AccountingApproval">Accounting Approval</option>
+                                <option value="@ApprovalType.CustomerServiceApproval">Customer Service Approval</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Approval.TargetKind">Decided by</label>
+                            <select class="form-control" asp-for="Approval.TargetKind">
+                                <option value="@ApprovalTargetKind.Department">A department</option>
+                                <option value="@ApprovalTargetKind.Role">Anyone holding a role</option>
+                                <option value="@ApprovalTargetKind.Employee">One employee</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Approval.TargetDepartmentId">Department (when decided by a department)</label>
+                            <select class="form-control" asp-for="Approval.TargetDepartmentId">
+                                <option value="">—</option>
+                                @foreach (var d in Model.Departments)
+                                {
+                                    <option value="@d.DepartmentId">@d.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Approval.TargetRoleName">Role (required for a role; optional narrowing for a department)</label>
+                            <select class="form-control" asp-for="Approval.TargetRoleName">
+                                <option value="">—</option>
+                                @foreach (var role in RequestTypeEditModel.FixedRoles)
+                                {
+                                    <option value="@role">@role</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Approval.TargetEmployeeId">Employee (when decided by one employee)</label>
+                        <select class="form-control" asp-for="Approval.TargetEmployeeId">
+                            <option value="">—</option>
+                            @foreach (var u in Model.AllUsers)
+                            {
+                                <option value="@u.EmployeeId">@u.DisplayName</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="checkbox-grid">
+                        <label class="checkbox-field"><input type="checkbox" asp-for="Approval.BlocksWorkUntilApproved" /> Work waits for the decision</label>
+                        <label class="checkbox-field"><input type="checkbox" asp-for="Approval.IsActive" /> Active</label>
+                    </div>
+                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save Approval Requirement</button></div>
+                </form>
+            </section>
+
+            <section class="panel admin-form-panel admin-grid__wide">
+                <div class="panel__header"><h2 class="panel__title">SLA (existing values)</h2></div>
+                <p class="field-hint">Durations are stored exactly as approved (e.g. 10–12 days). Whether a day is a business day, and whether Pending pauses the clock, remain pending business decisions — “Not decided” keeps them undecided.</p>
+                @if (r.SlaPolicies.Count == 0)
+                {
+                    <div class="empty-state"><p>No SLA values are configured for this request type.</p></div>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead><tr><th>Priority</th><th>Clock starts</th><th>First response</th><th>Resolution</th><th>Pauses on Pending Customer</th><th>Pauses on Pending Internal</th><th>Status</th></tr></thead>
+                            <tbody>
+                                @foreach (var s in r.SlaPolicies)
+                                {
+                                    <tr>
+                                        <td>@RequestTypeEditModel.PriorityLabel(s.PriorityId)</td>
+                                        <td>@s.Trigger</td>
+                                        <td>@(s.FirstResponseTargetValue is null ? "—" : $"{s.FirstResponseTargetValue}{(s.FirstResponseMaximumValue is { } frm ? $"–{frm}" : "")} {s.Unit}")</td>
+                                        <td>@(s.IsImmediate ? "Immediately" : $"{s.ResolutionTargetValue}{(s.ResolutionMaximumValue is { } rm ? $"–{rm}" : "")} {s.Unit}")</td>
+                                        <td>@(s.PausesOnPendingCustomer switch { true => "Yes", false => "No", _ => "Not decided" })</td>
+                                        <td>@(s.PausesOnPendingInternal switch { true => "Yes", false => "No", _ => "Not decided" })</td>
+                                        <td>@(s.IsActive ? "Active" : "Inactive")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                <form method="post" asp-page-handler="Sla" asp-route-id="@r.RequestTypeId" class="admin-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Sla.PriorityId">Priority</label>
+                            <select class="form-control" asp-for="Sla.PriorityId">
+                                @foreach (var p in priorities)
+                                {
+                                    <option value="@p">@RequestTypeEditModel.PriorityLabel(p)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Sla.Trigger">Clock starts</label>
+                            <select class="form-control" asp-for="Sla.Trigger" asp-items="Html.GetEnumSelectList<SlaTriggerType>()"></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Sla.Unit">Unit</label>
+                            <select class="form-control" asp-for="Sla.Unit" asp-items="Html.GetEnumSelectList<SlaDurationUnit>()"></select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label" asp-for="Sla.FirstResponseTargetValue">First response target</label><input class="form-control" type="number" min="1" asp-for="Sla.FirstResponseTargetValue" /></div>
+                        <div class="form-group"><label class="form-label" asp-for="Sla.FirstResponseMaximumValue">First response maximum</label><input class="form-control" type="number" min="1" asp-for="Sla.FirstResponseMaximumValue" /></div>
+                        <div class="form-group"><label class="form-label" asp-for="Sla.ResolutionTargetValue">Resolution target</label><input class="form-control" type="number" min="1" asp-for="Sla.ResolutionTargetValue" /></div>
+                        <div class="form-group"><label class="form-label" asp-for="Sla.ResolutionMaximumValue">Resolution maximum</label><input class="form-control" type="number" min="1" asp-for="Sla.ResolutionMaximumValue" /></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Sla.PausesOnPendingCustomer">Pauses on Pending Customer</label>
+                            <select class="form-control" asp-for="Sla.PausesOnPendingCustomer"><option value="">Not decided</option><option value="true">Yes</option><option value="false">No</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Sla.PausesOnPendingInternal">Pauses on Pending Internal</label>
+                            <select class="form-control" asp-for="Sla.PausesOnPendingInternal"><option value="">Not decided</option><option value="true">Yes</option><option value="false">No</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Sla.WarningThresholdPercent">Warning threshold %</label>
+                            <input class="form-control" type="number" min="1" max="100" step="0.01" asp-for="Sla.WarningThresholdPercent" />
+                        </div>
+                    </div>
+                    <div class="checkbox-grid">
+                        <label class="checkbox-field"><input type="checkbox" asp-for="Sla.IsImmediate" /> Immediate (no resolution duration)</label>
+                        <label class="checkbox-field"><input type="checkbox" asp-for="Sla.IsActive" /> Active</label>
+                    </div>
+                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save SLA Values</button></div>
+                </form>
+            </section>
+
+            <section class="panel admin-form-panel">
+                <div class="panel__header"><h2 class="panel__title">Status</h2></div>
+                @if (r.TicketCount > 0)
+                {
+                    <p class="field-hint">@r.TicketCount ticket(s) follow this request type. It can be deactivated but never deleted; those tickets keep it.</p>
+                }
+                <form method="post" asp-page-handler="Activation" asp-route-id="@r.RequestTypeId" class="admin-form"
+                      data-confirm="@(r.IsActive ? $"Deactivate '{r.Name}'? It will no longer be offered on new tickets." : null)">
+                    <input type="hidden" asp-for="Activation.IsActive" value="@(r.IsActive ? "false" : "true")" />
+                    @if (r.IsActive)
+                    {
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Activation.Reason">Reason (recorded in the audit trail)</label>
+                            <input class="form-control" asp-for="Activation.Reason" />
+                        </div>
+                        <div class="action-form__footer"><button type="submit" class="btn btn-critical btn-sm">Deactivate Request Type</button></div>
+                    }
+                    else
+                    {
+                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reactivate Request Type</button></div>
+                    }
+                </form>
+            </section>
+        }
+    </div>
+</div>

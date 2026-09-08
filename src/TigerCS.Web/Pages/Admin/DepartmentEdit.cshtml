@@ -1,0 +1,146 @@
+@page "/Admin/Departments/{id:int}"
+@model TigerCS.Web.Pages.Admin.DepartmentEditModel
+@{
+    var d = Model.Department;
+    ViewData["Title"] = d?.Name ?? "Department";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Departments", "/Admin/Departments", d?.Name ?? "Department"))
+
+    @if (d is null)
+    {
+        <div class="panel"><div class="error-state"><p>@(Model.LoadError ?? "The department could not be loaded.")</p></div></div>
+    }
+    else
+    {
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">@d.Name</h1>
+                <p class="page-subtitle">
+                    <span class="text-mono text-secondary">@d.Code</span>
+                    @if (d.IsActive)
+                    {
+                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                    }
+                    else
+                    {
+                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                    }
+                    <span class="text-secondary">· @d.TicketReferenceCount ticket(s) · @d.RequestTypeCount request type(s)</span>
+                </p>
+            </div>
+            <a class="btn" href="/Admin/RequestTypes?departmentId=@d.DepartmentId">Request Types</a>
+        </div>
+
+        @await Html.PartialAsync("_AdminMessages", Model)
+
+        <div class="admin-grid">
+            <section class="panel admin-form-panel">
+                <div class="panel__header"><h2 class="panel__title">Details</h2></div>
+                <form method="post" asp-page-handler="Edit" asp-route-id="@d.DepartmentId" class="admin-form">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.Name">Name *</label>
+                        <input class="form-control" asp-for="Edit.Name" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.Code">Code *</label>
+                        <input class="form-control" asp-for="Edit.Code" maxlength="10" />
+                        @if (d.TicketReferenceCount > 0)
+                        {
+                            <span class="field-hint">Existing ticket numbers keep the code they were created with; only new tickets use a changed code.</span>
+                        }
+                    </div>
+                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
+                </form>
+            </section>
+
+            <section class="panel admin-form-panel">
+                <div class="panel__header"><h2 class="panel__title">Status</h2></div>
+                @if (d.TicketReferenceCount > 0)
+                {
+                    <p class="field-hint">This department is referenced by @d.TicketReferenceCount ticket(s). It can be deactivated but never deleted.</p>
+                }
+                <form method="post" asp-page-handler="Activation" asp-route-id="@d.DepartmentId" class="admin-form"
+                      data-confirm="@(d.IsActive ? $"Deactivate {d.Name}? It will no longer be offered for new tickets, request types or transfers." : null)">
+                    <input type="hidden" asp-for="Activation.IsActive" value="@(d.IsActive ? "false" : "true")" />
+                    @if (d.IsActive)
+                    {
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Activation.Reason">Reason (recorded in the audit trail)</label>
+                            <input class="form-control" asp-for="Activation.Reason" />
+                        </div>
+                        <div class="action-form__footer"><button type="submit" class="btn btn-critical btn-sm">Deactivate Department</button></div>
+                    }
+                    else
+                    {
+                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reactivate Department</button></div>
+                    }
+                </form>
+            </section>
+
+            <section class="panel admin-form-panel admin-grid__wide">
+                <div class="panel__header"><h2 class="panel__title">Members</h2></div>
+                @if (d.Members.Count == 0)
+                {
+                    <div class="empty-state"><p>No members yet. Add existing users below.</p></div>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead><tr><th>Name</th><th>Roles</th><th>Membership</th><th>Status</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var m in d.Members)
+                                {
+                                    <tr>
+                                        <td><a class="ticket-id-link" href="/Admin/Users/@m.EmployeeId">@m.DisplayName</a></td>
+                                        <td>@(m.Roles.Count == 0 ? "—" : string.Join(", ", m.Roles))</td>
+                                        <td>@(m.IsPrimary ? "Primary" : "Additional")</td>
+                                        <td>
+                                            @if (m.IsActive)
+                                            {
+                                                <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <form method="post" asp-page-handler="RemoveMember" asp-route-id="@d.DepartmentId" asp-route-employeeId="@m.EmployeeId" data-confirm="Remove @m.DisplayName from @d.Name?">
+                                                <button type="submit" class="btn btn-sm btn-critical">Remove</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                <form method="post" asp-page-handler="AddMember" asp-route-id="@d.DepartmentId" class="admin-form admin-form--inline">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Member.EmployeeId">Add member</label>
+                        <select class="form-control" asp-for="Member.EmployeeId">
+                            @foreach (var u in Model.CandidateUsers)
+                            {
+                                <option value="@u.EmployeeId">@u.DisplayName (@u.UserName)</option>
+                            }
+                        </select>
+                    </div>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Member.IsPrimary" />
+                        As primary department
+                    </label>
+                    <button type="submit" class="btn btn-sm" disabled="@(d.IsActive && Model.CandidateUsers.Count > 0 ? null : "disabled")">Add</button>
+                </form>
+                @if (!d.IsActive)
+                {
+                    <p class="field-hint">Reactivate the department before adding members.</p>
+                }
+            </section>
+        </div>
+    }
+</div>

@@ -20,4 +20,19 @@ public sealed class DepartmentRepository(TigerCsDbContext dbContext) : IDepartme
 
         return await query.OrderBy(d => d.Name).ToListAsync(cancellationToken);
     }
+
+    public async Task AddAsync(Department department, CancellationToken cancellationToken = default) =>
+        await dbContext.Departments.AddAsync(department, cancellationToken);
+
+    public Task<bool> NameExistsAsync(string name, int? excludeDepartmentId, CancellationToken cancellationToken = default) =>
+        dbContext.Departments.AnyAsync(
+            d => d.Name == name && (excludeDepartmentId == null || d.DepartmentId != excludeDepartmentId), cancellationToken);
+
+    public Task<bool> CodeExistsAsync(string code, int? excludeDepartmentId, CancellationToken cancellationToken = default) =>
+        dbContext.Departments.AnyAsync(
+            d => d.Code == code && (excludeDepartmentId == null || d.DepartmentId != excludeDepartmentId), cancellationToken);
+
+    public Task<int> CountTicketReferencesAsync(int departmentId, CancellationToken cancellationToken = default) =>
+        dbContext.Tickets.CountAsync(
+            t => t.CurrentDepartmentId == departmentId || t.OriginatingDepartmentId == departmentId, cancellationToken);
 }

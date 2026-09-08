@@ -43,6 +43,8 @@ public static class OpenApiTags
     public const string Approvals = "Approvals and Dependencies";
     public const string CrmReconciliation = "CRM Reconciliation";
     public const string SlaAndEscalation = "SLA and Escalation";
+    public const string RequestTypes = "Request Types";
+    public const string Administration = "Administration";
 
     /// <summary>
     /// Every tag, in the order Swagger UI should render them — roughly the
@@ -91,6 +93,13 @@ public static class OpenApiTags
         (SlaAndEscalation,
             "SLA due dates and breach state, recording the First Human Response, and manual escalation. "
             + "Automatic Level 2 escalation on an SLA breach is system-triggered by a background job and has no endpoint. "
-            + "SLA pause/resume, priority change, and escalation responses are not part of this pilot.")
+            + "SLA pause/resume, priority change, and escalation responses are not part of this pilot."),
+        (RequestTypes,
+            "The active Request Type directory scoped to one Department — what the New Ticket wizard's Request Type "
+            + "picker reads from. A request type resolves the workflow version a new ticket is pinned to."),
+        (Administration,
+            "System Administrator-only management of users, departments, request types and workflows, including the "
+            + "Workflow Designer's versioned Draft -> Validate -> Publish lifecycle. Every endpoint here requires the "
+            + "System Administrator role; nothing is hidden by UI alone.")
     ];
 }

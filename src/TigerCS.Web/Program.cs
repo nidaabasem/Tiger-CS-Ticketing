@@ -13,6 +13,11 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.AllowAnonymousToPage("/Login");
     options.Conventions.AllowAnonymousToPage("/Index");
     options.Conventions.AllowAnonymousToPage("/AccessDenied");
+
+    // Administration area: System Administrator only. This only decides what
+    // the Web renders — every api/admin/* endpoint enforces the same policy
+    // server-side, so hiding the pages is never the actual protection.
+    options.Conventions.AuthorizeFolder("/Admin", AdministrationPolicy.Name);
 });
 builder.Services.AddHttpContextAccessor();
 
@@ -51,6 +56,10 @@ builder.Services.AddHttpClient<CustomerHistoryApiClient>(client => client.BaseAd
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<DashboardApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddHttpClient<AdminApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddHttpClient<RequestTypesApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -71,7 +80,8 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.SlidingExpiration = false;
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy(AdministrationPolicy.Name, policy => policy.RequireRole(AdministrationPolicy.RequiredRole)));
 
 var app = builder.Build();
 

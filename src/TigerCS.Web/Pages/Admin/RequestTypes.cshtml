@@ -1,0 +1,93 @@
+@page "/Admin/RequestTypes"
+@model TigerCS.Web.Pages.Admin.RequestTypesModel
+@{
+    ViewData["Title"] = "Request Types";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Request Types", "/Admin/RequestTypes", (string?)null))
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Request Types</h1>
+            <p class="page-subtitle">What each department handles: its workflow, assignment, approvals and SLA. Urgency is a ticket priority, never a second request type.</p>
+        </div>
+        <a class="btn btn-gold" href="/Admin/RequestTypes/New">+ Add Request Type</a>
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <form class="filter-bar" method="get">
+        <div class="field-group">
+            <label class="field-label" for="departmentId">Department</label>
+            <select class="field-select" id="departmentId" name="departmentId" data-autosubmit>
+                <option value="">All departments</option>
+                @foreach (var d in Model.Departments)
+                {
+                    <option value="@d.DepartmentId" selected="@(Model.DepartmentId == d.DepartmentId)">@d.Name</option>
+                }
+            </select>
+        </div>
+        <label class="checkbox-field">
+            <input type="checkbox" name="includeInactive" value="true" checked="@(Model.IncludeInactive ? "checked" : null)" />
+            Show inactive
+        </label>
+        <button type="submit" class="btn btn-sm filter-bar__submit">Apply</button>
+    </form>
+
+    <div class="panel">
+        @if (Model.LoadError is not null)
+        {
+            <div class="error-state"><p>@Model.LoadError</p></div>
+        }
+        else if (Model.RequestTypes.Count == 0)
+        {
+            <div class="empty-state"><p>No request types match this filter.</p></div>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead>
+                        <tr><th>Request type</th><th>Department</th><th>Workflow</th><th>Assignment</th><th>Default priority</th><th>Tickets</th><th>Status</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in Model.RequestTypes)
+                        {
+                            <tr>
+                                <td><a class="ticket-id-link" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a></td>
+                                <td>@r.DepartmentName</td>
+                                <td>
+                                    @r.WorkflowName
+                                    @if (r.ActiveVersionNumber is { } v)
+                                    {
+                                        <span class="badge badge-version-published">V@(v) Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-version-draft">No published version</span>
+                                    }
+                                </td>
+                                <td>@r.AssignmentSummary</td>
+                                <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(r.DefaultPriorityId)">@RequestTypesModel.PriorityLabel(r.DefaultPriorityId)</span></td>
+                                <td>@r.TicketCount</td>
+                                <td>
+                                    @if (r.IsActive)
+                                    {
+                                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                                    }
+                                </td>
+                                <td><a class="btn btn-sm" href="/Admin/RequestTypes/@r.RequestTypeId">Manage</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>

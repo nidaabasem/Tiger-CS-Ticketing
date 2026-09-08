@@ -80,7 +80,7 @@ public class TicketCreationAppServiceTests
         var service = new TicketCreationAppService(
             intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
             tickets, snapshots, statusHistory, unitOfWork, audit, outbox, sla.DueDates, TimeProvider.System,
-            requestTypes, interactions, autoAssignment);
+            requestTypes, interactions, autoAssignment, workflowTemplates);
 
         return new Fixture(
             service, intakeRecords, unitReferences, contactReferences, categories, priorities, departments,
@@ -714,10 +714,11 @@ public class TicketCreationAppServiceTests
     private TigerCS.Domain.Modules.WorkflowConfiguration.RequestType SeedRequestType(
         Fixture f, int departmentId, string name = "AC Issue")
     {
-        var template = f.WorkflowTemplates.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate(
-            "PENDING", "Request With Pending", null, true, true, false));
+        // Workflow id 100: the logical workflow the request type follows; its
+        // Published version is what the created ticket pins.
+        var template = f.WorkflowTemplates.Add(TestWorkflows.PublishedPending(workflowId: 100));
         return f.RequestTypes.Add(new TigerCS.Domain.Modules.WorkflowConfiguration.RequestType(
-            departmentId, name, template.WorkflowTemplateId, (byte)PriorityLevel.Medium,
+            departmentId, name, template.WorkflowId, (byte)PriorityLevel.Medium,
             allowAgentPriorityChange: false, allowPendingCustomer: true, allowPendingInternal: true, allowReopen: true));
     }
 

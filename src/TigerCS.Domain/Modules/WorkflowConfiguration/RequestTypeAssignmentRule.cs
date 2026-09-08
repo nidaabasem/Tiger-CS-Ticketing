@@ -71,6 +71,10 @@ public class RequestTypeAssignmentRule
         IsActive = isActive;
     }
 
+    public void Deactivate() => IsActive = false;
+
+    public void Activate() => IsActive = true;
+
     /// <summary>An explicit department-queue rule — equivalent to having no rule at all, but recordable so the choice is visible configuration rather than an absence.</summary>
     public static RequestTypeAssignmentRule ForDepartmentQueue(int requestTypeId, bool isActive = true) =>
         new(requestTypeId, AssignmentMode.DepartmentQueue, primaryEmployeeId: null, teamName: null, isActive);

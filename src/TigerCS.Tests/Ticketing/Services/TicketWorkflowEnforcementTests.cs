@@ -57,11 +57,9 @@ public class TicketWorkflowEnforcementTests
     private static async Task<(Ticket Ticket, Guid Owner)> SeedClassifiedInProgressTicketAsync(
         Fixture f, bool allowPendingCustomer, bool allowPendingInternal, bool allowReopen = true)
     {
-        var template = f.WorkflowTemplates.Add(new WorkflowTemplate(
-            "PENDING", "Request With Pending", null,
-            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: false));
+        var template = f.WorkflowTemplates.Add(TestWorkflows.PublishedPending(workflowId: 100));
         var requestType = f.RequestTypes.Add(new RequestType(
-            departmentId: 2, "NOC for Resale", template.WorkflowTemplateId, (byte)PriorityLevel.Medium,
+            departmentId: 2, "NOC for Resale", template.WorkflowId, (byte)PriorityLevel.Medium,
             allowAgentPriorityChange: true, allowPendingCustomer, allowPendingInternal, allowReopen));
 
         var owner = Guid.NewGuid();
@@ -69,6 +67,7 @@ public class TicketWorkflowEnforcementTests
             "TG-CS-20260904-0001", 2, categoryId: 5, (byte)PriorityLevel.Medium, "NOC request", DateTime.UtcNow);
         await f.Tickets.AddAsync(ticket);
         ticket.ClassifyRequestType(requestType.RequestTypeId);
+        ticket.PinWorkflowVersion(template.WorkflowTemplateId);
         ticket.AssignTo(owner);
         ticket.ChangeStatus(TicketStatus.InProgress);
         return (ticket, owner);

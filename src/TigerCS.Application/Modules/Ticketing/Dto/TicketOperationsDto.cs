@@ -92,6 +92,11 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, never a local reference.</param>
 /// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — an external identifier only.</param>
 /// <param name="ResolvedAtUtc">When the current resolution was recorded, in UTC — null while the ticket has no current resolution. Populated on detail reads (<c>GET /api/tickets/{id}</c>); write responses leave it null and clients re-read.</param>
+/// <param name="RequestTypeId">The configured request type the ticket follows, or null for a ticket created without one.</param>
+/// <param name="RequestTypeName">The request type's name — populated on detail reads.</param>
+/// <param name="WorkflowTemplateId">The exact workflow VERSION the ticket was pinned to at creation; null for a ticket with no request type. Never changes after creation.</param>
+/// <param name="WorkflowName">The pinned version's workflow name — populated on detail reads.</param>
+/// <param name="WorkflowVersionNumber">The pinned version's number ("V2") — populated on detail reads.</param>
 /// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Resolved/Closed and within the ISSUE-011 window. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen. Populated on detail reads; false on write responses.</param>
 public sealed record TicketDetailDto(
     long TicketId,
@@ -126,7 +131,12 @@ public sealed record TicketDetailDto(
     string? ExternalCustomerId = null,
     string? ExternalUnitId = null,
     DateTime? ResolvedAtUtc = null,
-    bool IsReopenEligible = false);
+    bool IsReopenEligible = false,
+    int? RequestTypeId = null,
+    string? RequestTypeName = null,
+    int? WorkflowTemplateId = null,
+    string? WorkflowName = null,
+    int? WorkflowVersionNumber = null);
 
 public enum TicketQueryOutcome
 {

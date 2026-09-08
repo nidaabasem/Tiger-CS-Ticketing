@@ -119,7 +119,12 @@ public class StartupValidationTests
     [Fact]
     public void ProductionEnvironment_WithMockCrmProvider_FailsAtStartup()
     {
-        using var factory = new ConfiguredFactory("Production", ValidConfig());
+        // The shipped appsettings.json now names the real "Http" CRM provider
+        // for UAT, so the Mock selection this guard is about must be explicit.
+        var config = ValidConfig();
+        config["Crm:Provider"] = "Mock";
+
+        using var factory = new ConfiguredFactory("Production", config);
 
         var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
         Assert.Contains("Crm:Provider", ex.ToString());
@@ -147,6 +152,13 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "InternalCrmGateway";
+
+        // The UAT startup guard change made this check conditional on
+        // Notifications:Email:Enabled (the shipped appsettings.json disables
+        // email for UAT). The guard under test is the enabled-email one, so
+        // enable it explicitly here.
+        config["Notifications:Email:Enabled"] = "true";
+        config["Notifications:Email:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory("Production", config);
 

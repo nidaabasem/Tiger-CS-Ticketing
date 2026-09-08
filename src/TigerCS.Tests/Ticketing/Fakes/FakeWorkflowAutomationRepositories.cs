@@ -81,6 +81,31 @@ public sealed class FakeRequestTypeRepository : IRequestTypeRepository
     public Task<IReadOnlyList<RequestType>> ListActiveByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<RequestType>>(
             _requestTypes.Values.Where(r => r.DepartmentId == departmentId && r.IsActive).OrderBy(r => r.Name).ToList());
+
+    public Task<IReadOnlyList<RequestType>> ListAsync(int? departmentId, bool includeInactive, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RequestType>>(_requestTypes.Values
+            .Where(r => departmentId is null || r.DepartmentId == departmentId)
+            .Where(r => includeInactive || r.IsActive)
+            .OrderBy(r => r.DepartmentId).ThenBy(r => r.Name)
+            .ToList());
+
+    public Task<IReadOnlyList<RequestType>> ListByWorkflowIdAsync(int workflowId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RequestType>>(_requestTypes.Values.Where(r => r.WorkflowId == workflowId).OrderBy(r => r.Name).ToList());
+
+    public Task<bool> NameExistsAsync(int departmentId, string name, int? excludeRequestTypeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_requestTypes.Values.Any(r =>
+            r.DepartmentId == departmentId && r.Name == name && (excludeRequestTypeId is null || r.RequestTypeId != excludeRequestTypeId)));
+
+    public Task AddAsync(RequestType requestType, CancellationToken cancellationToken = default)
+    {
+        Add(requestType);
+        return Task.CompletedTask;
+    }
+
+    public Dictionary<int, int> TicketCounts { get; } = [];
+
+    public Task<int> CountTicketsAsync(int requestTypeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(TicketCounts.GetValueOrDefault(requestTypeId));
 }
 
 /// <summary>In-memory workflow-template store for service tests.</summary>
@@ -89,18 +114,107 @@ public sealed class FakeWorkflowTemplateRepository : IWorkflowTemplateRepository
     private readonly Dictionary<int, WorkflowTemplate> _templates = [];
     private int _nextId = 1;
 
+    private int _nextStepId = 1;
+
     public WorkflowTemplate Add(WorkflowTemplate template)
     {
         typeof(WorkflowTemplate).GetProperty(nameof(WorkflowTemplate.WorkflowTemplateId))!.SetValue(template, _nextId++);
         _templates[template.WorkflowTemplateId] = template;
+        AssignStepIds(template);
         return template;
     }
 
-    public Task<WorkflowTemplate?> GetByIdAsync(int workflowTemplateId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_templates.GetValueOrDefault(workflowTemplateId));
+    /// <summary>Mirrors what a database save does: every step appended since the last read gets a real id, so id-based editing works exactly as it does over EF.</summary>
+    private void AssignStepIds(WorkflowTemplate template)
+    {
+        foreach (var step in template.Steps.Where(s => s.WorkflowTemplateStepId == 0))
+        {
+            typeof(WorkflowTemplateStep).GetProperty(nameof(WorkflowTemplateStep.WorkflowTemplateStepId))!.SetValue(step, _nextStepId++);
+        }
+    }
+
+    public Task<WorkflowTemplate?> GetByIdAsync(int workflowTemplateId, CancellationToken cancellationToken = default)
+    {
+        var template = _templates.GetValueOrDefault(workflowTemplateId);
+        if (template is not null)
+        {
+            AssignStepIds(template);
+        }
+
+        return Task.FromResult(template);
+    }
 
     public Task<WorkflowTemplate?> GetByCodeAsync(string code, CancellationToken cancellationToken = default) =>
         Task.FromResult(_templates.Values.FirstOrDefault(t => t.Code == code));
+
+    public Task<IReadOnlyList<WorkflowTemplate>> ListByWorkflowIdAsync(int workflowId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<WorkflowTemplate>>(_templates.Values.Where(t => t.WorkflowId == workflowId).OrderBy(t => t.VersionNumber).ToList());
+
+    public Task<WorkflowTemplate?> GetPublishedAsync(int workflowId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_templates.Values.FirstOrDefault(t => t.WorkflowId == workflowId && t.IsPublished));
+
+    public Task<WorkflowTemplate?> GetDraftAsync(int workflowId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_templates.Values.FirstOrDefault(t => t.WorkflowId == workflowId && t.IsDraft));
+
+    public Task AddAsync(WorkflowTemplate version, CancellationToken cancellationToken = default)
+    {
+        Add(version);
+        return Task.CompletedTask;
+    }
+
+    public void Remove(WorkflowTemplate version) => _templates.Remove(version.WorkflowTemplateId);
+
+    public Dictionary<int, int> PinnedTicketCounts { get; } = [];
+
+    public Task<int> CountPinnedTicketsAsync(int workflowTemplateId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(PinnedTicketCounts.GetValueOrDefault(workflowTemplateId));
+
+    public Task<IReadOnlyDictionary<int, int>> CountPinnedTicketsByVersionAsync(int workflowId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<int, int>>(_templates.Values
+            .Where(t => t.WorkflowId == workflowId && PinnedTicketCounts.ContainsKey(t.WorkflowTemplateId))
+            .ToDictionary(t => t.WorkflowTemplateId, t => PinnedTicketCounts[t.WorkflowTemplateId]));
+}
+
+public sealed class FakeWorkflowRepository : IWorkflowRepository
+{
+    private readonly Dictionary<int, Workflow> _workflows = [];
+    private int _nextId = 1;
+
+    public Workflow Add(Workflow workflow)
+    {
+        typeof(Workflow).GetProperty(nameof(Workflow.WorkflowId))!.SetValue(workflow, _nextId++);
+        _workflows[workflow.WorkflowId] = workflow;
+        return workflow;
+    }
+
+    public Task<Workflow?> GetByIdAsync(int workflowId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_workflows.GetValueOrDefault(workflowId));
+
+    public Task<Workflow?> GetByCodeAsync(string code, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_workflows.Values.FirstOrDefault(w => w.Code == code));
+
+    public Task<IReadOnlyList<Workflow>> ListAsync(bool includeInactive, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Workflow>>(_workflows.Values.Where(w => includeInactive || w.IsActive).OrderBy(w => w.Name).ToList());
+
+    public Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_workflows.Values.Any(w => w.Code == code));
+
+    public Task AddAsync(Workflow workflow, CancellationToken cancellationToken = default)
+    {
+        Add(workflow);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeWorkflowConfigurationUnitOfWork : IWorkflowConfigurationUnitOfWork
+{
+    public int SaveChangesCallCount { get; private set; }
+
+    public Task SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        SaveChangesCallCount++;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>In-memory assignment-rule store — one rule per request type, like the real unique index.</summary>
@@ -119,6 +233,14 @@ public sealed class FakeRequestTypeAssignmentRuleRepository : IRequestTypeAssign
 
     public Task<RequestTypeAssignmentRule?> GetByRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_rulesByRequestTypeId.GetValueOrDefault(requestTypeId));
+
+    public Task AddAsync(RequestTypeAssignmentRule rule, CancellationToken cancellationToken = default)
+    {
+        Add(rule);
+        return Task.CompletedTask;
+    }
+
+    public void Remove(RequestTypeAssignmentRule rule) => _rulesByRequestTypeId.Remove(rule.RequestTypeId);
 }
 
 /// <summary>In-memory department workflow settings — absent rows behave exactly like a department that predates the configuration.</summary>
@@ -228,4 +350,41 @@ public sealed class FakeRequestTypeApprovalRequirementRepository : IRequestTypeA
         int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default) =>
         Task.FromResult(_requirements.FirstOrDefault(
             r => r.RequestTypeId == requestTypeId && r.ApprovalType == approvalType && r.IsActive));
+
+    public Task<IReadOnlyList<RequestTypeApprovalRequirement>> ListByRequestTypeIdAsync(
+        int requestTypeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RequestTypeApprovalRequirement>>(
+            _requirements.Where(r => r.RequestTypeId == requestTypeId).OrderBy(r => r.ApprovalType).ToList());
+
+    public Task<RequestTypeApprovalRequirement?> GetAsync(
+        int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_requirements.FirstOrDefault(r => r.RequestTypeId == requestTypeId && r.ApprovalType == approvalType));
+
+    public Task AddAsync(RequestTypeApprovalRequirement requirement, CancellationToken cancellationToken = default)
+    {
+        Add(requirement);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class FakeRequestTypeSlaPolicyRepository : IRequestTypeSlaPolicyRepository
+{
+    private readonly List<RequestTypeSlaPolicy> _policies = [];
+    private int _nextId = 1;
+
+    public Task<RequestTypeSlaPolicy?> GetActiveAsync(int requestTypeId, byte priorityId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_policies.FirstOrDefault(p => p.RequestTypeId == requestTypeId && p.PriorityId == priorityId && p.IsActive));
+
+    public Task<RequestTypeSlaPolicy?> GetAsync(int requestTypeId, byte priorityId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_policies.FirstOrDefault(p => p.RequestTypeId == requestTypeId && p.PriorityId == priorityId));
+
+    public Task<IReadOnlyList<RequestTypeSlaPolicy>> ListByRequestTypeAsync(int requestTypeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RequestTypeSlaPolicy>>(_policies.Where(p => p.RequestTypeId == requestTypeId).OrderBy(p => p.PriorityId).ToList());
+
+    public Task AddAsync(RequestTypeSlaPolicy policy, CancellationToken cancellationToken = default)
+    {
+        typeof(RequestTypeSlaPolicy).GetProperty(nameof(RequestTypeSlaPolicy.RequestTypeSlaPolicyId))!.SetValue(policy, _nextId++);
+        _policies.Add(policy);
+        return Task.CompletedTask;
+    }
 }

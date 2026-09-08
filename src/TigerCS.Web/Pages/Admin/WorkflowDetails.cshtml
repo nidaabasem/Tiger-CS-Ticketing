@@ -1,0 +1,148 @@
+@page "/Admin/Workflows/{id:int}"
+@model TigerCS.Web.Pages.Admin.WorkflowDetailsModel
+@{
+    var w = Model.Workflow;
+    ViewData["Title"] = w?.Name ?? "Workflow";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+    var hasDraft = w?.Versions.Any(v => v.Status == WorkflowVersionStatus.Draft) ?? false;
+}
+
+<div class="page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Workflows", "/Admin/Workflows", w?.Name ?? "Workflow"))
+
+    @if (w is null)
+    {
+        <div class="panel"><div class="error-state"><p>@(Model.LoadError ?? "The workflow could not be loaded.")</p></div></div>
+        return;
+    }
+
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">@w.Name</h1>
+            <p class="page-subtitle">
+                @if (w.IsActive)
+                {
+                    <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                }
+                else
+                {
+                    <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                }
+                @if (!string.IsNullOrEmpty(w.Description))
+                {
+                    <span class="text-secondary">@w.Description</span>
+                }
+            </p>
+        </div>
+        @if (!hasDraft)
+        {
+            <form method="post" asp-page-handler="CreateVersion" asp-route-id="@w.WorkflowId">
+                <button type="submit" class="btn btn-gold">Create New Version</button>
+            </form>
+        }
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Versions</h2></div>
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead><tr><th>Version</th><th>Status</th><th>Steps</th><th>Tickets</th><th>Created</th><th>Published</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var v in w.Versions)
+                    {
+                        <tr>
+                            <td><strong>V@(v.VersionNumber)</strong> <span class="text-secondary">@v.Name</span></td>
+                            <td>
+                                @switch (v.Status)
+                                {
+                                    case WorkflowVersionStatus.Draft:
+                                        <span class="badge badge-version-draft">Draft</span>
+                                        break;
+                                    case WorkflowVersionStatus.Published:
+                                        <span class="badge badge-version-published">Active</span>
+                                        break;
+                                    default:
+                                        <span class="badge badge-version-historical">Historical</span>
+                                        break;
+                                }
+                            </td>
+                            <td>@v.StepCount</td>
+                            <td>@v.TicketCount</td>
+                            <td class="text-secondary">@v.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")@(v.CreatedByName is null ? " · System" : $" · {v.CreatedByName}")</td>
+                            <td class="text-secondary">@(v.PublishedAtUtc is { } p ? $"{p.ToLocalTime():MMM d, yyyy}{(v.PublishedByName is null ? " · System" : $" · {v.PublishedByName}")}" : "—")</td>
+                            <td class="admin-actions">
+                                <a class="btn btn-sm" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId">@(v.Status == WorkflowVersionStatus.Draft ? "Edit" : "View")</a>
+                                @if (v.CanDelete)
+                                {
+                                    <form method="post" asp-page-handler="DeleteDraft" asp-route-id="@w.WorkflowId" asp-route-versionId="@v.WorkflowTemplateId" data-confirm="Delete Draft V@(v.VersionNumber)? This cannot be undone.">
+                                        <button type="submit" class="btn btn-sm btn-critical">Delete Draft</button>
+                                    </form>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="field-hint">Publishing a Draft makes it the active version for new tickets and marks the previous active version Historical. Tickets already in progress keep their version.</p>
+    </div>
+
+    <div class="admin-grid">
+        <section class="panel admin-form-panel">
+            <div class="panel__header"><h2 class="panel__title">Used by request types</h2></div>
+            @if (w.RequestTypes.Count == 0)
+            {
+                <div class="empty-state"><p>No request type uses this workflow yet.</p></div>
+            }
+            else
+            {
+                <ul class="entry-list">
+                    @foreach (var r in w.RequestTypes)
+                    {
+                        <li class="entry-row">
+                            <a class="ticket-id-link" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a>
+                            <span class="text-secondary">@r.DepartmentName @(r.IsActive ? "" : "· inactive")</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+
+        <section class="panel admin-form-panel">
+            <div class="panel__header"><h2 class="panel__title">Details</h2></div>
+            <form method="post" asp-page-handler="Edit" asp-route-id="@w.WorkflowId" class="admin-form">
+                <div class="form-group">
+                    <label class="form-label" asp-for="Edit.Name">Name *</label>
+                    <input class="form-control" asp-for="Edit.Name" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="Edit.Description">Description</label>
+                    <textarea class="form-control" asp-for="Edit.Description" rows="2"></textarea>
+                </div>
+                <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
+            </form>
+        </section>
+
+        <section class="panel admin-form-panel">
+            <div class="panel__header"><h2 class="panel__title">Status</h2></div>
+            <p class="field-hint">Deactivating hides the workflow from new request types. Versions are never deleted once published.</p>
+            <form method="post" asp-page-handler="Activation" asp-route-id="@w.WorkflowId" class="admin-form"
+                  data-confirm="@(w.IsActive ? $"Deactivate '{w.Name}'?" : null)">
+                <input type="hidden" asp-for="Activation.IsActive" value="@(w.IsActive ? "false" : "true")" />
+                <div class="action-form__footer">
+                    @if (w.IsActive)
+                    {
+                        <button type="submit" class="btn btn-critical btn-sm">Deactivate Workflow</button>
+                    }
+                    else
+                    {
+                        <button type="submit" class="btn btn-gold btn-sm">Reactivate Workflow</button>
+                    }
+                </div>
+            </form>
+        </section>
+    </div>
+</div>
