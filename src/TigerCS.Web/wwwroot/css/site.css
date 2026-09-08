@@ -228,16 +228,6 @@ table { border-collapse: collapse; width: 100%; }
 .alert-info { background: var(--color-gold-pale); border-color: #E9D9AF; color: var(--color-gold-dark); }
 .alert-success { background: var(--color-success-pale); border-color: #D3E2D8; color: var(--color-success); }
 
-/* ---------- Counters (small, secondary) ---------- */
-
-.stat-strip {
-  display: flex; flex-wrap: wrap; gap: var(--space-5); padding: var(--space-3) 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); font-size: 12px; color: var(--color-text-secondary);
-}
-.stat-strip strong { display: block; font-size: 18px; font-weight: 700; color: var(--color-text); line-height: 1.2; }
-.stat-strip .stat-open strong { color: var(--color-gold-dark); }
-.stat-strip .stat-breached strong { color: var(--color-critical); }
-
 /* ---------- Filters (a real GET form) ---------- */
 
 .filter-bar {
@@ -652,7 +642,6 @@ a.kpi-card:hover { border-color: var(--color-text-secondary); }
 }
 
 @media (max-width: 900px) {
-  .stat-strip { gap: var(--space-4); }
   .app-nav__list { padding: 0 var(--space-3); }
 }
 

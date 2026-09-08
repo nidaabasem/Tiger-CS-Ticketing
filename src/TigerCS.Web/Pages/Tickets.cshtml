@@ -4,7 +4,6 @@
     ViewData["Title"] = "Tickets";
     var active = "queue";
     if (Model.Viewer is not null && Model.OwnerEmployeeId == Model.Viewer.EmployeeId) { active = "my"; }
-    else if (Model.VerificationStatus == "PendingCrmVerification") { active = "pendingcrm"; }
     else if (Model.TicketStatus == "Closed") { active = "closed"; }
     ViewData["ActiveNav"] = active;
     Layout = "_Layout";
@@ -30,12 +29,24 @@
         <a class="btn btn-gold" href="/NewTicket">+ New Ticket</a>
     </div>
 
-    <div class="stat-strip">
-        <span class="stat-open"><strong>@(Model.OpenCount?.ToString() ?? "—")</strong>Open</span>
-        <span><strong>@(Model.InProgressCount?.ToString() ?? "—")</strong>In Progress</span>
-        <span><strong>@(Model.PendingCustomerCount?.ToString() ?? "—")</strong>Pending Customer</span>
-        <span><strong>@(Model.ClosedCount?.ToString() ?? "—")</strong>Closed</span>
-    </div>
+    <section class="kpi-grid" aria-label="Queue counters">
+        <div class="kpi-card kpi-card--attention">
+            <strong>@(Model.OpenCount?.ToString() ?? "—")</strong>
+            <span>Open</span>
+        </div>
+        <div class="kpi-card">
+            <strong>@(Model.InProgressCount?.ToString() ?? "—")</strong>
+            <span>In Progress</span>
+        </div>
+        <div class="kpi-card">
+            <strong>@(Model.PendingCustomerCount?.ToString() ?? "—")</strong>
+            <span>Pending Customer</span>
+        </div>
+        <div class="kpi-card">
+            <strong>@(Model.ClosedCount?.ToString() ?? "—")</strong>
+            <span>Closed</span>
+        </div>
+    </section>
 
     <form class="filter-bar" id="ticketFilters" method="get">
         <div class="search-field filter-bar__search">
