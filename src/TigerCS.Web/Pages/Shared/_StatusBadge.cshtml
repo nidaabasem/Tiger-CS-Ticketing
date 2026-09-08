@@ -1,0 +1,10 @@
+@model bool
+@* Active / Inactive — the one status vocabulary used by every admin list and detail page. *@
+@if (Model)
+{
+    <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+}
+else
+{
+    <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+}

@@ -1,7 +1,8 @@
 @model TigerCS.Web.Pages.Admin.WorkflowVersionModel
 <div class="form-group">
     <label class="form-label" asp-for="Step.Name">Step name *</label>
-    <input class="form-control" asp-for="Step.Name" placeholder="e.g. Accounting Approval" />
+    <input class="form-control" asp-for="Step.Name" required aria-required="true" placeholder="e.g. Accounting Approval" />
+    <span class="field-hint">The name agents and approvers see on the ticket.</span>
 </div>
 <div class="form-group">
     <label class="form-label" asp-for="Step.Kind">Step type *</label>
@@ -11,16 +12,18 @@
             <option value="@k.Kind" selected="@(Model.Step.Kind == k.Kind)">@k.Label</option>
         }
     </select>
+    <span class="field-hint">What the step means for the ticket. See the step types reference below.</span>
 </div>
 <div class="form-group">
-    <label class="form-label" asp-for="Step.ApprovalType">Approval type (Approval steps only)</label>
+    <label class="form-label" asp-for="Step.ApprovalType">Approval type</label>
     <select class="form-control" asp-for="Step.ApprovalType">
-        <option value="">—</option>
+        <option value="">— not an approval step —</option>
         @foreach (var a in Model.Catalog.ApprovalTypes)
         {
             <option value="@a.ApprovalType" selected="@(Model.Step.ApprovalType == a.ApprovalType)">@a.Label</option>
         }
     </select>
+    <span class="field-hint">Approval steps only. The approval type decides who can approve and which outcome branches apply.</span>
 </div>
 <label class="checkbox-field">
     <input type="checkbox" asp-for="Step.IsOptional" />

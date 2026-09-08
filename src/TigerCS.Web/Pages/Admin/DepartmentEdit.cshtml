@@ -4,112 +4,149 @@
     var d = Model.Department;
     ViewData["Title"] = d?.Name ?? "Department";
     ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "departments";
     Layout = "_Layout";
 }
 
-<div class="page">
+<div class="page admin-page">
     @await Html.PartialAsync("_AdminBreadcrumb", ("Departments", "/Admin/Departments", d?.Name ?? "Department"))
 
     @if (d is null)
     {
-        <div class="panel"><div class="error-state"><p>@(Model.LoadError ?? "The department could not be loaded.")</p></div></div>
+        <div class="panel">
+            <div class="error-state">
+                @await Html.PartialAsync("_AdminIcon", "warning")
+                <p>@(Model.LoadError ?? "The department could not be loaded.")</p>
+            </div>
+        </div>
     }
     else
     {
         <div class="page-header">
             <div>
+                <p class="page-eyebrow">Department</p>
                 <h1 class="page-title">@d.Name</h1>
-                <p class="page-subtitle">
-                    <span class="text-mono text-secondary">@d.Code</span>
-                    @if (d.IsActive)
-                    {
-                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
-                    }
-                    else
-                    {
-                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
-                    }
-                    <span class="text-secondary">· @d.TicketReferenceCount ticket(s) · @d.RequestTypeCount request type(s)</span>
-                </p>
+                <div class="page-title__meta">
+                    <span class="badge badge-neutral text-mono">@d.Code</span>
+                    @await Html.PartialAsync("_StatusBadge", d.IsActive)
+                    <span><strong>@d.Members.Count</strong> @(d.Members.Count == 1 ? "member" : "members")</span>
+                    <span><strong>@d.RequestTypeCount</strong> @(d.RequestTypeCount == 1 ? "request type" : "request types")</span>
+                    <span><strong>@d.TicketReferenceCount</strong> @(d.TicketReferenceCount == 1 ? "ticket" : "tickets")</span>
+                </div>
             </div>
-            <a class="btn" href="/Admin/RequestTypes?departmentId=@d.DepartmentId">Request Types</a>
+            <div class="page-header__actions">
+                <a class="btn" href="/Admin/Departments">Back to Departments</a>
+                <a class="btn" href="/Admin/RequestTypes?departmentId=@d.DepartmentId">@await Html.PartialAsync("_AdminIcon", "request-types") Request Types</a>
+            </div>
         </div>
 
         @await Html.PartialAsync("_AdminMessages", Model)
 
         <div class="admin-grid">
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Details</h2></div>
+            <section class="panel admin-form-panel" aria-labelledby="details-title">
+                <div class="panel__header"><h2 class="panel__title" id="details-title">Details</h2></div>
                 <form method="post" asp-page-handler="Edit" asp-route-id="@d.DepartmentId" class="admin-form">
                     <div class="form-group">
                         <label class="form-label" asp-for="Edit.Name">Name *</label>
-                        <input class="form-control" asp-for="Edit.Name" />
+                        <input class="form-control" asp-for="Edit.Name" required aria-required="true" />
                     </div>
                     <div class="form-group">
                         <label class="form-label" asp-for="Edit.Code">Code *</label>
-                        <input class="form-control" asp-for="Edit.Code" maxlength="10" />
-                        @if (d.TicketReferenceCount > 0)
-                        {
-                            <span class="field-hint">Existing ticket numbers keep the code they were created with; only new tickets use a changed code.</span>
-                        }
+                        <input class="form-control" asp-for="Edit.Code" maxlength="10" required aria-required="true" />
+                        <span class="field-hint">
+                            Short code used in ticket numbers. Up to 10 characters.
+                            @if (d.TicketReferenceCount > 0)
+                            {
+                                <text>Existing ticket numbers keep the code they were created with; only new tickets use a changed code.</text>
+                            }
+                        </span>
                     </div>
-                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
+                    <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
                 </form>
             </section>
 
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Status</h2></div>
-                @if (d.TicketReferenceCount > 0)
-                {
-                    <p class="field-hint">This department is referenced by @d.TicketReferenceCount ticket(s). It can be deactivated but never deleted.</p>
-                }
+            <section class="panel admin-form-panel @(d.IsActive ? "panel--danger" : "")" aria-labelledby="status-title">
+                <div class="panel__header"><h2 class="panel__title" id="status-title">@(d.IsActive ? "Deactivate department" : "Reactivate department")</h2></div>
+                <div class="panel__note panel__note--top">
+                    @if (d.IsActive)
+                    {
+                        <p>An inactive department is no longer offered for new tickets, request types or transfers. Historical tickets keep its name.</p>
+                    }
+                    else
+                    {
+                        <p>Reactivating makes the department available again for new tickets, request types and transfers.</p>
+                    }
+                    @if (d.TicketReferenceCount > 0)
+                    {
+                        <p>This department is referenced by @d.TicketReferenceCount @(d.TicketReferenceCount == 1 ? "ticket" : "tickets"), so it can be deactivated but never deleted.</p>
+                    }
+                </div>
                 <form method="post" asp-page-handler="Activation" asp-route-id="@d.DepartmentId" class="admin-form"
                       data-confirm="@(d.IsActive ? $"Deactivate {d.Name}? It will no longer be offered for new tickets, request types or transfers." : null)">
                     <input type="hidden" asp-for="Activation.IsActive" value="@(d.IsActive ? "false" : "true")" />
                     @if (d.IsActive)
                     {
                         <div class="form-group">
-                            <label class="form-label" asp-for="Activation.Reason">Reason (recorded in the audit trail)</label>
-                            <input class="form-control" asp-for="Activation.Reason" />
+                            <label class="form-label" asp-for="Activation.Reason">Reason</label>
+                            <input class="form-control" asp-for="Activation.Reason" placeholder="Optional — recorded in the audit trail" />
                         </div>
-                        <div class="action-form__footer"><button type="submit" class="btn btn-critical btn-sm">Deactivate Department</button></div>
+                        <div class="form-actions"><button type="submit" class="btn btn-critical btn-sm">Deactivate Department</button></div>
                     }
                     else
                     {
-                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reactivate Department</button></div>
+                        <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Reactivate Department</button></div>
                     }
                 </form>
             </section>
 
-            <section class="panel admin-form-panel admin-grid__wide">
-                <div class="panel__header"><h2 class="panel__title">Members</h2></div>
+            <section class="panel admin-form-panel admin-grid__wide" aria-labelledby="members-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="members-title">Members <span class="panel__count">@d.Members.Count</span></h2>
+                </div>
                 @if (d.Members.Count == 0)
                 {
-                    <div class="empty-state"><p>No members yet. Add existing users below.</p></div>
+                    <div class="empty-state">
+                        @await Html.PartialAsync("_AdminIcon", "users")
+                        <p class="empty-state__title">No members yet</p>
+                        <p>Add existing users below. New accounts are created under Users.</p>
+                    </div>
                 }
                 else
                 {
                     <div class="table-scroll">
                         <table class="data-table">
-                            <thead><tr><th>Name</th><th>Roles</th><th>Membership</th><th>Status</th><th></th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Roles</th>
+                                    <th>Membership</th>
+                                    <th>Status</th>
+                                    <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                @foreach (var m in d.Members)
+                                @foreach (var m in d.Members.OrderByDescending(m => m.IsPrimary).ThenBy(m => m.DisplayName))
                                 {
-                                    <tr>
-                                        <td><a class="ticket-id-link" href="/Admin/Users/@m.EmployeeId">@m.DisplayName</a></td>
-                                        <td>@(m.Roles.Count == 0 ? "—" : string.Join(", ", m.Roles))</td>
-                                        <td>@(m.IsPrimary ? "Primary" : "Additional")</td>
-                                        <td>
-                                            @if (m.IsActive)
+                                    <tr class="@(m.IsActive ? "" : "is-inactive")">
+                                        <td class="cell-primary"><a class="ticket-id-link" href="/Admin/Users/@m.EmployeeId">@m.DisplayName</a></td>
+                                        <td class="cell-wrap">
+                                            @if (m.Roles.Count == 0)
                                             {
-                                                <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                                                <span class="text-secondary">—</span>
                                             }
                                             else
                                             {
-                                                <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                                                <span class="chip-list">
+                                                    @foreach (var role in m.Roles)
+                                                    {
+                                                        <span class="badge badge-neutral">@role</span>
+                                                    }
+                                                </span>
                                             }
                                         </td>
-                                        <td>
+                                        <td>@if (m.IsPrimary) { <span class="badge badge-version-published">Primary</span> } else { <span class="badge badge-neutral">Additional</span> }</td>
+                                        <td>@await Html.PartialAsync("_StatusBadge", m.IsActive)</td>
+                                        <td class="col-actions">
                                             <form method="post" asp-page-handler="RemoveMember" asp-route-id="@d.DepartmentId" asp-route-employeeId="@m.EmployeeId" data-confirm="Remove @m.DisplayName from @d.Name?">
                                                 <button type="submit" class="btn btn-sm btn-critical">Remove</button>
                                             </form>
@@ -138,7 +175,11 @@
                 </form>
                 @if (!d.IsActive)
                 {
-                    <p class="field-hint">Reactivate the department before adding members.</p>
+                    <p class="panel__note">Reactivate the department before adding members.</p>
+                }
+                else if (Model.CandidateUsers.Count == 0)
+                {
+                    <p class="panel__note">Every active user is already a member of this department.</p>
                 }
             </section>
         </div>
