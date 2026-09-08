@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
@@ -106,6 +107,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IUserDepartmentAssignmentRepository, UserDepartmentAssignmentRepository>();
         services.AddScoped<IIdentityUnitOfWork, IdentityUnitOfWork>();
         services.AddScoped<IUserRoleReader, UserRoleReader>();
+        services.AddScoped<IUserAccountManager, UserAccountManager>();
         services.AddScoped<IRoleCatalogReader, RoleCatalogReader>();
         services.AddScoped<IIdentityAuthenticator, IdentityAuthenticator>();
         services.AddScoped<ITokenService, JwtTokenService>();
@@ -205,7 +207,9 @@ public static class InfrastructureServiceCollectionExtensions
         // Workflow/SLA Configuration (phase 1) — the Department → Request
         // Type → Workflow Template → SLA configuration layer. Read-only at
         // this phase; configuration is seeded/database-driven.
+        services.AddScoped<IWorkflowRepository, WorkflowRepository>();
         services.AddScoped<IWorkflowTemplateRepository, WorkflowTemplateRepository>();
+        services.AddScoped<IWorkflowConfigurationUnitOfWork, WorkflowConfigurationUnitOfWork>();
         services.AddScoped<IRequestTypeRepository, RequestTypeRepository>();
         services.AddScoped<IRequestTypeSlaPolicyRepository, RequestTypeSlaPolicyRepository>();
         services.AddScoped<IDepartmentWorkflowSettingsRepository, DepartmentWorkflowSettingsRepository>();
@@ -226,6 +230,13 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketWorkflowEventRepository, TicketWorkflowEventRepository>();
         services.AddScoped<IRequestTypeApprovalRequirementRepository, RequestTypeApprovalRequirementRepository>();
         services.AddScoped<TicketApprovalAppService>();
+
+        // Administration / Workflow Designer phase — SystemAdministrator-only
+        // endpoints compose these over the existing services above.
+        services.AddScoped<AdminUserAppService>();
+        services.AddScoped<AdminDepartmentAppService>();
+        services.AddScoped<AdminRequestTypeAppService>();
+        services.AddScoped<AdminWorkflowAppService>();
 
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).

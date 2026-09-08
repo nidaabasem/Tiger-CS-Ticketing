@@ -166,6 +166,9 @@ public enum TicketCreationOutcome
     /// <summary>A same-department, same-day TicketNumber collision (real DB unique-index race) — nothing else was touched; retrying the whole request is always correct.</summary>
     TicketNumberCollision,
 
+    /// <summary>The selected request type's workflow has no Published version to pin the ticket to — an administration gap (the workflow is still a Draft), never silently ignored.</summary>
+    RequestTypeWorkflowNotPublished,
+
     /// <summary>Workflow/Automation phase 2: RequestTypeId did not resolve to an active request type.</summary>
     RequestTypeNotFound,
 

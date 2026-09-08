@@ -2,51 +2,113 @@ using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 
-/// <summary>Reads the seeded reusable workflow templates (Workflow/SLA Configuration phase 1). Configuration data — read-only for this module's services.</summary>
+/// <summary>The logical workflows (Administration / Workflow Designer phase).</summary>
+public interface IWorkflowRepository
+{
+    Task<Workflow?> GetByIdAsync(int workflowId, CancellationToken cancellationToken = default);
+
+    Task<Workflow?> GetByCodeAsync(string code, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Workflow>> ListAsync(bool includeInactive, CancellationToken cancellationToken = default);
+
+    Task<bool> CodeExistsAsync(string code, CancellationToken cancellationToken = default);
+
+    Task AddAsync(Workflow workflow, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Workflow VERSIONS — the phase-1 template rows, now versioned.</summary>
 public interface IWorkflowTemplateRepository
 {
     Task<WorkflowTemplate?> GetByIdAsync(int workflowTemplateId, CancellationToken cancellationToken = default);
 
     Task<WorkflowTemplate?> GetByCodeAsync(string code, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<WorkflowTemplate>> ListByWorkflowIdAsync(int workflowId, CancellationToken cancellationToken = default);
+
+    /// <summary>The single Published version of a workflow, or null when none is published (a workflow whose only version is still a Draft).</summary>
+    Task<WorkflowTemplate?> GetPublishedAsync(int workflowId, CancellationToken cancellationToken = default);
+
+    /// <summary>The single Draft of a workflow, or null when there is none.</summary>
+    Task<WorkflowTemplate?> GetDraftAsync(int workflowId, CancellationToken cancellationToken = default);
+
+    Task AddAsync(WorkflowTemplate version, CancellationToken cancellationToken = default);
+
+    /// <summary>Physically removes a version — the application service only ever calls this for an unreferenced Draft.</summary>
+    void Remove(WorkflowTemplate version);
+
+    /// <summary>How many tickets are pinned to this exact version — the reference count that makes a version undeletable.</summary>
+    Task<int> CountPinnedTicketsAsync(int workflowTemplateId, CancellationToken cancellationToken = default);
+
+    /// <summary>Pinned-ticket counts per version of one workflow (versions with no tickets are absent).</summary>
+    Task<IReadOnlyDictionary<int, int>> CountPinnedTicketsByVersionAsync(int workflowId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Reads the per-department request type configuration.</summary>
 public interface IRequestTypeRepository
 {
     Task<RequestType?> GetByIdAsync(int requestTypeId, CancellationToken cancellationToken = default);
 
-    /// <summary>Active request types of one department, ordered by name — the set an agent can pick from when raising a request for that department.</summary>
     Task<IReadOnlyList<RequestType>> ListActiveByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default);
+
+    /// <summary>Administration listing — optionally one department, optionally including inactive rows.</summary>
+    Task<IReadOnlyList<RequestType>> ListAsync(int? departmentId, bool includeInactive, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<RequestType>> ListByWorkflowIdAsync(int workflowId, CancellationToken cancellationToken = default);
+
+    Task<bool> NameExistsAsync(int departmentId, string name, int? excludeRequestTypeId, CancellationToken cancellationToken = default);
+
+    Task AddAsync(RequestType requestType, CancellationToken cancellationToken = default);
+
+    /// <summary>How many tickets reference this request type — the count that makes it undeletable and its department immutable.</summary>
+    Task<int> CountTicketsAsync(int requestTypeId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Reads the per-(request type, priority) SLA configuration.</summary>
 public interface IRequestTypeSlaPolicyRepository
 {
-    /// <summary>The active SLA row for this exact (request type, priority) pair, or null when none is configured — the caller decides the fallback, never this repository.</summary>
     Task<RequestTypeSlaPolicy?> GetActiveAsync(int requestTypeId, byte priorityId, CancellationToken cancellationToken = default);
 
-    /// <summary>All SLA rows of one request type (active and inactive), ordered by priority.</summary>
+    /// <summary>The row for a (request type, priority) pair regardless of its active flag — administration edits target it.</summary>
+    Task<RequestTypeSlaPolicy?> GetAsync(int requestTypeId, byte priorityId, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<RequestTypeSlaPolicy>> ListByRequestTypeAsync(int requestTypeId, CancellationToken cancellationToken = default);
+
+    Task AddAsync(RequestTypeSlaPolicy policy, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Reads the optional per-department workflow settings row.</summary>
 public interface IDepartmentWorkflowSettingsRepository
 {
     Task<DepartmentWorkflowSettings?> GetByDepartmentIdAsync(int departmentId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Reads the per-request-type assignment rule (Workflow/Automation phase 2). At most one rule per request type; absence means department queue.</summary>
 public interface IRequestTypeAssignmentRuleRepository
 {
     Task<RequestTypeAssignmentRule?> GetByRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default);
+
+    Task AddAsync(RequestTypeAssignmentRule rule, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a configuration row so it can be replaced (rules are immutable value configuration; a change is a new rule).</summary>
+    void Remove(RequestTypeAssignmentRule rule);
 }
 
-/// <summary>Reads the per-request-type approval requirements (Workflow/Automation phase 3). At most one per (request type, approval type); absence means no approval is required.</summary>
 public interface IRequestTypeApprovalRequirementRepository
 {
     Task<IReadOnlyList<RequestTypeApprovalRequirement>> ListActiveByRequestTypeIdAsync(
         int requestTypeId, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<RequestTypeApprovalRequirement>> ListByRequestTypeIdAsync(
+        int requestTypeId, CancellationToken cancellationToken = default);
+
     Task<RequestTypeApprovalRequirement?> GetActiveAsync(
         int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default);
+
+    /// <summary>The row for a (request type, approval type) pair regardless of its active flag.</summary>
+    Task<RequestTypeApprovalRequirement?> GetAsync(
+        int requestTypeId, ApprovalType approvalType, CancellationToken cancellationToken = default);
+
+    Task AddAsync(RequestTypeApprovalRequirement requirement, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Commits administration edits of workflow configuration.</summary>
+public interface IWorkflowConfigurationUnitOfWork
+{
+    Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

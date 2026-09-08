@@ -1,0 +1,28 @@
+@model TigerCS.Web.Pages.Admin.WorkflowVersionModel
+<div class="form-group">
+    <label class="form-label" asp-for="Step.Name">Step name *</label>
+    <input class="form-control" asp-for="Step.Name" placeholder="e.g. Accounting Approval" />
+</div>
+<div class="form-group">
+    <label class="form-label" asp-for="Step.Kind">Step type *</label>
+    <select class="form-control" asp-for="Step.Kind">
+        @foreach (var k in Model.Catalog.StepKinds)
+        {
+            <option value="@k.Kind" selected="@(Model.Step.Kind == k.Kind)">@k.Label</option>
+        }
+    </select>
+</div>
+<div class="form-group">
+    <label class="form-label" asp-for="Step.ApprovalType">Approval type (Approval steps only)</label>
+    <select class="form-control" asp-for="Step.ApprovalType">
+        <option value="">—</option>
+        @foreach (var a in Model.Catalog.ApprovalTypes)
+        {
+            <option value="@a.ApprovalType" selected="@(Model.Step.ApprovalType == a.ApprovalType)">@a.Label</option>
+        }
+    </select>
+</div>
+<label class="checkbox-field">
+    <input type="checkbox" asp-for="Step.IsOptional" />
+    Optional step (a ticket may skip it)
+</label>

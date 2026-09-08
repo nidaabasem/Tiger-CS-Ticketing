@@ -100,6 +100,32 @@ public class RequestTypeSlaPolicy
             throw new ArgumentException($"PriorityId {priorityId} is not one of the fixed priorities.", nameof(priorityId));
         }
 
+        RequestTypeId = requestTypeId;
+        PriorityId = priorityId;
+        Update(trigger, unit, firstResponseTargetValue, firstResponseMaximumValue, resolutionTargetValue, resolutionMaximumValue,
+            isImmediate, clockBasis, pausesOnPendingCustomer, pausesOnPendingInternal, warningThresholdPercent, isActive);
+    }
+
+    /// <summary>
+    /// Administration edit of the existing, confirmed SLA values of this
+    /// (request type, priority) row — the same validation as construction.
+    /// No new SLA rule is introduced here; the tri-state pause flags keep
+    /// their "null = not yet decided" meaning.
+    /// </summary>
+    public void Update(
+        SlaTriggerType trigger,
+        SlaDurationUnit unit,
+        int? firstResponseTargetValue,
+        int? firstResponseMaximumValue,
+        int? resolutionTargetValue,
+        int? resolutionMaximumValue,
+        bool isImmediate,
+        SlaClockBasis? clockBasis,
+        bool? pausesOnPendingCustomer,
+        bool? pausesOnPendingInternal,
+        decimal? warningThresholdPercent,
+        bool isActive)
+    {
         if (!Enum.IsDefined(trigger))
         {
             throw new ArgumentException($"Trigger {trigger} is not a defined SLA trigger.", nameof(trigger));
@@ -137,8 +163,6 @@ public class RequestTypeSlaPolicy
                 nameof(warningThresholdPercent), "WarningThresholdPercent must be within (0, 100].");
         }
 
-        RequestTypeId = requestTypeId;
-        PriorityId = priorityId;
         Trigger = trigger;
         Unit = unit;
         FirstResponseTargetValue = firstResponseTargetValue;

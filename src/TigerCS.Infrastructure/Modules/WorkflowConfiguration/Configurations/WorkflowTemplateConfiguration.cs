@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Infrastructure.Modules.WorkflowConfiguration.Configurations;
 
-/// <summary>Workflow/SLA Configuration phase 1 — the reusable workflow patterns (Standard / With Pending / With Approval).</summary>
 public class WorkflowTemplateConfiguration : IEntityTypeConfiguration<WorkflowTemplate>
 {
     public void Configure(EntityTypeBuilder<WorkflowTemplate> builder)
@@ -23,6 +23,43 @@ public class WorkflowTemplateConfiguration : IEntityTypeConfiguration<WorkflowTe
         builder.Property(t => t.AllowsPendingInternal).IsRequired();
         builder.Property(t => t.RequiresApproval).IsRequired();
         builder.Property(t => t.IsActive).IsRequired();
+
+        builder.Property(t => t.WorkflowId).IsRequired();
+        builder.Property(t => t.VersionNumber).IsRequired();
+        builder.Property(t => t.Status).HasConversion<byte>().IsRequired();
+        builder.Property(t => t.CreatedAtUtc).IsRequired();
+
+        builder.HasIndex(t => new { t.WorkflowId, t.VersionNumber }).IsUnique();
+
+        // At most one Published and at most one Draft per workflow — the
+        // database-level guarantee behind "the active version".
+        // Two named indexes on the same column: naming them at HasIndex is
+        // what makes EF keep both (an unnamed second HasIndex on the same
+        // properties would replace the first).
+        builder.HasIndex(t => t.WorkflowId, "UX_WorkflowTemplates_OnePublishedPerWorkflow")
+            .IsUnique()
+            .HasFilter("[Status] = 2");
+
+        builder.HasIndex(t => t.WorkflowId, "UX_WorkflowTemplates_OneDraftPerWorkflow")
+            .IsUnique()
+            .HasFilter("[Status] = 1");
+
+        builder.HasOne<Workflow>()
+            .WithMany()
+            .HasForeignKey(t => t.WorkflowId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Employee>()
+            .WithMany()
+            .HasForeignKey(t => t.CreatedByEmployeeId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Employee>()
+            .WithMany()
+            .HasForeignKey(t => t.PublishedByEmployeeId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(t => t.Steps)
             .WithOne(s => s.WorkflowTemplate!)

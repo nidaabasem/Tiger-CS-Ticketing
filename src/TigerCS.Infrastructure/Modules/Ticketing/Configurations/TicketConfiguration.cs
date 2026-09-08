@@ -123,5 +123,13 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
             .HasForeignKey(t => t.RequestTypeId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // The pinned workflow VERSION. Restrict: a version referenced by any
+        // ticket can never be physically deleted.
+        builder.HasOne<TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate>()
+            .WithMany()
+            .HasForeignKey(t => t.WorkflowTemplateId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

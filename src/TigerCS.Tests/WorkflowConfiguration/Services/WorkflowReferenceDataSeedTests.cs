@@ -70,14 +70,16 @@ public class WorkflowReferenceDataSeedTests
     {
         await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
 
-        var templateCodesById = await db.WorkflowTemplates.ToDictionaryAsync(t => t.WorkflowTemplateId, t => t.Code);
+        // Request types now select the LOGICAL workflow; its Published
+        // version 1 carries the phase-1 template code.
+        var templateCodesById = await db.Workflows.ToDictionaryAsync(w => w.WorkflowId, w => w.Code);
         var departmentIdsByCode = await db.Departments.ToDictionaryAsync(d => d.Code, d => d.DepartmentId);
 
         foreach (var seed in WorkflowReferenceData.RequestTypes())
         {
             var stored = await db.RequestTypes.SingleAsync(
                 r => r.Name == seed.Name && r.DepartmentId == departmentIdsByCode[seed.DepartmentCode]);
-            Assert.Equal(seed.TemplateCode, templateCodesById[stored.WorkflowTemplateId]);
+            Assert.Equal(seed.TemplateCode, templateCodesById[stored.WorkflowId]);
         }
     }
 
@@ -256,5 +258,33 @@ public class WorkflowReferenceDataSeedTests
         Assert.Equal(requestTypeCount, await db.RequestTypes.CountAsync());
         Assert.Equal(slaCount, await db.RequestTypeSlaPolicies.CountAsync());
         Assert.Equal(departmentCount, await db.Departments.CountAsync());
+    }
+
+    [Fact]
+    public async Task Seeded_templates_become_version_1_published_of_same_named_workflows_with_their_steps_intact()
+    {
+        await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+
+        var workflows = await db.Workflows.ToListAsync();
+        Assert.Equal(3, workflows.Count);
+
+        foreach (var expected in WorkflowReferenceData.Templates())
+        {
+            var workflow = workflows.Single(w => w.Code == expected.Code);
+            var version = await db.WorkflowTemplates.SingleAsync(t => t.WorkflowId == workflow.WorkflowId);
+
+            Assert.Equal(1, version.VersionNumber);
+            Assert.Equal(WorkflowVersionStatus.Published, version.Status);
+            Assert.Null(version.PublishedByEmployeeId);
+            Assert.Equal(expected.Name, version.Name);
+            Assert.Equal(
+                expected.Steps.Select(s => (s.Sequence, s.Name, s.Kind, s.IsOptional)),
+                version.Steps.Select(s => (s.Sequence, s.Name, s.Kind, s.IsOptional)));
+        }
+
+        // Seeding again is idempotent — no second version, no duplicate workflow.
+        await WorkflowReferenceData.SeedAsync(db);
+        Assert.Equal(3, await db.Workflows.CountAsync());
+        Assert.Equal(3, await db.WorkflowTemplates.CountAsync());
     }
 }

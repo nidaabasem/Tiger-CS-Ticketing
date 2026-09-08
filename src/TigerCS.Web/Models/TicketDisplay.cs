@@ -18,7 +18,13 @@ public static class TicketDisplay
     /// state; only the human-readable name can be missing.
     /// </summary>
     public static string AssignedDepartmentLabel(int currentDepartmentId, string? departmentName)
-        => departmentName ?? $"Department #{currentDepartmentId}";
+        => departmentName ?? UnknownDepartmentLabel;
+
+    /// <summary>Neutral wording used when a department's name cannot be resolved — never a raw numeric id.</summary>
+    public const string UnknownDepartmentLabel = "Unknown department";
+
+    /// <summary>Neutral wording for a queued ticket whose department name cannot be resolved.</summary>
+    public const string UnknownDepartmentQueueLabel = "Department queue";
 
     /// <summary>
     /// Who the ticket is assigned to — the SECONDARY assignment. A null
@@ -31,7 +37,7 @@ public static class TicketDisplay
     public static string AssignedToLabel(
         Guid? currentOwnerEmployeeId, string? ownerName, int currentDepartmentId, string? departmentName)
         => currentOwnerEmployeeId is not { } ownerId
-            ? $"{AssignedDepartmentLabel(currentDepartmentId, departmentName)} Queue"
+            ? departmentName is null ? UnknownDepartmentQueueLabel : $"{departmentName} Queue"
             : ownerName ?? $"Employee #{ownerId.ToString()[..8]}";
 
     /// <summary>True when the ticket sits in its department queue rather than with a named employee — for styling only, never for the label text.</summary>

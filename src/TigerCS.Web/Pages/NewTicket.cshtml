@@ -448,6 +448,26 @@
                             </select>
                         </div>
 
+                        @if (Model.RequestTypeOptions.Count > 0)
+                        {
+                            <div class="form-group">
+                                <label class="form-label" asp-for="CreateStep.RequestTypeId">Handling Process</label>
+                                <select class="form-control" asp-for="CreateStep.RequestTypeId">
+                                    <option value="">None — standard handling</option>
+                                    @foreach (var group in Model.RequestTypeOptions.GroupBy(r => Model.DepartmentNameOf(r.DepartmentId)))
+                                    {
+                                        <optgroup label="@group.Key">
+                                            @foreach (var requestType in group)
+                                            {
+                                                <option value="@requestType.RequestTypeId">@requestType.Name</option>
+                                            }
+                                        </optgroup>
+                                    }
+                                </select>
+                                <span class="field-hint">The configured process this request follows (e.g. Send Receipts). It sets the assignment, approvals and SLA, and must belong to the same department as the request type above.</span>
+                            </div>
+                        }
+
                         <div class="form-group">
                             <label class="form-label" asp-for="CreateStep.PriorityId">Priority *</label>
                             <select class="form-control" asp-for="CreateStep.PriorityId">
@@ -515,6 +535,7 @@
                         @await Html.PartialAsync("_NewTicketWizardState", Model)
                         <input type="hidden" asp-for="CreateStep.DepartmentId" />
                         <input type="hidden" asp-for="CreateStep.CategoryId" />
+                        <input type="hidden" asp-for="CreateStep.RequestTypeId" />
                         <input type="hidden" asp-for="CreateStep.PriorityId" />
                         <input type="hidden" asp-for="CreateStep.RequestSummary" />
                         <input type="hidden" asp-for="CreateStep.ManualProjectName" />
@@ -585,6 +606,13 @@
                         <dt>Request Type</dt>
                         <dd>@if (Model.SelectedCategory is { } selectedCategory) { @selectedCategory.Name } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
                     </div>
+                    @if (Model.SelectedRequestType is { } summaryRequestType)
+                    {
+                        <div class="wizard-summary__row">
+                            <dt>Handling Process</dt>
+                            <dd>@summaryRequestType.Name</dd>
+                        </div>
+                    }
                     <div class="wizard-summary__row">
                         <dt>Priority</dt>
                         <dd>@if (Model.CreateStep.PriorityId is { } summaryPriority) { @TicketDisplay.PriorityLabel(summaryPriority) } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>

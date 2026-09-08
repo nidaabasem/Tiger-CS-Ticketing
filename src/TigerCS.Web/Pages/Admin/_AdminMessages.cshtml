@@ -1,0 +1,9 @@
+@model TigerCS.Web.Pages.Admin.AdminPageModel
+@if (!string.IsNullOrEmpty(Model.StatusMessage))
+{
+    <div class="alert alert-success" role="status">@Model.StatusMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-error" role="alert">@Model.ErrorMessage</div>
+}

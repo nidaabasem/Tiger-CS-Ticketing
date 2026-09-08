@@ -24,6 +24,19 @@ public sealed class FakeEmployeeRepository : IEmployeeRepository
         return Task.CompletedTask;
     }
 
+    public Task<IReadOnlyList<Employee>> ListAsync(
+        bool includeInactive, IReadOnlyCollection<Guid>? employeeIds, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Employee>>(_employees.Values
+            .Where(e => includeInactive || e.IsActive)
+            .Where(e => employeeIds is null || employeeIds.Contains(e.EmployeeId))
+            .OrderBy(e => e.DisplayName)
+            .ToList());
+
+    public HashSet<Guid> ReferencedByHistory { get; } = [];
+
+    public Task<bool> IsReferencedByHistoryAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(ReferencedByHistory.Contains(employeeId));
+
     public Task<int> CountActiveInRoleAsync(string roleName, CancellationToken cancellationToken = default)
     {
         var count = _employees.Values.Count(e =>
@@ -47,6 +60,24 @@ public sealed class FakeDepartmentRepository : IDepartmentRepository
 
     public Task<Department?> GetByIdAsync(int departmentId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_departments.GetValueOrDefault(departmentId));
+
+    public Dictionary<int, int> TicketReferences { get; } = [];
+
+    public Task AddAsync(Department department, CancellationToken cancellationToken = default)
+    {
+        typeof(Department).GetProperty(nameof(Department.DepartmentId))!.SetValue(department, _nextId++);
+        _departments[department.DepartmentId] = department;
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> NameExistsAsync(string name, int? excludeDepartmentId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_departments.Values.Any(d => d.Name == name && (excludeDepartmentId is null || d.DepartmentId != excludeDepartmentId)));
+
+    public Task<bool> CodeExistsAsync(string code, int? excludeDepartmentId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_departments.Values.Any(d => d.Code == code && (excludeDepartmentId is null || d.DepartmentId != excludeDepartmentId)));
+
+    public Task<int> CountTicketReferencesAsync(int departmentId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(TicketReferences.GetValueOrDefault(departmentId));
 
     public Task<IReadOnlyCollection<Department>> ListAsync(bool activeOnly, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyCollection<Department>>(
@@ -72,6 +103,11 @@ public sealed class FakeUserDepartmentAssignmentRepository : IUserDepartmentAssi
         int departmentId, bool activeEmployeesOnly, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyCollection<UserDepartmentAssignment>>(
             Assignments.Where(a => a.DepartmentId == departmentId).ToList());
+
+    public Task<UserDepartmentAssignment?> GetAsync(Guid employeeId, int departmentId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Assignments.FirstOrDefault(a => a.EmployeeId == employeeId && a.DepartmentId == departmentId));
+
+    public void Remove(UserDepartmentAssignment assignment) => Assignments.Remove(assignment);
 
     public Task AddAsync(UserDepartmentAssignment assignment, CancellationToken cancellationToken = default)
     {

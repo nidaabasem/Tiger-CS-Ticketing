@@ -62,7 +62,8 @@ public sealed class TicketCreationAppService(
     TimeProvider timeProvider,
     IRequestTypeRepository requestTypeRepository,
     ITicketInteractionRepository interactionRepository,
-    TicketAutoAssignmentService autoAssignmentService)
+    TicketAutoAssignmentService autoAssignmentService,
+    IWorkflowTemplateRepository workflowTemplateRepository)
 {
     public async Task<TicketCreationResult> CreateAsync(
         Guid callerEmployeeId, CreateTicketRequestDto request, CancellationToken cancellationToken = default)
@@ -180,6 +181,22 @@ public sealed class TicketCreationAppService(
             }
         }
 
+        // Administration / Workflow Designer phase — resolve the request
+        // type's currently Published workflow version NOW, so the ticket is
+        // pinned to exactly the definition in force at creation. A request
+        // type whose workflow has no published version cannot govern a new
+        // ticket; that is a configuration error surfaced to the caller, never
+        // a silently unpinned ticket.
+        WorkflowTemplate? workflowVersion = null;
+        if (requestType is not null)
+        {
+            workflowVersion = await workflowTemplateRepository.GetPublishedAsync(requestType.WorkflowId, cancellationToken);
+            if (workflowVersion is null)
+            {
+                return TicketCreationResult.Failure(TicketCreationOutcome.RequestTypeWorkflowNotPublished);
+            }
+        }
+
         if (request.GenesysContext is { } genesysContext && string.IsNullOrWhiteSpace(genesysContext.ConversationId))
         {
             return TicketCreationResult.Failure(TicketCreationOutcome.GenesysConversationIdRequired);
@@ -213,9 +230,10 @@ public sealed class TicketCreationAppService(
                     request.ManualProjectName, request.ManualUnitNumber)
             };
 
-            if (requestType is not null)
+            if (requestType is not null && workflowVersion is not null)
             {
                 ticket.ClassifyRequestType(requestType.RequestTypeId);
+                ticket.PinWorkflowVersion(workflowVersion.WorkflowTemplateId);
             }
 
             await ticketRepository.AddAsync(ticket, cancellationToken);

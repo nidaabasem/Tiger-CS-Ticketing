@@ -96,3 +96,11 @@ public sealed class TicketRequestTypeAlreadySetException(long ticketId, int requ
     public long TicketId { get; } = ticketId;
     public int RequestTypeId { get; } = requestTypeId;
 }
+
+/// <summary>A ticket's workflow version is pinned once at creation and never re-pinned.</summary>
+public sealed class TicketWorkflowVersionAlreadyPinnedException(long ticketId, int workflowTemplateId)
+    : TicketException($"Ticket {ticketId} is already pinned to workflow version {workflowTemplateId}; the pinned version never changes.")
+{
+    public long TicketId { get; } = ticketId;
+    public int WorkflowTemplateId { get; } = workflowTemplateId;
+}

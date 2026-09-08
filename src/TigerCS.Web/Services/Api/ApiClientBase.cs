@@ -90,6 +90,50 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
         }
     }
 
+    protected Task<ApiResult<TResponse>> PutAsync<TRequest, TResponse>(
+        string requestUri, TRequest body, CancellationToken cancellationToken) =>
+        SendJsonAsync<TRequest, TResponse>(HttpMethod.Put, requestUri, body, cancellationToken);
+
+    protected Task<ApiResult<TResponse>> PatchAsync<TRequest, TResponse>(
+        string requestUri, TRequest body, CancellationToken cancellationToken) =>
+        SendJsonAsync<TRequest, TResponse>(HttpMethod.Patch, requestUri, body, cancellationToken);
+
+    protected Task<ApiResult<TResponse>> DeleteAsync<TResponse>(string requestUri, CancellationToken cancellationToken) =>
+        SendJsonAsync<object?, TResponse>(HttpMethod.Delete, requestUri, null, cancellationToken);
+
+    protected async Task<ApiResult> DeleteAsync(string requestUri, CancellationToken cancellationToken)
+    {
+        var result = await SendJsonAsync<object?, object?>(HttpMethod.Delete, requestUri, null, cancellationToken);
+        return result.IsSuccess ? ApiResult.Success() : ApiResult.Failure(result.Outcome, result.Detail);
+    }
+
+    /// <summary>One implementation for the verbs that carry an optional JSON body and return a JSON body (PUT/PATCH/DELETE); GET/POST keep their original shape above.</summary>
+    private async Task<ApiResult<TResponse>> SendJsonAsync<TRequest, TResponse>(
+        HttpMethod method, string requestUri, TRequest? body, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(method, requestUri);
+            if (body is not null)
+            {
+                request.Content = JsonContent.Create(body, options: ApiJson.Options);
+            }
+
+            using var response = await Http.SendAsync(request, cancellationToken);
+            return await ToResultAsync<TResponse>(method, requestUri, response, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            LogUnreachable(method, requestUri, ex);
+            return ApiResult<TResponse>.Failure(ApiOutcome.Unreachable, ex.Message);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogUnreachable(method, requestUri, ex);
+            return ApiResult<TResponse>.Failure(ApiOutcome.Unreachable, "The request timed out.");
+        }
+    }
+
     private async Task<ApiResult<TResponse>> ToResultAsync<TResponse>(
         HttpMethod method, string requestUri, HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -129,11 +173,27 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
         {
             using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            if (document.RootElement.TryGetProperty("detail", out var detailEl))
+            if (document.RootElement.TryGetProperty("errors", out var errorsEl) && errorsEl.ValueKind == JsonValueKind.Object)
+            {
+                // ValidationProblemDetails: every message from every key, so
+                // an administration form can show the whole validation summary.
+                var messages = errorsEl.EnumerateObject()
+                    .SelectMany(p => p.Value.ValueKind == JsonValueKind.Array
+                        ? p.Value.EnumerateArray().Select(e => e.GetString())
+                        : [p.Value.GetString()])
+                    .Where(m => !string.IsNullOrWhiteSpace(m))
+                    .ToList();
+                if (messages.Count > 0)
+                {
+                    detail = string.Join(" ", messages);
+                }
+            }
+
+            if (detail is null && document.RootElement.TryGetProperty("detail", out var detailEl))
             {
                 detail = detailEl.GetString();
             }
-            else if (document.RootElement.TryGetProperty("title", out var titleEl))
+            else if (detail is null && document.RootElement.TryGetProperty("title", out var titleEl))
             {
                 detail = titleEl.GetString();
             }

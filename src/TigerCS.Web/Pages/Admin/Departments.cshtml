@@ -1,0 +1,85 @@
+@page "/Admin/Departments"
+@model TigerCS.Web.Pages.Admin.DepartmentsModel
+@{
+    ViewData["Title"] = "Departments";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Departments", "/Admin/Departments", (string?)null))
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Departments</h1>
+            <p class="page-subtitle">Responsible departments. An inactive department keeps its name on historical tickets but is never offered for new work.</p>
+        </div>
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <div class="admin-grid admin-grid--list-form">
+        <div class="panel">
+            <div class="panel__header">
+                <h2 class="panel__title">All departments</h2>
+                <a class="btn btn-sm" href="/Admin/Departments?includeInactive=@(Model.IncludeInactive ? "false" : "true")">@(Model.IncludeInactive ? "Hide inactive" : "Show inactive")</a>
+            </div>
+            @if (Model.LoadError is not null)
+            {
+                <div class="error-state"><p>@Model.LoadError</p></div>
+            }
+            else if (Model.Departments.Count == 0)
+            {
+                <div class="empty-state"><p>No departments yet. Add the first one on the right.</p></div>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Department</th><th>Code</th><th>Members</th><th>Request types</th><th>Tickets</th><th>Status</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var d in Model.Departments)
+                            {
+                                <tr>
+                                    <td><a class="ticket-id-link" href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
+                                    <td class="text-mono text-secondary">@d.Code</td>
+                                    <td>@d.MemberCount</td>
+                                    <td>@d.RequestTypeCount</td>
+                                    <td>@d.TicketReferenceCount</td>
+                                    <td>
+                                        @if (d.IsActive)
+                                        {
+                                            <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                                        }
+                                    </td>
+                                    <td><a class="btn btn-sm" href="/Admin/Departments/@d.DepartmentId">Manage</a></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <section class="panel admin-form-panel">
+            <div class="panel__header"><h2 class="panel__title">Add department</h2></div>
+            <form method="post" asp-page-handler="Create" class="admin-form">
+                <div class="form-group">
+                    <label class="form-label" asp-for="Create.Name">Name *</label>
+                    <input class="form-control" asp-for="Create.Name" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label" asp-for="Create.Code">Code *</label>
+                    <input class="form-control" asp-for="Create.Code" maxlength="10" />
+                    <span class="field-hint">Short code used in ticket numbers (e.g. COL). Up to 10 characters.</span>
+                </div>
+                <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Add Department</button></div>
+            </form>
+        </section>
+    </div>
+</div>

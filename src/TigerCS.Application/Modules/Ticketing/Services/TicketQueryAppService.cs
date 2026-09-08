@@ -2,6 +2,7 @@ using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -18,7 +19,10 @@ public sealed class TicketQueryAppService(
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     ITicketResolutionRepository ticketResolutionRepository,
     ReopenPolicy reopenPolicy,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IRequestTypeRepository? requestTypeRepository = null,
+    IWorkflowTemplateRepository? workflowTemplateRepository = null,
+    IWorkflowRepository? workflowRepository = null)
 {
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
@@ -82,6 +86,30 @@ public sealed class TicketQueryAppService(
             IsReopenEligible = reopenPolicy.IsReopenEligible(
                 ticket.TicketStatus, currentResolution?.ResolvedAtUtc, timeProvider.GetUtcNow().UtcDateTime)
         };
+
+        // Workflow identity (Administration / Workflow Designer phase): the
+        // request type's name and the PINNED version's workflow name and
+        // number — read-only display facts, resolved by name so no page ever
+        // shows a raw configuration id.
+        if (ticket.RequestTypeId is { } requestTypeId && requestTypeRepository is not null)
+        {
+            var requestType = await requestTypeRepository.GetByIdAsync(requestTypeId, cancellationToken);
+            detail = detail with { RequestTypeName = requestType?.Name };
+        }
+
+        if (ticket.WorkflowTemplateId is { } versionId && workflowTemplateRepository is not null)
+        {
+            var version = await workflowTemplateRepository.GetByIdAsync(versionId, cancellationToken);
+            if (version is not null)
+            {
+                var workflow = workflowRepository is null ? null : await workflowRepository.GetByIdAsync(version.WorkflowId, cancellationToken);
+                detail = detail with
+                {
+                    WorkflowName = workflow?.Name ?? version.Name,
+                    WorkflowVersionNumber = version.VersionNumber
+                };
+            }
+        }
 
         return TicketQueryResultDto<TicketDetailDto>.Success(detail);
     }
@@ -151,5 +179,7 @@ public sealed class TicketQueryAppService(
         ticket.ManualUnitNumber,
         ticket.CustomerVerificationSource,
         ticket.ExternalCustomerId,
-        ticket.ExternalUnitId);
+        ticket.ExternalUnitId,
+        RequestTypeId: ticket.RequestTypeId,
+        WorkflowTemplateId: ticket.WorkflowTemplateId);
 }

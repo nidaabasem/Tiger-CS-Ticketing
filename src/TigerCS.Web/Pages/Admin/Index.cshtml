@@ -1,0 +1,29 @@
+@page "/Admin"
+@model TigerCS.Web.Pages.Admin.IndexModel
+@{
+    ViewData["Title"] = "Administration";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Administration</h1>
+            <p class="page-subtitle">System configuration for Customer Service management. Every change here is recorded in the audit trail.</p>
+        </div>
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <section class="admin-cards" aria-label="Administration areas">
+        @foreach (var card in Model.Cards)
+        {
+            <a class="admin-card" href="@card.Href">
+                <span class="admin-card__title">@card.Title</span>
+                <span class="admin-card__desc">@card.Description</span>
+                <span class="admin-card__count"><strong>@(card.Count?.ToString() ?? "—")</strong> @card.CountLabel</span>
+            </a>
+        }
+    </section>
+</div>

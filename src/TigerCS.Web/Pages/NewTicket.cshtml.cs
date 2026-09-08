@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Web.Models;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Web.Services.Api;
 
@@ -77,7 +79,8 @@ public sealed class NewTicketModel(
     DepartmentsApiClient departmentsClient,
     CategoriesApiClient categoriesClient,
     TicketsApiClient ticketsClient,
-    CustomerHistoryApiClient customerHistoryClient) : PageModel
+    CustomerHistoryApiClient customerHistoryClient,
+    RequestTypesApiClient? requestTypesClient = null) : PageModel
 {
     public const string StepCustomer = "customer";
     public const string StepProperty = "property";
@@ -269,6 +272,23 @@ public sealed class NewTicketModel(
 
     public string? SummaryProjectName => CrmBuyerProjectName ?? ExternalProjectName ?? ManualProjectName;
     public string? SummaryUnitNumber => CrmBuyerUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
+
+    /// <summary>
+    /// Administration / Workflow Designer phase — the configured request
+    /// types the Issue step may attach to the ticket, scoped to the selected
+    /// Department (or every department when none is selected, grouped by
+    /// department name). Choosing one is optional: it pins the ticket to
+    /// the request type's active workflow version and drives its assignment,
+    /// approvals and SLA. The Api re-validates that the request type belongs
+    /// to the department the selected Category routes to.
+    /// </summary>
+    public IReadOnlyList<RequestTypeOptionDto> RequestTypeOptions { get; private set; } = [];
+
+    public RequestTypeOptionDto? SelectedRequestType =>
+        CreateStep.RequestTypeId is { } requestTypeId ? RequestTypeOptions.FirstOrDefault(r => r.RequestTypeId == requestTypeId) : null;
+
+    public string DepartmentNameOf(int departmentId) =>
+        Departments.FirstOrDefault(d => d.DepartmentId == departmentId)?.Name ?? TicketDisplay.UnknownDepartmentLabel;
 
     public CategoryDto? SelectedCategory =>
         CreateStep.CategoryId is { } categoryId ? Categories.FirstOrDefault(c => c.CategoryId == categoryId) : null;
@@ -707,6 +727,23 @@ public sealed class NewTicketModel(
     {
         await LoadDepartmentsAsync(cancellationToken);
         await LoadCategoriesAsync(CreateStep.DepartmentId, cancellationToken);
+        await LoadRequestTypeOptionsAsync(CreateStep.DepartmentId, cancellationToken);
+    }
+
+    private async Task LoadRequestTypeOptionsAsync(int? departmentId, CancellationToken cancellationToken)
+    {
+        if (requestTypesClient is null)
+        {
+            RequestTypeOptions = [];
+            return;
+        }
+
+        // A failure here is tolerated: the picker is optional, so the wizard
+        // still works with no request type rather than blocking the agent.
+        var result = await requestTypesClient.GetOptionsAsync(departmentId, cancellationToken);
+        RequestTypeOptions = result.IsSuccess && result.Value is not null
+            ? result.Value.Where(r => r.HasPublishedWorkflow).ToList()
+            : [];
     }
 
     /// <summary>
@@ -735,6 +772,11 @@ public sealed class NewTicketModel(
         if (CreateStep.CategoryId is { } categoryId && Categories.All(c => c.CategoryId != categoryId))
         {
             CreateStep.CategoryId = null;
+        }
+
+        if (CreateStep.RequestTypeId is { } requestTypeId && RequestTypeOptions.All(r => r.RequestTypeId != requestTypeId))
+        {
+            CreateStep.RequestTypeId = null;
         }
 
         return Page();
@@ -816,6 +858,7 @@ public sealed class NewTicketModel(
             CategoryId: CreateStep.CategoryId!.Value,
             PriorityId: CreateStep.PriorityId!.Value,
             RequestSummary: CreateStep.RequestSummary,
+            RequestTypeId: CreateStep.RequestTypeId,
             CrmBuyerCustomerId: hasCrmBuyerMatch ? crmBuyerCustomerId : null,
             CrmBuyerLeadId: hasCrmBuyerMatch ? crmBuyerLeadId : null,
             CrmBuyerUnitId: hasCrmBuyerMatch ? crmBuyerUnitId : null,
@@ -1004,6 +1047,9 @@ public sealed class NewTicketModel(
         /// <summary>1=Critical, 2=High, 3=Medium, 4=Low — dropdown only. Nullable so "nothing selected" is distinct and validatable.</summary>
         [Required(ErrorMessage = "Select a priority.")]
         public byte? PriorityId { get; set; }
+
+        /// <summary>Optional configured Request Type (workflow/assignment/approval/SLA configuration) — a dropdown selection, never typed. Null means the ticket is created without one, exactly as before this phase.</summary>
+        public int? RequestTypeId { get; set; }
 
         [Required]
         public string RequestSummary { get; set; } = string.Empty;

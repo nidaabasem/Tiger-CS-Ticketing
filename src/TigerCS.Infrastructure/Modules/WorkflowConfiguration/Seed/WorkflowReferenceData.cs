@@ -99,9 +99,24 @@ public static class WorkflowReferenceData
     /// data over the existing lifecycle — see <c>WorkflowStepKind</c>'s
     /// remarks; nothing here adds a <c>TicketStatus</c>.
     /// </summary>
+    /// <summary>The seed's fixed "creation" instant for the baseline versions — a stable, recognizable value rather than the run's wall clock.</summary>
+    public static readonly DateTime BaselineVersionStampUtc = new(2026, 9, 3, 0, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>
+    /// The three phase-1 workflow patterns as LOGICAL workflows plus their
+    /// version-1 definitions (Administration / Workflow Designer phase).
+    /// Each returned version is a Draft carrying the exact phase-1 steps;
+    /// <see cref="SeedAsync"/> stamps them Published as the seeded baseline
+    /// once the logical workflow rows exist.
+    /// </summary>
+    public static IReadOnlyList<(Workflow Workflow, WorkflowTemplate Version)> Workflows() =>
+        Templates().Select(version => (
+            new Workflow(version.Code, version.Name, version.Description, BaselineVersionStampUtc),
+            version)).ToList();
+
     public static IReadOnlyList<WorkflowTemplate> Templates()
     {
-        var standard = new WorkflowTemplate(
+        var standard = BaselineVersion(
             StandardTemplateCode, "Standard Request",
             "Straightforward requests with no pending wait and no approval step.",
             allowsPendingCustomer: false, allowsPendingInternal: false, requiresApproval: false);
@@ -111,7 +126,7 @@ public static class WorkflowReferenceData
         standard.AddStep(4, "Resolved", WorkflowStepKind.Resolved);
         standard.AddStep(5, "Closed", WorkflowStepKind.Closed);
 
-        var withPending = new WorkflowTemplate(
+        var withPending = BaselineVersion(
             WithPendingTemplateCode, "Request With Pending",
             "Requests that may wait on the customer (payment, documents, response) or on an internal department / external party.",
             allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: false);
@@ -123,7 +138,7 @@ public static class WorkflowReferenceData
         withPending.AddStep(6, "Resolved", WorkflowStepKind.Resolved);
         withPending.AddStep(7, "Closed", WorkflowStepKind.Closed);
 
-        var withApproval = new WorkflowTemplate(
+        var withApproval = BaselineVersion(
             WithApprovalTemplateCode, "Request With Approval",
             "Requests carrying an approval stage (e.g. Accounting approval for Send Receipts, Customer Service approval for Handover) before work proceeds.",
             allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: true);
@@ -138,6 +153,15 @@ public static class WorkflowReferenceData
 
         return [standard, withPending, withApproval];
     }
+
+    // WorkflowId 0 is a placeholder: SeedAsync links each version to its
+    // saved logical workflow before adding it.
+    private static WorkflowTemplate BaselineVersion(
+        string code, string name, string description,
+        bool allowsPendingCustomer, bool allowsPendingInternal, bool requiresApproval) =>
+        new(workflowId: 0, versionNumber: 1, code, name, description,
+            allowsPendingCustomer, allowsPendingInternal, requiresApproval,
+            BaselineVersionStampUtc, createdByEmployeeId: null);
 
     /// <summary>
     /// The request types of the Customer Service SLA document (its §Customer
@@ -292,16 +316,34 @@ public static class WorkflowReferenceData
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        if (!await dbContext.WorkflowTemplates.AnyAsync(cancellationToken))
+        if (!await dbContext.Workflows.AnyAsync(cancellationToken))
         {
-            dbContext.WorkflowTemplates.AddRange(Templates());
+            foreach (var (workflow, version) in Workflows())
+            {
+                dbContext.Workflows.Add(workflow);
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+                // Re-create the version against the saved workflow id, then
+                // stamp it Published as the seeded baseline (no publish
+                // validation: the shared With Approval pattern's approval step
+                // deliberately carries no approval type — see
+                // WorkflowTemplate.PublishAsSeededBaseline).
+                var linked = new WorkflowTemplate(
+                    workflow.WorkflowId, version.VersionNumber, version.Code, version.Name, version.Description,
+                    version.AllowsPendingCustomer, version.AllowsPendingInternal, version.RequiresApproval,
+                    version.CreatedAtUtc, version.CreatedByEmployeeId);
+                linked.CopyStepsFrom(version);
+                linked.PublishAsSeededBaseline(BaselineVersionStampUtc);
+                dbContext.WorkflowTemplates.Add(linked);
+            }
+
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
         var departmentIdsByCode = await dbContext.Departments
             .ToDictionaryAsync(d => d.Code, d => d.DepartmentId, cancellationToken);
-        var templateIdsByCode = await dbContext.WorkflowTemplates
-            .ToDictionaryAsync(t => t.Code, t => t.WorkflowTemplateId, cancellationToken);
+        var templateIdsByCode = await dbContext.Workflows
+            .ToDictionaryAsync(w => w.Code, w => w.WorkflowId, cancellationToken);
 
         if (!await dbContext.RequestTypes.AnyAsync(cancellationToken))
         {
