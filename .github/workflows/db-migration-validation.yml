@@ -135,11 +135,16 @@ jobs:
           # deployment path itself, so a migration that only works
           # command-by-command is caught here rather than on a UAT server.
           # -b makes sqlcmd exit non-zero on the first SQL error.
-          sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b \
+          # -I sets QUOTED_IDENTIFIER ON for the session: sqlcmd defaults it
+          # OFF, and SQL Server then refuses to CREATE the schema's filtered
+          # indexes (Msg 1934) or to INSERT/UPDATE tables that carry one.
+          # SSMS and SqlClient default it ON, so a deployment run from sqlcmd
+          # must pass -I explicitly — the same applies to the UAT script.
+          sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b -I \
             -Q "CREATE DATABASE [TigerCsTicketing_CI_Script];"
-          sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b \
+          sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b -I \
             -d TigerCsTicketing_CI_Script -i src/idempotent-migration.sql
-          applied=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b -d TigerCsTicketing_CI_Script -h -1 -W \
+          applied=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b -I -d TigerCsTicketing_CI_Script -h -1 -W \
             -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM [__EFMigrationsHistory] WHERE [MigrationId] = N'20260908054944_AddWorkflowVersioning';")
           if [ "$applied" != "1" ]; then
             echo "::error::The idempotent script ran but did not record AddWorkflowVersioning in __EFMigrationsHistory (got '$applied')."
