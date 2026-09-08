@@ -5,9 +5,11 @@ namespace TigerCS.Domain.Modules.WorkflowConfiguration;
 /// <summary>
 /// The operational configuration unit of the Department → Request Type →
 /// Workflow → SLA model (Workflow/SLA Configuration phase 1). Each request
-/// type belongs to exactly one department, selects one reusable
-/// <see cref="WorkflowTemplate"/>, and carries the business flags that
-/// gate lifecycle actions for tickets of that type (enforcement is phase 2).
+/// type belongs to exactly one department, selects one logical
+/// <see cref="Workflow"/> (whose currently Published version — a
+/// <see cref="WorkflowTemplate"/> — is what new tickets are pinned to), and
+/// carries the business flags that gate lifecycle actions for tickets of
+/// that type (enforcement is phase 2).
 ///
 /// <para>
 /// <b>Deliberately distinct from <c>Category</c>.</b> Category remains the
@@ -35,7 +37,14 @@ public class RequestType
     /// <summary>Unique within the department (e.g. "Ticketing System" exists under both Customer Service and Collections).</summary>
     public string Name { get; private set; } = string.Empty;
 
-    public int WorkflowTemplateId { get; private set; }
+    /// <summary>
+    /// The logical workflow this request type follows (Administration /
+    /// Workflow Designer phase; before it, this was a direct template id).
+    /// Which VERSION applies is resolved per ticket: new tickets pin the
+    /// workflow's currently Published version at creation, existing tickets
+    /// keep theirs.
+    /// </summary>
+    public int WorkflowId { get; private set; }
 
     /// <summary>The priority a new ticket of this type starts at, from the existing fixed Priorities set — no second priority model.</summary>
     public byte DefaultPriorityId { get; private set; }
@@ -73,7 +82,7 @@ public class RequestType
     public RequestType(
         int departmentId,
         string name,
-        int workflowTemplateId,
+        int workflowId,
         byte defaultPriorityId,
         bool allowAgentPriorityChange,
         bool allowPendingCustomer,
@@ -81,6 +90,22 @@ public class RequestType
         bool allowReopen,
         string? requiredFieldsJson = null,
         bool isActive = true)
+    {
+        DepartmentId = departmentId;
+        IsActive = isActive;
+        Update(name, workflowId, defaultPriorityId, allowAgentPriorityChange, allowPendingCustomer, allowPendingInternal, allowReopen, requiredFieldsJson);
+    }
+
+    /// <summary>Administration edit of the configurable fields. The department is deliberately not here — see <see cref="ChangeDepartment"/>.</summary>
+    public void Update(
+        string name,
+        int workflowId,
+        byte defaultPriorityId,
+        bool allowAgentPriorityChange,
+        bool allowPendingCustomer,
+        bool allowPendingInternal,
+        bool allowReopen,
+        string? requiredFieldsJson)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -93,17 +118,23 @@ public class RequestType
                 $"DefaultPriorityId {defaultPriorityId} is not one of the fixed priorities.", nameof(defaultPriorityId));
         }
 
-        DepartmentId = departmentId;
-        Name = name;
-        WorkflowTemplateId = workflowTemplateId;
+        Name = name.Trim();
+        WorkflowId = workflowId;
         DefaultPriorityId = defaultPriorityId;
         AllowAgentPriorityChange = allowAgentPriorityChange;
         AllowPendingCustomer = allowPendingCustomer;
         AllowPendingInternal = allowPendingInternal;
         AllowReopen = allowReopen;
-        RequiredFieldsJson = requiredFieldsJson;
-        IsActive = isActive;
+        RequiredFieldsJson = string.IsNullOrWhiteSpace(requiredFieldsJson) ? null : requiredFieldsJson;
     }
+
+    /// <summary>
+    /// Moves the request type to another responsible department. The
+    /// application service only allows this while no ticket references the
+    /// request type: a request type that governed tickets historically keeps
+    /// its department so those tickets' configuration stays truthful.
+    /// </summary>
+    public void ChangeDepartment(int departmentId) => DepartmentId = departmentId;
 
     public void Deactivate() => IsActive = false;
 

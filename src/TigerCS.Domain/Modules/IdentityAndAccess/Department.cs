@@ -30,6 +30,23 @@ public class Department
         IsActive = isActive;
     }
 
+    /// <summary>Administration rename. Historical tickets keep referencing the same DepartmentId, so they display the new name — the identity is the id, never the text.</summary>
+    public void Rename(string name, string code)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Name is required.", nameof(name));
+        }
+
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            throw new ArgumentException("Code is required.", nameof(code));
+        }
+
+        Name = name.Trim();
+        Code = code.Trim().ToUpperInvariant();
+    }
+
     public void Deactivate() => IsActive = false;
 
     public void Activate() => IsActive = true;

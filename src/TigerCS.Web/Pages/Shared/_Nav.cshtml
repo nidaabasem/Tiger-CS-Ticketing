@@ -10,6 +10,10 @@
         ("pendingcrm", "Pending CRM", "/Tickets?verificationStatus=PendingCrmVerification"),
         ("closed", "Closed", "/Tickets?ticketStatus=Closed"),
     ];
+    if (AdministrationPolicy.AppliesTo(currentUser))
+    {
+        items = [.. items, ("admin", "Administration", "/Admin")];
+    }
 }
 <nav class="app-nav" aria-label="Primary">
     <ul class="app-nav__list">

@@ -511,7 +511,15 @@ public sealed class TicketLifecycleAppService(
             return null;
         }
 
-        var template = await workflowTemplateRepository.GetByIdAsync(requestType.WorkflowTemplateId, cancellationToken);
+        // The ticket's PINNED version is authoritative (Administration /
+        // Workflow Designer phase): publishing a newer version never changes
+        // what an existing ticket may do. A legacy ticket that carries a
+        // request type but no pinned version (classified before versioning,
+        // and not backfilled) falls back to the workflow's currently
+        // Published version — the same resolution it always had.
+        var template = ticket.WorkflowTemplateId is { } pinnedVersionId
+            ? await workflowTemplateRepository.GetByIdAsync(pinnedVersionId, cancellationToken)
+            : await workflowTemplateRepository.GetPublishedAsync(requestType.WorkflowId, cancellationToken);
         return template is null ? null : WorkflowCapabilities.Resolve(template, requestType);
     }
 

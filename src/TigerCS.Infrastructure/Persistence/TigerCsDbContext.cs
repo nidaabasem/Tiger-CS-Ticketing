@@ -98,7 +98,11 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<Notification> Notifications => Set<Notification>();
 
+    public DbSet<Workflow> Workflows => Set<Workflow>();
+
     public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
+
+    public DbSet<WorkflowStepTransition> WorkflowStepTransitions => Set<WorkflowStepTransition>();
 
     public DbSet<WorkflowTemplateStep> WorkflowTemplateSteps => Set<WorkflowTemplateStep>();
 
@@ -158,7 +162,9 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new OutboxMessageConfiguration());
         builder.ApplyConfiguration(new NotificationConfiguration());
 
+        builder.ApplyConfiguration(new WorkflowConfiguration());
         builder.ApplyConfiguration(new WorkflowTemplateConfiguration());
+        builder.ApplyConfiguration(new WorkflowStepTransitionConfiguration());
         builder.ApplyConfiguration(new WorkflowTemplateStepConfiguration());
         builder.ApplyConfiguration(new RequestTypeConfiguration());
         builder.ApplyConfiguration(new RequestTypeSlaPolicyConfiguration());

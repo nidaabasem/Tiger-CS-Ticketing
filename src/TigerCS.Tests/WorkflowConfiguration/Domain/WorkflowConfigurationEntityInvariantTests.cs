@@ -11,12 +11,19 @@ namespace TigerCS.Tests.WorkflowConfiguration.Domain;
 /// </summary>
 public class WorkflowConfigurationEntityInvariantTests
 {
+    /// <summary>A Draft version (Administration / Workflow Designer phase signature) with the phase-1 capability flags.</summary>
+    private static WorkflowTemplate Version(
+        string code, string name, bool allowsPendingCustomer = false, bool allowsPendingInternal = false, bool requiresApproval = false) =>
+        new(workflowId: 1, versionNumber: 1, code, name, description: null,
+            allowsPendingCustomer, allowsPendingInternal, requiresApproval,
+            new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), createdByEmployeeId: null);
+
     private static RequestType SomeRequestType(
         bool allowPendingCustomer = true, bool allowPendingInternal = true, bool allowReopen = true) =>
         new(
             departmentId: 1,
             name: "NOC for Resale",
-            workflowTemplateId: 0,
+            workflowId: 0,
             defaultPriorityId: (byte)PriorityLevel.Medium,
             allowAgentPriorityChange: true,
             allowPendingCustomer: allowPendingCustomer,
@@ -42,14 +49,14 @@ public class WorkflowConfigurationEntityInvariantTests
     [Fact]
     public void WorkflowTemplate_requires_code_and_name()
     {
-        Assert.Throws<ArgumentException>(() => new WorkflowTemplate(" ", "Standard", null, false, false, false));
-        Assert.Throws<ArgumentException>(() => new WorkflowTemplate("STANDARD", " ", null, false, false, false));
+        Assert.Throws<ArgumentException>(() => Version(" ", "Standard"));
+        Assert.Throws<ArgumentException>(() => Version("STANDARD", " "));
     }
 
     [Fact]
     public void WorkflowTemplate_steps_must_have_strictly_increasing_sequences()
     {
-        var template = new WorkflowTemplate("T", "Template", null, true, true, false);
+        var template = Version("T", "Template", allowsPendingCustomer: true, allowsPendingInternal: true);
         template.AddStep(1, "Ticket Created", WorkflowStepKind.Created);
         template.AddStep(3, "In Progress", WorkflowStepKind.InProgress);
 
@@ -65,8 +72,7 @@ public class WorkflowConfigurationEntityInvariantTests
     {
         // Template allows both pending kinds; the request type switches off
         // pending internal — the narrower answer must win in both directions.
-        var template = new WorkflowTemplate("PENDING", "Request With Pending", null,
-            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: false);
+        var template = Version("PENDING", "Request With Pending", allowsPendingCustomer: true, allowsPendingInternal: true);
         var requestType = SomeRequestType(allowPendingCustomer: true, allowPendingInternal: false);
 
         var capabilities = WorkflowCapabilities.Resolve(template, requestType);
@@ -81,8 +87,7 @@ public class WorkflowConfigurationEntityInvariantTests
     [Fact]
     public void Capabilities_request_type_cannot_widen_a_forbidding_template()
     {
-        var standard = new WorkflowTemplate("STANDARD", "Standard Request", null,
-            allowsPendingCustomer: false, allowsPendingInternal: false, requiresApproval: false);
+        var standard = Version("STANDARD", "Standard Request");
         var requestType = SomeRequestType(allowPendingCustomer: true, allowPendingInternal: true);
 
         var capabilities = WorkflowCapabilities.Resolve(standard, requestType);

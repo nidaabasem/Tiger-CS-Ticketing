@@ -47,6 +47,19 @@
     });
   });
 
+  // Confirmation before a deactivation/archive/delete/publish action:
+  // forms marked data-confirm ask first. Without JS the form submits
+  // directly — the Api still enforces every rule server-side.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    var message = form.getAttribute("data-confirm");
+    if (message && !window.confirm(message)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
+
   // Prevent duplicate submission: disable a form's submit button(s) the
   // moment it submits, so a double-click can't fire the request twice.
   // Without JS the form still submits normally on every click.

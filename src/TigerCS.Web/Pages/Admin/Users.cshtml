@@ -1,0 +1,99 @@
+@page "/Admin/Users"
+@model TigerCS.Web.Pages.Admin.UsersModel
+@{
+    ViewData["Title"] = "Users";
+    ViewData["ActiveNav"] = "admin";
+    Layout = "_Layout";
+}
+
+<div class="page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Users", "/Admin/Users", (string?)null))
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Users</h1>
+            <p class="page-subtitle">Accounts, roles and department membership. Deactivate a user instead of deleting — their ticket history stays intact.</p>
+        </div>
+        <a class="btn btn-gold" href="/Admin/Users/New">+ Add User</a>
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <form class="filter-bar" method="get">
+        <div class="search-field filter-bar__search">
+            <input type="search" name="search" value="@Model.Search" placeholder="Search by name, user name or e-mail…" aria-label="Search users" />
+        </div>
+        <label class="checkbox-field">
+            <input type="checkbox" name="includeInactive" value="true" checked="@(Model.IncludeInactive ? "checked" : null)" data-autosubmit-checkbox />
+            Show inactive users
+        </label>
+        <button type="submit" class="btn btn-sm filter-bar__submit">Apply</button>
+    </form>
+
+    <div class="panel">
+        @if (Model.LoadError is not null)
+        {
+            <div class="error-state"><p>@Model.LoadError</p></div>
+        }
+        else if (Model.Users is null || Model.Users.Items.Count == 0)
+        {
+            <div class="empty-state"><p>No users match. Try a different search, or include inactive users.</p></div>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>User name</th>
+                            <th>Roles</th>
+                            <th>Departments</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in Model.Users.Items)
+                        {
+                            <tr>
+                                <td><a class="ticket-id-link" href="/Admin/Users/@user.EmployeeId">@user.DisplayName</a></td>
+                                <td class="text-secondary">@user.UserName</td>
+                                <td>@(user.Roles.Count == 0 ? "—" : string.Join(", ", user.Roles))</td>
+                                <td>
+                                    @if (user.Departments.Count == 0)
+                                    {
+                                        <span class="text-secondary">No department</span>
+                                    }
+                                    else
+                                    {
+                                        @string.Join(", ", user.Departments.OrderByDescending(d => d.IsPrimary).Select(d => d.IsPrimary ? $"{d.Name} (primary)" : d.Name))
+                                    }
+                                </td>
+                                <td>
+                                    @if (user.IsActive)
+                                    {
+                                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
+                                    }
+                                </td>
+                                <td><a class="btn btn-sm" href="/Admin/Users/@user.EmployeeId">Manage</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (Model.TotalPages > 1)
+            {
+                <nav class="pagination" aria-label="Pagination">
+                    @for (var p = 1; p <= Model.TotalPages; p++)
+                    {
+                        <a class="btn btn-sm @(p == Model.PageNumber ? "btn-gold" : "")" href="/Admin/Users?search=@Model.Search&includeInactive=@(Model.IncludeInactive ? "true" : "false")&page=@p">@p</a>
+                    }
+                </nav>
+            }
+        }
+    </div>
+</div>

@@ -40,6 +40,13 @@ public sealed class UserDepartmentAssignmentRepository(TigerCsDbContext dbContex
 
     public async Task AddAsync(UserDepartmentAssignment assignment, CancellationToken cancellationToken = default) =>
         await dbContext.UserDepartmentAssignments.AddAsync(assignment, cancellationToken);
+
+    public Task<UserDepartmentAssignment?> GetAsync(Guid employeeId, int departmentId, CancellationToken cancellationToken = default) =>
+        dbContext.UserDepartmentAssignments
+            .Include(a => a.Department)
+            .FirstOrDefaultAsync(a => a.EmployeeId == employeeId && a.DepartmentId == departmentId, cancellationToken);
+
+    public void Remove(UserDepartmentAssignment assignment) => dbContext.UserDepartmentAssignments.Remove(assignment);
 }
 
 public sealed class IdentityUnitOfWork(TigerCsDbContext dbContext) : IIdentityUnitOfWork

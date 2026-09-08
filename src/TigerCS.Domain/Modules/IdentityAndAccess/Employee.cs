@@ -39,6 +39,18 @@ public class Employee
         CreatedAtUtc = createdAtUtc;
     }
 
+    /// <summary>Administration edit of the supported profile fields (display name and the Geyness-staff flag) — never identity credentials.</summary>
+    public void UpdateProfile(string displayName, bool isGeynessStaff)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            throw new ArgumentException("DisplayName is required.", nameof(displayName));
+        }
+
+        DisplayName = displayName.Trim();
+        IsGeynessStaff = isGeynessStaff;
+    }
+
     public void Deactivate(DateTime deactivatedAtUtc)
     {
         DeactivatedAtUtc = deactivatedAtUtc;

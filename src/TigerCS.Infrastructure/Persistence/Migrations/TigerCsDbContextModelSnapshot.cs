@@ -1077,6 +1077,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<byte>("VerificationStatus")
                         .HasColumnType("tinyint");
 
+                    b.Property<int?>("WorkflowTemplateId")
+                        .HasColumnType("int");
+
                     b.HasKey("TicketId");
 
                     b.HasIndex("CategoryId");
@@ -1099,6 +1102,8 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("UnitReferenceId");
+
+                    b.HasIndex("WorkflowTemplateId");
 
                     b.HasIndex("CustomerVerificationSource", "ExternalCustomerId")
                         .HasFilter("[ExternalCustomerId] IS NOT NULL");
@@ -1617,14 +1622,14 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
-                    b.Property<int>("WorkflowTemplateId")
+                    b.Property<int>("WorkflowId")
                         .HasColumnType("int");
 
                     b.HasKey("RequestTypeId");
 
                     b.HasIndex("DefaultPriorityId");
 
-                    b.HasIndex("WorkflowTemplateId");
+                    b.HasIndex("WorkflowId");
 
                     b.HasIndex("DepartmentId", "Name")
                         .IsUnique();
@@ -1796,6 +1801,69 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("RequestTypeSlaPolicies", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.Workflow", b =>
+                {
+                    b.Property<int>("WorkflowId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("WorkflowId"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("WorkflowId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("Workflows", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepTransition", b =>
+                {
+                    b.Property<int>("WorkflowStepTransitionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("WorkflowStepTransitionId"));
+
+                    b.Property<byte>("Outcome")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("TargetWorkflowTemplateStepId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("WorkflowTemplateStepId")
+                        .HasColumnType("int");
+
+                    b.HasKey("WorkflowStepTransitionId");
+
+                    b.HasIndex("TargetWorkflowTemplateStepId");
+
+                    b.HasIndex("WorkflowTemplateStepId", "Outcome")
+                        .IsUnique();
+
+                    b.ToTable("WorkflowStepTransitions", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", b =>
                 {
                     b.Property<int>("WorkflowTemplateId")
@@ -1815,6 +1883,12 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
 
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("CreatedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Description")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
@@ -1827,13 +1901,43 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("PublishedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<bool>("RequiresApproval")
                         .HasColumnType("bit");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("int");
+
+                    b.Property<int>("WorkflowId")
+                        .HasColumnType("int");
 
                     b.HasKey("WorkflowTemplateId");
 
                     b.HasIndex("Code")
                         .IsUnique();
+
+                    b.HasIndex("CreatedByEmployeeId");
+
+                    b.HasIndex("PublishedByEmployeeId");
+
+                    b.HasIndex("WorkflowId", "VersionNumber")
+                        .IsUnique();
+
+                    b.HasIndex(new[] { "WorkflowId" }, "UX_WorkflowTemplates_OneDraftPerWorkflow")
+                        .IsUnique()
+                        .HasFilter("[Status] = 1");
+
+                    b.HasIndex(new[] { "WorkflowId" }, "UX_WorkflowTemplates_OnePublishedPerWorkflow")
+                        .IsUnique()
+                        .HasFilter("[Status] = 2");
 
                     b.ToTable("WorkflowTemplates", (string)null);
                 });
@@ -1845,6 +1949,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasColumnType("int");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("WorkflowTemplateStepId"));
+
+                    b.Property<byte?>("ApprovalType")
+                        .HasColumnType("tinyint");
 
                     b.Property<bool>("IsOptional")
                         .HasColumnType("bit");
@@ -1865,8 +1972,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WorkflowTemplateStepId");
 
-                    b.HasIndex("WorkflowTemplateId", "Sequence")
-                        .IsUnique();
+                    b.HasIndex("WorkflowTemplateId", "Sequence");
 
                     b.ToTable("WorkflowTemplateSteps", (string)null);
                 });
@@ -2271,6 +2377,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("UnitReferenceId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("WorkflowTemplateId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>
@@ -2458,9 +2569,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", null)
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.Workflow", null)
                         .WithMany()
-                        .HasForeignKey("WorkflowTemplateId")
+                        .HasForeignKey("WorkflowId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -2530,6 +2641,44 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepTransition", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep", "TargetStep")
+                        .WithMany()
+                        .HasForeignKey("TargetWorkflowTemplateStepId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep", "Step")
+                        .WithMany("Transitions")
+                        .HasForeignKey("WorkflowTemplateStepId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Step");
+
+                    b.Navigation("TargetStep");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("PublishedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.Workflow", null)
+                        .WithMany()
+                        .HasForeignKey("WorkflowId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", "WorkflowTemplate")
@@ -2559,6 +2708,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate", b =>
                 {
                     b.Navigation("Steps");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep", b =>
+                {
+                    b.Navigation("Transitions");
                 });
 #pragma warning restore 612, 618
         }

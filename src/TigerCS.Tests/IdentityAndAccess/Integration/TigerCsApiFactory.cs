@@ -100,6 +100,11 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 // exercise the real HTTP path (PactHttpLookupEndToEndTests)
                 // override these via ExtraConfiguration, which is applied
                 // after and therefore wins.
+                // The shipped appsettings.json now selects the real providers
+                // (Crm/Pact "Http") for UAT. The integration host pins BOTH to
+                // Mock regardless, exactly as it already did for PACT — a test
+                // must never depend on which adapter the deployed config names.
+                ["Crm:Provider"] = "Mock",
                 ["Pact:Provider"] = "Mock",
                 ["PactApi:BaseUrl"] = "",
                 ["PactApi:ApiKey"] = ""
@@ -247,14 +252,36 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
 
-        var template = new TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate(
-            Guid.NewGuid().ToString("N")[..12], "Test Approval Template", null,
-            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: requiredApproval is not null);
-        db.WorkflowTemplates.Add(template);
+        // A logical workflow with one Published version — the version every
+        // ticket of this request type pins at creation.
+        var code = Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var workflow = new TigerCS.Domain.Modules.WorkflowConfiguration.Workflow(code, "Test Approval Workflow", null, DateTime.UtcNow);
+        db.Workflows.Add(workflow);
+        await db.SaveChangesAsync();
+
+        var version = new TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate(
+            workflow.WorkflowId, 1, code, "Test Approval Template", null,
+            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: requiredApproval is not null,
+            DateTime.UtcNow, createdByEmployeeId: null);
+        version.AppendStep("Ticket Created", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Created);
+        version.AppendStep("Assigned", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Assigned);
+        if (requiredApproval is { } approvalStepType)
+        {
+            version.AppendStep("Waiting for Approval", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval,
+                approvalType: approvalStepType);
+        }
+
+        version.AppendStep("In Progress", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.InProgress);
+        version.AppendStep("Pending Customer", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.PendingCustomer, isOptional: true);
+        version.AppendStep("Pending Internal / Third Party", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.PendingInternal, isOptional: true);
+        version.AppendStep("Resolved", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Resolved);
+        version.AppendStep("Closed", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Closed);
+        version.Publish(DateTime.UtcNow, publishedByEmployeeId: null);
+        db.WorkflowTemplates.Add(version);
         await db.SaveChangesAsync();
 
         var requestType = new TigerCS.Domain.Modules.WorkflowConfiguration.RequestType(
-            departmentId, name, template.WorkflowTemplateId,
+            departmentId, name, workflow.WorkflowId,
             (byte)TigerCS.Domain.Modules.SlaAndEscalation.PriorityLevel.Medium,
             allowAgentPriorityChange: false, allowPendingCustomer: true, allowPendingInternal: true, allowReopen: true);
         db.RequestTypes.Add(requestType);

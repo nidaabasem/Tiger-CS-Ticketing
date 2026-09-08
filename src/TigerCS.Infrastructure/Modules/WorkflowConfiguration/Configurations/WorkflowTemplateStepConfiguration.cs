@@ -4,7 +4,6 @@ using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Infrastructure.Modules.WorkflowConfiguration.Configurations;
 
-/// <summary>Workflow/SLA Configuration phase 1 — the displayable, ordered steps of a template's flow.</summary>
 public class WorkflowTemplateStepConfiguration : IEntityTypeConfiguration<WorkflowTemplateStep>
 {
     public void Configure(EntityTypeBuilder<WorkflowTemplateStep> builder)
@@ -18,9 +17,16 @@ public class WorkflowTemplateStepConfiguration : IEntityTypeConfiguration<Workfl
         builder.Property(s => s.Name).HasMaxLength(100).IsRequired();
         builder.Property(s => s.Kind).HasConversion<byte>().IsRequired();
         builder.Property(s => s.IsOptional).IsRequired();
+        builder.Property(s => s.ApprovalType).HasConversion<byte?>();
 
-        // One sequence number per template — the stored order IS the display
-        // order, and can never be ambiguous.
-        builder.HasIndex(s => new { s.WorkflowTemplateId, s.Sequence }).IsUnique();
+        // Not unique any more: the designer reorders a Draft by swapping two
+        // steps' sequences in one save, which a unique index would reject
+        // mid-batch. Uniqueness of positions is enforced by the aggregate
+        // (renumbering) and re-checked by publish validation.
+        builder.HasIndex(s => new { s.WorkflowTemplateId, s.Sequence });
+
+        builder.Navigation(s => s.Transitions)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .AutoInclude();
     }
 }

@@ -60,6 +60,19 @@ public class Ticket
     public int? RequestTypeId { get; private set; }
 
     /// <summary>
+    /// Administration / Workflow Designer phase — the exact workflow VERSION
+    /// (<c>WorkflowTemplates</c> row) that was Published for the ticket's
+    /// request type when the ticket was created. Write-once via
+    /// <see cref="PinWorkflowVersion"/>: publishing a later version never
+    /// changes it, so the ticket keeps following the flow it started on.
+    /// Nullable: tickets without a request type carry null (no workflow
+    /// governs them, exactly as before), and pre-versioning tickets were
+    /// backfilled with the single template that governed them at the time —
+    /// never a fabricated later version.
+    /// </summary>
+    public int? WorkflowTemplateId { get; private set; }
+
+    /// <summary>
     /// Business-rule change: the real CRM Buyer Lookup match the agent
     /// selected (<c>GET /api/crm/buyers</c> — phone search only, never a
     /// Unit/Project search). A different identifier space from
@@ -377,6 +390,28 @@ public class Ticket
         }
 
         RequestTypeId = requestTypeId;
+    }
+
+    /// <summary>
+    /// Pins the workflow version the ticket follows — write-once, at creation,
+    /// by the creating application service after it resolved the request
+    /// type's currently Published version. Requires the request type to be
+    /// classified first: a version is only ever pinned through a request type.
+    /// </summary>
+    public void PinWorkflowVersion(int workflowTemplateId)
+    {
+        if (RequestTypeId is null)
+        {
+            throw new InvalidOperationException(
+                $"Ticket {TicketId} has no request type; a workflow version is only pinned through a request type.");
+        }
+
+        if (WorkflowTemplateId is not null)
+        {
+            throw new TicketWorkflowVersionAlreadyPinnedException(TicketId, WorkflowTemplateId.Value);
+        }
+
+        WorkflowTemplateId = workflowTemplateId;
     }
 
     /// <summary>MVP-API-Contracts.md §3.5 / §2.12 — sets the current owner and appends a superseding <see cref="TicketAssignment"/> row is the caller's job (this method only updates the ticket's own denormalized pointer).</summary>

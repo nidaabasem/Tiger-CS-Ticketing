@@ -716,6 +716,12 @@ public class TicketsController(
             detail: "RequestTypeId did not resolve to an active request type.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
+        TicketCreationOutcome.RequestTypeWorkflowNotPublished => Problem(
+            type: "https://tigercs.internal/problems/request-type-workflow-not-published",
+            title: "Request type workflow is not published",
+            detail: "The selected request type's workflow has no published version yet. An administrator must publish it before tickets of this type can be created.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketCreationOutcome.RequestTypeDepartmentMismatch => Problem(
             type: "https://tigercs.internal/problems/request-type-department-mismatch",
             title: "Request type belongs to another department",

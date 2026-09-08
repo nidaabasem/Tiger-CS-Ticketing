@@ -80,7 +80,51 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/tickets/{ticketId:long}/sla"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketSla_Returns200),
         ["POST /api/tickets/{ticketId:long}/sla/first-response"] = nameof(SystemAdministratorEndpointAuthorizationTests.RecordFirstResponse_Returns200),
         ["POST /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
-        ["GET /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200)
+        ["GET /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
+
+        // Administration / Workflow Designer phase — covered by
+        // AdministrationEndpointsTests (System Administrator succeeds) and
+        // AdministrationAuthorizationTests (every other role is refused).
+        ["GET /api/request-types"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypeDirectory_FiltersByDepartment_ForAnyStaff),
+        ["GET /api/admin/users"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["GET /api/admin/users/{employeeId:guid}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["POST /api/admin/users"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["PUT /api/admin/users/{employeeId:guid}/profile"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["PATCH /api/admin/users/{employeeId:guid}/activation"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["PUT /api/admin/users/{employeeId:guid}/roles"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["POST /api/admin/users/{employeeId:guid}/departments"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["DELETE /api/admin/users/{employeeId:guid}/departments/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["GET /api/admin/departments"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["GET /api/admin/departments/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["POST /api/admin/departments"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["PUT /api/admin/departments/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["PATCH /api/admin/departments/{departmentId:int}/activation"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["POST /api/admin/departments/{departmentId:int}/members"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["DELETE /api/admin/departments/{departmentId:int}/members/{employeeId:guid}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Departments_CreateListGetEditMembersAndDeactivate),
+        ["GET /api/admin/request-types"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["GET /api/admin/request-types/{requestTypeId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["POST /api/admin/request-types"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["PUT /api/admin/request-types/{requestTypeId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["PATCH /api/admin/request-types/{requestTypeId:int}/activation"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["PUT /api/admin/request-types/{requestTypeId:int}/assignment-rule"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["PUT /api/admin/request-types/{requestTypeId:int}/approval-requirements/{approvalType}"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["PUT /api/admin/request-types/{requestTypeId:int}/sla-policies/{priorityId}"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["GET /api/admin/workflows/catalog"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["GET /api/admin/workflows"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["GET /api/admin/workflows/{workflowId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["POST /api/admin/workflows"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["PUT /api/admin/workflows/{workflowId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["PATCH /api/admin/workflows/{workflowId:int}/activation"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["POST /api/admin/workflows/{workflowId:int}/versions"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["GET /api/admin/workflows/versions/{versionId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["PUT /api/admin/workflows/versions/{versionId:int}/settings"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["POST /api/admin/workflows/versions/{versionId:int}/steps"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["PUT /api/admin/workflows/versions/{versionId:int}/steps/{stepId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["DELETE /api/admin/workflows/versions/{versionId:int}/steps/{stepId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["POST /api/admin/workflows/versions/{versionId:int}/steps/{stepId:int}/move"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["PUT /api/admin/workflows/versions/{versionId:int}/steps/{stepId:int}/transitions"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["POST /api/admin/workflows/versions/{versionId:int}/publish"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
+        ["DELETE /api/admin/workflows/versions/{versionId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets)
     };
 
     private static IReadOnlyCollection<string> ProtectedEndpointsOf(EndpointDataSource endpoints) =>

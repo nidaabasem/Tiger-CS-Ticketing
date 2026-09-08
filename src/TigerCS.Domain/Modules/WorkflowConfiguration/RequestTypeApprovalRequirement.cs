@@ -76,6 +76,39 @@ public class RequestTypeApprovalRequirement
         IsActive = isActive;
     }
 
+    /// <summary>Administration edit — re-points the target (the business's documented path for resolving Accounting's provisional status) without creating a second requirement row.</summary>
+    public void Update(
+        ApprovalTargetKind targetKind, int? targetDepartmentId, string? targetRoleName, Guid? targetEmployeeId,
+        bool blocksWorkUntilApproved, bool isActive)
+    {
+        if (!Enum.IsDefined(targetKind))
+        {
+            throw new ArgumentException($"TargetKind {targetKind} is not a defined target kind.", nameof(targetKind));
+        }
+
+        if (targetRoleName is not null && !Roles.All.Contains(targetRoleName))
+        {
+            throw new ArgumentException($"Role '{targetRoleName}' is not one of the fixed roles.", nameof(targetRoleName));
+        }
+
+        switch (targetKind)
+        {
+            case ApprovalTargetKind.Department when targetDepartmentId is null:
+                throw new ArgumentException("A department-targeted requirement needs a target department.", nameof(targetDepartmentId));
+            case ApprovalTargetKind.Role when string.IsNullOrWhiteSpace(targetRoleName):
+                throw new ArgumentException("A role-targeted requirement needs a target role.", nameof(targetRoleName));
+            case ApprovalTargetKind.Employee when targetEmployeeId is null || targetEmployeeId == Guid.Empty:
+                throw new ArgumentException("An employee-targeted requirement needs a target employee.", nameof(targetEmployeeId));
+        }
+
+        TargetKind = targetKind;
+        TargetDepartmentId = targetKind == ApprovalTargetKind.Department ? targetDepartmentId : null;
+        TargetRoleName = targetKind is ApprovalTargetKind.Role or ApprovalTargetKind.Department ? targetRoleName : null;
+        TargetEmployeeId = targetKind == ApprovalTargetKind.Employee ? targetEmployeeId : null;
+        BlocksWorkUntilApproved = blocksWorkUntilApproved;
+        IsActive = isActive;
+    }
+
     public static RequestTypeApprovalRequirement ForDepartment(
         int requestTypeId, ApprovalType approvalType, int targetDepartmentId,
         string? narrowedToRoleName = null, bool blocksWorkUntilApproved = true, bool isActive = true) =>

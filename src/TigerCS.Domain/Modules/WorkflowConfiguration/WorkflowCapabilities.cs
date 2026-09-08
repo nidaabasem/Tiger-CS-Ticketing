@@ -2,7 +2,9 @@ namespace TigerCS.Domain.Modules.WorkflowConfiguration;
 
 /// <summary>
 /// The effective lifecycle capabilities for tickets of one request type —
-/// the template's capability flags combined with the request type's own,
+/// the workflow VERSION's capability flags (for an existing ticket, the
+/// version it is pinned to; for a new one, the request type's currently
+/// Published version) combined with the request type's own,
 /// each gate an AND (a request type can only narrow what its template
 /// allows, never widen it). This is the single place the combination rule
 /// lives, so phase-2 transition enforcement and the Ticket Details action
@@ -25,12 +27,11 @@ public readonly record struct WorkflowCapabilities(
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(requestType);
 
-        if (requestType.WorkflowTemplateId != template.WorkflowTemplateId)
-        {
-            throw new ArgumentException(
-                $"RequestType {requestType.RequestTypeId} uses template {requestType.WorkflowTemplateId}, not {template.WorkflowTemplateId}.",
-                nameof(template));
-        }
+        // No workflow-id equality guard: a ticket stays pinned to the
+        // version that was published when it was created, even after the
+        // request type is re-pointed at another workflow — the pinned version
+        // is authoritative for that ticket, so the combination rule must
+        // accept it.
 
         return new WorkflowCapabilities(
             CanGoPendingCustomer: template.AllowsPendingCustomer && requestType.AllowPendingCustomer,

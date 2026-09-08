@@ -94,11 +94,12 @@ public sealed class WorkflowConfigurationQueryService(
 
     private async Task<WorkflowTemplate> GetTemplateOrThrowAsync(RequestType requestType, CancellationToken cancellationToken)
     {
-        var template = await workflowTemplateRepository.GetByIdAsync(requestType.WorkflowTemplateId, cancellationToken);
+        var template = await workflowTemplateRepository.GetPublishedAsync(requestType.WorkflowId, cancellationToken);
 
-        // A request type referencing a missing template is broken seed/config
-        // data, not a normal outcome — surfaced loudly rather than skipped.
+        // A request type whose workflow has no Published version is an
+        // administration gap (a Draft-only workflow), not a normal outcome —
+        // surfaced loudly rather than skipped.
         return template ?? throw new InvalidOperationException(
-            $"RequestType {requestType.RequestTypeId} references WorkflowTemplate {requestType.WorkflowTemplateId}, which does not exist.");
+            $"RequestType {requestType.RequestTypeId} references Workflow {requestType.WorkflowId}, which has no published version.");
     }
 }

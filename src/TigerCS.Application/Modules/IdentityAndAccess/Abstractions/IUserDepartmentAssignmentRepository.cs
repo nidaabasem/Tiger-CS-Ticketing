@@ -15,6 +15,11 @@ public interface IUserDepartmentAssignmentRepository
         int departmentId, bool activeEmployeesOnly, CancellationToken cancellationToken = default);
 
     Task AddAsync(UserDepartmentAssignment assignment, CancellationToken cancellationToken = default);
+
+    Task<UserDepartmentAssignment?> GetAsync(Guid employeeId, int departmentId, CancellationToken cancellationToken = default);
+
+    /// <summary>Ends a membership. Membership rows are not referenced by ticket history (assignments snapshot employee and department ids separately), so removal never breaks a historical record.</summary>
+    void Remove(UserDepartmentAssignment assignment);
 }
 
 /// <summary>Commits changes made through the Identity and Access repositories in this request.</summary>
