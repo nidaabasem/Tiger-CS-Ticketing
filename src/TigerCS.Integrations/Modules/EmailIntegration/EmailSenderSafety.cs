@@ -37,4 +37,19 @@ public static class EmailSenderSafety
     public static bool IsUnsafe(string? provider, string environmentName) =>
         string.Equals(provider, "Recording", StringComparison.OrdinalIgnoreCase)
         && !RecordingAllowedEnvironments.Contains(environmentName);
+
+    /// <summary>
+    /// The form <c>Program.cs</c> actually calls. When
+    /// <paramref name="emailEnabled"/> is <c>false</c>
+    /// (<c>Notifications:Email:Enabled</c>, see
+    /// <see cref="EmailSenderOptions.Enabled"/>) email delivery is not part
+    /// of the current phase, so the recording adapter is never mistaken for
+    /// a delivering one and startup is allowed in every environment — UAT
+    /// and Production included. Nothing is sent either way: the flag does not
+    /// change which adapter is wired up. When <paramref name="emailEnabled"/>
+    /// is <c>true</c> the decision is exactly
+    /// <see cref="IsUnsafe(string?, string)"/>.
+    /// </summary>
+    public static bool IsUnsafe(bool emailEnabled, string? provider, string environmentName) =>
+        emailEnabled && IsUnsafe(provider, environmentName);
 }

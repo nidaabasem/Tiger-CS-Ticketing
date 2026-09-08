@@ -1,0 +1,21 @@
+@model (int VersionNumber, WorkflowVersionStatus Status)
+@*
+    A workflow version's identity and state in one glance: the "V2" chip plus
+    a Draft / Active / Historical badge. Wording follows the versioning rule —
+    Published is shown as "Active" because it is the version new tickets use.
+*@
+<span class="version-tag">
+    <span class="version-chip">V@(Model.VersionNumber)</span>
+    @switch (Model.Status)
+    {
+        case WorkflowVersionStatus.Draft:
+            <span class="badge badge-version-draft"><span class="badge-dot"></span>Draft</span>
+            break;
+        case WorkflowVersionStatus.Published:
+            <span class="badge badge-version-published"><span class="badge-dot"></span>Active</span>
+            break;
+        default:
+            <span class="badge badge-version-historical"><span class="badge-dot"></span>Historical</span>
+            break;
+    }
+</span>

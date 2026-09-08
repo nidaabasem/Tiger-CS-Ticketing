@@ -1,0 +1,30 @@
+@{
+    // Rendered by the layout whenever the Administration nav item is active.
+    // Each admin page names its own section via ViewData["AdminSection"].
+    var section = ViewData["AdminSection"] as string ?? "overview";
+    (string Key, string Label, string Href, string Icon)[] items =
+    [
+        ("overview", "Overview", "/Admin", "overview"),
+        ("users", "Users", "/Admin/Users", "users"),
+        ("departments", "Departments", "/Admin/Departments", "departments"),
+        ("requesttypes", "Request Types", "/Admin/RequestTypes", "request-types"),
+        ("workflows", "Workflows", "/Admin/Workflows", "workflows"),
+    ];
+}
+<nav class="admin-subnav" aria-label="Administration sections">
+    <div class="admin-subnav__inner">
+        <span class="admin-subnav__label">Administration</span>
+        <ul class="admin-subnav__list">
+            @foreach (var item in items)
+            {
+                var isActive = item.Key == section;
+                <li>
+                    <a class="admin-subnav__link @(isActive ? "is-active" : "")" href="@item.Href" aria-current="@(isActive ? "page" : null)">
+                        @await Html.PartialAsync("_AdminIcon", item.Icon)
+                        @item.Label
+                    </a>
+                </li>
+            }
+        </ul>
+    </div>
+</nav>

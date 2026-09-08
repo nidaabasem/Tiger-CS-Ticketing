@@ -225,6 +225,40 @@ public class OutboxAndNotificationDomainTests
         Assert.Equal(expectedUnsafe, EmailSenderSafety.IsUnsafe(provider, environment));
     }
 
+    /// <summary>
+    /// <c>Notifications:Email:Enabled</c> = <c>false</c> declares that delivery
+    /// is not part of the current phase, so the recording adapter is allowed
+    /// anywhere; with it <c>true</c> the decision is exactly the two-argument
+    /// form above. The flag never makes a non-recording provider unsafe.
+    /// </summary>
+    [Theory]
+    [InlineData(false, "Recording", "UAT", false)]
+    [InlineData(false, "Recording", "Production", false)]
+    [InlineData(false, "Recording", "Development", false)]
+    [InlineData(false, "Recording", "Testing", false)]
+    [InlineData(true, "Recording", "UAT", true)]
+    [InlineData(true, "Recording", "Production", true)]
+    [InlineData(true, "recording", "Staging", true)]
+    [InlineData(true, "Recording", "Development", false)]
+    [InlineData(true, "Recording", "Testing", false)]
+    [InlineData(true, "Office365EmailSender", "Production", false)]
+    [InlineData(false, "Office365EmailSender", "Production", false)]
+    public void EmailSenderSafety_AllowsTheRecordingAdapterAnywhereWhenEmailIsDisabled(
+        bool emailEnabled, string provider, string environment, bool expectedUnsafe)
+    {
+        Assert.Equal(expectedUnsafe, EmailSenderSafety.IsUnsafe(emailEnabled, provider, environment));
+    }
+
+    /// <summary>The code default keeps the guard on: an environment whose configuration omits the key is protected exactly as before.</summary>
+    [Fact]
+    public void EmailSenderOptions_DefaultToDeliveryEnabledWithTheRecordingAdapter()
+    {
+        var options = new EmailSenderOptions();
+
+        Assert.True(options.Enabled);
+        Assert.Equal("Recording", options.Provider);
+    }
+
     /// <summary>A misconfigured policy must not be able to disable the safety properties — an unbounded attempt count would defeat FR-NOT-05's dead-letter path entirely.</summary>
     [Fact]
     public void OutboxDispatchOptions_ClampAMisconfiguredPolicy()

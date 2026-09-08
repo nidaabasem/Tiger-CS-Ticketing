@@ -3,83 +3,119 @@
 @{
     ViewData["Title"] = "Departments";
     ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "departments";
     Layout = "_Layout";
+    var activeCount = Model.Departments.Count(d => d.IsActive);
 }
 
-<div class="page">
+<div class="page admin-page">
     @await Html.PartialAsync("_AdminBreadcrumb", ("Departments", "/Admin/Departments", (string?)null))
     <div class="page-header">
         <div>
             <h1 class="page-title">Departments</h1>
             <p class="page-subtitle">Responsible departments. An inactive department keeps its name on historical tickets but is never offered for new work.</p>
         </div>
+        <div class="page-header__actions">
+            <a class="btn btn-gold" href="#add-department">@await Html.PartialAsync("_AdminIcon", "plus") Add Department</a>
+        </div>
     </div>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
     <div class="admin-grid admin-grid--list-form">
-        <div class="panel">
-            <div class="panel__header">
-                <h2 class="panel__title">All departments</h2>
-                <a class="btn btn-sm" href="/Admin/Departments?includeInactive=@(Model.IncludeInactive ? "false" : "true")">@(Model.IncludeInactive ? "Hide inactive" : "Show inactive")</a>
-            </div>
-            @if (Model.LoadError is not null)
-            {
-                <div class="error-state"><p>@Model.LoadError</p></div>
-            }
-            else if (Model.Departments.Count == 0)
-            {
-                <div class="empty-state"><p>No departments yet. Add the first one on the right.</p></div>
-            }
-            else
-            {
-                <div class="table-scroll">
-                    <table class="data-table">
-                        <thead>
-                            <tr><th>Department</th><th>Code</th><th>Members</th><th>Request types</th><th>Tickets</th><th>Status</th><th></th></tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var d in Model.Departments)
-                            {
-                                <tr>
-                                    <td><a class="ticket-id-link" href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
-                                    <td class="text-mono text-secondary">@d.Code</td>
-                                    <td>@d.MemberCount</td>
-                                    <td>@d.RequestTypeCount</td>
-                                    <td>@d.TicketReferenceCount</td>
-                                    <td>
-                                        @if (d.IsActive)
-                                        {
-                                            <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
-                                        }
-                                    </td>
-                                    <td><a class="btn btn-sm" href="/Admin/Departments/@d.DepartmentId">Manage</a></td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+        <div>
+            <form class="filter-bar" method="get" aria-label="Filter departments">
+                <div class="field-group">
+                    <label class="field-label" for="includeInactive">Show</label>
+                    <select class="field-select" id="includeInactive" name="includeInactive" data-autosubmit>
+                        <option value="true" selected="@Model.IncludeInactive">All departments</option>
+                        <option value="false" selected="@(!Model.IncludeInactive)">Active only</option>
+                    </select>
                 </div>
-            }
+                @if (Model.LoadError is null)
+                {
+                    <span class="filter-bar__count">@Model.Departments.Count shown · @activeCount active</span>
+                }
+                <div class="filter-bar__submit"><button type="submit" class="btn btn-sm">Apply</button></div>
+            </form>
+
+            <div class="panel">
+                @if (Model.LoadError is not null)
+                {
+                    <div class="error-state">
+                        @await Html.PartialAsync("_AdminIcon", "warning")
+                        <p>@Model.LoadError</p>
+                    </div>
+                }
+                else if (Model.Departments.Count == 0)
+                {
+                    <div class="empty-state">
+                        @await Html.PartialAsync("_AdminIcon", "departments")
+                        <p class="empty-state__title">@(Model.IncludeInactive ? "No departments yet" : "No active departments")</p>
+                        <p>@(Model.IncludeInactive ? "Add the first department using the form." : "Show all departments to see inactive ones.")</p>
+                        @if (Model.IncludeInactive)
+                        {
+                            <a class="btn btn-sm btn-gold" href="#add-department">Add Department</a>
+                        }
+                        else
+                        {
+                            <a class="btn btn-sm" href="/Admin/Departments">Show all departments</a>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Department</th>
+                                    <th>Code</th>
+                                    <th class="col-num">Members</th>
+                                    <th class="col-num">Request types</th>
+                                    <th class="col-num">Tickets</th>
+                                    <th>Status</th>
+                                    <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var d in Model.Departments)
+                                {
+                                    <tr class="@(d.IsActive ? "" : "is-inactive")">
+                                        <td class="cell-primary"><a class="ticket-id-link" href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
+                                        <td><span class="badge badge-neutral text-mono">@d.Code</span></td>
+                                        <td class="col-num">@d.MemberCount</td>
+                                        <td class="col-num">@d.RequestTypeCount</td>
+                                        <td class="col-num">@d.TicketReferenceCount</td>
+                                        <td>@await Html.PartialAsync("_StatusBadge", d.IsActive)</td>
+                                        <td class="col-actions"><a class="btn btn-sm" href="/Admin/Departments/@d.DepartmentId">Manage</a></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
         </div>
 
-        <section class="panel admin-form-panel">
-            <div class="panel__header"><h2 class="panel__title">Add department</h2></div>
-            <form method="post" asp-page-handler="Create" class="admin-form">
-                <div class="form-group">
-                    <label class="form-label" asp-for="Create.Name">Name *</label>
-                    <input class="form-control" asp-for="Create.Name" />
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="Create.Code">Code *</label>
-                    <input class="form-control" asp-for="Create.Code" maxlength="10" />
-                    <span class="field-hint">Short code used in ticket numbers (e.g. COL). Up to 10 characters.</span>
-                </div>
-                <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Add Department</button></div>
-            </form>
-        </section>
+        <aside class="admin-side">
+            <section class="panel admin-form-panel" id="add-department" aria-labelledby="add-department-title">
+                <div class="panel__header"><h2 class="panel__title" id="add-department-title">Add department</h2></div>
+                <form method="post" asp-page-handler="Create" class="admin-form">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.Name">Name *</label>
+                        <input class="form-control" asp-for="Create.Name" required aria-required="true" placeholder="e.g. Collections" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.Code">Code *</label>
+                        <input class="form-control" asp-for="Create.Code" maxlength="10" required aria-required="true" placeholder="e.g. COL" />
+                        <span class="field-hint">Short code used in ticket numbers. Up to 10 characters.</span>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-gold">Add Department</button>
+                    </div>
+                </form>
+            </section>
+        </aside>
     </div>
 </div>

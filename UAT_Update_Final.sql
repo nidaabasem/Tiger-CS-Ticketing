@@ -2099,10 +2099,12 @@ IF NOT EXISTS (
     WHERE [MigrationId] = N'20260908054944_AddWorkflowVersioning'
 )
 BEGIN
+    EXEC(N'
     INSERT INTO [Workflows] ([Code], [Name], [Description], [IsActive], [CreatedAtUtc])
     SELECT [Code], [Name], [Description], [IsActive], SYSUTCDATETIME()
     FROM [WorkflowTemplates]
     ORDER BY [WorkflowTemplateId];
+    ');
 END;
 
 IF NOT EXISTS (
@@ -2166,6 +2168,7 @@ IF NOT EXISTS (
     WHERE [MigrationId] = N'20260908054944_AddWorkflowVersioning'
 )
 BEGIN
+    EXEC(N'
     UPDATE t
     SET t.[WorkflowId] = w.[WorkflowId],
         t.[VersionNumber] = 1,
@@ -2174,6 +2177,7 @@ BEGIN
         t.[PublishedAtUtc] = SYSUTCDATETIME()
     FROM [WorkflowTemplates] t
     INNER JOIN [Workflows] w ON w.[Code] = t.[Code];
+    ');
 END;
 
 IF NOT EXISTS (
@@ -2253,12 +2257,16 @@ IF NOT EXISTS (
     WHERE [MigrationId] = N'20260908054944_AddWorkflowVersioning'
 )
 BEGIN
+
+
+    EXEC(N'
     UPDATE tk
     SET tk.[WorkflowTemplateId] = rt.[WorkflowTemplateId]
     FROM [Tickets] tk
     INNER JOIN [RequestTypes] rt ON rt.[RequestTypeId] = tk.[RequestTypeId]
     WHERE tk.[RequestTypeId] IS NOT NULL
       AND tk.[WorkflowTemplateId] IS NULL;
+    ');
 END;
 
 IF NOT EXISTS (
@@ -2282,10 +2290,12 @@ IF NOT EXISTS (
     WHERE [MigrationId] = N'20260908054944_AddWorkflowVersioning'
 )
 BEGIN
+    EXEC(N'
     UPDATE rt
     SET rt.[WorkflowId] = t.[WorkflowId]
     FROM [RequestTypes] rt
     INNER JOIN [WorkflowTemplates] t ON t.[WorkflowTemplateId] = rt.[WorkflowId];
+    ');
 END;
 
 IF NOT EXISTS (
