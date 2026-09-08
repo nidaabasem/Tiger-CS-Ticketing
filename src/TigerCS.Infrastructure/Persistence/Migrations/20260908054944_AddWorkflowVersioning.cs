@@ -64,12 +64,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                 unique: true);
 
             migrationBuilder.Sql(
-                """
-                INSERT INTO [Workflows] ([Code], [Name], [Description], [IsActive], [CreatedAtUtc])
-                SELECT [Code], [Name], [Description], [IsActive], SYSUTCDATETIME()
-                FROM [WorkflowTemplates]
-                ORDER BY [WorkflowTemplateId];
-                """);
+      """
+    INSERT INTO [Workflows] ([Code], [Name], [Description], [IsActive], [CreatedAtUtc])
+    SELECT [Code], [Name], [Description], [IsActive], SYSUTCDATETIME()
+    FROM [WorkflowTemplates];
+    """);
 
             // ---- 2. Templates become versions -------------------------------------
             migrationBuilder.AddColumn<int>(
@@ -180,13 +179,16 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
             migrationBuilder.Sql(
                 """
-                UPDATE tk
-                SET tk.[WorkflowTemplateId] = rt.[WorkflowTemplateId]
-                FROM [Tickets] tk
-                INNER JOIN [RequestTypes] rt ON rt.[RequestTypeId] = tk.[RequestTypeId]
-                WHERE tk.[RequestTypeId] IS NOT NULL
-                  AND tk.[WorkflowTemplateId] IS NULL;
-                """);
+    EXEC(N'
+        UPDATE tk
+        SET tk.[WorkflowTemplateId] = rt.[WorkflowTemplateId]
+        FROM [Tickets] tk
+        INNER JOIN [RequestTypes] rt
+            ON rt.[RequestTypeId] = tk.[RequestTypeId]
+        WHERE tk.[RequestTypeId] IS NOT NULL
+          AND tk.[WorkflowTemplateId] IS NULL;
+    ');
+    """);
 
             migrationBuilder.RenameColumn(
                 name: "WorkflowTemplateId",

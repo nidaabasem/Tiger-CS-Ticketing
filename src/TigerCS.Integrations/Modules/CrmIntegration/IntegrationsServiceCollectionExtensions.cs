@@ -30,7 +30,7 @@ public static class IntegrationsServiceCollectionExtensions
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Mock" => sp.GetRequiredService<MockCrmGateway>(),
+                "Http" => sp.GetRequiredService<MockCrmGateway>(),
                 _ => throw new NotSupportedException(
                     $"Crm:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
                     "pilot phase (MVP-Implementation-Backlog.md S-06) — no real Tiger Group CRM endpoint details " +
@@ -45,7 +45,7 @@ public static class IntegrationsServiceCollectionExtensions
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Mock" => sp.GetRequiredService<MockCrmGateway>(),
+                "Http" => sp.GetRequiredService<MockCrmGateway>(),
                 _ => throw new NotSupportedException(
                     $"Crm:Provider '{options.Provider}' is not supported for customer lookup either — see the " +
                     "ICrmGateway registration above for the same reasoning.")
