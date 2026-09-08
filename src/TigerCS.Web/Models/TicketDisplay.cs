@@ -111,6 +111,7 @@ public static class TicketDisplay
         "CrmUnavailable" => "Live CRM data is unavailable right now.",
         "AmbiguousCustomerMatch" => "Multiple CRM customer records were found for this phone number — profile details are unavailable.",
         "NotFoundInCrm" => "CRM no longer has a matching record for this customer.",
+        "NoPhoneOnRecord" => "No phone number is on record for this ticket, so CRM cannot be queried for this customer.",
         _ => "Customer profile is unavailable right now."
     };
 
