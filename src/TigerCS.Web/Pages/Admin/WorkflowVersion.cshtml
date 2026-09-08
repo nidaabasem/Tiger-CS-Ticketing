@@ -4,47 +4,52 @@
     var v = Model.Version;
     ViewData["Title"] = v is null ? "Workflow Version" : $"{v.WorkflowName} V{v.VersionNumber}";
     ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "workflows";
     Layout = "_Layout";
+    var errorCount = v?.Validation.Count(i => i.Severity == WorkflowValidationSeverity.Error) ?? 0;
 }
 
-<div class="page">
+<div class="page admin-page">
     @await Html.PartialAsync("_AdminBreadcrumb", ("Workflows", "/Admin/Workflows", v is null ? "Version" : $"{v.WorkflowName} · V{v.VersionNumber}"))
 
     @if (v is null)
     {
-        <div class="panel"><div class="error-state"><p>@(Model.LoadError ?? "The workflow version could not be loaded.")</p></div></div>
+        <div class="panel">
+            <div class="error-state">
+                @await Html.PartialAsync("_AdminIcon", "warning")
+                <p>@(Model.LoadError ?? "The workflow version could not be loaded.")</p>
+            </div>
+        </div>
         return;
     }
 
     <div class="page-header">
         <div>
-            <h1 class="page-title">@v.WorkflowName <span class="text-secondary">· Version @v.VersionNumber</span></h1>
-            <p class="page-subtitle">
-                @switch (v.Status)
-                {
-                    case WorkflowVersionStatus.Draft:
-                        <span class="badge badge-version-draft">Draft — editable</span>
-                        break;
-                    case WorkflowVersionStatus.Published:
-                        <span class="badge badge-version-published">Active — read-only</span>
-                        break;
-                    default:
-                        <span class="badge badge-version-historical">Historical — read-only</span>
-                        break;
-                }
-                <span class="text-secondary">· @v.TicketCount ticket(s) on this version</span>
+            <p class="page-eyebrow">Workflow designer</p>
+            <h1 class="page-title page-title--with-chip">
+                <span>@v.WorkflowName</span>
+                @await Html.PartialAsync("_VersionBadge", (v.VersionNumber, v.Status))
+            </h1>
+            <div class="page-title__meta">
+                <span>@(v.IsEditable ? "Editable draft" : "Read-only")</span>
+                <span>Version name <strong>@v.Name</strong></span>
+                <span><strong>@v.TicketCount</strong> @(v.TicketCount == 1 ? "ticket" : "tickets") on this version</span>
                 @if (v.PublishedAtUtc is { } p)
                 {
-                    <span class="text-secondary">· published @p.ToLocalTime().ToString("MMM d, yyyy") by @(v.PublishedByName ?? "System")</span>
+                    <span>Published @p.ToLocalTime().ToString("MMM d, yyyy") by @(v.PublishedByName ?? "System")</span>
                 }
-            </p>
+                else
+                {
+                    <span>Created @v.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy") by @(v.CreatedByName ?? "System")</span>
+                }
+            </div>
         </div>
-        <div class="ticket-header__actions">
+        <div class="page-header__actions">
             <a class="btn" href="/Admin/Workflows/@v.WorkflowId">All Versions</a>
             @if (v.IsEditable)
             {
                 <form method="post" asp-page-handler="Publish" asp-route-id="@v.WorkflowTemplateId" data-confirm="Publish V@(v.VersionNumber)? It becomes read-only and the active version for new tickets. Existing tickets keep their version.">
-                    <button type="submit" class="btn btn-gold" disabled="@(v.CanPublish ? null : "disabled")">Publish V@(v.VersionNumber)</button>
+                    <button type="submit" class="btn btn-gold" disabled="@(v.CanPublish ? null : "disabled")" title="@(v.CanPublish ? null : "Resolve the items under “Before publishing” first")">@await Html.PartialAsync("_AdminIcon", "check") Publish V@(v.VersionNumber)</button>
                 </form>
             }
         </div>
@@ -54,22 +59,30 @@
 
     @if (!v.IsEditable)
     {
-        <div class="alert alert-info">This version is @(v.Status == WorkflowVersionStatus.Published ? "active" : "historical") and cannot be changed. To modify the workflow, create a new version from the workflow's versions page.</div>
+        <div class="alert alert-info alert-lock" role="status">
+            @await Html.PartialAsync("_AdminIcon", "lock")
+            <span>This version is <strong>@(v.Status == WorkflowVersionStatus.Published ? "active" : "historical")</strong> and cannot be changed. To modify the workflow, create a new version from <a class="link-muted" href="/Admin/Workflows/@v.WorkflowId">the workflow's versions page</a>.</span>
+        </div>
     }
     else if (v.Validation.Count > 0)
     {
         <div class="panel validation-summary">
-            <div class="panel__header"><h2 class="panel__title">Before publishing</h2></div>
+            <div class="panel__header">
+                <h2 class="panel__title">Before publishing</h2>
+                <span class="text-secondary">@(errorCount == 0 ? "Nothing blocks publishing" : errorCount == 1 ? "1 item must be fixed" : $"{errorCount} items must be fixed")</span>
+            </div>
             <ul class="validation-list">
                 @foreach (var issue in v.Validation)
                 {
                     <li class="validation-item validation-item--@issue.Severity.ToString().ToLowerInvariant()">
-                        <span class="badge @(issue.Severity == WorkflowValidationSeverity.Error ? "badge-inactive" : "badge-neutral")">@(issue.Severity == WorkflowValidationSeverity.Error ? "Must fix" : "Note")</span>
-                        @if (issue.StepSequence is { } seq)
-                        {
-                            <span class="text-secondary">Step @seq ·</span>
-                        }
-                        @issue.Message
+                        <span class="badge @(issue.Severity == WorkflowValidationSeverity.Error ? "badge-warning" : "badge-neutral")">@(issue.Severity == WorkflowValidationSeverity.Error ? "Must fix" : "Note")</span>
+                        <span>
+                            @if (issue.StepSequence is { } seq)
+                            {
+                                <strong>Step @seq ·</strong>
+                            }
+                            @issue.Message
+                        </span>
                     </li>
                 }
             </ul>
@@ -77,163 +90,203 @@
     }
     else
     {
-        <div class="alert alert-success">This draft passes validation and can be published.</div>
+        <div class="alert alert-success" role="status">
+            @await Html.PartialAsync("_AdminIcon", "check")
+            <span>This draft passes validation and can be published.</span>
+        </div>
     }
 
     <div class="admin-grid admin-grid--designer">
-        <section class="panel designer">
-            <div class="panel__header"><h2 class="panel__title">Steps</h2></div>
+        <section class="panel designer" aria-labelledby="steps-title">
+            <div class="panel__header">
+                <h2 class="panel__title" id="steps-title">Steps <span class="panel__count">@v.Steps.Count</span></h2>
+                <span class="text-secondary">@(v.IsEditable ? "Steps run top to bottom. Reorder, edit or delete any step." : "Steps run top to bottom.")</span>
+            </div>
             @if (v.Steps.Count == 0)
             {
-                <div class="empty-state"><p>This version has no steps yet. Add a Start step first.</p></div>
+                <div class="empty-state">
+                    @await Html.PartialAsync("_AdminIcon", "workflows")
+                    <p class="empty-state__title">No steps yet</p>
+                    <p>@(v.IsEditable ? "Add a Start step first, then the steps a ticket moves through." : "This version has no steps.")</p>
+                </div>
             }
-            <ol class="designer-steps">
-                @foreach (var s in v.Steps)
-                {
-                    var isEditing = Model.EditingStepId == s.WorkflowTemplateStepId;
-                    <li class="designer-step @(isEditing ? "designer-step--editing" : "")">
-                        <div class="designer-step__num">@s.Sequence</div>
-                        <div class="designer-step__body">
-                            <div class="designer-step__title">
-                                <strong>@s.Name</strong>
-                                <span class="badge badge-neutral">@s.KindLabel</span>
-                                @if (s.IsOptional)
-                                {
-                                    <span class="badge badge-neutral">Optional</span>
-                                }
-                                @if (s.RequiresApprovalType)
-                                {
-                                    if (s.ApprovalTypeLabel is not null)
-                                    {
-                                        <span class="badge badge-version-published">@s.ApprovalTypeLabel</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge badge-inactive">Approval type not set</span>
-                                    }
-                                }
-                            </div>
-                            @if (s.SupportsOutcomeBranches)
-                            {
-                                <div class="designer-step__branches">
-                                    @foreach (var outcome in new[] { WorkflowStepOutcome.Approved, WorkflowStepOutcome.Rejected })
-                                    {
-                                        var t = s.Transitions.FirstOrDefault(x => x.Outcome == outcome);
-                                        <div class="designer-branch">
-                                            <span class="designer-branch__label">@outcome →</span>
-                                            @if (t is not null)
+            else
+            {
+                <ol class="designer-steps">
+                    @foreach (var s in v.Steps)
+                    {
+                        var isEditing = Model.EditingStepId == s.WorkflowTemplateStepId;
+                        var kindKey = s.Kind.ToString().ToLowerInvariant();
+                        var isFirst = s.Sequence == v.Steps.Min(x => x.Sequence);
+                        var isLast = s.Sequence == v.Steps.Max(x => x.Sequence);
+                        <li class="designer-step @(isEditing ? "designer-step--editing" : "") @(v.IsEditable ? "" : "designer-step--readonly")" id="step-@s.WorkflowTemplateStepId">
+                            <div class="designer-step__num" aria-hidden="true">@s.Sequence</div>
+                            <div class="designer-step__body">
+                                <div class="designer-step__head">
+                                    <div class="designer-step__title">
+                                        <span class="visually-hidden">Step @s.Sequence:</span>
+                                        <span class="designer-step__name">@s.Name</span>
+                                        <span class="badge badge-kind badge-kind-@kindKey">@s.KindLabel</span>
+                                        @if (s.IsOptional)
+                                        {
+                                            <span class="badge badge-neutral">Optional</span>
+                                        }
+                                        @if (s.RequiresApprovalType)
+                                        {
+                                            if (s.ApprovalTypeLabel is not null)
                                             {
-                                                <span>Step @t.TargetSequence · @t.TargetName</span>
-                                            }
-                                            else if (outcome == WorkflowStepOutcome.Approved)
-                                            {
-                                                <span class="text-secondary">next step</span>
+                                                <span class="badge badge-approval-type" title="Approval type">@await Html.PartialAsync("_AdminIcon", "check") @s.ApprovalTypeLabel</span>
                                             }
                                             else
                                             {
-                                                <span class="text-secondary">not configured (next action stays explicit)</span>
+                                                <span class="badge badge-warning">Approval type not set</span>
                                             }
-                                            @if (v.IsEditable)
-                                            {
-                                                <form method="post" asp-page-handler="Transition" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" class="designer-branch__form">
-                                                    <input type="hidden" name="Transition.Outcome" value="@outcome" />
-                                                    <select class="field-select" name="Transition.TargetStepId" aria-label="@outcome target step">
-                                                        <option value="">@(outcome == WorkflowStepOutcome.Approved ? "Next step" : "Not configured")</option>
-                                                        @foreach (var target in v.Steps.Where(x => x.WorkflowTemplateStepId != s.WorkflowTemplateStepId))
-                                                        {
-                                                            <option value="@target.WorkflowTemplateStepId" selected="@(t?.TargetStepId == target.WorkflowTemplateStepId)">Step @target.Sequence · @target.Name</option>
-                                                        }
-                                                    </select>
-                                                    <button type="submit" class="btn btn-sm">Set</button>
-                                                </form>
-                                            }
+                                        }
+                                    </div>
+                                    @if (v.IsEditable)
+                                    {
+                                        <div class="designer-step__actions">
+                                            <form method="post" asp-page-handler="MoveStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" asp-route-direction="up">
+                                                <button type="submit" class="btn btn-sm" title="Move up" aria-label="Move step @s.Sequence up" disabled="@(isFirst ? "disabled" : null)">@await Html.PartialAsync("_AdminIcon", "arrow-up")<span class="visually-hidden">Move up</span></button>
+                                            </form>
+                                            <form method="post" asp-page-handler="MoveStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" asp-route-direction="down">
+                                                <button type="submit" class="btn btn-sm" title="Move down" aria-label="Move step @s.Sequence down" disabled="@(isLast ? "disabled" : null)">@await Html.PartialAsync("_AdminIcon", "arrow-down")<span class="visually-hidden">Move down</span></button>
+                                            </form>
+                                            <a class="btn btn-sm @(isEditing ? "btn-gold" : "")" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId?editStep=@s.WorkflowTemplateStepId#step-@s.WorkflowTemplateStepId" aria-label="Edit step @s.Sequence">@await Html.PartialAsync("_AdminIcon", "edit") Edit</a>
+                                            <form method="post" asp-page-handler="RemoveStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" data-confirm="Delete step '@s.Name'?">
+                                                <button type="submit" class="btn btn-sm btn-critical" aria-label="Delete step @s.Sequence">@await Html.PartialAsync("_AdminIcon", "trash") Delete</button>
+                                            </form>
                                         </div>
                                     }
                                 </div>
-                            }
-                            @if (isEditing && v.IsEditable)
-                            {
-                                <form method="post" asp-page-handler="UpdateStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" class="admin-form designer-edit-form">
-                                    @await Html.PartialAsync("_WorkflowStepFields", Model)
-                                    <div class="action-form__footer">
-                                        <a class="btn btn-sm" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId">Cancel</a>
-                                        <button type="submit" class="btn btn-gold btn-sm">Save Step</button>
+                                @if (s.SupportsOutcomeBranches)
+                                {
+                                    <div class="designer-step__branches">
+                                        <span class="designer-step__branches-title">Outcomes</span>
+                                        @foreach (var outcome in new[] { WorkflowStepOutcome.Approved, WorkflowStepOutcome.Rejected })
+                                        {
+                                            var t = s.Transitions.FirstOrDefault(x => x.Outcome == outcome);
+                                            var outcomeKey = outcome.ToString().ToLowerInvariant();
+                                            <div class="designer-branch">
+                                                <span class="badge badge-outcome-@outcomeKey designer-branch__outcome">@outcome</span>
+                                                <span class="designer-branch__arrow">@await Html.PartialAsync("_AdminIcon", "arrow-right")</span>
+                                                @if (t is not null)
+                                                {
+                                                    <span class="designer-branch__target">Step @t.TargetSequence · @t.TargetName</span>
+                                                }
+                                                else if (outcome == WorkflowStepOutcome.Approved)
+                                                {
+                                                    <span class="designer-branch__target designer-branch__target--default">continues to the next step</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="designer-branch__target designer-branch__target--default">not configured — the next action stays explicit</span>
+                                                }
+                                                @if (v.IsEditable)
+                                                {
+                                                    <form method="post" asp-page-handler="Transition" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" class="designer-branch__form">
+                                                        <input type="hidden" name="Transition.Outcome" value="@outcome" />
+                                                        <select class="field-select" name="Transition.TargetStepId" aria-label="@outcome target step">
+                                                            <option value="">@(outcome == WorkflowStepOutcome.Approved ? "Next step" : "Not configured")</option>
+                                                            @foreach (var target in v.Steps.Where(x => x.WorkflowTemplateStepId != s.WorkflowTemplateStepId))
+                                                            {
+                                                                <option value="@target.WorkflowTemplateStepId" selected="@(t?.TargetStepId == target.WorkflowTemplateStepId)">Step @target.Sequence · @target.Name</option>
+                                                            }
+                                                        </select>
+                                                        <button type="submit" class="btn btn-sm">Set</button>
+                                                    </form>
+                                                }
+                                            </div>
+                                        }
                                     </div>
-                                </form>
-                            }
-                        </div>
-                        @if (v.IsEditable)
-                        {
-                            <div class="designer-step__actions">
-                                <form method="post" asp-page-handler="MoveStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" asp-route-direction="up">
-                                    <button type="submit" class="btn btn-sm" title="Move up" disabled="@(s.Sequence == v.Steps.Min(x => x.Sequence) ? "disabled" : null)">↑</button>
-                                </form>
-                                <form method="post" asp-page-handler="MoveStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" asp-route-direction="down">
-                                    <button type="submit" class="btn btn-sm" title="Move down" disabled="@(s.Sequence == v.Steps.Max(x => x.Sequence) ? "disabled" : null)">↓</button>
-                                </form>
-                                <a class="btn btn-sm" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId?editStep=@s.WorkflowTemplateStepId">Edit</a>
-                                <form method="post" asp-page-handler="RemoveStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" data-confirm="Delete step '@s.Name'?">
-                                    <button type="submit" class="btn btn-sm btn-critical">Delete</button>
-                                </form>
+                                }
+                                @if (isEditing && v.IsEditable)
+                                {
+                                    <form method="post" asp-page-handler="UpdateStep" asp-route-id="@v.WorkflowTemplateId" asp-route-stepId="@s.WorkflowTemplateStepId" class="admin-form designer-edit-form">
+                                        <span class="form-section__title">Edit step @s.Sequence</span>
+                                        @await Html.PartialAsync("_WorkflowStepFields", Model)
+                                        <div class="form-actions">
+                                            <a class="btn btn-sm" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId">Cancel</a>
+                                            <button type="submit" class="btn btn-gold btn-sm">Save Step</button>
+                                        </div>
+                                    </form>
+                                }
                             </div>
-                        }
-                    </li>
-                }
-            </ol>
+                        </li>
+                    }
+                </ol>
+            }
         </section>
 
         <div class="designer-side">
             @if (v.IsEditable)
             {
-                <section class="panel admin-form-panel">
-                    <div class="panel__header"><h2 class="panel__title">Add step</h2></div>
+                <section class="panel admin-form-panel" aria-labelledby="add-step-title">
+                    <div class="panel__header"><h2 class="panel__title" id="add-step-title">Add step</h2></div>
                     <form method="post" asp-page-handler="AddStep" asp-route-id="@v.WorkflowTemplateId" class="admin-form">
                         @await Html.PartialAsync("_WorkflowStepFields", Model)
-                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Add Step</button></div>
+                        <div class="form-actions">
+                            <span class="form-actions__note">Added at the end — move it into place afterwards.</span>
+                            <button type="submit" class="btn btn-gold btn-sm">Add Step</button>
+                        </div>
                     </form>
                 </section>
 
-                <section class="panel admin-form-panel">
-                    <div class="panel__header"><h2 class="panel__title">Version settings</h2></div>
+                <section class="panel admin-form-panel" aria-labelledby="settings-title">
+                    <div class="panel__header"><h2 class="panel__title" id="settings-title">Version settings</h2></div>
                     <form method="post" asp-page-handler="Settings" asp-route-id="@v.WorkflowTemplateId" class="admin-form">
                         <div class="form-group">
                             <label class="form-label" asp-for="Settings.Name">Version name *</label>
-                            <input class="form-control" asp-for="Settings.Name" />
+                            <input class="form-control" asp-for="Settings.Name" required aria-required="true" />
                         </div>
                         <div class="form-group">
                             <label class="form-label" asp-for="Settings.Description">Description</label>
                             <textarea class="form-control" asp-for="Settings.Description" rows="2"></textarea>
                         </div>
-                        <div class="checkbox-grid">
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Settings.AllowsPendingCustomer" /> Pending Customer available</label>
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Settings.AllowsPendingInternal" /> Pending Internal / Third Party available</label>
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Settings.RequiresApproval" /> Carries an approval stage</label>
-                        </div>
-                        <p class="field-hint">Publishing switches these on automatically wherever the steps require them.</p>
-                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save Settings</button></div>
+                        <fieldset class="form-group">
+                            <legend class="form-label">Available on tickets</legend>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-field"><input type="checkbox" asp-for="Settings.AllowsPendingCustomer" /> Pending Customer available</label>
+                                <label class="checkbox-field"><input type="checkbox" asp-for="Settings.AllowsPendingInternal" /> Pending Internal / Third Party available</label>
+                                <label class="checkbox-field"><input type="checkbox" asp-for="Settings.RequiresApproval" /> Carries an approval stage</label>
+                            </div>
+                            <span class="field-hint">Publishing switches these on automatically wherever the steps require them.</span>
+                        </fieldset>
+                        <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save Settings</button></div>
                     </form>
                 </section>
             }
             else
             {
-                <section class="panel admin-form-panel">
-                    <div class="panel__header"><h2 class="panel__title">Version settings</h2></div>
+                <section class="panel admin-form-panel" aria-labelledby="settings-title">
+                    <div class="panel__header"><h2 class="panel__title" id="settings-title">Version settings</h2></div>
                     <dl class="facts-panel">
                         <div class="facts-row"><dt>Name</dt><dd>@v.Name</dd></div>
+                        @if (!string.IsNullOrEmpty(v.Description))
+                        {
+                            <div class="facts-row"><dt>Description</dt><dd>@v.Description</dd></div>
+                        }
                         <div class="facts-row"><dt>Pending Customer</dt><dd>@(v.AllowsPendingCustomer ? "Available" : "Not available")</dd></div>
                         <div class="facts-row"><dt>Pending Internal</dt><dd>@(v.AllowsPendingInternal ? "Available" : "Not available")</dd></div>
                         <div class="facts-row"><dt>Approval stage</dt><dd>@(v.RequiresApproval ? "Yes" : "No")</dd></div>
                         <div class="facts-row"><dt>Created</dt><dd>@v.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy") by @(v.CreatedByName ?? "System")</dd></div>
+                        @if (v.PublishedAtUtc is { } pubAt)
+                        {
+                            <div class="facts-row"><dt>Published</dt><dd>@pubAt.ToLocalTime().ToString("MMM d, yyyy") by @(v.PublishedByName ?? "System")</dd></div>
+                        }
                     </dl>
                 </section>
             }
 
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Step types</h2></div>
+            <section class="panel admin-form-panel" aria-labelledby="kinds-title">
+                <div class="panel__header"><h2 class="panel__title" id="kinds-title">Step types</h2></div>
                 <dl class="facts-panel facts-panel--compact">
                     @foreach (var k in Model.Catalog.StepKinds)
                     {
-                        <div class="facts-row"><dt>@k.Label</dt><dd class="text-secondary">@k.Description</dd></div>
+                        <div class="facts-row facts-row--stack">
+                            <dt><span class="badge badge-kind badge-kind-@k.Kind.ToString().ToLowerInvariant()">@k.Label</span></dt>
+                            <dd class="text-secondary">@k.Description</dd>
+                        </div>
                     }
                 </dl>
             </section>

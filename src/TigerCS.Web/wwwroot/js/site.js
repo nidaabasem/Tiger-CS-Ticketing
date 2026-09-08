@@ -34,12 +34,12 @@
     });
   });
 
-  // Filter forms: auto-submit on select change, so a mouse/keyboard user
-  // doesn't need to also press the Apply button. The button still works
+  // Filter forms: auto-submit on select/checkbox change, so a mouse/keyboard
+  // user doesn't need to also press the Apply button. The button still works
   // (and is the only way to apply filters) without this script. Applies to
-  // any select marked data-autosubmit (the ticket queue's filters, the
-  // customer workspace's unit filter).
-  document.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
+  // any select or checkbox marked data-autosubmit (the ticket queue's
+  // filters, the customer workspace's unit filter, the admin list toolbars).
+  document.querySelectorAll("select[data-autosubmit], input[type=checkbox][data-autosubmit]").forEach(function (el) {
     el.addEventListener("change", function () {
       if (el.form) {
         el.form.requestSubmit();

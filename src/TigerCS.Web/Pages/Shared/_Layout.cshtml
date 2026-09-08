@@ -10,6 +10,10 @@
 <body>
     @await Html.PartialAsync("_Header")
     @await Html.PartialAsync("_Nav")
+    @if ((ViewData["ActiveNav"] as string) == "admin")
+    {
+        @await Html.PartialAsync("_AdminSubNav")
+    }
 
     <main>
         @RenderBody()

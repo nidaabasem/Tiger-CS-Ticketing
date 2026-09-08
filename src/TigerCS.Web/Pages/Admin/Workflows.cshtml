@@ -3,106 +3,153 @@
 @{
     ViewData["Title"] = "Workflows";
     ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "workflows";
     Layout = "_Layout";
+    var activeCount = Model.Workflows.Count(w => w.IsActive);
 }
 
-<div class="page">
+<div class="page admin-page">
     @await Html.PartialAsync("_AdminBreadcrumb", ("Workflows", "/Admin/Workflows", (string?)null))
     <div class="page-header">
         <div>
             <h1 class="page-title">Workflows</h1>
             <p class="page-subtitle">Each workflow is versioned. Only a Draft can be edited; a published version is read-only and existing tickets keep the version they started on.</p>
         </div>
+        <div class="page-header__actions">
+            <a class="btn btn-gold" href="#create-workflow">@await Html.PartialAsync("_AdminIcon", "plus") Create Workflow</a>
+        </div>
     </div>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
     <div class="admin-grid admin-grid--list-form">
-        <div class="panel">
-            <div class="panel__header">
-                <h2 class="panel__title">All workflows</h2>
-                <a class="btn btn-sm" href="/Admin/Workflows?includeInactive=@(Model.IncludeInactive ? "false" : "true")">@(Model.IncludeInactive ? "Hide inactive" : "Show inactive")</a>
-            </div>
-            @if (Model.LoadError is not null)
-            {
-                <div class="error-state"><p>@Model.LoadError</p></div>
-            }
-            else if (Model.Workflows.Count == 0)
-            {
-                <div class="empty-state"><p>No workflows yet. Create the first one on the right.</p></div>
-            }
-            else
-            {
-                <div class="table-scroll">
-                    <table class="data-table">
-                        <thead><tr><th>Workflow</th><th>Active version</th><th>Draft</th><th>Versions</th><th>Request types</th><th>Tickets</th><th>Status</th><th></th></tr></thead>
-                        <tbody>
-                            @foreach (var w in Model.Workflows)
-                            {
-                                <tr>
-                                    <td>
-                                        <a class="ticket-id-link" href="/Admin/Workflows/@w.WorkflowId">@w.Name</a>
-                                        @if (!string.IsNullOrEmpty(w.Description))
-                                        {
-                                            <div class="text-secondary">@w.Description</div>
-                                        }
-                                    </td>
-                                    <td>
-                                        @if (w.ActiveVersionNumber is { } av)
-                                        {
-                                            <a class="badge badge-version-published" href="/Admin/Workflows/Versions/@w.ActiveVersionId">V@(av) Active</a>
-                                        }
-                                        else
-                                        {
-                                            <span class="text-secondary">None</span>
-                                        }
-                                    </td>
-                                    <td>
-                                        @if (w.DraftVersionNumber is { } dv)
-                                        {
-                                            <a class="badge badge-version-draft" href="/Admin/Workflows/Versions/@w.DraftVersionId">V@(dv) Draft</a>
-                                        }
-                                        else
-                                        {
-                                            <span class="text-secondary">—</span>
-                                        }
-                                    </td>
-                                    <td>@w.VersionCount</td>
-                                    <td>@w.RequestTypeCount</td>
-                                    <td>@w.TicketCount</td>
-                                    <td>
-                                        @if (w.IsActive)
-                                        {
-                                            <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
-                                        }
-                                    </td>
-                                    <td><a class="btn btn-sm" href="/Admin/Workflows/@w.WorkflowId">Versions</a></td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+        <div>
+            <form class="filter-bar" method="get" aria-label="Filter workflows">
+                <div class="field-group">
+                    <label class="field-label" for="includeInactive">Show</label>
+                    <select class="field-select" id="includeInactive" name="includeInactive" data-autosubmit>
+                        <option value="true" selected="@Model.IncludeInactive">All workflows</option>
+                        <option value="false" selected="@(!Model.IncludeInactive)">Active only</option>
+                    </select>
                 </div>
-            }
+                @if (Model.LoadError is null)
+                {
+                    <span class="filter-bar__count">@Model.Workflows.Count shown · @activeCount active</span>
+                }
+                <div class="filter-bar__submit"><button type="submit" class="btn btn-sm">Apply</button></div>
+            </form>
+
+            <div class="panel">
+                @if (Model.LoadError is not null)
+                {
+                    <div class="error-state">
+                        @await Html.PartialAsync("_AdminIcon", "warning")
+                        <p>@Model.LoadError</p>
+                    </div>
+                }
+                else if (Model.Workflows.Count == 0)
+                {
+                    <div class="empty-state">
+                        @await Html.PartialAsync("_AdminIcon", "workflows")
+                        <p class="empty-state__title">@(Model.IncludeInactive ? "No workflows yet" : "No active workflows")</p>
+                        <p>@(Model.IncludeInactive ? "Create the first workflow using the form. It starts as Draft V1 with the standard steps." : "Show all workflows to see inactive ones.")</p>
+                        @if (Model.IncludeInactive)
+                        {
+                            <a class="btn btn-sm btn-gold" href="#create-workflow">Create Workflow</a>
+                        }
+                        else
+                        {
+                            <a class="btn btn-sm" href="/Admin/Workflows">Show all workflows</a>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Workflow</th>
+                                    <th>Active version</th>
+                                    <th>Draft</th>
+                                    <th class="col-num">Versions</th>
+                                    <th class="col-num">Request types</th>
+                                    <th class="col-num">Tickets</th>
+                                    <th>Status</th>
+                                    <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var w in Model.Workflows)
+                                {
+                                    <tr class="@(w.IsActive ? "" : "is-inactive")">
+                                        <td class="cell-wrap cell-primary">
+                                            <a class="ticket-id-link" href="/Admin/Workflows/@w.WorkflowId">@w.Name</a>
+                                            @if (!string.IsNullOrEmpty(w.Description))
+                                            {
+                                                <div class="cell-sub">@w.Description</div>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (w.ActiveVersionNumber is { } av)
+                                            {
+                                                <a href="/Admin/Workflows/Versions/@w.ActiveVersionId" aria-label="View active version @av of @w.Name">@await Html.PartialAsync("_VersionBadge", (av, WorkflowVersionStatus.Published))</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge badge-warning">None published</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (w.DraftVersionNumber is { } dv)
+                                            {
+                                                <a href="/Admin/Workflows/Versions/@w.DraftVersionId" aria-label="Edit draft version @dv of @w.Name">@await Html.PartialAsync("_VersionBadge", (dv, WorkflowVersionStatus.Draft))</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-secondary">—</span>
+                                            }
+                                        </td>
+                                        <td class="col-num">@w.VersionCount</td>
+                                        <td class="col-num">@w.RequestTypeCount</td>
+                                        <td class="col-num">@w.TicketCount</td>
+                                        <td>@await Html.PartialAsync("_StatusBadge", w.IsActive)</td>
+                                        <td class="col-actions">
+                                            <span class="admin-actions">
+                                                @if (w.DraftVersionId is { } draftId)
+                                                {
+                                                    <a class="btn btn-sm" href="/Admin/Workflows/Versions/@draftId">Edit Draft</a>
+                                                }
+                                                <a class="btn btn-sm" href="/Admin/Workflows/@w.WorkflowId">Versions</a>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
         </div>
 
-        <section class="panel admin-form-panel">
-            <div class="panel__header"><h2 class="panel__title">Create workflow</h2></div>
-            <form method="post" asp-page-handler="Create" class="admin-form">
-                <div class="form-group">
-                    <label class="form-label" asp-for="Create.Name">Name *</label>
-                    <input class="form-control" asp-for="Create.Name" placeholder="e.g. Send Receipts Workflow" />
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="Create.Description">Description</label>
-                    <textarea class="form-control" asp-for="Create.Description" rows="3"></textarea>
-                </div>
-                <p class="field-hint">A Draft V1 with the standard steps (Start, Department Queue, Department Work, Resolve, Close) is created for you to adjust.</p>
-                <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Create Workflow</button></div>
-            </form>
-        </section>
+        <aside class="admin-side">
+            <section class="panel admin-form-panel" id="create-workflow" aria-labelledby="create-workflow-title">
+                <div class="panel__header"><h2 class="panel__title" id="create-workflow-title">Create workflow</h2></div>
+                <form method="post" asp-page-handler="Create" class="admin-form">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.Name">Name *</label>
+                        <input class="form-control" asp-for="Create.Name" required aria-required="true" placeholder="e.g. Send Receipts Workflow" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.Description">Description</label>
+                        <textarea class="form-control" asp-for="Create.Description" rows="3" placeholder="What this workflow is for, in one or two sentences."></textarea>
+                        <span class="field-hint">A Draft V1 with the standard steps (Start, Department Queue, Department Work, Resolve, Close) is created for you to adjust.</span>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-gold">Create Workflow</button>
+                    </div>
+                </form>
+            </section>
+        </aside>
     </div>
 </div>

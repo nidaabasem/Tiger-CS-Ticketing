@@ -3,121 +3,172 @@
 @{
     ViewData["Title"] = Model.IsNew ? "Add User" : "Manage User";
     ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "users";
     Layout = "_Layout";
     var u = Model.UserRecord;
 }
 
-<div class="page">
+<div class="page admin-page">
     @await Html.PartialAsync("_AdminBreadcrumb", ("Users", "/Admin/Users", Model.IsNew ? "Add User" : u?.DisplayName ?? "User"))
 
     @if (Model.IsNew)
     {
         <div class="page-header">
             <div>
+                <p class="page-eyebrow">Users</p>
                 <h1 class="page-title">Add User</h1>
                 <p class="page-subtitle">Creates the sign-in account and the employee profile. The initial password must satisfy the system's password policy.</p>
             </div>
+            <div class="page-header__actions">
+                <a class="btn" href="/Admin/Users">Cancel</a>
+            </div>
         </div>
 
-        @await Html.PartialAsync("_AdminMessages", Model)
+        <div class="admin-grid admin-grid--list-form">
+            <section class="panel admin-form-panel" aria-labelledby="new-user-title">
+                <div class="panel__header"><h2 class="panel__title" id="new-user-title">New account</h2></div>
+                <form method="post" asp-page-handler="Create" class="admin-form">
+                    @await Html.PartialAsync("_AdminMessages", Model)
 
-        <div class="panel admin-form-panel">
-            <form method="post" asp-page-handler="Create" class="admin-form">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.DisplayName">Display name *</label>
-                        <input class="form-control" asp-for="Create.DisplayName" />
+                    <fieldset class="form-section">
+                        <legend class="form-section__title">Identity</legend>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Create.DisplayName">Display name *</label>
+                                <input class="form-control" asp-for="Create.DisplayName" required aria-required="true" autocomplete="off" />
+                                <span class="field-hint">Shown on tickets, assignments and the audit trail.</span>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Create.UserName">User name *</label>
+                                <input class="form-control" asp-for="Create.UserName" required aria-required="true" autocomplete="off" />
+                                <span class="field-hint">Used to sign in. Cannot be changed later.</span>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Create.Email">E-mail</label>
+                                <input class="form-control" asp-for="Create.Email" type="email" autocomplete="off" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Create.PrimaryDepartmentId">Primary department</label>
+                                <select class="form-control" asp-for="Create.PrimaryDepartmentId">
+                                    <option value="">No department yet</option>
+                                    @foreach (var d in Model.ActiveDepartments)
+                                    {
+                                        <option value="@d.DepartmentId">@d.Name</option>
+                                    }
+                                </select>
+                                <span class="field-hint">More departments can be added after the account exists.</span>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="form-section">
+                        <legend class="form-section__title">Initial password</legend>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Create.InitialPassword">Initial password *</label>
+                                <input class="form-control" asp-for="Create.InitialPassword" type="password" required aria-required="true" autocomplete="new-password" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Create.ConfirmPassword">Confirm password *</label>
+                                <input class="form-control" asp-for="Create.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" />
+                                <span class="field-hint">Both entries must match.</span>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="form-section">
+                        <legend class="form-section__title">Access</legend>
+                        <fieldset class="form-group">
+                            <legend class="form-label">Roles</legend>
+                            <div class="checkbox-grid">
+                                @foreach (var role in Model.Roles)
+                                {
+                                    <label class="checkbox-field" title="@role.Description">
+                                        <input type="checkbox" name="Create.Roles" value="@role.RoleName" />
+                                        @role.RoleName
+                                    </label>
+                                }
+                            </div>
+                            <span class="field-hint">Roles are the fixed TigerCS role set. A user without a role can sign in but see nothing.</span>
+                        </fieldset>
+                        <label class="checkbox-field">
+                            <input type="checkbox" asp-for="Create.IsGeynessStaff" />
+                            Geyness staff
+                        </label>
+                    </fieldset>
+
+                    <div class="form-actions">
+                        <a class="btn" href="/Admin/Users">Cancel</a>
+                        <button type="submit" class="btn btn-gold">Create User</button>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.UserName">User name *</label>
-                        <input class="form-control" asp-for="Create.UserName" autocomplete="off" />
+                </form>
+            </section>
+
+            <aside class="admin-side">
+                <section class="panel panel--muted">
+                    <div class="panel__header"><h2 class="panel__title">Good to know</h2></div>
+                    <div class="panel__note panel__note--top">
+                        <p>Users are never deleted. Once an account appears in ticket history it can only be deactivated, so its name stays valid on past tickets.</p>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.Email">E-mail</label>
-                        <input class="form-control" asp-for="Create.Email" type="email" />
+                    <div class="panel__note">
+                        <p>Department membership and the primary department can be changed at any time from the user's page.</p>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.PrimaryDepartmentId">Primary department</label>
-                        <select class="form-control" asp-for="Create.PrimaryDepartmentId">
-                            <option value="">No department yet</option>
-                            @foreach (var d in Model.ActiveDepartments)
-                            {
-                                <option value="@d.DepartmentId">@d.Name</option>
-                            }
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.InitialPassword">Initial password *</label>
-                        <input class="form-control" asp-for="Create.InitialPassword" type="password" autocomplete="new-password" />
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.ConfirmPassword">Confirm password *</label>
-                        <input class="form-control" asp-for="Create.ConfirmPassword" type="password" autocomplete="new-password" />
-                    </div>
-                </div>
-                <fieldset class="form-group">
-                    <legend class="form-label">Roles</legend>
-                    <div class="checkbox-grid">
-                        @foreach (var role in Model.Roles)
-                        {
-                            <label class="checkbox-field" title="@role.Description">
-                                <input type="checkbox" name="Create.Roles" value="@role.RoleName" />
-                                @role.RoleName
-                            </label>
-                        }
-                    </div>
-                </fieldset>
-                <label class="checkbox-field">
-                    <input type="checkbox" asp-for="Create.IsGeynessStaff" />
-                    Geyness staff
-                </label>
-                <div class="action-form__footer">
-                    <a class="btn" href="/Admin/Users">Cancel</a>
-                    <button type="submit" class="btn btn-gold">Create User</button>
-                </div>
-            </form>
+                </section>
+            </aside>
         </div>
     }
     else if (u is null)
     {
-        <div class="panel"><div class="error-state"><p>@(Model.LoadError ?? "The user could not be loaded.")</p></div></div>
+        <div class="panel">
+            <div class="error-state">
+                @await Html.PartialAsync("_AdminIcon", "warning")
+                <p>@(Model.LoadError ?? "The user could not be loaded.")</p>
+            </div>
+        </div>
     }
     else
     {
         <div class="page-header">
             <div>
+                <p class="page-eyebrow">User</p>
                 <h1 class="page-title">@u.DisplayName</h1>
-                <p class="page-subtitle">
-                    <span class="text-secondary">@u.UserName</span>
-                    @if (u.IsActive)
+                <div class="page-title__meta">
+                    <span><strong>@u.UserName</strong></span>
+                    @if (!string.IsNullOrEmpty(u.Email))
                     {
-                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
+                        <span>@u.Email</span>
                     }
-                    else
+                    @await Html.PartialAsync("_StatusBadge", u.IsActive)
+                    @if (!u.IsActive && u.DeactivatedAtUtc is { } deactivated)
                     {
-                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive since @(u.DeactivatedAtUtc?.ToLocalTime().ToString("MMM d, yyyy"))</span>
+                        <span>since @deactivated.ToLocalTime().ToString("MMM d, yyyy")</span>
                     }
                     @if (u.IsLockedOut)
                     {
-                        <span class="badge badge-inactive">Locked out</span>
+                        <span class="badge badge-warning">Locked out</span>
                     }
-                </p>
+                    @if (u.IsGeynessStaff)
+                    {
+                        <span class="badge badge-neutral">Geyness staff</span>
+                    }
+                </div>
+            </div>
+            <div class="page-header__actions">
+                <a class="btn" href="/Admin/Users">Back to Users</a>
             </div>
         </div>
 
         @await Html.PartialAsync("_AdminMessages", Model)
 
         <div class="admin-grid">
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Profile</h2></div>
+            <section class="panel admin-form-panel" aria-labelledby="profile-title">
+                <div class="panel__header"><h2 class="panel__title" id="profile-title">Profile</h2></div>
                 <form method="post" asp-page-handler="Profile" asp-route-id="@u.EmployeeId" class="admin-form">
                     <div class="form-group">
                         <label class="form-label" asp-for="Profile.DisplayName">Display name *</label>
-                        <input class="form-control" asp-for="Profile.DisplayName" />
+                        <input class="form-control" asp-for="Profile.DisplayName" required aria-required="true" />
                     </div>
                     <div class="form-group">
                         <label class="form-label" asp-for="Profile.Email">E-mail</label>
@@ -127,12 +178,12 @@
                         <input type="checkbox" asp-for="Profile.IsGeynessStaff" />
                         Geyness staff
                     </label>
-                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save Profile</button></div>
+                    <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save Profile</button></div>
                 </form>
             </section>
 
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Roles</h2></div>
+            <section class="panel admin-form-panel" aria-labelledby="roles-title">
+                <div class="panel__header"><h2 class="panel__title" id="roles-title">Roles</h2></div>
                 <form method="post" asp-page-handler="Roles" asp-route-id="@u.EmployeeId" class="admin-form">
                     <div class="checkbox-grid">
                         @foreach (var role in Model.Roles)
@@ -144,29 +195,49 @@
                         }
                     </div>
                     <p class="field-hint">Roles are the fixed TigerCS role set. The last active System Administrator cannot lose the role.</p>
-                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Save Roles</button></div>
+                    <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save Roles</button></div>
                 </form>
             </section>
 
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Departments</h2></div>
+            <section class="panel admin-form-panel admin-grid__wide" aria-labelledby="departments-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="departments-title">Departments <span class="panel__count">@u.Departments.Count</span></h2>
+                </div>
                 @if (u.Departments.Count == 0)
                 {
-                    <div class="empty-state"><p>This user is not a member of any department.</p></div>
+                    <div class="empty-state">
+                        @await Html.PartialAsync("_AdminIcon", "departments")
+                        <p class="empty-state__title">Not a member of any department</p>
+                        <p>Add a department below so this user can receive assignments.</p>
+                    </div>
                 }
                 else
                 {
-                    <ul class="entry-list">
-                        @foreach (var d in u.Departments)
-                        {
-                            <li class="entry-row">
-                                <span>@d.Name @if (d.IsPrimary) { <span class="badge badge-neutral">Primary</span> }</span>
-                                <form method="post" asp-page-handler="RemoveDepartment" asp-route-id="@u.EmployeeId" asp-route-departmentId="@d.DepartmentId" data-confirm="Remove @u.DisplayName from @d.Name?">
-                                    <button type="submit" class="btn btn-sm btn-critical">Remove</button>
-                                </form>
-                            </li>
-                        }
-                    </ul>
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Department</th>
+                                    <th>Membership</th>
+                                    <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var d in u.Departments.OrderByDescending(d => d.IsPrimary))
+                                {
+                                    <tr>
+                                        <td class="cell-primary"><a class="ticket-id-link" href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
+                                        <td>@if (d.IsPrimary) { <span class="badge badge-version-published">Primary</span> } else { <span class="badge badge-neutral">Additional</span> }</td>
+                                        <td class="col-actions">
+                                            <form method="post" asp-page-handler="RemoveDepartment" asp-route-id="@u.EmployeeId" asp-route-departmentId="@d.DepartmentId" data-confirm="Remove @u.DisplayName from @d.Name?">
+                                                <button type="submit" class="btn btn-sm btn-critical">Remove</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
                 }
                 <form method="post" asp-page-handler="AddDepartment" asp-route-id="@u.EmployeeId" class="admin-form admin-form--inline">
                     <div class="form-group">
@@ -186,30 +257,40 @@
                 </form>
                 @if (!u.IsActive)
                 {
-                    <p class="field-hint">Reactivate the user before changing department membership.</p>
+                    <p class="panel__note">Reactivate the user before changing department membership.</p>
                 }
             </section>
 
-            <section class="panel admin-form-panel">
-                <div class="panel__header"><h2 class="panel__title">Status</h2></div>
-                @if (u.HasHistory)
-                {
-                    <p class="field-hint">This user appears in ticket history (assignments, approvals or audit). They can be deactivated but never deleted, so that history stays valid.</p>
-                }
+            <section class="panel admin-form-panel @(u.IsActive ? "panel--danger" : "") admin-grid__wide" aria-labelledby="status-title">
+                <div class="panel__header"><h2 class="panel__title" id="status-title">@(u.IsActive ? "Deactivate user" : "Reactivate user")</h2></div>
+                <div class="panel__note panel__note--top">
+                    @if (u.IsActive)
+                    {
+                        <p>A deactivated user can no longer sign in or receive new assignments. Their ticket history is kept as-is.</p>
+                    }
+                    else
+                    {
+                        <p>Reactivating restores sign-in and makes the user available for assignments again.</p>
+                    }
+                    @if (u.HasHistory)
+                    {
+                        <p>This user appears in ticket history (assignments, approvals or audit), so the account can be deactivated but never deleted.</p>
+                    }
+                </div>
                 <form method="post" asp-page-handler="Activation" asp-route-id="@u.EmployeeId" class="admin-form"
                       data-confirm="@(u.IsActive ? $"Deactivate {u.DisplayName}? They will no longer be able to sign in or receive new assignments." : null)">
                     <input type="hidden" asp-for="Activation.IsActive" value="@(u.IsActive ? "false" : "true")" />
                     @if (u.IsActive)
                     {
                         <div class="form-group">
-                            <label class="form-label" asp-for="Activation.Reason">Reason (recorded in the audit trail)</label>
-                            <input class="form-control" asp-for="Activation.Reason" />
+                            <label class="form-label" asp-for="Activation.Reason">Reason</label>
+                            <input class="form-control" asp-for="Activation.Reason" placeholder="Optional — recorded in the audit trail" />
                         </div>
-                        <div class="action-form__footer"><button type="submit" class="btn btn-critical btn-sm">Deactivate User</button></div>
+                        <div class="form-actions"><button type="submit" class="btn btn-critical btn-sm">Deactivate User</button></div>
                     }
                     else
                     {
-                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reactivate User</button></div>
+                        <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Reactivate User</button></div>
                     }
                 </form>
             </section>

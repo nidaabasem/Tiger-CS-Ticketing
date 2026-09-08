@@ -3,22 +3,27 @@
 @{
     ViewData["Title"] = "Request Types";
     ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "requesttypes";
     Layout = "_Layout";
+    var hasFilter = Model.DepartmentId is not null || !Model.IncludeInactive;
+    var departmentName = Model.Departments.FirstOrDefault(d => d.DepartmentId == Model.DepartmentId)?.Name;
 }
 
-<div class="page">
+<div class="page admin-page">
     @await Html.PartialAsync("_AdminBreadcrumb", ("Request Types", "/Admin/RequestTypes", (string?)null))
     <div class="page-header">
         <div>
             <h1 class="page-title">Request Types</h1>
             <p class="page-subtitle">What each department handles: its workflow, assignment, approvals and SLA. Urgency is a ticket priority, never a second request type.</p>
         </div>
-        <a class="btn btn-gold" href="/Admin/RequestTypes/New">+ Add Request Type</a>
+        <div class="page-header__actions">
+            <a class="btn btn-gold" href="/Admin/RequestTypes/New">@await Html.PartialAsync("_AdminIcon", "plus") Add Request Type</a>
+        </div>
     </div>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
-    <form class="filter-bar" method="get">
+    <form class="filter-bar" method="get" aria-label="Filter request types">
         <div class="field-group">
             <label class="field-label" for="departmentId">Department</label>
             <select class="field-select" id="departmentId" name="departmentId" data-autosubmit>
@@ -29,60 +34,90 @@
                 }
             </select>
         </div>
-        <label class="checkbox-field">
-            <input type="checkbox" name="includeInactive" value="true" checked="@(Model.IncludeInactive ? "checked" : null)" />
-            Show inactive
-        </label>
-        <button type="submit" class="btn btn-sm filter-bar__submit">Apply</button>
+        <div class="field-group">
+            <label class="field-label" for="includeInactive">Show</label>
+            <select class="field-select" id="includeInactive" name="includeInactive" data-autosubmit>
+                <option value="true" selected="@Model.IncludeInactive">All request types</option>
+                <option value="false" selected="@(!Model.IncludeInactive)">Active only</option>
+            </select>
+        </div>
+        @if (Model.LoadError is null)
+        {
+            <span class="filter-bar__count">@(Model.RequestTypes.Count == 1 ? "1 request type" : $"{Model.RequestTypes.Count} request types")@(departmentName is null ? "" : $" in {departmentName}")</span>
+        }
+        <div class="filter-bar__submit">
+            @if (hasFilter)
+            {
+                <a class="btn btn-sm btn-ghost" href="/Admin/RequestTypes">Clear</a>
+            }
+            <button type="submit" class="btn btn-sm">Apply</button>
+        </div>
     </form>
 
     <div class="panel">
         @if (Model.LoadError is not null)
         {
-            <div class="error-state"><p>@Model.LoadError</p></div>
+            <div class="error-state">
+                @await Html.PartialAsync("_AdminIcon", "warning")
+                <p>@Model.LoadError</p>
+            </div>
         }
         else if (Model.RequestTypes.Count == 0)
         {
-            <div class="empty-state"><p>No request types match this filter.</p></div>
+            <div class="empty-state">
+                @await Html.PartialAsync("_AdminIcon", "request-types")
+                <p class="empty-state__title">@(hasFilter ? "No request types match this filter" : "No request types yet")</p>
+                <p>@(hasFilter ? "Try another department, or show inactive request types." : "Each department needs at least one request type before tickets can be routed to it.")</p>
+                @if (hasFilter)
+                {
+                    <a class="btn btn-sm" href="/Admin/RequestTypes">Clear filters</a>
+                }
+                else
+                {
+                    <a class="btn btn-sm btn-gold" href="/Admin/RequestTypes/New">Add Request Type</a>
+                }
+            </div>
         }
         else
         {
             <div class="table-scroll">
                 <table class="data-table">
                     <thead>
-                        <tr><th>Request type</th><th>Department</th><th>Workflow</th><th>Assignment</th><th>Default priority</th><th>Tickets</th><th>Status</th><th></th></tr>
+                        <tr>
+                            <th>Request type</th>
+                            <th>Department</th>
+                            <th>Workflow</th>
+                            <th>Assignment</th>
+                            <th>Default priority</th>
+                            <th class="col-num">Tickets</th>
+                            <th>Status</th>
+                            <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                        </tr>
                     </thead>
                     <tbody>
                         @foreach (var r in Model.RequestTypes)
                         {
-                            <tr>
-                                <td><a class="ticket-id-link" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a></td>
+                            <tr class="@(r.IsActive ? "" : "is-inactive")">
+                                <td class="cell-primary"><a class="ticket-id-link" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a></td>
                                 <td>@r.DepartmentName</td>
                                 <td>
-                                    @r.WorkflowName
-                                    @if (r.ActiveVersionNumber is { } v)
-                                    {
-                                        <span class="badge badge-version-published">V@(v) Active</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge badge-version-draft">No published version</span>
-                                    }
+                                    <div>@r.WorkflowName</div>
+                                    <div class="cell-sub">
+                                        @if (r.ActiveVersionNumber is { } v)
+                                        {
+                                            @await Html.PartialAsync("_VersionBadge", (v, WorkflowVersionStatus.Published))
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-warning">No published version</span>
+                                        }
+                                    </div>
                                 </td>
-                                <td>@r.AssignmentSummary</td>
+                                <td class="cell-wrap">@r.AssignmentSummary</td>
                                 <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(r.DefaultPriorityId)">@RequestTypesModel.PriorityLabel(r.DefaultPriorityId)</span></td>
-                                <td>@r.TicketCount</td>
-                                <td>
-                                    @if (r.IsActive)
-                                    {
-                                        <span class="badge badge-active"><span class="badge-dot"></span>Active</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge badge-inactive"><span class="badge-dot"></span>Inactive</span>
-                                    }
-                                </td>
-                                <td><a class="btn btn-sm" href="/Admin/RequestTypes/@r.RequestTypeId">Manage</a></td>
+                                <td class="col-num">@r.TicketCount</td>
+                                <td>@await Html.PartialAsync("_StatusBadge", r.IsActive)</td>
+                                <td class="col-actions"><a class="btn btn-sm" href="/Admin/RequestTypes/@r.RequestTypeId">Manage</a></td>
                             </tr>
                         }
                     </tbody>
