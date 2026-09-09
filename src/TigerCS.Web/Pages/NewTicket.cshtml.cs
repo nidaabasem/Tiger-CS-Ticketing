@@ -80,7 +80,8 @@ public sealed class NewTicketModel(
     CategoriesApiClient categoriesClient,
     TicketsApiClient ticketsClient,
     CustomerHistoryApiClient customerHistoryClient,
-    RequestTypesApiClient? requestTypesClient = null) : PageModel
+    RequestTypesApiClient? requestTypesClient = null,
+    ChannelsApiClient? channelsClient = null) : PageModel
 {
     public const string StepCustomer = "customer";
     public const string StepProperty = "property";
@@ -99,6 +100,29 @@ public sealed class NewTicketModel(
 
     public long? IntakeRecordId { get; private set; }
     public string? PhoneNumber { get; private set; }
+
+    /// <summary>
+    /// The channels Step 1 offers — the ACTIVE rows of the configured
+    /// channel catalogue (Admin → Configuration → Channels) from
+    /// <c>GET /api/channels</c>, already ordered by display order then name.
+    /// Never a hard-coded list: a channel an administrator deactivates
+    /// disappears from here (and only from here), a new one appears without
+    /// a release.
+    /// </summary>
+    public IReadOnlyList<ChannelDto> Channels { get; private set; } = [];
+
+    /// <summary>Set only when the Channels API call itself failed — distinct from "loaded successfully but empty".</summary>
+    public string? ChannelsErrorMessage { get; private set; }
+
+    /// <summary>
+    /// The channel the Search form currently names, resolved against the
+    /// loaded active channels by id (what the picker posts) or by code (what
+    /// older callers/tests post). Null when nothing valid is selected.
+    /// </summary>
+    public ChannelDto? SelectedChannel => ResolveChannel(Intake.ChannelId);
+
+    /// <summary>Whether the phone field is mandatory — the selected channel's own <c>RequiresPhone</c> configuration, never a channel-name comparison. Defaults to required until a channel is resolved.</summary>
+    public bool PhoneRequired => SelectedChannel?.RequiresPhone ?? true;
 
     /// <summary>The Step 1 customer selection token: "crm", "ext:{source}:{escaped id}", or "manual". Null until the agent picks (or falls back to manual entry).</summary>
     public string? CustomerKey { get; private set; }
@@ -386,9 +410,25 @@ public sealed class NewTicketModel(
         // would silently re-render an empty Step 1 for a perfectly valid
         // phone search. Validate only what this form actually submits, and
         // report the failure visibly — this step never fails silently.
-        if (string.IsNullOrWhiteSpace(Intake.ChannelId) || string.IsNullOrWhiteSpace(Intake.PhoneNumber))
+        //
+        // The channel is validated against CONFIGURATION: it must be one
+        // of the active channels the picker was built from, and its own
+        // RequiresPhone setting decides whether the phone is mandatory. The
+        // Api re-validates both server-side regardless of this check.
+        await LoadChannelsAsync(defaultSelection: false, cancellationToken);
+        var channel = SelectedChannel;
+        if (channel is null)
+        {
+            ErrorMessage = "Select a valid channel.";
+            ModelState.AddModelError("Intake.ChannelId", "Select a valid channel.");
+            Step = StepCustomer;
+            return Page();
+        }
+
+        if (channel.RequiresPhone && string.IsNullOrWhiteSpace(Intake.PhoneNumber))
         {
             ErrorMessage = "Enter a phone number to search.";
+            ModelState.AddModelError("Intake.PhoneNumber", "A phone number is required for this channel.");
             Step = StepCustomer;
             return Page();
         }
@@ -415,6 +455,8 @@ public sealed class NewTicketModel(
 
     private async Task LoadCustomerStepAsync(CancellationToken cancellationToken)
     {
+        await LoadChannelsAsync(defaultSelection: true, cancellationToken);
+
         // Customer Workspace carry-forward: "+ New Ticket" from a searched/
         // selected customer arrives with ?phoneNumber=… — the search field is
         // prefilled (still free-form and editable, value preserved exactly)
@@ -972,6 +1014,55 @@ public sealed class NewTicketModel(
         return Uri.UnescapeDataString(parts[index]);
     }
 
+    /// <summary>
+    /// Loads the active channel list for Step 1 and, when
+    /// <paramref name="defaultSelection"/> is set (rendering the form), defaults
+    /// the picker to the first configured channel if the form does not name
+    /// one yet — never on a POST, where a missing channel is a validation
+    /// failure. A failure leaves an empty list with a visible message — the
+    /// Search form is unusable without a channel, and says so rather than
+    /// silently offering nothing.
+    /// </summary>
+    private async Task LoadChannelsAsync(bool defaultSelection, CancellationToken cancellationToken)
+    {
+        if (channelsClient is null)
+        {
+            Channels = [];
+            ChannelsErrorMessage = "Unable to load the channel list. Please try again.";
+            return;
+        }
+
+        var result = await channelsClient.GetChannelsAsync(cancellationToken);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            ChannelsErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Unable to load the channel list. Please try again.");
+            Channels = [];
+            return;
+        }
+
+        Channels = result.Value;
+        if (defaultSelection && string.IsNullOrWhiteSpace(Intake.ChannelId) && Channels.Count > 0)
+        {
+            Intake.ChannelId = Channels[0].ChannelId.ToString();
+        }
+    }
+
+    private ChannelDto? ResolveChannel(string? channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+        {
+            return null;
+        }
+
+        var value = channelId.Trim();
+        if (byte.TryParse(value, out var id))
+        {
+            return Channels.FirstOrDefault(c => c.ChannelId == id);
+        }
+
+        return Channels.FirstOrDefault(c => string.Equals(c.Code, value, StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task LoadDepartmentsAsync(CancellationToken cancellationToken)
     {
         var result = await departmentsClient.GetDepartmentsAsync(cancellationToken);
@@ -1016,8 +1107,14 @@ public sealed class NewTicketModel(
 
     public sealed class IntakeInput
     {
+        /// <summary>
+        /// The selected channel — the numeric ChannelId the picker posts
+        /// (the Api also accepts the channel's stable code). No default:
+        /// the picker is built from, and defaults to, the configured
+        /// active channels; nothing about channels is hard-coded here.
+        /// </summary>
         [Required]
-        public string ChannelId { get; set; } = "Phone";
+        public string ChannelId { get; set; } = string.Empty;
 
         /// <summary>
         /// Free-form string, deliberately: a leading '+' (e.g.
@@ -1031,7 +1128,11 @@ public sealed class NewTicketModel(
         /// (PactCustomerHttpGateway.NormalizePactPhone strips the '+' for
         /// PACT requests); CRM receives the number exactly as entered.
         /// </summary>
-        [Required]
+        /// <para>
+        /// Not <c>[Required]</c>: whether a phone number is mandatory is
+        /// the selected channel's <c>RequiresPhone</c> configuration,
+        /// enforced in <see cref="OnPostIntakeAsync"/> and again by the Api.
+        /// </para>
         public string PhoneNumber { get; set; } = string.Empty;
     }
 

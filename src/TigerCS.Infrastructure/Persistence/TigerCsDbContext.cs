@@ -64,6 +64,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<Category> Categories => Set<Category>();
 
+    public DbSet<Channel> Channels => Set<Channel>();
+
     public DbSet<IntakeRecord> IntakeRecords => Set<IntakeRecord>();
 
     public DbSet<DepartmentCustomerLookupSource> DepartmentCustomerLookupSources => Set<DepartmentCustomerLookupSource>();
@@ -143,6 +145,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
         builder.ApplyConfiguration(new PriorityConfiguration());
         builder.ApplyConfiguration(new CategoryConfiguration());
+        builder.ApplyConfiguration(new ChannelConfiguration());
         builder.ApplyConfiguration(new IntakeRecordConfiguration());
         builder.ApplyConfiguration(new DepartmentCustomerLookupSourceConfiguration());
         builder.ApplyConfiguration(new TicketConfiguration());

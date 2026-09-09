@@ -14,7 +14,8 @@ public sealed class IndexModel(AdminApiClient adminApi) : AdminPageModel
         var departments = adminApi.GetDepartmentsAsync(includeInactive: false, cancellationToken);
         var requestTypes = adminApi.GetRequestTypesAsync(null, includeInactive: false, cancellationToken);
         var workflows = adminApi.GetWorkflowsAsync(includeInactive: false, cancellationToken);
-        await Task.WhenAll(users, departments, requestTypes, workflows);
+        var channels = adminApi.GetChannelsAsync(includeInactive: false, cancellationToken);
+        await Task.WhenAll(users, departments, requestTypes, workflows, channels);
 
         Cards =
         [
@@ -25,7 +26,9 @@ public sealed class IndexModel(AdminApiClient adminApi) : AdminPageModel
             new("Request Types", "What each department handles, how it is assigned, what approvals and SLAs apply.", "/Admin/RequestTypes",
                 requestTypes.Result.IsSuccess ? requestTypes.Result.Value?.Count : null, "active request types", "request-types"),
             new("Workflows", "The versioned step sequences request types follow — Draft, Active, Historical.", "/Admin/Workflows",
-                workflows.Result.IsSuccess ? workflows.Result.Value?.Count : null, "active workflows", "workflows")
+                workflows.Result.IsSuccess ? workflows.Result.Value?.Count : null, "active workflows", "workflows"),
+            new("Channels", "How customer interactions enter the system — which channels Create Ticket offers, and which require a phone number.", "/Admin/Channels",
+                channels.Result.IsSuccess ? channels.Result.Value?.Count : null, "active channels", "channels")
         ];
     }
 }

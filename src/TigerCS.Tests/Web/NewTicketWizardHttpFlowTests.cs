@@ -76,10 +76,30 @@ public sealed class NewTicketWizardHttpFlowTests
             });
         });
 
-    /// <summary>The Api responses the happy-path search needs: intake creation, the department-aware lookup (Crm participates), the CRM Buyer match, and its bounded history.</summary>
+    /// <summary>GET /api/channels as the configured catalogue answers it — the nine approved active channels, in display order.</summary>
+    private static HttpResponseMessage ChannelsResponse() =>
+        FakeApiHandler.JsonResponse(HttpStatusCode.OK, new ChannelDto[]
+        {
+            new(1, "Phone", "PHONE", true, true, true, 1),
+            new(6, "WhatsApp", "WHATSAPP", true, true, true, 2),
+            new(7, "Live Chat", "LIVE_CHAT", true, true, true, 3),
+            new(4, "Social Media Direct Message", "SOCIAL_DM", true, true, true, 4),
+            new(8, "Website", "WEBSITE", true, false, true, 5),
+            new(5, "Walk in / Kiosk", "WALK_IN_KIOSK", false, false, true, 6),
+            new(9, "Mobile App (Customer Portal)", "MOBILE_APP", true, false, true, 7),
+            new(10, "Instagram", "INSTAGRAM", true, true, true, 8),
+            new(11, "Facebook", "FACEBOOK", true, true, true, 9)
+        });
+
+    /// <summary>The Api responses the happy-path search needs: the channel catalogue, intake creation, the department-aware lookup (Crm participates), the CRM Buyer match, and its bounded history.</summary>
     private static FakeApiHandler CrmFoundApi() => new((request, _) =>
     {
         var path = request.RequestUri!.AbsolutePath;
+
+        if (request.Method == HttpMethod.Get && path == "/api/channels")
+        {
+            return ChannelsResponse();
+        }
 
         if (request.Method == HttpMethod.Post && path == "/api/intake-records")
         {
@@ -184,6 +204,11 @@ public sealed class NewTicketWizardHttpFlowTests
         var api = new FakeApiHandler((request, _) =>
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Get && path == "/api/channels")
+            {
+                return ChannelsResponse();
+            }
+
             if (request.Method == HttpMethod.Post && path == "/api/intake-records")
             {
                 return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new IntakeRecordResponseDto(

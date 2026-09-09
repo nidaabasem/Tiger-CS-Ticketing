@@ -7,10 +7,23 @@ public class IntakeRecordTests
     private const string Phone = "+971500000001";
 
     [Fact]
-    public void Constructor_BlankPhoneNumber_Throws()
+    public void Constructor_BlankPhoneNumber_StoresEmpty_PhoneRequirementIsChannelConfiguration()
+    {
+        // Channel Management: whether a phone is REQUIRED is the selected
+        // channel's RequiresPhone setting, enforced by IntakeRecordAppService
+        // against configuration — the entity itself accepts a phone-less
+        // intake (a Face to Face / Kiosk walk-in) and stores it as empty.
+        var record = new IntakeRecord(WellKnownChannels.FaceToFaceKiosk, "", null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+
+        Assert.Equal(string.Empty, record.PhoneNumber);
+        Assert.Equal(WellKnownChannels.FaceToFaceKiosk, record.ChannelId);
+    }
+
+    [Fact]
+    public void Constructor_ZeroChannelId_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            new IntakeRecord(Channel.Phone, "", null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
+            new IntakeRecord(0, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow));
     }
 
     // ---- RawUnitNumberEntered is optional historical/raw information only,
@@ -24,7 +37,7 @@ public class IntakeRecordTests
     {
         // Exactly what the current New Ticket wizard sends for every intake:
         // no unit classification and no raw number known yet.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         Assert.False(record.IsUnitRelated);
         Assert.Null(record.RawUnitNumberEntered);
@@ -36,7 +49,7 @@ public class IntakeRecordTests
         // The old constructor invariant required a raw number here — no
         // longer: a caller may classify an interaction unit-related without
         // ever having a raw caller-given number to go with it.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         Assert.True(record.IsUnitRelated);
         Assert.Null(record.RawUnitNumberEntered);
@@ -48,7 +61,7 @@ public class IntakeRecordTests
         // The old constructor invariant forbade this combination — no
         // longer: RawUnitNumberEntered is a historical note, not evidence
         // that forces classification either way.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         Assert.False(record.IsUnitRelated);
         Assert.Equal("1204", record.RawUnitNumberEntered);
@@ -57,7 +70,7 @@ public class IntakeRecordTests
     [Fact]
     public void Constructor_NonUnitRelated_PreservesPhoneNumberAndStartsUnverifiedAndUnlinked()
     {
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         Assert.Equal(Phone, record.PhoneNumber);
         Assert.False(record.IsUnitRelated);
@@ -72,7 +85,7 @@ public class IntakeRecordTests
         // a ticket too — only its CrmVerificationStatus differs (Unverified,
         // never Verified/PendingCrmVerification, since it has nothing to
         // verify against the CRM).
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
 
@@ -86,7 +99,7 @@ public class IntakeRecordTests
         // Business-rule change: a customer-lookup match found before ticket
         // creation results in Verified; NotFound/Failed both still promote,
         // just with Unverified instead (see the test above).
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Verified, hasSelectedUnit: true);
 
@@ -96,7 +109,7 @@ public class IntakeRecordTests
     [Fact]
     public void LinkToTicket_AlreadyLinked_Throws()
     {
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
         record.LinkToTicket(1, CrmVerificationStatus.Verified, hasSelectedUnit: true);
 
         Assert.Throws<IntakeRecordAlreadyLinkedException>(() => record.LinkToTicket(2, CrmVerificationStatus.Verified, hasSelectedUnit: true));
@@ -116,7 +129,7 @@ public class IntakeRecordTests
         // the raw unit number ever was — so the record is reclassified, and
         // RawUnitNumberEntered is never backfilled to justify it: the
         // authoritative Unit lives on the Ticket, not this raw string.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Verified, hasSelectedUnit: true);
 
@@ -130,7 +143,7 @@ public class IntakeRecordTests
         // No resolved Unit reference was ever attached to the Ticket — the
         // record must stay exactly what it was, not be classified unit-related
         // just because a Ticket happened to link.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
 
@@ -148,7 +161,7 @@ public class IntakeRecordTests
         // decoupling from CrmVerificationStatus: the outcome here would have
         // upgraded the record under the old "resultingStatus == Verified"
         // rule this correction replaced.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Verified, hasSelectedUnit: false);
 
@@ -164,7 +177,7 @@ public class IntakeRecordTests
         // lookup source (CRM/PACT/Tasleeh) produced the reference. A real
         // Unit reference is a real Unit reference, whatever status label
         // rides along with it.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Unverified, hasSelectedUnit: true);
 
@@ -177,7 +190,7 @@ public class IntakeRecordTests
         // Upgrade-only: a record already unit-related at creation (e.g. a
         // future caller outside the current wizard) must never be pulled
         // back to false by this Ticket's own (unrelated) outcome.
-        var record = new IntakeRecord(Channel.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+        var record = new IntakeRecord(WellKnownChannels.Phone, Phone, null, isUnitRelated: true, rawUnitNumberEntered: "1204", priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
 
         record.LinkToTicket(1, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
 

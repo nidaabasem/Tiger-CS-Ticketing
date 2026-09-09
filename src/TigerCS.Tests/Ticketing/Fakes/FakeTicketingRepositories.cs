@@ -3,6 +3,7 @@ using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Infrastructure.Modules.Ticketing.Seed;
 
 namespace TigerCS.Tests.Ticketing.Fakes;
 
@@ -43,6 +44,81 @@ public sealed class FakePriorityRepository : IPriorityRepository
 
     public Task<Priority?> GetByIdAsync(byte priorityId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_priorities.GetValueOrDefault(priorityId));
+}
+
+/// <summary>
+/// In-memory <see cref="IChannelRepository"/>. Starts EMPTY — a test seeds
+/// exactly the channels it needs (<see cref="SeedWellKnown"/> adds the
+/// approved production reference rows under their <see cref="WellKnownChannels"/>
+/// ids), so no test passes on a channel list it never declared.
+/// </summary>
+public sealed class FakeChannelRepository : IChannelRepository
+{
+    private readonly Dictionary<byte, Channel> _channels = [];
+    private byte _nextId = 1;
+
+    /// <summary>Test assertion helper — every channel, in insertion order.</summary>
+    public IReadOnlyList<Channel> All => _channels.Values.ToList();
+
+    public Dictionary<byte, int> References { get; } = [];
+
+    /// <summary>The approved production reference channels under their fixed ids — mirrors ChannelReferenceData (ids 2 and 3 are inactive legacy rows).</summary>
+    public FakeChannelRepository SeedWellKnown()
+    {
+        foreach (var channel in ChannelReferenceData.Channels())
+        {
+            Add(channel);
+        }
+
+        return this;
+    }
+
+    public Channel Add(Channel channel)
+    {
+        if (channel.ChannelId == 0)
+        {
+            while (_channels.ContainsKey(_nextId))
+            {
+                _nextId++;
+            }
+
+            typeof(Channel).GetProperty(nameof(Channel.ChannelId))!.SetValue(channel, _nextId++);
+        }
+
+        _channels[channel.ChannelId] = channel;
+        return channel;
+    }
+
+    public Channel AddChannel(string name, string code, bool requiresPhone = true, bool isGenesysEnabled = false, int displayOrder = 0, bool isActive = true) =>
+        Add(new Channel(name, code, requiresPhone, isGenesysEnabled, displayOrder, isActive));
+
+    public Task<Channel?> GetByIdAsync(byte channelId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_channels.GetValueOrDefault(channelId));
+
+    public Task<Channel?> GetByCodeAsync(string code, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_channels.Values.FirstOrDefault(c => string.Equals(c.Code, code.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    public Task<IReadOnlyList<Channel>> ListAsync(bool activeOnly, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Channel>>(
+            _channels.Values
+                .Where(c => !activeOnly || c.IsActive)
+                .OrderBy(c => c.DisplayOrder)
+                .ThenBy(c => c.Name, StringComparer.Ordinal)
+                .ToList());
+
+    public Task AddAsync(Channel channel, CancellationToken cancellationToken = default)
+    {
+        Add(channel);
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> CodeExistsAsync(string code, byte? excludeChannelId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_channels.Values.Any(c =>
+            string.Equals(c.Code, code.Trim(), StringComparison.OrdinalIgnoreCase)
+            && (excludeChannelId is null || c.ChannelId != excludeChannelId)));
+
+    public Task<int> CountReferencesAsync(byte channelId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(References.GetValueOrDefault(channelId));
 }
 
 public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository

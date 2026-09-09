@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc;
 using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
-using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
 namespace TigerCS.Api.Controllers;
@@ -36,8 +35,9 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
     /// <param name="request">The channel, the phone number, an optional department (narrows customer lookup to its configured source(s)), whether the request concerns a unit, and the raw unit number if the caller happened to give one.</param>
     /// <response code="201">The intake record, with its initial crmVerificationStatus.</response>
     /// <response code="400">
-    /// channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
-    /// SocialMediaDirectMessage, FaceToFaceKiosk; or phoneNumber was blank.
+    /// channelId did not resolve to a configured channel (by id or code), or
+    /// resolved to a deactivated channel; or the channel's configuration
+    /// requires a phone number and phoneNumber was blank.
     /// </response>
     /// <response code="404">departmentId was supplied but does not reference a real department.</response>
     [HttpPost]
@@ -46,16 +46,9 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Create([FromBody] CreateIntakeRecordRequestDto request, CancellationToken cancellationToken)
     {
-        if (!Enum.TryParse<Channel>(request.ChannelId, ignoreCase: false, out _))
+        if (string.IsNullOrWhiteSpace(request.ChannelId))
         {
-            ModelState.AddModelError(
-                nameof(request.ChannelId), $"ChannelId must be one of: {string.Join(", ", Enum.GetNames<Channel>())}.");
-            return ValidationProblem(ModelState);
-        }
-
-        if (string.IsNullOrWhiteSpace(request.PhoneNumber))
-        {
-            ModelState.AddModelError(nameof(request.PhoneNumber), "Required.");
+            ModelState.AddModelError(nameof(request.ChannelId), "Required.");
             return ValidationProblem(ModelState);
         }
 
@@ -69,12 +62,24 @@ public class IntakeRecordsController(IntakeRecordAppService intakeRecordAppServi
         return result.Outcome switch
         {
             IntakeRecordOutcome.Success => Created($"/api/intake-records/{result.Response!.IntakeRecordId}", result.Response),
+            IntakeRecordOutcome.ChannelNotFound => ValidationFailure(
+                nameof(request.ChannelId), "ChannelId does not reference a configured channel."),
+            IntakeRecordOutcome.ChannelInactive => ValidationFailure(
+                nameof(request.ChannelId), "The selected channel is inactive and cannot be used for a new ticket."),
+            IntakeRecordOutcome.PhoneNumberRequired => ValidationFailure(
+                nameof(request.PhoneNumber), "A phone number is required for the selected channel."),
             IntakeRecordOutcome.DepartmentNotFound => Problem(
                 type: "https://tigercs.internal/problems/department-not-found",
                 title: "Department not found",
                 statusCode: StatusCodes.Status404NotFound),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
         };
+    }
+
+    private IActionResult ValidationFailure(string field, string message)
+    {
+        ModelState.AddModelError(field, message);
+        return ValidationProblem(ModelState);
     }
 
     private Guid? GetEmployeeId()

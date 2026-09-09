@@ -250,4 +250,48 @@ public class TicketQueryAppServiceTests
         Assert.False(result.Response!.IsReopenEligible);
         Assert.Null(result.Response.ResolvedAtUtc);
     }
+
+    // ---- Channel Management: Ticket Details names the ORIGINATING channel,
+    // even after an administrator deactivates it. ----
+
+    [Fact]
+    public async Task GetDetailAsync_ShowsTheOriginatingChannelName_EvenWhenTheChannelIsNowInactive()
+    {
+        var tickets = new FakeTicketRepository();
+        var interactions = new FakeTicketInteractionRepository();
+        var channels = new FakeChannelRepository().SeedWellKnown();
+        var service = new TicketQueryAppService(
+            tickets, new FakeUserDepartmentAssignmentRepository(), new FakeTicketResolutionRepository(), ReopenPolicy.Default, TimeProvider.System,
+            interactionRepository: interactions, channelRepository: channels);
+
+        var ticket = await SeedTicketAsync(tickets, 2);
+        await interactions.AddAsync(TicketInteraction.CreateLocal(ticket.TicketId, WellKnownChannels.Phone, "+971500000001", DateTime.UtcNow, isOriginatingInteraction: true));
+        await interactions.AddAsync(TicketInteraction.CreateLocal(ticket.TicketId, WellKnownChannels.WhatsAppOrLiveChat, "+971500000001", DateTime.UtcNow.AddHours(1)));
+
+        var before = await service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+        Assert.Equal(WellKnownChannels.Phone, before.Response!.OriginatingChannelId);
+        Assert.Equal("Phone", before.Response.OriginatingChannelName);
+
+        // Admin retires Phone: the historical ticket still says Phone.
+        (await channels.GetByIdAsync(WellKnownChannels.Phone))!.Deactivate();
+
+        var after = await service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+        Assert.Equal("Phone", after.Response!.OriginatingChannelName);
+        Assert.DoesNotContain(await channels.ListAsync(activeOnly: true), c => c.ChannelId == WellKnownChannels.Phone);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_TicketPredatingTheInteractionModel_HasNoOriginatingChannel()
+    {
+        var tickets = new FakeTicketRepository();
+        var service = new TicketQueryAppService(
+            tickets, new FakeUserDepartmentAssignmentRepository(), new FakeTicketResolutionRepository(), ReopenPolicy.Default, TimeProvider.System,
+            interactionRepository: new FakeTicketInteractionRepository(), channelRepository: new FakeChannelRepository().SeedWellKnown());
+        var ticket = await SeedTicketAsync(tickets, 2);
+
+        var detail = await service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.Null(detail.Response!.OriginatingChannelId);
+        Assert.Null(detail.Response.OriginatingChannelName);
+    }
 }

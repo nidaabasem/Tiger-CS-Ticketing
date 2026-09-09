@@ -60,6 +60,27 @@
     }
   }, true);
 
+  // New Ticket Step 1: the phone field's "required" state follows the
+  // selected channel's own configuration (each option carries the
+  // channel's RequiresPhone flag from Administration → Channels). Without
+  // JS the server-rendered state stands, and the PageModel and Api enforce
+  // the same rule regardless of what the browser did.
+  document.querySelectorAll("form[data-channel-form]").forEach(function (form) {
+    var select = form.querySelector("[data-channel-select]");
+    var phone = form.querySelector("[data-phone-input]");
+    var hint = form.querySelector("[data-phone-optional-hint]");
+    if (!select || !phone) return;
+    var apply = function () {
+      var option = select.options[select.selectedIndex];
+      var requiresPhone = !option || option.getAttribute("data-requires-phone") !== "false";
+      phone.required = requiresPhone;
+      phone.setAttribute("aria-required", requiresPhone ? "true" : "false");
+      if (hint) hint.hidden = requiresPhone;
+    };
+    select.addEventListener("change", apply);
+    apply();
+  });
+
   // Prevent duplicate submission: disable a form's submit button(s) the
   // moment it submits, so a double-click can't fire the request twice.
   // Without JS the form still submits normally on every click.

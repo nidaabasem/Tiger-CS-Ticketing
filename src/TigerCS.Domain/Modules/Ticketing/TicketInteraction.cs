@@ -53,7 +53,8 @@ public class TicketInteraction
     public bool IsOriginatingInteraction { get; private set; }
 
     public InteractionContextSource Source { get; private set; }
-    public Channel ChannelId { get; private set; }
+    /// <summary>The <see cref="Channel"/> this interaction happened on. On the originating interaction, this is the ticket's originating channel.</summary>
+    public byte ChannelId { get; private set; }
 
     /// <summary>The customer's phone number for this interaction — the identity input for customer verification, preserved per interaction for reporting.</summary>
     public string CustomerPhone { get; private set; } = string.Empty;
@@ -80,25 +81,29 @@ public class TicketInteraction
 
     private TicketInteraction(
         long ticketId, bool isOriginatingInteraction, InteractionContextSource source,
-        Channel channelId, string customerPhone, DateTime createdAtUtc)
+        byte channelId, string? customerPhone, DateTime createdAtUtc)
     {
-        if (string.IsNullOrWhiteSpace(customerPhone))
+        if (channelId == 0)
         {
-            throw new ArgumentException(
-                "CustomerPhone is required — it is the identity input customer verification searches with.", nameof(customerPhone));
+            throw new ArgumentException("ChannelId is required.", nameof(channelId));
         }
+
+        // The phone is the identity input customer verification searches
+        // with, but whether one MUST exist is the channel's RequiresPhone
+        // configuration (enforced at intake) — a Face-to-Face / kiosk
+        // interaction may legitimately carry none, stored as empty.
 
         TicketId = ticketId;
         IsOriginatingInteraction = isOriginatingInteraction;
         Source = source;
         ChannelId = channelId;
-        CustomerPhone = customerPhone;
+        CustomerPhone = customerPhone ?? string.Empty;
         CreatedAtUtc = createdAtUtc;
     }
 
     /// <summary>A Face-to-Face / locally-created interaction: channel and phone the agent entered; every Genesys field stays null, by construction.</summary>
     public static TicketInteraction CreateLocal(
-        long ticketId, Channel channelId, string customerPhone, DateTime createdAtUtc, bool isOriginatingInteraction = false) =>
+        long ticketId, byte channelId, string? customerPhone, DateTime createdAtUtc, bool isOriginatingInteraction = false) =>
         new(ticketId, isOriginatingInteraction, InteractionContextSource.Ticketing, channelId, customerPhone, createdAtUtc);
 
     /// <summary>
@@ -108,8 +113,8 @@ public class TicketInteraction
     /// </summary>
     public static TicketInteraction CreateFromGenesys(
         long ticketId,
-        Channel channelId,
-        string customerPhone,
+        byte channelId,
+        string? customerPhone,
         string genesysConversationId,
         string? calledNumber,
         string? genesysQueueId,

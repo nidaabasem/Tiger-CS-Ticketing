@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Infrastructure.Persistence;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -51,6 +55,105 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
             "/api/intake-records", new CreateIntakeRecordRequestDto("Phone", PhoneWithCrmMatch, null, true, "1204", null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ---- Channel Management: the intake validates the channel against
+    // configuration, and the ticket keeps the channel it entered on. ----
+
+    [Fact]
+    public async Task CreateIntakeRecord_ChannelIsValidatedAgainstConfiguration_ByIdOrCode()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        // Unknown id / unknown code → 400 validation problem on channelId.
+        var unknownId = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("99", PhoneWithNoMatch, null, false, null, null));
+        Assert.Equal(HttpStatusCode.BadRequest, unknownId.StatusCode);
+        Assert.Contains("ChannelId", await unknownId.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("NoSuchChannel", PhoneWithNoMatch, null, false, null, null))).StatusCode);
+
+        // Numeric id and (case-insensitive) code both resolve to the same seeded channel.
+        var byId = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("6", PhoneWithNoMatch, null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, byId.StatusCode);
+        var byIdIntake = await byId.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.Equal("WHATSAPP", byIdIntake!.ChannelId);
+        Assert.Equal("WhatsApp", byIdIntake.ChannelName);
+
+        var byCode = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("whatsapp", PhoneWithNoMatch, null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, byCode.StatusCode);
+        Assert.Equal("WHATSAPP", (await byCode.Content.ReadFromJsonAsync<IntakeRecordResponseDto>())!.ChannelId);
+    }
+
+    [Fact]
+    public async Task CreateIntakeRecord_PhoneRequirement_FollowsTheChannelConfiguration()
+    {
+        var client = await CreateAuthenticatedClientAsync();
+
+        // Phone (RequiresPhone = true): a blank phone is a 400 on phoneNumber.
+        var blankOnPhone = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("Phone", "", null, false, null, null));
+        Assert.Equal(HttpStatusCode.BadRequest, blankOnPhone.StatusCode);
+        Assert.Contains("PhoneNumber", await blankOnPhone.Content.ReadAsStringAsync());
+
+        // Walk in / Kiosk (RequiresPhone = false): a blank phone is accepted and stored as empty.
+        var blankOnKiosk = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("WALK_IN_KIOSK", "", null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, blankOnKiosk.StatusCode);
+        var intake = await blankOnKiosk.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.Equal("WALK_IN_KIOSK", intake!.ChannelId);
+        Assert.Equal(string.Empty, intake.PhoneNumber);
+    }
+
+    [Fact]
+    public async Task CreatedTicket_PreservesItsOriginatingChannel_EvenAfterTheChannelIsDeactivated()
+    {
+        var agent = await CreateAuthenticatedClientAsync();
+        var admin = await CreateAuthenticatedClientAsync(Roles.SystemAdministrator);
+        await _factory.SeedPrioritiesAsync();
+        var departmentId = await _factory.CreateDepartmentAsync("Customer Service " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("Walk-in Query", departmentId);
+
+        // A channel of this test's own (so deactivating it disturbs no other test), phone optional.
+        var code = "KIOSK" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+        var channelResponse = await admin.PostAsJsonAsync("/api/admin/channels", new SaveChannelRequestDto("Lobby Kiosk " + code, code, false, false, 60));
+        Assert.Equal(HttpStatusCode.Created, channelResponse.StatusCode);
+        var channel = await channelResponse.Content.ReadFromJsonAsync<AdminChannelDto>();
+
+        var intakeResponse = await agent.PostAsJsonAsync("/api/intake-records",
+            new CreateIntakeRecordRequestDto(channel!.ChannelId.ToString(), "", null, false, null, null));
+        Assert.Equal(HttpStatusCode.Created, intakeResponse.StatusCode);
+        var intake = await intakeResponse.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
+        Assert.Equal(code, intake!.ChannelId);
+
+        var ticketResponse = await agent.PostAsJsonAsync("/api/tickets",
+            new CreateTicketRequestDto(intake.IntakeRecordId, null, null, categoryId, (byte)PriorityLevel.Low, "Walk-in question"));
+        Assert.Equal(HttpStatusCode.Created, ticketResponse.StatusCode);
+        var ticket = await ticketResponse.Content.ReadFromJsonAsync<TicketResponseDto>();
+
+        var detail = await (await agent.GetAsync($"/api/tickets/{ticket!.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(channel.ChannelId, detail!.OriginatingChannelId);
+        Assert.Equal("Lobby Kiosk " + code, detail.OriginatingChannelName);
+
+        // Exactly one originating interaction, on the intake's channel; the intake keeps its channel.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+            var interactions = await db.TicketInteractions.Where(i => i.TicketId == ticket.TicketId).ToListAsync();
+            var originating = Assert.Single(interactions, i => i.IsOriginatingInteraction);
+            Assert.Equal(channel.ChannelId, originating.ChannelId);
+            Assert.Equal(channel.ChannelId, (await db.IntakeRecords.SingleAsync(i => i.IntakeRecordId == intake.IntakeRecordId)).ChannelId);
+        }
+
+        // Admin deactivates the channel: gone from new-ticket selection, still named on the historical ticket.
+        var deactivated = await admin.PatchAsJsonAsync($"/api/admin/channels/{channel.ChannelId}/activation", new SetActiveRequestDto(false, "closed"));
+        Assert.Equal(HttpStatusCode.OK, deactivated.StatusCode);
+        Assert.DoesNotContain(await (await agent.GetAsync("/api/channels")).Content.ReadFromJsonAsync<List<ChannelDto>>() ?? [], c => c.ChannelId == channel.ChannelId);
+
+        var afterDeactivation = await (await agent.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Lobby Kiosk " + code, afterDeactivation!.OriginatingChannelName);
+
+        // And a NEW intake on the retired channel is refused.
+        var stale = await agent.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto(channel.ChannelId.ToString(), "", null, false, null, null));
+        Assert.Equal(HttpStatusCode.BadRequest, stale.StatusCode);
+        Assert.Contains("inactive", await stale.Content.ReadAsStringAsync());
     }
 
     [Fact]

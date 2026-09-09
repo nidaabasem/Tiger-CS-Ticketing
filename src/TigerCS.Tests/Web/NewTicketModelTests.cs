@@ -40,7 +40,8 @@ public sealed class NewTicketModelTests
         Func<HttpRequestMessage, string?, HttpResponseMessage>? categoriesResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? ticketsResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerHistoryResponder = null,
-        Func<HttpRequestMessage, string?, HttpResponseMessage>? customerLookupResponder = null)
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? customerLookupResponder = null,
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? channelsResponder = null)
     {
         var intakeHandler = new FakeApiHandler(intakeResponder ?? ((_, _) => throw new InvalidOperationException("Intake API not expected to be called.")));
         var crmBuyerLookupHandler = new FakeApiHandler(crmBuyerLookupResponder ?? ((_, _) => throw new InvalidOperationException("CRM Buyer Lookup API not expected to be called.")));
@@ -63,6 +64,12 @@ public sealed class NewTicketModelTests
                 CustomerLookupSourceResultDto.NotFound("Pact"),
                 CustomerLookupSourceResultDto.NotFound("Tasleeh")]))));
 
+        // Channel Management: the Step 1 channel list comes from
+        // GET /api/channels — the configured, active channels — so the
+        // default here is the seeded reference catalogue in its display
+        // order; a test about the picker itself supplies its own.
+        var channelsHandler = new FakeApiHandler(channelsResponder ?? ChannelsReturning(SeededChannels));
+
         var intakeClient = new IntakeRecordsApiClient(
             new HttpClient(intakeHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<IntakeRecordsApiClient>.Instance);
         var crmBuyerLookupClient = new CrmBuyerLookupApiClient(
@@ -78,9 +85,31 @@ public sealed class NewTicketModelTests
         var customerLookupClient = new CustomerLookupApiClient(
             new HttpClient(customerLookupHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CustomerLookupApiClient>.Instance);
 
-        var model = new NewTicketModel(intakeClient, customerLookupClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient);
+        var channelsClient = new ChannelsApiClient(
+            new HttpClient(channelsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<ChannelsApiClient>.Instance);
+
+        var model = new NewTicketModel(
+            intakeClient, customerLookupClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient,
+            channelsClient: channelsClient);
         return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler, customerLookupHandler);
     }
+
+    /// <summary>The nine approved active channels exactly as GET /api/channels returns them (active only, display order).</summary>
+    private static readonly ChannelDto[] SeededChannels =
+    [
+        new(1, "Phone", "PHONE", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 1),
+        new(6, "WhatsApp", "WHATSAPP", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 2),
+        new(7, "Live Chat", "LIVE_CHAT", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 3),
+        new(4, "Social Media Direct Message", "SOCIAL_DM", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 4),
+        new(8, "Website", "WEBSITE", RequiresPhone: true, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 5),
+        new(5, "Walk in / Kiosk", "WALK_IN_KIOSK", RequiresPhone: false, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 6),
+        new(9, "Mobile App (Customer Portal)", "MOBILE_APP", RequiresPhone: true, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 7),
+        new(10, "Instagram", "INSTAGRAM", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 8),
+        new(11, "Facebook", "FACEBOOK", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 9)
+    ];
+
+    private static Func<HttpRequestMessage, string?, HttpResponseMessage> ChannelsReturning(params ChannelDto[] channels) =>
+        (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, channels);
 
     /// <summary>OnGetAsync with the wizard's carried state as named optionals — the query-string shape, minus repetition.</summary>
     private static Task<IActionResult> GetAsync(
@@ -140,15 +169,23 @@ public sealed class NewTicketModelTests
     // ---- Step 1: the phone number is free-form and travels verbatim ----
 
     [Fact]
-    public void IntakeInput_PhoneNumber_IsRequired()
+    public void IntakeInput_PhoneNumber_IsNotAnnotatedRequired_TheChannelConfigurationDecides()
     {
-        var input = new NewTicketModel.IntakeInput { PhoneNumber = "" };
+        // Channel Management: whether the phone is mandatory is the selected
+        // channel's RequiresPhone setting (enforced by OnPostIntakeAsync and
+        // by the Api), so a blanket [Required] would wrongly block a
+        // phone-optional channel such as Face to Face / Kiosk. The channel
+        // itself stays required.
+        var input = new NewTicketModel.IntakeInput { ChannelId = "5", PhoneNumber = "" };
         var results = new List<ValidationResult>();
 
         var isValid = Validator.TryValidateObject(input, new ValidationContext(input), results, validateAllProperties: true);
 
-        Assert.False(isValid);
-        Assert.Contains(results, r => r.MemberNames.Contains(nameof(NewTicketModel.IntakeInput.PhoneNumber)));
+        Assert.True(isValid);
+        Assert.DoesNotContain(results, r => r.MemberNames.Contains(nameof(NewTicketModel.IntakeInput.PhoneNumber)));
+
+        var noChannel = new NewTicketModel.IntakeInput { ChannelId = "", PhoneNumber = "+971501234567" };
+        Assert.False(Validator.TryValidateObject(noChannel, new ValidationContext(noChannel), results, validateAllProperties: true));
     }
 
     [Theory]
@@ -176,7 +213,7 @@ public sealed class NewTicketModelTests
 
         Assert.Equal(typeof(string), property.PropertyType);
         var attributeNames = property.GetCustomAttributes(inherit: true).Select(a => a.GetType().Name).ToList();
-        Assert.Equal(["RequiredAttribute"], attributeNames);
+        Assert.Empty(attributeNames);
     }
 
     [Fact]
@@ -1171,5 +1208,137 @@ public sealed class NewTicketModelTests
         using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
         Assert.Equal("Tiger Tower A", body.RootElement.GetProperty("manualProjectName").GetString());
         Assert.Equal("1204", body.RootElement.GetProperty("manualUnitNumber").GetString());
+    }
+
+    // ---- Channel Management: Step 1's channel list is configuration read
+    // from GET /api/channels, and the phone rule follows the selected
+    // channel's own RequiresPhone setting. ----
+
+    [Fact]
+    public async Task OnGetAsync_CustomerStep_LoadsTheActiveChannelsFromTheApi_InTheApiOrder_NeverHardCoded()
+    {
+        var channels = new FakeApiHandler(ChannelsReturning(
+            new ChannelDto(9, "Kiosk", "KIOSK", false, false, true, 1),
+            new ChannelDto(1, "Phone", "Phone", true, true, true, 2),
+            new ChannelDto(12, "Email", "EMAIL", false, false, true, 3)));
+        var (model, _, _, _, _, _, _, _) = CreateModel(channelsResponder: (request, body) => channels.Respond(request, body));
+
+        await GetAsync(model);
+
+        // Active channels only are requested; the Api's DisplayOrder/Name
+        // ordering is preserved as-is, and no channel the Api did not
+        // return is offered.
+        var request = Assert.Single(channels.Requests);
+        Assert.Contains("api/channels?activeOnly=true", request.RequestUri);
+        Assert.Equal(["Kiosk", "Phone", "Email"], model.Channels.Select(c => c.Name).ToArray());
+        Assert.Equal((byte)9, model.SelectedChannel?.ChannelId);
+        Assert.Equal("9", model.Intake.ChannelId);
+        Assert.False(model.PhoneRequired);
+        Assert.Null(model.ChannelsErrorMessage);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_CustomerStep_WhenTheChannelsApiFails_SaysSo_AndOffersNoChannel()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(channelsResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway));
+
+        await GetAsync(model);
+
+        Assert.Empty(model.Channels);
+        Assert.NotNull(model.ChannelsErrorMessage);
+        Assert.Null(model.SelectedChannel);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_ChannelNotRequiringPhone_AllowsAnEmptyPhone_AndSendsTheChannelId()
+    {
+        var (model, intake, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.Created,
+                new IntakeRecordResponseDto(42, "FaceToFaceKiosk", DateTime.UtcNow, "", null, false, null, null, "Unverified", null, "Face to Face / Kiosk")));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "5", PhoneNumber = "" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        using var sentBody = JsonDocument.Parse(Assert.Single(intake.Requests).Body!);
+        Assert.Equal("5", sentBody.RootElement.GetProperty("channelId").GetString());
+        Assert.Equal("", sentBody.RootElement.GetProperty("phoneNumber").GetString());
+        var values = RouteValues(Assert.IsType<RedirectToPageResult>(result));
+        Assert.Equal(42L, values["intakeRecordId"]);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_ChannelRequiringPhone_RejectsAnEmptyPhone_ByConfigurationNotByName()
+    {
+        // "Kiosk" configured to REQUIRE a phone: the rule reads RequiresPhone.
+        var (model, intake, _, _, _, _, _, _) = CreateModel(channelsResponder: ChannelsReturning(
+            new ChannelDto(9, "Kiosk", "KIOSK", RequiresPhone: true, false, true, 1)));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "9", PhoneNumber = "" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal("Enter a phone number to search.", model.ErrorMessage);
+        Assert.True(model.PhoneRequired);
+        Assert.Empty(intake.Requests);
+    }
+
+    [Theory]
+    [InlineData("99")]
+    [InlineData("NoSuchChannel")]
+    [InlineData("")]
+    public async Task OnPostIntakeAsync_InvalidChannelId_IsRejected_AndNeverReachesTheApi(string channelId)
+    {
+        var (model, intake, _, _, _, _, _, _) = CreateModel();
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = channelId, PhoneNumber = "+971501234567" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal("Select a valid channel.", model.ErrorMessage);
+        Assert.Equal(NewTicketModel.StepCustomer, model.Step);
+        Assert.Empty(intake.Requests);
+        Assert.False(model.ModelState.IsValid);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_InactiveChannel_IsNotOffered_AndIsRejectedIfPosted()
+    {
+        // The Api's active-only directory never returns a deactivated
+        // channel, so a stale form posting its id is rejected exactly like
+        // an unknown one.
+        var (model, intake, _, _, _, _, _, _) = CreateModel(channelsResponder: ChannelsReturning(
+            new ChannelDto(1, "Phone", "Phone", true, true, true, 1)));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "5", PhoneNumber = "" };
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal("Select a valid channel.", model.ErrorMessage);
+        Assert.Single(model.Channels);
+        Assert.Empty(intake.Requests);
+    }
+
+    [Fact]
+    public async Task OnPostIntakeAsync_IsNotBlockedByLaterStepValidation_CategoryPriorityAndSummaryAreNotStep1Fields()
+    {
+        var (model, intake, _, _, _, _, _, _) = CreateModel(intakeResponder: (_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.Created,
+                new IntakeRecordResponseDto(42, "Phone", DateTime.UtcNow, "+971501234567", null, false, null, null, "Unverified", null)));
+        model.Intake = new NewTicketModel.IntakeInput { ChannelId = "1", PhoneNumber = "+971501234567" };
+
+        // What the real pipeline does on every Step 1 POST: the co-bound
+        // Issue-step input is empty, so its [Required] members invalidate
+        // the page-wide ModelState.
+        model.CreateStep = new NewTicketModel.CreateStepInput();
+        model.ModelState.AddModelError("CreateStep.CategoryId", "Select a request type.");
+        model.ModelState.AddModelError("CreateStep.PriorityId", "Select a priority.");
+        model.ModelState.AddModelError("CreateStep.RequestSummary", "The RequestSummary field is required.");
+
+        var result = await model.OnPostIntakeAsync(CancellationToken.None);
+
+        Assert.Single(intake.Requests);
+        var values = RouteValues(Assert.IsType<RedirectToPageResult>(result));
+        Assert.Equal(NewTicketModel.StepCustomer, values["step"]);
+        Assert.Equal(42L, values["intakeRecordId"]);
     }
 }

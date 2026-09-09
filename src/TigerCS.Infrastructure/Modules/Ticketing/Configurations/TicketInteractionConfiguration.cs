@@ -21,7 +21,7 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
 
         builder.Property(i => i.IsOriginatingInteraction).IsRequired();
         builder.Property(i => i.Source).HasConversion<byte>().IsRequired();
-        builder.Property(i => i.ChannelId).HasConversion<byte>().IsRequired();
+        builder.Property(i => i.ChannelId).IsRequired();
         builder.Property(i => i.CustomerPhone).HasMaxLength(32).IsRequired();
         builder.Property(i => i.CalledNumber).HasMaxLength(32);
 
@@ -56,5 +56,12 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
             .WithMany()
             .HasForeignKey(i => i.TicketId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // The interaction's channel is configuration (Channels) — Restrict:
+        // a channel referenced by history is deactivated, never deleted.
+        builder.HasOne<Channel>()
+            .WithMany()
+            .HasForeignKey(i => i.ChannelId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

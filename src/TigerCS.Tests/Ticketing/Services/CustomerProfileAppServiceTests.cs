@@ -57,7 +57,7 @@ public class CustomerProfileAppServiceTests
     {
         var ticket = await SeedCrmBuyerTicketWithoutIntakeAsync(repo, departmentId, crmBuyerCustomerId);
 
-        var intake = new IntakeRecord(Channel.Phone, phoneNumber, departmentId, false, null, null, Guid.NewGuid(), DateTime.UtcNow);
+        var intake = new IntakeRecord(WellKnownChannels.Phone, phoneNumber, departmentId, false, null, null, Guid.NewGuid(), DateTime.UtcNow);
         await intakeRecords.AddAsync(intake);
         intake.LinkToTicket(ticket.TicketId, ticket.VerificationStatus, hasSelectedUnit: true);
 
@@ -224,7 +224,7 @@ public class CustomerProfileAppServiceTests
         var f = CreateService();
         var ticket = await SeedCrmBuyerTicketWithoutIntakeAsync(f.Tickets, 2, 493575);
         await f.Interactions.AddAsync(TicketInteraction.CreateLocal(
-            ticket.TicketId, Channel.Phone, "+971509999999", DateTime.UtcNow, isOriginatingInteraction: true));
+            ticket.TicketId, WellKnownChannels.Phone, "+971509999999", DateTime.UtcNow, isOriginatingInteraction: true));
         f.CrmGateway.Returns(CrmBuyerLookupResult.Success([Buyer(493575, Unit(101, "2508", "Nobles Tower"))]));
 
         var result = await f.Service.GetForTicketAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
@@ -240,7 +240,7 @@ public class CustomerProfileAppServiceTests
         var f = CreateService();
         var ticket = await SeedCrmBuyerTicketAsync(f.Tickets, f.IntakeRecords, 2, 493575, "+971501234567");
         await f.Interactions.AddAsync(TicketInteraction.CreateLocal(
-            ticket.TicketId, Channel.Phone, "+971509999999", DateTime.UtcNow, isOriginatingInteraction: true));
+            ticket.TicketId, WellKnownChannels.Phone, "+971509999999", DateTime.UtcNow, isOriginatingInteraction: true));
         f.CrmGateway.Returns(CrmBuyerLookupResult.Success([Buyer(493575, Unit(101, "2508", "Nobles Tower"))]));
 
         await f.Service.GetForTicketAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);

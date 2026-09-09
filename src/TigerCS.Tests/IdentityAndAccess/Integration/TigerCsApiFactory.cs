@@ -19,6 +19,7 @@ using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.Notifications;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
+using TigerCS.Infrastructure.Modules.Ticketing.Seed;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Infrastructure.Persistence;
 using TigerCS.Tests.CustomerVerification.Fakes;
@@ -195,6 +196,10 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
         await db.Database.EnsureCreatedAsync();
+
+        // The channel catalogue the intake endpoint validates against —
+        // the same reference rows the AddChannels migration inserts.
+        await ChannelReferenceData.SeedAsync(db);
 
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<ApplicationRole>>();
         foreach (var roleToSeed in Roles.All)

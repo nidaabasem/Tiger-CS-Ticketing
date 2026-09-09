@@ -66,7 +66,7 @@ public class CustomerLookupAppServiceTests
         FakeIntakeRecordRepository repo, string phoneNumber = Phone, int? departmentId = null)
     {
         var record = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
-            Channel.Phone, phoneNumber, departmentId, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
+            WellKnownChannels.Phone, phoneNumber, departmentId, isUnitRelated: false, rawUnitNumberEntered: null, priorityHint: null, Guid.NewGuid(), DateTime.UtcNow);
         await repo.AddAsync(record);
         return record.IntakeRecordId;
     }

@@ -15,6 +15,7 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 public sealed class IntakeRecordAppService(
     IIntakeRecordRepository intakeRecordRepository,
     IDepartmentRepository departmentRepository,
+    IChannelRepository channelRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider)
@@ -28,11 +29,35 @@ public sealed class IntakeRecordAppService(
             return IntakeRecordResult.Failure(IntakeRecordOutcome.DepartmentNotFound);
         }
 
-        var channel = Enum.Parse<Channel>(request.ChannelId);
+        // The channel is CONFIGURATION (Admin → Configuration → Channels),
+        // resolved here — never a hard-coded list or a name comparison. It
+        // must exist and be active for a new ticket, and its own
+        // RequiresPhone setting decides whether the phone number is
+        // mandatory (a Phone call has one; a kiosk walk-in may not).
+        var channel = await ResolveChannelAsync(request.ChannelId, cancellationToken);
+        if (channel is null)
+        {
+            return IntakeRecordResult.Failure(IntakeRecordOutcome.ChannelNotFound);
+        }
+
+        if (!channel.IsActive)
+        {
+            return IntakeRecordResult.Failure(IntakeRecordOutcome.ChannelInactive);
+        }
+
+        if (channel.RequiresPhone && string.IsNullOrWhiteSpace(request.PhoneNumber))
+        {
+            return IntakeRecordResult.Failure(IntakeRecordOutcome.PhoneNumberRequired);
+        }
+
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
+        // The phone travels verbatim (never reformatted); a blank one on a
+        // channel that does not require it is stored as empty.
+        var phoneNumber = string.IsNullOrWhiteSpace(request.PhoneNumber) ? string.Empty : request.PhoneNumber;
+
         var intakeRecord = new IntakeRecord(
-            channel, request.PhoneNumber, request.DepartmentId, request.IsUnitRelated,
+            channel.ChannelId, phoneNumber, request.DepartmentId, request.IsUnitRelated,
             request.RawUnitNumberEntered, request.PriorityHint, createdByEmployeeId, now);
 
         // Both SaveChanges calls below share one real transaction (senior
@@ -51,19 +76,40 @@ public sealed class IntakeRecordAppService(
             "IntakeRecord",
             intakeRecord.IntakeRecordId.ToString(),
             beforeValue: null,
-            afterValue: $"ChannelId={channel};IsUnitRelated={intakeRecord.IsUnitRelated}",
+            afterValue: $"ChannelId={channel.ChannelId};ChannelCode={channel.Code};IsUnitRelated={intakeRecord.IsUnitRelated}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
 
-        return IntakeRecordResult.Success(ToDto(intakeRecord));
+        return IntakeRecordResult.Success(ToDto(intakeRecord, channel));
     }
 
-    internal static IntakeRecordResponseDto ToDto(IntakeRecord intakeRecord) => new(
+    /// <summary>
+    /// Accepts the canonical numeric ChannelId, or — for API backward
+    /// compatibility with the former enum contract — the channel's stable
+    /// Code (case-insensitive). Returns null when neither resolves.
+    /// </summary>
+    private async Task<Channel?> ResolveChannelAsync(string? channelId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+        {
+            return null;
+        }
+
+        var value = channelId.Trim();
+        if (byte.TryParse(value, out var id))
+        {
+            return await channelRepository.GetByIdAsync(id, cancellationToken);
+        }
+
+        return await channelRepository.GetByCodeAsync(value, cancellationToken);
+    }
+
+    internal static IntakeRecordResponseDto ToDto(IntakeRecord intakeRecord, Channel channel) => new(
         intakeRecord.IntakeRecordId,
-        intakeRecord.ChannelId.ToString(),
+        channel.Code,
         intakeRecord.ReceivedAtUtc,
         intakeRecord.PhoneNumber,
         intakeRecord.DepartmentId,
@@ -71,5 +117,6 @@ public sealed class IntakeRecordAppService(
         intakeRecord.RawUnitNumberEntered,
         intakeRecord.PriorityHint,
         intakeRecord.CrmVerificationStatus.ToString(),
-        intakeRecord.LinkedTicketId);
+        intakeRecord.LinkedTicketId,
+        channel.Name);
 }

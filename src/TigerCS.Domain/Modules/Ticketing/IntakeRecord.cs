@@ -15,7 +15,10 @@ namespace TigerCS.Domain.Modules.Ticketing;
 /// Tasleeh (<c>CustomerLookupAppService</c>). It never changes based on what
 /// that search finds — Found, NotFound, or Failed all leave it exactly as the
 /// agent entered it, so a later re-lookup or manual reconciliation always has
-/// the original value to search with.
+/// the original value to search with. Whether it is <i>required</i> is the
+/// selected <see cref="Channel"/>'s <c>RequiresPhone</c> configuration
+/// (enforced by <c>IntakeRecordAppService</c>); a channel that does not
+/// require one stores an empty string.
 /// </para>
 ///
 /// <para>
@@ -61,7 +64,8 @@ namespace TigerCS.Domain.Modules.Ticketing;
 public class IntakeRecord
 {
     public long IntakeRecordId { get; private set; }
-    public Channel ChannelId { get; private set; }
+    /// <summary>The <see cref="Channel"/> the interaction arrived on — the ticket's originating channel once promoted.</summary>
+    public byte ChannelId { get; private set; }
     public DateTime ReceivedAtUtc { get; private set; }
     public string PhoneNumber { get; private set; } = string.Empty;
     public int? DepartmentId { get; private set; }
@@ -75,8 +79,8 @@ public class IntakeRecord
     private IntakeRecord() { }
 
     public IntakeRecord(
-        Channel channelId,
-        string phoneNumber,
+        byte channelId,
+        string? phoneNumber,
         int? departmentId,
         bool isUnitRelated,
         string? rawUnitNumberEntered,
@@ -89,12 +93,17 @@ public class IntakeRecord
             throw new ArgumentException("CreatedByEmployeeId is required.", nameof(createdByEmployeeId));
         }
 
-        if (string.IsNullOrWhiteSpace(phoneNumber))
+        if (channelId == 0)
         {
-            throw new ArgumentException(
-                "PhoneNumber is required — it is the identifier customer lookup searches CRM/PACT/Tasleeh with.",
-                nameof(phoneNumber));
+            throw new ArgumentException("ChannelId is required.", nameof(channelId));
         }
+
+        // Whether a phone number is REQUIRED is channel configuration
+        // (Channel.RequiresPhone — a Phone call has one, a kiosk walk-in may
+        // not), resolved by IntakeRecordAppService before this constructor
+        // runs. Here the value is preserved exactly as entered, or stored as
+        // an empty string when the channel did not require one; it is never
+        // reformatted.
 
         // No coupling between isUnitRelated and rawUnitNumberEntered — see
         // this type's remarks. The lookup-first workflow means IsUnitRelated
@@ -105,7 +114,7 @@ public class IntakeRecord
         // unit-related.
 
         ChannelId = channelId;
-        PhoneNumber = phoneNumber;
+        PhoneNumber = phoneNumber ?? string.Empty;
         DepartmentId = departmentId;
         IsUnitRelated = isUnitRelated;
         RawUnitNumberEntered = rawUnitNumberEntered;

@@ -1,0 +1,113 @@
+@page "/Admin/Channels/{id:int:range(1,255)}"
+@model TigerCS.Web.Pages.Admin.ChannelEditModel
+@{
+    var c = Model.Channel;
+    ViewData["Title"] = c?.Name ?? "Channel";
+    ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "channels";
+    Layout = "_Layout";
+}
+
+<div class="page admin-page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Channels", "/Admin/Channels", c?.Name ?? "Channel"))
+
+    @if (c is null)
+    {
+        <div class="panel">
+            <div class="error-state">
+                @await Html.PartialAsync("_AdminIcon", "warning")
+                <p>@(Model.LoadError ?? "The channel could not be loaded.")</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="page-header">
+            <div>
+                <p class="page-eyebrow">Channel</p>
+                <h1 class="page-title">@c.Name</h1>
+                <div class="page-title__meta">
+                    <span class="badge badge-neutral text-mono">@c.Code</span>
+                    @await Html.PartialAsync("_StatusBadge", c.IsActive)
+                    <span><strong>@(c.RequiresPhone ? "Phone required" : "Phone optional")</strong></span>
+                    <span><strong>@(c.IsGenesysEnabled ? "Genesys enabled" : "Not Genesys")</strong></span>
+                    <span><strong>@c.ReferenceCount</strong> historical @(c.ReferenceCount == 1 ? "reference" : "references")</span>
+                </div>
+            </div>
+            <div class="page-header__actions">
+                <a class="btn" href="/Admin/Channels">Back to Channels</a>
+            </div>
+        </div>
+
+        @await Html.PartialAsync("_AdminMessages", Model)
+
+        <div class="admin-grid">
+            <section class="panel admin-form-panel" aria-labelledby="details-title">
+                <div class="panel__header"><h2 class="panel__title" id="details-title">Details</h2></div>
+                <form method="post" asp-page-handler="Edit" asp-route-id="@c.ChannelId" class="admin-form">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.Name">Channel Name *</label>
+                        <input class="form-control" asp-for="Edit.Name" maxlength="100" required aria-required="true" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.Code">Channel Code *</label>
+                        <input class="form-control" asp-for="Edit.Code" maxlength="50" required aria-required="true" />
+                        <span class="field-hint">Stable, unique identifier used by integrations. Historical records reference the channel by id, so they keep displaying this channel under its current name.</span>
+                    </div>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Edit.RequiresPhone" />
+                        Requires Phone Number
+                    </label>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Edit.IsGenesysEnabled" />
+                        Genesys Enabled
+                    </label>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Edit.IsActive" />
+                        Active
+                    </label>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.DisplayOrder">Display Order</label>
+                        <input class="form-control" asp-for="Edit.DisplayOrder" type="number" min="0" step="1" />
+                        <span class="field-hint">Lower numbers appear first in Create Ticket.</span>
+                    </div>
+                    <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
+                </form>
+            </section>
+
+            <section class="panel admin-form-panel @(c.IsActive ? "panel--danger" : "")" aria-labelledby="status-title">
+                <div class="panel__header"><h2 class="panel__title" id="status-title">@(c.IsActive ? "Deactivate channel" : "Reactivate channel")</h2></div>
+                <div class="panel__note panel__note--top">
+                    @if (c.IsActive)
+                    {
+                        <p>An inactive channel is no longer offered when creating a ticket. Historical tickets and interactions keep showing it.</p>
+                    }
+                    else
+                    {
+                        <p>Reactivating offers the channel again when creating a ticket.</p>
+                    }
+                    @if (c.ReferenceCount > 0)
+                    {
+                        <p>This channel is referenced by @c.ReferenceCount historical @(c.ReferenceCount == 1 ? "record" : "records"), so it can be deactivated but never deleted.</p>
+                    }
+                </div>
+                <form method="post" asp-page-handler="Activation" asp-route-id="@c.ChannelId" class="admin-form"
+                      data-confirm="@(c.IsActive ? $"Deactivate {c.Name}? It will no longer be offered when creating a ticket." : null)">
+                    <input type="hidden" asp-for="Activation.IsActive" value="@(c.IsActive ? "false" : "true")" />
+                    @if (c.IsActive)
+                    {
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Activation.Reason">Reason</label>
+                            <input class="form-control" asp-for="Activation.Reason" placeholder="Optional — recorded in the audit trail" />
+                        </div>
+                        <div class="form-actions"><button type="submit" class="btn btn-critical btn-sm">Deactivate Channel</button></div>
+                    }
+                    else
+                    {
+                        <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Reactivate Channel</button></div>
+                    }
+                </form>
+            </section>
+        </div>
+    }
+</div>

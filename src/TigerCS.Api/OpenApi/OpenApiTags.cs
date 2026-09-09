@@ -29,6 +29,7 @@ public static class OpenApiTags
     public const string Categories = "Categories";
     public const string CrmLookup = "CRM Lookup";
     public const string CustomerVerification = "Customer Verification";
+    public const string Channels = "Channels";
     public const string Intake = "Intake";
     public const string CustomerLookup = "Customer Lookup";
     public const string CustomerSearch = "Customer Search";
@@ -61,6 +62,7 @@ public static class OpenApiTags
         (Categories, "The active Ticket Category directory, optionally scoped to one Department — what the New Ticket UI's Category dropdown reads from."),
         (CrmLookup, "Read-only lookups against Tiger CRM: units and the contacts linked to a unit."),
         (CustomerVerification, "Verification sessions — recording that a requester was confirmed against a CRM unit and contact."),
+        (Channels, "The configured channel directory (Admin → Configuration → Channels) — what the New Ticket wizard's Channel picker reads. Active channels only by default."),
         (Intake, "Intake records — every customer interaction is captured before customer lookup is attempted."),
         (CustomerLookup,
             "Searches CRM, PACT, and Tasleeh for the intake's phone number and returns whatever each source found. "
@@ -98,7 +100,7 @@ public static class OpenApiTags
             "The active Request Type directory scoped to one Department — what the New Ticket wizard's Request Type "
             + "picker reads from. A request type resolves the workflow version a new ticket is pinned to."),
         (Administration,
-            "System Administrator-only management of users, departments, request types and workflows, including the "
+            "System Administrator-only management of users, departments, request types, workflows and channels, including the "
             + "Workflow Designer's versioned Draft -> Validate -> Publish lifecycle. Every endpoint here requires the "
             + "System Administrator role; nothing is hidden by UI alone.")
     ];
