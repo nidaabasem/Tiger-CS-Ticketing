@@ -7,7 +7,6 @@
         ("customers", "Customers", "/Customers"),
         ("queue", "Queue", "/Tickets"),
         ("my", "My Tickets", currentUser is null ? "/Tickets" : $"/Tickets?ownerEmployeeId={currentUser.EmployeeId}"),
-        ("pendingcrm", "Pending CRM", "/Tickets?verificationStatus=PendingCrmVerification"),
         ("closed", "Closed", "/Tickets?ticketStatus=Closed"),
     ];
     if (AdministrationPolicy.AppliesTo(currentUser))
