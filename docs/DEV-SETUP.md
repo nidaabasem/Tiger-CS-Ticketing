@@ -98,9 +98,22 @@ production environment until that's actually authorized.
 The CRM Buyer Lookup integration (`CrmBuyerHttpGateway`, `GET /api/crm/buyers`)
 calls the legacy CRM MVC 4.7 application's own
 `GET /TicketingSystem/GetBuyerByPhone` endpoint directly — it is a real
-integration from day one, unlike `ICrmGateway`'s unit/contact lookups, which
-still run against `MockCrmGateway` (`Crm:Provider`) until a real endpoint for
-those exists.
+integration from day one and is not governed by `Crm:Provider`.
+
+`Crm:Provider` governs the other two CRM ports — `ICrmGateway` (unit/contact
+lookup) and `ICrmCustomerLookupGateway` (the CRM leg of phone-based customer
+search) — for which Tiger CRM publishes no endpoint yet:
+
+- **`Http`** — the standard for Development, UAT and Production
+  (`appsettings.json`, `appsettings.Development.json`). Until the CRM team
+  publishes those endpoints the two ports fail closed
+  (`UnimplementedCrmHttpGateway`): `GET /api/crm/units…` answers 502
+  `crm-unavailable` and the customer lookup's Crm source reports `Failed`.
+  These two ports never serve fixture data in a real environment.
+- **`Mock`** — `MockCrmGateway` fixture data. The automated test host pins it
+  (`TigerCsApiFactory`); `CrmGatewaySafety` refuses it outside
+  Development/Testing. To use the fixtures locally instead of the real CRM:
+  `dotnet user-secrets set "Crm:Provider" "Mock"` from `src/TigerCS.Api`.
 
 Two configuration values under the same `Crm` section:
 

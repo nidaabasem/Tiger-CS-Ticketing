@@ -1,13 +1,16 @@
 namespace TigerCS.Integrations.Modules.CrmIntegration;
 
 /// <summary>
-/// The "Crm" configuration section. <see cref="Provider"/> governs which
+/// The "Crm" configuration section. <see cref="Provider"/> governs what the
 /// <see cref="TigerCS.Application.Modules.CustomerVerification.CrmIntegration.ICrmGateway"/>
-/// implementation is wired up — only "Mock" is implemented at this pilot
-/// phase (MVP-Implementation-Backlog.md S-06) — no real Tiger Group CRM
-/// endpoint details were available to build against for unit/contact lookup.
-/// See <see cref="MockCrmGateway"/>'s own remarks: it is never
-/// production-ready.
+/// and <c>ICrmCustomerLookupGateway</c> ports resolve
+/// (<see cref="IntegrationsServiceCollectionExtensions"/>): "Http" — the
+/// standard for Development, UAT and Production — or "Mock" — the automated
+/// test host's <see cref="MockCrmGateway"/> fixture data, refused outside
+/// Development/Testing by <see cref="CrmGatewaySafety"/>. Tiger CRM publishes
+/// no endpoint for those two ports yet, so "Http" resolves
+/// <see cref="UnimplementedCrmHttpGateway"/>, which fails closed and never
+/// serves fixture data; see its remarks for what the CRM side still owes.
 ///
 /// <para>
 /// <see cref="BaseUrl"/> and <see cref="SecretKey"/> are a separate,
@@ -22,7 +25,12 @@ public sealed class CrmGatewayOptions
 {
     public const string SectionName = "Crm";
 
-    public string Provider { get; set; } = "Mock";
+    /// <summary>
+    /// Defaults to "Http" so an environment whose configuration omits the key
+    /// fails closed rather than silently running fixture data; the automated
+    /// test host sets "Mock" explicitly (TigerCsApiFactory).
+    /// </summary>
+    public string Provider { get; set; } = "Http";
 
     /// <summary>
     /// The legacy CRM MVC 4.7 application's base URL (e.g.
