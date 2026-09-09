@@ -87,21 +87,41 @@
             {
                 <section class="section-card" aria-label="Customer search">
                     <div class="section-card__title">Step 1 — Customer</div>
-                    <form method="post" asp-page-handler="Intake" class="wizard-search">
+                    @if (Model.ChannelsErrorMessage is not null)
+                    {
+                        <div class="alert alert-error" role="alert"><span>@Model.ChannelsErrorMessage</span></div>
+                    }
+                    else if (Model.Channels.Count == 0)
+                    {
+                        <div class="alert alert-error" role="alert"><span>No active channels are configured. Ask an administrator to activate a channel under Administration → Channels.</span></div>
+                    }
+                    @* The channel list is the configured, active channel
+                       catalogue (Administration → Channels), in its display
+                       order — never a hard-coded list. Each option carries
+                       its own RequiresPhone configuration so the phone
+                       field's "required" state follows the selection
+                       (site.js); the PageModel and the Api enforce the same
+                       rule server-side regardless. *@
+                    <form method="post" asp-page-handler="Intake" class="wizard-search" data-channel-form>
                         <div class="field-group wizard-search__channel">
                             <label class="field-label" asp-for="Intake.ChannelId">Channel</label>
-                            <select class="field-select" asp-for="Intake.ChannelId">
-                                @foreach (var c in new[] { "Phone", "AppOrWebsite", "WhatsAppOrLiveChat", "SocialMediaDirectMessage", "FaceToFaceKiosk" })
+                            <select class="field-select" asp-for="Intake.ChannelId" data-channel-select required aria-required="true">
+                                @foreach (var c in Model.Channels)
                                 {
-                                    <option value="@c">@c</option>
+                                    <option value="@c.ChannelId" data-requires-phone="@(c.RequiresPhone ? "true" : "false")"
+                                            selected="@(Model.SelectedChannel?.ChannelId == c.ChannelId)">@c.Name</option>
                                 }
                             </select>
                         </div>
                         <div class="field-group wizard-search__phone">
-                            <label class="field-label" asp-for="Intake.PhoneNumber">Search by phone number</label>
-                            <input class="form-control" asp-for="Intake.PhoneNumber" placeholder="+971 50 ..." />
+                            <label class="field-label" asp-for="Intake.PhoneNumber">
+                                Search by phone number
+                                <span class="field-hint" data-phone-optional-hint hidden="@(Model.PhoneRequired)">(optional for this channel)</span>
+                            </label>
+                            <input class="form-control" asp-for="Intake.PhoneNumber" placeholder="+971 50 ..." data-phone-input
+                                   required="@(Model.PhoneRequired ? "required" : null)" aria-required="@(Model.PhoneRequired ? "true" : "false")" />
                         </div>
-                        <button type="submit" class="btn btn-gold wizard-search__submit">Search</button>
+                        <button type="submit" class="btn btn-gold wizard-search__submit" disabled="@(Model.Channels.Count == 0 ? "disabled" : null)">Search</button>
                     </form>
                 </section>
 

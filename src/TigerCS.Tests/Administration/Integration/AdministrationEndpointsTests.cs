@@ -8,6 +8,7 @@ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 using TigerCS.Infrastructure.Persistence;
 using TigerCS.Tests.IdentityAndAccess.Integration;
@@ -99,6 +100,75 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.NotNull(await db.Employees.FindAsync(created.EmployeeId));
         Assert.NotNull(await db.Users.FindAsync(created.EmployeeId));
         Assert.Contains(await db.AuditEntries.Where(a => a.EntityId == created.EmployeeId.ToString()).ToListAsync(), a => a.Action == "AdminDeactivateUser");
+    }
+
+    // ------------------------------------------------------------- channels
+
+    [Fact]
+    public async Task Channels_ListAddEditActivationAndDuplicateCode_ThroughTheRealHost()
+    {
+        var (admin, _) = await CreateClientAsync(Roles.SystemAdministrator);
+        var code = "CH" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+
+        // The seeded catalogue (the former enum, same ids) is listed with status.
+        var seeded = await ReadAsync<List<AdminChannelDto>>(await admin.GetAsync("/api/admin/channels"));
+        Assert.Contains(seeded, c => c.ChannelId == WellKnownChannels.Phone && c.Code == "Phone" && c.IsActive && c.RequiresPhone);
+        Assert.Contains(seeded, c => c.ChannelId == WellKnownChannels.FaceToFaceKiosk && !c.RequiresPhone);
+
+        var created = await ReadAsync<AdminChannelDto>(await admin.PostAsJsonAsync("/api/admin/channels",
+            new SaveChannelRequestDto("Email " + code, code, RequiresPhone: false, IsGenesysEnabled: false, DisplayOrder: 50)));
+        Assert.Equal(code, created.Code);
+        Assert.True(created.IsActive);
+        Assert.Equal(50, created.DisplayOrder);
+
+        // Duplicate code (any case) is a 400 with a validation problem, on create and on edit.
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/api/admin/channels",
+            new SaveChannelRequestDto("Another", code.ToLowerInvariant(), true, false, 0))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync($"/api/admin/channels/{created.ChannelId}",
+            new SaveChannelRequestDto("Email", "phone", false, false, 50))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/api/admin/channels",
+            new SaveChannelRequestDto("", "", true, false, 0))).StatusCode);
+
+        var edited = await ReadAsync<AdminChannelDto>(await admin.PutAsJsonAsync($"/api/admin/channels/{created.ChannelId}",
+            new SaveChannelRequestDto("E-mail " + code, code, RequiresPhone: true, IsGenesysEnabled: true, DisplayOrder: 51)));
+        Assert.Equal("E-mail " + code, edited.Name);
+        Assert.True(edited.RequiresPhone);
+        Assert.True(edited.IsGenesysEnabled);
+        Assert.Equal(51, edited.DisplayOrder);
+
+        var fetched = await ReadAsync<AdminChannelDto>(await admin.GetAsync($"/api/admin/channels/{created.ChannelId}"));
+        Assert.Equal(edited, fetched);
+
+        // Offered to Create Ticket while active, in display order …
+        var offered = await ReadAsync<List<ChannelDto>>(await admin.GetAsync("/api/channels"));
+        Assert.Contains(offered, c => c.ChannelId == created.ChannelId);
+        Assert.Equal(offered.OrderBy(c => c.DisplayOrder).ThenBy(c => c.Name, StringComparer.Ordinal).Select(c => c.ChannelId), offered.Select(c => c.ChannelId));
+
+        // … and not once deactivated, while still resolvable for history.
+        var deactivated = await ReadAsync<AdminChannelDto>(await admin.PatchAsJsonAsync($"/api/admin/channels/{created.ChannelId}/activation",
+            new SetActiveRequestDto(false, "unused")));
+        Assert.False(deactivated.IsActive);
+        Assert.DoesNotContain(await ReadAsync<List<ChannelDto>>(await admin.GetAsync("/api/channels")), c => c.ChannelId == created.ChannelId);
+        Assert.Contains(await ReadAsync<List<ChannelDto>>(await admin.GetAsync("/api/channels?activeOnly=false")), c => c.ChannelId == created.ChannelId && !c.IsActive);
+        Assert.Contains(await ReadAsync<List<AdminChannelDto>>(await admin.GetAsync("/api/admin/channels")), c => c.ChannelId == created.ChannelId && !c.IsActive);
+        Assert.DoesNotContain(await ReadAsync<List<AdminChannelDto>>(await admin.GetAsync("/api/admin/channels?includeInactive=false")), c => c.ChannelId == created.ChannelId);
+
+        var reactivated = await ReadAsync<AdminChannelDto>(await admin.PatchAsJsonAsync($"/api/admin/channels/{created.ChannelId}/activation",
+            new SetActiveRequestDto(true)));
+        Assert.True(reactivated.IsActive);
+
+        // Never deleted: no DELETE endpoint, and the row is still there.
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, (await admin.DeleteAsync($"/api/admin/channels/{created.ChannelId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/admin/channels/250")).StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        Assert.NotNull(await db.Channels.FindAsync(created.ChannelId));
+        var audit = await db.AuditEntries.Where(a => a.EntityType == "Channel" && a.EntityId == created.ChannelId.ToString()).ToListAsync();
+        Assert.Contains(audit, a => a.Action == "AdminCreateChannel");
+        Assert.Contains(audit, a => a.Action == "AdminUpdateChannel");
+        Assert.Contains(audit, a => a.Action == "AdminDeactivateChannel");
+        Assert.Contains(audit, a => a.Action == "AdminActivateChannel");
     }
 
     // ---------------------------------------------------------- departments

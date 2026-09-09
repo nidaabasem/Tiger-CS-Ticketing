@@ -9,6 +9,7 @@ using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
+using TigerCS.Infrastructure.Modules.Ticketing.Seed;
 using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Seed;
 using TigerCS.Infrastructure.Persistence;
 
@@ -37,6 +38,7 @@ public static class DevSeedData
         await SeedDepartmentsAsync(dbContext, logger, cancellationToken);
         await SeedPrioritiesAsync(dbContext, logger, cancellationToken);
         await SeedCategoriesAsync(dbContext, logger, cancellationToken);
+        await SeedChannelsAsync(dbContext, logger, cancellationToken);
         await SeedDepartmentCustomerLookupSourcesAsync(dbContext, logger, cancellationToken);
         await SeedSlaReferenceDataAsync(dbContext, logger, cancellationToken);
         await SeedWorkflowReferenceDataAsync(dbContext, logger, cancellationToken);
@@ -104,6 +106,24 @@ public static class DevSeedData
         await WorkflowReferenceData.SeedAsync(dbContext, cancellationToken);
         logger.LogInformation(
             "Seeded workflow configuration reference data (templates, request types, request-type SLA rows, department workflow settings).");
+    }
+
+    /// <summary>
+    /// The channel catalogue (Channel Management). Delegates to
+    /// <see cref="ChannelReferenceData"/> — the same rows the AddChannels
+    /// migration inserts — so a database created without migrations still
+    /// has the five original channels under their original ids; rows an
+    /// administrator has since edited are left untouched.
+    /// </summary>
+    private static async Task SeedChannelsAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        var before = await dbContext.Channels.CountAsync(cancellationToken);
+        await ChannelReferenceData.SeedAsync(dbContext, cancellationToken);
+        var added = await dbContext.Channels.CountAsync(cancellationToken) - before;
+        if (added > 0)
+        {
+            logger.LogInformation("Seeded {Count} channels.", added);
+        }
     }
 
     private static async Task SeedCategoriesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)

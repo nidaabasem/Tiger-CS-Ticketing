@@ -94,7 +94,7 @@ public class TicketCreationAppServiceTests
     {
         var agentId = Guid.NewGuid();
         var record = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
-            Channel.Phone, "+971500000001", null, isUnitRelated, isUnitRelated ? rawUnitNumberEntered : null, priorityHint: null, agentId, DateTime.UtcNow);
+            WellKnownChannels.Phone, "+971500000001", null, isUnitRelated, isUnitRelated ? rawUnitNumberEntered : null, priorityHint: null, agentId, DateTime.UtcNow);
         await repo.AddAsync(record);
         return (record, agentId);
     }
@@ -586,7 +586,7 @@ public class TicketCreationAppServiceTests
 
         var agentId = Guid.NewGuid();
         var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
-            Channel.Phone, "+971500009999", customerService.DepartmentId, false, null, priorityHint: null, agentId, DateTime.UtcNow);
+            WellKnownChannels.Phone, "+971500009999", customerService.DepartmentId, false, null, priorityHint: null, agentId, DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(intake);
 
         var result = await f.Service.CreateAsync(
@@ -606,7 +606,7 @@ public class TicketCreationAppServiceTests
 
         var agentId = Guid.NewGuid();
         var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
-            Channel.Phone, "+971500009999", facilities.DepartmentId, false, null, priorityHint: null, agentId, DateTime.UtcNow);
+            WellKnownChannels.Phone, "+971500009999", facilities.DepartmentId, false, null, priorityHint: null, agentId, DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(intake);
 
         var result = await f.Service.CreateAsync(
@@ -852,7 +852,7 @@ public class TicketCreationAppServiceTests
         // (still the CRM/PACT/Tasleeh verification input), no Genesys at all.
         var agentId = Guid.NewGuid();
         var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
-            Channel.FaceToFaceKiosk, "+971500000009", null, false, null, null, agentId, DateTime.UtcNow);
+            WellKnownChannels.FaceToFaceKiosk, "+971500000009", null, false, null, null, agentId, DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(intake);
 
         var result = await f.Service.CreateAsync(
@@ -866,7 +866,7 @@ public class TicketCreationAppServiceTests
         Assert.NotNull(context);
         Assert.True(context.IsOriginatingInteraction);
         Assert.Equal(InteractionContextSource.Ticketing, context.Source);
-        Assert.Equal(Channel.FaceToFaceKiosk, context.ChannelId);
+        Assert.Equal(WellKnownChannels.FaceToFaceKiosk, context.ChannelId);
         Assert.Equal("+971500000009", context.CustomerPhone);
         Assert.Null(context.GenesysConversationId);
         Assert.Null(context.GenesysQueueId);
@@ -889,5 +889,82 @@ public class TicketCreationAppServiceTests
 
         Assert.Equal(TicketCreationOutcome.GenesysConversationIdRequired, result.Outcome);
         Assert.Empty(f.Tickets.All);
+    }
+
+    // ---- Channel Management: the ticket's originating channel IS the
+    // intake's selected channel, recorded once on the originating
+    // interaction and never duplicated. ----
+
+    [Fact]
+    public async Task CreateAsync_OriginatingInteraction_UsesTheIntakeChannel_AndIsTheOnlyOriginatingRow()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var agentId = Guid.NewGuid();
+        var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            WellKnownChannels.WhatsAppOrLiveChat, "+971500000011", null, false, null, null, agentId, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "Chat follow-up"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+
+        // Exactly one originating interaction, on the intake's channel.
+        var originating = Assert.Single(f.Interactions.All, i => i.TicketId == ticket.TicketId && i.IsOriginatingInteraction);
+        Assert.Equal(WellKnownChannels.WhatsAppOrLiveChat, originating.ChannelId);
+        Assert.Equal(intake.ChannelId, originating.ChannelId);
+        Assert.Equal("+971500000011", originating.CustomerPhone);
+        Assert.Single(f.Interactions.All, i => i.TicketId == ticket.TicketId);
+
+        // Intake ↔ Ticket: the intake keeps the channel it was created with.
+        Assert.Equal(ticket.TicketId, intake.LinkedTicketId);
+        Assert.Equal(WellKnownChannels.WhatsAppOrLiveChat, intake.ChannelId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_LaterInteractionsOnOtherChannels_NeverChangeTheOriginatingChannel()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var agentId = Guid.NewGuid();
+        var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            WellKnownChannels.Phone, "+971500000012", null, false, null, null, agentId, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+        var ticket = (await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "Call"))).Response!;
+
+        // Two follow-ups on other channels (a WhatsApp exchange, a walk-in).
+        await f.Interactions.AddAsync(TicketInteraction.CreateLocal(ticket.TicketId, WellKnownChannels.WhatsAppOrLiveChat, "+971500000012", DateTime.UtcNow.AddHours(1)));
+        await f.Interactions.AddAsync(TicketInteraction.CreateLocal(ticket.TicketId, WellKnownChannels.FaceToFaceKiosk, null, DateTime.UtcNow.AddHours(2)));
+
+        var originating = await f.Interactions.GetOriginatingAsync(ticket.TicketId);
+        Assert.Equal(WellKnownChannels.Phone, originating!.ChannelId);
+        Assert.Equal(3, (await f.Interactions.ListByTicketIdAsync(ticket.TicketId)).Count);
+        Assert.Single(await f.Interactions.ListByTicketIdAsync(ticket.TicketId), i => i.IsOriginatingInteraction);
+    }
+
+    [Fact]
+    public async Task CreateAsync_PhoneOptionalChannel_CreatesTheTicket_WithAnEmptyPhoneOnTheOriginatingInteraction()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Facility Management", "FM");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var agentId = Guid.NewGuid();
+        var intake = new TigerCS.Domain.Modules.Ticketing.IntakeRecord(
+            WellKnownChannels.FaceToFaceKiosk, "", null, false, null, null, agentId, DateTime.UtcNow);
+        await f.IntakeRecords.AddAsync(intake);
+
+        var result = await f.Service.CreateAsync(
+            agentId, new CreateTicketRequestDto(intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Low, "Walk-in query"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var originating = await f.Interactions.GetOriginatingAsync(result.Response!.TicketId);
+        Assert.Equal(WellKnownChannels.FaceToFaceKiosk, originating!.ChannelId);
+        Assert.Equal(string.Empty, originating.CustomerPhone);
+        Assert.Equal(InteractionContextSource.Ticketing, originating.Source);
     }
 }

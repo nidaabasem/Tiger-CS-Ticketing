@@ -369,6 +369,13 @@ else
                         <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.PriorityId)</dd></div>
                         <div class="facts-row"><dt>Category</dt><dd class="id-fallback">#@t.CategoryId</dd></div>
                         <div class="facts-row"><dt>Assigned Department</dt><dd>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
+                        @if (t.OriginatingChannelId is not null)
+                        {
+                            @* The channel the ticket ENTERED on — resolved
+                               from channel configuration by id, so a channel
+                               deactivated since still shows its name here. *@
+                            <div class="facts-row"><dt>Channel</dt><dd>@(t.OriginatingChannelName ?? "Unknown channel")</dd></div>
+                        }
                         @if (t.RequestTypeName is not null)
                         {
                             <div class="facts-row"><dt>Request Type</dt><dd>@t.RequestTypeName</dd></div>

@@ -216,6 +216,18 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
+    public async Task ListChannels_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/channels");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var channels = await response.Content.ReadFromJsonAsync<List<TigerCS.Application.Modules.Ticketing.Dto.ChannelDto>>();
+        Assert.Contains(channels!, c => c.Code == "Phone" && c.IsActive);
+    }
+
+    [Fact]
     public async Task ListDepartmentUsers_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();

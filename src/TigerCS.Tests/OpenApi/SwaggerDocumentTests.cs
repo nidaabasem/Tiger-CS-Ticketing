@@ -71,6 +71,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
 
         "GET /api/departments",
         "GET /api/departments/{departmentId}/users",
+        "GET /api/channels",
 
         "GET /api/categories",
 
@@ -145,6 +146,11 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "PUT /api/admin/request-types/{requestTypeId}/assignment-rule",
         "PUT /api/admin/request-types/{requestTypeId}/approval-requirements/{approvalType}",
         "PUT /api/admin/request-types/{requestTypeId}/sla-policies/{priorityId}",
+        "GET /api/admin/channels",
+        "GET /api/admin/channels/{channelId}",
+        "POST /api/admin/channels",
+        "PUT /api/admin/channels/{channelId}",
+        "PATCH /api/admin/channels/{channelId}/activation",
         "GET /api/admin/workflows/catalog",
         "GET /api/admin/workflows",
         "GET /api/admin/workflows/{workflowId}",

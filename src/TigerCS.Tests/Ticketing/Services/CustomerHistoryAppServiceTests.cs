@@ -170,7 +170,7 @@ public class CustomerHistoryAppServiceTests
             "TG-CS-20260101-0001", 2, 5, (byte)PriorityLevel.Low, "Older issue", DateTime.UtcNow.AddDays(-1),
             manualProjectName: "Sapphire Residences", manualUnitNumber: "1204");
         await f.Tickets.AddAsync(olderTicket);
-        var olderIntake = new IntakeRecord(Channel.Phone, phone, 2, false, null, null, Guid.NewGuid(), DateTime.UtcNow.AddDays(-1));
+        var olderIntake = new IntakeRecord(WellKnownChannels.Phone, phone, 2, false, null, null, Guid.NewGuid(), DateTime.UtcNow.AddDays(-1));
         await f.IntakeRecords.AddAsync(olderIntake);
         olderIntake.LinkToTicket(olderTicket.TicketId, olderTicket.VerificationStatus, hasSelectedUnit: false);
 
@@ -178,7 +178,7 @@ public class CustomerHistoryAppServiceTests
             "TG-CS-20260102-0001", 2, 5, (byte)PriorityLevel.Low, "Current issue", DateTime.UtcNow,
             manualProjectName: "Sapphire Residences", manualUnitNumber: "1204");
         await f.Tickets.AddAsync(currentTicket);
-        var currentIntake = new IntakeRecord(Channel.Phone, phone, 2, false, null, null, Guid.NewGuid(), DateTime.UtcNow);
+        var currentIntake = new IntakeRecord(WellKnownChannels.Phone, phone, 2, false, null, null, Guid.NewGuid(), DateTime.UtcNow);
         await f.IntakeRecords.AddAsync(currentIntake);
         currentIntake.LinkToTicket(currentTicket.TicketId, currentTicket.VerificationStatus, hasSelectedUnit: false);
 

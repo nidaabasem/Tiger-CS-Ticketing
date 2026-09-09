@@ -97,6 +97,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="WorkflowTemplateId">The exact workflow VERSION the ticket was pinned to at creation; null for a ticket with no request type. Never changes after creation.</param>
 /// <param name="WorkflowName">The pinned version's workflow name — populated on detail reads.</param>
 /// <param name="WorkflowVersionNumber">The pinned version's number ("V2") — populated on detail reads.</param>
+/// <param name="OriginatingChannelId">The channel the ticket ENTERED the system on (its originating interaction's channel) — never changed by later interactions on other channels; null for tickets predating the interaction model. Populated on detail reads.</param>
+/// <param name="OriginatingChannelName">The originating channel's display name, resolved from channel configuration — still shown for a channel that has since been deactivated. Populated on detail reads.</param>
 /// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Resolved/Closed and within the ISSUE-011 window. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen. Populated on detail reads; false on write responses.</param>
 public sealed record TicketDetailDto(
     long TicketId,
@@ -136,7 +138,9 @@ public sealed record TicketDetailDto(
     string? RequestTypeName = null,
     int? WorkflowTemplateId = null,
     string? WorkflowName = null,
-    int? WorkflowVersionNumber = null);
+    int? WorkflowVersionNumber = null,
+    byte? OriginatingChannelId = null,
+    string? OriginatingChannelName = null);
 
 public enum TicketQueryOutcome
 {

@@ -72,7 +72,12 @@ public class AdministrationAuthorizationTests : IClassFixture<TigerCsApiFactory>
         ("POST", "/api/admin/workflows/versions/1/steps/1/move"),
         ("PUT", "/api/admin/workflows/versions/1/steps/1/transitions"),
         ("POST", "/api/admin/workflows/versions/1/publish"),
-        ("DELETE", "/api/admin/workflows/versions/1")
+        ("DELETE", "/api/admin/workflows/versions/1"),
+        ("GET", "/api/admin/channels"),
+        ("GET", "/api/admin/channels/1"),
+        ("POST", "/api/admin/channels"),
+        ("PUT", "/api/admin/channels/1"),
+        ("PATCH", "/api/admin/channels/1/activation")
     ];
 
     [Theory]

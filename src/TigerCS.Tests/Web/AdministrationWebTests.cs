@@ -64,7 +64,7 @@ public sealed class AdministrationWebTests
 
         // Anonymous requests to every admin page are sent to sign-in, never rendered.
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        foreach (var path in new[] { "/Admin", "/Admin/Users", "/Admin/Departments", "/Admin/RequestTypes", "/Admin/Workflows", "/Admin/Workflows/Versions/1" })
+        foreach (var path in new[] { "/Admin", "/Admin/Users", "/Admin/Departments", "/Admin/RequestTypes", "/Admin/Workflows", "/Admin/Workflows/Versions/1", "/Admin/Channels", "/Admin/Channels/1" })
         {
             var response = await client.GetAsync(path);
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
@@ -83,6 +83,8 @@ public sealed class AdministrationWebTests
     [InlineData("Workflows.cshtml")]
     [InlineData("WorkflowDetails.cshtml")]
     [InlineData("WorkflowVersion.cshtml")]
+    [InlineData("Channels.cshtml")]
+    [InlineData("ChannelEdit.cshtml")]
     public void AdminViews_UseNamesAndBadges_NeverRawIdsOrJsonEditors(string view)
     {
         var html = View("Admin", view);
@@ -107,10 +109,10 @@ public sealed class AdministrationWebTests
     }
 
     [Fact]
-    public void AdminHome_OffersTheFourAreas()
+    public void AdminHome_OffersTheFiveAreas()
     {
         var model = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Admin", "Index.cshtml.cs")));
-        foreach (var area in new[] { "\"Users\"", "\"Departments\"", "\"Request Types\"", "\"Workflows\"" })
+        foreach (var area in new[] { "\"Users\"", "\"Departments\"", "\"Request Types\"", "\"Workflows\"", "\"Channels\"" })
         {
             Assert.Contains(area, model);
         }
@@ -124,6 +126,8 @@ public sealed class AdministrationWebTests
         Assert.Contains("data-confirm", View("Admin", "RequestTypeEdit.cshtml"));
         Assert.Contains("data-confirm", View("Admin", "WorkflowDetails.cshtml"));
         Assert.Contains("data-confirm", View("Admin", "WorkflowVersion.cshtml"));
+        Assert.Contains("data-confirm", View("Admin", "ChannelEdit.cshtml"));
+        Assert.Contains("data-confirm", View("Admin", "Channels.cshtml"));
 
         var details = View("Admin", "WorkflowDetails.cshtml");
         Assert.Contains("badge-version-draft", details);

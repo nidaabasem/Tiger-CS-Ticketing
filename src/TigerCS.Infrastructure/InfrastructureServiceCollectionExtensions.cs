@@ -148,6 +148,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICategoryRepository, CategoryRepository>();
         services.AddScoped<CategoryCatalogAppService>();
         services.AddScoped<IPriorityRepository, PriorityRepository>();
+        services.AddScoped<IChannelRepository, ChannelRepository>();
+        services.AddScoped<ChannelDirectoryAppService>();
         services.AddScoped<IIntakeRecordRepository, IntakeRecordRepository>();
         services.AddScoped<IDepartmentCustomerLookupSourceRepository, DepartmentCustomerLookupSourceRepository>();
         services.AddScoped<ITicketRepository, TicketRepository>();
@@ -237,6 +239,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<AdminDepartmentAppService>();
         services.AddScoped<AdminRequestTypeAppService>();
         services.AddScoped<AdminWorkflowAppService>();
+        services.AddScoped<AdminChannelAppService>();
 
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).

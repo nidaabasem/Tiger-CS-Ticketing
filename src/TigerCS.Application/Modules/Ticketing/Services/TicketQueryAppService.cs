@@ -22,7 +22,9 @@ public sealed class TicketQueryAppService(
     TimeProvider timeProvider,
     IRequestTypeRepository? requestTypeRepository = null,
     IWorkflowTemplateRepository? workflowTemplateRepository = null,
-    IWorkflowRepository? workflowRepository = null)
+    IWorkflowRepository? workflowRepository = null,
+    ITicketInteractionRepository? interactionRepository = null,
+    IChannelRepository? channelRepository = null)
 {
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
@@ -107,6 +109,25 @@ public sealed class TicketQueryAppService(
                 {
                     WorkflowName = workflow?.Name ?? version.Name,
                     WorkflowVersionNumber = version.VersionNumber
+                };
+            }
+        }
+
+        // Originating channel (Channel Management phase): the channel the
+        // ticket ENTERED the system on, read from its originating
+        // interaction and resolved by name — including a channel that has
+        // since been deactivated, so history keeps showing it. Later
+        // interactions on other channels never change it.
+        if (interactionRepository is not null)
+        {
+            var originating = await interactionRepository.GetOriginatingAsync(ticketId, cancellationToken);
+            if (originating is not null)
+            {
+                var channel = channelRepository is null ? null : await channelRepository.GetByIdAsync(originating.ChannelId, cancellationToken);
+                detail = detail with
+                {
+                    OriginatingChannelId = originating.ChannelId,
+                    OriginatingChannelName = channel?.Name
                 };
             }
         }

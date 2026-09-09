@@ -19,7 +19,7 @@ public class WorkflowAutomationDomainTests
     public void GenesysContext_CanCarryTheFullInteractionContext()
     {
         var context = TicketInteraction.CreateFromGenesys(
-            ticketId: 1, Channel.Phone, "+971500000001",
+            ticketId: 1, WellKnownChannels.Phone, "+971500000001",
             genesysConversationId: "conv-8842", calledNumber: "+97142223333",
             genesysQueueId: "q-77", genesysQueueName: "CS Main Queue",
             genesysAgentId: "agent-5", genesysAgentName: "Genesys Agent",
@@ -39,7 +39,7 @@ public class WorkflowAutomationDomainTests
         // The exact Genesys contract is not finalized — only the
         // conversation id (the traceability link) is mandatory.
         var context = TicketInteraction.CreateFromGenesys(
-            ticketId: 1, Channel.Phone, "+971500000001",
+            ticketId: 1, WellKnownChannels.Phone, "+971500000001",
             genesysConversationId: "conv-1", calledNumber: null,
             genesysQueueId: null, genesysQueueName: null,
             genesysAgentId: null, genesysAgentName: null,
@@ -51,17 +51,17 @@ public class WorkflowAutomationDomainTests
         Assert.Null(context.CalledNumber);
 
         Assert.Throws<ArgumentException>(() => TicketInteraction.CreateFromGenesys(
-            1, Channel.Phone, "+971500000001",
+            1, WellKnownChannels.Phone, "+971500000001",
             genesysConversationId: " ", null, null, null, null, null, null, null, Now));
     }
 
     [Fact]
     public void FaceToFaceContext_NeverCarriesGenesysFields_ButStillRequiresCustomerPhone()
     {
-        var context = TicketInteraction.CreateLocal(1, Channel.FaceToFaceKiosk, "+971500000001", Now);
+        var context = TicketInteraction.CreateLocal(1, WellKnownChannels.FaceToFaceKiosk, "+971500000001", Now);
 
         Assert.Equal(InteractionContextSource.Ticketing, context.Source);
-        Assert.Equal(Channel.FaceToFaceKiosk, context.ChannelId);
+        Assert.Equal(WellKnownChannels.FaceToFaceKiosk, context.ChannelId);
         Assert.Equal("+971500000001", context.CustomerPhone);
         Assert.Null(context.GenesysConversationId);
         Assert.Null(context.GenesysQueueId);
@@ -70,9 +70,11 @@ public class WorkflowAutomationDomainTests
         Assert.Null(context.GenesysAgentName);
         Assert.Null(context.CalledNumber);
 
-        // The phone stays mandatory — it is the CRM/PACT/Tasleeh
-        // verification identity input, Genesys or not.
-        Assert.Throws<ArgumentException>(() => TicketInteraction.CreateLocal(1, Channel.FaceToFaceKiosk, " ", Now));
+        // Whether a phone is mandatory is the channel's RequiresPhone
+        // configuration (enforced at intake) — a kiosk walk-in may carry
+        // none, stored as empty; the channel itself is always required.
+        Assert.Equal(string.Empty, TicketInteraction.CreateLocal(1, WellKnownChannels.FaceToFaceKiosk, null, Now).CustomerPhone);
+        Assert.Throws<ArgumentException>(() => TicketInteraction.CreateLocal(1, 0, "+971500000001", Now));
     }
 
     [Fact]
@@ -84,12 +86,12 @@ public class WorkflowAutomationDomainTests
         // and a Face-to-Face follow-up — three independent rows on one
         // ticket, each retaining its own context.
         await repo.AddAsync(TicketInteraction.CreateFromGenesys(
-            1, Channel.Phone, "+971500000001", "conv-1", null, "q-1", null, null, null, null, "Inbound",
+            1, WellKnownChannels.Phone, "+971500000001", "conv-1", null, "q-1", null, null, null, null, "Inbound",
             Now, isOriginatingInteraction: true));
         await repo.AddAsync(TicketInteraction.CreateFromGenesys(
-            1, Channel.Phone, "+971500000001", "conv-2", null, "q-1", null, null, null, null, "Inbound",
+            1, WellKnownChannels.Phone, "+971500000001", "conv-2", null, "q-1", null, null, null, null, "Inbound",
             Now.AddDays(1)));
-        await repo.AddAsync(TicketInteraction.CreateLocal(1, Channel.FaceToFaceKiosk, "+971500000001", Now.AddDays(2)));
+        await repo.AddAsync(TicketInteraction.CreateLocal(1, WellKnownChannels.FaceToFaceKiosk, "+971500000001", Now.AddDays(2)));
 
         var interactions = await repo.ListByTicketIdAsync(1);
         Assert.Equal(3, interactions.Count);
@@ -102,7 +104,7 @@ public class WorkflowAutomationDomainTests
         // At most one originating interaction per ticket — the fake mirrors
         // the database's filtered unique index.
         await Assert.ThrowsAsync<InvalidOperationException>(() => repo.AddAsync(
-            TicketInteraction.CreateLocal(1, Channel.Phone, "+971500000001", Now.AddDays(3), isOriginatingInteraction: true)));
+            TicketInteraction.CreateLocal(1, WellKnownChannels.Phone, "+971500000001", Now.AddDays(3), isOriginatingInteraction: true)));
     }
 
     // ---- Request-type classification ----

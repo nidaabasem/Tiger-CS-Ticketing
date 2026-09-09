@@ -1,0 +1,149 @@
+@page "/Admin/Channels"
+@model TigerCS.Web.Pages.Admin.ChannelsModel
+@{
+    ViewData["Title"] = "Channels";
+    ViewData["ActiveNav"] = "admin";
+    ViewData["AdminSection"] = "channels";
+    Layout = "_Layout";
+    var activeCount = Model.Channels.Count(c => c.IsActive);
+}
+
+<div class="page admin-page">
+    @await Html.PartialAsync("_AdminBreadcrumb", ("Channels", "/Admin/Channels", (string?)null))
+    <div class="page-header">
+        <div>
+            <p class="page-eyebrow">Configuration</p>
+            <h1 class="page-title">Channels</h1>
+            <p class="page-subtitle">How customer interactions enter the system. Create Ticket offers only active channels, in display order; an inactive channel keeps its name on historical tickets but is never offered for new ones.</p>
+        </div>
+        <div class="page-header__actions">
+            <a class="btn btn-gold" href="#add-channel">@await Html.PartialAsync("_AdminIcon", "plus") Add Channel</a>
+        </div>
+    </div>
+
+    @await Html.PartialAsync("_AdminMessages", Model)
+
+    <div class="admin-grid admin-grid--list-form">
+        <div>
+            <form class="filter-bar" method="get" aria-label="Filter channels">
+                <div class="field-group">
+                    <label class="field-label" for="includeInactive">Show</label>
+                    <select class="field-select" id="includeInactive" name="includeInactive" data-autosubmit>
+                        <option value="true" selected="@Model.IncludeInactive">All channels</option>
+                        <option value="false" selected="@(!Model.IncludeInactive)">Active only</option>
+                    </select>
+                </div>
+                @if (Model.LoadError is null)
+                {
+                    <span class="filter-bar__count">@Model.Channels.Count shown · @activeCount active</span>
+                }
+                <div class="filter-bar__submit"><button type="submit" class="btn btn-sm">Apply</button></div>
+            </form>
+
+            <div class="panel">
+                @if (Model.LoadError is not null)
+                {
+                    <div class="error-state">
+                        @await Html.PartialAsync("_AdminIcon", "warning")
+                        <p>@Model.LoadError</p>
+                    </div>
+                }
+                else if (Model.Channels.Count == 0)
+                {
+                    <div class="empty-state">
+                        @await Html.PartialAsync("_AdminIcon", "channels")
+                        <p class="empty-state__title">@(Model.IncludeInactive ? "No channels yet" : "No active channels")</p>
+                        <p>@(Model.IncludeInactive ? "Add the first channel using the form." : "Show all channels to see inactive ones.")</p>
+                        @if (Model.IncludeInactive)
+                        {
+                            <a class="btn btn-sm btn-gold" href="#add-channel">Add Channel</a>
+                        }
+                        else
+                        {
+                            <a class="btn btn-sm" href="/Admin/Channels">Show all channels</a>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Code</th>
+                                    <th>Phone Required</th>
+                                    <th>Genesys</th>
+                                    <th>Status</th>
+                                    <th class="col-num">Order</th>
+                                    <th class="col-num">History</th>
+                                    <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in Model.Channels)
+                                {
+                                    <tr class="@(c.IsActive ? "" : "is-inactive")">
+                                        <td class="cell-primary"><a class="ticket-id-link" href="/Admin/Channels/@c.ChannelId">@c.Name</a></td>
+                                        <td><span class="badge badge-neutral text-mono">@c.Code</span></td>
+                                        <td>@(c.RequiresPhone ? "Yes" : "No")</td>
+                                        <td>@(c.IsGenesysEnabled ? "Yes" : "No")</td>
+                                        <td>@await Html.PartialAsync("_StatusBadge", c.IsActive)</td>
+                                        <td class="col-num">@c.DisplayOrder</td>
+                                        <td class="col-num">@c.ReferenceCount</td>
+                                        <td class="col-actions">
+                                            <span class="chip-list">
+                                                <a class="btn btn-sm" href="/Admin/Channels/@c.ChannelId">Edit</a>
+                                                <form method="post" asp-page-handler="Activation" asp-route-id="@c.ChannelId" asp-route-isActive="@(c.IsActive ? "false" : "true")"
+                                                      data-confirm="@(c.IsActive ? $"Deactivate {c.Name}? It will no longer be offered when creating a ticket. Historical tickets keep it." : null)">
+                                                    <button type="submit" class="btn btn-sm @(c.IsActive ? "btn-critical" : "btn-gold")">@(c.IsActive ? "Deactivate" : "Activate")</button>
+                                                </form>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <aside class="admin-side">
+            <section class="panel admin-form-panel" id="add-channel" aria-labelledby="add-channel-title">
+                <div class="panel__header"><h2 class="panel__title" id="add-channel-title">Add channel</h2></div>
+                <form method="post" asp-page-handler="Create" class="admin-form">
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.Name">Channel Name *</label>
+                        <input class="form-control" asp-for="Create.Name" maxlength="100" required aria-required="true" placeholder="e.g. WhatsApp" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.Code">Channel Code *</label>
+                        <input class="form-control" asp-for="Create.Code" maxlength="50" required aria-required="true" placeholder="e.g. WHATSAPP" />
+                        <span class="field-hint">Stable, unique identifier used by integrations. Up to 50 characters.</span>
+                    </div>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Create.RequiresPhone" />
+                        Requires Phone Number
+                    </label>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Create.IsGenesysEnabled" />
+                        Genesys Enabled
+                    </label>
+                    <label class="checkbox-field">
+                        <input type="checkbox" asp-for="Create.IsActive" />
+                        Active
+                    </label>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Create.DisplayOrder">Display Order</label>
+                        <input class="form-control" asp-for="Create.DisplayOrder" type="number" min="0" step="1" />
+                        <span class="field-hint">Lower numbers appear first in Create Ticket.</span>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-gold">Save</button>
+                    </div>
+                </form>
+            </section>
+        </aside>
+    </div>
+</div>

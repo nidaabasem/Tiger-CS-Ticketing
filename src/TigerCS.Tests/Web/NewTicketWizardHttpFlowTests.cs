@@ -76,10 +76,26 @@ public sealed class NewTicketWizardHttpFlowTests
             });
         });
 
-    /// <summary>The Api responses the happy-path search needs: intake creation, the department-aware lookup (Crm participates), the CRM Buyer match, and its bounded history.</summary>
+    /// <summary>GET /api/channels as the configured catalogue answers it — the five reference channels, active, in display order.</summary>
+    private static HttpResponseMessage ChannelsResponse() =>
+        FakeApiHandler.JsonResponse(HttpStatusCode.OK, new ChannelDto[]
+        {
+            new(1, "Phone", "Phone", true, true, true, 1),
+            new(2, "App / Website", "AppOrWebsite", true, false, true, 2),
+            new(3, "WhatsApp / Live Chat", "WhatsAppOrLiveChat", true, true, true, 3),
+            new(4, "Social Media Direct Message", "SocialMediaDirectMessage", false, true, true, 4),
+            new(5, "Face to Face / Kiosk", "FaceToFaceKiosk", false, false, true, 5)
+        });
+
+    /// <summary>The Api responses the happy-path search needs: the channel catalogue, intake creation, the department-aware lookup (Crm participates), the CRM Buyer match, and its bounded history.</summary>
     private static FakeApiHandler CrmFoundApi() => new((request, _) =>
     {
         var path = request.RequestUri!.AbsolutePath;
+
+        if (request.Method == HttpMethod.Get && path == "/api/channels")
+        {
+            return ChannelsResponse();
+        }
 
         if (request.Method == HttpMethod.Post && path == "/api/intake-records")
         {
@@ -184,6 +200,11 @@ public sealed class NewTicketWizardHttpFlowTests
         var api = new FakeApiHandler((request, _) =>
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Get && path == "/api/channels")
+            {
+                return ChannelsResponse();
+            }
+
             if (request.Method == HttpMethod.Post && path == "/api/intake-records")
             {
                 return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new IntakeRecordResponseDto(

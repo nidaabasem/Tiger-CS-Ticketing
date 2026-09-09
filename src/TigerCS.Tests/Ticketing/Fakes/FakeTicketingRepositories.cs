@@ -45,6 +45,81 @@ public sealed class FakePriorityRepository : IPriorityRepository
         Task.FromResult(_priorities.GetValueOrDefault(priorityId));
 }
 
+/// <summary>
+/// In-memory <see cref="IChannelRepository"/>. Starts EMPTY — a test seeds
+/// exactly the channels it needs (<see cref="SeedWellKnown"/> adds the five
+/// reference rows under their <see cref="WellKnownChannels"/> ids), so no
+/// test passes on a channel list it never declared.
+/// </summary>
+public sealed class FakeChannelRepository : IChannelRepository
+{
+    private readonly Dictionary<byte, Channel> _channels = [];
+    private byte _nextId = 1;
+
+    /// <summary>Test assertion helper — every channel, in insertion order.</summary>
+    public IReadOnlyList<Channel> All => _channels.Values.ToList();
+
+    public Dictionary<byte, int> References { get; } = [];
+
+    /// <summary>The five reference channels (Phone, App / Website, WhatsApp / Live Chat, Social Media DM, Face to Face / Kiosk) under their fixed ids — mirrors ChannelReferenceData.</summary>
+    public FakeChannelRepository SeedWellKnown()
+    {
+        Add(Channel.Seeded(WellKnownChannels.Phone, "Phone", "Phone", requiresPhone: true, isGenesysEnabled: true, displayOrder: 1));
+        Add(Channel.Seeded(WellKnownChannels.AppOrWebsite, "App / Website", "AppOrWebsite", requiresPhone: true, isGenesysEnabled: false, displayOrder: 2));
+        Add(Channel.Seeded(WellKnownChannels.WhatsAppOrLiveChat, "WhatsApp / Live Chat", "WhatsAppOrLiveChat", requiresPhone: true, isGenesysEnabled: true, displayOrder: 3));
+        Add(Channel.Seeded(WellKnownChannels.SocialMediaDirectMessage, "Social Media Direct Message", "SocialMediaDirectMessage", requiresPhone: false, isGenesysEnabled: true, displayOrder: 4));
+        Add(Channel.Seeded(WellKnownChannels.FaceToFaceKiosk, "Face to Face / Kiosk", "FaceToFaceKiosk", requiresPhone: false, isGenesysEnabled: false, displayOrder: 5));
+        return this;
+    }
+
+    public Channel Add(Channel channel)
+    {
+        if (channel.ChannelId == 0)
+        {
+            while (_channels.ContainsKey(_nextId))
+            {
+                _nextId++;
+            }
+
+            typeof(Channel).GetProperty(nameof(Channel.ChannelId))!.SetValue(channel, _nextId++);
+        }
+
+        _channels[channel.ChannelId] = channel;
+        return channel;
+    }
+
+    public Channel AddChannel(string name, string code, bool requiresPhone = true, bool isGenesysEnabled = false, int displayOrder = 0, bool isActive = true) =>
+        Add(new Channel(name, code, requiresPhone, isGenesysEnabled, displayOrder, isActive));
+
+    public Task<Channel?> GetByIdAsync(byte channelId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_channels.GetValueOrDefault(channelId));
+
+    public Task<Channel?> GetByCodeAsync(string code, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_channels.Values.FirstOrDefault(c => string.Equals(c.Code, code.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    public Task<IReadOnlyList<Channel>> ListAsync(bool activeOnly, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Channel>>(
+            _channels.Values
+                .Where(c => !activeOnly || c.IsActive)
+                .OrderBy(c => c.DisplayOrder)
+                .ThenBy(c => c.Name, StringComparer.Ordinal)
+                .ToList());
+
+    public Task AddAsync(Channel channel, CancellationToken cancellationToken = default)
+    {
+        Add(channel);
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> CodeExistsAsync(string code, byte? excludeChannelId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_channels.Values.Any(c =>
+            string.Equals(c.Code, code.Trim(), StringComparison.OrdinalIgnoreCase)
+            && (excludeChannelId is null || c.ChannelId != excludeChannelId)));
+
+    public Task<int> CountReferencesAsync(byte channelId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(References.GetValueOrDefault(channelId));
+}
+
 public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
 {
     private readonly Dictionary<long, IntakeRecord> _records = [];

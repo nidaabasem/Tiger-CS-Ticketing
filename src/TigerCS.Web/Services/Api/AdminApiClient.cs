@@ -53,6 +53,22 @@ public sealed class AdminApiClient(HttpClient httpClient, ILogger<AdminApiClient
     public Task<ApiResult<IReadOnlyCollection<RoleDto>>> GetRolesAsync(CancellationToken ct) =>
         GetAsync<IReadOnlyCollection<RoleDto>>("api/roles", ct);
 
+    // ---- channels ----
+    public Task<ApiResult<IReadOnlyList<AdminChannelDto>>> GetChannelsAsync(bool includeInactive, CancellationToken ct) =>
+        GetAsync<IReadOnlyList<AdminChannelDto>>($"api/admin/channels?includeInactive={(includeInactive ? "true" : "false")}", ct);
+
+    public Task<ApiResult<AdminChannelDto>> GetChannelAsync(byte channelId, CancellationToken ct) =>
+        GetAsync<AdminChannelDto>($"api/admin/channels/{channelId}", ct);
+
+    public Task<ApiResult<AdminChannelDto>> CreateChannelAsync(SaveChannelRequestDto request, CancellationToken ct) =>
+        PostAsync<SaveChannelRequestDto, AdminChannelDto>("api/admin/channels", request, ct);
+
+    public Task<ApiResult<AdminChannelDto>> UpdateChannelAsync(byte channelId, SaveChannelRequestDto request, CancellationToken ct) =>
+        PutAsync<SaveChannelRequestDto, AdminChannelDto>($"api/admin/channels/{channelId}", request, ct);
+
+    public Task<ApiResult<AdminChannelDto>> SetChannelActivationAsync(byte channelId, SetActiveRequestDto request, CancellationToken ct) =>
+        PatchAsync<SetActiveRequestDto, AdminChannelDto>($"api/admin/channels/{channelId}/activation", request, ct);
+
     // ---- departments ----
     public Task<ApiResult<IReadOnlyList<AdminDepartmentDto>>> GetDepartmentsAsync(bool includeInactive, CancellationToken ct) =>
         GetAsync<IReadOnlyList<AdminDepartmentDto>>($"api/admin/departments?includeInactive={(includeInactive ? "true" : "false")}", ct);

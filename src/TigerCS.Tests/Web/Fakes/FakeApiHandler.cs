@@ -25,6 +25,13 @@ public sealed class FakeApiHandler(Func<HttpRequestMessage, string?, HttpRespons
         return respond(request, body);
     }
 
+    /// <summary>Records the request and answers it — for a test that wants one handler's recording while composing responders.</summary>
+    public HttpResponseMessage Respond(HttpRequestMessage request, string? body)
+    {
+        Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.ToString(), body));
+        return respond(request, body);
+    }
+
     public static HttpResponseMessage JsonResponse(HttpStatusCode status, object body) =>
         new(status) { Content = JsonContent.Create(body, options: JsonOptions) };
 }

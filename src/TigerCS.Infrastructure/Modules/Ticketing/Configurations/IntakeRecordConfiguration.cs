@@ -24,6 +24,14 @@ public class IntakeRecordConfiguration : IEntityTypeConfiguration<IntakeRecord>
         builder.Property(i => i.CrmVerificationStatus).IsRequired();
         builder.Property(i => i.CreatedByEmployeeId).IsRequired();
 
+        // The originating channel is configuration (Channels) — Restrict,
+        // because a channel referenced by history is deactivated, never
+        // deleted (see Channel's remarks).
+        builder.HasOne<Channel>()
+            .WithMany()
+            .HasForeignKey(i => i.ChannelId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasOne<Priority>()
             .WithMany()
             .HasForeignKey(i => i.PriorityHint)
