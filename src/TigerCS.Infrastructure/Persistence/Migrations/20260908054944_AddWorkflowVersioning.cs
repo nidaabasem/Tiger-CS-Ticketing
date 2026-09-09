@@ -209,15 +209,19 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
             // directly above in the same batch. Tickets and RequestTypes both
             // exist at bind time, so nothing defers this statement on its own:
             // as a plain UPDATE it fails with "Invalid column name
-            // 'WorkflowTemplateId'" before the batch executes at all.
+            // 'WorkflowTemplateId'" before the batch executes at all. Wrapped
+            // in EXEC(N'...') so name resolution is deferred until execution,
+            // after the ALTER TABLE ... ADD above has run.
             migrationBuilder.Sql(
                 """
+                EXEC(N'
                 UPDATE tk
                 SET tk.[WorkflowTemplateId] = rt.[WorkflowTemplateId]
                 FROM [Tickets] tk
                 INNER JOIN [RequestTypes] rt ON rt.[RequestTypeId] = tk.[RequestTypeId]
                 WHERE tk.[RequestTypeId] IS NOT NULL
                   AND tk.[WorkflowTemplateId] IS NULL;
+                ');
                 """);
 
             migrationBuilder.RenameColumn(
