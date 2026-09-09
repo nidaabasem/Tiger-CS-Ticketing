@@ -28,9 +28,14 @@ public static class IntegrationsServiceCollectionExtensions
         services.AddScoped<ICrmGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            // "Mock" is the fixture gateway Development/Testing run on (the API
+            // test host pins it; CrmGatewaySafety still refuses it anywhere
+            // else). "Http" — the shipped appsettings.json default — resolves to
+            // the same MockCrmGateway for now: no real HTTP implementation of
+            // this port exists yet (only the separate CrmBuyerHttpGateway does).
             return options.Provider switch
             {
-                "Http" => sp.GetRequiredService<MockCrmGateway>(),
+                "Mock" or "Http" => sp.GetRequiredService<MockCrmGateway>(),
                 _ => throw new NotSupportedException(
                     $"Crm:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
                     "pilot phase (MVP-Implementation-Backlog.md S-06) — no real Tiger Group CRM endpoint details " +
@@ -45,7 +50,7 @@ public static class IntegrationsServiceCollectionExtensions
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Http" => sp.GetRequiredService<MockCrmGateway>(),
+                "Mock" or "Http" => sp.GetRequiredService<MockCrmGateway>(),
                 _ => throw new NotSupportedException(
                     $"Crm:Provider '{options.Provider}' is not supported for customer lookup either — see the " +
                     "ICrmGateway registration above for the same reasoning.")

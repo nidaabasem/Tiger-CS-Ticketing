@@ -9,7 +9,7 @@
     --color-text-secondary: #66645F;
     --color-border: #E4E3DF;
     --color-gold: #e7b95e;
-    --color-gold-dark: #e7b95e;
+    --color-gold-dark: #daad55;
     --color-gold-pale: #f8f8f8;
     --color-critical: #B3261E;
     --color-critical-pale: #F8E6E4;
@@ -351,6 +351,14 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 
 .form-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
 .checkbox-field { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--color-text); cursor: pointer; }
+.checkbox-field-login {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--color-text-login);
+    cursor: pointer;
+}
 .checkbox-field input { width: 15px; height: 15px; accent-color: var(--color-gold); }
 .link-muted { font-size: 12.5px; color: var(--color-text-secondary); }
 .link-muted:hover { color: var(--color-gold-dark); text-decoration: underline; }
