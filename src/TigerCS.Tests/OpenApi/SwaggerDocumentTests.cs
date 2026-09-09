@@ -362,7 +362,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     /// enum a client has to supply or interpret.
     /// </summary>
     [Theory]
-    [InlineData("CreateIntakeRecordRequestDto", "channelId", new[] { "Phone", "AppOrWebsite", "WhatsAppOrLiveChat", "SocialMediaDirectMessage", "FaceToFaceKiosk" })]
+    [InlineData("CreateIntakeRecordRequestDto", "channelId", new[] { "PHONE", "WHATSAPP", "LIVE_CHAT", "SOCIAL_DM", "WEBSITE", "WALK_IN_KIOSK", "MOBILE_APP", "INSTAGRAM", "FACEBOOK" })]
     [InlineData("IntakeRecordResponseDto", "crmVerificationStatus", new[] { "Unverified", "PendingCrmVerification", "Verified" })]
     [InlineData("CreateVerificationSessionRequestDto", "verificationMethod", new[] { "ManualAgentConfirmation", "AuthenticatedDigitalUser", "Otp", "FaceToFaceDocumentCheck", "Other" })]
     [InlineData("VerificationSessionResponseDto", "status", new[] { "InProgress", "Confirmed", "Consumed", "Expired", "Abandoned" })]

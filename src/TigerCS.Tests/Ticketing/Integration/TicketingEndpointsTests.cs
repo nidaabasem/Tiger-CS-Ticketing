@@ -73,15 +73,15 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
             (await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("NoSuchChannel", PhoneWithNoMatch, null, false, null, null))).StatusCode);
 
         // Numeric id and (case-insensitive) code both resolve to the same seeded channel.
-        var byId = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("3", PhoneWithNoMatch, null, false, null, null));
+        var byId = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("6", PhoneWithNoMatch, null, false, null, null));
         Assert.Equal(HttpStatusCode.Created, byId.StatusCode);
         var byIdIntake = await byId.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
-        Assert.Equal("WhatsAppOrLiveChat", byIdIntake!.ChannelId);
-        Assert.Equal("WhatsApp / Live Chat", byIdIntake.ChannelName);
+        Assert.Equal("WHATSAPP", byIdIntake!.ChannelId);
+        Assert.Equal("WhatsApp", byIdIntake.ChannelName);
 
-        var byCode = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("whatsapporlivechat", PhoneWithNoMatch, null, false, null, null));
+        var byCode = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("whatsapp", PhoneWithNoMatch, null, false, null, null));
         Assert.Equal(HttpStatusCode.Created, byCode.StatusCode);
-        Assert.Equal("WhatsAppOrLiveChat", (await byCode.Content.ReadFromJsonAsync<IntakeRecordResponseDto>())!.ChannelId);
+        Assert.Equal("WHATSAPP", (await byCode.Content.ReadFromJsonAsync<IntakeRecordResponseDto>())!.ChannelId);
     }
 
     [Fact]
@@ -94,11 +94,11 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(HttpStatusCode.BadRequest, blankOnPhone.StatusCode);
         Assert.Contains("PhoneNumber", await blankOnPhone.Content.ReadAsStringAsync());
 
-        // Face to Face / Kiosk (RequiresPhone = false): a blank phone is accepted and stored as empty.
-        var blankOnKiosk = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("FaceToFaceKiosk", "", null, false, null, null));
+        // Walk in / Kiosk (RequiresPhone = false): a blank phone is accepted and stored as empty.
+        var blankOnKiosk = await client.PostAsJsonAsync("/api/intake-records", new CreateIntakeRecordRequestDto("WALK_IN_KIOSK", "", null, false, null, null));
         Assert.Equal(HttpStatusCode.Created, blankOnKiosk.StatusCode);
         var intake = await blankOnKiosk.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
-        Assert.Equal("FaceToFaceKiosk", intake!.ChannelId);
+        Assert.Equal("WALK_IN_KIOSK", intake!.ChannelId);
         Assert.Equal(string.Empty, intake.PhoneNumber);
     }
 

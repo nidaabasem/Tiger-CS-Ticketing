@@ -5,33 +5,38 @@ using TigerCS.Infrastructure.Persistence;
 namespace TigerCS.Infrastructure.Modules.Ticketing.Seed;
 
 /// <summary>
-/// The channel reference rows — the five members of the former
-/// <c>Channel</c> enum, with their exact original ids
-/// (<see cref="WellKnownChannels"/>) and the enum names as their stable
-/// codes, so every pre-existing <c>IntakeRecords.ChannelId</c> /
+/// The channel reference rows — the approved production channel list, keyed
+/// by their fixed ids (<see cref="WellKnownChannels"/>) with stable codes,
+/// so every pre-existing <c>IntakeRecords.ChannelId</c> /
 /// <c>TicketInteractions.ChannelId</c> value (and every API client still
-/// sending "Phone") resolves to the same channel. The
+/// sending a channel code) resolves to the same channel. Ids 2 and 3 are
+/// retained as inactive legacy rows so historical records keep resolving
+/// their names; the active channels carry the approved display order. The
 /// <c>AddChannels</c> migration inserts the same rows for a migrated
 /// database; this seed exists for databases created without migrations
 /// (the InMemory-backed integration tests) and is idempotent per row.
 ///
 /// <para>
-/// Only the five rows are seeded, deliberately: the request's example list
-/// (WhatsApp and Live Chat as separate channels, etc.) is not recreated
-/// because seed data already existed as the enum — an administrator adds
-/// or renames channels under Admin → Configuration → Channels, and this
-/// seed never overwrites those edits.
+/// This seed never overwrites existing rows — administrator edits under
+/// Admin → Configuration → Channels are preserved; only missing ids are
+/// inserted.
 /// </para>
 /// </summary>
 public static class ChannelReferenceData
 {
     public static IReadOnlyList<Channel> Channels() =>
     [
-        Channel.Seeded(WellKnownChannels.Phone, "Phone", "Phone", requiresPhone: true, isGenesysEnabled: true, displayOrder: 1),
-        Channel.Seeded(WellKnownChannels.AppOrWebsite, "App / Website", "AppOrWebsite", requiresPhone: true, isGenesysEnabled: false, displayOrder: 2),
-        Channel.Seeded(WellKnownChannels.WhatsAppOrLiveChat, "WhatsApp / Live Chat", "WhatsAppOrLiveChat", requiresPhone: true, isGenesysEnabled: true, displayOrder: 3),
-        Channel.Seeded(WellKnownChannels.SocialMediaDirectMessage, "Social Media Direct Message", "SocialMediaDirectMessage", requiresPhone: false, isGenesysEnabled: true, displayOrder: 4),
-        Channel.Seeded(WellKnownChannels.FaceToFaceKiosk, "Face to Face / Kiosk", "FaceToFaceKiosk", requiresPhone: false, isGenesysEnabled: false, displayOrder: 5)
+        Channel.Seeded(WellKnownChannels.Phone, "Phone", "PHONE", requiresPhone: true, isGenesysEnabled: true, displayOrder: 1, isActive: true),
+        Channel.Seeded(WellKnownChannels.AppOrWebsite, "App / Website (Legacy)", "LEGACY_APP_OR_WEBSITE", requiresPhone: true, isGenesysEnabled: false, displayOrder: 101, isActive: false),
+        Channel.Seeded(WellKnownChannels.WhatsAppOrLiveChat, "WhatsApp / Live Chat (Legacy)", "LEGACY_WHATSAPP_OR_LIVE_CHAT", requiresPhone: true, isGenesysEnabled: true, displayOrder: 102, isActive: false),
+        Channel.Seeded(WellKnownChannels.SocialMediaDirectMessage, "Social Media Direct Message", "SOCIAL_DM", requiresPhone: true, isGenesysEnabled: true, displayOrder: 4, isActive: true),
+        Channel.Seeded(WellKnownChannels.FaceToFaceKiosk, "Walk in / Kiosk", "WALK_IN_KIOSK", requiresPhone: false, isGenesysEnabled: false, displayOrder: 6, isActive: true),
+        Channel.Seeded(WellKnownChannels.WhatsApp, "WhatsApp", "WHATSAPP", requiresPhone: true, isGenesysEnabled: true, displayOrder: 2, isActive: true),
+        Channel.Seeded(WellKnownChannels.LiveChat, "Live Chat", "LIVE_CHAT", requiresPhone: true, isGenesysEnabled: true, displayOrder: 3, isActive: true),
+        Channel.Seeded(WellKnownChannels.Website, "Website", "WEBSITE", requiresPhone: true, isGenesysEnabled: false, displayOrder: 5, isActive: true),
+        Channel.Seeded(WellKnownChannels.MobileApp, "Mobile App (Customer Portal)", "MOBILE_APP", requiresPhone: true, isGenesysEnabled: false, displayOrder: 7, isActive: true),
+        Channel.Seeded(WellKnownChannels.Instagram, "Instagram", "INSTAGRAM", requiresPhone: true, isGenesysEnabled: true, displayOrder: 8, isActive: true),
+        Channel.Seeded(WellKnownChannels.Facebook, "Facebook", "FACEBOOK", requiresPhone: true, isGenesysEnabled: true, displayOrder: 9, isActive: true)
     ];
 
     /// <summary>

@@ -3,6 +3,7 @@ using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Infrastructure.Modules.Ticketing.Seed;
 
 namespace TigerCS.Tests.Ticketing.Fakes;
 
@@ -47,9 +48,9 @@ public sealed class FakePriorityRepository : IPriorityRepository
 
 /// <summary>
 /// In-memory <see cref="IChannelRepository"/>. Starts EMPTY — a test seeds
-/// exactly the channels it needs (<see cref="SeedWellKnown"/> adds the five
-/// reference rows under their <see cref="WellKnownChannels"/> ids), so no
-/// test passes on a channel list it never declared.
+/// exactly the channels it needs (<see cref="SeedWellKnown"/> adds the
+/// approved production reference rows under their <see cref="WellKnownChannels"/>
+/// ids), so no test passes on a channel list it never declared.
 /// </summary>
 public sealed class FakeChannelRepository : IChannelRepository
 {
@@ -61,14 +62,14 @@ public sealed class FakeChannelRepository : IChannelRepository
 
     public Dictionary<byte, int> References { get; } = [];
 
-    /// <summary>The five reference channels (Phone, App / Website, WhatsApp / Live Chat, Social Media DM, Face to Face / Kiosk) under their fixed ids — mirrors ChannelReferenceData.</summary>
+    /// <summary>The approved production reference channels under their fixed ids — mirrors ChannelReferenceData (ids 2 and 3 are inactive legacy rows).</summary>
     public FakeChannelRepository SeedWellKnown()
     {
-        Add(Channel.Seeded(WellKnownChannels.Phone, "Phone", "Phone", requiresPhone: true, isGenesysEnabled: true, displayOrder: 1));
-        Add(Channel.Seeded(WellKnownChannels.AppOrWebsite, "App / Website", "AppOrWebsite", requiresPhone: true, isGenesysEnabled: false, displayOrder: 2));
-        Add(Channel.Seeded(WellKnownChannels.WhatsAppOrLiveChat, "WhatsApp / Live Chat", "WhatsAppOrLiveChat", requiresPhone: true, isGenesysEnabled: true, displayOrder: 3));
-        Add(Channel.Seeded(WellKnownChannels.SocialMediaDirectMessage, "Social Media Direct Message", "SocialMediaDirectMessage", requiresPhone: false, isGenesysEnabled: true, displayOrder: 4));
-        Add(Channel.Seeded(WellKnownChannels.FaceToFaceKiosk, "Face to Face / Kiosk", "FaceToFaceKiosk", requiresPhone: false, isGenesysEnabled: false, displayOrder: 5));
+        foreach (var channel in ChannelReferenceData.Channels())
+        {
+            Add(channel);
+        }
+
         return this;
     }
 

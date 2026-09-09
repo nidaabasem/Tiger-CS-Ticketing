@@ -17,7 +17,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
         /// original ids (1..5) and the enum names as their stable codes
         /// BEFORE the two foreign keys are added, so every existing row
         /// already references a channel the moment the constraint exists.
-        /// The seed rows mirror <c>ChannelReferenceData</c> exactly.
+        /// The seed rows mirror <c>ChannelReferenceData</c> exactly — the
+        /// approved production channel list, with ids 2 and 3 retained as
+        /// inactive legacy rows so historical records keep resolving them.
         /// </summary>
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -39,20 +41,27 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     table.PrimaryKey("PK_Channels", x => x.ChannelId);
                 });
 
-            // The former enum members, under their original ids — inserted
-            // before the foreign keys below so existing IntakeRecords /
-            // TicketInteractions rows satisfy them. (InsertData handles
-            // IDENTITY_INSERT for the identity column.)
+            // The approved production channels, under their fixed ids —
+            // inserted before the foreign keys below so existing
+            // IntakeRecords / TicketInteractions rows satisfy them. Ids 2 and
+            // 3 are inactive legacy rows retained for historical resolution.
+            // (InsertData handles IDENTITY_INSERT for the identity column.)
             migrationBuilder.InsertData(
                 table: "Channels",
                 columns: new[] { "ChannelId", "Name", "Code", "RequiresPhone", "IsGenesysEnabled", "IsActive", "DisplayOrder" },
                 values: new object[,]
                 {
-                    { (byte)1, "Phone", "Phone", true, true, true, 1 },
-                    { (byte)2, "App / Website", "AppOrWebsite", true, false, true, 2 },
-                    { (byte)3, "WhatsApp / Live Chat", "WhatsAppOrLiveChat", true, true, true, 3 },
-                    { (byte)4, "Social Media Direct Message", "SocialMediaDirectMessage", false, true, true, 4 },
-                    { (byte)5, "Face to Face / Kiosk", "FaceToFaceKiosk", false, false, true, 5 }
+                    { (byte)1, "Phone", "PHONE", true, true, true, 1 },
+                    { (byte)2, "App / Website (Legacy)", "LEGACY_APP_OR_WEBSITE", true, false, false, 101 },
+                    { (byte)3, "WhatsApp / Live Chat (Legacy)", "LEGACY_WHATSAPP_OR_LIVE_CHAT", true, true, false, 102 },
+                    { (byte)4, "Social Media Direct Message", "SOCIAL_DM", true, true, true, 4 },
+                    { (byte)5, "Walk in / Kiosk", "WALK_IN_KIOSK", false, false, true, 6 },
+                    { (byte)6, "WhatsApp", "WHATSAPP", true, true, true, 2 },
+                    { (byte)7, "Live Chat", "LIVE_CHAT", true, true, true, 3 },
+                    { (byte)8, "Website", "WEBSITE", true, false, true, 5 },
+                    { (byte)9, "Mobile App (Customer Portal)", "MOBILE_APP", true, false, true, 7 },
+                    { (byte)10, "Instagram", "INSTAGRAM", true, true, true, 8 },
+                    { (byte)11, "Facebook", "FACEBOOK", true, true, true, 9 }
                 });
 
             migrationBuilder.CreateIndex(

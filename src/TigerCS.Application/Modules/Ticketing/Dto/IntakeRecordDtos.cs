@@ -4,15 +4,15 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="ChannelId">
 /// Required. The selected channel from <c>GET /api/channels</c> — its
 /// numeric <c>channelId</c> (canonical), or its stable <c>code</c> (the
-/// seeded codes are Phone, AppOrWebsite, WhatsAppOrLiveChat,
-/// SocialMediaDirectMessage, FaceToFaceKiosk; codes match
+/// seeded active codes are PHONE, WHATSAPP, LIVE_CHAT, SOCIAL_DM, WEBSITE,
+/// WALK_IN_KIOSK, MOBILE_APP, INSTAGRAM, FACEBOOK; codes match
 /// case-insensitively). The channel must exist and be active for a new
 /// ticket; it is configured under Admin → Configuration → Channels.
 /// </param>
 /// <param name="PhoneNumber">
 /// The identifier customer lookup searches CRM/PACT/Tasleeh with. Required
 /// when the selected channel's <c>requiresPhone</c> configuration is true
-/// (e.g. Phone), optional otherwise (e.g. Face to Face / Kiosk). Preserved
+/// (e.g. Phone), optional otherwise (e.g. Walk in / Kiosk). Preserved
 /// exactly as entered, regardless of what the lookup finds.
 /// </param>
 /// <param name="DepartmentId">

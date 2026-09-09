@@ -104,14 +104,14 @@ public class IntakeRecordAppServiceTests
         var (service, records, _, audit, _) = CreateService();
 
         var result = await service.CreateAsync(
-            Guid.NewGuid(), new CreateIntakeRecordRequestDto("3", "+971500000001", null, false, null, null));
+            Guid.NewGuid(), new CreateIntakeRecordRequestDto("6", "+971500000001", null, false, null, null));
 
         Assert.Equal(IntakeRecordOutcome.Success, result.Outcome);
         var stored = await records.GetByIdAsync(result.Response!.IntakeRecordId);
-        Assert.Equal(WellKnownChannels.WhatsAppOrLiveChat, stored!.ChannelId);
-        Assert.Equal("WhatsAppOrLiveChat", result.Response.ChannelId);
-        Assert.Equal("WhatsApp / Live Chat", result.Response.ChannelName);
-        Assert.Contains(audit.Entries, w => w.Action == "CreateIntakeRecord" && w.AfterValue!.Contains("ChannelId=3", StringComparison.Ordinal));
+        Assert.Equal(WellKnownChannels.WhatsApp, stored!.ChannelId);
+        Assert.Equal("WHATSAPP", result.Response.ChannelId);
+        Assert.Equal("WhatsApp", result.Response.ChannelName);
+        Assert.Contains(audit.Entries, w => w.Action == "CreateIntakeRecord" && w.AfterValue!.Contains("ChannelId=6", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public class IntakeRecordAppServiceTests
 
         Assert.Equal(IntakeRecordOutcome.Success, result.Outcome);
         Assert.Equal(WellKnownChannels.Phone, (await records.GetByIdAsync(result.Response!.IntakeRecordId))!.ChannelId);
-        Assert.Equal("Phone", result.Response.ChannelId);
+        Assert.Equal("PHONE", result.Response.ChannelId);
     }
 
     [Theory]
@@ -179,7 +179,7 @@ public class IntakeRecordAppServiceTests
         var (service, records, _, _, _) = CreateService();
 
         var result = await service.CreateAsync(
-            Guid.NewGuid(), new CreateIntakeRecordRequestDto("FaceToFaceKiosk", "", null, false, null, null));
+            Guid.NewGuid(), new CreateIntakeRecordRequestDto("WALK_IN_KIOSK", "", null, false, null, null));
 
         Assert.Equal(IntakeRecordOutcome.Success, result.Outcome);
         var stored = await records.GetByIdAsync(result.Response!.IntakeRecordId);

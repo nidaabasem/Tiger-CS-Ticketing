@@ -110,9 +110,9 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         var (admin, _) = await CreateClientAsync(Roles.SystemAdministrator);
         var code = "CH" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
 
-        // The seeded catalogue (the former enum, same ids) is listed with status.
+        // The seeded catalogue (the approved production channels, fixed ids) is listed with status.
         var seeded = await ReadAsync<List<AdminChannelDto>>(await admin.GetAsync("/api/admin/channels"));
-        Assert.Contains(seeded, c => c.ChannelId == WellKnownChannels.Phone && c.Code == "Phone" && c.IsActive && c.RequiresPhone);
+        Assert.Contains(seeded, c => c.ChannelId == WellKnownChannels.Phone && c.Code == "PHONE" && c.IsActive && c.RequiresPhone);
         Assert.Contains(seeded, c => c.ChannelId == WellKnownChannels.FaceToFaceKiosk && !c.RequiresPhone);
 
         var created = await ReadAsync<AdminChannelDto>(await admin.PostAsJsonAsync("/api/admin/channels",

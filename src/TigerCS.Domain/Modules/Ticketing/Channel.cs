@@ -2,11 +2,12 @@ namespace TigerCS.Domain.Modules.Ticketing;
 
 /// <summary>
 /// FR-CH-02 — the configurable catalogue of channels a customer interaction
-/// can arrive on (Phone, WhatsApp / Live Chat, App / Website, Face to Face /
-/// Kiosk, …). Was a fixed <c>enum</c>; is now a <c>Channels</c> table
-/// administered under Admin → Configuration → Channels, so a new channel is
-/// a row, not a release. The five original enum members keep their exact ids
-/// (<see cref="WellKnownChannels"/>) so every existing IntakeRecord and
+/// can arrive on (Phone, WhatsApp, Live Chat, Website, Walk in / Kiosk,
+/// Mobile App, Instagram, Facebook, …). Was a fixed <c>enum</c>; is now a
+/// <c>Channels</c> table administered under Admin → Configuration → Channels,
+/// so a new channel is a row, not a release. The original enum members keep
+/// their exact ids (<see cref="WellKnownChannels"/>) — including the retired
+/// legacy rows (ids 2 and 3) — so every existing IntakeRecord and
 /// TicketInteraction row still references the same channel.
 ///
 /// <para>
@@ -73,14 +74,14 @@ public class Channel
     /// added through administration are identity-generated.
     /// </summary>
     public static Channel Seeded(
-        byte channelId, string name, string code, bool requiresPhone, bool isGenesysEnabled, int displayOrder)
+        byte channelId, string name, string code, bool requiresPhone, bool isGenesysEnabled, int displayOrder, bool isActive = true)
     {
         if (channelId == 0)
         {
             throw new ArgumentOutOfRangeException(nameof(channelId), "A seeded channel needs a fixed, non-zero id.");
         }
 
-        return new Channel(name, code, requiresPhone, isGenesysEnabled, displayOrder) { ChannelId = channelId };
+        return new Channel(name, code, requiresPhone, isGenesysEnabled, displayOrder, isActive) { ChannelId = channelId };
     }
 
     /// <summary>Administration edit. Historical records keep referencing the same ChannelId, so they display the new name — the identity is the id, never the text.</summary>

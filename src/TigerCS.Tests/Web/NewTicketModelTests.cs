@@ -94,14 +94,18 @@ public sealed class NewTicketModelTests
         return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler, customerLookupHandler);
     }
 
-    /// <summary>The five reference channels exactly as GET /api/channels returns them (active, display order).</summary>
+    /// <summary>The nine approved active channels exactly as GET /api/channels returns them (active only, display order).</summary>
     private static readonly ChannelDto[] SeededChannels =
     [
-        new(1, "Phone", "Phone", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 1),
-        new(2, "App / Website", "AppOrWebsite", RequiresPhone: true, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 2),
-        new(3, "WhatsApp / Live Chat", "WhatsAppOrLiveChat", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 3),
-        new(4, "Social Media Direct Message", "SocialMediaDirectMessage", RequiresPhone: false, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 4),
-        new(5, "Face to Face / Kiosk", "FaceToFaceKiosk", RequiresPhone: false, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 5)
+        new(1, "Phone", "PHONE", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 1),
+        new(6, "WhatsApp", "WHATSAPP", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 2),
+        new(7, "Live Chat", "LIVE_CHAT", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 3),
+        new(4, "Social Media Direct Message", "SOCIAL_DM", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 4),
+        new(8, "Website", "WEBSITE", RequiresPhone: true, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 5),
+        new(5, "Walk in / Kiosk", "WALK_IN_KIOSK", RequiresPhone: false, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 6),
+        new(9, "Mobile App (Customer Portal)", "MOBILE_APP", RequiresPhone: true, IsGenesysEnabled: false, IsActive: true, DisplayOrder: 7),
+        new(10, "Instagram", "INSTAGRAM", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 8),
+        new(11, "Facebook", "FACEBOOK", RequiresPhone: true, IsGenesysEnabled: true, IsActive: true, DisplayOrder: 9)
     ];
 
     private static Func<HttpRequestMessage, string?, HttpResponseMessage> ChannelsReturning(params ChannelDto[] channels) =>

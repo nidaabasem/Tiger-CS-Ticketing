@@ -224,7 +224,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var channels = await response.Content.ReadFromJsonAsync<List<TigerCS.Application.Modules.Ticketing.Dto.ChannelDto>>();
-        Assert.Contains(channels!, c => c.Code == "Phone" && c.IsActive);
+        Assert.Contains(channels!, c => c.Code == "PHONE" && c.IsActive);
     }
 
     [Fact]
@@ -362,7 +362,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         // 201 over an empty write.
         var intake = await response.Content.ReadFromJsonAsync<IntakeRecordResponseDto>();
         Assert.True(intake!.IntakeRecordId > 0);
-        Assert.Equal("Phone", intake.ChannelId);
+        Assert.Equal("PHONE", intake.ChannelId);
         Assert.True(intake.IsUnitRelated);
     }
 

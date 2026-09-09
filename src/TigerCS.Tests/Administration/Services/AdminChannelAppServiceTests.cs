@@ -45,14 +45,20 @@ public class AdminChannelAppServiceTests
 
         var all = await f.Service.ListAsync(includeInactive: true);
 
-        Assert.Equal(["Alpha", "Zeta", "Phone", "App / Website", "WhatsApp / Live Chat", "Social Media Direct Message", "Face to Face / Kiosk"],
+        Assert.Equal(
+            [
+                "Alpha", "Zeta", "Phone", "WhatsApp", "Live Chat", "Social Media Direct Message",
+                "Website", "Walk in / Kiosk", "Mobile App (Customer Portal)", "Instagram", "Facebook",
+                "App / Website (Legacy)", "WhatsApp / Live Chat (Legacy)"
+            ],
             all.Select(c => c.Name).ToArray());
         Assert.False(all.Single(c => c.Code == "ZETA").IsActive);
         Assert.True(all.Single(c => c.Code == "ALPHA").IsActive);
 
         var activeOnly = await f.Service.ListAsync(includeInactive: false);
         Assert.DoesNotContain(activeOnly, c => c.Code == "ZETA");
-        Assert.Equal(6, activeOnly.Count);
+        // Alpha + the nine approved active channels (the two legacy rows and Zeta are inactive).
+        Assert.Equal(10, activeOnly.Count);
     }
 
     [Fact]
@@ -61,11 +67,11 @@ public class AdminChannelAppServiceTests
         var f = Create();
 
         var created = await f.Service.CreateAsync(Admin,
-            new SaveChannelRequestDto(" WhatsApp ", " WHATSAPP ", RequiresPhone: true, IsGenesysEnabled: true, DisplayOrder: 7));
+            new SaveChannelRequestDto(" Telegram ", " TELEGRAM ", RequiresPhone: true, IsGenesysEnabled: true, DisplayOrder: 7));
 
         Assert.Equal(AdminOutcome.Success, created.Outcome);
-        Assert.Equal("WhatsApp", created.Value!.Name);
-        Assert.Equal("WHATSAPP", created.Value.Code);
+        Assert.Equal("Telegram", created.Value!.Name);
+        Assert.Equal("TELEGRAM", created.Value.Code);
         Assert.True(created.Value.RequiresPhone);
         Assert.True(created.Value.IsGenesysEnabled);
         Assert.True(created.Value.IsActive);
@@ -87,7 +93,7 @@ public class AdminChannelAppServiceTests
         Assert.Equal(AdminOutcome.ValidationFailed, result.Outcome);
         Assert.Contains("Name is required.", result.Errors!);
         Assert.Contains("Code is required.", result.Errors!);
-        Assert.Equal(5, f.Channels.All.Count);
+        Assert.Equal(11, f.Channels.All.Count);
     }
 
     [Fact]
@@ -173,7 +179,7 @@ public class AdminChannelAppServiceTests
         var stillThere = await f.Channels.GetByIdAsync(WellKnownChannels.Phone);
         Assert.NotNull(stillThere);
         Assert.Equal("Phone", stillThere.Name);
-        Assert.Equal(5, f.Channels.All.Count);
+        Assert.Equal(11, f.Channels.All.Count);
 
         // Gone from the new-ticket directory only.
         Assert.DoesNotContain(await f.Directory.ListAsync(activeOnly: true), c => c.ChannelId == WellKnownChannels.Phone);
