@@ -45,6 +45,15 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
     /// </summary>
     public Dictionary<string, string?> ExtraConfiguration { get; init; } = [];
 
+    /// <summary>
+    /// The <c>Crm:Provider</c> this host runs on. "Mock" (the default) pins
+    /// MockCrmGateway's fixture data, which every unit/contact-lookup and
+    /// customer-search test is written against. A test proving that the real
+    /// environments' standard "Http" never serves fixture data sets "Http"
+    /// (CrmHttpProviderEndpointsTests).
+    /// </summary>
+    public string CrmProvider { get; init; } = "Mock";
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // Explicit, deterministic environment name — distinct from "Development"
@@ -71,17 +80,17 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         // execution, never job logic.
         builder.UseSetting("BackgroundJobs:Enabled", "false");
 
-        // The committed appsettings.json now names the deployment's own CRM
-        // provider ("Http" — see Crm:Provider there), which the generic
-        // ICrmGateway/ICrmCustomerLookupGateway registrations do not
-        // implement (IntegrationsServiceCollectionExtensions: only "Mock"
-        // exists for those two ports). This host must not depend on the
-        // committed deployment default: every test that touches unit/contact
-        // lookup or customer search is written against MockCrmGateway's
-        // fixture, so pin it here — the same test-double swap as the
-        // ICrmBuyerLookupGateway replacement below and the InMemory
-        // DbContext. UseSetting for the same eager-read reason as above.
-        builder.UseSetting("Crm:Provider", "Mock");
+        // "Http" is the standard Crm:Provider for every real environment
+        // (appsettings.json), where the two generic CRM ports fail closed
+        // until Tiger CRM publishes their endpoints
+        // (UnimplementedCrmHttpGateway). This host must not depend on that
+        // deployment default: every test that touches unit/contact lookup or
+        // customer search is written against MockCrmGateway's fixture, so
+        // "Mock" is pinned explicitly here (CrmProvider) — the same
+        // test-double swap as the ICrmBuyerLookupGateway replacement below
+        // and the InMemory DbContext. UseSetting for the same eager-read
+        // reason as above.
+        builder.UseSetting("Crm:Provider", CrmProvider);
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
@@ -100,11 +109,12 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 // exercise the real HTTP path (PactHttpLookupEndToEndTests)
                 // override these via ExtraConfiguration, which is applied
                 // after and therefore wins.
-                // The shipped appsettings.json now selects the real providers
-                // (Crm/Pact "Http") for UAT. The integration host pins BOTH to
-                // Mock regardless, exactly as it already did for PACT — a test
-                // must never depend on which adapter the deployed config names.
-                ["Crm:Provider"] = "Mock",
+                // The shipped appsettings.json selects "Http" for both Crm and
+                // Pact in every real environment. The integration host pins
+                // both to Mock by default (Crm through CrmProvider, so one test
+                // class can opt into "Http") — a test must never depend on
+                // which adapter the deployed config names.
+                ["Crm:Provider"] = CrmProvider,
                 ["Pact:Provider"] = "Mock",
                 ["PactApi:BaseUrl"] = "",
                 ["PactApi:ApiKey"] = ""

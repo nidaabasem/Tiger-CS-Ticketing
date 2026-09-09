@@ -17,31 +17,32 @@ public static class IntegrationsServiceCollectionExtensions
     {
         services.Configure<CrmGatewayOptions>(configuration.GetSection(CrmGatewayOptions.SectionName));
 
-        // ICrmGateway (unit-number lookup) and ICrmCustomerLookupGateway
-        // (business-rule change: phone-based customer search,
-        // CustomerLookupAppService's only caller) are deliberately separate
-        // interfaces (see ICrmCustomerLookupGateway's remarks) but the same
-        // "Mock" provider switch and the same single MockCrmGateway instance
-        // backs both — one fixture data set, not two to keep in sync.
+        // ICrmGateway (unit/contact lookup) and ICrmCustomerLookupGateway
+        // (phone-based customer search, CustomerLookupAppService's only caller)
+        // are deliberately separate interfaces (see ICrmCustomerLookupGateway's
+        // remarks) but share one Crm:Provider switch and one instance per
+        // provider:
+        //   "Http" — the standard for Development, UAT and Production. Tiger
+        //            CRM publishes no endpoint for these two ports yet, so it
+        //            resolves UnimplementedCrmHttpGateway, which fails closed
+        //            through each port's own outage contract and never serves
+        //            fixture data (see its remarks). The real CRM HTTP
+        //            integration, CrmBuyerHttpGateway, is a separate port
+        //            (AddCrmBuyerLookupGateway) not governed by this switch.
+        //   "Mock" — MockCrmGateway, one fixture data set behind both ports.
+        //            The API test host pins it (TigerCsApiFactory);
+        //            CrmGatewaySafety refuses it outside Development/Testing.
         services.AddScoped<MockCrmGateway>();
+        services.AddScoped<UnimplementedCrmHttpGateway>();
 
         services.AddScoped<ICrmGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
-            // "Mock" is the fixture gateway Development/Testing run on (the API
-            // test host pins it; CrmGatewaySafety still refuses it anywhere
-            // else). "Http" — the shipped appsettings.json default — resolves to
-            // the same MockCrmGateway for now: no real HTTP implementation of
-            // this port exists yet (only the separate CrmBuyerHttpGateway does).
             return options.Provider switch
             {
-                "Mock" or "Http" => sp.GetRequiredService<MockCrmGateway>(),
-                _ => throw new NotSupportedException(
-                    $"Crm:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
-                    "pilot phase (MVP-Implementation-Backlog.md S-06) — no real Tiger Group CRM endpoint details " +
-                    "were available to build against. See MockCrmGateway's own remarks: it must never be " +
-                    "described as production-ready, and a real ICrmGateway implementation is required before " +
-                    "any other provider value can be used.")
+                "Http" => (ICrmGateway)sp.GetRequiredService<UnimplementedCrmHttpGateway>(),
+                "Mock" => sp.GetRequiredService<MockCrmGateway>(),
+                _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
             };
         });
 
@@ -50,10 +51,9 @@ public static class IntegrationsServiceCollectionExtensions
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Mock" or "Http" => sp.GetRequiredService<MockCrmGateway>(),
-                _ => throw new NotSupportedException(
-                    $"Crm:Provider '{options.Provider}' is not supported for customer lookup either — see the " +
-                    "ICrmGateway registration above for the same reasoning.")
+                "Http" => (ICrmCustomerLookupGateway)sp.GetRequiredService<UnimplementedCrmHttpGateway>(),
+                "Mock" => sp.GetRequiredService<MockCrmGateway>(),
+                _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
             };
         });
 
@@ -64,6 +64,12 @@ public static class IntegrationsServiceCollectionExtensions
 
         return services;
     }
+
+    private static string UnsupportedCrmProviderMessage(string? provider) =>
+        $"Crm:Provider '{provider}' is not supported. Use \"Http\" — the standard for Development, UAT and " +
+        "Production (the real CRM Buyer Lookup runs over HTTP; unit, contact and phone-search operations fail " +
+        "closed until Tiger CRM publishes their endpoints) — or \"Mock\" (MockCrmGateway fixture data for the " +
+        "automated test host; CrmGatewaySafety refuses it outside Development/Testing).";
 
     /// <summary>
     /// The CRM Buyer Lookup increment's own real HTTP integration — unlike

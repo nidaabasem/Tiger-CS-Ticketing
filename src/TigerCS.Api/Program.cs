@@ -109,10 +109,10 @@ using (var startupScope = app.Services.CreateScope())
 // Fail fast if the mock CRM adapter would run outside Development/Testing.
 // The actual decision is CrmGatewaySafety.IsUnsafe — conditional on the
 // selected gateway type (Crm:Provider), not on the environment name alone;
-// see that class's own remarks. A real ICrmGateway implementation
-// (Crm:Provider set to anything other than "Mock",
-// IntegrationsServiceCollectionExtensions) is judged safe here in every
-// environment, Production included.
+// see that class's own remarks. "Http" — the standard for Development, UAT
+// and Production (IntegrationsServiceCollectionExtensions) — never resolves
+// MockCrmGateway and is judged safe here in every environment, Production
+// included.
 using (var crmStartupScope = app.Services.CreateScope())
 {
     var crmOptions = crmStartupScope.ServiceProvider.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
@@ -121,8 +121,8 @@ using (var crmStartupScope = app.Services.CreateScope())
         throw new InvalidOperationException(
             $"Crm:Provider is 'Mock' in environment '{app.Environment.EnvironmentName}'. MockCrmGateway is " +
             "never production-ready (see its own remarks) and may only run in " +
-            $"{string.Join("/", CrmGatewaySafety.MockAllowedEnvironments)}. Configure a real ICrmGateway " +
-            "implementation and set Crm:Provider accordingly before deploying to this environment.");
+            $"{string.Join("/", CrmGatewaySafety.MockAllowedEnvironments)}. Set Crm:Provider to \"Http\" — the " +
+            "standard for every real environment — before deploying to this environment.");
     }
 }
 

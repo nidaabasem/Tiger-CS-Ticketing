@@ -3,8 +3,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Infrastructure.Persistence;
+using TigerCS.Integrations.Modules.CrmIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 
 namespace TigerCS.Tests.IdentityAndAccess.Integration;
@@ -102,18 +105,15 @@ public class StartupValidationTests
     /// refused at the JWT/security-config level, by ASPNETCORE_ENVIRONMENT
     /// name alone — that decision (no blanket "if IsProduction() throw")
     /// still stands and is unchanged. What's new: MockCrmGateway must never
-    /// run in Production (explicit review requirement) — Program.cs now
-    /// fails fast if Crm:Provider resolves to "Mock" outside
-    /// Development/Testing, which is <c>CrmGatewayOptions</c>' own default
-    /// and every environment's config today (no real ICrmGateway
-    /// implementation exists yet, per backlog S-06). Given valid JWT config
-    /// (the same config that proves other environments start cleanly, see
-    /// <see cref="ValidConfiguration_StartsSuccessfully"/>) and the default
-    /// "Mock" provider, Production therefore genuinely cannot start today —
-    /// a correct outcome, not a regression: it is consistent with "no
-    /// production deployment is authorized at this pilot stage" (ADR-0022,
-    /// docs/DEV-SETUP.md), now enforced by a real, narrow, risk-specific
-    /// code gate rather than documentation alone. This guard is conditional
+    /// run in Production (explicit review requirement) — Program.cs fails
+    /// fast if Crm:Provider resolves to "Mock" outside Development/Testing.
+    /// "Http" is now the standard provider for every real environment
+    /// (<c>CrmGatewayOptions</c>' default and every committed appsettings)
+    /// and starts cleanly everywhere, see
+    /// <see cref="AnyRealEnvironment_WithHttpCrmProvider_StartsAndNeverResolvesTheMock"/>;
+    /// this test configures "Mock" explicitly to pin the guard — a real,
+    /// narrow, risk-specific code gate rather than documentation alone
+    /// (ADR-0022, docs/DEV-SETUP.md). This guard is conditional
     /// on the selected gateway type, not the environment name itself — a
     /// non-Mock provider starts cleanly in Production, see
     /// <see cref="ProductionEnvironment_WithNonMockCrmProvider_StartsSuccessfully"/>.
@@ -293,6 +293,33 @@ public class StartupValidationTests
         var server = factory.Server;
 
         Assert.NotNull(server);
+    }
+
+    /// <summary>
+    /// "Http" is the standard Crm:Provider for every real environment
+    /// (Development, UAT, Production — appsettings.json). It must start
+    /// everywhere: it never resolves MockCrmGateway, so CrmGatewaySafety has
+    /// nothing to refuse, and the two ports Tiger CRM publishes no endpoint
+    /// for resolve UnimplementedCrmHttpGateway — failing closed on use, never
+    /// at startup, and never with fixture data.
+    /// </summary>
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("UAT")]
+    [InlineData("Production")]
+    public void AnyRealEnvironment_WithHttpCrmProvider_StartsAndNeverResolvesTheMock(string environment)
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "Http";
+        config["Notifications:Email:Enabled"] = "false";
+        config["Notifications:Email:Provider"] = "Recording";
+
+        using var factory = new ConfiguredFactory(environment, config);
+
+        Assert.NotNull(factory.Server);
+        using var scope = factory.Services.CreateScope();
+        Assert.IsType<UnimplementedCrmHttpGateway>(scope.ServiceProvider.GetRequiredService<ICrmGateway>());
+        Assert.IsType<UnimplementedCrmHttpGateway>(scope.ServiceProvider.GetRequiredService<ICrmCustomerLookupGateway>());
     }
 
     [Fact]

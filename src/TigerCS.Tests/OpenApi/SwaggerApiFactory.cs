@@ -37,12 +37,11 @@ public sealed class SwaggerApiFactory(string environment) : WebApplicationFactor
             ["Jwt:ExpirationMinutes"] = "60",
 
             // MockCrmGateway may only run in Development/Testing
-            // (CrmGatewaySafety), so a Production host would refuse to start
-            // with the repository's default Crm:Provider of "Mock". Naming a
-            // different provider satisfies that startup guard; the gateway
-            // itself is never resolved by these tests, which only read the
-            // Swagger surface.
-            ["Crm:Provider"] = environment == "Production" ? "NotMock" : "Mock",
+            // (CrmGatewaySafety), so the Production host names "Http" — the
+            // real environments' standard provider — and the others keep the
+            // fixture-backed "Mock"; the gateway itself is never resolved by
+            // these tests, which only read the Swagger surface.
+            ["Crm:Provider"] = environment == "Production" ? "Http" : "Mock",
 
             // Same reasoning for the email adapter (EmailSenderSafety):
             // RecordingEmailSender never delivers anything, so a Production
