@@ -162,7 +162,7 @@ jobs:
             "AspNetUserRoles" "AspNetUserTokens" "AspNetUsers" "Departments" \
             "Employees" "UserDepartmentAssignments" \
             "AuditEntries" "ContactReferences" "UnitReferences" "VerificationSessions" \
-            "Categories" "Priorities" "IntakeRecords" "Tickets" \
+            "Categories" "Channels" "Priorities" "IntakeRecords" "Tickets" \
             "TicketRequesterSnapshots" "TicketStatusHistory" \
             "TicketAssignments" "TicketResolutions" "TicketNotes" \
             "SlaPolicies" "BusinessCalendars" "BusinessCalendarWorkingDays" "Holidays" \
@@ -187,7 +187,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 48 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table). TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables (the Genesys context lives as nullable columns on TicketInteractions, not tables of its own). TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
+          echo "Table list matches exactly: 49 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum). TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables (the Genesys context lives as nullable columns on TicketInteractions, not tables of its own). TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -408,9 +408,14 @@ jobs:
             exit 1
           fi
           # 28 = the original 27 plus Tickets->RequestTypes (the nullable
-          # Workflow/Automation classification FK, Restrict like the rest).
-          if [ "$fk_count" -ne 29 ]; then
-            echo "::error::Expected exactly 29 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes/DepartmentCustomerLookupSources (28 + Tickets->WorkflowTemplates from AddWorkflowVersioning), found $fk_count."
+          # Workflow/Automation classification FK, Restrict like the rest);
+          # 29 = 28 plus Tickets->WorkflowTemplates (AddWorkflowVersioning);
+          # 30 = 29 plus IntakeRecords->Channels (AddChannels — Channel
+          # Management's configurable channel catalogue). TicketInteractions
+          # also gained a Channels FK, but TicketInteractions is not one of
+          # the tables this check filters on, so it does not add to this count.
+          if [ "$fk_count" -ne 30 ]; then
+            echo "::error::Expected exactly 30 foreign keys across Categories/Tickets/TicketRequesterSnapshots/TicketStatusHistory/IntakeRecords/TicketAssignments/TicketResolutions/TicketNotes/DepartmentCustomerLookupSources (29 + IntakeRecords->Channels from AddChannels), found $fk_count."
             exit 1
           fi
           echo "All foreign keys on the new Ticketing tables are NO_ACTION (Restrict), as required."
