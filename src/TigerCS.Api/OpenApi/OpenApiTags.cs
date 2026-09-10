@@ -104,13 +104,14 @@ public static class OpenApiTags
         (Genesys,
             "The three externally consumable Genesys contracts. CREATE: one normalized endpoint every channel "
             + "(phone, website chat, chatbot, WhatsApp, social media) converges on, idempotent on the Genesys "
-            + "conversation id — one inquiry produces exactly one ticket, and a retry returns that same ticket. A "
-            + "ringing call creates nothing; the flow starts when the agent answers. New tickets may be created "
+            + "conversation id — one inquiry produces exactly one ticket, and a retry returns that same ticket. There "
+            + "is no event field: posting means create-or-reuse, and a ringing call never reaches TigerCS. New tickets may be created "
             + "Unclassified (no category, request type or priority), and a customer-lookup failure never blocks "
             + "creation. LOOK UP: the call-pickup customer lookup, reusing the same CRM Buyer and PACT/Tasleeh "
             + "services the New Ticket wizard uses — no second CRM integration, and finding nobody is a normal 200. "
             + "UPDATE: one endpoint for everything Genesys owns about a ticket afterwards — agent context, "
-            + "conversation end and transcript, and human-handoff state. It carries no field for category, "
+            + "conversation end and transcript (Customer / VirtualAgent / HumanAgent / System, deduplicated on the "
+            + "supplied messageId), and human-handoff state. It carries no field for category, "
             + "priority, status, owner or closure: those move through their own TigerCS operations, and ending a "
             + "conversation never closes the ticket."),
         (PendingCustomerInteractions,

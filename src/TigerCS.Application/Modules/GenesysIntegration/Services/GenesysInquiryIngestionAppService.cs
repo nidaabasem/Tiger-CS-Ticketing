@@ -34,12 +34,11 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>A ringing phone creates nothing.</b>
-/// <see cref="GenesysInquiryEvent.Ringing"/> is accepted and acknowledged
-/// with <see cref="GenesysIngestionOutcome.NoTicketYet"/>; only
-/// <see cref="GenesysInquiryEvent.Answered"/> (the agent picked up) and
-/// <see cref="GenesysInquiryEvent.Started"/> (a text conversation reached an
-/// agent) start the ticket flow.
+/// <b>A ringing phone never gets here.</b> Reaching this service means a real
+/// inquiry exists: an agent picked up the call, or a digital conversation
+/// started. TigerCS is not an event receiver for call progress, so there is no
+/// Ringing/Answered vocabulary for Genesys to send — the phone flow simply
+/// begins at pickup, with the customer lookup and then this.
 /// </para>
 ///
 /// <para>
@@ -112,13 +111,6 @@ public sealed class GenesysInquiryIngestionAppService(
         if (await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is { } existing)
         {
             return await AlreadyIngestedAsync(existing, cancellationToken);
-        }
-
-        // The phone rule: a ringing call is not an inquiry anyone has taken
-        // on yet. Accepted, and deliberately creates nothing.
-        if (inquiry.Event == GenesysInquiryEvent.Ringing)
-        {
-            return GenesysIngestionResult.Failure(GenesysIngestionOutcome.NoTicketYet);
         }
 
         var channel = await channelRepository.GetByCodeAsync(GenesysChannelResolver.CodeFor(inquiry.Channel), cancellationToken);
@@ -244,7 +236,7 @@ public sealed class GenesysInquiryIngestionAppService(
             beforeValue: null,
             afterValue:
                 $"TicketId={creation.Response.TicketId};TicketNumber={creation.Response.TicketNumber};"
-                + $"Channel={inquiry.Channel};Event={inquiry.Event};DepartmentId={department.DepartmentId};"
+                + $"Channel={inquiry.Channel};DepartmentId={department.DepartmentId};"
                 + $"QueueId={inquiry.QueueId ?? "(none)"};CustomerLookup={lookup.Status};Classification=Unclassified",
             correlationId: Guid.NewGuid(),
             cancellationToken);

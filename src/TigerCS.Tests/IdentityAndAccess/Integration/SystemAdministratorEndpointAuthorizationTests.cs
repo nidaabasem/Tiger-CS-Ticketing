@@ -495,16 +495,11 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
 
         var conversationId = "conv-" + Guid.NewGuid().ToString("N")[..12];
 
-        // A ringing call is accepted and creates nothing.
-        var ringing = await client.PostAsJsonAsync(
-            "/api/genesys/tickets",
-            new GenesysInquiryRequest(conversationId, "Phone", "Ringing", CustomerPhone: "+971500000001", DepartmentId: departmentId));
-        Assert.Equal(HttpStatusCode.NoContent, ringing.StatusCode);
-
-        // The agent answers: exactly one ticket.
+        // The agent picks up — a ringing call never reaches TigerCS, and
+        // there is no event field to say so. Exactly one ticket.
         var answered = await client.PostAsJsonAsync(
             "/api/genesys/tickets",
-            new GenesysInquiryRequest(conversationId, "Phone", "Answered", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+            new GenesysInquiryRequest(conversationId, "Phone", CustomerPhone: "+971500000001", DepartmentId: departmentId));
         Assert.Equal(HttpStatusCode.Created, answered.StatusCode);
         var created = await answered.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
         Assert.Equal("TicketCreated", created!.Outcome);
@@ -512,7 +507,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         // A retry returns the SAME ticket and creates no second one.
         var retry = await client.PostAsJsonAsync(
             "/api/genesys/tickets",
-            new GenesysInquiryRequest(conversationId, "Phone", "Answered", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+            new GenesysInquiryRequest(conversationId, "Phone", CustomerPhone: "+971500000001", DepartmentId: departmentId));
         Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
         var retried = await retry.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
         Assert.Equal("AlreadyIngested", retried!.Outcome);
@@ -547,7 +542,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
                     DateTime.UtcNow, "AgentDisconnect",
                     [
                         new GenesysTranscriptMessageRequest("Customer", DateTime.UtcNow.AddMinutes(-2), "Any update on my unit?"),
-                        new GenesysTranscriptMessageRequest("Agent", DateTime.UtcNow.AddMinutes(-1), "Checking now.")
+                        new GenesysTranscriptMessageRequest("HumanAgent", DateTime.UtcNow.AddMinutes(-1), "Checking now.")
                     ])));
         Assert.Equal(HttpStatusCode.OK, ended.StatusCode);
         var endResult = await ended.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>();
@@ -618,7 +613,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var created = await client.PostAsJsonAsync(
             "/api/genesys/tickets",
             new GenesysInquiryRequest(
-                conversationId, "Phone", "Answered", CustomerPhone: unknownNumber, DepartmentId: departmentId));
+                conversationId, "Phone", CustomerPhone: unknownNumber, DepartmentId: departmentId));
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var ticket = await created.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
 
@@ -656,7 +651,7 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var started = await client.PostAsJsonAsync(
             "/api/genesys/tickets",
             new GenesysInquiryRequest(
-                conversationId, "WebsiteChat", "Started",
+                conversationId, "WebsiteChat",
                 CustomerPhone: "+971500000055", CustomerName: "Ahmed Ali", DepartmentId: departmentId));
         Assert.Equal(HttpStatusCode.Created, started.StatusCode);
         var ticket = await started.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();

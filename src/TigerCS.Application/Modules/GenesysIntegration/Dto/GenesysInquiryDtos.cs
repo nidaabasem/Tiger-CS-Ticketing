@@ -25,41 +25,24 @@ public enum GenesysChannel
 }
 
 /// <summary>
-/// What happened on the Genesys side — the one field that decides whether an
-/// inquiry becomes a ticket <b>now</b>.
-///
-/// <para>
-/// <b>The phone rule lives here.</b> A ringing phone is not an inquiry a
-/// human has taken on: <see cref="Ringing"/> is accepted, acknowledged, and
-/// deliberately creates nothing. <see cref="Answered"/> — the agent picked
-/// up — is what starts the ticket flow. Text channels (website chat,
-/// WhatsApp, social) report <see cref="Started"/> when the conversation
-/// begins with an agent, which is the equivalent moment for them.
-/// </para>
-/// </summary>
-public enum GenesysInquiryEvent
-{
-    /// <summary>The call is ringing / alerting. Recorded as a no-op: NO ticket is created.</summary>
-    Ringing = 1,
-
-    /// <summary>The Genesys agent answered/picked up the call — create the ticket.</summary>
-    Answered = 2,
-
-    /// <summary>A text conversation reached an agent and is under way — create the ticket.</summary>
-    Started = 3
-}
-
-/// <summary>
 /// The normalized Genesys inquiry — the <b>only</b> shape Ticketing's
 /// application layer understands, defined here on Ticketing's side of the
 /// boundary. Raw Genesys transport payloads never travel past
 /// <c>TigerCS.Api</c>'s Genesys contracts: the API edge maps them onto this
-/// record, so no domain or application code depends on Genesys' JSON,
-/// its field names, or its event vocabulary.
+/// record, so no domain or application code depends on Genesys' JSON or its
+/// field names.
 ///
 /// <para>
-/// <b>Everything except <see cref="ConversationId"/>, <see cref="Channel"/>
-/// and <see cref="Event"/> is optional</b>, because Genesys' per-channel
+/// <b>There is no event vocabulary.</b> Receiving this inquiry means "create
+/// or reuse a ticket for this conversation" and nothing else. A ringing phone
+/// never reaches TigerCS at all — the phone flow starts when the agent picks
+/// up — so no Ringing/Answered/Started vocabulary is invented for Genesys to
+/// send.
+/// </para>
+///
+/// <para>
+/// <b>Everything except <see cref="ConversationId"/> and
+/// <see cref="Channel"/> is optional</b>, because Genesys' per-channel
 /// guarantees are not confirmed. Absent values are stored as null, never
 /// guessed. All four ticket-creating channels converge on this one contract
 /// and one ingestion flow — there is no per-channel ticket-creation path.
@@ -67,7 +50,6 @@ public enum GenesysInquiryEvent
 /// </summary>
 /// <param name="ConversationId">Required. Genesys' conversation identifier — the idempotency key and the permanent Ticket ↔ conversation link.</param>
 /// <param name="Channel">Required. Which TigerCS-normalized channel the inquiry arrived on.</param>
-/// <param name="Event">Required. What happened (ringing / answered / started) — decides whether a ticket is created now.</param>
 /// <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id and is supplied.</param>
 /// <param name="ParticipantId">Genesys' customer-participant id, where supplied.</param>
 /// <param name="CommunicationId">Genesys' communication id, where supplied.</param>
@@ -93,7 +75,6 @@ public enum GenesysInquiryEvent
 public sealed record GenesysInquiryDto(
     string ConversationId,
     GenesysChannel Channel,
-    GenesysInquiryEvent Event,
     string? InteractionId = null,
     string? ParticipantId = null,
     string? CommunicationId = null,
@@ -157,9 +138,6 @@ public enum GenesysIngestionOutcome
 
     /// <summary>This conversation was already ingested — the SAME ticket is returned, and nothing was created. The correct answer to any retry or duplicate delivery.</summary>
     AlreadyIngested,
-
-    /// <summary>The event does not create a ticket yet (a ringing call). Accepted and acknowledged; nothing was created, by design.</summary>
-    NoTicketYet,
 
     /// <summary>The Genesys integration is switched off (<c>Genesys:Enabled=false</c>). Nothing was created; normal manual ticketing is unaffected.</summary>
     IntegrationDisabled,

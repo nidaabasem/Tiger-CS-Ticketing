@@ -1,6 +1,7 @@
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.GenesysIntegration.Fakes;
 
@@ -27,7 +28,7 @@ public class GenesysContractsTests
 
     private static GenesysInquiryDto Inquiry(
         string conversationId, GenesysChannel channel, int departmentId, string? phone = "+971500000001") =>
-        new(conversationId, channel, GenesysInquiryEvent.Started,
+        new(conversationId, channel,
             CustomerPhone: phone, CustomerName: "Ahmed Ali", DepartmentId: departmentId);
 
     // ---- Contract 2: customer lookup on call pickup ----
@@ -147,7 +148,7 @@ public class GenesysContractsTests
                     DateTime.UtcNow, "AgentDisconnect",
                     [
                         new GenesysTranscriptMessageDto("Customer", DateTime.UtcNow.AddMinutes(-2), "Any update?"),
-                        new GenesysTranscriptMessageDto("Agent", DateTime.UtcNow.AddMinutes(-1), "Checking now.")
+                        new GenesysTranscriptMessageDto("HumanAgent", DateTime.UtcNow.AddMinutes(-1), "Checking now.")
                     ])));
 
         Assert.Equal(GenesysTicketUpdateOutcome.Applied, result.Outcome);
@@ -167,12 +168,17 @@ public class GenesysContractsTests
     public async Task Update_ResendingTheSameTranscript_StoresNothingTwice()
     {
         var (f, ticketId) = await CreatedTicketAsync();
+        var sentAt = new DateTime(2026, 9, 10, 9, 33, 0, DateTimeKind.Utc);
 
+        // A real retry resends the SAME messages — same ids, same timestamps.
         GenesysTicketUpdateDto Update() => new(
             "conv-update",
             Ended: new GenesysConversationEndUpdateDto(
-                DateTime.UtcNow, "CustomerDisconnect",
-                [new GenesysTranscriptMessageDto("Customer", DateTime.UtcNow, "Hello?")]));
+                sentAt.AddMinutes(5), "CustomerDisconnect",
+                [
+                    new GenesysTranscriptMessageDto("Customer", sentAt, "I want to sell my apartment.", ExternalMessageId: "m-1"),
+                    new GenesysTranscriptMessageDto("VirtualAgent", sentAt.AddSeconds(20), "An NOC for resale?", ExternalMessageId: "m-2")
+                ]));
 
         var first = await f.TicketUpdate.UpdateAsync(ServiceAccount, ticketId, Update());
         var replay = await f.TicketUpdate.UpdateAsync(ServiceAccount, ticketId, Update());
@@ -180,9 +186,111 @@ public class GenesysContractsTests
 
         Assert.Equal(GenesysTicketUpdateOutcome.Applied, first.Outcome);
         Assert.Equal(GenesysTicketUpdateOutcome.Applied, replay.Outcome);
-        Assert.Equal(1, first.TranscriptMessageCount);
+        Assert.Equal(2, first.TranscriptMessageCount);
+        Assert.Equal(2, replay.TranscriptMessageCount);
+        Assert.Equal(2, thirdTime.TranscriptMessageCount);
+        Assert.Equal(2, f.Conversations.AllMessages.Count);
+    }
+
+    [Fact]
+    public async Task Update_ResendingWithoutMessageIds_StillStoresNothingTwice()
+    {
+        // No messageId supplied. Sender + timestamp + body identify the line
+        // instead — two genuinely distinct messages matching all three would
+        // be the same person saying the same thing at the same instant.
+        var (f, ticketId) = await CreatedTicketAsync();
+        var sentAt = new DateTime(2026, 9, 10, 9, 33, 0, DateTimeKind.Utc);
+
+        GenesysTicketUpdateDto Update() => new(
+            "conv-update",
+            Ended: new GenesysConversationEndUpdateDto(
+                sentAt.AddMinutes(5), "CustomerDisconnect",
+                [new GenesysTranscriptMessageDto("Customer", sentAt, "Hello?")]));
+
+        await f.TicketUpdate.UpdateAsync(ServiceAccount, ticketId, Update());
+        var replay = await f.TicketUpdate.UpdateAsync(ServiceAccount, ticketId, Update());
+
         Assert.Equal(1, replay.TranscriptMessageCount);
-        Assert.Equal(1, thirdTime.TranscriptMessageCount);
+        Assert.Single(f.Conversations.AllMessages);
+    }
+
+    [Fact]
+    public async Task Update_AFullerRetryAfterATruncatedDelivery_CompletesTheTranscript()
+    {
+        // The reason a redelivered end is not simply skipped: if the first
+        // delivery was cut short, refusing the retry outright would leave the
+        // conversation permanently incomplete — and the COMPLETE transcript is
+        // the requirement.
+        var (f, ticketId) = await CreatedTicketAsync();
+        var sentAt = new DateTime(2026, 9, 10, 9, 33, 0, DateTimeKind.Utc);
+        var endedAt = sentAt.AddMinutes(5);
+
+        var truncated = await f.TicketUpdate.UpdateAsync(
+            ServiceAccount, ticketId,
+            new GenesysTicketUpdateDto(
+                "conv-update",
+                Ended: new GenesysConversationEndUpdateDto(
+                    endedAt, "CustomerDisconnect",
+                    [new GenesysTranscriptMessageDto("Customer", sentAt, "I want to sell my apartment.", ExternalMessageId: "m-1")])));
+        Assert.Equal(1, truncated.TranscriptMessageCount);
+
+        var full = await f.TicketUpdate.UpdateAsync(
+            ServiceAccount, ticketId,
+            new GenesysTicketUpdateDto(
+                "conv-update",
+                Ended: new GenesysConversationEndUpdateDto(
+                    // A later end time is IGNORED — the recorded end is
+                    // write-once — but the missing messages still land.
+                    endedAt.AddHours(1), "SomethingElse",
+                    [
+                        new GenesysTranscriptMessageDto("Customer", sentAt, "I want to sell my apartment.", ExternalMessageId: "m-1"),
+                        new GenesysTranscriptMessageDto("VirtualAgent", sentAt.AddSeconds(20), "An NOC for resale?", ExternalMessageId: "m-2"),
+                        new GenesysTranscriptMessageDto("Customer", sentAt.AddSeconds(45), "Yes.", ExternalMessageId: "m-3")
+                    ])));
+
+        Assert.Equal(3, full.TranscriptMessageCount);
+        Assert.Equal(3, f.Conversations.AllMessages.Count);
+
+        var interaction = Assert.Single(f.Interactions.All);
+        Assert.Equal(endedAt, interaction.EndedAtUtc);
+        Assert.Equal("CustomerDisconnect", interaction.EndReason);
+    }
+
+    [Fact]
+    public async Task Update_PreservesEverySenderType_InChronologicalOrder()
+    {
+        var (f, ticketId) = await CreatedTicketAsync();
+        var sentAt = new DateTime(2026, 9, 10, 9, 33, 0, DateTimeKind.Utc);
+
+        await f.TicketUpdate.UpdateAsync(
+            ServiceAccount, ticketId,
+            new GenesysTicketUpdateDto(
+                "conv-update",
+                Ended: new GenesysConversationEndUpdateDto(
+                    sentAt.AddMinutes(5), "CustomerDisconnect",
+                    [
+                        new GenesysTranscriptMessageDto("System", sentAt, "Conversation started.", ExternalMessageId: "m-0"),
+                        new GenesysTranscriptMessageDto("Customer", sentAt.AddSeconds(10), "I want to sell my apartment.", ExternalMessageId: "m-1"),
+                        new GenesysTranscriptMessageDto("VirtualAgent", sentAt.AddSeconds(20), "An NOC for resale?", ExternalMessageId: "m-2"),
+                        new GenesysTranscriptMessageDto("Customer", sentAt.AddSeconds(45), "Yes.", ExternalMessageId: "m-3"),
+                        new GenesysTranscriptMessageDto("HumanAgent", sentAt.AddSeconds(90), "I can help with that.", "Layla", "ga-7", "m-4")
+                    ])));
+
+        var history = await f.InteractionQuery.GetForTicketAsync(Guid.NewGuid(), [Roles.CsAgent], ticketId);
+        var interaction = Assert.Single(history.Response!.Interactions);
+
+        // All four sender types survive, in the order they were delivered.
+        Assert.Equal(
+            ["System", "Customer", "VirtualAgent", "Customer", "HumanAgent"],
+            interaction.Messages.Select(m => m.Sender).ToArray());
+        Assert.Equal([1, 2, 3, 4, 5], interaction.Messages.Select(m => m.Sequence).ToArray());
+        Assert.Equal("Layla", interaction.Messages[4].SenderName);
+        Assert.Equal("I want to sell my apartment.", interaction.Messages[1].Body);
+
+        // And the conversation is closed while the ticket is not.
+        Assert.Equal("Ended", interaction.Status);
+        Assert.Equal("CustomerDisconnect", interaction.EndReason);
+        Assert.Equal(TicketStatus.Open, Assert.Single(f.Tickets.All).TicketStatus);
     }
 
     [Fact]

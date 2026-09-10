@@ -30,10 +30,16 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Idempotent.</b> <see cref="TicketInteraction.End"/> is write-once, so a
-/// redelivered end event answers
-/// <see cref="GenesysConversationEndOutcome.AlreadyEnded"/> without moving
-/// the recorded end time and without appending the transcript a second time.
+/// <b>Idempotent, without losing anything.</b>
+/// <see cref="TicketInteraction.End"/> is write-once, so a redelivered end
+/// answers <see cref="GenesysConversationEndOutcome.AlreadyEnded"/> and never
+/// moves the recorded end time or reason. Its transcript is still read,
+/// though, and any message not already stored is appended — deduplicated on
+/// Genesys' own message id where one is supplied, and otherwise on
+/// sender+timestamp+body. That is what makes "the COMPLETE transcript is
+/// persisted" true rather than "whatever the first delivery happened to
+/// carry": a chat stored from a truncated first delivery is completed by the
+/// retry instead of staying permanently short.
 /// The transcript is validated in full <i>before</i> anything is written, so
 /// a malformed message can never leave a half-stored conversation.
 /// </para>
@@ -80,28 +86,34 @@ public sealed class GenesysConversationEndAppService(
             return GenesysConversationEndResult.Failure(GenesysConversationEndOutcome.InvalidTranscript, transcriptError);
         }
 
-        if (interaction.IsEnded)
-        {
-            return new GenesysConversationEndResult(
-                GenesysConversationEndOutcome.AlreadyEnded,
-                interaction.TicketId,
-                ticket?.TicketNumber,
-                ticket?.TicketStatus.ToString(),
-                await conversationRepository.CountMessagesAsync(interaction.TicketInteractionId, cancellationToken));
-        }
-
+        var alreadyEnded = interaction.IsEnded;
         var endedAtUtc = request.EndedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
-        interaction.End(endedAtUtc, request.EndReason);
+        // The end time and reason are write-once: a redelivered end never
+        // moves them. The TRANSCRIPT is not skipped along with them, though —
+        // a redelivery that carries messages the first one did not must still
+        // land them, or a conversation stored from a truncated first delivery
+        // would stay permanently incomplete.
+        if (!alreadyEnded)
+        {
+            interaction.End(endedAtUtc, request.EndReason);
+        }
+
         interaction.RecordAgentIfAbsent(request.AgentId, request.AgentName);
 
-        // Sequence continues from whatever is already stored, so a transcript
-        // delivered in parts appends rather than restarting at 1.
-        var nextSequence = await conversationRepository.CountMessagesAsync(interaction.TicketInteractionId, cancellationToken) + 1;
+        var stored = await conversationRepository.ListMessagesAsync(interaction.TicketInteractionId, cancellationToken);
+        var nextSequence = stored.Count + 1;
+        var appended = 0;
+
         foreach (var message in messages)
         {
+            if (IsAlreadyStored(message, stored))
+            {
+                continue;
+            }
+
             await conversationRepository.AddMessageAsync(
                 new TicketInteractionMessage(
                     interaction.TicketInteractionId,
@@ -113,6 +125,7 @@ public sealed class GenesysConversationEndAppService(
                     message.Body,
                     message.ExternalMessageId),
                 cancellationToken);
+            appended++;
         }
 
         await auditWriter.WriteAsync(
@@ -123,7 +136,7 @@ public sealed class GenesysConversationEndAppService(
             beforeValue: null,
             afterValue:
                 $"TicketId={interaction.TicketId};EndedAtUtc={endedAtUtc:O};"
-                + $"EndReason={request.EndReason ?? "(none)"};TranscriptMessages={messages.Count};"
+                + $"EndReason={interaction.EndReason ?? "(none)"};TranscriptMessagesAppended={appended};"
                 + $"TicketStatus={ticket?.TicketStatus.ToString() ?? "(unknown)"}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
@@ -132,14 +145,44 @@ public sealed class GenesysConversationEndAppService(
         await transaction.CommitAsync(cancellationToken);
 
         return new GenesysConversationEndResult(
-            GenesysConversationEndOutcome.Ended,
+            alreadyEnded ? GenesysConversationEndOutcome.AlreadyEnded : GenesysConversationEndOutcome.Ended,
             interaction.TicketId,
             ticket?.TicketNumber,
             // Read back from the ticket, deliberately: the whole point is
             // that this is whatever the workflow says, untouched by the chat
             // ending.
             ticket?.TicketStatus.ToString(),
-            messages.Count);
+            // The conversation's WHOLE transcript, not just this delivery's
+            // share of it — what the caller wants to know is how much is
+            // stored.
+            stored.Count + appended);
+    }
+
+    /// <summary>
+    /// Whether this message is already in the stored transcript.
+    ///
+    /// <para>
+    /// Genesys' own message id decides it whenever one is supplied — that is
+    /// what <c>messageId</c> is for. Without one there is no identifier to
+    /// trust, so the fallback compares the facts that together identify a
+    /// line of conversation: same sender, same instant, same body. Two
+    /// genuinely distinct messages matching all three would be the same
+    /// person saying the same thing at the same timestamp, which is a
+    /// redelivery in every case that matters.
+    /// </para>
+    /// </summary>
+    private static bool IsAlreadyStored(NormalizedMessage message, IReadOnlyList<TicketInteractionMessage> stored)
+    {
+        if (message.ExternalMessageId is { } externalId)
+        {
+            return stored.Any(m => string.Equals(m.ExternalMessageId, externalId, StringComparison.Ordinal));
+        }
+
+        return stored.Any(m =>
+            m.ExternalMessageId is null
+            && m.Sender == message.Sender
+            && m.SentAtUtc == message.SentAtUtc
+            && string.Equals(m.Body, message.Body, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -171,7 +214,9 @@ public sealed class GenesysConversationEndAppService(
             if (!Enum.TryParse<InteractionMessageSender>(message.Sender, ignoreCase: true, out var sender)
                 || !Enum.IsDefined(sender))
             {
-                error = $"Transcript message {index + 1} has an unrecognized sender '{message.Sender}'. Expected Customer, Agent or System.";
+                error =
+                    $"Transcript message {index + 1} has an unrecognized sender '{message.Sender}'. "
+                    + "Expected Customer, VirtualAgent, HumanAgent or System.";
                 return false;
             }
 

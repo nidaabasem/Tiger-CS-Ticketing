@@ -108,7 +108,7 @@ public class GenesysDomainTests
     public void Message_KeepsItsBodyVerbatim_AndTrimsOnlyTheIdentityFields()
     {
         var message = new TicketInteractionMessage(
-            1, 1, InteractionMessageSender.Agent, "  John  ", "  ga-7  ", Now, "  Thank you for waiting.  ", "  msg-1  ");
+            1, 1, InteractionMessageSender.HumanAgent, "  John  ", "  ga-7  ", Now, "  Thank you for waiting.  ", "  msg-1  ");
 
         // The transcript body is evidence — never trimmed or normalized.
         Assert.Equal("  Thank you for waiting.  ", message.Body);

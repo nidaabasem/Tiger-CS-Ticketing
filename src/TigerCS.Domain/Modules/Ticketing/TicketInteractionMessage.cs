@@ -4,14 +4,16 @@ namespace TigerCS.Domain.Modules.Ticketing;
 public enum InteractionMessageSender : byte
 {
     Customer = 1,
-    Agent = 2,
+
+    /// <summary>A human agent speaking to the customer — distinct from <see cref="VirtualAgent"/>, so an agent reading a chatbot conversation can tell which lines a person wrote.</summary>
+    HumanAgent = 2,
 
     /// <summary>A platform/bot/system line in the transcript (e.g. "Conversation transferred", an automated greeting) — kept so the record is complete, rendered distinctly.</summary>
     System = 3,
 
     /// <summary>
     /// A virtual agent / chatbot speaking to the customer. Distinct from
-    /// <see cref="Agent"/> because an agent taking over a bot conversation
+    /// <see cref="HumanAgent"/> because an agent taking over a bot conversation
     /// must be able to see which lines a human said and which the bot did —
     /// and distinct from <see cref="System"/> because a bot asking "Are you
     /// asking about an NOC for resale?" is conversation, not platform noise.

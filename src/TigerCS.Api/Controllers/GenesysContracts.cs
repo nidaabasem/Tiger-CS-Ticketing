@@ -14,14 +14,15 @@ namespace TigerCS.Api.Controllers;
 /// official Genesys webhook schema, event-topic vocabulary, authentication
 /// mechanism or payload has been confirmed to this repository, so none is
 /// invented here: this endpoint asks for exactly the facts Ticketing needs
-/// and nothing more. When the Genesys team supplies their real contract, the
+/// and nothing more. In particular there is <b>no event field</b> — posting
+/// this body means "create or reuse a ticket for this conversation", and
+/// nothing else. A ringing call never reaches TigerCS. When the Genesys team supplies their real contract, the
 /// adapter that translates it lives at this boundary — this record changes
 /// or gains a sibling, and nothing behind it moves.
 /// </para>
 /// </summary>
 /// <param name="ConversationId">Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</param>
 /// <param name="Channel">Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</param>
-/// <param name="Event">Required. One of "Ringing", "Answered", "Started" (case-insensitive). "Ringing" is accepted and deliberately creates no ticket.</param>
 /// <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id.</param>
 /// <param name="ParticipantId">Genesys' customer-participant id, where available.</param>
 /// <param name="CommunicationId">Genesys' communication id, where available.</param>
@@ -43,7 +44,6 @@ namespace TigerCS.Api.Controllers;
 public sealed record GenesysInquiryRequest(
     string ConversationId,
     string Channel,
-    string Event,
     string? InteractionId = null,
     string? ParticipantId = null,
     string? CommunicationId = null,
@@ -202,16 +202,9 @@ internal static class GenesysContractMapper
             return false;
         }
 
-        if (!Enum.TryParse<GenesysInquiryEvent>(request.Event, ignoreCase: true, out var inquiryEvent) || !Enum.IsDefined(inquiryEvent))
-        {
-            error = $"Unsupported event '{request.Event}'. Expected Ringing, Answered or Started.";
-            return false;
-        }
-
         inquiry = new GenesysInquiryDto(
             request.ConversationId,
             channel,
-            inquiryEvent,
             request.InteractionId,
             request.ParticipantId,
             request.CommunicationId,

@@ -253,6 +253,11 @@ To switch it on locally (from `src/TigerCS.Api`):
 dotnet user-secrets set "Genesys:Enabled" "true"
 ```
 
+**The JWT service account below is the UAT mechanism, not the confirmed final
+Genesys authentication design** — see
+`docs/architecture/Genesys-API-Contracts.md`. No new authentication scheme has
+been built.
+
 **There is no Genesys credential or endpoint to configure.** No Genesys API
 base URL, OAuth client or webhook signing secret exists in this system,
 because none has been confirmed by the Genesys team (see

@@ -24,7 +24,7 @@ public class GenesysConversationEndAppServiceTests
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
             new GenesysInquiryDto(
-                conversationId, GenesysChannel.WebsiteChat, GenesysInquiryEvent.Started,
+                conversationId, GenesysChannel.WebsiteChat,
                 CustomerPhone: "+971500000001", CustomerName: "Ahmed Ali",
                 AgentName: "John", DepartmentId: department.DepartmentId, StartedAtUtc: ChatStart));
 
@@ -100,7 +100,7 @@ public class GenesysConversationEndAppServiceTests
         await f.Ingestion.IngestAsync(
             ServiceAccount,
             new GenesysInquiryDto(
-                "conv-other", GenesysChannel.WhatsApp, GenesysInquiryEvent.Started,
+                "conv-other", GenesysChannel.WhatsApp,
                 DepartmentId: otherDepartment.Department.DepartmentId));
 
         await f.ConversationEnd.EndAsync(
@@ -110,7 +110,7 @@ public class GenesysConversationEndAppServiceTests
                 Transcript:
                 [
                     Message("Customer", 0, "Hello, I need an update about my unit.", "Ahmed Ali"),
-                    Message("Agent", 1, "Sure. Can you confirm your unit number?", "John")
+                    Message("HumanAgent", 1, "Sure. Can you confirm your unit number?", "John")
                 ]));
 
         var interaction = f.InteractionFor("conv-transcript")!;
@@ -137,9 +137,9 @@ public class GenesysConversationEndAppServiceTests
                 Transcript:
                 [
                     Message("Customer", 0, "Hello, I need an update about my unit."),
-                    Message("Agent", 1, "Sure. Can you confirm your unit number?"),
+                    Message("HumanAgent", 1, "Sure. Can you confirm your unit number?"),
                     Message("Customer", 2, "1204"),
-                    Message("Agent", 3, "Thank you, checking now.")
+                    Message("HumanAgent", 3, "Thank you, checking now.")
                 ]));
 
         var interaction = f.InteractionFor("conv-order")!;
@@ -150,8 +150,8 @@ public class GenesysConversationEndAppServiceTests
             ["Hello, I need an update about my unit.", "Sure. Can you confirm your unit number?", "1204", "Thank you, checking now."],
             stored.Select(m => m.Body));
         Assert.Equal(
-            [InteractionMessageSender.Customer, InteractionMessageSender.Agent,
-             InteractionMessageSender.Customer, InteractionMessageSender.Agent],
+            [InteractionMessageSender.Customer, InteractionMessageSender.HumanAgent,
+             InteractionMessageSender.Customer, InteractionMessageSender.HumanAgent],
             stored.Select(m => m.Sender));
         Assert.True(stored.Zip(stored.Skip(1)).All(pair => pair.First.SentAtUtc <= pair.Second.SentAtUtc));
     }
@@ -165,7 +165,7 @@ public class GenesysConversationEndAppServiceTests
         var firstEndedAt = ChatStart.AddMinutes(15);
         GenesysConversationEndDto EndRequest(DateTime endedAt) =>
             new("conv-dup-end", endedAt, "AgentDisconnect",
-                Transcript: [Message("Customer", 0, "Hello"), Message("Agent", 1, "Hi, how can I help?")]);
+                Transcript: [Message("Customer", 0, "Hello"), Message("HumanAgent", 1, "Hi, how can I help?")]);
 
         var first = await f.ConversationEnd.EndAsync(ServiceAccount, EndRequest(firstEndedAt));
         // The redelivery even carries a LATER end time — it must not move the
@@ -216,7 +216,7 @@ public class GenesysConversationEndAppServiceTests
         var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
         await f.Ingestion.IngestAsync(
             ServiceAccount,
-            new GenesysInquiryDto("conv-voice", GenesysChannel.Phone, GenesysInquiryEvent.Answered,
+            new GenesysInquiryDto("conv-voice", GenesysChannel.Phone,
                 CustomerPhone: "+971500000001", DepartmentId: department.DepartmentId));
 
         var result = await f.ConversationEnd.EndAsync(
@@ -234,7 +234,7 @@ public class GenesysConversationEndAppServiceTests
         var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
         await f.Ingestion.IngestAsync(
             ServiceAccount,
-            new GenesysInquiryDto("conv-lateagent", GenesysChannel.WhatsApp, GenesysInquiryEvent.Started,
+            new GenesysInquiryDto("conv-lateagent", GenesysChannel.WhatsApp,
                 DepartmentId: department.DepartmentId));
         Assert.Null(f.InteractionFor("conv-lateagent")!.GenesysAgentName);
 
@@ -315,7 +315,7 @@ public class GenesysConversationEndAppServiceTests
                 Transcript:
                 [
                     Message("Customer", 0, "Hello, I need an update about my unit.", "Ahmed Ali"),
-                    Message("Agent", 1, "Sure. Can you confirm your unit number?", "John"),
+                    Message("HumanAgent", 1, "Sure. Can you confirm your unit number?", "John"),
                     Message("Customer", 2, "1204", "Ahmed Ali")
                 ]));
 
@@ -328,7 +328,7 @@ public class GenesysConversationEndAppServiceTests
         Assert.Equal("Completed", interaction.EndReason);
         Assert.Equal(ChatStart, interaction.StartedAtUtc);
         Assert.Equal(3, interaction.Messages.Count);
-        Assert.Equal(["Customer", "Agent", "Customer"], interaction.Messages.Select(m => m.Sender));
+        Assert.Equal(["Customer", "HumanAgent", "Customer"], interaction.Messages.Select(m => m.Sender));
         Assert.Equal("1204", interaction.Messages[2].Body);
 
         // The ticket is untouched by the conversation ending.

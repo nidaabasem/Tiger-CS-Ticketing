@@ -56,7 +56,7 @@ public sealed class GenesysDisabledEndpointsTests : IDisposable
 
         var response = await client.PostAsJsonAsync(
             "/api/genesys/tickets",
-            new GenesysInquiryRequest("conv-flag-off", "Phone", "Answered", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+            new GenesysInquiryRequest("conv-flag-off", "Phone", CustomerPhone: "+971500000001", DepartmentId: departmentId));
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Contains("Genesys:Enabled is false", await response.Content.ReadAsStringAsync());

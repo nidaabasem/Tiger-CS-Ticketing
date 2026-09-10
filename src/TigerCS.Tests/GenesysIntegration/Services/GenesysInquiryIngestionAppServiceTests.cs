@@ -28,7 +28,6 @@ public class GenesysInquiryIngestionAppServiceTests
     private static GenesysInquiryDto Inquiry(
         string conversationId,
         GenesysChannel channel = GenesysChannel.Phone,
-        GenesysInquiryEvent inquiryEvent = GenesysInquiryEvent.Answered,
         string? phone = "+971500000001",
         int? departmentId = null,
         string? departmentCode = null,
@@ -37,7 +36,7 @@ public class GenesysInquiryIngestionAppServiceTests
         string? towerName = null,
         string? unitNumber = null,
         string? subject = null) =>
-        new(conversationId, channel, inquiryEvent,
+        new(conversationId, channel,
             CustomerPhone: phone,
             CustomerName: customerName,
             QueueId: queueId,
@@ -143,39 +142,21 @@ public class GenesysInquiryIngestionAppServiceTests
         Assert.Single(f.Tickets.All);
     }
 
-    // ---- 3 & 4. Phone: ringing creates nothing; answering creates the ticket ----
+    // ---- 3 & 4. Phone: the flow starts at pickup ----
 
     [Fact]
-    public async Task Ingest_RingingCall_CreatesNoTicket()
+    public async Task Ingest_CallPickedUp_CreatesExactlyOneTicket()
     {
+        // A ringing call never reaches TigerCS at all — there is no event
+        // vocabulary for Genesys to send and no endpoint to send it to.
+        // Reaching ingestion IS the pickup.
         var f = new GenesysServiceFixture();
         var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
         f.QueueMappings.Map("queue-cs", department.DepartmentId);
 
-        var result = await f.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry("conv-ringing", inquiryEvent: GenesysInquiryEvent.Ringing, queueId: "queue-cs"));
-
-        Assert.Equal(GenesysIngestionOutcome.NoTicketYet, result.Outcome);
-        Assert.Empty(f.Tickets.All);
-        Assert.Empty(f.Interactions.All);
-        // Nothing at all was written — not even an intake record.
-        Assert.Null(result.Ticket);
-    }
-
-    [Fact]
-    public async Task Ingest_CallAnsweredAfterRinging_CreatesExactlyOneTicket()
-    {
-        var f = new GenesysServiceFixture();
-        var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
-        f.QueueMappings.Map("queue-cs", department.DepartmentId);
-
-        // The real sequence for one call: it rings, then the agent picks up.
-        var ringing = await f.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry("conv-call-9", inquiryEvent: GenesysInquiryEvent.Ringing, queueId: "queue-cs"));
         var answered = await f.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry("conv-call-9", inquiryEvent: GenesysInquiryEvent.Answered, queueId: "queue-cs"));
+            ServiceAccount, Inquiry("conv-call-9", queueId: "queue-cs"));
 
-        Assert.Equal(GenesysIngestionOutcome.NoTicketYet, ringing.Outcome);
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, answered.Outcome);
         Assert.Single(f.Tickets.All);
         Assert.Equal(WellKnownChannels.Phone, Assert.Single(f.Interactions.All).ChannelId);
@@ -199,7 +180,7 @@ public class GenesysInquiryIngestionAppServiceTests
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
-            Inquiry($"conv-web-{departmentCode}", GenesysChannel.WebsiteChat, GenesysInquiryEvent.Started,
+            Inquiry($"conv-web-{departmentCode}", GenesysChannel.WebsiteChat,
                 departmentId: expected.Department.DepartmentId,
                 customerName: "Ahmed Ali", towerName: "Tiger Tower A", unitNumber: "1204"));
 
@@ -230,7 +211,7 @@ public class GenesysInquiryIngestionAppServiceTests
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
-            Inquiry("conv-web-code", GenesysChannel.WebsiteChat, GenesysInquiryEvent.Started, departmentCode: "ls"));
+            Inquiry("conv-web-code", GenesysChannel.WebsiteChat, departmentCode: "ls"));
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
         Assert.Equal(leasing.Department.DepartmentId, Assert.Single(f.Tickets.All).OriginatingDepartmentId);
@@ -246,7 +227,7 @@ public class GenesysInquiryIngestionAppServiceTests
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
-            Inquiry("conv-web-nort", GenesysChannel.WebsiteChat, GenesysInquiryEvent.Started,
+            Inquiry("conv-web-nort", GenesysChannel.WebsiteChat,
                 departmentId: department.DepartmentId));
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
@@ -346,7 +327,7 @@ public class GenesysInquiryIngestionAppServiceTests
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
-            Inquiry("conv-nophone", GenesysChannel.SocialMedia, GenesysInquiryEvent.Started,
+            Inquiry("conv-nophone", GenesysChannel.SocialMedia,
                 phone: null, departmentId: department.DepartmentId));
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
@@ -359,18 +340,18 @@ public class GenesysInquiryIngestionAppServiceTests
     // ---- Channels converge on ONE flow ----
 
     [Theory]
-    [InlineData(GenesysChannel.Phone, GenesysInquiryEvent.Answered, WellKnownChannels.Phone)]
-    [InlineData(GenesysChannel.WebsiteChat, GenesysInquiryEvent.Started, WellKnownChannels.LiveChat)]
-    [InlineData(GenesysChannel.WhatsApp, GenesysInquiryEvent.Started, WellKnownChannels.WhatsApp)]
-    [InlineData(GenesysChannel.SocialMedia, GenesysInquiryEvent.Started, WellKnownChannels.SocialMediaDirectMessage)]
+    [InlineData(GenesysChannel.Phone, WellKnownChannels.Phone)]
+    [InlineData(GenesysChannel.WebsiteChat, WellKnownChannels.LiveChat)]
+    [InlineData(GenesysChannel.WhatsApp, WellKnownChannels.WhatsApp)]
+    [InlineData(GenesysChannel.SocialMedia, WellKnownChannels.SocialMediaDirectMessage)]
     public async Task Ingest_EveryChannel_UsesTheSameFlow_AndRecordsItsOwnOriginatingChannel(
-        GenesysChannel channel, GenesysInquiryEvent inquiryEvent, byte expectedChannelId)
+        GenesysChannel channel, byte expectedChannelId)
     {
         var f = new GenesysServiceFixture();
         var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
 
         var result = await f.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry($"conv-{channel}", channel, inquiryEvent, departmentId: department.DepartmentId));
+            ServiceAccount, Inquiry($"conv-{channel}", channel, departmentId: department.DepartmentId));
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
         var interaction = Assert.Single(f.Interactions.All);
@@ -390,7 +371,7 @@ public class GenesysInquiryIngestionAppServiceTests
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
-            Inquiry("conv-wa-1", GenesysChannel.WhatsApp, GenesysInquiryEvent.Started, queueId: "genesys-queue-leasing"));
+            Inquiry("conv-wa-1", GenesysChannel.WhatsApp, queueId: "genesys-queue-leasing"));
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
         Assert.Equal(leasing.Department.DepartmentId, Assert.Single(f.Tickets.All).OriginatingDepartmentId);
@@ -406,7 +387,7 @@ public class GenesysInquiryIngestionAppServiceTests
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount,
-            Inquiry("conv-priority", GenesysChannel.WebsiteChat, GenesysInquiryEvent.Started,
+            Inquiry("conv-priority", GenesysChannel.WebsiteChat,
                 departmentId: customerService.Department.DepartmentId, queueId: "shared-queue"));
 
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
@@ -420,7 +401,7 @@ public class GenesysInquiryIngestionAppServiceTests
         f.SeedGenesysDepartment("Customer Service", "CS");
 
         var result = await f.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry("conv-unmapped", GenesysChannel.WhatsApp, GenesysInquiryEvent.Started, queueId: "queue-nobody-configured"));
+            ServiceAccount, Inquiry("conv-unmapped", GenesysChannel.WhatsApp, queueId: "queue-nobody-configured"));
 
         Assert.Equal(GenesysIngestionOutcome.DepartmentNotResolved, result.Outcome);
         Assert.Empty(f.Tickets.All);
@@ -435,7 +416,7 @@ public class GenesysInquiryIngestionAppServiceTests
         f.QueueMappings.Map("retired-queue", department.DepartmentId, isActive: false);
 
         var result = await f.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry("conv-retired", GenesysChannel.WhatsApp, GenesysInquiryEvent.Started, queueId: "retired-queue"));
+            ServiceAccount, Inquiry("conv-retired", GenesysChannel.WhatsApp, queueId: "retired-queue"));
 
         Assert.Equal(GenesysIngestionOutcome.DepartmentNotResolved, result.Outcome);
         Assert.Empty(f.Tickets.All);

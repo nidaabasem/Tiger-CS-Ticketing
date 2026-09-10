@@ -42,7 +42,7 @@ public class GenesysController(
     GenesysTicketUpdateAppService ticketUpdateAppService,
     GenesysCustomerLookupAppService customerLookupAppService) : ControllerBase
 {
-    /// <summary>Report a Genesys inquiry that has reached an agent — creating exactly one ticket for the conversation.</summary>
+    /// <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
     /// <remarks>
     /// <b>Idempotent on <c>conversationId</c>.</b> The first accepted event
     /// for a conversation creates a ticket; every retry or duplicate returns
@@ -51,10 +51,12 @@ public class GenesysController(
     /// concurrent delivery, not merely under sequential retries.
     ///
     /// <para>
-    /// <b>A ringing phone creates nothing.</b> <c>event: "Ringing"</c> is
-    /// accepted and acknowledged with <c>204 No Content</c> — the ticket flow
-    /// starts when the agent answers (<c>"Answered"</c>), or when a text
-    /// conversation reaches an agent (<c>"Started"</c>).
+    /// <b>This endpoint means exactly one thing:</b> create or reuse the
+    /// ticket for this conversation. It is not an event receiver for call
+    /// progress, and there is no event field — a ringing call simply never
+    /// reaches TigerCS. The phone flow starts at pickup: look the caller up,
+    /// then post this. Digital channels (website chat, chatbot, WhatsApp,
+    /// social) post it when the conversation starts.
     /// </para>
     ///
     /// <para>
@@ -72,14 +74,12 @@ public class GenesysController(
     /// <param name="request">The normalized inquiry.</param>
     /// <response code="200">The conversation was already ingested — the same ticket is returned, and nothing was created.</response>
     /// <response code="201">A ticket was created for this conversation.</response>
-    /// <response code="204">Accepted, and deliberately created nothing (a ringing call).</response>
-    /// <response code="400">The channel or event value was not recognized, or conversationId was blank.</response>
+    /// <response code="400">The channel was not recognized, or conversationId was blank.</response>
     /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, or ticket creation itself was refused.</response>
     /// <response code="503">The Genesys integration is switched off (<c>Genesys:Enabled</c> is false).</response>
     [HttpPost("tickets")]
     [ProducesResponseType<GenesysInquiryAcceptedResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<GenesysInquiryAcceptedResponse>(StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
@@ -112,9 +112,6 @@ public class GenesysController(
                 new GenesysInquiryAcceptedResponse(
                     nameof(GenesysIngestionOutcome.AlreadyIngested), inquiry.ConversationId,
                     result.Ticket.TicketId, result.Ticket.TicketNumber)),
-
-            // Accepted and, by design, nothing was created.
-            GenesysIngestionOutcome.NoTicketYet => NoContent(),
 
             GenesysIngestionOutcome.IntegrationDisabled => Problem(
                 type: "https://tigercs.internal/problems/genesys-integration-disabled",

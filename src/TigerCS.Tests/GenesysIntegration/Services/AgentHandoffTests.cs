@@ -30,9 +30,8 @@ public class AgentHandoffTests
     private static readonly string[] AgentRoles = [Roles.CsAgent];
 
     private static GenesysInquiryDto Inquiry(
-        string conversationId, GenesysChannel channel, int departmentId,
-        GenesysInquiryEvent inquiryEvent = GenesysInquiryEvent.Started, string? customerName = null) =>
-        new(conversationId, channel, inquiryEvent,
+        string conversationId, GenesysChannel channel, int departmentId, string? customerName = null) =>
+        new(conversationId, channel,
             CustomerPhone: "+971500000001", CustomerName: customerName, DepartmentId: departmentId);
 
     /// <summary>An ingested inquiry on any channel — the state every handoff starts from.</summary>

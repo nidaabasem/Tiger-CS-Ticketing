@@ -45,13 +45,21 @@ There is **no per-channel ticket-creation code**. Every channel posts the same
 
 ### The phone rule
 
-A ringing phone is **not** an inquiry anyone has taken on.
+A ringing phone is **not** an inquiry anyone has taken on — so TigerCS never
+hears about it.
 
-| `event` | Result |
-|---|---|
-| `Ringing` | Accepted, `204 No Content`. **Nothing is created** — not even an intake record. |
-| `Answered` | The agent picked up → the ticket flow starts. |
-| `Started` | A text conversation reached an agent → the ticket flow starts. |
+```
+Incoming call → Ringing  → TigerCS receives nothing
+Agent picks up           → GET  /api/genesys/customers/lookup?phoneNumber=…
+                         → POST /api/genesys/tickets
+```
+
+**There is no `event` field, and no event vocabulary.** Posting to
+`/api/genesys/tickets` means "create or reuse the ticket for this
+conversation", full stop — the endpoint is not an event receiver for call
+progress. Digital channels (website chat, chatbot, WhatsApp, social) post
+directly when the conversation starts. Nothing forces Genesys to send an
+invented Ringing/Answered/Started vocabulary, and none is defined.
 
 ## 3. Idempotency
 
@@ -443,7 +451,7 @@ ticket.
 ### The call-pickup sequence
 
 ```
-Ringing            → nothing at all (no lookup, no ticket)
+Ringing            → TigerCS receives nothing at all
 Agent picks up     → GET  /api/genesys/customers/lookup?phoneNumber=…
                      → customer, units, and their existing tickets (open first)
                      → found:false is a normal 200, never a 404
@@ -451,6 +459,55 @@ Agent picks up     → GET  /api/genesys/customers/lookup?phoneNumber=…
                      → one ticket, Unclassified, whatever the lookup said
 Conversation runs  → PATCH /api/genesys/tickets/{id}   (handoff, agent, end)
 ```
+
+
+## 4d. Digital conversations: the complete transcript
+
+Mandatory for chatbot, website chat, WhatsApp and social conversations.
+
+```
+Chat starts                → POST  /api/genesys/tickets
+Conversation runs          → (Customer / VirtualAgent / HumanAgent / System messages)
+Chat closes or disconnects → PATCH /api/genesys/tickets/{ticketId}
+                             → every transcript message stored
+                             → EndedAtUtc + EndReason recorded
+                             → the interaction marked Ended
+                             → the TICKET is NOT closed
+```
+
+Each stored message preserves, where supplied: **`messageId`**
+(`ExternalMessageId`), **sender type**, **timestamp**, **body** (verbatim,
+never trimmed), plus sender name/id. The sender vocabulary is TigerCS-owned
+and closed:
+
+| Sender | Meaning |
+|---|---|
+| `Customer` | The customer |
+| `VirtualAgent` | A chatbot / virtual agent |
+| `HumanAgent` | A human agent |
+| `System` | A platform line ("Conversation transferred") |
+
+An unrecognized sender **fails the whole update** rather than being silently
+attributed — nothing is stored, and the caller resends.
+
+Ticket Details renders the whole conversation in `Sequence` order (the
+delivered order, never re-sorted by timestamp: a provider clock is not
+guaranteed monotonic and two messages can share an instant).
+
+### Retries never duplicate — and never truncate
+
+`EndedAtUtc`/`EndReason` are write-once: a redelivered end never moves them.
+Its **transcript is still read**, though, and any message not already stored
+is appended. That is deliberate, and it is what makes "the COMPLETE transcript
+is persisted" true rather than "whatever the first delivery happened to
+carry" — a conversation stored from a truncated first delivery is completed by
+the retry instead of staying permanently short.
+
+Deduplication is on Genesys' own **`messageId`** whenever one is supplied.
+Without one, the fallback is sender + timestamp + body: two genuinely distinct
+messages matching all three would be the same person saying the same thing at
+the same instant. *Supplying `messageId` is therefore strongly preferred* — it
+is the only key that survives a retry whose timestamps were regenerated.
 
 
 ## 5. What is deliberately **not** built

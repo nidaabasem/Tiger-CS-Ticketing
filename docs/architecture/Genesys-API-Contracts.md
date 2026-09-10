@@ -14,14 +14,21 @@ it is off.
 
 ---
 
-## Authentication (UAT)
+## Authentication — **UAT only, not the final design**
+
+> **This is the UAT mechanism, not the confirmed final Genesys authentication
+> design.** A CS Agent service account + JWT is what UAT runs on so integration
+> testing can start now. The production scheme is still open — see item 1 under
+> *Still required from the Genesys team*. No new authentication scheme has been
+> built, and none should be assumed from this section.
 
 **There is no Genesys-specific credential, and none is invented.** No Genesys
 API base URL, OAuth client or webhook signing secret exists in this system,
 because none has been confirmed by the Genesys team.
 
-Genesys calls TigerCS as an ordinary authenticated **service account**, using
-the same JWT bearer authentication every other client of this API uses:
+For UAT, Genesys calls TigerCS as an ordinary authenticated **service
+account**, using the same JWT bearer authentication every other client of this
+API uses:
 
 1. An administrator creates a staff account for Genesys under Administration
    (`POST /api/admin/users`) with the **CS Agent** role — the same role that
@@ -43,7 +50,9 @@ Content-Type: application/json
 
 When the real mechanism is confirmed (HMAC signature, OAuth client
 credentials, mutual TLS, IP allow-list), it is added at this boundary without
-touching anything behind it.
+touching anything behind it. **Until then, treat the JWT service account as a
+UAT convenience with a known expiry date, not as the integration's security
+design.**
 
 ---
 
@@ -60,9 +69,22 @@ ticket; every retry returns *that same ticket* with `outcome:
 "AlreadyIngested"` and creates nothing. A unique database index makes this hold
 under concurrent delivery, not only under sequential retries.
 
-**A ringing call creates nothing** — `event: "Ringing"` answers `204 No
-Content`. The flow starts at `"Answered"` (agent picked up) or `"Started"` (a
-text conversation reached an agent).
+**This endpoint means exactly one thing:** create or reuse the ticket for this
+conversation. **There is no `event` field.** It is not an event receiver for
+call progress — a ringing call never reaches TigerCS at all:
+
+```
+Incoming call → Ringing  → TigerCS receives nothing
+Agent picks up           → GET  /api/genesys/customers/lookup?phoneNumber=…
+                         → POST /api/genesys/tickets
+```
+
+Digital channels (website chat, chatbot, WhatsApp, social) post here directly
+when the conversation starts.
+
+**Only `conversationId` and `channel` are required.** Everything else is
+optional context, because Genesys' per-channel guarantees are not confirmed —
+absent values are stored as null, never guessed.
 
 **A customer-lookup failure never blocks creation.** Nor does a missing phone
 number (withheld caller id, a social DM).
@@ -73,7 +95,6 @@ number (withheld caller id, a social DM).
 {
   "conversationId": "8f2c1e40-3d2a-4b1c-9e77-1a2b3c4d5e6f",
   "channel": "WebsiteChat",
-  "event": "Started",
   "customerPhone": "+971501234567",
   "customerName": "Ahmed Ali",
   "customerEmail": "ahmed@example.com",
@@ -134,8 +155,7 @@ when the business SLA starts. **Genesys is not involved in classification.**
 
 | Code | When |
 |---|---|
-| `204` | `event: "Ringing"` — accepted, nothing created |
-| `400` | Unrecognized `channel`/`event`, or blank `conversationId` |
+| `400` | Unrecognized `channel`, or blank `conversationId` |
 | `422` | No department could be resolved, or ticket creation was refused |
 | `503` | `Genesys:Enabled` is false |
 
@@ -275,8 +295,17 @@ cannot reach.**
 }
 ```
 
-`sender` is one of `Customer`, `Agent`, `VirtualAgent`, `System`. Anything else
-is rejected — the sender is never silently attributed.
+`sender` is one of **`Customer`**, **`VirtualAgent`**, **`HumanAgent`**,
+**`System`**. Anything else fails the whole update — the sender is never
+silently attributed, and nothing is stored, so the caller simply resends.
+
+Each message preserves, where supplied: `messageId`, sender type, `sentAtUtc`,
+`body` (verbatim), plus `senderName` / `senderId`. Ticket Details renders the
+whole conversation in delivered order.
+
+**Supplying `messageId` is strongly preferred.** It is the deduplication key,
+and the only one that survives a retry whose timestamps were regenerated.
+Without it the fallback is sender + timestamp + body.
 
 ### Request — a human agent is needed
 
@@ -334,11 +363,17 @@ it — so an end event shows that the pending human work is *still outstanding*.
 That is exactly the customer-disconnected case: the live session ended, the
 business case did not.
 
-### Idempotency
+### Idempotency — no duplicates, and no truncation
 
 - Resending an already-stored transcript stores nothing twice —
   `transcriptMessageCount` stays put.
-- A redelivered end does not move the recorded end time.
+- A redelivered end does **not** move the recorded `endedAtUtc`/`endReason`;
+  those are write-once.
+- But its transcript **is** still read, and any message not already stored is
+  appended. A conversation stored from a truncated first delivery is completed
+  by the retry rather than staying permanently short — "the complete
+  transcript is persisted" is the requirement, so a redelivery is not simply
+  discarded.
 - A redelivered handoff returns the same `ticketAgentHandoffId`; there is never
   a second work item for a conversation whose work is still outstanding.
 - Re-reporting the same assigned agent changes nothing.
@@ -355,6 +390,27 @@ business case did not.
 
 A malformed transcript is refused **before anything is written**, so a bad
 update never leaves a half-stored conversation.
+
+---
+
+## The digital / chatbot conversation flow
+
+Mandatory for chatbot, website chat, WhatsApp and social conversations.
+
+```
+Chat starts                → POST  /api/genesys/tickets          → ticket created
+Conversation runs          → Customer / VirtualAgent / HumanAgent / System messages
+Chat closes or disconnects → PATCH /api/genesys/tickets/{id}
+                             ├─ every transcript message stored
+                             ├─ endedAtUtc + endReason recorded
+                             ├─ the interaction marked Ended
+                             └─ the TICKET stays open
+```
+
+The whole conversation is then visible in Ticket Details → Conversation
+History, in order, with each line attributed to the customer, the virtual
+agent, the human agent or the platform. A human agent taking over later reads
+exactly what the bot and the customer said.
 
 ---
 
