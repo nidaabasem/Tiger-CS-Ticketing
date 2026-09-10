@@ -335,7 +335,7 @@ jobs:
             "Tickets.AcknowledgementSentAtUtc=YES" "Tickets.CategoryId=YES" "Tickets.ContactReferenceId=YES" \
             "Tickets.CreatedAtUtc=NO" "Tickets.CurrentDepartmentId=NO" "Tickets.CurrentOwnerEmployeeId=YES" \
             "Tickets.DuplicateOfTicketId=YES" "Tickets.EscalationLevel=NO" "Tickets.FirstHumanResponseAtUtc=YES" \
-            "Tickets.OriginatingDepartmentId=NO" "Tickets.PriorityId=NO" "Tickets.ReopenCount=NO" \
+            "Tickets.OriginatingDepartmentId=NO" "Tickets.PriorityId=YES" "Tickets.ReopenCount=NO" \
             "Tickets.RequestSummary=NO" "Tickets.ResolutionOutcome=YES" "Tickets.SlaState=NO" \
             "Tickets.TicketId=NO" "Tickets.TicketNumber=NO" "Tickets.TicketStatus=NO" \
             "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" "Tickets.RowVersion=NO" \
@@ -352,7 +352,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (46 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior. Tickets.WorkflowTemplateId (the pinned workflow version, AddWorkflowVersioning) is nullable for the same reason: only a ticket with a request type pins a version. Tickets.CategoryId became nullable in AddGenesysIntegration: an inquiry arriving through Genesys is turned into a ticket the moment an agent picks it up, before anyone has read the request, so its category is genuinely unknown — NULL says so honestly where a placeholder category would drive the wrong SLA and workflow. Ticket.Classify fills it in later on the same ticket."
+          echo "Column nullability matches the confirmed design exactly (46 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior. Tickets.WorkflowTemplateId (the pinned workflow version, AddWorkflowVersioning) is nullable for the same reason: only a ticket with a request type pins a version. Tickets.CategoryId and Tickets.PriorityId both became nullable in AddGenesysIntegration: an inquiry arriving through Genesys is turned into a ticket the moment an agent picks it up, before anyone has read the request, so neither its category nor its urgency has been judged. NULL says so honestly. A placeholder category would drive reporting and routing; a placeholder priority is no more harmless, since priority drives the dashboard KPI counts, the queue order and the attention ranking — the queries handle NULL explicitly (never sorting it ahead of Critical, never counting it as Critical/High). Ticket.Classify sets both later on the same ticket, and that is also when the SLA period is opened. TicketSlaInstances.PriorityId stays NOT NULL: an SLA period only ever exists for a classified ticket."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |

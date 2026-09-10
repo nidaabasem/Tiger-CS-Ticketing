@@ -359,17 +359,20 @@ public class TicketTests
     // made.
 
     [Fact]
-    public void CreateUnclassified_HasNoCategory_AndDeliberatelyNoSlaClock()
+    public void CreateUnclassified_HasNoCategoryNoPriority_AndDeliberatelyNoSlaClock()
     {
         var ticket = Ticket.CreateUnclassified(
-            "TG-CS-20260910-0001", departmentId: 2, priorityId: (byte)PriorityLevel.Medium,
+            "TG-CS-20260910-0001", departmentId: 2,
             "Customer asked about an NOC", DateTime.UtcNow);
 
         Assert.Null(ticket.CategoryId);
         Assert.False(ticket.IsClassified);
         Assert.Null(ticket.RequestTypeId);
-        // The SLA policy is chosen by priority, and this ticket's priority is
-        // provisional — so no period is opened rather than the wrong one.
+        // Nobody has judged this ticket's urgency, so it carries no tier —
+        // not a defaulted Medium that would rank it against triaged tickets.
+        Assert.Null(ticket.PriorityId);
+        // The SLA policy is chosen by priority, and this ticket has none — so
+        // no period is opened rather than the wrong one.
         Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
         Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
         Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
@@ -378,10 +381,12 @@ public class TicketTests
     }
 
     [Fact]
-    public void Classify_FillsInTheCategoryAndPriority_OnTheSameTicket()
+    public void Classify_SetsTheCategoryAndTheFirstRealPriority_OnTheSameTicket()
     {
         var ticket = Ticket.CreateUnclassified(
-            "TG-CS-20260910-0001", 2, (byte)PriorityLevel.Medium, "Customer asked about an NOC", DateTime.UtcNow);
+            "TG-CS-20260910-0001", 2, "Customer asked about an NOC", DateTime.UtcNow);
+
+        Assert.Null(ticket.PriorityId);
 
         ticket.Classify(categoryId: 5, priorityId: (byte)PriorityLevel.High);
 
@@ -395,7 +400,7 @@ public class TicketTests
     public void Classify_IsWriteOnce_SoAClassifiedTicketIsNeverSilentlyReCategorised()
     {
         var ticket = Ticket.CreateUnclassified(
-            "TG-CS-20260910-0001", 2, (byte)PriorityLevel.Medium, "Customer asked about an NOC", DateTime.UtcNow);
+            "TG-CS-20260910-0001", 2, "Customer asked about an NOC", DateTime.UtcNow);
         ticket.Classify(categoryId: 5, priorityId: (byte)PriorityLevel.High);
 
         var refused = Assert.Throws<TicketAlreadyClassifiedException>(
@@ -421,7 +426,7 @@ public class TicketTests
     public void StartSlaClock_MovesOnlyANotApplicableTicket_AndNeverRestartsARunningOne()
     {
         var unclassified = Ticket.CreateUnclassified(
-            "TG-CS-20260910-0001", 2, (byte)PriorityLevel.Medium, "Customer asked about an NOC", DateTime.UtcNow);
+            "TG-CS-20260910-0001", 2, "Customer asked about an NOC", DateTime.UtcNow);
         unclassified.StartSlaClock();
         Assert.Equal(SlaState.Running, unclassified.SlaState);
 

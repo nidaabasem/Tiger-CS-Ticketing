@@ -21,23 +21,33 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// </para>
 ///
 /// <para>
-/// <b>This is where the SLA clock starts for an unclassified ticket.</b> The
-/// SLA policy is selected by priority (<see cref="SlaDueDateService"/> →
-/// <c>SlaPolicies</c>), so a ticket created before anyone knew the request
-/// deliberately opened no period: measuring against a provisional priority
-/// would breach against a deadline nobody set. The period is opened here,
-/// from the real classification — and <b>backdated to the ticket's own
-/// CreatedAtUtc</b>, not to now, so classifying late never buys extra time
-/// and the customer's clock still runs from the moment their inquiry
-/// arrived.
+/// <b>This is where the business/resolution SLA starts — at the moment of
+/// classification, not retroactively.</b> An SLA policy is a commitment to
+/// resolve a <i>known</i> request within a target; while the ticket was
+/// unclassified nobody knew the request, the priority or therefore the
+/// policy, so there was no commitment to measure and no period was opened.
+/// The clock runs from <c>now</c>, the classification timestamp. Backdating
+/// it to the ticket's creation would charge the department for time during
+/// which no target existed, against a policy chosen after the fact.
+/// </para>
+///
+/// <para>
+/// <b>First Response is measured separately and is unaffected.</b>
+/// <c>Ticket.FirstHumanResponseAtUtc</c> lives on the ticket, not on the SLA
+/// period, so an agent's first reply to an unclassified Genesys inquiry is
+/// recorded with its real timestamp exactly as on any other ticket — how
+/// quickly the customer reached a human stays measurable from the moment the
+/// inquiry arrived, whether or not anyone has classified it yet.
 /// </para>
 ///
 /// <para>
 /// A ticket that was created classified is untouched by all of this: it
-/// already has its category and its SLA period, and this service refuses to
-/// re-categorise it (<see cref="TicketMutationOutcome.AlreadyClassified"/>) —
-/// re-categorisation is a different operation, with its own SLA
-/// consequences, and is not built in this phase.
+/// already has its category, its priority and its SLA period, and this
+/// service performs <i>initial</i> classification only
+/// (<see cref="TicketMutationOutcome.AlreadyClassified"/>). That refusal is a
+/// Phase 1 safeguard while reclassification semantics are undefined — see
+/// <see cref="TicketAlreadyClassifiedException"/> — not a rule that a
+/// classification may never change.
 /// </para>
 /// </summary>
 public sealed class TicketClassificationAppService(
@@ -138,7 +148,6 @@ public sealed class TicketClassificationAppService(
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var correlationId = Guid.NewGuid();
-        var previousPriorityId = ticket.PriorityId;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
@@ -154,10 +163,11 @@ public sealed class TicketClassificationAppService(
                 ticket.PinWorkflowVersion(workflowVersion.WorkflowTemplateId);
             }
 
-            // The SLA clock the ticket never had. Backdated to CreatedAtUtc
-            // deliberately — see this type's remarks.
+            // The SLA clock the ticket never had, started from this moment —
+            // the first instant at which a target exists to measure against.
+            // See this type's remarks for why it is not backdated.
             await slaDueDateService.OpenInitialPeriodAsync(
-                ticket, ticket.CreatedAtUtc, callerEmployeeId, correlationId, cancellationToken);
+                ticket, now, callerEmployeeId, correlationId, cancellationToken);
 
             // The ticket's SlaState was NotApplicable while unclassified; a
             // real period now exists, so the dimension reports Running like
@@ -170,12 +180,12 @@ public sealed class TicketClassificationAppService(
                 new TicketStatusHistory(
                     ticket.TicketId, TicketStatusDimension.SlaState, oldValue: (byte)SlaState.NotApplicable,
                     newValue: (byte)SlaState.Running, callerEmployeeId, actorIsSystem: false,
-                    note: "SLA clock started at classification.", correlationId, now),
+                    note: $"SLA clock started at classification ({now:O}).", correlationId, now),
                 cancellationToken);
 
             await auditWriter.WriteAsync(
                 callerEmployeeId, "ClassifyTicket", "Ticket", ticket.TicketId.ToString(),
-                beforeValue: $"CategoryId=(none);PriorityId={previousPriorityId};RequestTypeId=(none);SlaState={SlaState.NotApplicable}",
+                beforeValue: "CategoryId=(none);PriorityId=(none);RequestTypeId=(none);SlaState=NotApplicable",
                 afterValue:
                     $"CategoryId={ticket.CategoryId};PriorityId={ticket.PriorityId};"
                     + $"RequestTypeId={ticket.RequestTypeId?.ToString() ?? "(none)"};SlaState={ticket.SlaState}",

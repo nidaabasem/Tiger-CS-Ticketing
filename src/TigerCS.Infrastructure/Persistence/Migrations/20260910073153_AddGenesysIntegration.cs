@@ -15,6 +15,14 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                 name: "IX_TicketInteractions_GenesysConversationId",
                 table: "TicketInteractions");
 
+            migrationBuilder.AlterColumn<byte>(
+                name: "PriorityId",
+                table: "Tickets",
+                type: "tinyint",
+                nullable: true,
+                oldClrType: typeof(byte),
+                oldType: "tinyint");
+
             migrationBuilder.AlterColumn<int>(
                 name: "CategoryId",
                 table: "Tickets",
@@ -153,6 +161,16 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
             migrationBuilder.DropColumn(
                 name: "EndedAtUtc",
                 table: "TicketInteractions");
+
+            migrationBuilder.AlterColumn<byte>(
+                name: "PriorityId",
+                table: "Tickets",
+                type: "tinyint",
+                nullable: false,
+                defaultValue: (byte)0,
+                oldClrType: typeof(byte),
+                oldType: "tinyint",
+                oldNullable: true);
 
             migrationBuilder.AlterColumn<int>(
                 name: "CategoryId",

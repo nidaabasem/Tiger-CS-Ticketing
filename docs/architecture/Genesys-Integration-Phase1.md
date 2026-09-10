@@ -93,57 +93,141 @@ workflow behaviour are unchanged.
 ### What is *not* inferred
 
 The website's three options are **departments** — not Request Types, not
-Categories. A Genesys ticket is created **Unclassified**:
+Categories, not Priorities. A Genesys ticket is created **Unclassified**:
 
 - `CategoryId` = **null**
 - `RequestTypeId` = **null**
-- `SlaState` = **`NotApplicable`** — no SLA period is opened
-- `PriorityId` = **Medium**, provisional and documented, never derived from
-  channel/queue/department — and while the ticket is Unclassified it selects
-  nothing, because no SLA period exists to select a policy for
+- `PriorityId` = **null**
+- `SlaState` = **`NotApplicable`** — no SLA period exists
 
-That is the honest state at pick-up: the department is known, the request is
-not, because nobody has read it yet. See §4a.
+That is the honest state at pick-up: the department is known, and nothing else
+about the request is, because nobody has read it yet. See §4a.
 
 ## 4a. Unclassified tickets, and when the SLA clock starts
 
-`Tickets.CategoryId` is **nullable**. It was `NOT NULL` before this phase, and
-the alternative — a per-department default category, which an earlier draft of
-this design used — was rejected because it is not merely cosmetic: a
-placeholder category is a real business classification that reporting, queues
-and the agent's screen all read as true, and it would have made a ticket look
-triaged when it is not. Inferring a category from a department is the same
-mistake wearing a different hat. NULL is the truth, so NULL is what is stored.
+### Why both fields are null
 
-The lifecycle:
+`Tickets.CategoryId` and `Tickets.PriorityId` are both **nullable**. Both were
+`NOT NULL` before this phase.
+
+An earlier draft defaulted the category (per department) and the priority (to
+Medium). Both were rejected, for the same reason:
+
+- A **placeholder category** is a real business classification. Reporting,
+  queue filters and the agent's screen all read it as true, so it makes a
+  ticket look triaged when it is not. Inferring one from the department is the
+  same mistake wearing a different hat.
+- A **placeholder priority** is no more harmless, even though it starts no SLA
+  clock. Priority drives the dashboard's *Critical/High* KPI count, the queue's
+  priority sort, the *Tickets Requiring Attention* ranking, and the badge on
+  every list row. A defaulted Medium would rank an inquiry nobody has read
+  among tickets whose urgency a human actually judged.
+
+NULL is the truth in both cases, so NULL is what is stored — and every reader
+handles it explicitly (see *Reading a null priority* below).
+
+### The lifecycle
 
 ```
-inquiry received → ticket created (Unclassified) → agent reads it
-    → agent picks Category + Priority (+ optional Request Type)
-    → ticket becomes Classified          ← the SAME ticket, updated in place
+10:00  Genesys inquiry arrives, agent picks up
+       → Ticket created:  Department known
+                          Category = NULL, RequestType = NULL, Priority = NULL
+                          SlaState = NotApplicable  (no SLA period)
+
+10:03  Agent replies to the customer
+       → FirstHumanResponseAtUtc = 10:03   (3 minutes — measured, see below)
+
+10:15  Agent has understood the inquiry and selects
+       Category = NOC, RequestType = NOC for Resale, Priority = Normal
+       → the SAME ticket becomes Classified
+       → business/resolution SLA period opens, starting 10:15
 ```
 
-`POST /api/tickets/{ticketId}/classification` performs the transition.
-`Ticket.Classify` is **write-once**: a second attempt is refused with
-`AlreadyClassified` rather than silently re-categorising a ticket someone is
-already working. The call takes the ticket's `RowVersion`, so two agents
-classifying at once cannot both win. **No second ticket is ever created.**
+`POST /api/tickets/{ticketId}/classification` performs the transition, on the
+same ticket, under its `RowVersion` so two agents cannot both win. **No second
+ticket is ever created.** A real `PriorityId` is required alongside the
+category; the request type is optional and pins its published workflow version
+exactly as classifying at creation would.
 
-**When the SLA clock starts.** SLA policy selection is keyed on
-`PriorityId` alone (`SlaDueDateService.ComputeDueDatesAsync` →
-`SlaPolicyRepository.GetByPriorityIdAsync`); Category has never taken part in
-it, and this phase does not change that rule. But Priority is *also* part of
-classification, so an Unclassified ticket's Medium is provisional — opening a
-period against it would measure the department against a target nobody chose.
-So an Unclassified ticket opens **no SLA period at all** and sits at
-`SlaState.NotApplicable`. Classification opens the initial period, backdated
-to `Ticket.CreatedAtUtc`, and moves the state `NotApplicable → Running` with a
-history row. Backdating is deliberate: classifying an hour late must not buy
-an hour of extra SLA.
+### When the business SLA starts — and why not at creation
 
-Nothing else changed. Workflow, approvals, assignment and escalation never
-read `CategoryId`; the four places that do are display and reporting
-projections, which now render *Unclassified*.
+SLA policy selection is keyed on **`PriorityId` alone**
+(`SlaDueDateService.ComputeDueDatesAsync` →
+`SlaPolicyRepository.GetByPriorityIdAsync`). Category has never taken part in
+it, and this phase does not change that rule.
+
+An SLA policy is a commitment to resolve a *known* request within a target.
+While the ticket is Unclassified nobody knows the request, the priority, or
+therefore the policy — so there is nothing to commit to and **no period is
+opened**. The clock starts at the **classification timestamp** and runs from
+there. It is deliberately *not* backdated to `CreatedAtUtc`: doing so would
+charge the department for a stretch of time during which no target existed,
+against a policy chosen after the fact.
+
+`SlaState` moves `NotApplicable → Running` at that moment, recorded on the
+ticket's status history like any other dimension change.
+
+### First Response stays measurable throughout
+
+`Ticket.FirstHumanResponseAtUtc` lives on the **ticket**, not on the SLA
+period. Recording an agent's first reply needs no SLA instance, so "how
+quickly did this Genesys customer reach a human" is captured with its real
+timestamp from the moment the inquiry arrived — whether or not anyone has
+classified the ticket yet. `SlaBreachProcessor` already has a
+`NoSlaPeriod` outcome for a ticket without a current period, and
+`SlaQueryAppService.ToSummaryDto` already renders a null instance, so this
+needed no new machinery.
+
+The distinction, stated plainly:
+
+| | Depends on classification? | Starts at |
+|---|---|---|
+| **First Response** (human responsiveness) | No | Ticket creation; recorded on the ticket |
+| **Business / Resolution SLA** (target for a known request) | Yes | Classification |
+
+The First Response *deadline* is part of the SLA period and so exists only
+once classified — but the *measurement* of when a human first responded does
+not wait for it.
+
+### Reading a null priority
+
+Both SQL Server and LINQ order `NULL` **first** ascending, and ascending is
+"most urgent first" here (1 = Critical). Left alone, an unclassified ticket
+would outrank every Critical one. Each reader therefore says what it does:
+
+| Reader | Behaviour with `PriorityId = NULL` |
+|---|---|
+| Queue sort by priority (asc **and** desc) | Sorts **last**, via a leading `PriorityId == null` key. Unjudged is not "most urgent", nor "least" |
+| Queue filter `?priorityId=` | Never matches — an unclassified ticket has no tier to match |
+| Dashboard *Critical/High* KPI | Not counted: `PriorityId != null && PriorityId <= 2`, written explicitly rather than relying on SQL's `NULL <= 2` |
+| *Tickets Requiring Attention* | Still listed (it is unassigned), but tie-breaks **below** every judged tier |
+| Escalation on breach | Unreachable — a breach needs an SLA period, which needs classification |
+| `TicketSlaInstance.PriorityId` | Stays **NOT NULL**: a period only ever exists for a classified ticket |
+| Ticket Details / queue rows / customer history | Renders **Not set** with its own neutral badge — never coalesced to *Medium* |
+
+Nothing else changed. Workflow, approvals and assignment never read
+`CategoryId` or `PriorityId` at all.
+
+### Reclassification is deferred, not forbidden
+
+`Ticket.Classify` performs a ticket's **initial** classification; a second
+attempt is refused with `AlreadyClassified`. **This is a Phase 1 safeguard,
+not a confirmed final business rule.** Reclassification is deferred because
+its semantics are undefined: whether the SLA period is recomputed, restarted
+or left alone; what happens to a workflow version already pinned and
+executing; what happens to approvals raised under the previous request type.
+Until those are decided, refusing keeps a ticket's business meaning from
+moving underneath machinery that has already acted on it.
+
+This is not a new restriction. `Ticket.ClassifyRequestType` has guarded its
+own field the same way since the Workflow/Automation phase
+(`TicketRequestTypeAlreadySetException`), and TigerCS has **no** existing
+operation that changes a ticket's category, request type or priority after
+creation — there is no update-ticket endpoint. Note that
+`RequestType.AllowAgentPriorityChange` (surfaced as
+`WorkflowCapabilities.CanChangePriority`) already exists in configuration with
+no consuming operation, so the intent to allow priority changes predates this
+phase and is waiting on exactly the semantics above.
 
 ## 5. What is deliberately **not** built
 
@@ -218,8 +302,9 @@ real host.
 | **`TicketInteractionMessages`** (new) | The structured transcript. |
 | **`GenesysQueueMappings`** (new) | Queue → Department configuration. **No rows seeded.** |
 | `Tickets.CategoryId` → **nullable** | The Unclassified phase (§4a). Existing rows are unaffected — every ticket created before this phase keeps its category. |
+| `Tickets.PriorityId` → **nullable** | Same reason (§4a): an unread inquiry has no judged urgency. Existing rows keep their priority. `TicketSlaInstances.PriorityId` stays NOT NULL. |
 
-Migration: `20260910064613_AddGenesysIntegration`. No existing interaction
+Migration: `20260910073153_AddGenesysIntegration`. No existing interaction
 model was replaced or duplicated — `TicketInteraction` was extended.
 
 ---

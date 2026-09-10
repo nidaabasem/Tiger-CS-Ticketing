@@ -200,7 +200,14 @@ public sealed class SlaBreachProcessor(
             return;
         }
 
-        var escalation = TicketEscalation.RaiseAutomaticLevel2OnBreach(ticket.TicketId, ticket.PriorityId, nowUtc);
+        // Reachable only from a breached deadline, which requires an SLA
+        // period, which only a classified ticket has — so the priority that
+        // decides which roles are notified is always a real one.
+        var priorityId = ticket.PriorityId
+            ?? throw new InvalidOperationException(
+                $"Ticket {ticket.TicketId} breached an SLA deadline without a priority — an SLA period should not exist for an unclassified ticket.");
+
+        var escalation = TicketEscalation.RaiseAutomaticLevel2OnBreach(ticket.TicketId, priorityId, nowUtc);
         await escalationRepository.AddAsync(escalation, cancellationToken);
 
         var previousLevel = ticket.EscalationLevel;

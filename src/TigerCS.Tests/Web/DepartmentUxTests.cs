@@ -365,4 +365,24 @@ public sealed class DepartmentUxTests
         Assert.Equal("Facility Management Queue", TicketDisplay.AssignedToLabel(null, null, 1, "Facility Management"));
         Assert.Equal("Department queue", TicketDisplay.AssignedToLabel(null, null, 1, null));
     }
+
+    /// <summary>
+    /// An Unclassified ticket has no priority, and the display must say so.
+    /// The trap this guards is the <c>_ =&gt;</c> arm: before nullability,
+    /// <c>PriorityCssKey</c> fell through to <c>medium</c>, so a null would
+    /// have rendered as a quiet Medium badge — the UI asserting an urgency
+    /// judgement nobody made.
+    /// </summary>
+    [Theory]
+    [InlineData(null, "Not set", "none")]
+    [InlineData((byte)1, "Critical", "critical")]
+    [InlineData((byte)2, "High", "high")]
+    [InlineData((byte)3, "Medium", "medium")]
+    [InlineData((byte)4, "Low", "low")]
+    public void PriorityDisplay_ShowsNotSetForAnUnclassifiedTicket_AndNeverFallsThroughToMedium(
+        byte? priorityId, string expectedLabel, string expectedCssKey)
+    {
+        Assert.Equal(expectedLabel, TicketDisplay.PriorityLabel(priorityId));
+        Assert.Equal(expectedCssKey, TicketDisplay.PriorityCssKey(priorityId));
+    }
 }

@@ -90,21 +90,6 @@ public sealed class GenesysInquiryIngestionAppService(
     IAuditEntryWriter auditWriter,
     ITicketingUnitOfWork unitOfWork)
 {
-    /// <summary>
-    /// The <b>provisional</b> working priority an unclassified inquiry
-    /// carries until an agent classifies it. It is never derived from the
-    /// channel, the queue or the department — priority is a classification
-    /// decision this phase does not make.
-    ///
-    /// <para>
-    /// Critically, it selects <b>no SLA policy</b>: ticket creation opens no
-    /// SLA period for an unclassified ticket precisely so that a provisional
-    /// priority cannot start a real clock against a target nobody chose. The
-    /// clock starts at classification, from the agent's real priority.
-    /// </para>
-    /// </summary>
-    private const byte ProvisionalPriorityId = (byte)PriorityLevel.Medium;
-
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
     {
@@ -193,10 +178,15 @@ public sealed class GenesysInquiryIngestionAppService(
             UnitReferenceId: null,
             ContactReferenceId: null,
             // Unclassified, on purpose: the agent has taken the inquiry but
-            // has not read the request yet, so there is no category to give.
-            // The department — which IS known — places the ticket instead.
+            // has not read the request yet, so there is neither a category
+            // nor a priority to give. The department — which IS known —
+            // places the ticket, and nothing else about the request is
+            // guessed. Priority in particular is left null rather than
+            // defaulted: it drives the dashboard counts, the queue order and
+            // the attention ranking, so a default would rank an inquiry
+            // nobody has read among tickets a human actually triaged.
             CategoryId: null,
-            PriorityId: ProvisionalPriorityId,
+            PriorityId: null,
             RequestSummary: BuildRequestSummary(inquiry),
             // The website form's tower/unit, when the customer typed one —
             // the same manual snapshot an agent would enter by hand. Never a

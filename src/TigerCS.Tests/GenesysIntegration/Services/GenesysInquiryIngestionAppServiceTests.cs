@@ -239,7 +239,7 @@ public class GenesysInquiryIngestionAppServiceTests
     // ---- 8. The department selection is NOT a request type ----
 
     [Fact]
-    public async Task Ingest_WebsiteChatDepartmentSelection_NeverInfersARequestTypeOrPriority()
+    public async Task Ingest_WebsiteChatDepartmentSelection_NeverInfersACategoryRequestTypeOrPriority()
     {
         var f = new GenesysServiceFixture();
         var (department, _) = f.SeedGenesysDepartment("Maintenance", "MNT");
@@ -258,10 +258,14 @@ public class GenesysInquiryIngestionAppServiceTests
         Assert.Null(ticket.WorkflowTemplateId);
         Assert.Null(ticket.CategoryId);
 
-        // The priority is provisional, and — the part that matters — it
-        // selected no SLA policy: no period was opened against it.
-        Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);
+        // Nor a priority. A default here would not be harmless: priority
+        // drives the dashboard counts, the queue order and the attention
+        // ranking, so it would place an unread inquiry among tickets a human
+        // actually triaged. With no priority there is also no SLA policy to
+        // select, and so no period.
+        Assert.Null(ticket.PriorityId);
         Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
+        Assert.Empty(f.Sla.SlaInstances.All);
     }
 
     // ---- 9 & 10. Customer lookup: used, but never a gate ----

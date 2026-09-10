@@ -47,7 +47,7 @@
 |---|---|---|---|---|---|---|
 | FR-CLS-01 (single primary category) | — | — | `Tickets.CategoryId` | §3.1, `POST /api/tickets/{id}/classification` | 6 | Category is single-select and mandatory **to classify**. A Genesys inquiry becomes a ticket before anyone has read the request, so it may exist *Unclassified* first (`CategoryId` null) and is classified on the same ticket — never a second one. See `architecture/Genesys-Integration-Phase1.md` §4a. |
 | FR-CLS-02 (FM sub-category mandatory) | — | — | `Categories.ParentCategoryId` | §3.1 (category picker logic) | 6 | Sub-category required when parent = Facility Management |
-| FR-CLS-03 (priority selection, mandatory) | — | ADR-0008 | `Tickets.PriorityId` | §3.1 | 6 | Priority mandatory, single-select |
+| FR-CLS-03 (priority selection, mandatory) | — | ADR-0008 | `Tickets.PriorityId` | §3.1, `POST /api/tickets/{id}/classification` | 6 | Priority is mandatory and single-select **at classification**. An Unclassified Genesys ticket carries none until then, and every queue/dashboard reader handles that explicitly rather than defaulting a tier. See `architecture/Genesys-Integration-Phase1.md` §4a. |
 | FR-RTE-01 (auto-route by category/sub-category, data-driven) | — | — | `Categories.DepartmentId` | §3.1 (derives `OriginatingDepartmentId`) | 6 | Ticket routes to the department the selected category maps to |
 | FR-RTE-02 (verbal confirmation + read back ticket number) | — | — | — | 6 (success confirmation) | 6 | UI surfaces routed department + ticket number post-create |
 | FR-RTE-03 (named current owner; SLA start per ISSUE-001) | ISSUE-001 | ADR-0009 | `Tickets.CurrentOwnerEmployeeId`, `TicketAssignments` | §3.5 | 8 | Ticket has exactly one current owner once assigned |

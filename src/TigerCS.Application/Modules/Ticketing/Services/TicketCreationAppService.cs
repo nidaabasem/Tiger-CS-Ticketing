@@ -161,7 +161,7 @@ public sealed class TicketCreationAppService(
         // Null exactly when the ticket is being created Unclassified — see
         // ResolveRoutingAsync.
         var category = routing.Category;
-        var priority = routing.Priority!;
+        var priority = routing.Priority;
         var department = routing.Department!;
 
         // Workflow/Automation phase 2 — optional request-type classification.
@@ -226,25 +226,25 @@ public sealed class TicketCreationAppService(
                 // channel collected as the manual project/unit snapshot, the
                 // same as CreateUnverified.
                 ? Ticket.CreateUnclassified(
-                    ticketNumber, department.DepartmentId, priority.PriorityId, request.RequestSummary, now,
+                    ticketNumber, department.DepartmentId, request.RequestSummary, now,
                     request.ManualProjectName, request.ManualUnitNumber)
                 : (unitReference, contactReference, hasCrmBuyerMatch, hasExternalVerification) switch
             {
                 (not null, not null, _, _) => Ticket.CreateVerified(
                     ticketNumber, category.DepartmentId, unitReference!.UnitReferenceId, contactReference!.ContactReferenceId,
-                    category.CategoryId, priority.PriorityId, request.RequestSummary, now),
+                    category.CategoryId, priority!.PriorityId, request.RequestSummary, now),
                 (_, _, true, _) => Ticket.CreateVerifiedFromCrmBuyer(
                     ticketNumber, category.DepartmentId,
                     request.CrmBuyerCustomerId!.Value, request.CrmBuyerLeadId!.Value, request.CrmBuyerUnitId!.Value, request.CrmBuyerProjectId!.Value,
                     request.CrmBuyerCustomerName, request.CrmBuyerProjectName, request.CrmBuyerUnitNumber,
-                    category.CategoryId, priority.PriorityId, request.RequestSummary, now),
+                    category.CategoryId, priority!.PriorityId, request.RequestSummary, now),
                 (_, _, _, true) => Ticket.CreateFromExternalLookup(
                     ticketNumber, category.DepartmentId,
                     request.CustomerVerificationSource!, request.ExternalCustomerId, request.ExternalUnitId,
                     request.ManualProjectName, request.ManualUnitNumber,
-                    category.CategoryId, priority.PriorityId, request.RequestSummary, now),
+                    category.CategoryId, priority!.PriorityId, request.RequestSummary, now),
                 _ => Ticket.CreateUnverified(
-                    ticketNumber, category.DepartmentId, category.CategoryId, priority.PriorityId, request.RequestSummary, now,
+                    ticketNumber, category.DepartmentId, category.CategoryId, priority!.PriorityId, request.RequestSummary, now,
                     request.ManualProjectName, request.ManualUnitNumber)
             };
 
@@ -330,12 +330,11 @@ public sealed class TicketCreationAppService(
         //
         // The one exception, and the reason it is an exception: the SLA
         // policy is selected by PriorityId (SlaDueDateService.ComputeDueDates
-        // -> SlaPolicies keyed on priority). An Unclassified ticket's
-        // priority is provisional — nobody has read the request — so opening
-        // a period here would measure against a target no one chose and
-        // breach against a deadline no one set. TicketClassificationAppService
-        // opens the period the moment a real classification exists, backdated
-        // to this same CreatedAtUtc so classifying late never buys time.
+        // -> SlaPolicies keyed on priority). An Unclassified ticket has no
+        // priority at all — nobody has read the request — so there is no
+        // policy to select and no commitment to measure.
+        // TicketClassificationAppService opens the period at the moment a
+        // real classification exists, timed from that moment.
         if (ticket.IsClassified)
         {
             await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
@@ -435,20 +434,21 @@ public sealed class TicketCreationAppService(
     /// this last case only fires against a request built outside that UI.
     /// </summary>
     private async Task<RoutingResolution> ResolveRoutingAsync(
-        int? categoryId, int? requestedDepartmentId, byte priorityId, int? intakeDepartmentId, CancellationToken cancellationToken)
+        int? categoryId, int? requestedDepartmentId, byte? priorityId, int? intakeDepartmentId, CancellationToken cancellationToken)
     {
-        var priority = await priorityRepository.GetByIdAsync(priorityId, cancellationToken);
-        if (priority is null)
-        {
-            return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
-        }
-
         // The Unclassified path: no category has been chosen because nobody
         // has read the request yet, so the department is supplied directly
-        // and is the ONLY thing that places the ticket. Nothing is inferred
-        // and no category stands in.
+        // and is the ONLY thing that places the ticket. Nothing is inferred —
+        // no category stands in, and no priority either: an unjudged ticket
+        // carries none rather than a default that would rank it against
+        // tickets a human actually triaged.
         if (categoryId is null)
         {
+            if (priorityId is not null)
+            {
+                return RoutingResolution.Failed(TicketCreationOutcome.PriorityRequiresCategory);
+            }
+
             if (requestedDepartmentId is not { } unclassifiedDepartmentId)
             {
                 return RoutingResolution.Failed(TicketCreationOutcome.DepartmentOrCategoryRequired);
@@ -470,7 +470,20 @@ public sealed class TicketCreationAppService(
                 return RoutingResolution.Failed(TicketCreationOutcome.CategoryDepartmentMismatch);
             }
 
-            return RoutingResolution.Succeeded(category: null, priority, unclassifiedDepartment);
+            return RoutingResolution.Succeeded(category: null, priority: null, unclassifiedDepartment);
+        }
+
+        // A classified ticket must name a real priority — the classified
+        // factories and the SLA period both require one.
+        if (priorityId is not { } classifiedPriorityId)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
+        }
+
+        var priority = await priorityRepository.GetByIdAsync(classifiedPriorityId, cancellationToken);
+        if (priority is null)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
         }
 
         var category = await categoryRepository.GetByIdAsync(categoryId.Value, cancellationToken);
@@ -499,9 +512,9 @@ public sealed class TicketCreationAppService(
         Domain.Modules.IdentityAndAccess.Department? Department,
         TicketCreationOutcome? Failure)
     {
-        /// <summary><paramref name="category"/> is null exactly on the Unclassified path, where the department alone places the ticket.</summary>
+        /// <summary><paramref name="category"/> and <paramref name="priority"/> are both null exactly on the Unclassified path, where the department alone places the ticket and nothing about the request has been judged.</summary>
         public static RoutingResolution Succeeded(
-            Domain.Modules.ClassificationAndRouting.Category? category, Priority priority, Domain.Modules.IdentityAndAccess.Department department) =>
+            Domain.Modules.ClassificationAndRouting.Category? category, Priority? priority, Domain.Modules.IdentityAndAccess.Department department) =>
             new(category, priority, department, null);
 
         public static RoutingResolution Failed(TicketCreationOutcome outcome) => new(null, null, null, outcome);

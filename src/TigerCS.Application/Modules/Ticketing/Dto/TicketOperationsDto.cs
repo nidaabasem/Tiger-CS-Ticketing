@@ -35,7 +35,7 @@ public sealed record TicketListRequestDto(
 /// <param name="CurrentDepartmentId">The department that currently holds it.</param>
 /// <param name="CurrentOwnerEmployeeId">The current owner, or null when unassigned.</param>
 /// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low. Provisional while Unclassified.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="RequestSummary">The request, in the agent's words.</param>
@@ -46,7 +46,7 @@ public sealed record TicketSummaryDto(
     int CurrentDepartmentId,
     Guid? CurrentOwnerEmployeeId,
     int? CategoryId,
-    byte PriorityId,
+    byte? PriorityId,
     string TicketStatus,
     string VerificationStatus,
     string RequestSummary,
@@ -68,7 +68,7 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="UnitReferenceId">The verified unit, or null while the ticket is provisional.</param>
 /// <param name="ContactReferenceId">The verified contact, or null while the ticket is provisional.</param>
 /// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified — no category is ever invented to fill it.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low. Provisional while Unclassified: it selects no SLA policy until the ticket is classified.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified: no priority has been judged, so none is shown and none selects an SLA policy.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
@@ -110,7 +110,7 @@ public sealed record TicketDetailDto(
     int? UnitReferenceId,
     int? ContactReferenceId,
     int? CategoryId,
-    byte PriorityId,
+    byte? PriorityId,
     string TicketStatus,
     string VerificationStatus,
     string EscalationLevel,

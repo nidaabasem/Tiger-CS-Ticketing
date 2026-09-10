@@ -279,12 +279,14 @@ PUT/POST /api/admin/genesys/queue-mappings
 An inquiry whose queue is unmapped is refused with a `422` naming the gap — it
 is never routed to a guessed department.
 
-Nothing configures a **category**. A Genesys ticket is created *Unclassified*
-(`CategoryId` and `RequestTypeId` both `NULL`, `SlaState = NotApplicable`),
-because at pick-up nobody has read the request yet. An agent classifies it
-later on the same ticket via `POST /api/tickets/{ticketId}/classification`,
-and that is when the SLA clock opens — backdated to the ticket's creation
-time, so classifying late buys no extra time.
+Nothing configures a **category** or a **priority**. A Genesys ticket is
+created *Unclassified* — `CategoryId`, `RequestTypeId` and `PriorityId` all
+`NULL`, `SlaState = NotApplicable` — because at pick-up nobody has read the
+request yet. An agent supplies a real category and priority later on the same
+ticket via `POST /api/tickets/{ticketId}/classification`, and **that** is when
+the business/resolution SLA period opens, timed from the classification
+moment. How quickly a human first responded is measured separately and is
+unaffected by any of this.
 
 ## 4. Apply the database migration
 

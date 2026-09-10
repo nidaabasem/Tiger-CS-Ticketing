@@ -1117,7 +1117,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<int>("OriginatingDepartmentId")
                         .HasColumnType("int");
 
-                    b.Property<byte>("PriorityId")
+                    b.Property<byte?>("PriorityId")
                         .HasColumnType("tinyint");
 
                     b.Property<int>("ReopenCount")
@@ -2522,8 +2522,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
                         .WithMany()
                         .HasForeignKey("PriorityId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", null)
                         .WithMany()

@@ -65,7 +65,29 @@ public class Ticket
     /// </para>
     /// </summary>
     public int? CategoryId { get; private set; }
-    public byte PriorityId { get; private set; }
+
+    /// <summary>
+    /// The ticket's priority tier — <b>null while the ticket is
+    /// Unclassified</b>, for the same reason <see cref="CategoryId"/> is.
+    ///
+    /// <para>
+    /// A provisional priority is not harmless. Priority drives the dashboard
+    /// KPI counts, queue sorting, the Tickets Requiring Attention ranking and
+    /// the badge on every list row, so a defaulted Medium would place a
+    /// ticket nobody has read yet among tickets whose urgency a human
+    /// actually judged. Null says "not judged yet" and every one of those
+    /// readers now handles it explicitly — never by coalescing it into a
+    /// tier, and never by letting SQL's NULLs-sort-first put an unclassified
+    /// ticket above Critical.
+    /// </para>
+    ///
+    /// <para>
+    /// Set exactly once, together with <see cref="CategoryId"/>, by
+    /// <see cref="Classify"/>. That is also the point at which an SLA policy
+    /// becomes selectable, since the policy is keyed on this value.
+    /// </para>
+    /// </summary>
+    public byte? PriorityId { get; private set; }
 
     /// <summary>
     /// Whether the ticket carries a real business classification. False only
@@ -345,30 +367,26 @@ public class Ticket
     /// mapping) well before the request is.
     ///
     /// <para>
-    /// <b>No SLA clock starts here</b>, and that is the point:
-    /// <see cref="SlaState"/> is <see cref="SlaState.NotApplicable"/> rather
-    /// than <see cref="SlaState.Running"/>, because the SLA policy is
-    /// selected by <see cref="PriorityId"/> — and an unclassified ticket's
-    /// priority is not a business decision anyone has made. Starting a clock
-    /// against a placeholder would measure the wrong target and breach
-    /// against a deadline nobody set. <see cref="Classify"/> is what starts
-    /// it, computed from the real classification.
+    /// <b>Nothing about the request is guessed.</b>
+    /// <see cref="CategoryId"/>, <see cref="RequestTypeId"/> and
+    /// <see cref="PriorityId"/> are all null, and no SLA period exists —
+    /// <see cref="SlaState"/> is <see cref="SlaState.NotApplicable"/>. The
+    /// SLA policy is selected by priority, and a priority nobody has judged
+    /// would measure the wrong target and breach against a deadline nobody
+    /// set. <see cref="Classify"/> is what supplies all three and starts the
+    /// clock, from the moment the agent actually classifies.
     /// </para>
     ///
     /// <para>
     /// Everything else behaves exactly as any other new ticket: it is Open,
     /// it belongs to a real department, it is assignable, notable and
-    /// transferable, and its customer identification follows the same
-    /// enrichment-never-a-gate rule as <see cref="CreateUnverified"/>.
+    /// transferable, its first human response is recordable, and its customer
+    /// identification follows the same enrichment-never-a-gate rule as
+    /// <see cref="CreateUnverified"/>.
     /// </para>
     /// </summary>
     /// <param name="ticketNumber">The generated, unique ticket number.</param>
     /// <param name="departmentId">The resolved (and initial current) department — known, never guessed.</param>
-    /// <param name="priorityId">
-    /// A provisional working priority. It selects no SLA policy while the
-    /// ticket is unclassified (no SLA period exists), and
-    /// <see cref="Classify"/> replaces it with the agent's real choice.
-    /// </param>
     /// <param name="requestSummary">What is known of the request — for a raw inquiry, how it arrived.</param>
     /// <param name="createdAtUtc">Creation time, in UTC.</param>
     /// <param name="manualProjectName">Optional project/tower snapshot the channel collected, same as <see cref="CreateUnverified"/>.</param>
@@ -376,13 +394,12 @@ public class Ticket
     public static Ticket CreateUnclassified(
         string ticketNumber,
         int departmentId,
-        byte priorityId,
         string requestSummary,
         DateTime createdAtUtc,
         string? manualProjectName = null,
         string? manualUnitNumber = null)
     {
-        var ticket = CreateCore(ticketNumber, departmentId, categoryId: null, priorityId, requestSummary, createdAtUtc);
+        var ticket = CreateCore(ticketNumber, departmentId, categoryId: null, priorityId: null, requestSummary, createdAtUtc);
         ticket.VerificationStatus = CrmVerificationStatus.Unverified;
         ticket.SlaState = SlaState.NotApplicable;
         ticket.ManualProjectName = manualProjectName;
@@ -391,7 +408,7 @@ public class Ticket
     }
 
     private static Ticket CreateCore(
-        string ticketNumber, int departmentId, int? categoryId, byte priorityId, string requestSummary, DateTime createdAtUtc)
+        string ticketNumber, int departmentId, int? categoryId, byte? priorityId, string requestSummary, DateTime createdAtUtc)
     {
         if (string.IsNullOrWhiteSpace(ticketNumber))
         {
@@ -471,12 +488,21 @@ public class Ticket
     /// never creates a second ticket.</b>
     ///
     /// <para>
-    /// Write-once for the category: a ticket that already carries one is
-    /// already classified, and re-categorising an existing ticket is a
-    /// different operation (not built in this phase) with its own SLA
-    /// consequences. The priority is replaced here because until this moment
-    /// it was provisional and drove nothing — no SLA period exists for an
-    /// unclassified ticket.
+    /// <b>Initial classification only — a Phase 1 safeguard, not a settled
+    /// business rule.</b> A ticket that already carries a category is
+    /// refused, because <i>re</i>classification has consequences nobody has
+    /// specified yet: whether the SLA period is recomputed or restarted, what
+    /// happens to a pinned workflow version mid-flight, and what happens to
+    /// approvals already raised under the old request type. Until those are
+    /// decided, refusing is the safe answer — it is not a statement that a
+    /// classification may never change. <see cref="ClassifyRequestType"/>
+    /// already guards its own field the same way, for the same reason.
+    /// </para>
+    ///
+    /// <para>
+    /// Priority is set rather than replaced: an unclassified ticket has none
+    /// (<see cref="PriorityId"/> is null), and this is the first judgement
+    /// anyone has made about the ticket's urgency.
     /// </para>
     ///
     /// <para>

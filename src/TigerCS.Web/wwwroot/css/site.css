@@ -115,6 +115,9 @@ table { border-collapse: collapse; width: 100%; }
 .badge-priority-critical { background: var(--color-critical-pale); color: var(--color-critical); border-color: #EBC5C1; }
 .badge-priority-high { background: #FBF1E4; color: #8A6A1E; border-color: #F0DDB8; }
 .badge-priority-medium, .badge-priority-low { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+/* An Unclassified ticket has no priority. Dashed, so it reads as "not judged
+   yet" rather than as a quiet tier alongside Medium and Low. */
+.badge-priority-none { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); border-style: dashed; }
 
 .badge-sla-running { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
 .badge-sla-met { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }

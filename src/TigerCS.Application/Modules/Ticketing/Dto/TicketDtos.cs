@@ -51,7 +51,13 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// already-resolved department the unclassified ticket belongs to. Ignored
 /// when a category is supplied, since the category itself routes the ticket.
 /// </param>
-/// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="PriorityId">
+/// 1=Critical, 2=High, 3=Medium, 4=Low. Required whenever
+/// <paramref name="CategoryId"/> is supplied, and must be <b>omitted</b> when
+/// it is not: an unclassified ticket carries no priority, because nobody has
+/// judged its urgency yet, and a default would rank it against tickets a
+/// human actually triaged.
+/// </param>
 /// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
 /// <param name="CustomerVerificationSource">The external lookup source that verified the customer ("Pact"/"Tasleeh") when the agent selected a matched external customer/unit. Mutually exclusive with the CrmBuyer* identifiers; accompanies (never replaces) the manual Project/Unit snapshot.</param>
 /// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, stored for audit/reconciliation; requires <paramref name="CustomerVerificationSource"/>.</param>
@@ -63,7 +69,7 @@ public sealed record CreateTicketRequestDto(
     int? UnitReferenceId,
     int? ContactReferenceId,
     int? CategoryId,
-    byte PriorityId,
+    byte? PriorityId,
     string RequestSummary,
     int? CrmBuyerCustomerId = null,
     int? CrmBuyerLeadId = null,
@@ -89,7 +95,7 @@ public sealed record CreateTicketRequestDto(
 /// <param name="UnitReferenceId">The matched unit, or null when no customer match was linked at creation.</param>
 /// <param name="ContactReferenceId">The matched contact, or null when no customer match was linked at creation.</param>
 /// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low. Provisional while the ticket is Unclassified — it selects no SLA policy until classification.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while the ticket is Unclassified — no priority has been judged yet.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
@@ -117,7 +123,7 @@ public sealed record TicketResponseDto(
     int? UnitReferenceId,
     int? ContactReferenceId,
     int? CategoryId,
-    byte PriorityId,
+    byte? PriorityId,
     string TicketStatus,
     string VerificationStatus,
     string EscalationLevel,
@@ -174,6 +180,9 @@ public enum TicketCreationOutcome
 
     /// <summary>DepartmentId was supplied for an unclassified ticket but does not resolve to an active Department.</summary>
     DepartmentNotFound,
+
+    /// <summary>A PriorityId was supplied without a CategoryId. An unclassified ticket carries no priority at all — priority is a judgement made at classification, alongside the category, never before it.</summary>
+    PriorityRequiresCategory,
     PriorityNotFound,
 
     /// <summary>Item 9 (senior review): the Category's routed Department is missing or deactivated — never silently route a ticket to a department nobody is staffing.</summary>

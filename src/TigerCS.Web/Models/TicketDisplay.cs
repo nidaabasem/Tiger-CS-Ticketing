@@ -43,8 +43,16 @@ public static class TicketDisplay
     /// <summary>True when the ticket sits in its department queue rather than with a named employee — for styling only, never for the label text.</summary>
     public static bool IsDepartmentQueue(Guid? currentOwnerEmployeeId) => currentOwnerEmployeeId is null;
 
-    public static string PriorityLabel(byte priorityId) => priorityId switch
+    /// <summary>
+    /// The priority tier's name — or <c>Not set</c> for an Unclassified
+    /// ticket, whose priority is genuinely null because nobody has judged its
+    /// urgency yet. Never coalesced into a tier: showing "Medium" for a
+    /// ticket nobody has read would be a claim the system is not entitled to
+    /// make.
+    /// </summary>
+    public static string PriorityLabel(byte? priorityId) => priorityId switch
     {
+        null => "Not set",
         1 => "Critical",
         2 => "High",
         3 => "Medium",
@@ -52,8 +60,14 @@ public static class TicketDisplay
         _ => $"Priority {priorityId}"
     };
 
-    public static string PriorityCssKey(byte priorityId) => priorityId switch
+    /// <summary>
+    /// The badge modifier for <see cref="PriorityLabel"/>. A null priority
+    /// gets its own neutral key rather than falling through to
+    /// <c>medium</c> — the badge must not look like a judged tier.
+    /// </summary>
+    public static string PriorityCssKey(byte? priorityId) => priorityId switch
     {
+        null => "none",
         1 => "critical",
         2 => "high",
         3 => "medium",

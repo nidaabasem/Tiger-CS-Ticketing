@@ -106,11 +106,19 @@ public sealed class TicketWorkflowVersionAlreadyPinnedException(long ticketId, i
 }
 
 /// <summary>
-/// <see cref="Ticket.Classify"/> is write-once for the category: a ticket
-/// that already carries one is already classified. Re-categorising an
-/// existing ticket is a different operation — with its own SLA consequences
-/// — and is not built in this phase, so a second attempt is refused rather
-/// than silently moving a ticket's business meaning.
+/// <see cref="Ticket.Classify"/> performs a ticket's <i>initial</i>
+/// classification, so a ticket that already carries a category is refused.
+///
+/// <para>
+/// This is a <b>Phase 1 safeguard, not a confirmed final business rule.</b>
+/// Reclassification is deferred because its semantics are undefined: whether
+/// the SLA period is recomputed, restarted or left alone, what happens to a
+/// workflow version already pinned and executing, and what happens to
+/// approvals raised under the previous request type. Refusing keeps a
+/// ticket's business meaning from moving underneath machinery that has
+/// already acted on it; when those semantics are decided, a deliberate
+/// reclassification operation replaces this refusal.
+/// </para>
 /// </summary>
 public sealed class TicketAlreadyClassifiedException(long ticketId, int categoryId)
     : TicketException($"Ticket {ticketId} is already classified under category {categoryId}.")

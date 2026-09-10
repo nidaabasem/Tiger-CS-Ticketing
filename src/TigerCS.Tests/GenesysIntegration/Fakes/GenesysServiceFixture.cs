@@ -64,6 +64,9 @@ public sealed class GenesysServiceFixture
     public FakeTicketAssignmentRepository TicketAssignments { get; } = new();
     public FakeTicketStatusHistoryRepository StatusHistory { get; } = new();
 
+    /// <summary>The SLA services ticket creation runs through — exposed so a test can assert that an unclassified inquiry opened no period at all.</summary>
+    public SlaServiceFixture Sla { get; }
+
     public GenesysServiceFixture(bool enabled = true)
     {
         Options = new GenesysOptions { Enabled = enabled };
@@ -72,6 +75,7 @@ public sealed class GenesysServiceFixture
         var outbox = new FakeOutboxWriter();
         UnitOfWork.OutboxWriter = outbox;
         var sla = new SlaServiceFixture(Tickets, statusHistory: StatusHistory, audit: Audit, unitOfWork: UnitOfWork);
+        Sla = sla;
 
         var intakeRecordAppService = new IntakeRecordAppService(
             IntakeRecords, Departments, Channels, UnitOfWork, Audit, TimeProvider.System);

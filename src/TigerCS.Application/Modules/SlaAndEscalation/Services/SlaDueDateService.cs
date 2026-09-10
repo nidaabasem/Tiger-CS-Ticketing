@@ -51,11 +51,20 @@ public sealed class SlaDueDateService(
     {
         ArgumentNullException.ThrowIfNull(ticket);
 
+        // The invariant that makes TicketSlaInstance.PriorityId non-nullable:
+        // an SLA period only ever exists for a classified ticket, because the
+        // policy is selected by priority and an unclassified ticket has none.
+        // Callers open the period at classification, never before — this is
+        // the assertion, not a fallback.
+        var priorityId = ticket.PriorityId
+            ?? throw new InvalidOperationException(
+                $"Ticket {ticket.TicketId} has no priority — an SLA period may only be opened for a classified ticket.");
+
         var (firstResponseDueAtUtc, resolutionDueAtUtc) =
-            await ComputeDueDatesAsync(ticket.PriorityId, clockStartAtUtc, cancellationToken);
+            await ComputeDueDatesAsync(priorityId, clockStartAtUtc, cancellationToken);
 
         var instance = TicketSlaInstance.OpenInitialPeriod(
-            ticket.TicketId, ticket.PriorityId, clockStartAtUtc, firstResponseDueAtUtc, resolutionDueAtUtc);
+            ticket.TicketId, priorityId, clockStartAtUtc, firstResponseDueAtUtc, resolutionDueAtUtc);
 
         await slaInstanceRepository.AddAsync(instance, cancellationToken);
 
@@ -69,7 +78,7 @@ public sealed class SlaDueDateService(
             ticket.TicketId.ToString(),
             beforeValue: null,
             afterValue:
-                $"{{\"priorityId\":{ticket.PriorityId},\"clockStartAtUtc\":\"{clockStartAtUtc:O}\","
+                $"{{\"priorityId\":{priorityId},\"clockStartAtUtc\":\"{clockStartAtUtc:O}\","
                 + $"\"firstResponseDueAtUtc\":\"{firstResponseDueAtUtc:O}\",\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\"}}",
             correlationId,
             cancellationToken);

@@ -761,6 +761,12 @@ public class TicketsController(
             detail: "The selected category does not belong to the Intake department.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
+        TicketCreationOutcome.PriorityRequiresCategory => Problem(
+            type: "https://tigercs.internal/problems/priority-requires-category",
+            title: "Priority cannot be set without a category",
+            detail: "An unclassified ticket carries no priority. Priority is judged at classification, together with the category — POST /api/tickets/{ticketId}/classification.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketCreationOutcome.PriorityNotFound => Problem(
             type: "https://tigercs.internal/problems/priority-not-found",
             title: "Priority not found",
