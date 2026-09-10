@@ -32,7 +32,8 @@ public class TicketsController(
     TicketReconciliationAppService ticketReconciliationAppService,
     CustomerHistoryAppService customerHistoryAppService,
     CustomerProfileAppService customerProfileAppService,
-    TicketApprovalAppService ticketApprovalAppService) : ControllerBase
+    TicketApprovalAppService ticketApprovalAppService,
+    TicketInteractionQueryAppService ticketInteractionQueryAppService) : ControllerBase
 {
     /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
@@ -195,6 +196,41 @@ public class TicketsController(
         {
             CustomerProfileOutcome.Success => Ok(result.Response),
             CustomerProfileOutcome.Forbidden => Forbid(),
+            _ => NotFound()
+        };
+    }
+
+    /// <summary>The ticket's conversation history — every call/chat recorded against it, with transcripts.</summary>
+    /// <remarks>
+    /// Genesys integration phase 1. Returns each interaction the ticket
+    /// accumulated (the originating Genesys call or chat, plus any later
+    /// ones) in chronological order, each with its stored transcript for text
+    /// channels. An interaction's own <c>status</c> ("Active"/"Ended") is
+    /// independent of the ticket's status: a conversation that ended does not
+    /// close the ticket. Read-only, and scoped to the same department
+    /// visibility as <see cref="GetDetail"/>.
+    /// </remarks>
+    /// <param name="ticketId">The ticket whose conversation history to fetch.</param>
+    /// <response code="200">The ticket's interactions, oldest first, each with its transcript (possibly empty).</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    [HttpGet("{ticketId:long}/interactions")]
+    [Tags(OpenApiTags.Genesys)]
+    [ProducesResponseType<TicketInteractionHistoryDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetInteractions(long ticketId, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketInteractionQueryAppService.GetForTicketAsync(
+            employeeId.Value, GetRoles(), ticketId, cancellationToken);
+        return result.Outcome switch
+        {
+            TicketQueryOutcome.Success => Ok(result.Response),
+            TicketQueryOutcome.Forbidden => Forbid(),
             _ => NotFound()
         };
     }

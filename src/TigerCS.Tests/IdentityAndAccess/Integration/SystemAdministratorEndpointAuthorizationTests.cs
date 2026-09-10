@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Api.Controllers;
+using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
@@ -471,6 +473,101 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var profile = await response.Content.ReadFromJsonAsync<CustomerProfileDto>();
         Assert.Equal("Found", profile!.Status);
         Assert.Equal(ticket.CrmBuyerCustomerId, profile.CrmBuyerCustomerId);
+    }
+
+    /// <summary>
+    /// Genesys integration phase 1, end-to-end through the real host: a
+    /// normalized inquiry becomes exactly one ticket, a retry returns that
+    /// same ticket, a ringing call creates nothing, and ending the
+    /// conversation stores the transcript without closing the ticket.
+    /// </summary>
+    [Fact]
+    public async Task GenesysEndpoints_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        await _factory.SeedPrioritiesAsync();
+
+        // Administration first — the routing configuration a real deployment
+        // enters before any inquiry can be routed anywhere.
+        var departmentId = await _factory.CreateDepartmentAsync("Genesys CS " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
+        var settings = await client.PutAsJsonAsync(
+            $"/api/admin/genesys/department-settings/{departmentId}", new SaveGenesysDepartmentSettingsRequestDto(categoryId));
+        Assert.Equal(HttpStatusCode.OK, settings.StatusCode);
+
+        var conversationId = "conv-" + Guid.NewGuid().ToString("N")[..12];
+
+        // A ringing call is accepted and creates nothing.
+        var ringing = await client.PostAsJsonAsync(
+            "/api/genesys/inquiries",
+            new GenesysInquiryRequest(conversationId, "Phone", "Ringing", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.NoContent, ringing.StatusCode);
+
+        // The agent answers: exactly one ticket.
+        var answered = await client.PostAsJsonAsync(
+            "/api/genesys/inquiries",
+            new GenesysInquiryRequest(conversationId, "Phone", "Answered", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.Created, answered.StatusCode);
+        var created = await answered.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
+        Assert.Equal("TicketCreated", created!.Outcome);
+
+        // A retry returns the SAME ticket and creates no second one.
+        var retry = await client.PostAsJsonAsync(
+            "/api/genesys/inquiries",
+            new GenesysInquiryRequest(conversationId, "Phone", "Answered", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        var retried = await retry.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
+        Assert.Equal("AlreadyIngested", retried!.Outcome);
+        Assert.Equal(created.TicketId, retried.TicketId);
+
+        // Ending the conversation stores the transcript — and leaves the
+        // ticket exactly where the workflow had it.
+        var ended = await client.PostAsJsonAsync(
+            "/api/genesys/conversations/end",
+            new GenesysConversationEndRequest(
+                conversationId, DateTime.UtcNow, "AgentDisconnect",
+                Transcript:
+                [
+                    new GenesysTranscriptMessageRequest("Customer", DateTime.UtcNow.AddMinutes(-2), "Any update on my unit?"),
+                    new GenesysTranscriptMessageRequest("Agent", DateTime.UtcNow.AddMinutes(-1), "Checking now.")
+                ]));
+        Assert.Equal(HttpStatusCode.OK, ended.StatusCode);
+        var endResult = await ended.Content.ReadFromJsonAsync<GenesysConversationEndResponse>();
+        Assert.Equal("Ended", endResult!.Outcome);
+        Assert.Equal(2, endResult.TranscriptMessageCount);
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.TicketStatus.Open), endResult.TicketStatus);
+
+        var ticketAfterEnd = await _factory.GetTicketAsync(created.TicketId);
+        Assert.Equal(TigerCS.Domain.Modules.Ticketing.TicketStatus.Open, ticketAfterEnd!.TicketStatus);
+
+        // A duplicate end event changes nothing.
+        var endedAgain = await client.PostAsJsonAsync(
+            "/api/genesys/conversations/end", new GenesysConversationEndRequest(conversationId, DateTime.UtcNow, "AgentDisconnect"));
+        Assert.Equal(HttpStatusCode.OK, endedAgain.StatusCode);
+        Assert.Equal("AlreadyEnded", (await endedAgain.Content.ReadFromJsonAsync<GenesysConversationEndResponse>())!.Outcome);
+    }
+
+    [Fact]
+    public async Task GetTicketInteractions_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/tickets/{ticket.TicketId}/interactions");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = await response.Content.ReadFromJsonAsync<TicketInteractionHistoryDto>();
+        Assert.Equal(ticket.TicketId, history!.TicketId);
+
+        // A manually-created ticket still has its originating interaction —
+        // a locally-sourced one, with no Genesys conversation and no
+        // transcript.
+        var interaction = Assert.Single(history.Interactions);
+        Assert.True(interaction.IsOriginatingInteraction);
+        Assert.Equal("Ticketing", interaction.Source);
+        Assert.Null(interaction.GenesysConversationId);
+        Assert.Empty(interaction.Messages);
+        Assert.Equal("Active", interaction.Status);
     }
 
     [Fact]

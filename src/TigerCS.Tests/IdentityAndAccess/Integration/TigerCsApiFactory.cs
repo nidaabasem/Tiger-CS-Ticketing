@@ -118,7 +118,14 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 ["Crm:Provider"] = CrmProvider,
                 ["Pact:Provider"] = "Mock",
                 ["PactApi:BaseUrl"] = "",
-                ["PactApi:ApiKey"] = ""
+                ["PactApi:ApiKey"] = "",
+                // The Genesys integration ships switched OFF (appsettings.json)
+                // and is switched on here so the endpoint tests exercise the
+                // real ingestion path rather than the disabled short-circuit.
+                // A test that needs it off again overrides this through
+                // ExtraConfiguration, which is applied after and therefore
+                // wins — see GenesysDisabledEndpointsTests.
+                ["Genesys:Enabled"] = "true"
             });
 
             if (ExtraConfiguration.Count > 0)

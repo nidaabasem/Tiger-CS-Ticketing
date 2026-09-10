@@ -44,6 +44,17 @@ public sealed class TicketDetailsModel(
 
     /// <summary>Approvals / Dependencies (Workflow/Automation phase 3) — cycles, requestable requirements, and the derived maintenance/prerequisite states. Null when the call failed; a view with empty lists is the normal "nothing configured" result and renders no section.</summary>
     public TicketApprovalsViewDto? Approvals { get; private set; }
+
+    /// <summary>
+    /// Conversation History (Genesys integration phase 1) — every call/chat
+    /// recorded against this ticket, oldest first, each with its transcript.
+    /// Empty is the normal result for a ticket created by hand; null only
+    /// when the call itself failed.
+    /// </summary>
+    public IReadOnlyList<TicketInteractionDto> Interactions { get; private set; } = [];
+
+    /// <summary>True when the interactions call failed, so the tab says so instead of implying the ticket has no conversations.</summary>
+    public bool InteractionsUnavailable { get; private set; }
     public string? DepartmentName { get; private set; }
     public string? OwnerName { get; private set; }
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
@@ -357,8 +368,15 @@ public sealed class TicketDetailsModel(
         var assignableTask = usersApiClient.GetDepartmentUsersAsync(Ticket.CurrentDepartmentId, 1, 100, cancellationToken);
         var customerHistoryTask = ticketsApiClient.GetCustomerHistoryAsync(TicketId, limit: 10, cancellationToken);
         var approvalsTask = ticketsApiClient.GetApprovalsAsync(TicketId, cancellationToken);
+        var interactionsTask = ticketsApiClient.GetInteractionsAsync(TicketId, cancellationToken);
 
-        await Task.WhenAll(slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask, approvalsTask);
+        await Task.WhenAll(
+            slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask, approvalsTask, interactionsTask);
+
+        Interactions = interactionsTask.Result.IsSuccess && interactionsTask.Result.Value is not null
+            ? interactionsTask.Result.Value.Interactions
+            : [];
+        InteractionsUnavailable = !interactionsTask.Result.IsSuccess;
 
         Approvals = approvalsTask.Result.IsSuccess ? approvalsTask.Result.Value : null;
         Sla = slaTask.Result.IsSuccess ? slaTask.Result.Value : null;

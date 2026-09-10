@@ -288,7 +288,8 @@ public sealed class TicketCreationAppService(
                 ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber,
                 genesys.ConversationId, genesys.CalledNumber, genesys.QueueId, genesys.QueueName,
                 genesys.AgentId, genesys.AgentName, genesys.InteractionStartedAtUtc, genesys.Direction, now,
-                isOriginatingInteraction: true)
+                isOriginatingInteraction: true,
+                customerName: genesys.CustomerName, customerEmail: genesys.CustomerEmail)
             : TicketInteraction.CreateLocal(
                 ticket.TicketId, intakeRecord.ChannelId, intakeRecord.PhoneNumber, now, isOriginatingInteraction: true);
         await interactionRepository.AddAsync(originatingInteraction, cancellationToken);
@@ -483,32 +484,5 @@ public sealed class TicketCreationAppService(
         return $"{prefix}{existingCount + 1:D4}";
     }
 
-    private static TicketResponseDto ToDto(Ticket ticket) => new(
-        ticket.TicketId,
-        ticket.TicketNumber,
-        ticket.OriginatingDepartmentId,
-        ticket.CurrentDepartmentId,
-        ticket.UnitReferenceId,
-        ticket.ContactReferenceId,
-        ticket.CategoryId,
-        ticket.PriorityId,
-        ticket.TicketStatus.ToString(),
-        ticket.VerificationStatus.ToString(),
-        ticket.EscalationLevel.ToString(),
-        ticket.SlaState.ToString(),
-        ticket.RequestSummary,
-        ticket.CreatedAtUtc,
-        Convert.ToBase64String(ticket.RowVersion),
-        ticket.CrmBuyerCustomerId,
-        ticket.CrmBuyerLeadId,
-        ticket.CrmBuyerUnitId,
-        ticket.CrmBuyerProjectId,
-        ticket.CrmBuyerCustomerName,
-        ticket.CrmBuyerProjectName,
-        ticket.CrmBuyerUnitNumber,
-        ticket.ManualProjectName,
-        ticket.ManualUnitNumber,
-        ticket.CustomerVerificationSource,
-        ticket.ExternalCustomerId,
-        ticket.ExternalUnitId);
+    private static TicketResponseDto ToDto(Ticket ticket) => TicketProjection.ToResponseDto(ticket);
 }

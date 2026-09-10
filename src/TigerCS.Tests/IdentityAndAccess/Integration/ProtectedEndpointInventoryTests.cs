@@ -68,6 +68,17 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/tickets/{ticketId:long}/customer-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketCustomerHistory_Returns200),
         ["GET /api/tickets/{ticketId:long}/customer-profile"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketCustomerProfile_Returns200),
 
+        // Genesys integration phase 1 — the inbound boundary and the ticket's
+        // conversation-history read.
+        ["POST /api/genesys/inquiries"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/conversations/end"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/tickets/{ticketId:long}/interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketInteractions_Returns200),
+        ["GET /api/admin/genesys/queue-mappings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappingsAndDepartmentSettings_ThroughTheRealHost),
+        ["POST /api/admin/genesys/queue-mappings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappingsAndDepartmentSettings_ThroughTheRealHost),
+        ["PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappingsAndDepartmentSettings_ThroughTheRealHost),
+        ["GET /api/admin/genesys/department-settings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappingsAndDepartmentSettings_ThroughTheRealHost),
+        ["PUT /api/admin/genesys/department-settings/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappingsAndDepartmentSettings_ThroughTheRealHost),
+
         ["GET /api/customers/crm/{crmCustomerId:int}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCrmCustomerTicketHistory_Returns200),
         ["GET /api/customers/external/{source}/{externalCustomerId}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetExternalCustomerHistory_Returns200),
         ["GET /api/customers/search"] = nameof(SystemAdministratorEndpointAuthorizationTests.SearchCustomers_Returns200),

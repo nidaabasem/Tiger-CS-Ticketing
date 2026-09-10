@@ -399,6 +399,7 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-audit:checked ~ .tabs-body #panel-audit,
 #tab-details:checked ~ .tabs-body #panel-details,
 #tab-history:checked ~ .tabs-body #panel-history,
+#tab-conversations:checked ~ .tabs-body #panel-conversations,
 #tab-overview:checked ~ .tabs-body #panel-overview,
 #tab-contact:checked ~ .tabs-body #panel-contact,
 #tab-units:checked ~ .tabs-body #panel-units,

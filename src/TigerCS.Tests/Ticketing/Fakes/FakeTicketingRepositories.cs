@@ -126,6 +126,9 @@ public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
     private readonly Dictionary<long, IntakeRecord> _records = [];
     private long _nextId = 1;
 
+    /// <summary>Test assertion helper — every intake record added so far, in insertion order.</summary>
+    public IReadOnlyCollection<IntakeRecord> All => _records.Values;
+
     public Task<IntakeRecord?> GetByIdAsync(long intakeRecordId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_records.GetValueOrDefault(intakeRecordId));
 

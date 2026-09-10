@@ -230,6 +230,61 @@ Whichever variant returns the customer defines the target format;
 `NormalizePactPhone` is the single place to adjust (PACT-only — CRM and
 persistence are untouched by design).
 
+## 3c. Configure the Genesys integration (`Genesys:Enabled`)
+
+The Genesys integration ships **switched off** and stays off until it is
+deliberately enabled:
+
+```jsonc
+// src/TigerCS.Api/appsettings.json — the shipped default
+"Genesys": { "Enabled": false }
+```
+
+With `Enabled: false`, `POST /api/genesys/inquiries` and
+`POST /api/genesys/conversations/end` answer `503` and write nothing.
+**Everything else is unaffected** — manual/Face-to-Face ticket creation, the
+New Ticket wizard, and every existing flow behave exactly as before, because
+nothing in the normal ticketing path reads the flag.
+
+To switch it on locally (from `src/TigerCS.Api`):
+
+```bash
+dotnet user-secrets set "Genesys:Enabled" "true"
+```
+
+**There is no Genesys credential or endpoint to configure.** No Genesys API
+base URL, OAuth client or webhook signing secret exists in this system,
+because none has been confirmed by the Genesys team (see
+`docs/architecture/Genesys-Integration-Phase1.md` §10). Genesys calls
+TigerCS's own inbound endpoints as an ordinary authenticated **service
+account**, using the same JWT authentication every other API client uses:
+
+1. Create a staff account for Genesys under Administration
+   (`POST /api/admin/users`) and give it the **CS Agent** role — the same role
+   that may create tickets, which is exactly what ingestion does.
+2. Genesys signs in with `POST /api/auth/login` and sends
+   `Authorization: Bearer {token}` on every call.
+
+### Genesys routing configuration (required before any inquiry can be routed)
+
+Two things must be configured, both System Administrator-only, and **neither
+is seeded** — the real Genesys queue ids are not known to this repository and
+are never invented:
+
+```bash
+# Which department a Genesys queue's inquiries belong to.
+PUT/POST /api/admin/genesys/queue-mappings
+
+# Which category a department's unclassified Genesys tickets start under
+# (Tickets.CategoryId is NOT NULL; the ticket still starts with no request
+# type, so the agent/workflow classifies it later).
+PUT /api/admin/genesys/department-settings/{departmentId}
+```
+
+An inquiry whose queue is unmapped, or whose department has no Genesys
+category configured, is refused with a `422` naming the gap — it is never
+routed to a guessed department or filed under a guessed category.
+
 ## 4. Apply the database migration
 
 From `src/`:

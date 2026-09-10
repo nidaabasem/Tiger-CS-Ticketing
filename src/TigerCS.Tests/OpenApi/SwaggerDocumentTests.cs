@@ -121,6 +121,18 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/escalations",
         "GET /api/tickets/{ticketId}/escalations",
 
+        // Genesys integration phase 1 — the inbound boundary (one normalized
+        // ingestion endpoint every channel converges on, plus conversation
+        // end) and the ticket's conversation-history read.
+        "POST /api/genesys/inquiries",
+        "POST /api/genesys/conversations/end",
+        "GET /api/tickets/{ticketId}/interactions",
+        "GET /api/admin/genesys/queue-mappings",
+        "POST /api/admin/genesys/queue-mappings",
+        "PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId}",
+        "GET /api/admin/genesys/department-settings",
+        "PUT /api/admin/genesys/department-settings/{departmentId}",
+
         // Administration / Workflow Designer phase (System Administrator only)
         "GET /api/request-types",
         "GET /api/admin/users",

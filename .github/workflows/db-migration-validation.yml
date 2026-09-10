@@ -173,7 +173,8 @@ jobs:
             "RequestTypeSlaPolicies" "DepartmentWorkflowSettings" \
             "RequestTypeAssignmentRules" "RequestTypeAssignmentRuleMembers" \
             "RequestTypeApprovalRequirements" \
-            "TicketPendingRecords" "TicketInteractions" \
+            "TicketPendingRecords" "TicketInteractions" "TicketInteractionMessages" \
+            "GenesysQueueMappings" "GenesysDepartmentSettings" \
             "TicketApprovals" "TicketWorkflowEvents" \
             "Workflows" "WorkflowStepTransitions" \
             "__EFMigrationsHistory" | sort)
@@ -187,7 +188,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 49 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum). TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables (the Genesys context lives as nullable columns on TicketInteractions, not tables of its own). TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
+          echo "Table list matches exactly: 52 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum; TicketInteractionMessages, GenesysQueueMappings and GenesysDepartmentSettings added by AddGenesysIntegration). TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2). The Genesys tables present are ONLY the transcript and the routing configuration: the Genesys interaction context itself still lives as nullable columns on TicketInteractions, not a table of its own, and no GenesysInteractions/GenesysInteractionEvents/GenesysAgentMappings tables exist — those belong to a design that assumed a webhook contract the Genesys team has not confirmed. TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -704,8 +705,14 @@ jobs:
           #   - one open pending record per ticket (TicketPendingRecords)
           #   - one Pending approval cycle per (ticket, type) (TicketApprovals)
           #   - one current approval cycle per (ticket, type) (TicketApprovals)
+          #   - one interaction per Genesys conversation (TicketInteractions,
+          #     AddGenesysIntegration) — the database-level guarantee behind
+          #     "one Genesys inquiry produces exactly one ticket": without it
+          #     two concurrent deliveries of the same conversation would both
+          #     pass the application's read-side check and create two tickets.
           declare -A expected_filters=(
             ["UX_TicketInteractions_OneOriginatingPerTicket"]="([IsOriginatingInteraction]=(1))"
+            ["UX_TicketInteractions_GenesysConversationId"]="([GenesysConversationId]ISNOTNULL)"
             ["UX_TicketPendingRecords_OpenPerTicket"]="([ResumedAtUtc]ISNULL)"
             ["UX_TicketApprovals_OnePendingPerType"]="([Status]=(1))"
             ["UX_TicketApprovals_OneCurrentPerType"]="([IsCurrent]=(1))"

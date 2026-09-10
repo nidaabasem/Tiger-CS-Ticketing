@@ -25,6 +25,15 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
         builder.Property(i => i.CustomerPhone).HasMaxLength(32).IsRequired();
         builder.Property(i => i.CalledNumber).HasMaxLength(32);
 
+        // Genesys integration phase 1 — what the channel collected about the
+        // customer (a website chat form's Full Name/Email), and the
+        // conversation's own ending. All nullable: a voice call collects no
+        // form fields, and a conversation that is still live has no end.
+        builder.Property(i => i.CustomerName).HasMaxLength(TicketInteraction.CustomerNameMaxLength);
+        builder.Property(i => i.CustomerEmail).HasMaxLength(TicketInteraction.CustomerEmailMaxLength);
+        builder.Property(i => i.EndReason).HasMaxLength(TicketInteraction.EndReasonMaxLength);
+        builder.Property(i => i.EndedAtUtc);
+
         // Genesys identifiers are external identifiers stored as strings —
         // never foreign keys (there is nothing local to reference).
         builder.Property(i => i.GenesysConversationId).HasMaxLength(64);
@@ -48,9 +57,24 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
             .IsUnique();
 
         // Ticket ↔ Genesys conversation traceability in the other direction:
-        // find the ticket(s)/interaction(s) of one Genesys conversation.
-        builder.HasIndex(i => i.GenesysConversationId)
-            .HasFilter("[GenesysConversationId] IS NOT NULL");
+        // find the interaction of one Genesys conversation — and, since the
+        // Genesys integration phase, guarantee there is at most ONE.
+        //
+        // This UNIQUE filtered index is the database-level half of "one
+        // Genesys inquiry produces exactly one ticket": the ingestion service
+        // checks for an existing conversation first, but two concurrent
+        // deliveries of the same conversation can both pass that read. The
+        // index makes the loser fail its insert (translated to
+        // DuplicateWriteException), which ingestion answers with the winner's
+        // ticket — so a retried or duplicated Genesys event can never produce
+        // a second ticket, rather than merely being unlikely to.
+        //
+        // Filtered on NOT NULL because locally-created (walk-in) interactions
+        // carry no conversation id, and SQL Server treats multiple NULLs as
+        // duplicates in a unique index.
+        builder.HasIndex(i => i.GenesysConversationId, "UX_TicketInteractions_GenesysConversationId")
+            .HasFilter("[GenesysConversationId] IS NOT NULL")
+            .IsUnique();
 
         builder.HasOne<Ticket>()
             .WithMany()
