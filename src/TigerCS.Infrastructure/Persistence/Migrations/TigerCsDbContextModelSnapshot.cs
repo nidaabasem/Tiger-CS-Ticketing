@@ -459,6 +459,46 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("VerificationSessions", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping", b =>
+                {
+                    b.Property<int>("GenesysQueueMappingId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("GenesysQueueMappingId"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("QueueId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("QueueName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("GenesysQueueMappingId");
+
+                    b.HasIndex("DepartmentId");
+
+                    b.HasIndex("QueueId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_GenesysQueueMappings_QueueId");
+
+                    b.ToTable("GenesysQueueMappings", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.IdentityAndAccess.Department", b =>
                 {
                     b.Property<int>("DepartmentId")
@@ -1006,7 +1046,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("AcknowledgementSentAtUtc")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("CategoryId")
+                    b.Property<int?>("CategoryId")
                         .HasColumnType("int");
 
                     b.Property<int?>("ContactReferenceId")
@@ -1077,7 +1117,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<int>("OriginatingDepartmentId")
                         .HasColumnType("int");
 
-                    b.Property<byte>("PriorityId")
+                    b.Property<byte?>("PriorityId")
                         .HasColumnType("tinyint");
 
                     b.Property<int>("ReopenCount")
@@ -1149,6 +1189,91 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasFilter("[ExternalCustomerId] IS NOT NULL");
 
                     b.ToTable("Tickets", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff", b =>
+                {
+                    b.Property<long>("TicketAgentHandoffId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketAgentHandoffId"));
+
+                    b.Property<DateTime?>("AssignedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AssignedEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("ChannelId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ExternalWorkItemId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("GenesysAgentId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte?>("Mode")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("RequestReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TicketInteractionId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketAgentHandoffId");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex(new[] { "AssignedEmployeeId" }, "IX_TicketAgentHandoffs_AssignedEmployeeId");
+
+                    b.HasIndex(new[] { "DepartmentId", "RequestedAtUtc" }, "IX_TicketAgentHandoffs_OpenByDepartment")
+                        .HasFilter("[ResolvedAtUtc] IS NULL");
+
+                    b.HasIndex(new[] { "TicketId" }, "IX_TicketAgentHandoffs_TicketId");
+
+                    b.HasIndex(new[] { "ExternalWorkItemId" }, "UX_TicketAgentHandoffs_ExternalWorkItemId")
+                        .IsUnique()
+                        .HasFilter("[ExternalWorkItemId] IS NOT NULL");
+
+                    b.HasIndex(new[] { "TicketInteractionId" }, "UX_TicketAgentHandoffs_OpenPerInteraction")
+                        .IsUnique()
+                        .HasFilter("[ResolvedAtUtc] IS NULL");
+
+                    b.ToTable("TicketAgentHandoffs", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>
@@ -1287,6 +1412,14 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("CustomerEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("CustomerName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<string>("CustomerPhone")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1295,6 +1428,13 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<string>("Direction")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("EndReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("EndedAtUtc")
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("GenesysAgentId")
                         .HasMaxLength(64)
@@ -1332,16 +1472,62 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ChannelId");
 
-                    b.HasIndex("GenesysConversationId")
-                        .HasFilter("[GenesysConversationId] IS NOT NULL");
-
                     b.HasIndex(new[] { "TicketId" }, "IX_TicketInteractions_TicketId");
+
+                    b.HasIndex(new[] { "GenesysConversationId" }, "UX_TicketInteractions_GenesysConversationId")
+                        .IsUnique()
+                        .HasFilter("[GenesysConversationId] IS NOT NULL");
 
                     b.HasIndex(new[] { "TicketId" }, "UX_TicketInteractions_OneOriginatingPerTicket")
                         .IsUnique()
                         .HasFilter("[IsOriginatingInteraction] = 1");
 
                     b.ToTable("TicketInteractions", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage", b =>
+                {
+                    b.Property<long>("TicketInteractionMessageId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketInteractionMessageId"));
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExternalMessageId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte>("Sender")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("SenderId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SenderName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("SentAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("int");
+
+                    b.Property<long>("TicketInteractionId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketInteractionMessageId");
+
+                    b.HasIndex("TicketInteractionId", "Sequence")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TicketInteractionMessages_InteractionSequence");
+
+                    b.ToTable("TicketInteractionMessages", (string)null);
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketNote", b =>
@@ -2223,6 +2409,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.IdentityAndAccess.Employee", b =>
                 {
                     b.HasOne("TigerCS.Infrastructure.Identity.ApplicationUser", null)
@@ -2380,8 +2575,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.ClassificationAndRouting.Category", null)
                         .WithMany()
                         .HasForeignKey("CategoryId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("TigerCS.Domain.Modules.CustomerVerification.ContactReference", null)
                         .WithMany()
@@ -2413,8 +2607,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
                         .WithMany()
                         .HasForeignKey("PriorityId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("TigerCS.Domain.Modules.WorkflowConfiguration.RequestType", null)
                         .WithMany()
@@ -2430,6 +2623,33 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WorkflowTemplateId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Channel", null)
+                        .WithMany()
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.TicketInteraction", null)
+                        .WithMany()
+                        .HasForeignKey("TicketInteractionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>
@@ -2499,6 +2719,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
                         .WithMany()
                         .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.TicketInteraction", null)
+                        .WithMany()
+                        .HasForeignKey("TicketInteractionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

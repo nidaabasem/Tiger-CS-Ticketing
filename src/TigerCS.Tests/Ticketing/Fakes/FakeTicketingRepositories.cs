@@ -126,6 +126,9 @@ public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
     private readonly Dictionary<long, IntakeRecord> _records = [];
     private long _nextId = 1;
 
+    /// <summary>Test assertion helper — every intake record added so far, in insertion order.</summary>
+    public IReadOnlyCollection<IntakeRecord> All => _records.Values;
+
     public Task<IntakeRecord?> GetByIdAsync(long intakeRecordId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_records.GetValueOrDefault(intakeRecordId));
 
@@ -234,11 +237,16 @@ public sealed class FakeTicketRepository : ITicketRepository
         var all = filtered.ToList();
         var totalCount = all.Count;
 
+        // Mirrors TicketRepository exactly, the null-priority ordering
+        // included: both LINQ-to-objects and SQL Server sort NULL first
+        // ascending, so without the leading key an unclassified ticket would
+        // outrank every Critical one. A fake that got this wrong would let
+        // the real bug pass.
         IEnumerable<Ticket> sorted = query.SortBy switch
         {
             TicketSortBy.Priority => query.SortDescending
-                ? all.OrderByDescending(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc)
-                : all.OrderBy(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc),
+                ? all.OrderBy(t => t.PriorityId is null).ThenByDescending(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc)
+                : all.OrderBy(t => t.PriorityId is null).ThenBy(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc),
             _ => query.SortDescending
                 ? all.OrderByDescending(t => t.CreatedAtUtc)
                 : all.OrderBy(t => t.CreatedAtUtc)
@@ -337,6 +345,7 @@ public sealed class FakeTicketRepository : ITicketRepository
         var attention = active
             .Where(t => t.SlaState == SlaState.Breached || t.PriorityId <= 2 || t.CurrentOwnerEmployeeId == null)
             .OrderBy(t => t.SlaState == SlaState.Breached ? 0 : t.PriorityId == 1 ? 2 : t.PriorityId == 2 ? 3 : 4)
+            .ThenBy(t => t.PriorityId is null)
             .ThenBy(t => t.PriorityId)
             .ThenBy(t => t.CreatedAtUtc)
             .Take(query.AttentionLimit)
@@ -348,7 +357,9 @@ public sealed class FakeTicketRepository : ITicketRepository
             active.Count(t => t.CurrentOwnerEmployeeId == null),
             SlaAtRisk: 0,
             active.Count(t => t.SlaState == SlaState.Breached),
-            active.Count(t => t.PriorityId <= 2),
+            // An unclassified ticket has no priority, so it is neither
+            // Critical nor High — same explicit rule as TicketRepository.
+            active.Count(t => t.PriorityId != null && t.PriorityId <= 2),
             visibleList.Count(t => t.TicketStatus == TicketStatus.PendingCustomer),
             resolvedToday,
             active.Count(t => t.ReopenCount > 0),

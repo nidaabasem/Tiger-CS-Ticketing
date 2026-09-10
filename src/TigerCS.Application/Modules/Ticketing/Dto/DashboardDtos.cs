@@ -40,7 +40,7 @@ public sealed record DashboardSummaryDto(
 /// <param name="TicketNumber">The human-facing ticket number.</param>
 /// <param name="CustomerName">The ticket-time customer name snapshot, when one exists (CRM Buyer tickets).</param>
 /// <param name="UnitNumber">The unit number snapshot (CRM Buyer or manual), when one exists.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while the ticket is Unclassified.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty.</param>
 /// <param name="SlaState">One of Running, Paused, Met, Breached, NotApplicable.</param>
 /// <param name="SlaDueAtUtc">The current SLA period's pending resolution deadline, when one exists.</param>
@@ -53,7 +53,7 @@ public sealed record DashboardAttentionTicketDto(
     string TicketNumber,
     string? CustomerName,
     string? UnitNumber,
-    byte PriorityId,
+    byte? PriorityId,
     string TicketStatus,
     string SlaState,
     DateTime? SlaDueAtUtc,

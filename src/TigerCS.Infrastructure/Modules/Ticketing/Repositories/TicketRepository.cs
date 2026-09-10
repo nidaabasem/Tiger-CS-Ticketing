@@ -63,11 +63,17 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
 
         var totalCount = await filtered.CountAsync(cancellationToken);
 
+        // Sorting by priority has to say where an unclassified ticket goes,
+        // because SQL Server sorts NULL first ascending — and ascending is
+        // "most urgent first" here (1 = Critical), so the default would put
+        // every ticket nobody has judged above every Critical one. An
+        // unjudged ticket is not urgent; it sorts last either way, and the
+        // secondary key still surfaces the oldest of them first.
         filtered = query.SortBy switch
         {
             TicketSortBy.Priority => query.SortDescending
-                ? filtered.OrderByDescending(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc)
-                : filtered.OrderBy(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc),
+                ? filtered.OrderBy(t => t.PriorityId == null).ThenByDescending(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc)
+                : filtered.OrderBy(t => t.PriorityId == null).ThenBy(t => t.PriorityId).ThenByDescending(t => t.CreatedAtUtc),
             _ => query.SortDescending
                 ? filtered.OrderByDescending(t => t.CreatedAtUtc)
                 : filtered.OrderBy(t => t.CreatedAtUtc)
@@ -170,7 +176,10 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
         var openTickets = await active.CountAsync(cancellationToken);
         var unassigned = await active.CountAsync(t => t.CurrentOwnerEmployeeId == null, cancellationToken);
         var slaBreached = await active.CountAsync(t => t.SlaState == SlaState.Breached, cancellationToken);
-        var criticalOrHigh = await active.CountAsync(t => t.PriorityId <= 2, cancellationToken);
+        // An unclassified ticket has no priority, so it is neither Critical
+        // nor High. Written explicitly rather than leaning on SQL's
+        // NULL <= 2 being unknown, so the intent survives a refactor.
+        var criticalOrHigh = await active.CountAsync(t => t.PriorityId != null && t.PriorityId <= 2, cancellationToken);
         var pendingCustomer = await visible.CountAsync(t => t.TicketStatus == TicketStatus.PendingCustomer, cancellationToken);
         var reopened = await active.CountAsync(t => t.ReopenCount > 0, cancellationToken);
         var myTickets = await active.CountAsync(t => t.CurrentOwnerEmployeeId == query.CallerEmployeeId, cancellationToken);
@@ -207,7 +216,7 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             })
             .Where(x =>
                 x.Ticket.SlaState == SlaState.Breached
-                || x.Ticket.PriorityId <= 2
+                || (x.Ticket.PriorityId != null && x.Ticket.PriorityId <= 2)
                 || x.Ticket.CurrentOwnerEmployeeId == null
                 || (x.SlaDueAtUtc != null && x.SlaDueAtUtc <= atRiskUntil))
             .OrderBy(x =>
@@ -217,6 +226,10 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
                 : x.Ticket.PriorityId == 2 ? 3
                 : 4)
             .ThenBy(x => x.SlaDueAtUtc ?? DateTime.MaxValue)
+            // Same NULLs-sort-first trap as the queue: without this an
+            // unclassified ticket would tie-break ahead of a Critical one
+            // inside the same rank bucket.
+            .ThenBy(x => x.Ticket.PriorityId == null)
             .ThenBy(x => x.Ticket.PriorityId)
             .ThenBy(x => x.Ticket.CreatedAtUtc)
             .Take(query.AttentionLimit)

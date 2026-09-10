@@ -510,4 +510,59 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
             new ChangeStatusRequestDto("PendingCustomer", Convert.FromBase64String(inProgress.RowVersion), "Waiting for documents"));
         Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
     }
+
+    /// <summary>
+    /// Genesys routing configuration through the real host: the Queue →
+    /// Department mapping, which is the whole of it — a queue says which
+    /// department an inquiry belongs to and nothing about what the customer
+    /// wants, so there is no category configuration to administer.
+    ///
+    /// <para>
+    /// Nothing here is seeded — the real Genesys queue ids are not known to
+    /// this repository and are never invented, so an administrator creates
+    /// every mapping. The listing therefore starts empty for a queue id this
+    /// test invents for itself.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task GenesysRouting_QueueMappings_ThroughTheRealHost()
+    {
+        var (admin, _) = await CreateClientAsync(Roles.SystemAdministrator);
+        var queueId = "queue-" + Guid.NewGuid().ToString("N")[..10];
+        var departmentId = await _factory.CreateDepartmentAsync("Genesys Leasing " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var otherDepartmentId = await _factory.CreateDepartmentAsync("Genesys Maintenance " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
+
+        // No mapping exists for a queue nobody configured.
+        var before = await ReadAsync<List<AdminGenesysQueueMappingDto>>(await admin.GetAsync("/api/admin/genesys/queue-mappings"));
+        Assert.DoesNotContain(before, m => m.QueueId == queueId);
+
+        // Create.
+        var created = await admin.PostAsJsonAsync(
+            "/api/admin/genesys/queue-mappings",
+            new SaveGenesysQueueMappingRequestDto(queueId, "Leasing queue", departmentId));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var mapping = await created.Content.ReadFromJsonAsync<AdminGenesysQueueMappingDto>();
+        Assert.Equal(queueId, mapping!.QueueId);
+        Assert.Equal(departmentId, mapping.DepartmentId);
+        Assert.True(mapping.IsActive);
+
+        // The same queue cannot be mapped twice — re-pointing is an edit.
+        var duplicate = await admin.PostAsJsonAsync(
+            "/api/admin/genesys/queue-mappings",
+            new SaveGenesysQueueMappingRequestDto(queueId, "Duplicate", otherDepartmentId));
+        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+        Assert.Contains("already mapped", await duplicate.Content.ReadAsStringAsync());
+
+        // Re-point it at another department, and deactivate it.
+        var updated = await admin.PutAsJsonAsync(
+            $"/api/admin/genesys/queue-mappings/{mapping.GenesysQueueMappingId}",
+            new SaveGenesysQueueMappingRequestDto(queueId, "Maintenance queue", otherDepartmentId, IsActive: false));
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var afterUpdate = await updated.Content.ReadFromJsonAsync<AdminGenesysQueueMappingDto>();
+        Assert.Equal(otherDepartmentId, afterUpdate!.DepartmentId);
+        Assert.False(afterUpdate.IsActive);
+        // The queue id is the identity and never changes.
+        Assert.Equal(queueId, afterUpdate.QueueId);
+    }
 }

@@ -76,7 +76,7 @@ else
                     <div class="ticket-header__meta">
                         <span><strong>Assigned Department:</strong> @TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</span>
                         <span><strong>Assigned To:</strong> @TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</span>
-                        <span><strong>Category:</strong> #@t.CategoryId</span>
+                        <span><strong>Category:</strong> @(t.CategoryId is int hdrCat ? $"#{hdrCat}" : "Unclassified")</span>
                     </div>
                     <div class="ticket-header__badges">
                         <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(t.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</span>
@@ -286,6 +286,12 @@ else
             <label class="tab-label" for="tab-details">Details</label>
             <input type="radio" name="pageTab" id="tab-history" class="tab-input" />
             <label class="tab-label" for="tab-history">Previous Tickets@(Model.CustomerHistory is not null ? $" ({Model.CustomerHistory.TotalTickets})" : "")</label>
+            @* Conversation History (Genesys integration phase 1) — the calls
+               and chats this ticket came from, in their own tab so they never
+               compete with the primary ticket information, exactly like
+               Previous Tickets. *@
+            <input type="radio" name="pageTab" id="tab-conversations" class="tab-input" />
+            <label class="tab-label" for="tab-conversations">Conversation History@(Model.Interactions.Count > 0 ? $" ({Model.Interactions.Count})" : "")</label>
 
             <div class="tabs-body">
                 <div class="tab-panel" id="panel-details">
@@ -367,7 +373,13 @@ else
                         <div class="facts-row"><dt>Ticket number</dt><dd>@t.TicketNumber</dd></div>
                         <div class="facts-row"><dt>Status</dt><dd>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</dd></div>
                         <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.PriorityId)</dd></div>
-                        <div class="facts-row"><dt>Category</dt><dd class="id-fallback">#@t.CategoryId</dd></div>
+                        @* An unclassified ticket has no category at all — say so plainly
+                           rather than rendering an empty id. It is a real state, not
+                           missing data. *@
+                        <div class="facts-row">
+                            <dt>Category</dt>
+                            <dd class="@(t.CategoryId is null ? "" : "id-fallback")">@(t.CategoryId is int catId ? $"#{catId}" : "Unclassified")</dd>
+                        </div>
                         <div class="facts-row"><dt>Assigned Department</dt><dd>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
                         @if (t.OriginatingChannelId is not null)
                         {
@@ -624,7 +636,7 @@ else
                                         {
                                             <tr>
                                                 <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
-                                                <td><span class="id-fallback">Category #@row.CategoryId</span></td>
+                                                <td><span class="id-fallback">@(row.CategoryId is int rowCat ? $"Category #{rowCat}" : "Unclassified")</span></td>
                                                 <td>@TicketDisplay.AssignedDepartmentLabel(row.CurrentDepartmentId, Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId))</td>
                                                 <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
                                                 <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>
@@ -635,6 +647,126 @@ else
                                         }
                                     </tbody>
                                 </table>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="tab-panel" id="panel-conversations">
+                    @if (Model.InteractionsUnavailable)
+                    {
+                        <div class="empty-state"><p>Conversation history is unavailable right now.</p></div>
+                    }
+                    else if (Model.Interactions.Count == 0)
+                    {
+                        <div class="empty-state"><p>No calls or chats are recorded against this ticket.</p></div>
+                    }
+                    else
+                    {
+                        @* Chronological, oldest first — the API already orders
+                           them; the view never re-sorts. *@
+                        foreach (var interaction in Model.Interactions)
+                        {
+                            <div class="facts-section">
+                                <div class="facts-section__title">
+                                    @(interaction.ChannelName ?? "Unknown channel")
+                                    @if (interaction.IsOriginatingInteraction)
+                                    {
+                                        <span class="badge badge-status-open"><span class="badge-dot"></span>Originating</span>
+                                    }
+                                </div>
+                                <dl>
+                                    <div class="facts-row">
+                                        <dt>When</dt>
+                                        <dd>
+                                            @interaction.StartedAtUtc.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                                            @(interaction.EndedAtUtc is { } endedAt ? $" – {endedAt.ToLocalTime():HH:mm}" : "")
+                                        </dd>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(interaction.AgentName))
+                                    {
+                                        <div class="facts-row"><dt>Agent</dt><dd>@interaction.AgentName</dd></div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(interaction.CustomerName))
+                                    {
+                                        <div class="facts-row"><dt>Customer</dt><dd>@interaction.CustomerName</dd></div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(interaction.CustomerPhone))
+                                    {
+                                        <div class="facts-row"><dt>Phone</dt><dd>@interaction.CustomerPhone</dd></div>
+                                    }
+                                    @* The INTERACTION's own lifecycle — deliberately
+                                       separate from the ticket's status: a conversation
+                                       that ended never closes the ticket. *@
+                                    <div class="facts-row">
+                                        <dt>Status</dt>
+                                        <dd>@(interaction.Status == "Ended"
+                                                ? $"Ended{(string.IsNullOrWhiteSpace(interaction.EndReason) ? "" : $" ({interaction.EndReason})")}"
+                                                : "Active")</dd>
+                                    </div>
+                                    @* Pending human work raised from this interaction —
+                                       the context an agent taking over most needs, and a
+                                       status deliberately separate from the ticket's own:
+                                       completing the human work never closes the ticket. *@
+                                    @if (interaction.Handoff is { } handoff)
+                                    {
+                                        <div class="facts-row">
+                                            <dt>Human agent</dt>
+                                            <dd>
+                                                <span class="badge badge-handoff-@TicketDisplay.HandoffStatusCssKey(handoff.Status)">
+                                                    @TicketDisplay.HandoffStatusLabel(handoff.Status)
+                                                </span>
+                                                <span class="text-secondary">
+                                                    requested @handoff.RequestedAtUtc.ToLocalTime().ToString("dd MMM HH:mm")
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="facts-row">
+                                            <dt>Follow-up</dt>
+                                            <dd class="@(handoff.Mode is null ? "text-secondary" : null)">@TicketDisplay.HandoffModeLabel(handoff.Mode)</dd>
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(handoff.RequestReason))
+                                        {
+                                            <div class="facts-row"><dt>Why a human</dt><dd>@handoff.RequestReason</dd></div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(handoff.ResolutionNote))
+                                        {
+                                            <div class="facts-row"><dt>Outcome note</dt><dd>@handoff.ResolutionNote</dd></div>
+                                        }
+                                    }
+                                </dl>
+
+                                @if (interaction.Messages.Count == 0)
+                                {
+                                    <p class="text-secondary">
+                                        @(interaction.Status == "Ended"
+                                            ? "No transcript was recorded for this interaction."
+                                            : "No transcript yet — this conversation has not ended.")
+                                    </p>
+                                }
+                                else
+                                {
+                                    <ol class="timeline">
+                                        @foreach (var message in interaction.Messages)
+                                        {
+                                            var isCustomer = message.Sender == "Customer";
+                                            var iconCss = isCustomer ? "icon-gold" : "icon-quiet";
+                                            @* A bot line is labelled as a bot: an agent taking over
+                                               must be able to tell what a human said from what the
+                                               virtual agent said. *@
+                                            var senderLabel = message.SenderName
+                                                ?? (message.Sender == "VirtualAgent" ? "Virtual agent" : message.Sender);
+                                            <li class="timeline-item">
+                                                <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
+                                                <div class="timeline-row">
+                                                    <span class="timeline-text"><strong>@senderLabel</strong></span>
+                                                    <span class="timeline-time">@message.SentAtUtc.ToLocalTime().ToString("HH:mm")</span>
+                                                </div>
+                                                <div class="timeline-note @(isCustomer ? "timeline-note--human" : "timeline-note--system")">@message.Body</div>
+                                            </li>
+                                        }
+                                    </ol>
+                                }
                             </div>
                         }
                     }

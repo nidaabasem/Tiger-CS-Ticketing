@@ -1,3 +1,4 @@
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Modules.Ticketing;
@@ -54,6 +55,20 @@ public sealed class FakeTicketInteractionRepository : ITicketInteractionReposito
         {
             throw new InvalidOperationException(
                 $"Ticket {interaction.TicketId} already has an originating interaction.");
+        }
+
+        // Mirror the OTHER filtered unique index (AddGenesysIntegration):
+        // one Genesys conversation, one interaction. The real database
+        // surfaces a violation as DuplicateWriteException through
+        // TicketingUnitOfWork, and the Genesys ingestion service catches
+        // exactly that to answer a concurrent duplicate with the winning
+        // ticket — so the fake must raise the same exception, or that
+        // recovery path would never be exercised by a test.
+        if (interaction.GenesysConversationId is { } conversationId
+            && _interactions.Any(i => i.GenesysConversationId == conversationId))
+        {
+            throw new DuplicateWriteException(
+                new InvalidOperationException($"Conversation {conversationId} already has an interaction."));
         }
 
         typeof(TicketInteraction).GetProperty(nameof(TicketInteraction.TicketInteractionId))!.SetValue(interaction, _nextId++);

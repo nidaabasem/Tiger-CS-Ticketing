@@ -23,8 +23,13 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
 
         builder.Property(t => t.OriginatingDepartmentId).IsRequired();
         builder.Property(t => t.CurrentDepartmentId).IsRequired();
-        builder.Property(t => t.CategoryId).IsRequired();
-        builder.Property(t => t.PriorityId).IsRequired();
+        // Both nullable since the Unclassified phase: a ticket created from an
+        // inquiry nobody has read yet genuinely has no category and no judged
+        // priority, and placeholder values would be worse than null — they
+        // feed reporting, queue sorting and the dashboard as if a human had
+        // chosen them (see Ticket.CategoryId / Ticket.PriorityId).
+        builder.Property(t => t.CategoryId);
+        builder.Property(t => t.PriorityId);
 
         builder.Property(t => t.TicketStatus).IsRequired();
         builder.Property(t => t.VerificationStatus).IsRequired();
@@ -102,11 +107,13 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.HasOne<Category>()
             .WithMany()
             .HasForeignKey(t => t.CategoryId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Priority>()
             .WithMany()
             .HasForeignKey(t => t.PriorityId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Ticket>()

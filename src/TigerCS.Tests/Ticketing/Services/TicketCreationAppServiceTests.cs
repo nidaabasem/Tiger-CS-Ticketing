@@ -967,4 +967,77 @@ public class TicketCreationAppServiceTests
         Assert.Equal(string.Empty, originating.CustomerPhone);
         Assert.Equal(InteractionContextSource.Ticketing, originating.Source);
     }
+
+    // ---- The Unclassified creation path ----
+    //
+    // The same service, the same transaction, the same status history and
+    // outbox — only the classification is absent, because the caller (today,
+    // Genesys ingestion) has a resolved department and nothing else.
+
+    [Fact]
+    public async Task CreateAsync_WithADepartmentAndNoCategory_CreatesAnUnclassifiedTicket_WithNoPriorityAndNoSlaPeriod()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, CategoryId: null, PriorityId: null,
+                "Customer asked about an NOC", DepartmentId: department.DepartmentId));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        Assert.Equal(department.DepartmentId, ticket.CurrentDepartmentId);
+        Assert.Equal(department.DepartmentId, ticket.OriginatingDepartmentId);
+        Assert.Null(ticket.CategoryId);
+        Assert.Null(ticket.PriorityId);
+        Assert.Null(ticket.RequestTypeId);
+        Assert.False(ticket.IsClassified);
+
+        // No priority means no policy to select, so no period is opened —
+        // the state TicketClassificationAppService later closes.
+        Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
+        Assert.Empty(f.Sla.SlaInstances.All);
+
+        // Everything else about creation is unchanged.
+        Assert.Equal(1, f.UnitOfWork.TransactionsCommitted);
+        Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
+    }
+
+    [Fact]
+    public async Task CreateAsync_APriorityWithoutACategory_IsRefused_BecauseAnUnclassifiedTicketHasNoPriority()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        // Priority is a judgement made at classification, alongside the
+        // category — never before it. Accepting one here would quietly
+        // recreate the provisional-priority problem this design removed.
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, CategoryId: null, PriorityId: (byte)PriorityLevel.Medium,
+                "Customer asked about an NOC", DepartmentId: department.DepartmentId));
+
+        Assert.Equal(TicketCreationOutcome.PriorityRequiresCategory, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NeitherACategoryNorADepartment_IsRefused_BecauseNeitherIsEverInvented()
+    {
+        var f = CreateService();
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, CategoryId: null, PriorityId: null, "Where does this go?"));
+
+        Assert.Equal(TicketCreationOutcome.DepartmentOrCategoryRequired, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
 }

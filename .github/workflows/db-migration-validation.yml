@@ -173,7 +173,9 @@ jobs:
             "RequestTypeSlaPolicies" "DepartmentWorkflowSettings" \
             "RequestTypeAssignmentRules" "RequestTypeAssignmentRuleMembers" \
             "RequestTypeApprovalRequirements" \
-            "TicketPendingRecords" "TicketInteractions" \
+            "TicketPendingRecords" "TicketInteractions" "TicketInteractionMessages" \
+            "TicketAgentHandoffs" \
+            "GenesysQueueMappings" \
             "TicketApprovals" "TicketWorkflowEvents" \
             "Workflows" "WorkflowStepTransitions" \
             "__EFMigrationsHistory" | sort)
@@ -187,7 +189,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 49 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum). TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2), as are all Genesys tables (the Genesys context lives as nullable columns on TicketInteractions, not tables of its own). TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
+          echo "Table list matches exactly: 52 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum; TicketInteractionMessages, GenesysQueueMappings and TicketAgentHandoffs added by AddGenesysIntegration). TicketAgentHandoffs is pending HUMAN work raised from an interaction on any channel — deliberately not a callback table: a callback is one follow-up mode among several, and most rows will be chat, WhatsApp or social. It is a separate table rather than columns on TicketInteractions because the work outlives the interaction: a customer who closes the browser while waiting ends the interaction, and the work must stay actionable. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2). The Genesys tables present are ONLY the transcript and the routing configuration: the Genesys interaction context itself still lives as nullable columns on TicketInteractions, not a table of its own, and no GenesysInteractions/GenesysInteractionEvents/GenesysAgentMappings tables exist — those belong to a design that assumed a webhook contract the Genesys team has not confirmed. GenesysDepartmentSettings is deliberately absent as well: a per-department default Category existed only to satisfy the old Tickets.CategoryId NOT NULL constraint, and a Genesys ticket is now created Unclassified instead. TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -331,10 +333,10 @@ jobs:
             "IntakeRecords.DepartmentId=YES" "IntakeRecords.IntakeRecordId=NO" "IntakeRecords.IsUnitRelated=NO" \
             "IntakeRecords.LinkedTicketId=YES" "IntakeRecords.PhoneNumber=NO" \
             "IntakeRecords.PriorityHint=YES" "IntakeRecords.RawUnitNumberEntered=YES" "IntakeRecords.ReceivedAtUtc=NO" \
-            "Tickets.AcknowledgementSentAtUtc=YES" "Tickets.CategoryId=NO" "Tickets.ContactReferenceId=YES" \
+            "Tickets.AcknowledgementSentAtUtc=YES" "Tickets.CategoryId=YES" "Tickets.ContactReferenceId=YES" \
             "Tickets.CreatedAtUtc=NO" "Tickets.CurrentDepartmentId=NO" "Tickets.CurrentOwnerEmployeeId=YES" \
             "Tickets.DuplicateOfTicketId=YES" "Tickets.EscalationLevel=NO" "Tickets.FirstHumanResponseAtUtc=YES" \
-            "Tickets.OriginatingDepartmentId=NO" "Tickets.PriorityId=NO" "Tickets.ReopenCount=NO" \
+            "Tickets.OriginatingDepartmentId=NO" "Tickets.PriorityId=YES" "Tickets.ReopenCount=NO" \
             "Tickets.RequestSummary=NO" "Tickets.ResolutionOutcome=YES" "Tickets.SlaState=NO" \
             "Tickets.TicketId=NO" "Tickets.TicketNumber=NO" "Tickets.TicketStatus=NO" \
             "Tickets.UnitReferenceId=YES" "Tickets.VerificationStatus=NO" "Tickets.RowVersion=NO" \
@@ -351,7 +353,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (46 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior. Tickets.WorkflowTemplateId (the pinned workflow version, AddWorkflowVersioning) is nullable for the same reason: only a ticket with a request type pins a version."
+          echo "Column nullability matches the confirmed design exactly (46 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior. Tickets.WorkflowTemplateId (the pinned workflow version, AddWorkflowVersioning) is nullable for the same reason: only a ticket with a request type pins a version. Tickets.CategoryId and Tickets.PriorityId both became nullable in AddGenesysIntegration: an inquiry arriving through Genesys is turned into a ticket the moment an agent picks it up, before anyone has read the request, so neither its category nor its urgency has been judged. NULL says so honestly. A placeholder category would drive reporting and routing; a placeholder priority is no more harmless, since priority drives the dashboard KPI counts, the queue order and the attention ranking — the queries handle NULL explicitly (never sorting it ahead of Critical, never counting it as Critical/High). Ticket.Classify sets both later on the same ticket, and that is also when the SLA period is opened. TicketSlaInstances.PriorityId stays NOT NULL: an SLA period only ever exists for a classified ticket."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |
@@ -704,8 +706,26 @@ jobs:
           #   - one open pending record per ticket (TicketPendingRecords)
           #   - one Pending approval cycle per (ticket, type) (TicketApprovals)
           #   - one current approval cycle per (ticket, type) (TicketApprovals)
+          #   - one interaction per Genesys conversation (TicketInteractions,
+          #     AddGenesysIntegration) — the database-level guarantee behind
+          #     "one Genesys inquiry produces exactly one ticket": without it
+          #     two concurrent deliveries of the same conversation would both
+          #     pass the application's read-side check and create two tickets.
+          #   - one OPEN human-handoff per interaction (TicketAgentHandoffs,
+          #     AddGenesysIntegration) — the same guarantee for pending human
+          #     work: a redelivered "human required" event cannot produce a
+          #     second work item for a conversation whose work is still
+          #     outstanding. Filtered on unresolved rather than on the
+          #     interaction, so a customer who needs a human again later is a
+          #     new piece of work on the same ticket.
+          #   - one row per Genesys work-item id when Genesys supplies one
+          #     (TicketAgentHandoffs) — the stronger idempotency key, costing
+          #     nothing while it is absent.
           declare -A expected_filters=(
             ["UX_TicketInteractions_OneOriginatingPerTicket"]="([IsOriginatingInteraction]=(1))"
+            ["UX_TicketInteractions_GenesysConversationId"]="([GenesysConversationId]ISNOTNULL)"
+            ["UX_TicketAgentHandoffs_OpenPerInteraction"]="([ResolvedAtUtc]ISNULL)"
+            ["UX_TicketAgentHandoffs_ExternalWorkItemId"]="([ExternalWorkItemId]ISNOTNULL)"
             ["UX_TicketPendingRecords_OpenPerTicket"]="([ResumedAtUtc]ISNULL)"
             ["UX_TicketApprovals_OnePendingPerType"]="([Status]=(1))"
             ["UX_TicketApprovals_OneCurrentPerType"]="([IsCurrent]=(1))"
@@ -722,7 +742,7 @@ jobs:
               exit 1
             fi
           done
-          echo "All six Workflow/Automation filtered unique indexes are present with the expected filters (the two WorkflowTemplates ones guarantee at most one Published and one Draft version per workflow)."
+          echo "All nine filtered unique indexes are present with the expected filters (the two WorkflowTemplates ones guarantee at most one Published and one Draft version per workflow; the two TicketAgentHandoffs ones are what stop a redelivered Genesys handoff event from creating a second pending work item)."
 
       - name: Verify no schema drift (no-op probe migration)
         working-directory: src

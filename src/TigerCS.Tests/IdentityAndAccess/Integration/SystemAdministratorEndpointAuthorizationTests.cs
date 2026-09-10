@@ -3,9 +3,12 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Api.Controllers;
+using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
+using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -471,6 +474,308 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var profile = await response.Content.ReadFromJsonAsync<CustomerProfileDto>();
         Assert.Equal("Found", profile!.Status);
         Assert.Equal(ticket.CrmBuyerCustomerId, profile.CrmBuyerCustomerId);
+    }
+
+    /// <summary>
+    /// Genesys integration phase 1, end-to-end through the real host: a
+    /// normalized inquiry becomes exactly one ticket, a retry returns that
+    /// same ticket, a ringing call creates nothing, and ending the
+    /// conversation stores the transcript without closing the ticket.
+    /// </summary>
+    [Fact]
+    public async Task GenesysEndpoints_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        await _factory.SeedPrioritiesAsync();
+
+        // A department is all the configuration an inquiry needs: there is no
+        // category to configure, because an unread inquiry has none.
+        var departmentId = await _factory.CreateDepartmentAsync("Genesys CS " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var categoryId = await _factory.CreateCategoryAsync("NOC for Resale", departmentId);
+
+        var conversationId = "conv-" + Guid.NewGuid().ToString("N")[..12];
+
+        // The agent picks up — a ringing call never reaches TigerCS, and
+        // there is no event field to say so. Exactly one ticket.
+        var answered = await client.PostAsJsonAsync(
+            "/api/genesys/tickets",
+            new GenesysInquiryRequest(conversationId, "Phone", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.Created, answered.StatusCode);
+        var created = await answered.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
+        Assert.Equal("TicketCreated", created!.Outcome);
+
+        // A retry returns the SAME ticket and creates no second one.
+        var retry = await client.PostAsJsonAsync(
+            "/api/genesys/tickets",
+            new GenesysInquiryRequest(conversationId, "Phone", CustomerPhone: "+971500000001", DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        var retried = await retry.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
+        Assert.Equal("AlreadyIngested", retried!.Outcome);
+        Assert.Equal(created.TicketId, retried.TicketId);
+
+        // The ticket exists, and is honestly Unclassified: no category was
+        // invented, and no SLA clock was started against a priority nobody
+        // chose.
+        var unclassified = await (await client.GetAsync($"/api/tickets/{created.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Null(unclassified!.CategoryId);
+        Assert.False(unclassified.IsClassified);
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.SlaState.NotApplicable), unclassified.SlaState);
+
+        // The agent reads the conversation and classifies the SAME ticket.
+        var classified = await client.PostAsJsonAsync(
+            $"/api/tickets/{created.TicketId}/classification",
+            new ClassifyTicketRequestDto(categoryId, (byte)PriorityLevel.High, null, Convert.FromBase64String(unclassified.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, classified.StatusCode);
+        var afterClassification = await classified.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(created.TicketId, afterClassification!.TicketId);
+        Assert.Equal(categoryId, afterClassification.CategoryId);
+        Assert.True(afterClassification.IsClassified);
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.SlaState.Running), afterClassification.SlaState);
+
+        // Ending the conversation stores the transcript — and leaves the
+        // ticket exactly where the workflow had it.
+        var ended = await client.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{created.TicketId}",
+            new GenesysTicketUpdateRequest(
+                conversationId,
+                Ended: new GenesysConversationEndPart(
+                    DateTime.UtcNow, "AgentDisconnect",
+                    [
+                        new GenesysTranscriptMessageRequest("Customer", DateTime.UtcNow.AddMinutes(-2), "Any update on my unit?"),
+                        new GenesysTranscriptMessageRequest("HumanAgent", DateTime.UtcNow.AddMinutes(-1), "Checking now.")
+                    ])));
+        Assert.Equal(HttpStatusCode.OK, ended.StatusCode);
+        var endResult = await ended.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>();
+        Assert.Equal("Applied", endResult!.Outcome);
+        Assert.True(endResult.ConversationEnded);
+        Assert.Equal(2, endResult.TranscriptMessageCount);
+        // The echoed status is the proof: ending a conversation did not close
+        // the ticket.
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.TicketStatus.Open), endResult.TicketStatus);
+
+        var ticketAfterEnd = await _factory.GetTicketAsync(created.TicketId);
+        Assert.Equal(TigerCS.Domain.Modules.Ticketing.TicketStatus.Open, ticketAfterEnd!.TicketStatus);
+
+        // A duplicate end changes nothing and stores no second transcript.
+        var endedAgain = await client.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{created.TicketId}",
+            new GenesysTicketUpdateRequest(conversationId, Ended: new GenesysConversationEndPart(DateTime.UtcNow, "AgentDisconnect")));
+        Assert.Equal(HttpStatusCode.OK, endedAgain.StatusCode);
+        Assert.Equal(2, (await endedAgain.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>())!.TranscriptMessageCount);
+
+        // And the conversation cannot be updated through another ticket's route.
+        var mismatch = await client.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{created.TicketId + 9999}",
+            new GenesysTicketUpdateRequest(conversationId));
+        Assert.Equal(HttpStatusCode.NotFound, mismatch.StatusCode);
+    }
+
+    /// <summary>
+    /// The call-pickup lookup, contract #2: an agent answers and Genesys asks
+    /// who is on the line.
+    ///
+    /// <para>
+    /// Two things matter here. A lookup that matches nobody is still a
+    /// <b>200</b>, never a 404 — because the Create Ticket call that follows
+    /// must still work. And where the caller already has tickets, they come
+    /// back with the open ones first, so the agent knows before they speak.
+    /// (This host&apos;s CRM double matches every number, so
+    /// <c>found: false</c> itself is proved in
+    /// <c>GenesysCustomerLookupTests</c>, where the gateway is controlled.)
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task GenesysCustomerLookup_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        await _factory.SeedPrioritiesAsync();
+
+        var unknownNumber = "+9715" + Random.Shared.Next(10_000_000, 99_999_999);
+
+        // Nobody by that number, and nothing about that is an error.
+        var miss = await client.GetAsync($"/api/genesys/customers/lookup?phoneNumber={Uri.EscapeDataString(unknownNumber)}");
+        Assert.Equal(HttpStatusCode.OK, miss.StatusCode);
+        var nothingFound = await miss.Content.ReadFromJsonAsync<GenesysCustomerLookupResultDto>();
+        Assert.Equal(unknownNumber, nothingFound!.PhoneNumber);
+        Assert.NotNull(nothingFound.CrmStatus);
+        // No ticket has ever arrived from this number.
+        Assert.Empty(nothingFound.Tickets);
+        Assert.Equal(0, nothingFound.OpenTicketCount);
+
+        // A blank number is the one refusal.
+        Assert.Equal(
+            HttpStatusCode.BadRequest,
+            (await client.GetAsync("/api/genesys/customers/lookup?phoneNumber=%20")).StatusCode);
+
+        // Ticket creation is unaffected by the miss — the whole point.
+        var departmentId = await _factory.CreateDepartmentAsync("Genesys Lookup " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var conversationId = "conv-" + Guid.NewGuid().ToString("N")[..12];
+        var created = await client.PostAsJsonAsync(
+            "/api/genesys/tickets",
+            new GenesysInquiryRequest(
+                conversationId, "Phone", CustomerPhone: unknownNumber, DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var ticket = await created.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
+
+        // The same number now carries that ticket as context for the next call.
+        var hit = await client.GetAsync($"/api/genesys/customers/lookup?phoneNumber={Uri.EscapeDataString(unknownNumber)}");
+        var withContext = await hit.Content.ReadFromJsonAsync<GenesysCustomerLookupResultDto>();
+        var row = Assert.Single(withContext!.Tickets);
+        Assert.Equal(ticket!.TicketId, row.TicketId);
+        Assert.Equal(ticket.TicketNumber, row.TicketNumber);
+        Assert.True(row.IsOpen);
+        Assert.Equal(1, withContext.OpenTicketCount);
+    }
+
+    /// <summary>
+    /// The AI-first journey, end to end through the real host: a website chat
+    /// a bot could not finish, no agent available, and an agent picking the
+    /// work up later from the list.
+    ///
+    /// <para>
+    /// The point of doing this on <b>website chat</b> rather than phone is
+    /// that none of it is a callback — the follow-up mode is ContinueChat,
+    /// and nothing in the flow assumes dialling anybody.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task PendingCustomerInteractions_AuthorizedThroughTheOverride()
+    {
+        var (client, administrator) = await CreateAdministratorAsync();
+        await _factory.SeedPrioritiesAsync();
+
+        var departmentId = await _factory.CreateDepartmentAsync("Genesys Chat " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var conversationId = "conv-" + Guid.NewGuid().ToString("N")[..12];
+
+        // The chat starts and the ticket is created — Unclassified, as always.
+        var started = await client.PostAsJsonAsync(
+            "/api/genesys/tickets",
+            new GenesysInquiryRequest(
+                conversationId, "WebsiteChat",
+                CustomerPhone: "+971500000055", CustomerName: "Ahmed Ali", DepartmentId: departmentId));
+        Assert.Equal(HttpStatusCode.Created, started.StatusCode);
+        var ticket = await started.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
+
+        // The bot cannot finish, and no agent is free.
+        var handoffRequested = await client.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{ticket!.TicketId}",
+            new GenesysTicketUpdateRequest(
+                conversationId,
+                Handoff: new GenesysHandoffPart(
+                    Required: true, AgentAvailable: false, Mode: "ContinueChat",
+                    Reason: "Customer asked about an NOC for resale")));
+        Assert.Equal(HttpStatusCode.OK, handoffRequested.StatusCode);
+        var handoff = await handoffRequested.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>();
+        Assert.Equal("WaitingForAgent", handoff!.HandoffStatus);
+
+        // Same ticket — a handoff never creates a second one.
+        Assert.Equal(ticket.TicketId, handoff.TicketId);
+
+        // A redelivered handoff returns the SAME work item.
+        var handoffRetry = await client.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{ticket.TicketId}",
+            new GenesysTicketUpdateRequest(
+                conversationId, Handoff: new GenesysHandoffPart(Required: true, Mode: "ContinueChat")));
+        Assert.Equal(HttpStatusCode.OK, handoffRetry.StatusCode);
+        var retried = await handoffRetry.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>();
+        Assert.Equal(handoff.TicketAgentHandoffId, retried!.TicketAgentHandoffId);
+
+        // The customer closes the browser while waiting. The transcript is
+        // stored, the ticket stays open — and the work stays actionable.
+        var ended = await client.PatchAsJsonAsync(
+            $"/api/genesys/tickets/{ticket.TicketId}",
+            new GenesysTicketUpdateRequest(
+                conversationId,
+                Ended: new GenesysConversationEndPart(
+                    DateTime.UtcNow, "CustomerDisconnect",
+                    [
+                        new GenesysTranscriptMessageRequest("Customer", DateTime.UtcNow.AddMinutes(-3), "I want to sell my apartment."),
+                        new GenesysTranscriptMessageRequest("VirtualAgent", DateTime.UtcNow.AddMinutes(-2), "Are you asking about an NOC for resale?"),
+                        new GenesysTranscriptMessageRequest("Customer", DateTime.UtcNow.AddMinutes(-1), "Yes.")
+                    ])));
+        Assert.Equal(HttpStatusCode.OK, ended.StatusCode);
+        // The work stayed outstanding through the disconnect.
+        Assert.Equal("WaitingForAgent", (await ended.Content.ReadFromJsonAsync<GenesysTicketUpdateResponse>())!.HandoffStatus);
+
+        // The work list still shows it, and shows it as waiting.
+        var list = await (await client.GetAsync("/api/pending-customer-interactions"))
+            .Content.ReadFromJsonAsync<AgentHandoffListResultDto>();
+        var row = Assert.Single(list!.Items, i => i.TicketAgentHandoffId == handoff.TicketAgentHandoffId!.Value);
+        Assert.Equal("WaitingForAgent", row.Status);
+        Assert.Equal("ContinueChat", row.Mode);
+        Assert.Equal("Ahmed Ali", row.CustomerName);
+        Assert.True(row.InteractionEnded);
+        // Still unclassified, and still on the list: pending human work never
+        // waits for classification.
+        Assert.False(row.TicketIsClassified);
+
+        // Opening the ticket shows the agent the bot conversation that led
+        // here, and why a human was asked for.
+        var history = await (await client.GetAsync($"/api/tickets/{ticket.TicketId}/interactions"))
+            .Content.ReadFromJsonAsync<TicketInteractionHistoryDto>();
+        var interaction = Assert.Single(history!.Interactions);
+        Assert.Equal(3, interaction.Messages.Count);
+        Assert.Contains(interaction.Messages, m => m.Sender == "VirtualAgent");
+        Assert.Equal("Customer asked about an NOC for resale", interaction.Handoff!.RequestReason);
+        Assert.Equal("WaitingForAgent", interaction.Handoff.Status);
+
+        // The agent takes it, then finishes it.
+        var startedWork = await client.PostAsJsonAsync(
+            $"/api/pending-customer-interactions/{handoff.TicketAgentHandoffId!.Value}/start", new { });
+        Assert.Equal(HttpStatusCode.OK, startedWork.StatusCode);
+        var inProgress = await startedWork.Content.ReadFromJsonAsync<AgentHandoffDto>();
+        Assert.Equal("InProgress", inProgress!.Status);
+        Assert.Equal(administrator, inProgress.AssignedEmployeeId);
+
+        var completed = await client.PostAsJsonAsync(
+            $"/api/pending-customer-interactions/{handoff.TicketAgentHandoffId!.Value}/complete",
+            new CompleteAgentHandoffRequestDto("Replied in the chat thread; NOC request logged."));
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Equal("Completed", (await completed.Content.ReadFromJsonAsync<AgentHandoffDto>())!.Status);
+
+        // The load-bearing separation: the human work is done, the TICKET is
+        // not. The NOC workflow continues.
+        var ticketAfter = await _factory.GetTicketAsync(ticket.TicketId);
+        Assert.Equal(TigerCS.Domain.Modules.Ticketing.TicketStatus.Open, ticketAfter!.TicketStatus);
+
+        // Completed work leaves the default list.
+        var afterList = await (await client.GetAsync("/api/pending-customer-interactions"))
+            .Content.ReadFromJsonAsync<AgentHandoffListResultDto>();
+        Assert.DoesNotContain(afterList!.Items, i => i.TicketAgentHandoffId == handoff.TicketAgentHandoffId!.Value);
+
+        // A second completion is refused rather than double-counted.
+        var again = await client.PostAsJsonAsync(
+            $"/api/pending-customer-interactions/{handoff.TicketAgentHandoffId!.Value}/complete",
+            new CompleteAgentHandoffRequestDto(null));
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+
+        // And cancelling requires a reason.
+        var noReason = await client.PostAsJsonAsync(
+            "/api/pending-customer-interactions/999999/cancel", new CancelAgentHandoffRequestDto("   "));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, noReason.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetTicketInteractions_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/tickets/{ticket.TicketId}/interactions");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = await response.Content.ReadFromJsonAsync<TicketInteractionHistoryDto>();
+        Assert.Equal(ticket.TicketId, history!.TicketId);
+
+        // A manually-created ticket still has its originating interaction —
+        // a locally-sourced one, with no Genesys conversation and no
+        // transcript.
+        var interaction = Assert.Single(history.Interactions);
+        Assert.True(interaction.IsOriginatingInteraction);
+        Assert.Equal("Ticketing", interaction.Source);
+        Assert.Null(interaction.GenesysConversationId);
+        Assert.Empty(interaction.Messages);
+        Assert.Equal("Active", interaction.Status);
     }
 
     [Fact]

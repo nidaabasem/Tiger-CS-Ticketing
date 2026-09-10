@@ -115,6 +115,25 @@ table { border-collapse: collapse; width: 100%; }
 .badge-priority-critical { background: var(--color-critical-pale); color: var(--color-critical); border-color: #EBC5C1; }
 .badge-priority-high { background: #FBF1E4; color: #8A6A1E; border-color: #F0DDB8; }
 .badge-priority-medium, .badge-priority-low { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+/* An Unclassified ticket has no priority. Dashed, so it reads as "not judged
+   yet" rather than as a quiet tier alongside Medium and Low. */
+.badge-priority-none { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); border-style: dashed; }
+
+/* Pending human work, on any channel — its own scale, deliberately not reusing
+   the ticket-status colours: an interaction can be Completed here while its
+   ticket is still In Progress, and the two must not look like one thing. */
+.badge-handoff-waiting { background: #FBF1E4; color: #8A6A1E; border-color: #F0DDB8; }
+.badge-handoff-assigned { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-handoff-inprogress { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-handoff-completed { background: #EFEEEA; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-handoff-cancelled { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); border-style: dashed; }
+
+.inline-form { display: inline-block; margin: 0; }
+.inline-form--stacked { display: flex; gap: 6px; margin-top: 6px; }
+.inline-details { display: inline-block; }
+.inline-details > summary { list-style: none; cursor: pointer; }
+.inline-details > summary::-webkit-details-marker { display: none; }
+.col-actions { white-space: nowrap; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
 .badge-sla-running { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
 .badge-sla-met { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
@@ -399,6 +418,7 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-audit:checked ~ .tabs-body #panel-audit,
 #tab-details:checked ~ .tabs-body #panel-details,
 #tab-history:checked ~ .tabs-body #panel-history,
+#tab-conversations:checked ~ .tabs-body #panel-conversations,
 #tab-overview:checked ~ .tabs-body #panel-overview,
 #tab-contact:checked ~ .tabs-body #panel-contact,
 #tab-units:checked ~ .tabs-body #panel-units,

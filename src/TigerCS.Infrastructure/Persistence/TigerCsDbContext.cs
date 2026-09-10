@@ -4,6 +4,7 @@ using TigerCS.Domain.Audit;
 using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.CustomerVerification;
+using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Notifications;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -13,6 +14,7 @@ using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.ClassificationAndRouting.Configurations;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Configurations;
+using TigerCS.Infrastructure.Modules.GenesysIntegration.Configurations;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Configurations;
 using TigerCS.Infrastructure.Modules.Notifications.Configurations;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Configurations;
@@ -122,6 +124,12 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketInteraction> TicketInteractions => Set<TicketInteraction>();
 
+    public DbSet<TicketInteractionMessage> TicketInteractionMessages => Set<TicketInteractionMessage>();
+
+    public DbSet<TicketAgentHandoff> TicketAgentHandoffs => Set<TicketAgentHandoff>();
+
+    public DbSet<GenesysQueueMapping> GenesysQueueMappings => Set<GenesysQueueMapping>();
+
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
 
     public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
@@ -176,6 +184,9 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new RequestTypeAssignmentRuleMemberConfiguration());
         builder.ApplyConfiguration(new TicketPendingRecordConfiguration());
         builder.ApplyConfiguration(new TicketInteractionConfiguration());
+        builder.ApplyConfiguration(new TicketInteractionMessageConfiguration());
+        builder.ApplyConfiguration(new TicketAgentHandoffConfiguration());
+        builder.ApplyConfiguration(new GenesysQueueMappingConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
         builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());

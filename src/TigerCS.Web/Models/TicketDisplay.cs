@@ -43,8 +43,76 @@ public static class TicketDisplay
     /// <summary>True when the ticket sits in its department queue rather than with a named employee — for styling only, never for the label text.</summary>
     public static bool IsDepartmentQueue(Guid? currentOwnerEmployeeId) => currentOwnerEmployeeId is null;
 
-    public static string PriorityLabel(byte priorityId) => priorityId switch
+    // ---- Pending human work (any channel) ----
+
+    /// <summary>
+    /// The work item's own status, in agent-facing words. Deliberately
+    /// distinct wording from the TICKET's status, because the two are
+    /// separate: an interaction can be Completed here while its ticket is
+    /// still In Progress.
+    /// </summary>
+    public static string HandoffStatusLabel(string status) => status switch
     {
+        "NotRequired" => "No human needed",
+        "WaitingForAgent" => "Waiting for agent",
+        "Assigned" => "Assigned",
+        "InProgress" => "In progress",
+        "Completed" => "Completed",
+        "Cancelled" => "Cancelled",
+        _ => status
+    };
+
+    public static string HandoffStatusCssKey(string status) => status switch
+    {
+        "WaitingForAgent" => "waiting",
+        "Assigned" => "assigned",
+        "InProgress" => "inprogress",
+        "Completed" => "completed",
+        "Cancelled" => "cancelled",
+        _ => "waiting"
+    };
+
+    /// <summary>
+    /// How the human is expected to continue. Null renders as "Not specified"
+    /// rather than defaulting to Callback: which mode applies on which channel
+    /// is Genesys' behaviour to state, and inventing one here would be the
+    /// phone-shaped assumption this design exists to avoid.
+    /// </summary>
+    public static string HandoffModeLabel(string? mode) => mode switch
+    {
+        null or "" => "Not specified",
+        "Callback" => "Callback",
+        "ContinueChat" => "Continue chat",
+        "ReplyInChannel" => "Reply in channel",
+        "HumanTakeover" => "Human takeover",
+        _ => mode
+    };
+
+    /// <summary>How long a customer has been waiting for a human, in the coarsest unit that is still honest.</summary>
+    public static string WaitingSinceLabel(DateTime requestedAtUtc, DateTime nowUtc)
+    {
+        var waited = nowUtc - requestedAtUtc;
+        if (waited < TimeSpan.Zero)
+        {
+            waited = TimeSpan.Zero;
+        }
+
+        return waited.TotalMinutes < 1 ? "Just now"
+            : waited.TotalHours < 1 ? $"{(int)waited.TotalMinutes} min"
+            : waited.TotalDays < 1 ? $"{(int)waited.TotalHours} h {waited.Minutes} min"
+            : $"{(int)waited.TotalDays} d {waited.Hours} h";
+    }
+
+    /// <summary>
+    /// The priority tier's name — or <c>Not set</c> for an Unclassified
+    /// ticket, whose priority is genuinely null because nobody has judged its
+    /// urgency yet. Never coalesced into a tier: showing "Medium" for a
+    /// ticket nobody has read would be a claim the system is not entitled to
+    /// make.
+    /// </summary>
+    public static string PriorityLabel(byte? priorityId) => priorityId switch
+    {
+        null => "Not set",
         1 => "Critical",
         2 => "High",
         3 => "Medium",
@@ -52,8 +120,14 @@ public static class TicketDisplay
         _ => $"Priority {priorityId}"
     };
 
-    public static string PriorityCssKey(byte priorityId) => priorityId switch
+    /// <summary>
+    /// The badge modifier for <see cref="PriorityLabel"/>. A null priority
+    /// gets its own neutral key rather than falling through to
+    /// <c>medium</c> — the badge must not look like a judged tier.
+    /// </summary>
+    public static string PriorityCssKey(byte? priorityId) => priorityId switch
     {
+        null => "none",
         1 => "critical",
         2 => "high",
         3 => "medium",

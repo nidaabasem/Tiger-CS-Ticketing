@@ -40,8 +40,8 @@ public sealed record CustomerHistoryDto(
 /// <param name="TicketNumber">The human-facing ticket number.</param>
 /// <param name="CreatedAtUtc">When the ticket was created, in UTC — the sort key (newest first).</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
-/// <param name="CategoryId">The ticket's category.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while the ticket is Unclassified.</param>
+/// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
 /// <param name="CurrentDepartmentId">The department that currently holds the ticket.</param>
 /// <param name="ProjectName">The CRM Buyer or manually-entered project name snapshot, or null when neither is set.</param>
 /// <param name="UnitNumber">The CRM Buyer or manually-entered unit number snapshot, or null when neither is set.</param>
@@ -54,8 +54,8 @@ public sealed record CustomerHistoryTicketDto(
     string TicketNumber,
     DateTime CreatedAtUtc,
     string TicketStatus,
-    byte PriorityId,
-    int CategoryId,
+    byte? PriorityId,
+    int? CategoryId,
     int CurrentDepartmentId,
     string? ProjectName,
     string? UnitNumber,

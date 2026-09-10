@@ -94,6 +94,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/status",
         "POST /api/tickets/{ticketId}/resolution",
         "POST /api/tickets/{ticketId}/close",
+        "POST /api/tickets/{ticketId}/classification",
         "POST /api/tickets/{ticketId}/reopen",
         "POST /api/tickets/{ticketId}/reconciliation",
         "POST /api/tickets/{ticketId}/notes",
@@ -120,6 +121,24 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/sla/first-response",
         "POST /api/tickets/{ticketId}/escalations",
         "GET /api/tickets/{ticketId}/escalations",
+
+        // Genesys integration phase 1 — the inbound boundary (one normalized
+        // ingestion endpoint every channel converges on, plus conversation
+        // end) and the ticket's conversation-history read.
+        // The three externally consumable Genesys contracts — create, look
+        // up, update. Nothing else on api/genesys: everything Genesys does to
+        // a ticket after creating it goes through the one PATCH.
+        "POST /api/genesys/tickets",
+        "PATCH /api/genesys/tickets/{ticketId}",
+        "GET /api/genesys/customers/lookup",
+        "GET /api/pending-customer-interactions",
+        "POST /api/pending-customer-interactions/{handoffId}/start",
+        "POST /api/pending-customer-interactions/{handoffId}/complete",
+        "POST /api/pending-customer-interactions/{handoffId}/cancel",
+        "GET /api/tickets/{ticketId}/interactions",
+        "GET /api/admin/genesys/queue-mappings",
+        "POST /api/admin/genesys/queue-mappings",
+        "PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId}",
 
         // Administration / Workflow Designer phase (System Administrator only)
         "GET /api/request-types",
@@ -416,7 +435,6 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     [InlineData("AssignTicketRequestDto", "rowVersion")]
     [InlineData("ChangeStatusRequestDto", "newStatus")]
     [InlineData("TransferTicketRequestDto", "targetDepartmentId")]
-    [InlineData("CreateTicketRequestDto", "categoryId")]
     public void MandatoryFields_AreMarkedRequired(string schemaName, string propertyName)
     {
         var schema = SchemaFor(schemaName);

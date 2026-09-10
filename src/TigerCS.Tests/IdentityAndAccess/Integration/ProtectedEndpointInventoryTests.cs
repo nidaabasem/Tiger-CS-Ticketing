@@ -56,6 +56,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/tickets/{ticketId:long}/status"] = nameof(SystemAdministratorEndpointAuthorizationTests.ChangeTicketStatus_Returns200),
         ["POST /api/tickets/{ticketId:long}/resolution"] = nameof(SystemAdministratorEndpointAuthorizationTests.ResolveAndCloseTicket_BothReturn200),
         ["POST /api/tickets/{ticketId:long}/close"] = nameof(SystemAdministratorEndpointAuthorizationTests.ResolveAndCloseTicket_BothReturn200),
+        ["POST /api/tickets/{ticketId:long}/classification"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
         ["POST /api/tickets/{ticketId:long}/reopen"] = nameof(SystemAdministratorEndpointAuthorizationTests.ReopenTicket_Returns200),
         ["POST /api/tickets/{ticketId:long}/reconciliation"] = nameof(SystemAdministratorEndpointAuthorizationTests.ReconcileUnverifiedTicket_Returns200),
         ["GET /api/tickets/{ticketId:long}/approvals"] = nameof(SystemAdministratorEndpointAuthorizationTests.ApprovalWorkflowEndpoints_AuthorizedThroughTheOverride),
@@ -67,6 +68,22 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/tickets/{ticketId:long}/notes"] = nameof(SystemAdministratorEndpointAuthorizationTests.AddAndListTicketNotes_Return201And200),
         ["GET /api/tickets/{ticketId:long}/customer-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketCustomerHistory_Returns200),
         ["GET /api/tickets/{ticketId:long}/customer-profile"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketCustomerProfile_Returns200),
+
+        // Genesys integration phase 1 — the inbound boundary and the ticket's
+        // conversation-history read.
+        // The three Genesys contracts.
+        ["POST /api/genesys/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["PATCH /api/genesys/tickets/{ticketId:long}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
+        ["GET /api/pending-customer-interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
+        ["POST /api/pending-customer-interactions/{handoffId:long}/start"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
+        ["POST /api/pending-customer-interactions/{handoffId:long}/complete"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
+        ["POST /api/pending-customer-interactions/{handoffId:long}/cancel"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
+        ["GET /api/tickets/{ticketId:long}/interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketInteractions_Returns200),
+        ["GET /api/admin/genesys/queue-mappings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappings_ThroughTheRealHost),
+        ["POST /api/admin/genesys/queue-mappings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappings_ThroughTheRealHost),
+        ["PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappings_ThroughTheRealHost),
+
 
         ["GET /api/customers/crm/{crmCustomerId:int}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCrmCustomerTicketHistory_Returns200),
         ["GET /api/customers/external/{source}/{externalCustomerId}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetExternalCustomerHistory_Returns200),

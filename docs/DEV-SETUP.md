@@ -230,6 +230,78 @@ Whichever variant returns the customer defines the target format;
 `NormalizePactPhone` is the single place to adjust (PACT-only — CRM and
 persistence are untouched by design).
 
+## 3c. Configure the Genesys integration (`Genesys:Enabled`)
+
+The Genesys integration ships **switched off** and stays off until it is
+deliberately enabled:
+
+```jsonc
+// src/TigerCS.Api/appsettings.json — the shipped default
+"Genesys": { "Enabled": false }
+```
+
+With `Enabled: false`, all three Genesys endpoints (`POST /api/genesys/tickets`,
+`GET /api/genesys/customers/lookup`, `PATCH /api/genesys/tickets/{ticketId}`)
+answer `503` and write nothing.
+**Everything else is unaffected** — manual/Face-to-Face ticket creation, the
+New Ticket wizard, and every existing flow behave exactly as before, because
+nothing in the normal ticketing path reads the flag.
+
+To switch it on locally (from `src/TigerCS.Api`):
+
+```bash
+dotnet user-secrets set "Genesys:Enabled" "true"
+```
+
+**The JWT service account below is the UAT mechanism, not the confirmed final
+Genesys authentication design** — see
+`docs/architecture/Genesys-API-Contracts.md`. No new authentication scheme has
+been built.
+
+**There is no Genesys credential or endpoint to configure.** No Genesys API
+base URL, OAuth client or webhook signing secret exists in this system,
+because none has been confirmed by the Genesys team (see
+`docs/architecture/Genesys-Integration-Phase1.md` §10). Genesys calls
+TigerCS's own inbound endpoints as an ordinary authenticated **service
+account**, using the same JWT authentication every other API client uses:
+
+1. Create a staff account for Genesys under Administration
+   (`POST /api/admin/users`) and give it the **CS Agent** role — the same role
+   that may create tickets, which is exactly what ingestion does.
+2. Genesys signs in with `POST /api/auth/login` and sends
+   `Authorization: Bearer {token}` on every call.
+
+### Genesys routing configuration (required before any inquiry can be routed)
+
+One thing must be configured, System Administrator-only, and it is **not
+seeded** — the real Genesys queue ids are not known to this repository and are
+never invented:
+
+```bash
+# Which department a Genesys queue's inquiries belong to.
+PUT/POST /api/admin/genesys/queue-mappings
+```
+
+An inquiry whose queue is unmapped is refused with a `422` naming the gap — it
+is never routed to a guessed department.
+
+Nothing configures **pending human work** either. Genesys reports that an
+interaction needs a human agent (`PATCH /api/genesys/tickets/{ticketId}` with a
+`handoff` block) on
+whatever channel it happened, and TigerCS records it as a work item on the
+existing ticket. Agents see it under **Pending Interactions**. TigerCS performs
+no dialling, chat transport, WhatsApp/social sending or queue routing — Genesys
+owns all of that.
+
+Nothing configures a **category** or a **priority**. A Genesys ticket is
+created *Unclassified* — `CategoryId`, `RequestTypeId` and `PriorityId` all
+`NULL`, `SlaState = NotApplicable` — because at pick-up nobody has read the
+request yet. An agent supplies a real category and priority later on the same
+ticket via `POST /api/tickets/{ticketId}/classification`, and **that** is when
+the business/resolution SLA period opens, timed from the classification
+moment. How quickly a human first responded is measured separately and is
+unaffected by any of this.
+
 ## 4. Apply the database migration
 
 From `src/`:

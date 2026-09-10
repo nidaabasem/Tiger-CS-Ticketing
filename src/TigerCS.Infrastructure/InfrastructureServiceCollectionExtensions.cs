@@ -11,6 +11,9 @@ using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
+using TigerCS.Application.Modules.GenesysIntegration;
+using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
+using TigerCS.Application.Modules.GenesysIntegration.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
@@ -27,6 +30,7 @@ using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
+using TigerCS.Infrastructure.Modules.GenesysIntegration.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
@@ -224,6 +228,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IRequestTypeAssignmentRuleRepository, RequestTypeAssignmentRuleRepository>();
         services.AddScoped<ITicketPendingRecordRepository, TicketPendingRecordRepository>();
         services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
+        services.AddScoped<ITicketAgentHandoffRepository, TicketAgentHandoffRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
 
         // Workflow/Automation (phase 3) — approvals, approval requirements,
@@ -233,6 +238,37 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IRequestTypeApprovalRequirementRepository, RequestTypeApprovalRequirementRepository>();
         services.AddScoped<TicketApprovalAppService>();
 
+        // Genesys integration (phase 1) — the normalized inquiry boundary.
+        // Every Genesys channel converges on ONE ingestion flow that reuses
+        // the intake, ticket-creation and customer-lookup services already
+        // registered above; no Genesys API client exists, because no Genesys
+        // endpoint, credential or payload schema is confirmed yet.
+        //
+        // The feature flag is bound here, in the composition root, and read
+        // only by the two Genesys app services: with Genesys:Enabled false
+        // (the default) they refuse to do anything and every existing
+        // manual/Face-to-Face flow is completely unaffected — nothing in the
+        // normal ticketing path consults it.
+        // Bound through the options pipeline and resolved lazily — never read
+        // eagerly from the `configuration` parameter here, for the same
+        // ordering reason the JWT options and the connection string document
+        // above: an eager read happens before test-host configuration
+        // overrides (WebApplicationFactory) are merged in, so the flag would
+        // silently keep its deployed value under test.
+        services.Configure<GenesysOptions>(configuration.GetSection(GenesysOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<GenesysOptions>>().Value);
+
+        services.AddScoped<IGenesysQueueMappingRepository, GenesysQueueMappingRepository>();
+        services.AddScoped<IGenesysConversationRepository, GenesysConversationRepository>();
+        services.AddScoped<GenesysInquiryIngestionAppService>();
+        services.AddScoped<GenesysConversationEndAppService>();
+        services.AddScoped<GenesysAgentHandoffAppService>();
+        services.AddScoped<GenesysTicketUpdateAppService>();
+        services.AddScoped<GenesysCustomerLookupAppService>();
+        services.AddScoped<TicketInteractionQueryAppService>();
+        services.AddScoped<TicketClassificationAppService>();
+        services.AddScoped<AgentHandoffAppService>();
+
         // Administration / Workflow Designer phase — SystemAdministrator-only
         // endpoints compose these over the existing services above.
         services.AddScoped<AdminUserAppService>();
@@ -240,6 +276,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<AdminRequestTypeAppService>();
         services.AddScoped<AdminWorkflowAppService>();
         services.AddScoped<AdminChannelAppService>();
+        services.AddScoped<AdminGenesysRoutingAppService>();
 
         // Notifications and the transactional Outbox (ADR-0013/ADR-0014,
         // MVP-Data-Dictionary.md §2.21/§2.23).

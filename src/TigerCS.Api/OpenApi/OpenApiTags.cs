@@ -45,6 +45,8 @@ public static class OpenApiTags
     public const string CrmReconciliation = "CRM Reconciliation";
     public const string SlaAndEscalation = "SLA and Escalation";
     public const string RequestTypes = "Request Types";
+    public const string Genesys = "Genesys";
+    public const string PendingCustomerInteractions = "Pending Customer Interactions";
     public const string Administration = "Administration";
 
     /// <summary>
@@ -99,6 +101,24 @@ public static class OpenApiTags
         (RequestTypes,
             "The active Request Type directory scoped to one Department — what the New Ticket wizard's Request Type "
             + "picker reads from. A request type resolves the workflow version a new ticket is pinned to."),
+        (Genesys,
+            "The three externally consumable Genesys contracts. CREATE: one normalized endpoint every channel "
+            + "(phone, website chat, chatbot, WhatsApp, social media) converges on, idempotent on the Genesys "
+            + "conversation id — one inquiry produces exactly one ticket, and a retry returns that same ticket. There "
+            + "is no event field: posting means create-or-reuse, and a ringing call never reaches TigerCS. New tickets may be created "
+            + "Unclassified (no category, request type or priority), and a customer-lookup failure never blocks "
+            + "creation. LOOK UP: the call-pickup customer lookup, reusing the same CRM Buyer and PACT/Tasleeh "
+            + "services the New Ticket wizard uses — no second CRM integration, and finding nobody is a normal 200. "
+            + "UPDATE: one endpoint for everything Genesys owns about a ticket afterwards — agent context, "
+            + "conversation end and transcript (Customer / VirtualAgent / HumanAgent / System, deduplicated on the "
+            + "supplied messageId), and human-handoff state. It carries no field for category, "
+            + "priority, status, owner or closure: those move through their own TigerCS operations, and ending a "
+            + "conversation never closes the ticket."),
+        (PendingCustomerInteractions,
+            "Customer interactions waiting for a human agent, on every channel — the agent work list. A callback is one "
+            + "possible follow-up mode here, not the concept: a website chat, a WhatsApp thread and a social-media message "
+            + "each continue differently. TigerCS records and surfaces the work; Genesys still owns channel delivery, "
+            + "routing and execution. Completing a work item never closes its ticket."),
         (Administration,
             "System Administrator-only management of users, departments, request types, workflows and channels, including the "
             + "Workflow Designer's versioned Draft -> Validate -> Publish lifecycle. Every endpoint here requires the "

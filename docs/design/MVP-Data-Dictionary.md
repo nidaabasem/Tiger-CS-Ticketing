@@ -166,8 +166,8 @@
 | CurrentDepartmentId | int | No | FK → Departments; mutable on transfer |
 | CurrentOwnerEmployeeId | uniqueidentifier | Yes | FK → Employees |
 | UnitReferenceId, ContactReferenceId | int | No | FK → §2.7. **As of this review pass (Finding DR-01), populated by copying from the consumed `VerificationSessions` row (§2.24) at creation time — the create-ticket request supplies a `VerificationSessionId`, not these fields directly.** |
-| CategoryId | int | No | FK → Categories |
-| PriorityId | tinyint | No | FK → Priorities (current tier) |
+| CategoryId | int | Yes | FK → Categories. **Nullable as of the Genesys integration phase** (`AddGenesysIntegration`): an inquiry an agent has picked up becomes a ticket before anyone has read the request, so it starts *Unclassified* (`CategoryId` null, `SlaState = NotApplicable`) and `Ticket.Classify` fills it in later on the same ticket. A ticket created through the New Ticket wizard still supplies a category at creation. See `architecture/Genesys-Integration-Phase1.md` §4a. |
+| PriorityId | tinyint | Yes | FK → Priorities (current tier). **Nullable as of the Genesys integration phase** (`AddGenesysIntegration`), for the same reason as `CategoryId`: an inquiry an agent has picked up has no judged urgency until someone reads it, and a default would feed the dashboard KPI counts, the queue sort and the attention ranking as if a human had chosen it. Set at classification. `TicketSlaInstances.PriorityId` stays NOT NULL — an SLA period only ever exists for a classified ticket. |
 | TicketStatus, VerificationStatus, EscalationLevel, SlaState | tinyint | No | Independent dimensions (ADR-0008) |
 | ResolutionOutcome | tinyint | Yes | Null until Resolved/Closed |
 | DuplicateOfTicketId | bigint | Yes | Self-ref FK; required (app-level) when `ResolutionOutcome = Duplicate` |
@@ -505,3 +505,39 @@
 ## What This Document Does Not Cover
 
 Per instruction, this document stops at conceptual/logical column definitions. **Not included:** SQL DDL/CREATE TABLE statements, EF Core entity classes or Fluent API configuration, migrations, or any connection to a real database. Those remain Phase 3 ("Project Foundation") deliverables. Relationship cardinality, ownership, delete behavior, and referential-integrity notes are in `MVP-ERD.md`, not repeated here.
+
+### TicketAgentHandoffs (pending human work, any channel)
+
+Added by the Genesys integration phase. One row per piece of work raised
+because an interaction needs a **human agent** — on phone, website chat,
+chatbot, WhatsApp, social media or anything Genesys adds later. Deliberately
+not a callback table: a callback is one follow-up `Mode`, and most rows will
+not be one. A separate table rather than columns on `TicketInteractions`
+because the work outlives the interaction — a customer who disconnects while
+waiting ends the interaction, and the work must stay actionable.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| TicketAgentHandoffId | bigint | No | PK |
+| TicketId | bigint | No | FK → Tickets (cascade). Never a new ticket — always the conversation's existing one |
+| TicketInteractionId | bigint | No | FK → TicketInteractions; through it, the Genesys conversation |
+| DepartmentId | int | No | FK → Departments. The ticket's **current** department at request time, so work follows a transfer |
+| ChannelId | tinyint | No | FK → Channels |
+| Status | tinyint | No | TigerCS-owned: WaitingForAgent/Assigned/InProgress/Completed/Cancelled. `NotRequired` exists in the enum but is never stored |
+| Mode | tinyint | Yes | Callback/ContinueChat/ReplyInChannel/HumanTakeover. **Null = not stated**, never inferred from the channel |
+| RequestReason | nvarchar(500) | Yes | Why a human was needed, as reported. Free text — no vocabulary confirmed |
+| ExternalWorkItemId | nvarchar(64) | Yes | Genesys' routing-task id **if supplied**; unique when present. Never invented |
+| RequestedAtUtc | datetime2 | No | What "waiting since" is measured from |
+| AssignedEmployeeId | uniqueidentifier | Yes | The TigerCS employee, when one takes it here |
+| GenesysAgentId | nvarchar(64) | Yes | Genesys' own agent id, verbatim — never resolved to an employee |
+| AssignedAtUtc, StartedAtUtc, CompletedAtUtc | datetime2 | Yes | The work's own timeline |
+| ResolvedAtUtc | datetime2 | Yes | Null exactly while outstanding — the filtered unique index depends on it |
+| ResolutionNote | nvarchar(500) | Yes | Recorded on completion; **required** on cancellation |
+| CreatedAtUtc | datetime2 | No | |
+
+Two filtered unique indexes carry the idempotency guarantee:
+`UX_TicketAgentHandoffs_OpenPerInteraction` (unique on interaction
+`WHERE ResolvedAtUtc IS NULL`) and `UX_TicketAgentHandoffs_ExternalWorkItemId`
+(unique `WHERE NOT NULL`).
+
+Completing a row **never** changes its ticket: the two lifecycles are separate.

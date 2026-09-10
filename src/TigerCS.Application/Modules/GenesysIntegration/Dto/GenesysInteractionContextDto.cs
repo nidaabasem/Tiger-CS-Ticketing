@@ -39,6 +39,8 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="AgentName">The Genesys agent display name, where provided.</param>
 /// <param name="InteractionStartedAtUtc">When the interaction started on the Genesys side (UTC), where provided.</param>
 /// <param name="Direction">Interaction direction as reported by Genesys (e.g. "Inbound"), where available.</param>
+/// <param name="CustomerName">The customer's name as the channel collected it (e.g. a website chat form's Full Name), where available — display/audit only, never a verified identity.</param>
+/// <param name="CustomerEmail">The customer's email as the channel collected it, where available — same display/audit-only status as <paramref name="CustomerName"/>.</param>
 public sealed record GenesysInteractionContextDto(
     string ConversationId,
     string? CalledNumber = null,
@@ -47,4 +49,6 @@ public sealed record GenesysInteractionContextDto(
     string? AgentId = null,
     string? AgentName = null,
     DateTime? InteractionStartedAtUtc = null,
-    string? Direction = null);
+    string? Direction = null,
+    string? CustomerName = null,
+    string? CustomerEmail = null);
