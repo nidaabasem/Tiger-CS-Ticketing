@@ -116,6 +116,54 @@ public sealed record GenesysConversationEndResponse(
     int TranscriptMessageCount);
 
 /// <summary>
+/// Genesys reporting that an interaction needs a <b>human agent</b> — on any
+/// channel, not only phone.
+/// </summary>
+/// <param name="ConversationId">The conversation needing a human. Its ticket already exists; this never creates one.</param>
+/// <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait for one.</param>
+/// <param name="Mode">How the human is expected to continue: "Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
+/// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note). Free text.</param>
+/// <param name="AgentId">The Genesys agent already handling it, when there is one.</param>
+/// <param name="AgentName">That agent's display name.</param>
+/// <param name="WorkItemId">Genesys' own routing-task/work-item id, if it supplies one — used as the stronger idempotency key. Omit it if Genesys has none.</param>
+/// <param name="RequestedAtUtc">When Genesys decided a human was needed. Defaults to now.</param>
+public sealed record GenesysHandoffRequest(
+    string ConversationId,
+    bool AgentAvailable = false,
+    string? Mode = null,
+    string? Reason = null,
+    string? AgentId = null,
+    string? AgentName = null,
+    string? WorkItemId = null,
+    DateTime? RequestedAtUtc = null);
+
+/// <summary>Genesys reporting which agent has taken a conversation's pending human work.</summary>
+/// <param name="ConversationId">The conversation whose pending work this concerns.</param>
+/// <param name="AgentId">Genesys' agent identifier. Required — an assignment must name someone.</param>
+/// <param name="AgentName">That agent's display name.</param>
+/// <param name="AssignedAtUtc">When the assignment happened. Defaults to now.</param>
+public sealed record GenesysHandoffAssignmentRequest(
+    string ConversationId,
+    string? AgentId = null,
+    string? AgentName = null,
+    DateTime? AssignedAtUtc = null);
+
+/// <summary>What the handoff endpoints answer — always naming the one work item, so a retry and the original call are indistinguishable.</summary>
+/// <param name="Outcome">"HandoffRecorded", "AlreadyRequested" or "AssignmentRecorded".</param>
+/// <param name="ConversationId">The conversation, echoed back.</param>
+/// <param name="TicketAgentHandoffId">The one pending-work item for this conversation.</param>
+/// <param name="TicketId">The ticket it belongs to — never a new one.</param>
+/// <param name="TicketNumber">That ticket's number.</param>
+/// <param name="Status">The work item's TigerCS status: WaitingForAgent, Assigned, InProgress, Completed or Cancelled.</param>
+public sealed record GenesysHandoffResponse(
+    string Outcome,
+    string ConversationId,
+    long? TicketAgentHandoffId,
+    long? TicketId,
+    string? TicketNumber,
+    string? Status);
+
+/// <summary>
 /// Translates the transport records above into the normalized application
 /// contracts. The one place Genesys' vocabulary is interpreted — an
 /// unrecognized channel or event is rejected here with a clear message,
@@ -164,6 +212,22 @@ internal static class GenesysContractMapper
             request.Subject);
         return true;
     }
+
+    internal static GenesysHandoffRequestDto Map(GenesysHandoffRequest request) => new(
+        request.ConversationId,
+        request.AgentAvailable,
+        request.Mode,
+        request.Reason,
+        request.AgentId,
+        request.AgentName,
+        request.WorkItemId,
+        request.RequestedAtUtc);
+
+    internal static GenesysHandoffAssignmentDto Map(GenesysHandoffAssignmentRequest request) => new(
+        request.ConversationId,
+        request.AgentId,
+        request.AgentName,
+        request.AssignedAtUtc);
 
     internal static GenesysConversationEndDto Map(GenesysConversationEndRequest request) => new(
         request.ConversationId,

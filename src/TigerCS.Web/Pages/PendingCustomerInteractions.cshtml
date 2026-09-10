@@ -1,0 +1,220 @@
+@page "/PendingCustomerInteractions"
+@model TigerCS.Web.Pages.PendingCustomerInteractionsModel
+@{
+    ViewData["Title"] = "Pending Customer Interactions";
+    ViewData["ActiveNav"] = "pending";
+    Layout = "_Layout";
+    var nowUtc = DateTime.UtcNow;
+
+    string PageUrl(int p) => Url.Page("/PendingCustomerInteractions", new
+    {
+        channelId = Model.ChannelId,
+        departmentId = Model.DepartmentId,
+        mineOnly = Model.MineOnly,
+        unassignedOnly = Model.UnassignedOnly,
+        includeResolved = Model.IncludeResolved,
+        page = p,
+        pageSize = Model.PageSize
+    }) ?? "/PendingCustomerInteractions";
+}
+
+<div class="page">
+    <div class="page-header">
+        <h1 class="page-title">Pending Customer Interactions</h1>
+    </div>
+
+    <p class="page-intro text-secondary">
+        Customer interactions waiting for a human agent — on every channel. A callback is one
+        way of continuing a phone conversation; a chat, a WhatsApp thread or a social-media
+        message continues differently. Genesys still delivers the reply; this list is what is
+        waiting and who is on it.
+    </p>
+
+    @if (Model.ActionError is not null)
+    {
+        <div class="alert alert-error" role="alert">@Model.ActionError</div>
+    }
+
+    <section class="kpi-grid" aria-label="Pending work counters">
+        <div class="kpi-card kpi-card--attention">
+            <strong>@(Model.WaitingCount?.ToString() ?? "—")</strong>
+            <span>Waiting for an agent</span>
+        </div>
+        <div class="kpi-card">
+            <strong>@Model.TotalCount</strong>
+            <span>In this view</span>
+        </div>
+    </section>
+
+    <form class="filter-bar" method="get">
+        <div class="field-group">
+            <label class="field-label" for="channelId">Channel</label>
+            <select class="field-select" id="channelId" name="channelId" data-autosubmit>
+                <option value="">All channels</option>
+                @foreach (var channel in Model.Channels)
+                {
+                    <option value="@channel.ChannelId" selected="@(Model.ChannelId == channel.ChannelId)">@channel.Name</option>
+                }
+            </select>
+        </div>
+
+        @if (Model.NameResolver.OwnDepartments.Count > 0)
+        {
+            <div class="field-group">
+                <label class="field-label" for="departmentId">Department</label>
+                <select class="field-select" id="departmentId" name="departmentId" data-autosubmit>
+                    <option value="">All my departments</option>
+                    @foreach (var department in Model.NameResolver.OwnDepartments)
+                    {
+                        <option value="@department.DepartmentId" selected="@(Model.DepartmentId == department.DepartmentId)">@department.Name</option>
+                    }
+                </select>
+            </div>
+        }
+
+        <label class="field-check">
+            <input type="checkbox" name="mineOnly" value="true" checked="@Model.MineOnly" data-autosubmit />
+            Assigned to me
+        </label>
+        <label class="field-check">
+            <input type="checkbox" name="unassignedOnly" value="true" checked="@Model.UnassignedOnly" data-autosubmit />
+            Nobody has taken it
+        </label>
+        <label class="field-check">
+            <input type="checkbox" name="includeResolved" value="true" checked="@Model.IncludeResolved" data-autosubmit />
+            Include completed
+        </label>
+    </form>
+
+    @if (Model.Outcome != ApiOutcome.Success)
+    {
+        <div class="alert alert-error" role="alert">The pending interactions could not be loaded.</div>
+    }
+    else if (Model.Rows.Count == 0)
+    {
+        <div class="empty-state">
+            <p>Nothing is waiting for a human agent right now.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Status</th>
+                        <th scope="col">Ticket</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Mobile</th>
+                        <th scope="col">Channel</th>
+                        <th scope="col">Follow-up</th>
+                        <th scope="col">Department</th>
+                        <th scope="col">Waiting since</th>
+                        <th scope="col">Agent</th>
+                        <th scope="col">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in Model.Rows)
+                {
+                    var h = row.Handoff;
+                    <tr>
+                        <td>
+                            <span class="badge badge-handoff-@TicketDisplay.HandoffStatusCssKey(h.Status)">
+                                @TicketDisplay.HandoffStatusLabel(h.Status)
+                            </span>
+                        </td>
+                        <td>
+                            <a class="ticket-id-link" href="/Tickets/@h.TicketId">@h.TicketNumber</a>
+                            @if (!h.TicketIsClassified)
+                            {
+                                @* Pending human work never waits for classification — often the
+                                   agent classifies it BECAUSE they picked it up from here. *@
+                                <span class="badge badge-priority-none" title="No category or priority has been set yet">Unclassified</span>
+                            }
+                        </td>
+                        <td>@(h.CustomerName ?? "—")</td>
+                        <td class="text-mono">@(string.IsNullOrWhiteSpace(h.CustomerPhone) ? "—" : h.CustomerPhone)</td>
+                        <td>@(row.ChannelName ?? "—")</td>
+                        <td>
+                            <span class="@(h.Mode is null ? "text-secondary" : null)">@TicketDisplay.HandoffModeLabel(h.Mode)</span>
+                        </td>
+                        <td>@TicketDisplay.AssignedDepartmentLabel(h.DepartmentId, row.DepartmentName)</td>
+                        <td class="text-mono" title="@h.RequestedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")">
+                            @TicketDisplay.WaitingSinceLabel(h.RequestedAtUtc, nowUtc)
+                            @if (h.InteractionEnded)
+                            {
+                                @* The live session ended; the business case did not. *@
+                                <span class="text-secondary" title="The customer's live session has ended — the work is still actionable">· session ended</span>
+                            }
+                        </td>
+                        <td>
+                            @if (h.AssignedEmployeeId is Guid assigned)
+                            {
+                                <span class="id-fallback" title="@assigned">Employee #@assigned.ToString()[..8]</span>
+                            }
+                            else if (h.GenesysAgentId is not null)
+                            {
+                                <span class="text-secondary" title="Reported by Genesys">@h.GenesysAgentId</span>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">Nobody yet</span>
+                            }
+                        </td>
+                        <td class="col-actions">
+                            @* Open Ticket first: the ticket carries the customer, the units, the
+                               transcript and the history the agent needs before acting. There is
+                               deliberately no "Call" or "Reply on WhatsApp" here — Genesys owns
+                               channel delivery and no supported action has been confirmed. *@
+                            <a class="btn btn-sm" href="/Tickets/@h.TicketId">Open Ticket</a>
+                            @if (h.ResolvedAtUtc is null)
+                            {
+                                @if (h.Status != "InProgress")
+                                {
+                                    <form method="post" asp-page-handler="Start" class="inline-form">
+                                        <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
+                                        <button class="btn btn-sm btn-gold" type="submit">Start Handling</button>
+                                    </form>
+                                }
+                                <form method="post" asp-page-handler="Complete" class="inline-form">
+                                    <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
+                                    <button class="btn btn-sm" type="submit">Complete</button>
+                                </form>
+                                <details class="inline-details">
+                                    <summary class="btn btn-sm btn-quiet">Cancel</summary>
+                                    <form method="post" asp-page-handler="Cancel" class="inline-form inline-form--stacked">
+                                        <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
+                                        <input class="field-input" type="text" name="reason" required
+                                               placeholder="Why is this no longer needed?" aria-label="Cancellation reason" />
+                                        <button class="btn btn-sm" type="submit">Confirm cancel</button>
+                                    </form>
+                                </details>
+                            }
+                            else if (h.ResolutionNote is not null)
+                            {
+                                <span class="text-secondary" title="@h.ResolutionNote">Note recorded</span>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        @if (Model.TotalPages > 1)
+        {
+            <nav class="pager" aria-label="Pagination">
+                @if (Model.PageNumber > 1)
+                {
+                    <a class="btn btn-sm" href="@PageUrl(Model.PageNumber - 1)">Previous</a>
+                }
+                <span class="pager__status">Page @Model.PageNumber of @Model.TotalPages</span>
+                @if (Model.PageNumber < Model.TotalPages)
+                {
+                    <a class="btn btn-sm" href="@PageUrl(Model.PageNumber + 1)">Next</a>
+                }
+            </nav>
+        }
+    }
+</div>

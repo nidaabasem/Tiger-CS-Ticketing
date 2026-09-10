@@ -37,6 +37,7 @@ public sealed record TicketInteractionMessageDto(
 /// <param name="EndReason">Why it ended, as reported.</param>
 /// <param name="Status">"Ended" once an end was recorded, otherwise "Active" — the INTERACTION's own lifecycle, which is independent of the ticket's status.</param>
 /// <param name="Messages">The transcript, in order. Empty for a voice call, and for a chat with nothing recorded.</param>
+/// <param name="Handoff">The pending human work raised from this interaction, when there is any — so an agent opening the ticket sees <b>why</b> a human was asked for and where that work stands, beside the transcript that led to it. Null when this interaction never needed a human.</param>
 public sealed record TicketInteractionDto(
     long TicketInteractionId,
     bool IsOriginatingInteraction,
@@ -56,7 +57,33 @@ public sealed record TicketInteractionDto(
     DateTime? EndedAtUtc,
     string? EndReason,
     string Status,
-    IReadOnlyList<TicketInteractionMessageDto> Messages);
+    IReadOnlyList<TicketInteractionMessageDto> Messages,
+    AgentHandoffSummaryDto? Handoff = null);
+
+/// <summary>
+/// The pending-human-work summary shown inside Ticket Details' Conversation
+/// History. A compact view of <c>TicketAgentHandoff</c>: the work item's own
+/// status is deliberately separate from the ticket's.
+/// </summary>
+/// <param name="TicketAgentHandoffId">The work item.</param>
+/// <param name="Status">WaitingForAgent, Assigned, InProgress, Completed or Cancelled — never the ticket's status.</param>
+/// <param name="Mode">Callback, ContinueChat, ReplyInChannel or HumanTakeover, or null when Genesys did not state it.</param>
+/// <param name="RequestReason">Why a human was needed, as reported — the line an agent taking over a bot conversation most needs.</param>
+/// <param name="RequestedAtUtc">When a human was first asked for.</param>
+/// <param name="AssignedEmployeeId">The TigerCS employee handling it, when known.</param>
+/// <param name="GenesysAgentId">Genesys' own agent identifier, when supplied.</param>
+/// <param name="ResolvedAtUtc">When the work stopped being outstanding. Null while still pending.</param>
+/// <param name="ResolutionNote">What was recorded on finishing, or the required reason for cancelling.</param>
+public sealed record AgentHandoffSummaryDto(
+    long TicketAgentHandoffId,
+    string Status,
+    string? Mode,
+    string? RequestReason,
+    DateTime RequestedAtUtc,
+    Guid? AssignedEmployeeId,
+    string? GenesysAgentId,
+    DateTime? ResolvedAtUtc,
+    string? ResolutionNote);
 
 /// <summary>
 /// A ticket's whole conversation history: every interaction it accumulated,

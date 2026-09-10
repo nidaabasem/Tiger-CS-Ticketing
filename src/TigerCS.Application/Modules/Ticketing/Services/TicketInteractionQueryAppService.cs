@@ -30,6 +30,7 @@ public sealed class TicketInteractionQueryAppService(
     ITicketInteractionRepository interactionRepository,
     IGenesysConversationRepository conversationRepository,
     IChannelRepository channelRepository,
+    ITicketAgentHandoffRepository agentHandoffRepository,
     TicketQueryAppService ticketQueryAppService)
 {
     public async Task<TicketQueryResultDto<TicketInteractionHistoryDto>> GetForTicketAsync(
@@ -68,11 +69,22 @@ public sealed class TicketInteractionQueryAppService(
             channelNames[channelId] = (await channelRepository.GetByIdAsync(channelId, cancellationToken))?.Name;
         }
 
+        // The pending human work raised from these interactions, so an agent
+        // opening the ticket sees WHY a human was asked for beside the
+        // transcript that led to it — the context that matters most when a
+        // virtual agent handed over. One query for the whole ticket, never
+        // one per interaction. Only the latest per interaction is shown; the
+        // full history lives on the work item itself.
+        var handoffsByInteraction = (await agentHandoffRepository.ListByTicketIdAsync(ticketId, cancellationToken))
+            .GroupBy(h => h.TicketInteractionId)
+            .ToDictionary(g => g.Key, g => g.First());
+
         var items = interactions
             .Select(interaction => ToDto(
                 interaction,
                 channelNames.GetValueOrDefault(interaction.ChannelId),
-                messagesByInteraction.TryGetValue(interaction.TicketInteractionId, out var messages) ? messages : []))
+                messagesByInteraction.TryGetValue(interaction.TicketInteractionId, out var messages) ? messages : [],
+                handoffsByInteraction.GetValueOrDefault(interaction.TicketInteractionId)))
             // Chronological: Genesys' own start time where it supplied one,
             // otherwise the moment Ticketing recorded the interaction.
             .OrderBy(i => i.StartedAtUtc)
@@ -84,7 +96,8 @@ public sealed class TicketInteractionQueryAppService(
     }
 
     private static TicketInteractionDto ToDto(
-        TicketInteraction interaction, string? channelName, IReadOnlyList<TicketInteractionMessage> messages) => new(
+        TicketInteraction interaction, string? channelName, IReadOnlyList<TicketInteractionMessage> messages,
+        TicketAgentHandoff? handoff) => new(
         interaction.TicketInteractionId,
         interaction.IsOriginatingInteraction,
         interaction.Source.ToString(),
@@ -106,5 +119,17 @@ public sealed class TicketInteractionQueryAppService(
         messages
             .OrderBy(m => m.Sequence)
             .Select(m => new TicketInteractionMessageDto(m.Sequence, m.Sender.ToString(), m.SenderName, m.SentAtUtc, m.Body))
-            .ToList());
+            .ToList(),
+        handoff is null
+            ? null
+            : new AgentHandoffSummaryDto(
+                handoff.TicketAgentHandoffId,
+                handoff.Status.ToString(),
+                handoff.Mode?.ToString(),
+                handoff.RequestReason,
+                handoff.RequestedAtUtc,
+                handoff.AssignedEmployeeId,
+                handoff.GenesysAgentId,
+                handoff.ResolvedAtUtc,
+                handoff.ResolutionNote));
 }

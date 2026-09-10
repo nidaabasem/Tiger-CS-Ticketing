@@ -127,6 +127,12 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // end) and the ticket's conversation-history read.
         "POST /api/genesys/inquiries",
         "POST /api/genesys/conversations/end",
+        "POST /api/genesys/conversations/handoff",
+        "POST /api/genesys/conversations/handoff/assignment",
+        "GET /api/pending-customer-interactions",
+        "POST /api/pending-customer-interactions/{handoffId}/start",
+        "POST /api/pending-customer-interactions/{handoffId}/complete",
+        "POST /api/pending-customer-interactions/{handoffId}/cancel",
         "GET /api/tickets/{ticketId}/interactions",
         "GET /api/admin/genesys/queue-mappings",
         "POST /api/admin/genesys/queue-mappings",

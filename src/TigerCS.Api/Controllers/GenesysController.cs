@@ -39,7 +39,8 @@ namespace TigerCS.Api.Controllers;
 [Tags(OpenApiTags.Genesys)]
 public class GenesysController(
     GenesysInquiryIngestionAppService ingestionAppService,
-    GenesysConversationEndAppService conversationEndAppService) : ControllerBase
+    GenesysConversationEndAppService conversationEndAppService,
+    GenesysAgentHandoffAppService agentHandoffAppService) : ControllerBase
 {
     /// <summary>Report a Genesys inquiry that has reached an agent — creating exactly one ticket for the conversation.</summary>
     /// <remarks>
@@ -230,6 +231,160 @@ public class GenesysController(
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
         };
     }
+
+    /// <summary>Report that an interaction needs a human agent — on any channel.</summary>
+    /// <remarks>
+    /// <b>This is not a callback request.</b> The same endpoint covers a
+    /// caller who reached an IVR, a website chat a bot could not finish, a
+    /// WhatsApp thread that needs a person, and a social-media message a
+    /// human must answer. What differs between them is <c>mode</c>, and even
+    /// that is recorded only because you state it — TigerCS never derives it
+    /// from the channel.
+    ///
+    /// <para>
+    /// <b>Never a second ticket.</b> The conversation already has one. This
+    /// attaches pending human work to that ticket and its interaction,
+    /// whether a human takes over live (<c>agentAvailable: true</c> with an
+    /// agent named, recorded as <c>Assigned</c>) or the customer waits
+    /// (<c>WaitingForAgent</c>, and the agent work list). The AI-first
+    /// journey is the same one ticket throughout: customer → bot → human.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Idempotent on the conversation.</b> A conversation whose human work
+    /// is still outstanding answers <c>AlreadyRequested</c> with that same
+    /// work item and creates nothing. A filtered unique index makes that hold
+    /// under concurrent redelivery, not merely under sequential retries.
+    /// Supplying <c>workItemId</c> adds a stronger key; omit it if Genesys
+    /// has none.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>TigerCS executes nothing.</b> No dialling, no chat transport, no
+    /// WhatsApp or social sending, no queue scheduling — Genesys owns all of
+    /// that. This records the business state so agents can see the work.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The conversation, whether a human is already taking it, and how it is expected to continue.</param>
+    /// <response code="200">This conversation already had outstanding human work — the same work item is returned, and nothing was created.</response>
+    /// <response code="201">Pending human work was recorded for this conversation.</response>
+    /// <response code="400">conversationId was blank, or the supplied mode is not one of TigerCS' normalized values.</response>
+    /// <response code="404">No interaction exists for this conversation — it never produced a ticket.</response>
+    /// <response code="503">The Genesys integration is switched off.</response>
+    [HttpPost("conversations/handoff")]
+    [ProducesResponseType<GenesysHandoffResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<GenesysHandoffResponse>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> RequestHandoff(
+        [FromBody] GenesysHandoffRequest request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await agentHandoffAppService.RequestAsync(
+            employeeId.Value, GenesysContractMapper.Map(request), cancellationToken);
+
+        return result.Outcome switch
+        {
+            GenesysHandoffOutcome.HandoffRecorded => Created(
+                $"/api/pending-customer-interactions/{result.TicketAgentHandoffId}", HandoffResponse(result, request.ConversationId)),
+
+            // The retry answer: 200 rather than 201, same body, no second work item.
+            GenesysHandoffOutcome.AlreadyRequested => Ok(HandoffResponse(result, request.ConversationId)),
+
+            _ => HandoffProblem(result)
+        };
+    }
+
+    /// <summary>Report which agent has taken a conversation's pending human work.</summary>
+    /// <remarks>
+    /// Applies to the conversation's existing work item — never a second one
+    /// — and is idempotent: the same agent reported twice changes nothing and
+    /// does not move the recorded assignment time.
+    ///
+    /// <para>
+    /// The agent is recorded as Genesys' own identifier. TigerCS does not
+    /// invent a Genesys-agent → TigerCS-employee mapping; until an agent takes
+    /// the work inside TigerCS, the work item's TigerCS assignee stays empty
+    /// while the Genesys agent id is recorded verbatim.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The conversation and the agent who took it.</param>
+    /// <response code="200">The assignment was recorded.</response>
+    /// <response code="400">conversationId was blank, or the assignment named nobody.</response>
+    /// <response code="404">No interaction exists for this conversation, or it has no outstanding human work.</response>
+    /// <response code="503">The Genesys integration is switched off.</response>
+    [HttpPost("conversations/handoff/assignment")]
+    [ProducesResponseType<GenesysHandoffResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> UpdateHandoffAssignment(
+        [FromBody] GenesysHandoffAssignmentRequest request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await agentHandoffAppService.UpdateAssignmentAsync(
+            employeeId.Value, GenesysContractMapper.Map(request), cancellationToken);
+
+        return result.Outcome == GenesysHandoffOutcome.AssignmentRecorded
+            ? Ok(HandoffResponse(result, request.ConversationId))
+            : HandoffProblem(result);
+    }
+
+    private static GenesysHandoffResponse HandoffResponse(GenesysHandoffResult result, string conversationId) =>
+        new(result.Outcome.ToString(), conversationId, result.TicketAgentHandoffId,
+            result.TicketId, result.TicketNumber, result.Status);
+
+    private IActionResult HandoffProblem(GenesysHandoffResult result) => result.Outcome switch
+    {
+        GenesysHandoffOutcome.IntegrationDisabled => Problem(
+            type: "https://tigercs.internal/problems/genesys-integration-disabled",
+            title: "The Genesys integration is disabled",
+            detail: "Genesys:Enabled is false — no Genesys event is processed while the integration is switched off.",
+            statusCode: StatusCodes.Status503ServiceUnavailable),
+
+        GenesysHandoffOutcome.ConversationIdRequired => Problem(
+            type: "https://tigercs.internal/problems/genesys-conversation-id-required",
+            title: "Genesys conversation id required",
+            detail: "conversationId is what makes this call idempotent — without it the event cannot be accepted.",
+            statusCode: StatusCodes.Status400BadRequest),
+
+        GenesysHandoffOutcome.InvalidMode => Problem(
+            type: "https://tigercs.internal/problems/genesys-invalid-handoff-mode",
+            title: "Unrecognized follow-up mode",
+            detail: result.Detail,
+            statusCode: StatusCodes.Status400BadRequest),
+
+        GenesysHandoffOutcome.AgentRequired => Problem(
+            type: "https://tigercs.internal/problems/genesys-handoff-agent-required",
+            title: "An assignment must name an agent",
+            detail: result.Detail,
+            statusCode: StatusCodes.Status400BadRequest),
+
+        GenesysHandoffOutcome.ConversationNotFound => Problem(
+            type: "https://tigercs.internal/problems/genesys-conversation-not-found",
+            title: "No interaction exists for this conversation",
+            detail: result.Detail ?? "This conversation never produced a ticket.",
+            statusCode: StatusCodes.Status404NotFound),
+
+        GenesysHandoffOutcome.NoOpenHandoff => Problem(
+            type: "https://tigercs.internal/problems/genesys-no-open-handoff",
+            title: "No outstanding human work for this conversation",
+            detail: result.Detail,
+            statusCode: StatusCodes.Status404NotFound),
+
+        _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
+    };
 
     private Guid? GetEmployeeId()
     {

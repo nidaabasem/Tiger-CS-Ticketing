@@ -704,6 +704,36 @@ else
                                                 ? $"Ended{(string.IsNullOrWhiteSpace(interaction.EndReason) ? "" : $" ({interaction.EndReason})")}"
                                                 : "Active")</dd>
                                     </div>
+                                    @* Pending human work raised from this interaction —
+                                       the context an agent taking over most needs, and a
+                                       status deliberately separate from the ticket's own:
+                                       completing the human work never closes the ticket. *@
+                                    @if (interaction.Handoff is { } handoff)
+                                    {
+                                        <div class="facts-row">
+                                            <dt>Human agent</dt>
+                                            <dd>
+                                                <span class="badge badge-handoff-@TicketDisplay.HandoffStatusCssKey(handoff.Status)">
+                                                    @TicketDisplay.HandoffStatusLabel(handoff.Status)
+                                                </span>
+                                                <span class="text-secondary">
+                                                    requested @handoff.RequestedAtUtc.ToLocalTime().ToString("dd MMM HH:mm")
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="facts-row">
+                                            <dt>Follow-up</dt>
+                                            <dd class="@(handoff.Mode is null ? "text-secondary" : null)">@TicketDisplay.HandoffModeLabel(handoff.Mode)</dd>
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(handoff.RequestReason))
+                                        {
+                                            <div class="facts-row"><dt>Why a human</dt><dd>@handoff.RequestReason</dd></div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(handoff.ResolutionNote))
+                                        {
+                                            <div class="facts-row"><dt>Outcome note</dt><dd>@handoff.ResolutionNote</dd></div>
+                                        }
+                                    }
                                 </dl>
 
                                 @if (interaction.Messages.Count == 0)
@@ -720,11 +750,16 @@ else
                                         @foreach (var message in interaction.Messages)
                                         {
                                             var isCustomer = message.Sender == "Customer";
-                                            var iconCss = isCustomer ? "icon-gold" : message.Sender == "Agent" ? "icon-quiet" : "icon-quiet";
+                                            var iconCss = isCustomer ? "icon-gold" : "icon-quiet";
+                                            @* A bot line is labelled as a bot: an agent taking over
+                                               must be able to tell what a human said from what the
+                                               virtual agent said. *@
+                                            var senderLabel = message.SenderName
+                                                ?? (message.Sender == "VirtualAgent" ? "Virtual agent" : message.Sender);
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">
-                                                    <span class="timeline-text"><strong>@(message.SenderName ?? message.Sender)</strong></span>
+                                                    <span class="timeline-text"><strong>@senderLabel</strong></span>
                                                     <span class="timeline-time">@message.SentAtUtc.ToLocalTime().ToString("HH:mm")</span>
                                                 </div>
                                                 <div class="timeline-note @(isCustomer ? "timeline-note--human" : "timeline-note--system")">@message.Body</div>

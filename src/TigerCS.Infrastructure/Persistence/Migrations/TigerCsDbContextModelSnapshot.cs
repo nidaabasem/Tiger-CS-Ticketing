@@ -1191,6 +1191,91 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("Tickets", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff", b =>
+                {
+                    b.Property<long>("TicketAgentHandoffId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketAgentHandoffId"));
+
+                    b.Property<DateTime?>("AssignedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AssignedEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("ChannelId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ExternalWorkItemId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("GenesysAgentId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte?>("Mode")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("RequestReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TicketInteractionId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketAgentHandoffId");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex(new[] { "AssignedEmployeeId" }, "IX_TicketAgentHandoffs_AssignedEmployeeId");
+
+                    b.HasIndex(new[] { "DepartmentId", "RequestedAtUtc" }, "IX_TicketAgentHandoffs_OpenByDepartment")
+                        .HasFilter("[ResolvedAtUtc] IS NULL");
+
+                    b.HasIndex(new[] { "TicketId" }, "IX_TicketAgentHandoffs_TicketId");
+
+                    b.HasIndex(new[] { "ExternalWorkItemId" }, "UX_TicketAgentHandoffs_ExternalWorkItemId")
+                        .IsUnique()
+                        .HasFilter("[ExternalWorkItemId] IS NOT NULL");
+
+                    b.HasIndex(new[] { "TicketInteractionId" }, "UX_TicketAgentHandoffs_OpenPerInteraction")
+                        .IsUnique()
+                        .HasFilter("[ResolvedAtUtc] IS NULL");
+
+                    b.ToTable("TicketAgentHandoffs", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>
                 {
                     b.Property<long>("TicketApprovalId")
@@ -2538,6 +2623,33 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WorkflowTemplateId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Channel", null)
+                        .WithMany()
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.TicketInteraction", null)
+                        .WithMany()
+                        .HasForeignKey("TicketInteractionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.Ticketing.TicketApproval", b =>

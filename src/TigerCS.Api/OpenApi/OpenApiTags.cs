@@ -46,6 +46,7 @@ public static class OpenApiTags
     public const string SlaAndEscalation = "SLA and Escalation";
     public const string RequestTypes = "Request Types";
     public const string Genesys = "Genesys";
+    public const string PendingCustomerInteractions = "Pending Customer Interactions";
     public const string Administration = "Administration";
 
     /// <summary>
@@ -105,7 +106,13 @@ public static class OpenApiTags
             + "WhatsApp, social media) converges on, and the conversation-end endpoint that finalizes an interaction and "
             + "stores its transcript. Ingestion is idempotent on the Genesys conversation id — one inquiry produces exactly "
             + "one ticket, and a retry returns that same ticket. A ringing call creates nothing; the ticket flow starts when "
-            + "the agent answers. Ending a conversation never closes the ticket."),
+            + "the agent answers. Ending a conversation never closes the ticket. Genesys also reports here when an "
+            + "interaction needs a human agent on any channel, and when one takes it."),
+        (PendingCustomerInteractions,
+            "Customer interactions waiting for a human agent, on every channel — the agent work list. A callback is one "
+            + "possible follow-up mode here, not the concept: a website chat, a WhatsApp thread and a social-media message "
+            + "each continue differently. TigerCS records and surfaces the work; Genesys still owns channel delivery, "
+            + "routing and execution. Completing a work item never closes its ticket."),
         (Administration,
             "System Administrator-only management of users, departments, request types, workflows and channels, including the "
             + "Workflow Designer's versioned Draft -> Validate -> Publish lifecycle. Every endpoint here requires the "

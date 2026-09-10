@@ -67,10 +67,21 @@ public sealed class GenesysServiceFixture
     /// <summary>The SLA services ticket creation runs through — exposed so a test can assert that an unclassified inquiry opened no period at all.</summary>
     public SlaServiceFixture Sla { get; }
 
+    /// <summary>Pending human work, on any channel. Mirrors both of the table's filtered unique indexes.</summary>
+    public FakeTicketAgentHandoffRepository Handoffs { get; } = new();
+
+    /// <summary>Genesys reporting that an interaction needs a human, and who took it.</summary>
+    public GenesysAgentHandoffAppService AgentHandoff { get; }
+
+    /// <summary>The agent-facing work list and its actions.</summary>
+    public AgentHandoffAppService PendingWork { get; }
+
     public GenesysServiceFixture(bool enabled = true)
     {
         Options = new GenesysOptions { Enabled = enabled };
         Conversations = new FakeGenesysConversationRepository(Interactions);
+        Handoffs.Tickets = Tickets;
+        Handoffs.Interactions = Interactions;
 
         var outbox = new FakeOutboxWriter();
         UnitOfWork.OutboxWriter = outbox;
@@ -114,11 +125,18 @@ public sealed class GenesysServiceFixture
         ConversationEnd = new GenesysConversationEndAppService(
             Options, Conversations, Tickets, UnitOfWork, Audit, TimeProvider.System);
 
+        var ticketQuery = new TicketQueryAppService(
+            Tickets, DepartmentAssignments, new FakeTicketResolutionRepository(),
+            ReopenPolicy.Default, TimeProvider.System);
+
         InteractionQuery = new TicketInteractionQueryAppService(
-            Tickets, Interactions, Conversations, Channels,
-            new TicketQueryAppService(
-                Tickets, DepartmentAssignments, new FakeTicketResolutionRepository(),
-                ReopenPolicy.Default, TimeProvider.System));
+            Tickets, Interactions, Conversations, Channels, Handoffs, ticketQuery);
+
+        AgentHandoff = new GenesysAgentHandoffAppService(
+            Options, Conversations, Handoffs, Tickets, UnitOfWork, Audit, TimeProvider.System);
+
+        PendingWork = new AgentHandoffAppService(
+            Handoffs, ticketQuery, UnitOfWork, Audit, TimeProvider.System);
     }
 
     /// <summary>

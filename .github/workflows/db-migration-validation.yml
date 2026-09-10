@@ -174,6 +174,7 @@ jobs:
             "RequestTypeAssignmentRules" "RequestTypeAssignmentRuleMembers" \
             "RequestTypeApprovalRequirements" \
             "TicketPendingRecords" "TicketInteractions" "TicketInteractionMessages" \
+            "TicketAgentHandoffs" \
             "GenesysQueueMappings" \
             "TicketApprovals" "TicketWorkflowEvents" \
             "Workflows" "WorkflowStepTransitions" \
@@ -188,7 +189,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Table list matches exactly: 51 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum; TicketInteractionMessages and GenesysQueueMappings added by AddGenesysIntegration). TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2). The Genesys tables present are ONLY the transcript and the routing configuration: the Genesys interaction context itself still lives as nullable columns on TicketInteractions, not a table of its own, and no GenesysInteractions/GenesysInteractionEvents/GenesysAgentMappings tables exist — those belong to a design that assumed a webhook contract the Genesys team has not confirmed. GenesysDepartmentSettings is deliberately absent as well: a per-department default Category existed only to satisfy the old Tickets.CategoryId NOT NULL constraint, and a Genesys ticket is now created Unclassified instead. TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
+          echo "Table list matches exactly: 52 tables (Workflows and WorkflowStepTransitions added by AddWorkflowVersioning; WorkflowTemplates is now the version table; Channels added by AddChannels — Channel Management's configurable channel catalogue, replacing the former fixed enum; TicketInteractionMessages, GenesysQueueMappings and TicketAgentHandoffs added by AddGenesysIntegration). TicketAgentHandoffs is pending HUMAN work raised from an interaction on any channel — deliberately not a callback table: a callback is one follow-up mode among several, and most rows will be chat, WhatsApp or social. It is a separate table rather than columns on TicketInteractions because the work outlives the interaction: a customer who closes the browser while waiting ends the interaction, and the work must stay actionable. TicketSlaPausePeriods and PriorityDowngradeRequests are deliberately absent (MVP-Implementation-Backlog.md §0/§0.2). The Genesys tables present are ONLY the transcript and the routing configuration: the Genesys interaction context itself still lives as nullable columns on TicketInteractions, not a table of its own, and no GenesysInteractions/GenesysInteractionEvents/GenesysAgentMappings tables exist — those belong to a design that assumed a webhook contract the Genesys team has not confirmed. GenesysDepartmentSettings is deliberately absent as well: a per-department default Category existed only to satisfy the old Tickets.CategoryId NOT NULL constraint, and a Genesys ticket is now created Unclassified instead. TicketInteractionContexts is deliberately absent too — created by AddWorkflowAutomation and replaced by the 1-to-many TicketInteractions in ReplaceInteractionContextWithTicketInteractions."
 
       - name: Verify schema — filtered unique index (one primary department per employee)
         run: |
@@ -710,9 +711,21 @@ jobs:
           #     "one Genesys inquiry produces exactly one ticket": without it
           #     two concurrent deliveries of the same conversation would both
           #     pass the application's read-side check and create two tickets.
+          #   - one OPEN human-handoff per interaction (TicketAgentHandoffs,
+          #     AddGenesysIntegration) — the same guarantee for pending human
+          #     work: a redelivered "human required" event cannot produce a
+          #     second work item for a conversation whose work is still
+          #     outstanding. Filtered on unresolved rather than on the
+          #     interaction, so a customer who needs a human again later is a
+          #     new piece of work on the same ticket.
+          #   - one row per Genesys work-item id when Genesys supplies one
+          #     (TicketAgentHandoffs) — the stronger idempotency key, costing
+          #     nothing while it is absent.
           declare -A expected_filters=(
             ["UX_TicketInteractions_OneOriginatingPerTicket"]="([IsOriginatingInteraction]=(1))"
             ["UX_TicketInteractions_GenesysConversationId"]="([GenesysConversationId]ISNOTNULL)"
+            ["UX_TicketAgentHandoffs_OpenPerInteraction"]="([ResolvedAtUtc]ISNULL)"
+            ["UX_TicketAgentHandoffs_ExternalWorkItemId"]="([ExternalWorkItemId]ISNOTNULL)"
             ["UX_TicketPendingRecords_OpenPerTicket"]="([ResumedAtUtc]ISNULL)"
             ["UX_TicketApprovals_OnePendingPerType"]="([Status]=(1))"
             ["UX_TicketApprovals_OneCurrentPerType"]="([IsCurrent]=(1))"
@@ -729,7 +742,7 @@ jobs:
               exit 1
             fi
           done
-          echo "All six Workflow/Automation filtered unique indexes are present with the expected filters (the two WorkflowTemplates ones guarantee at most one Published and one Draft version per workflow)."
+          echo "All nine filtered unique indexes are present with the expected filters (the two WorkflowTemplates ones guarantee at most one Published and one Draft version per workflow; the two TicketAgentHandoffs ones are what stop a redelivered Genesys handoff event from creating a second pending work item)."
 
       - name: Verify no schema drift (no-op probe migration)
         working-directory: src

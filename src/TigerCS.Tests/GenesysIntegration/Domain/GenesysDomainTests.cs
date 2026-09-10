@@ -144,4 +144,144 @@ public class GenesysDomainTests
         Assert.Equal(Now.AddDays(1), mapping.UpdatedAtUtc);
         Assert.Equal(Now, mapping.CreatedAtUtc);
     }
+
+    // ---- Pending human work (any channel) ----
+
+    private static TicketAgentHandoff Handoff(
+        AgentHandoffMode? mode = null, string? genesysAgentId = null, string? workItemId = null) =>
+        new(ticketId: 1, ticketInteractionId: 2, departmentId: 5, channelId: WellKnownChannels.LiveChat,
+            requestedAtUtc: Now, createdAtUtc: Now, mode: mode, requestReason: "Bot could not answer",
+            externalWorkItemId: workItemId, assignedEmployeeId: null, genesysAgentId: genesysAgentId,
+            assignedAtUtc: null);
+
+    [Fact]
+    public void NewHandoff_WithNobodyAvailable_WaitsForAnAgent()
+    {
+        var handoff = Handoff();
+
+        Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff.Status);
+        Assert.True(handoff.IsOpen);
+        Assert.True(handoff.RequiresHumanAgent);
+        Assert.Null(handoff.AssignedEmployeeId);
+        Assert.Null(handoff.AssignedAtUtc);
+        Assert.Null(handoff.ResolvedAtUtc);
+
+        // Nothing about how it continues is guessed from the channel.
+        Assert.Null(handoff.Mode);
+    }
+
+    [Fact]
+    public void NewHandoff_WithAnAgentAlreadyNamed_IsAssignedFromTheStart()
+    {
+        var handoff = Handoff(genesysAgentId: "ga-7");
+
+        Assert.Equal(AgentHandoffStatus.Assigned, handoff.Status);
+        Assert.Equal("ga-7", handoff.GenesysAgentId);
+        Assert.Equal(Now, handoff.AssignedAtUtc);
+    }
+
+    [Fact]
+    public void NewHandoff_RequiresARealDepartmentAndChannel_AndARecognizedMode()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new TicketAgentHandoff(1, 2, departmentId: 0, WellKnownChannels.Phone, Now, Now));
+        Assert.Throws<ArgumentException>(() =>
+            new TicketAgentHandoff(1, 2, 5, channelId: 0, Now, Now));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new TicketAgentHandoff(1, 2, 5, WellKnownChannels.Phone, Now, Now, mode: (AgentHandoffMode)99));
+    }
+
+    [Theory]
+    [InlineData(AgentHandoffMode.Callback)]
+    [InlineData(AgentHandoffMode.ContinueChat)]
+    [InlineData(AgentHandoffMode.ReplyInChannel)]
+    [InlineData(AgentHandoffMode.HumanTakeover)]
+    public void EveryFollowUpMode_IsStorableOnAnyChannel(AgentHandoffMode mode)
+    {
+        // The entity never ties a mode to a channel: which one applies where
+        // is Genesys' behaviour to state, and it has not stated it.
+        Assert.Equal(mode, Handoff(mode).Mode);
+    }
+
+    [Fact]
+    public void AssignTo_IsIdempotent_SoARedeliveredAssignmentDoesNotMoveTheRecordedTime()
+    {
+        var handoff = Handoff();
+        var assignedAt = Now.AddMinutes(5);
+
+        handoff.AssignTo(employeeId: null, genesysAgentId: "ga-9", assignedAt);
+        Assert.Equal(AgentHandoffStatus.Assigned, handoff.Status);
+        Assert.Equal(assignedAt, handoff.AssignedAtUtc);
+
+        handoff.AssignTo(employeeId: null, genesysAgentId: "ga-9", assignedAt.AddHours(1));
+        Assert.Equal(assignedAt, handoff.AssignedAtUtc);
+    }
+
+    [Fact]
+    public void AssignTo_MustNameSomeone()
+    {
+        var handoff = Handoff();
+
+        Assert.Throws<ArgumentException>(() => handoff.AssignTo(employeeId: null, genesysAgentId: "  ", Now));
+    }
+
+    [Fact]
+    public void Start_TakesTheWork_AndNeverRewindsOnAReassignment()
+    {
+        var handoff = Handoff();
+        var agent = Guid.NewGuid();
+        var startedAt = Now.AddMinutes(10);
+
+        handoff.Start(agent, startedAt);
+        Assert.Equal(AgentHandoffStatus.InProgress, handoff.Status);
+        // Starting is also taking it — there is no separate claim step.
+        Assert.Equal(agent, handoff.AssignedEmployeeId);
+        Assert.Equal(startedAt, handoff.StartedAtUtc);
+
+        // A real mid-handling reassignment keeps it in progress.
+        handoff.AssignTo(Guid.NewGuid(), genesysAgentId: null, startedAt.AddMinutes(1));
+        Assert.Equal(AgentHandoffStatus.InProgress, handoff.Status);
+
+        // And starting again does not move the start time.
+        handoff.Start(agent, startedAt.AddHours(1));
+        Assert.Equal(startedAt, handoff.StartedAtUtc);
+    }
+
+    [Fact]
+    public void Complete_ResolvesTheWork_AndRefusesEverythingAfterwards()
+    {
+        var handoff = Handoff();
+        var agent = Guid.NewGuid();
+        var completedAt = Now.AddMinutes(30);
+
+        handoff.Complete(agent, completedAt, "Answered in the chat thread.");
+
+        Assert.Equal(AgentHandoffStatus.Completed, handoff.Status);
+        Assert.Equal(completedAt, handoff.CompletedAtUtc);
+        Assert.Equal(completedAt, handoff.ResolvedAtUtc);
+        Assert.False(handoff.IsOpen);
+
+        Assert.Throws<AgentHandoffAlreadyResolvedException>(() => handoff.Complete(agent, completedAt, null));
+        Assert.Throws<AgentHandoffAlreadyResolvedException>(() => handoff.Cancel(completedAt, "Too late"));
+        Assert.Throws<AgentHandoffAlreadyResolvedException>(() => handoff.Start(agent, completedAt));
+        Assert.Throws<AgentHandoffAlreadyResolvedException>(() => handoff.AssignTo(agent, null, completedAt));
+    }
+
+    [Fact]
+    public void Cancel_RequiresAReason_AndResolvesWithoutCompleting()
+    {
+        var handoff = Handoff();
+
+        Assert.Throws<ArgumentException>(() => handoff.Cancel(Now, "   "));
+        Assert.True(handoff.IsOpen);
+
+        handoff.Cancel(Now.AddMinutes(2), "Customer answered themselves.");
+
+        Assert.Equal(AgentHandoffStatus.Cancelled, handoff.Status);
+        Assert.False(handoff.IsOpen);
+        // Cancelled is resolved but never completed — the distinction the
+        // work list and any later reporting depend on.
+        Assert.Null(handoff.CompletedAtUtc);
+        Assert.Equal("Customer answered themselves.", handoff.ResolutionNote);
+    }
 }

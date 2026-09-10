@@ -83,6 +83,59 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "TicketAgentHandoffs",
+                columns: table => new
+                {
+                    TicketAgentHandoffId = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    TicketId = table.Column<long>(type: "bigint", nullable: false),
+                    TicketInteractionId = table.Column<long>(type: "bigint", nullable: false),
+                    DepartmentId = table.Column<int>(type: "int", nullable: false),
+                    ChannelId = table.Column<byte>(type: "tinyint", nullable: false),
+                    Status = table.Column<byte>(type: "tinyint", nullable: false),
+                    Mode = table.Column<byte>(type: "tinyint", nullable: true),
+                    RequestReason = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
+                    ExternalWorkItemId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: true),
+                    RequestedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    AssignedEmployeeId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    GenesysAgentId = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: true),
+                    AssignedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    StartedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    CompletedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ResolvedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ResolutionNote = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "datetime2", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_TicketAgentHandoffs", x => x.TicketAgentHandoffId);
+                    table.ForeignKey(
+                        name: "FK_TicketAgentHandoffs_Channels_ChannelId",
+                        column: x => x.ChannelId,
+                        principalTable: "Channels",
+                        principalColumn: "ChannelId",
+                        onDelete: ReferentialAction.Restrict);
+                    table.ForeignKey(
+                        name: "FK_TicketAgentHandoffs_Departments_DepartmentId",
+                        column: x => x.DepartmentId,
+                        principalTable: "Departments",
+                        principalColumn: "DepartmentId",
+                        onDelete: ReferentialAction.Restrict);
+                    table.ForeignKey(
+                        name: "FK_TicketAgentHandoffs_TicketInteractions_TicketInteractionId",
+                        column: x => x.TicketInteractionId,
+                        principalTable: "TicketInteractions",
+                        principalColumn: "TicketInteractionId",
+                        onDelete: ReferentialAction.Restrict);
+                    table.ForeignKey(
+                        name: "FK_TicketAgentHandoffs_Tickets_TicketId",
+                        column: x => x.TicketId,
+                        principalTable: "Tickets",
+                        principalColumn: "TicketId",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "TicketInteractionMessages",
                 columns: table => new
                 {
@@ -127,6 +180,41 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_TicketAgentHandoffs_AssignedEmployeeId",
+                table: "TicketAgentHandoffs",
+                column: "AssignedEmployeeId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TicketAgentHandoffs_ChannelId",
+                table: "TicketAgentHandoffs",
+                column: "ChannelId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TicketAgentHandoffs_OpenByDepartment",
+                table: "TicketAgentHandoffs",
+                columns: new[] { "DepartmentId", "RequestedAtUtc" },
+                filter: "[ResolvedAtUtc] IS NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TicketAgentHandoffs_TicketId",
+                table: "TicketAgentHandoffs",
+                column: "TicketId");
+
+            migrationBuilder.CreateIndex(
+                name: "UX_TicketAgentHandoffs_ExternalWorkItemId",
+                table: "TicketAgentHandoffs",
+                column: "ExternalWorkItemId",
+                unique: true,
+                filter: "[ExternalWorkItemId] IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "UX_TicketAgentHandoffs_OpenPerInteraction",
+                table: "TicketAgentHandoffs",
+                column: "TicketInteractionId",
+                unique: true,
+                filter: "[ResolvedAtUtc] IS NULL");
+
+            migrationBuilder.CreateIndex(
                 name: "UX_TicketInteractionMessages_InteractionSequence",
                 table: "TicketInteractionMessages",
                 columns: new[] { "TicketInteractionId", "Sequence" },
@@ -138,6 +226,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
         {
             migrationBuilder.DropTable(
                 name: "GenesysQueueMappings");
+
+            migrationBuilder.DropTable(
+                name: "TicketAgentHandoffs");
 
             migrationBuilder.DropTable(
                 name: "TicketInteractionMessages");

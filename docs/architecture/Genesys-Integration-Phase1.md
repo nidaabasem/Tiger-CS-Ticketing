@@ -229,6 +229,167 @@ creation — there is no update-ticket endpoint. Note that
 no consuming operation, so the intent to allow priority changes predates this
 phase and is waiting on exactly the semantics above.
 
+## 4b. Pending human work — on every channel
+
+### Why this is not "callbacks"
+
+Genesys carries phone, website chat, chatbot/virtual agent, WhatsApp, social
+media, and whatever it adds next. On every one of them the same thing can
+happen: routing or a virtual agent decides a **human agent** is needed, and no
+human is immediately available.
+
+The business rule is identical across all of them:
+
+> Any Genesys interaction that requires a human agent, but cannot immediately
+> reach one, must remain as pending human work and must be visible to agents.
+
+Only the *continuation* differs — and a callback is one of those, not the
+concept. Modelling this as a `CallbackRequest` would have been phone-shaped
+thinking that hid most of the work: a chat, a WhatsApp thread and a
+social-media message never involve dialling anyone.
+
+### The flow
+
+```
+Genesys AI / bot / routing decides a human is needed
+    │
+    ├── an agent IS available
+    │       → Genesys live-transfers
+    │       → SAME ticket, SAME conversation where supported
+    │       → work item recorded as Assigned; never appears as waiting
+    │
+    └── NO agent available
+            → SAME ticket stays open
+            → work item recorded as WaitingForAgent
+            → it appears in the agent work list
+```
+
+**No second ticket, ever.** The conversation already has one from ingestion.
+A handoff attaches work to that ticket and its interaction — including the
+AI-first journey, which is one ticket from customer → bot → human.
+
+### The model: `TicketAgentHandoff`
+
+A **separate entity**, not columns on `TicketInteraction`. The deciding
+reason: §11's rule that a customer disconnecting must not cancel the business
+case. `TicketInteraction.End` is write-once precisely so an ended conversation
+is a settled audit record — putting mutable, still-outstanding work on a
+settled row would make "ended" and "still pending" the same row saying two
+contradictory things. The work genuinely outlives the interaction, and it
+needs its own indexed status for a cross-ticket query the interaction table
+should not serve. `TicketPendingRecord` (an open/resolved pending period per
+ticket) is the existing precedent this follows.
+
+| Field | Notes |
+|---|---|
+| `TicketId`, `TicketInteractionId` | The ticket and the conversation it arose from — via the interaction, the `GenesysConversationId`. |
+| `DepartmentId`, `ChannelId` | Copied at request time from the ticket's **current** department, so work follows a transferred ticket. |
+| `Status` | `WaitingForAgent` / `Assigned` / `InProgress` / `Completed` / `Cancelled`. |
+| `Mode` | `Callback` / `ContinueChat` / `ReplyInChannel` / `HumanTakeover`, or **null**. |
+| `RequestReason` | Why a human was needed, as reported. Free text — no vocabulary is confirmed. |
+| `RequestedAtUtc` | What "waiting since" is measured from. |
+| `AssignedEmployeeId`, `GenesysAgentId` | The TigerCS employee where known, and Genesys' own agent id verbatim where that is all we get. |
+| `AssignedAtUtc`, `StartedAtUtc`, `CompletedAtUtc` | The work's own timeline. |
+| `ResolvedAtUtc`, `ResolutionNote` | Null exactly while outstanding. A cancellation **requires** a reason. |
+| `ExternalWorkItemId` | Genesys' routing-task/work-item id **if it supplies one**. Never invented. |
+
+`NotRequired` exists in the status enum but **no row ever stores it** — a work
+item exists only once a human has been asked for. It is what the ticket-level
+view reports when no handoff exists, so "does this need a human?" has an
+answer either way.
+
+### The mode is never inferred from the channel
+
+Which continuation applies on which channel is Genesys' behaviour to state,
+and **it has not stated it**. So the mode is whatever the caller supplies,
+normalized into the four TigerCS-owned values, and stays `null` when nothing
+was supplied — displayed as *Not specified*, never defaulted to Callback. An
+unrecognized value is refused at the boundary rather than stored as Genesys
+vocabulary.
+
+### Genesys still owns the channel
+
+TigerCS implements **no** dialling, chat transport, WhatsApp or social sending,
+queue scheduling, agent-availability logic, or routing. Genesys owns all of it.
+The agent-facing actions are therefore only *Open Ticket*, *Start Handling*,
+*Complete* and *Cancel* — recording what a human is doing. There is
+deliberately no "Call" or "Reply on WhatsApp" button, because offering one
+would be a promise this system cannot keep.
+
+Nor is there a second assignment algorithm. If Genesys assigns an agent, TigerCS
+reflects it (`POST /api/genesys/conversations/handoff/assignment`). Until then
+`AssignedEmployeeId` is null and the status is `WaitingForAgent`. A Genesys
+agent id is **not** mapped to a TigerCS employee — no such mapping has been
+confirmed — so it is recorded as the external string it is.
+
+### Idempotency
+
+Genesys events get retried. Two database-level guarantees, both using only
+identifiers that actually exist:
+
+| Index | Guarantee |
+|---|---|
+| `UX_TicketAgentHandoffs_OpenPerInteraction` — unique on interaction `WHERE ResolvedAtUtc IS NULL` | At most one **outstanding** work item per conversation. A retried "human required" event answers `AlreadyRequested` with the same item. |
+| `UX_TicketAgentHandoffs_ExternalWorkItemId` — unique `WHERE NOT NULL` | The stronger key, when Genesys supplies its own id. Costs nothing while absent. |
+
+Filtering on *unresolved* rather than on the interaction is deliberate: a
+customer who needs a human again after the first piece of work was finished is
+a **new work item on the same ticket**, never a new ticket. Assignment and
+completion updates are idempotent in the domain itself — re-reporting the same
+agent does not move `AssignedAtUtc`, and starting work already in progress does
+not move `StartedAtUtc`.
+
+### Two statuses, deliberately separate
+
+| | Example |
+|---|---|
+| **Ticket** | Open → In Progress → … (the existing workflow) |
+| **Human follow-up** | WaitingForAgent → InProgress → Completed |
+
+**Completing the human work never closes, resolves or otherwise touches the
+ticket.** The customer whose chat was answered may still have an NOC workflow
+running for days. Cancelling does not touch it either. The two are rendered
+side by side in Ticket Details and never conflated.
+
+### The customer disconnects
+
+A customer closing the browser while waiting ends the *interaction*: the
+transcript is stored and `EndedAtUtc`/`EndReason` recorded, exactly as before.
+The ticket stays open, and the work item **stays outstanding and actionable** —
+the work list shows it with a "session ended" marker rather than dropping it.
+The live session ended; the business case did not.
+
+### The agent must not start from zero
+
+Opening the work item's ticket shows what was already collected: the customer,
+the units, the department, the channel, the full AI/bot transcript, the
+previous interactions, the previous-ticket history, and the classification
+state. The Conversation History section now also carries, beside the transcript
+that led to it, **why a human was asked for**, the follow-up mode, the work's
+status and any outcome note.
+
+`InteractionMessageSender` gained **`VirtualAgent`**, distinct from both `Agent`
+and `System`: an agent taking over a bot conversation must be able to tell what
+a human said from what the bot said, and a bot asking "Are you asking about an
+NOC for resale?" is conversation, not platform noise. A TigerCS-owned
+normalized value — no Genesys vocabulary is assumed.
+
+### Unclassified tickets still qualify
+
+A ticket can need a human while it is still Unclassified (§4a) — no category,
+no request type, no priority, no SLA period. **Classification is not a
+prerequisite for entering the work list**; frequently the agent classifies the
+ticket *because* they picked it up from there.
+
+### The agent work list
+
+`GET /api/pending-customer-interactions`, and the **Pending Interactions** page
+(deliberately not "Callback List"). Longest wait first, scoped by exactly the
+same visible-department rule as the ticket queue. Columns: status, ticket
+number, customer, mobile, channel, follow-up mode, department, waiting since,
+agent, action.
+
+
 ## 5. What is deliberately **not** built
 
 No Genesys API endpoint, OAuth client, webhook signature scheme, event-topic
@@ -303,8 +464,9 @@ real host.
 | **`GenesysQueueMappings`** (new) | Queue → Department configuration. **No rows seeded.** |
 | `Tickets.CategoryId` → **nullable** | The Unclassified phase (§4a). Existing rows are unaffected — every ticket created before this phase keeps its category. |
 | `Tickets.PriorityId` → **nullable** | Same reason (§4a): an unread inquiry has no judged urgency. Existing rows keep their priority. `TicketSlaInstances.PriorityId` stays NOT NULL. |
+| **`TicketAgentHandoffs`** (new) | Pending human work on any channel (§4b), with two filtered unique indexes for idempotency. |
 
-Migration: `20260910073153_AddGenesysIntegration`. No existing interaction
+Migration: `20260910080219_AddGenesysIntegration`. No existing interaction
 model was replaced or duplicated — `TicketInteraction` was extended.
 
 ---
@@ -324,3 +486,9 @@ is finished.
 8. **Agent identity** — is an agent email/extension reliably present, and should Genesys agents be mapped to TigerCS employees? (Today agent id/name are recorded as external strings only.)
 9. **Website chat form** — confirmation that the department choice, name, phone, email, tower and unit are all delivered with the conversation start.
 10. **Sandbox availability** for integration testing.
+11. **Human-handoff events** — does Genesys emit an event when routing or a virtual agent decides a human is needed, and another when an agent takes it? Both endpoints exist; the trigger on Genesys' side is unconfirmed.
+12. **Follow-up behaviour per channel** — what continuation Genesys actually performs on each channel (callback, chat resume, reply in thread, live takeover), and whether it can resume a chat at all after the customer disconnected. Nothing is assumed; the mode is stored only when stated.
+13. **Routing-task / work-item identifiers** — does Genesys expose a stable id for a queued piece of human work? If so it becomes the stronger idempotency key. **None is invented.**
+14. **Agent identity mapping** — should Genesys agent ids map to TigerCS employees? Today a Genesys agent id is recorded as an external string and never resolved to an employee.
+15. **Escalation reason vocabulary** — does the virtual agent supply a structured reason for handing over, or only free text? Stored as free text until a vocabulary is confirmed.
+16. **Bot-authored transcript lines** — how Genesys labels a virtual agent's messages, so they map to the `VirtualAgent` sender rather than being flattened into `System`.

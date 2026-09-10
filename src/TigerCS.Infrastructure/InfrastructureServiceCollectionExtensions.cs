@@ -228,6 +228,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IRequestTypeAssignmentRuleRepository, RequestTypeAssignmentRuleRepository>();
         services.AddScoped<ITicketPendingRecordRepository, TicketPendingRecordRepository>();
         services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
+        services.AddScoped<ITicketAgentHandoffRepository, TicketAgentHandoffRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
 
         // Workflow/Automation (phase 3) — approvals, approval requirements,
@@ -261,8 +262,10 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IGenesysConversationRepository, GenesysConversationRepository>();
         services.AddScoped<GenesysInquiryIngestionAppService>();
         services.AddScoped<GenesysConversationEndAppService>();
+        services.AddScoped<GenesysAgentHandoffAppService>();
         services.AddScoped<TicketInteractionQueryAppService>();
         services.AddScoped<TicketClassificationAppService>();
+        services.AddScoped<AgentHandoffAppService>();
 
         // Administration / Workflow Designer phase — SystemAdministrator-only
         // endpoints compose these over the existing services above.

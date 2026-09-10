@@ -6,6 +6,8 @@
         ("dashboard", "Dashboard", "/Dashboard"),
         ("customers", "Customers", "/Customers"),
         ("queue", "Queue", "/Tickets"),
+        // Not "Callbacks": most of what waits here is chat, WhatsApp or social.
+        ("pending", "Pending Interactions", "/PendingCustomerInteractions"),
         ("my", "My Tickets", currentUser is null ? "/Tickets" : $"/Tickets?ownerEmployeeId={currentUser.EmployeeId}"),
         ("closed", "Closed", "/Tickets?ticketStatus=Closed"),
     ];

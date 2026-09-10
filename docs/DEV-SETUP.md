@@ -279,6 +279,13 @@ PUT/POST /api/admin/genesys/queue-mappings
 An inquiry whose queue is unmapped is refused with a `422` naming the gap — it
 is never routed to a guessed department.
 
+Nothing configures **pending human work** either. Genesys reports that an
+interaction needs a human agent (`POST /api/genesys/conversations/handoff`) on
+whatever channel it happened, and TigerCS records it as a work item on the
+existing ticket. Agents see it under **Pending Interactions**. TigerCS performs
+no dialling, chat transport, WhatsApp/social sending or queue routing — Genesys
+owns all of that.
+
 Nothing configures a **category** or a **priority**. A Genesys ticket is
 created *Unclassified* — `CategoryId`, `RequestTypeId` and `PriorityId` all
 `NULL`, `SlaState = NotApplicable` — because at pick-up nobody has read the

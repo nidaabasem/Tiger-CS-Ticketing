@@ -126,6 +126,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketInteractionMessage> TicketInteractionMessages => Set<TicketInteractionMessage>();
 
+    public DbSet<TicketAgentHandoff> TicketAgentHandoffs => Set<TicketAgentHandoff>();
+
     public DbSet<GenesysQueueMapping> GenesysQueueMappings => Set<GenesysQueueMapping>();
 
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
@@ -183,6 +185,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketPendingRecordConfiguration());
         builder.ApplyConfiguration(new TicketInteractionConfiguration());
         builder.ApplyConfiguration(new TicketInteractionMessageConfiguration());
+        builder.ApplyConfiguration(new TicketAgentHandoffConfiguration());
         builder.ApplyConfiguration(new GenesysQueueMappingConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
