@@ -40,7 +40,7 @@ ticket.
 ```
 
 There is **no per-channel ticket-creation code**. Every channel posts the same
-`POST /api/genesys/inquiries` body and runs the same
+`POST /api/genesys/tickets` body and runs the same
 `GenesysInquiryIngestionAppService`.
 
 ### The phone rule
@@ -317,7 +317,7 @@ deliberately no "Call" or "Reply on WhatsApp" button, because offering one
 would be a promise this system cannot keep.
 
 Nor is there a second assignment algorithm. If Genesys assigns an agent, TigerCS
-reflects it (`POST /api/genesys/conversations/handoff/assignment`). Until then
+reflects it (`PATCH /api/genesys/tickets/{ticketId}` with `handoff.assignedAgentId`). Until then
 `AssignedEmployeeId` is null and the status is `WaitingForAgent`. A Genesys
 agent id is **not** mapped to a TigerCS employee — no such mapping has been
 confirmed — so it is recorded as the external string it is.
@@ -390,6 +390,69 @@ number, customer, mobile, channel, follow-up mode, department, waiting since,
 agent, action.
 
 
+## 4c. The three externally consumable contracts
+
+Genesys asked for exactly three integration capabilities. The API surface is
+exactly those three — nothing on `api/genesys` beyond them:
+
+| # | Contract | Route |
+|---|---|---|
+| 1 | **Create Ticket**, any channel | `POST /api/genesys/tickets` |
+| 2 | **Customer lookup** on call pickup | `GET /api/genesys/customers/lookup?phoneNumber=` |
+| 3 | **Update Ticket** | `PATCH /api/genesys/tickets/{ticketId}` |
+
+### What changed, and what did not
+
+Two of the three already existed functionally and were re-shaped, not rebuilt:
+
+- `POST /api/genesys/inquiries` → **`POST /api/genesys/tickets`**. A rename
+  only: the ingestion service, its idempotency, its Unclassified rule and its
+  lookup-never-a-gate rule are untouched. Genesys asked for a *Create Ticket*
+  API and the resource created is a ticket, so the route now says so and pairs
+  with the update route.
+- `POST /api/genesys/conversations/end` and the two
+  `conversations/handoff*` routes → folded into **one `PATCH`**. Nothing was
+  reimplemented: `GenesysTicketUpdateAppService` is a facade that calls
+  `GenesysConversationEndAppService` and `GenesysAgentHandoffAppService`, so
+  every rule (write-once end, transcript validation before any write, at most
+  one open handoff per interaction) still lives in exactly one place. Three
+  routes for one integration concept made the external surface wider than the
+  integration is.
+
+Only contract 2 is genuinely new, and it too is composition:
+`GenesysCustomerLookupAppService` calls `CustomerSearchAppService` — the exact
+service the New Ticket wizard and Customer Workspace call — plus the existing
+phone-keyed linked-ticket lookup that Customer History's unverified path
+already uses. **No second CRM integration exists**, and Genesys never reaches
+Tiger CRM, PACT or Tasleeh directly.
+
+The agent-facing work list (`/api/pending-customer-interactions`) is
+unaffected: it is a TigerCS UI surface, not something Genesys consumes.
+
+### What Genesys cannot reach
+
+The update contract carries conversation facts only — agent context, end time
+and reason, transcript, human-handoff state. It has **no field** for category,
+request type, priority, ticket status, owner, department, resolution or
+closure. Those move through their own TigerCS operations, with their own
+authorization, workflow and SLA consequences. A field absent from the contract
+is a field Genesys cannot reach, and `ticketStatus` is echoed on every update
+response as the standing proof that ending a conversation did not close the
+ticket.
+
+### The call-pickup sequence
+
+```
+Ringing            → nothing at all (no lookup, no ticket)
+Agent picks up     → GET  /api/genesys/customers/lookup?phoneNumber=…
+                     → customer, units, and their existing tickets (open first)
+                     → found:false is a normal 200, never a 404
+                   → POST /api/genesys/tickets
+                     → one ticket, Unclassified, whatever the lookup said
+Conversation runs  → PATCH /api/genesys/tickets/{id}   (handoff, agent, end)
+```
+
+
 ## 5. What is deliberately **not** built
 
 No Genesys API endpoint, OAuth client, webhook signature scheme, event-topic
@@ -409,7 +472,7 @@ application and domain behind it do not move.
 
 ## 6. Conversation end and transcripts
 
-`POST /api/genesys/conversations/end` is called when a conversation ends for
+`PATCH /api/genesys/tickets/{ticketId}` with an `ended` block is called when a conversation ends for
 **any** reason — agent ended it, customer closed the browser, connection
 dropped, Genesys timed it out.
 

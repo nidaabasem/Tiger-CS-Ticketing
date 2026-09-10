@@ -71,10 +71,10 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
 
         // Genesys integration phase 1 — the inbound boundary and the ticket's
         // conversation-history read.
-        ["POST /api/genesys/inquiries"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
-        ["POST /api/genesys/conversations/end"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
-        ["POST /api/genesys/conversations/handoff"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
-        ["POST /api/genesys/conversations/handoff/assignment"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
+        // The three Genesys contracts.
+        ["POST /api/genesys/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["PATCH /api/genesys/tickets/{ticketId:long}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
         ["GET /api/pending-customer-interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/start"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/complete"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),

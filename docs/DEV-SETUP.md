@@ -240,8 +240,9 @@ deliberately enabled:
 "Genesys": { "Enabled": false }
 ```
 
-With `Enabled: false`, `POST /api/genesys/inquiries` and
-`POST /api/genesys/conversations/end` answer `503` and write nothing.
+With `Enabled: false`, all three Genesys endpoints (`POST /api/genesys/tickets`,
+`GET /api/genesys/customers/lookup`, `PATCH /api/genesys/tickets/{ticketId}`)
+answer `503` and write nothing.
 **Everything else is unaffected** — manual/Face-to-Face ticket creation, the
 New Ticket wizard, and every existing flow behave exactly as before, because
 nothing in the normal ticketing path reads the flag.
@@ -280,7 +281,8 @@ An inquiry whose queue is unmapped is refused with a `422` naming the gap — it
 is never routed to a guessed department.
 
 Nothing configures **pending human work** either. Genesys reports that an
-interaction needs a human agent (`POST /api/genesys/conversations/handoff`) on
+interaction needs a human agent (`PATCH /api/genesys/tickets/{ticketId}` with a
+`handoff` block) on
 whatever channel it happened, and TigerCS records it as a work item on the
 existing ticket. Agents see it under **Pending Interactions**. TigerCS performs
 no dialling, chat transport, WhatsApp/social sending or queue routing — Genesys

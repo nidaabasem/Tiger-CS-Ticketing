@@ -125,10 +125,12 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // Genesys integration phase 1 — the inbound boundary (one normalized
         // ingestion endpoint every channel converges on, plus conversation
         // end) and the ticket's conversation-history read.
-        "POST /api/genesys/inquiries",
-        "POST /api/genesys/conversations/end",
-        "POST /api/genesys/conversations/handoff",
-        "POST /api/genesys/conversations/handoff/assignment",
+        // The three externally consumable Genesys contracts — create, look
+        // up, update. Nothing else on api/genesys: everything Genesys does to
+        // a ticket after creating it goes through the one PATCH.
+        "POST /api/genesys/tickets",
+        "PATCH /api/genesys/tickets/{ticketId}",
+        "GET /api/genesys/customers/lookup",
         "GET /api/pending-customer-interactions",
         "POST /api/pending-customer-interactions/{handoffId}/start",
         "POST /api/pending-customer-interactions/{handoffId}/complete",

@@ -55,7 +55,7 @@ public sealed class GenesysDisabledEndpointsTests : IDisposable
         var departmentId = await _factory.CreateDepartmentAsync("Disabled CS " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
 
         var response = await client.PostAsJsonAsync(
-            "/api/genesys/inquiries",
+            "/api/genesys/tickets",
             new GenesysInquiryRequest("conv-flag-off", "Phone", "Answered", CustomerPhone: "+971500000001", DepartmentId: departmentId));
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
@@ -63,14 +63,28 @@ public sealed class GenesysDisabledEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task GenesysConversationEnd_IsRefused()
+    public async Task GenesysTicketUpdate_IsRefused()
     {
         var client = await CreateAgentClientAsync();
 
-        var response = await client.PostAsJsonAsync(
-            "/api/genesys/conversations/end", new GenesysConversationEndRequest("conv-flag-off", DateTime.UtcNow, "AgentDisconnect"));
+        var response = await client.PatchAsJsonAsync(
+            "/api/genesys/tickets/1",
+            new GenesysTicketUpdateRequest(
+                "conv-flag-off",
+                Ended: new GenesysConversationEndPart(DateTime.UtcNow, "AgentDisconnect")));
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GenesysCustomerLookup_IsRefused()
+    {
+        var client = await CreateAgentClientAsync();
+
+        var response = await client.GetAsync("/api/genesys/customers/lookup?phoneNumber=%2B971500000001");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Genesys:Enabled is false", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]

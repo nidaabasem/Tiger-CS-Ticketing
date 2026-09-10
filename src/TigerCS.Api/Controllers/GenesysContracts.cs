@@ -116,52 +116,72 @@ public sealed record GenesysConversationEndResponse(
     int TranscriptMessageCount);
 
 /// <summary>
-/// Genesys reporting that an interaction needs a <b>human agent</b> — on any
-/// channel, not only phone.
+/// The one Genesys update body. Every part is optional and independently
+/// idempotent — send only what changed, and resend freely.
+///
+/// <para>
+/// <b>Deliberately narrow.</b> There is no field for category, request type,
+/// priority, status, owner, department, resolution or closure: Genesys owns
+/// the conversation, TigerCS owns the ticket's business state, and a field
+/// absent from this contract is one Genesys cannot reach.
+/// </para>
 /// </summary>
-/// <param name="ConversationId">The conversation needing a human. Its ticket already exists; this never creates one.</param>
-/// <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait for one.</param>
-/// <param name="Mode">How the human is expected to continue: "Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
-/// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note). Free text.</param>
-/// <param name="AgentId">The Genesys agent already handling it, when there is one.</param>
-/// <param name="AgentName">That agent's display name.</param>
-/// <param name="WorkItemId">Genesys' own routing-task/work-item id, if it supplies one — used as the stronger idempotency key. Omit it if Genesys has none.</param>
-/// <param name="RequestedAtUtc">When Genesys decided a human was needed. Defaults to now.</param>
-public sealed record GenesysHandoffRequest(
+/// <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
+/// <param name="AgentId">The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</param>
+/// <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
+/// <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
+/// <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
+public sealed record GenesysTicketUpdateRequest(
     string ConversationId,
+    string? AgentId = null,
+    string? AgentName = null,
+    GenesysConversationEndPart? Ended = null,
+    GenesysHandoffPart? Handoff = null);
+
+/// <summary>The conversation has finished — for any reason: the agent ended it, the customer closed the browser, the connection dropped, Genesys timed it out.</summary>
+/// <param name="EndedAtUtc">When it ended. Defaults to now.</param>
+/// <param name="EndReason">Why, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout"). Free text — no vocabulary is confirmed.</param>
+/// <param name="Transcript">The conversation in order, as far as available. Resending an already-stored transcript stores nothing twice.</param>
+public sealed record GenesysConversationEndPart(
+    DateTime? EndedAtUtc = null,
+    string? EndReason = null,
+    IReadOnlyList<GenesysTranscriptMessageRequest>? Transcript = null);
+
+/// <summary>Human-agent state for the conversation, on any channel. A callback is one possible <paramref name="Mode"/>, never the concept.</summary>
+/// <param name="Required">True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</param>
+/// <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</param>
+/// <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
+/// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
+/// <param name="WorkItemId">Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</param>
+/// <param name="AssignedAgentId">Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</param>
+public sealed record GenesysHandoffPart(
+    bool Required = false,
     bool AgentAvailable = false,
     string? Mode = null,
     string? Reason = null,
-    string? AgentId = null,
-    string? AgentName = null,
     string? WorkItemId = null,
-    DateTime? RequestedAtUtc = null);
+    string? AssignedAgentId = null);
 
-/// <summary>Genesys reporting which agent has taken a conversation's pending human work.</summary>
-/// <param name="ConversationId">The conversation whose pending work this concerns.</param>
-/// <param name="AgentId">Genesys' agent identifier. Required — an assignment must name someone.</param>
-/// <param name="AgentName">That agent's display name.</param>
-/// <param name="AssignedAtUtc">When the assignment happened. Defaults to now.</param>
-public sealed record GenesysHandoffAssignmentRequest(
-    string ConversationId,
-    string? AgentId = null,
-    string? AgentName = null,
-    DateTime? AssignedAtUtc = null);
-
-/// <summary>What the handoff endpoints answer — always naming the one work item, so a retry and the original call are indistinguishable.</summary>
-/// <param name="Outcome">"HandoffRecorded", "AlreadyRequested" or "AssignmentRecorded".</param>
+/// <summary>What the update endpoint answers. <paramref name="TicketStatus"/> is echoed deliberately: it is the proof that ending a conversation did not close the ticket.</summary>
+/// <param name="Outcome">"Applied".</param>
 /// <param name="ConversationId">The conversation, echoed back.</param>
-/// <param name="TicketAgentHandoffId">The one pending-work item for this conversation.</param>
-/// <param name="TicketId">The ticket it belongs to — never a new one.</param>
-/// <param name="TicketNumber">That ticket's number.</param>
-/// <param name="Status">The work item's TigerCS status: WaitingForAgent, Assigned, InProgress, Completed or Cancelled.</param>
-public sealed record GenesysHandoffResponse(
+/// <param name="TicketId">The ticket.</param>
+/// <param name="TicketNumber">Its number.</param>
+/// <param name="TicketStatus">Its status — unchanged by anything in this contract.</param>
+/// <param name="ConversationEnded">Whether the interaction is now recorded as ended.</param>
+/// <param name="TranscriptMessageCount">How many transcript messages the interaction holds after this update.</param>
+/// <param name="HandoffStatus">The pending human work's status when there is any: WaitingForAgent, Assigned, InProgress, Completed or Cancelled. Null when this conversation never needed a human.</param>
+/// <param name="TicketAgentHandoffId">That work item's id, when there is one.</param>
+public sealed record GenesysTicketUpdateResponse(
     string Outcome,
     string ConversationId,
-    long? TicketAgentHandoffId,
-    long? TicketId,
-    string? TicketNumber,
-    string? Status);
+    long TicketId,
+    string TicketNumber,
+    string TicketStatus,
+    bool ConversationEnded,
+    int TranscriptMessageCount,
+    string? HandoffStatus,
+    long? TicketAgentHandoffId);
 
 /// <summary>
 /// Translates the transport records above into the normalized application
@@ -213,21 +233,27 @@ internal static class GenesysContractMapper
         return true;
     }
 
-    internal static GenesysHandoffRequestDto Map(GenesysHandoffRequest request) => new(
-        request.ConversationId,
-        request.AgentAvailable,
-        request.Mode,
-        request.Reason,
-        request.AgentId,
-        request.AgentName,
-        request.WorkItemId,
-        request.RequestedAtUtc);
-
-    internal static GenesysHandoffAssignmentDto Map(GenesysHandoffAssignmentRequest request) => new(
+    internal static GenesysTicketUpdateDto Map(GenesysTicketUpdateRequest request) => new(
         request.ConversationId,
         request.AgentId,
         request.AgentName,
-        request.AssignedAtUtc);
+        request.Ended is null
+            ? null
+            : new GenesysConversationEndUpdateDto(
+                request.Ended.EndedAtUtc,
+                request.Ended.EndReason,
+                request.Ended.Transcript?
+                    .Select(m => new GenesysTranscriptMessageDto(m.Sender, m.SentAtUtc, m.Body, m.SenderName, m.SenderId, m.ExternalMessageId))
+                    .ToList()),
+        request.Handoff is null
+            ? null
+            : new GenesysHandoffUpdateDto(
+                request.Handoff.Required,
+                request.Handoff.AgentAvailable,
+                request.Handoff.Mode,
+                request.Handoff.Reason,
+                request.Handoff.WorkItemId,
+                request.Handoff.AssignedAgentId));
 
     internal static GenesysConversationEndDto Map(GenesysConversationEndRequest request) => new(
         request.ConversationId,

@@ -76,6 +76,12 @@ public sealed class GenesysServiceFixture
     /// <summary>The agent-facing work list and its actions.</summary>
     public AgentHandoffAppService PendingWork { get; }
 
+    /// <summary>Genesys contract #2 — the call-pickup customer lookup.</summary>
+    public GenesysCustomerLookupAppService CustomerLookup { get; }
+
+    /// <summary>Genesys contract #3 — the one update facade.</summary>
+    public GenesysTicketUpdateAppService TicketUpdate { get; }
+
     public GenesysServiceFixture(bool enabled = true)
     {
         Options = new GenesysOptions { Enabled = enabled };
@@ -113,6 +119,11 @@ public sealed class GenesysServiceFixture
         var customerSearch = new CustomerSearchAppService(
             new CrmBuyerLookupAppService(CrmBuyers, NullLogger<CrmBuyerLookupAppService>.Instance), customerLookup);
 
+        // Contract #2: the call-pickup lookup, composed over exactly the same
+        // customer search the ingestion path uses — no second CRM path.
+        CustomerLookup = new GenesysCustomerLookupAppService(
+            Options, customerSearch, IntakeRecords, Tickets);
+
         Ingestion = new GenesysInquiryIngestionAppService(
             Options, Conversations, QueueMappings, Departments, Channels,
             Tickets, intakeRecordAppService, ticketCreationAppService, customerSearch, Audit, UnitOfWork);
@@ -137,6 +148,10 @@ public sealed class GenesysServiceFixture
 
         PendingWork = new AgentHandoffAppService(
             Handoffs, ticketQuery, UnitOfWork, Audit, TimeProvider.System);
+
+        // Contract #3: the one update facade over the two services above.
+        TicketUpdate = new GenesysTicketUpdateAppService(
+            Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff);
     }
 
     /// <summary>

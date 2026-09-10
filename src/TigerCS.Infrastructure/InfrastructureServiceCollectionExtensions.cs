@@ -263,6 +263,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GenesysInquiryIngestionAppService>();
         services.AddScoped<GenesysConversationEndAppService>();
         services.AddScoped<GenesysAgentHandoffAppService>();
+        services.AddScoped<GenesysTicketUpdateAppService>();
+        services.AddScoped<GenesysCustomerLookupAppService>();
         services.AddScoped<TicketInteractionQueryAppService>();
         services.AddScoped<TicketClassificationAppService>();
         services.AddScoped<AgentHandoffAppService>();
