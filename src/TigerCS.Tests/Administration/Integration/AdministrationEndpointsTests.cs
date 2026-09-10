@@ -513,7 +513,9 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
 
     /// <summary>
     /// Genesys routing configuration through the real host: the Queue →
-    /// Department mapping and the per-department Genesys ticket category.
+    /// Department mapping, which is the whole of it — a queue says which
+    /// department an inquiry belongs to and nothing about what the customer
+    /// wants, so there is no category configuration to administer.
     ///
     /// <para>
     /// Nothing here is seeded — the real Genesys queue ids are not known to
@@ -523,7 +525,7 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
     /// </para>
     /// </summary>
     [Fact]
-    public async Task GenesysRouting_QueueMappingsAndDepartmentSettings_ThroughTheRealHost()
+    public async Task GenesysRouting_QueueMappings_ThroughTheRealHost()
     {
         var (admin, _) = await CreateClientAsync(Roles.SystemAdministrator);
         var queueId = "queue-" + Guid.NewGuid().ToString("N")[..10];
@@ -562,29 +564,5 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.False(afterUpdate.IsActive);
         // The queue id is the identity and never changes.
         Assert.Equal(queueId, afterUpdate.QueueId);
-
-        // Department settings: the category must belong to that department.
-        var wrongDepartmentCategory = await admin.PutAsJsonAsync(
-            $"/api/admin/genesys/department-settings/{otherDepartmentId}",
-            new SaveGenesysDepartmentSettingsRequestDto(categoryId));
-        Assert.Equal(HttpStatusCode.BadRequest, wrongDepartmentCategory.StatusCode);
-        Assert.Contains("another department", await wrongDepartmentCategory.Content.ReadAsStringAsync());
-
-        var configured = await admin.PutAsJsonAsync(
-            $"/api/admin/genesys/department-settings/{departmentId}",
-            new SaveGenesysDepartmentSettingsRequestDto(categoryId));
-        Assert.Equal(HttpStatusCode.OK, configured.StatusCode);
-        var settings = await configured.Content.ReadFromJsonAsync<AdminGenesysDepartmentSettingsDto>();
-        Assert.Equal(categoryId, settings!.DefaultCategoryId);
-
-        // One row per department: saving again is an upsert, not a second row.
-        Assert.Equal(HttpStatusCode.OK,
-            (await admin.PutAsJsonAsync(
-                $"/api/admin/genesys/department-settings/{departmentId}",
-                new SaveGenesysDepartmentSettingsRequestDto(categoryId, IsActive: false))).StatusCode);
-        var listed = await ReadAsync<List<AdminGenesysDepartmentSettingsDto>>(
-            await admin.GetAsync("/api/admin/genesys/department-settings"));
-        var row = Assert.Single(listed, s => s.DepartmentId == departmentId);
-        Assert.False(row.IsActive);
     }
 }

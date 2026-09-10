@@ -42,26 +42,6 @@ public sealed class GenesysQueueMappingRepository(TigerCsDbContext dbContext) : 
         await dbContext.GenesysQueueMappings.AddAsync(mapping, cancellationToken);
 }
 
-public sealed class GenesysDepartmentSettingsRepository(TigerCsDbContext dbContext) : IGenesysDepartmentSettingsRepository
-{
-    public Task<GenesysDepartmentSettings?> GetByDepartmentIdAsync(int departmentId, CancellationToken cancellationToken = default) =>
-        dbContext.GenesysDepartmentSettings.FirstOrDefaultAsync(s => s.DepartmentId == departmentId, cancellationToken);
-
-    public async Task<IReadOnlyList<GenesysDepartmentSettings>> ListAsync(bool includeInactive, CancellationToken cancellationToken = default)
-    {
-        var query = dbContext.GenesysDepartmentSettings.AsQueryable();
-        if (!includeInactive)
-        {
-            query = query.Where(s => s.IsActive);
-        }
-
-        return await query.OrderBy(s => s.DepartmentId).ToListAsync(cancellationToken);
-    }
-
-    public async Task AddAsync(GenesysDepartmentSettings settings, CancellationToken cancellationToken = default) =>
-        await dbContext.GenesysDepartmentSettings.AddAsync(settings, cancellationToken);
-}
-
 /// <summary>
 /// Conversation-scoped reads/writes over the interaction and its transcript.
 /// The conversation lookup relies on the unique filtered index on

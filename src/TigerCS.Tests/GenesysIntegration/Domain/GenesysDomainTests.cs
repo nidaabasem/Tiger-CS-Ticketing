@@ -144,16 +144,4 @@ public class GenesysDomainTests
         Assert.Equal(Now.AddDays(1), mapping.UpdatedAtUtc);
         Assert.Equal(Now, mapping.CreatedAtUtc);
     }
-
-    [Fact]
-    public void DepartmentSettings_RequireRealReferences()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new GenesysDepartmentSettings(0, 1, Now));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new GenesysDepartmentSettings(1, 0, Now));
-
-        var settings = new GenesysDepartmentSettings(3, 7, Now);
-        Assert.Equal(3, settings.DepartmentId);
-        Assert.Equal(7, settings.DefaultCategoryId);
-        Assert.True(settings.IsActive);
-    }
 }

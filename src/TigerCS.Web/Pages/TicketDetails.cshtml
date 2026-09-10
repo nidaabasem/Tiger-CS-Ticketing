@@ -76,7 +76,7 @@ else
                     <div class="ticket-header__meta">
                         <span><strong>Assigned Department:</strong> @TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</span>
                         <span><strong>Assigned To:</strong> @TicketDisplay.AssignedToLabel(t.CurrentOwnerEmployeeId, Model.OwnerName, t.CurrentDepartmentId, Model.DepartmentName)</span>
-                        <span><strong>Category:</strong> #@t.CategoryId</span>
+                        <span><strong>Category:</strong> @(t.CategoryId is int hdrCat ? $"#{hdrCat}" : "Unclassified")</span>
                     </div>
                     <div class="ticket-header__badges">
                         <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(t.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</span>
@@ -373,7 +373,13 @@ else
                         <div class="facts-row"><dt>Ticket number</dt><dd>@t.TicketNumber</dd></div>
                         <div class="facts-row"><dt>Status</dt><dd>@TicketDisplay.TicketStatusLabel(t.TicketStatus)</dd></div>
                         <div class="facts-row"><dt>Priority</dt><dd>@TicketDisplay.PriorityLabel(t.PriorityId)</dd></div>
-                        <div class="facts-row"><dt>Category</dt><dd class="id-fallback">#@t.CategoryId</dd></div>
+                        @* An unclassified ticket has no category at all — say so plainly
+                           rather than rendering an empty id. It is a real state, not
+                           missing data. *@
+                        <div class="facts-row">
+                            <dt>Category</dt>
+                            <dd class="@(t.CategoryId is null ? "" : "id-fallback")">@(t.CategoryId is int catId ? $"#{catId}" : "Unclassified")</dd>
+                        </div>
                         <div class="facts-row"><dt>Assigned Department</dt><dd>@TicketDisplay.AssignedDepartmentLabel(t.CurrentDepartmentId, Model.DepartmentName)</dd></div>
                         @if (t.OriginatingChannelId is not null)
                         {
@@ -630,7 +636,7 @@ else
                                         {
                                             <tr>
                                                 <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
-                                                <td><span class="id-fallback">Category #@row.CategoryId</span></td>
+                                                <td><span class="id-fallback">@(row.CategoryId is int rowCat ? $"Category #{rowCat}" : "Unclassified")</span></td>
                                                 <td>@TicketDisplay.AssignedDepartmentLabel(row.CurrentDepartmentId, Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId))</td>
                                                 <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
                                                 <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>

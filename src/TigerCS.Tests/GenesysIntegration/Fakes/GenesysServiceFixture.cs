@@ -44,6 +44,9 @@ public sealed class GenesysServiceFixture
     /// </summary>
     public TicketCreationAppService ManualTicketCreation { get; }
 
+    /// <summary>The Unclassified → Classified transition an agent performs after reading the inquiry.</summary>
+    public TicketClassificationAppService Classification { get; }
+
     public FakeChannelRepository Channels { get; } = new FakeChannelRepository().SeedWellKnown();
     public FakeDepartmentRepository Departments { get; } = new();
     public FakeCategoryRepository Categories { get; } = new();
@@ -51,7 +54,6 @@ public sealed class GenesysServiceFixture
     public FakeIntakeRecordRepository IntakeRecords { get; } = new();
     public FakeTicketInteractionRepository Interactions { get; } = new();
     public FakeGenesysQueueMappingRepository QueueMappings { get; } = new();
-    public FakeGenesysDepartmentSettingsRepository DepartmentSettings { get; } = new();
     public FakeGenesysConversationRepository Conversations { get; }
     public FakeAuditEntryWriter Audit { get; } = new();
     public FakeTicketingUnitOfWork UnitOfWork { get; } = new();
@@ -97,8 +99,13 @@ public sealed class GenesysServiceFixture
             new CrmBuyerLookupAppService(CrmBuyers, NullLogger<CrmBuyerLookupAppService>.Instance), customerLookup);
 
         Ingestion = new GenesysInquiryIngestionAppService(
-            Options, Conversations, QueueMappings, DepartmentSettings, Departments, Categories, Channels,
+            Options, Conversations, QueueMappings, Departments, Channels,
             Tickets, intakeRecordAppService, ticketCreationAppService, customerSearch, Audit, UnitOfWork);
+
+        Classification = new TicketClassificationAppService(
+            Tickets, Categories, new FakePriorityRepository(), new FakeRequestTypeRepository(),
+            new FakeWorkflowTemplateRepository(), DepartmentAssignments, StatusHistory, UnitOfWork, Audit,
+            sla.DueDates, TimeProvider.System);
 
         ConversationEnd = new GenesysConversationEndAppService(
             Options, Conversations, Tickets, UnitOfWork, Audit, TimeProvider.System);
@@ -111,14 +118,20 @@ public sealed class GenesysServiceFixture
     }
 
     /// <summary>
-    /// Creates a department with an active category AND configures it for
-    /// Genesys — the setup a real deployment does through Administration.
+    /// A department that can receive Genesys inquiries, plus one real
+    /// category of that department for the classification step.
+    ///
+    /// <para>
+    /// The category is <b>not</b> configuration the integration reads — the
+    /// integration has no category configuration at all any more. It exists
+    /// here only so a test can classify the ticket afterwards, exactly as an
+    /// agent would.
+    /// </para>
     /// </summary>
     public (Department Department, Category Category) SeedGenesysDepartment(string name, string code)
     {
         var department = Departments.AddDepartment(name, code);
-        var category = Categories.Seed(department.DepartmentId, $"{name} General Inquiry");
-        DepartmentSettings.Configure(department.DepartmentId, category.CategoryId);
+        var category = Categories.Seed(department.DepartmentId, $"{name} Enquiry");
         return (department, category);
     }
 

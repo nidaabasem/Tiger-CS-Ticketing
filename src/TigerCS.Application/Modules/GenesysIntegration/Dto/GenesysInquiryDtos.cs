@@ -170,9 +170,6 @@ public enum GenesysIngestionOutcome
     /// <summary>No department could be resolved: the customer selected none, and the queue is unmapped (or names an inactive/unknown department).</summary>
     DepartmentNotResolved,
 
-    /// <summary>The resolved department has no active Genesys ticket category configured — an administration gap, never a guessed category.</summary>
-    DepartmentNotConfiguredForGenesys,
-
     /// <summary>The normalized channel does not resolve to a configured, active <c>Channel</c> row.</summary>
     ChannelNotConfigured,
 

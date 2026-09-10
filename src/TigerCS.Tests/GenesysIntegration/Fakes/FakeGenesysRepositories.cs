@@ -47,39 +47,6 @@ public sealed class FakeGenesysQueueMappingRepository : IGenesysQueueMappingRepo
     }
 }
 
-public sealed class FakeGenesysDepartmentSettingsRepository : IGenesysDepartmentSettingsRepository
-{
-    private readonly List<GenesysDepartmentSettings> _settings = [];
-    private int _nextId = 1;
-
-    public IReadOnlyList<GenesysDepartmentSettings> All => _settings;
-
-    public GenesysDepartmentSettings Add(GenesysDepartmentSettings settings)
-    {
-        typeof(GenesysDepartmentSettings).GetProperty(nameof(GenesysDepartmentSettings.GenesysDepartmentSettingsId))!
-            .SetValue(settings, _nextId++);
-        _settings.Add(settings);
-        return settings;
-    }
-
-    /// <summary>Configures a department's Genesys ticket category — the common test setup.</summary>
-    public GenesysDepartmentSettings Configure(int departmentId, int defaultCategoryId, bool isActive = true) =>
-        Add(new GenesysDepartmentSettings(departmentId, defaultCategoryId, DateTime.UtcNow, isActive));
-
-    public Task<GenesysDepartmentSettings?> GetByDepartmentIdAsync(int departmentId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_settings.FirstOrDefault(s => s.DepartmentId == departmentId));
-
-    public Task<IReadOnlyList<GenesysDepartmentSettings>> ListAsync(bool includeInactive, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<GenesysDepartmentSettings>>(
-            _settings.Where(s => includeInactive || s.IsActive).OrderBy(s => s.DepartmentId).ToList());
-
-    public Task AddAsync(GenesysDepartmentSettings settings, CancellationToken cancellationToken = default)
-    {
-        Add(settings);
-        return Task.CompletedTask;
-    }
-}
-
 /// <summary>
 /// Conversation-scoped view over the SAME interaction store the ticket
 /// creation path writes to (<see cref="FakeTicketInteractionRepository"/>) —

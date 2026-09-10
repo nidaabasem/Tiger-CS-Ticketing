@@ -164,7 +164,7 @@ else
                                             {
                                                 <tr>
                                                     <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
-                                                    <td><span class="id-fallback">Category #@row.CategoryId</span></td>
+                                                    <td><span class="id-fallback">@(row.CategoryId is int rowCat ? $"Category #{rowCat}" : "Unclassified")</span></td>
                                                     <td>@TicketDisplay.AssignedDepartmentLabel(row.CurrentDepartmentId, Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId))</td>
                                                     <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
                                                     <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>

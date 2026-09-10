@@ -258,11 +258,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<GenesysOptions>>().Value);
 
         services.AddScoped<IGenesysQueueMappingRepository, GenesysQueueMappingRepository>();
-        services.AddScoped<IGenesysDepartmentSettingsRepository, GenesysDepartmentSettingsRepository>();
         services.AddScoped<IGenesysConversationRepository, GenesysConversationRepository>();
         services.AddScoped<GenesysInquiryIngestionAppService>();
         services.AddScoped<GenesysConversationEndAppService>();
         services.AddScoped<TicketInteractionQueryAppService>();
+        services.AddScoped<TicketClassificationAppService>();
 
         // Administration / Workflow Designer phase — SystemAdministrator-only
         // endpoints compose these over the existing services above.

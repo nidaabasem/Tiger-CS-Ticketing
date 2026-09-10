@@ -151,13 +151,16 @@ public sealed class TicketCreationAppService(
         // ManualUnitNumber are accepted and stored as optional pass-through
         // fields whenever a caller does supply them.
 
-        var routing = await ResolveRoutingAsync(request.CategoryId, request.PriorityId, intakeRecord.DepartmentId, cancellationToken);
+        var routing = await ResolveRoutingAsync(
+            request.CategoryId, request.DepartmentId, request.PriorityId, intakeRecord.DepartmentId, cancellationToken);
         if (routing.Failure is { } routingFailure)
         {
             return TicketCreationResult.Failure(routingFailure);
         }
 
-        var category = routing.Category!;
+        // Null exactly when the ticket is being created Unclassified — see
+        // ResolveRoutingAsync.
+        var category = routing.Category;
         var priority = routing.Priority!;
         var department = routing.Department!;
 
@@ -175,7 +178,12 @@ public sealed class TicketCreationAppService(
                 return TicketCreationResult.Failure(TicketCreationOutcome.RequestTypeNotFound);
             }
 
-            if (requestType.DepartmentId != category.DepartmentId)
+            // Compared against the RESOLVED department rather than the
+            // category's, so the check reads the same on the Unclassified
+            // path (where there is no category, and the department was
+            // supplied directly). For a classified ticket the two are the
+            // same value by construction.
+            if (requestType.DepartmentId != department.DepartmentId)
             {
                 return TicketCreationResult.Failure(TicketCreationOutcome.RequestTypeDepartmentMismatch);
             }
@@ -210,7 +218,17 @@ public sealed class TicketCreationAppService(
         try
         {
             var ticketNumber = await GenerateTicketNumberAsync(department, now, cancellationToken);
-            ticket = (unitReference, contactReference, hasCrmBuyerMatch, hasExternalVerification) switch
+            ticket = category is null
+                // Unclassified: nobody has read the request yet, so no
+                // category — and therefore no SLA clock — is invented. The
+                // customer-identification variants below all presuppose a
+                // classified ticket; an unclassified one carries whatever the
+                // channel collected as the manual project/unit snapshot, the
+                // same as CreateUnverified.
+                ? Ticket.CreateUnclassified(
+                    ticketNumber, department.DepartmentId, priority.PriorityId, request.RequestSummary, now,
+                    request.ManualProjectName, request.ManualUnitNumber)
+                : (unitReference, contactReference, hasCrmBuyerMatch, hasExternalVerification) switch
             {
                 (not null, not null, _, _) => Ticket.CreateVerified(
                     ticketNumber, category.DepartmentId, unitReference!.UnitReferenceId, contactReference!.ContactReferenceId,
@@ -309,7 +327,19 @@ public sealed class TicketCreationAppService(
         // Ticket.CreateUnverified's remarks); `now` is both the ticket's
         // CreatedAtUtc and the SLA clock-start event (ISSUE-001 Option C,
         // SLA-Architecture.md §1/§2).
-        await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+        //
+        // The one exception, and the reason it is an exception: the SLA
+        // policy is selected by PriorityId (SlaDueDateService.ComputeDueDates
+        // -> SlaPolicies keyed on priority). An Unclassified ticket's
+        // priority is provisional — nobody has read the request — so opening
+        // a period here would measure against a target no one chose and
+        // breach against a deadline no one set. TicketClassificationAppService
+        // opens the period the moment a real classification exists, backdated
+        // to this same CreatedAtUtc so classifying late never buys time.
+        if (ticket.IsClassified)
+        {
+            await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+        }
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "Create", "Ticket", ticket.TicketId.ToString(),
@@ -405,9 +435,45 @@ public sealed class TicketCreationAppService(
     /// this last case only fires against a request built outside that UI.
     /// </summary>
     private async Task<RoutingResolution> ResolveRoutingAsync(
-        int categoryId, byte priorityId, int? intakeDepartmentId, CancellationToken cancellationToken)
+        int? categoryId, int? requestedDepartmentId, byte priorityId, int? intakeDepartmentId, CancellationToken cancellationToken)
     {
-        var category = await categoryRepository.GetByIdAsync(categoryId, cancellationToken);
+        var priority = await priorityRepository.GetByIdAsync(priorityId, cancellationToken);
+        if (priority is null)
+        {
+            return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
+        }
+
+        // The Unclassified path: no category has been chosen because nobody
+        // has read the request yet, so the department is supplied directly
+        // and is the ONLY thing that places the ticket. Nothing is inferred
+        // and no category stands in.
+        if (categoryId is null)
+        {
+            if (requestedDepartmentId is not { } unclassifiedDepartmentId)
+            {
+                return RoutingResolution.Failed(TicketCreationOutcome.DepartmentOrCategoryRequired);
+            }
+
+            var unclassifiedDepartment = await departmentRepository.GetByIdAsync(unclassifiedDepartmentId, cancellationToken);
+            if (unclassifiedDepartment is null)
+            {
+                return RoutingResolution.Failed(TicketCreationOutcome.DepartmentNotFound);
+            }
+
+            if (!unclassifiedDepartment.IsActive)
+            {
+                return RoutingResolution.Failed(TicketCreationOutcome.DepartmentInactive);
+            }
+
+            if (intakeDepartmentId is { } intakeDepartment && intakeDepartment != unclassifiedDepartmentId)
+            {
+                return RoutingResolution.Failed(TicketCreationOutcome.CategoryDepartmentMismatch);
+            }
+
+            return RoutingResolution.Succeeded(category: null, priority, unclassifiedDepartment);
+        }
+
+        var category = await categoryRepository.GetByIdAsync(categoryId.Value, cancellationToken);
         if (category is null || !category.IsActive)
         {
             return RoutingResolution.Failed(TicketCreationOutcome.CategoryNotFound);
@@ -416,12 +482,6 @@ public sealed class TicketCreationAppService(
         if (intakeDepartmentId is { } departmentIdOnIntake && category.DepartmentId != departmentIdOnIntake)
         {
             return RoutingResolution.Failed(TicketCreationOutcome.CategoryDepartmentMismatch);
-        }
-
-        var priority = await priorityRepository.GetByIdAsync(priorityId, cancellationToken);
-        if (priority is null)
-        {
-            return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
         }
 
         var department = await departmentRepository.GetByIdAsync(category.DepartmentId, cancellationToken);
@@ -439,8 +499,9 @@ public sealed class TicketCreationAppService(
         Domain.Modules.IdentityAndAccess.Department? Department,
         TicketCreationOutcome? Failure)
     {
+        /// <summary><paramref name="category"/> is null exactly on the Unclassified path, where the department alone places the ticket.</summary>
         public static RoutingResolution Succeeded(
-            Domain.Modules.ClassificationAndRouting.Category category, Priority priority, Domain.Modules.IdentityAndAccess.Department department) =>
+            Domain.Modules.ClassificationAndRouting.Category? category, Priority priority, Domain.Modules.IdentityAndAccess.Department department) =>
             new(category, priority, department, null);
 
         public static RoutingResolution Failed(TicketCreationOutcome outcome) => new(null, null, null, outcome);

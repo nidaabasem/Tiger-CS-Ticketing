@@ -94,6 +94,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/status",
         "POST /api/tickets/{ticketId}/resolution",
         "POST /api/tickets/{ticketId}/close",
+        "POST /api/tickets/{ticketId}/classification",
         "POST /api/tickets/{ticketId}/reopen",
         "POST /api/tickets/{ticketId}/reconciliation",
         "POST /api/tickets/{ticketId}/notes",
@@ -130,8 +131,6 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/admin/genesys/queue-mappings",
         "POST /api/admin/genesys/queue-mappings",
         "PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId}",
-        "GET /api/admin/genesys/department-settings",
-        "PUT /api/admin/genesys/department-settings/{departmentId}",
 
         // Administration / Workflow Designer phase (System Administrator only)
         "GET /api/request-types",
@@ -428,7 +427,6 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     [InlineData("AssignTicketRequestDto", "rowVersion")]
     [InlineData("ChangeStatusRequestDto", "newStatus")]
     [InlineData("TransferTicketRequestDto", "targetDepartmentId")]
-    [InlineData("CreateTicketRequestDto", "categoryId")]
     public void MandatoryFields_AreMarkedRequired(string schemaName, string propertyName)
     {
         var schema = SchemaFor(schemaName);

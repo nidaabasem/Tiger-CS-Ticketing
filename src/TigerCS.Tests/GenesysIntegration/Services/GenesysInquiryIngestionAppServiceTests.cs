@@ -64,8 +64,14 @@ public class GenesysInquiryIngestionAppServiceTests
         Assert.Equal(ticket.TicketId, result.Ticket!.TicketId);
         Assert.StartsWith("TG-CS-", ticket.TicketNumber);
         Assert.Equal(department.DepartmentId, ticket.OriginatingDepartmentId);
-        Assert.Equal(category.CategoryId, ticket.CategoryId);
         Assert.Equal("Asking about handover", ticket.RequestSummary);
+
+        // Unclassified, and honestly so: the department is known, the request
+        // is not. No category was invented — not even the department's own
+        // (which exists, and is deliberately NOT used).
+        Assert.Null(ticket.CategoryId);
+        Assert.False(ticket.IsClassified);
+        Assert.NotNull(category);
 
         // The permanent Ticket ↔ conversation link, on the originating interaction.
         var interaction = Assert.Single(f.Interactions.All);
@@ -76,7 +82,11 @@ public class GenesysInquiryIngestionAppServiceTests
 
         // It is a real ticket: the existing creation path ran in full.
         Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
-        Assert.Equal(SlaState.Running, ticket.SlaState);
+
+        // …but no SLA clock started, because the SLA policy is chosen by
+        // priority and no real priority has been set. A clock here would
+        // measure against a target nobody chose.
+        Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
         Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
         Assert.Contains(f.Audit.Written, w => w.Action == "GenesysInquiryIngested" && w.EntityId == "conv-1001");
     }
@@ -199,8 +209,11 @@ public class GenesysInquiryIngestionAppServiceTests
         // OriginatingDepartment AND CurrentDepartment are the selection.
         Assert.Equal(expected.Department.DepartmentId, ticket.OriginatingDepartmentId);
         Assert.Equal(expected.Department.DepartmentId, ticket.CurrentDepartmentId);
-        Assert.Equal(expected.Category.CategoryId, ticket.CategoryId);
         Assert.Equal(departmentName, expected.Department.Name);
+
+        // The selection is a DEPARTMENT and only a department: it produced no
+        // category, even though this department has one.
+        Assert.Null(ticket.CategoryId);
 
         // The chat form's tower/unit travel as the manual snapshot.
         Assert.Equal("Tiger Tower A", ticket.ManualProjectName);
@@ -239,12 +252,16 @@ public class GenesysInquiryIngestionAppServiceTests
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
         var ticket = Assert.Single(f.Tickets.All);
 
-        // "Maintenance" is a department, not a request type. Classification
-        // is the agent's or the workflow's later decision.
+        // "Maintenance" is a department, not a request type and not a
+        // category. Classification is the agent's later decision.
         Assert.Null(ticket.RequestTypeId);
         Assert.Null(ticket.WorkflowTemplateId);
-        // Priority is the documented default, never derived from the choice.
+        Assert.Null(ticket.CategoryId);
+
+        // The priority is provisional, and — the part that matters — it
+        // selected no SLA policy: no period was opened against it.
         Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);
+        Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
     }
 
     // ---- 9 & 10. Customer lookup: used, but never a gate ----
@@ -421,19 +438,22 @@ public class GenesysInquiryIngestionAppServiceTests
     }
 
     [Fact]
-    public async Task Ingest_DepartmentWithoutGenesysCategory_IsReportedRatherThanGuessed()
+    public async Task Ingest_DepartmentThatWasNeverConfiguredForGenesys_StillProducesTheTicket()
     {
+        // There is no per-department Genesys configuration any more, because
+        // there is no category to configure: a department only has to exist
+        // and be active. An inquiry can never be refused for want of a
+        // category nobody has chosen.
         var f = new GenesysServiceFixture();
-        // A department that exists and has categories, but was never
-        // configured for Genesys — ingestion must not pick a category itself.
         var department = f.Departments.AddDepartment("Collections", "COL");
-        f.Categories.Seed(department.DepartmentId, "Payment Query");
 
         var result = await f.Ingestion.IngestAsync(
             ServiceAccount, Inquiry("conv-nocat", departmentId: department.DepartmentId));
 
-        Assert.Equal(GenesysIngestionOutcome.DepartmentNotConfiguredForGenesys, result.Outcome);
-        Assert.Empty(f.Tickets.All);
+        Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
+        var ticket = Assert.Single(f.Tickets.All);
+        Assert.Equal(department.DepartmentId, ticket.OriginatingDepartmentId);
+        Assert.Null(ticket.CategoryId);
     }
 
     // ---- 16. The feature flag ----

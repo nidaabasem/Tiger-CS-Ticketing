@@ -267,23 +267,24 @@ account**, using the same JWT authentication every other API client uses:
 
 ### Genesys routing configuration (required before any inquiry can be routed)
 
-Two things must be configured, both System Administrator-only, and **neither
-is seeded** — the real Genesys queue ids are not known to this repository and
-are never invented:
+One thing must be configured, System Administrator-only, and it is **not
+seeded** — the real Genesys queue ids are not known to this repository and are
+never invented:
 
 ```bash
 # Which department a Genesys queue's inquiries belong to.
 PUT/POST /api/admin/genesys/queue-mappings
-
-# Which category a department's unclassified Genesys tickets start under
-# (Tickets.CategoryId is NOT NULL; the ticket still starts with no request
-# type, so the agent/workflow classifies it later).
-PUT /api/admin/genesys/department-settings/{departmentId}
 ```
 
-An inquiry whose queue is unmapped, or whose department has no Genesys
-category configured, is refused with a `422` naming the gap — it is never
-routed to a guessed department or filed under a guessed category.
+An inquiry whose queue is unmapped is refused with a `422` naming the gap — it
+is never routed to a guessed department.
+
+Nothing configures a **category**. A Genesys ticket is created *Unclassified*
+(`CategoryId` and `RequestTypeId` both `NULL`, `SlaState = NotApplicable`),
+because at pick-up nobody has read the request yet. An agent classifies it
+later on the same ticket via `POST /api/tickets/{ticketId}/classification`,
+and that is when the SLA clock opens — backdated to the ticket's creation
+time, so classifying late buys no extra time.
 
 ## 4. Apply the database migration
 

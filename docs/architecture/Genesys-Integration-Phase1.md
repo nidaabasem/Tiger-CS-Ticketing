@@ -93,14 +93,57 @@ workflow behaviour are unchanged.
 ### What is *not* inferred
 
 The website's three options are **departments** — not Request Types, not
-Categories. A Genesys ticket is created with:
+Categories. A Genesys ticket is created **Unclassified**:
 
-- `RequestTypeId` = **null** (unclassified — the agent or workflow classifies later)
-- `PriorityId` = **Medium**, a fixed documented default, never derived from channel/queue/department
-- `CategoryId` = the department's configured Genesys category
-  (`GenesysDepartmentSettings`), because `Tickets.CategoryId` is `NOT NULL` and
-  this phase does not change that lifecycle rule. A department with none
-  configured is reported as a configuration gap, never guessed.
+- `CategoryId` = **null**
+- `RequestTypeId` = **null**
+- `SlaState` = **`NotApplicable`** — no SLA period is opened
+- `PriorityId` = **Medium**, provisional and documented, never derived from
+  channel/queue/department — and while the ticket is Unclassified it selects
+  nothing, because no SLA period exists to select a policy for
+
+That is the honest state at pick-up: the department is known, the request is
+not, because nobody has read it yet. See §4a.
+
+## 4a. Unclassified tickets, and when the SLA clock starts
+
+`Tickets.CategoryId` is **nullable**. It was `NOT NULL` before this phase, and
+the alternative — a per-department default category, which an earlier draft of
+this design used — was rejected because it is not merely cosmetic: a
+placeholder category is a real business classification that reporting, queues
+and the agent's screen all read as true, and it would have made a ticket look
+triaged when it is not. Inferring a category from a department is the same
+mistake wearing a different hat. NULL is the truth, so NULL is what is stored.
+
+The lifecycle:
+
+```
+inquiry received → ticket created (Unclassified) → agent reads it
+    → agent picks Category + Priority (+ optional Request Type)
+    → ticket becomes Classified          ← the SAME ticket, updated in place
+```
+
+`POST /api/tickets/{ticketId}/classification` performs the transition.
+`Ticket.Classify` is **write-once**: a second attempt is refused with
+`AlreadyClassified` rather than silently re-categorising a ticket someone is
+already working. The call takes the ticket's `RowVersion`, so two agents
+classifying at once cannot both win. **No second ticket is ever created.**
+
+**When the SLA clock starts.** SLA policy selection is keyed on
+`PriorityId` alone (`SlaDueDateService.ComputeDueDatesAsync` →
+`SlaPolicyRepository.GetByPriorityIdAsync`); Category has never taken part in
+it, and this phase does not change that rule. But Priority is *also* part of
+classification, so an Unclassified ticket's Medium is provisional — opening a
+period against it would measure the department against a target nobody chose.
+So an Unclassified ticket opens **no SLA period at all** and sits at
+`SlaState.NotApplicable`. Classification opens the initial period, backdated
+to `Ticket.CreatedAtUtc`, and moves the state `NotApplicable → Running` with a
+history row. Backdating is deliberate: classifying an hour late must not buy
+an hour of extra SLA.
+
+Nothing else changed. Workflow, approvals, assignment and escalation never
+read `CategoryId`; the four places that do are display and reporting
+projections, which now render *Unclassified*.
 
 ## 5. What is deliberately **not** built
 
@@ -174,9 +217,9 @@ real host.
 | `IX_TicketInteractions_GenesysConversationId` → **`UX_…` (unique)** | The database-level one-ticket-per-conversation guarantee. |
 | **`TicketInteractionMessages`** (new) | The structured transcript. |
 | **`GenesysQueueMappings`** (new) | Queue → Department configuration. **No rows seeded.** |
-| **`GenesysDepartmentSettings`** (new) | Per-department Genesys ticket category. **No rows seeded.** |
+| `Tickets.CategoryId` → **nullable** | The Unclassified phase (§4a). Existing rows are unaffected — every ticket created before this phase keeps its category. |
 
-Migration: `20260910060646_AddGenesysIntegration`. No existing interaction
+Migration: `20260910064613_AddGenesysIntegration`. No existing interaction
 model was replaced or duplicated — `TicketInteraction` was extended.
 
 ---

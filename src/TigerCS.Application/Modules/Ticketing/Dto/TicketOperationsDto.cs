@@ -34,8 +34,8 @@ public sealed record TicketListRequestDto(
 /// <param name="TicketNumber">The human-facing ticket number.</param>
 /// <param name="CurrentDepartmentId">The department that currently holds it.</param>
 /// <param name="CurrentOwnerEmployeeId">The current owner, or null when unassigned.</param>
-/// <param name="CategoryId">The ticket's category.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low. Provisional while Unclassified.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="RequestSummary">The request, in the agent's words.</param>
@@ -45,7 +45,7 @@ public sealed record TicketSummaryDto(
     string TicketNumber,
     int CurrentDepartmentId,
     Guid? CurrentOwnerEmployeeId,
-    int CategoryId,
+    int? CategoryId,
     byte PriorityId,
     string TicketStatus,
     string VerificationStatus,
@@ -67,8 +67,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="CurrentOwnerEmployeeId">The current owner, or null when unassigned — including immediately after a transfer.</param>
 /// <param name="UnitReferenceId">The verified unit, or null while the ticket is provisional.</param>
 /// <param name="ContactReferenceId">The verified contact, or null while the ticket is provisional.</param>
-/// <param name="CategoryId">The ticket's category.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified — no category is ever invented to fill it.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low. Provisional while Unclassified: it selects no SLA policy until the ticket is classified.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
@@ -99,6 +99,7 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="WorkflowVersionNumber">The pinned version's number ("V2") — populated on detail reads.</param>
 /// <param name="OriginatingChannelId">The channel the ticket ENTERED the system on (its originating interaction's channel) — never changed by later interactions on other channels; null for tickets predating the interaction model. Populated on detail reads.</param>
 /// <param name="OriginatingChannelName">The originating channel's display name, resolved from channel configuration — still shown for a channel that has since been deactivated. Populated on detail reads.</param>
+/// <param name="IsClassified">False while the ticket has no Category yet — an inquiry captured before anyone read the request. The UI shows "Unclassified" and offers the classify action rather than rendering a missing category.</param>
 /// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Resolved/Closed and within the ISSUE-011 window. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen. Populated on detail reads; false on write responses.</param>
 public sealed record TicketDetailDto(
     long TicketId,
@@ -108,7 +109,7 @@ public sealed record TicketDetailDto(
     Guid? CurrentOwnerEmployeeId,
     int? UnitReferenceId,
     int? ContactReferenceId,
-    int CategoryId,
+    int? CategoryId,
     byte PriorityId,
     string TicketStatus,
     string VerificationStatus,
@@ -140,7 +141,8 @@ public sealed record TicketDetailDto(
     string? WorkflowName = null,
     int? WorkflowVersionNumber = null,
     byte? OriginatingChannelId = null,
-    string? OriginatingChannelName = null);
+    string? OriginatingChannelName = null,
+    bool IsClassified = true);
 
 public enum TicketQueryOutcome
 {
@@ -218,7 +220,19 @@ public enum TicketMutationOutcome
     NotAllowedForRequestType,
 
     /// <summary>Workflow/Automation phase 2: the department's workflow settings disable this operation (assignment, internal reassignment, or transfer out) for the ticket's current department.</summary>
-    DisabledByDepartmentSettings
+    DisabledByDepartmentSettings,
+
+    /// <summary>Classification: the ticket already carries a category. Re-categorising an existing ticket is a different operation, not built in this phase.</summary>
+    AlreadyClassified,
+
+    /// <summary>Classification: the selected category was not found, or is deactivated.</summary>
+    CategoryNotFound,
+
+    /// <summary>Classification: the selected category belongs to a different department than the ticket's — a ticket is never filed under another department's category.</summary>
+    CategoryDepartmentMismatch,
+
+    /// <summary>Classification: the selected priority does not exist.</summary>
+    PriorityNotFound
 }
 
 public sealed record TicketMutationResult(TicketMutationOutcome Outcome, TicketDetailDto? Response = null)

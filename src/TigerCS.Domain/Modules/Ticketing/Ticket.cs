@@ -43,8 +43,36 @@ public class Ticket
     public Guid? CurrentOwnerEmployeeId { get; private set; }
     public int? UnitReferenceId { get; private set; }
     public int? ContactReferenceId { get; private set; }
-    public int CategoryId { get; private set; }
+    /// <summary>
+    /// The ticket's business classification — <b>null while the ticket is
+    /// Unclassified</b>.
+    ///
+    /// <para>
+    /// A ticket may legitimately exist before anyone knows what the customer
+    /// is asking for: a Genesys inquiry reaches an agent with the department
+    /// known (the queue, or the customer's own website-chat choice) but the
+    /// actual request still unread. The ticket must be created immediately so
+    /// the inquiry is never lost, and inventing a placeholder category to
+    /// satisfy a NOT NULL column would be worse than null — it would feed
+    /// real business machinery (routing, reporting, and anything later keyed
+    /// on category) with a value nobody chose.
+    /// </para>
+    ///
+    /// <para>
+    /// Set exactly once, by <see cref="Classify"/>, when an agent reads the
+    /// inquiry and selects the real category. Tickets created through the
+    /// classified factories carry it from the start and are never Unclassified.
+    /// </para>
+    /// </summary>
+    public int? CategoryId { get; private set; }
     public byte PriorityId { get; private set; }
+
+    /// <summary>
+    /// Whether the ticket carries a real business classification. False only
+    /// for a ticket created from an inquiry whose request had not yet been
+    /// read — see <see cref="CategoryId"/>.
+    /// </summary>
+    public bool IsClassified => CategoryId is not null;
 
     /// <summary>
     /// Workflow/SLA Configuration phase 2 — which configured
@@ -308,8 +336,62 @@ public class Ticket
         return ticket;
     }
 
+    /// <summary>
+    /// The <b>Unclassified</b> path: an inquiry reached an agent and must
+    /// become a ticket immediately, but nobody has read the request yet, so
+    /// its Category — and usually its Request Type — are genuinely unknown.
+    /// Today's only producer is Genesys inquiry ingestion, where the
+    /// department is known (the customer's website-chat choice, or the queue
+    /// mapping) well before the request is.
+    ///
+    /// <para>
+    /// <b>No SLA clock starts here</b>, and that is the point:
+    /// <see cref="SlaState"/> is <see cref="SlaState.NotApplicable"/> rather
+    /// than <see cref="SlaState.Running"/>, because the SLA policy is
+    /// selected by <see cref="PriorityId"/> — and an unclassified ticket's
+    /// priority is not a business decision anyone has made. Starting a clock
+    /// against a placeholder would measure the wrong target and breach
+    /// against a deadline nobody set. <see cref="Classify"/> is what starts
+    /// it, computed from the real classification.
+    /// </para>
+    ///
+    /// <para>
+    /// Everything else behaves exactly as any other new ticket: it is Open,
+    /// it belongs to a real department, it is assignable, notable and
+    /// transferable, and its customer identification follows the same
+    /// enrichment-never-a-gate rule as <see cref="CreateUnverified"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="ticketNumber">The generated, unique ticket number.</param>
+    /// <param name="departmentId">The resolved (and initial current) department — known, never guessed.</param>
+    /// <param name="priorityId">
+    /// A provisional working priority. It selects no SLA policy while the
+    /// ticket is unclassified (no SLA period exists), and
+    /// <see cref="Classify"/> replaces it with the agent's real choice.
+    /// </param>
+    /// <param name="requestSummary">What is known of the request — for a raw inquiry, how it arrived.</param>
+    /// <param name="createdAtUtc">Creation time, in UTC.</param>
+    /// <param name="manualProjectName">Optional project/tower snapshot the channel collected, same as <see cref="CreateUnverified"/>.</param>
+    /// <param name="manualUnitNumber">Optional unit-number snapshot the channel collected.</param>
+    public static Ticket CreateUnclassified(
+        string ticketNumber,
+        int departmentId,
+        byte priorityId,
+        string requestSummary,
+        DateTime createdAtUtc,
+        string? manualProjectName = null,
+        string? manualUnitNumber = null)
+    {
+        var ticket = CreateCore(ticketNumber, departmentId, categoryId: null, priorityId, requestSummary, createdAtUtc);
+        ticket.VerificationStatus = CrmVerificationStatus.Unverified;
+        ticket.SlaState = SlaState.NotApplicable;
+        ticket.ManualProjectName = manualProjectName;
+        ticket.ManualUnitNumber = manualUnitNumber;
+        return ticket;
+    }
+
     private static Ticket CreateCore(
-        string ticketNumber, int departmentId, int categoryId, byte priorityId, string requestSummary, DateTime createdAtUtc)
+        string ticketNumber, int departmentId, int? categoryId, byte priorityId, string requestSummary, DateTime createdAtUtc)
     {
         if (string.IsNullOrWhiteSpace(ticketNumber))
         {
@@ -382,6 +464,43 @@ public class Ticket
     /// <see cref="ReconcileVerification"/>: department/active validation
     /// happens before this is called).
     /// </summary>
+    /// <summary>
+    /// Records the real business classification an agent selected after
+    /// reading the inquiry — the Unclassified → Classified transition of the
+    /// lifecycle. <b>The same ticket is classified in place; classification
+    /// never creates a second ticket.</b>
+    ///
+    /// <para>
+    /// Write-once for the category: a ticket that already carries one is
+    /// already classified, and re-categorising an existing ticket is a
+    /// different operation (not built in this phase) with its own SLA
+    /// consequences. The priority is replaced here because until this moment
+    /// it was provisional and drove nothing — no SLA period exists for an
+    /// unclassified ticket.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A bare state transition, deliberately.</b> Validating that the
+    /// category is active and belongs to the ticket's department, classifying
+    /// the request type, pinning its workflow version, and starting the SLA
+    /// clock are the calling application service's job, done in one
+    /// transaction — the same division of responsibility as
+    /// <see cref="CreateVerified"/> and <see cref="ReconcileVerification"/>.
+    /// </para>
+    /// </summary>
+    public void Classify(int categoryId, byte priorityId)
+    {
+        EnsureNotClosed();
+
+        if (CategoryId is { } already)
+        {
+            throw new TicketAlreadyClassifiedException(TicketId, already);
+        }
+
+        CategoryId = categoryId;
+        PriorityId = priorityId;
+    }
+
     public void ClassifyRequestType(int requestTypeId)
     {
         if (RequestTypeId is not null)
@@ -687,6 +806,29 @@ public class Ticket
         if (SlaState != SlaState.Breached)
         {
             SlaState = SlaState.Met;
+        }
+    }
+
+    /// <summary>
+    /// Moves the <see cref="SlaState"/> dimension from
+    /// <see cref="SlaState.NotApplicable"/> to <see cref="SlaState.Running"/>
+    /// when an Unclassified ticket's first SLA period is opened at
+    /// classification.
+    ///
+    /// <para>
+    /// Deliberately narrow: it only ever makes that one transition, so it
+    /// cannot resurrect a Met or Breached clock, and it is a no-op on a
+    /// ticket whose clock was already running (every classified ticket).
+    /// The period itself is opened by the calling application service — same
+    /// bare state-transition division of responsibility as
+    /// <see cref="Classify"/>.
+    /// </para>
+    /// </summary>
+    public void StartSlaClock()
+    {
+        if (SlaState == SlaState.NotApplicable)
+        {
+            SlaState = SlaState.Running;
         }
     }
 

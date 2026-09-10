@@ -166,7 +166,7 @@
 | CurrentDepartmentId | int | No | FK → Departments; mutable on transfer |
 | CurrentOwnerEmployeeId | uniqueidentifier | Yes | FK → Employees |
 | UnitReferenceId, ContactReferenceId | int | No | FK → §2.7. **As of this review pass (Finding DR-01), populated by copying from the consumed `VerificationSessions` row (§2.24) at creation time — the create-ticket request supplies a `VerificationSessionId`, not these fields directly.** |
-| CategoryId | int | No | FK → Categories |
+| CategoryId | int | Yes | FK → Categories. **Nullable as of the Genesys integration phase** (`AddGenesysIntegration`): an inquiry an agent has picked up becomes a ticket before anyone has read the request, so it starts *Unclassified* (`CategoryId` null, `SlaState = NotApplicable`) and `Ticket.Classify` fills it in later on the same ticket. A ticket created through the New Ticket wizard still supplies a category at creation. See `architecture/Genesys-Integration-Phase1.md` §4a. |
 | PriorityId | tinyint | No | FK → Priorities (current tier) |
 | TicketStatus, VerificationStatus, EscalationLevel, SlaState | tinyint | No | Independent dimensions (ADR-0008) |
 | ResolutionOutcome | tinyint | Yes | Null until Resolved/Closed |

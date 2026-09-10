@@ -60,8 +60,12 @@ public class GenesysController(
     /// The department comes from the customer's explicit website-chat choice
     /// (Leasing / Customer Service / Maintenance) when there is one, and
     /// otherwise from the configured Genesys queue → department mapping.
-    /// Request Type, Category and Priority are never inferred from it — the
-    /// ticket starts unclassified for the agent or the workflow to classify.
+    /// Category, Request Type and Priority are never inferred from it: the
+    /// ticket is created <b>Unclassified</b> (no category at all — never a
+    /// placeholder one) and therefore starts no SLA clock. An agent
+    /// classifies it afterwards via
+    /// <c>POST /api/tickets/{ticketId}/classification</c>, on the same
+    /// ticket, and that is when the SLA clock starts.
     /// </para>
     /// </remarks>
     /// <param name="request">The normalized inquiry.</param>
@@ -69,7 +73,7 @@ public class GenesysController(
     /// <response code="201">A ticket was created for this conversation.</response>
     /// <response code="204">Accepted, and deliberately created nothing (a ringing call).</response>
     /// <response code="400">The channel or event value was not recognized, or conversationId was blank.</response>
-    /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, the department has no Genesys category configured, or ticket creation itself was refused.</response>
+    /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, or ticket creation itself was refused.</response>
     /// <response code="503">The Genesys integration is switched off (<c>Genesys:Enabled</c> is false).</response>
     [HttpPost("inquiries")]
     [ProducesResponseType<GenesysInquiryAcceptedResponse>(StatusCodes.Status200OK)]
@@ -128,13 +132,6 @@ public class GenesysController(
                 title: "No department could be resolved for this inquiry",
                 detail: result.Detail
                     ?? "The inquiry named no department and its queue has no active mapping. Configure the queue under Administration → Genesys routing.",
-                statusCode: StatusCodes.Status422UnprocessableEntity),
-
-            GenesysIngestionOutcome.DepartmentNotConfiguredForGenesys => Problem(
-                type: "https://tigercs.internal/problems/genesys-department-not-configured",
-                title: "The department is not configured for Genesys inquiries",
-                detail: result.Detail
-                    ?? "The resolved department has no active Genesys ticket category configured.",
                 statusCode: StatusCodes.Status422UnprocessableEntity),
 
             GenesysIngestionOutcome.ChannelNotConfigured => Problem(

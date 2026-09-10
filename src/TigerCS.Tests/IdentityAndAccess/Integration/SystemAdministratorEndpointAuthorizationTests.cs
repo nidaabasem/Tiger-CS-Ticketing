@@ -487,13 +487,10 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var (client, _) = await CreateAdministratorAsync();
         await _factory.SeedPrioritiesAsync();
 
-        // Administration first — the routing configuration a real deployment
-        // enters before any inquiry can be routed anywhere.
+        // A department is all the configuration an inquiry needs: there is no
+        // category to configure, because an unread inquiry has none.
         var departmentId = await _factory.CreateDepartmentAsync("Genesys CS " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
-        var categoryId = await _factory.CreateCategoryAsync("General Inquiry", departmentId);
-        var settings = await client.PutAsJsonAsync(
-            $"/api/admin/genesys/department-settings/{departmentId}", new SaveGenesysDepartmentSettingsRequestDto(categoryId));
-        Assert.Equal(HttpStatusCode.OK, settings.StatusCode);
+        var categoryId = await _factory.CreateCategoryAsync("NOC for Resale", departmentId);
 
         var conversationId = "conv-" + Guid.NewGuid().ToString("N")[..12];
 
@@ -519,6 +516,25 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         var retried = await retry.Content.ReadFromJsonAsync<GenesysInquiryAcceptedResponse>();
         Assert.Equal("AlreadyIngested", retried!.Outcome);
         Assert.Equal(created.TicketId, retried.TicketId);
+
+        // The ticket exists, and is honestly Unclassified: no category was
+        // invented, and no SLA clock was started against a priority nobody
+        // chose.
+        var unclassified = await (await client.GetAsync($"/api/tickets/{created.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Null(unclassified!.CategoryId);
+        Assert.False(unclassified.IsClassified);
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.SlaState.NotApplicable), unclassified.SlaState);
+
+        // The agent reads the conversation and classifies the SAME ticket.
+        var classified = await client.PostAsJsonAsync(
+            $"/api/tickets/{created.TicketId}/classification",
+            new ClassifyTicketRequestDto(categoryId, (byte)PriorityLevel.High, null, Convert.FromBase64String(unclassified.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, classified.StatusCode);
+        var afterClassification = await classified.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(created.TicketId, afterClassification!.TicketId);
+        Assert.Equal(categoryId, afterClassification.CategoryId);
+        Assert.True(afterClassification.IsClassified);
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.SlaState.Running), afterClassification.SlaState);
 
         // Ending the conversation stores the transcript — and leaves the
         // ticket exactly where the workflow had it.

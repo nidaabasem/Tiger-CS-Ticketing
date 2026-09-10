@@ -128,8 +128,6 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<GenesysQueueMapping> GenesysQueueMappings => Set<GenesysQueueMapping>();
 
-    public DbSet<GenesysDepartmentSettings> GenesysDepartmentSettings => Set<GenesysDepartmentSettings>();
-
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
 
     public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
@@ -186,7 +184,6 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketInteractionConfiguration());
         builder.ApplyConfiguration(new TicketInteractionMessageConfiguration());
         builder.ApplyConfiguration(new GenesysQueueMappingConfiguration());
-        builder.ApplyConfiguration(new GenesysDepartmentSettingsConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
         builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());

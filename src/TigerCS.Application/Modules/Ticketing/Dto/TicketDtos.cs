@@ -38,7 +38,19 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// only.
 /// </param>
 /// <param name="ManualUnitNumber">Required together with <paramref name="ManualProjectName"/> — see that parameter.</param>
-/// <param name="CategoryId">Required. Determines which department the ticket routes to.</param>
+/// <param name="CategoryId">
+/// The ticket's business classification, which also determines the
+/// department it routes to. Optional <b>only</b> for the Unclassified path —
+/// an inquiry that must become a ticket before anyone has read the request
+/// (Genesys ingestion) — where <paramref name="DepartmentId"/> supplies the
+/// department instead. Every agent-driven creation supplies it, and a
+/// category is never invented to stand in for a missing one.
+/// </param>
+/// <param name="DepartmentId">
+/// Required <b>only</b> when <paramref name="CategoryId"/> is omitted: the
+/// already-resolved department the unclassified ticket belongs to. Ignored
+/// when a category is supplied, since the category itself routes the ticket.
+/// </param>
 /// <param name="PriorityId">Required. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
 /// <param name="RequestSummary">Required. The caller's request, in the agent's words.</param>
 /// <param name="CustomerVerificationSource">The external lookup source that verified the customer ("Pact"/"Tasleeh") when the agent selected a matched external customer/unit. Mutually exclusive with the CrmBuyer* identifiers; accompanies (never replaces) the manual Project/Unit snapshot.</param>
@@ -50,7 +62,7 @@ public sealed record CreateTicketRequestDto(
     long IntakeRecordId,
     int? UnitReferenceId,
     int? ContactReferenceId,
-    int CategoryId,
+    int? CategoryId,
     byte PriorityId,
     string RequestSummary,
     int? CrmBuyerCustomerId = null,
@@ -66,7 +78,8 @@ public sealed record CreateTicketRequestDto(
     string? ExternalCustomerId = null,
     string? ExternalUnitId = null,
     int? RequestTypeId = null,
-    GenesysIntegration.Dto.GenesysInteractionContextDto? GenesysContext = null);
+    GenesysIntegration.Dto.GenesysInteractionContextDto? GenesysContext = null,
+    int? DepartmentId = null);
 
 /// <summary>A newly created ticket (MVP-API-Contracts.md §3.1).</summary>
 /// <param name="TicketId">The ticket.</param>
@@ -75,8 +88,8 @@ public sealed record CreateTicketRequestDto(
 /// <param name="CurrentDepartmentId">The department that currently holds it.</param>
 /// <param name="UnitReferenceId">The matched unit, or null when no customer match was linked at creation.</param>
 /// <param name="ContactReferenceId">The matched contact, or null when no customer match was linked at creation.</param>
-/// <param name="CategoryId">The ticket's category.</param>
-/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low.</param>
+/// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
+/// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low. Provisional while the ticket is Unclassified — it selects no SLA policy until classification.</param>
 /// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
@@ -103,7 +116,7 @@ public sealed record TicketResponseDto(
     int CurrentDepartmentId,
     int? UnitReferenceId,
     int? ContactReferenceId,
-    int CategoryId,
+    int? CategoryId,
     byte PriorityId,
     string TicketStatus,
     string VerificationStatus,
@@ -153,8 +166,14 @@ public enum TicketCreationOutcome
     /// <summary>ExternalCustomerId/ExternalUnitId were supplied without a CustomerVerificationSource — external identifiers never travel without their source.</summary>
     ExternalVerificationSourceMissing,
 
-    /// <summary>Ticket Category is required for every ticket.</summary>
+    /// <summary>CategoryId was supplied but does not resolve to an active Ticket Category.</summary>
     CategoryNotFound,
+
+    /// <summary>Neither a CategoryId nor a DepartmentId was supplied — a ticket needs one of the two to know where it belongs, and neither is ever invented.</summary>
+    DepartmentOrCategoryRequired,
+
+    /// <summary>DepartmentId was supplied for an unclassified ticket but does not resolve to an active Department.</summary>
+    DepartmentNotFound,
     PriorityNotFound,
 
     /// <summary>Item 9 (senior review): the Category's routed Department is missing or deactivated — never silently route a ticket to a department nobody is staffing.</summary>

@@ -11,8 +11,10 @@ namespace TigerCS.Api.Controllers;
 /// Genesys routing configuration — System Administrator only.
 ///
 /// <para>
-/// This is where the Genesys Queue → Department mapping and each
-/// department's Genesys ticket category are entered. Nothing is seeded:
+/// This is where the Genesys Queue → Department mapping is entered — and
+/// only that: a queue says which department an inquiry belongs to, never
+/// what the customer wants, so there is no queue → category mapping and no
+/// default category anywhere. Nothing is seeded:
 /// the real Genesys queue ids are not known to this repository, and none is
 /// invented — an administrator enters them once the Genesys team supplies
 /// them. Mappings are deactivated, never deleted, so an inquiry that arrived
@@ -49,25 +51,4 @@ public class AdminGenesysController(AdminGenesysRoutingAppService genesys) : Adm
     public async Task<IActionResult> UpdateQueueMapping(
         int genesysQueueMappingId, [FromBody] SaveGenesysQueueMappingRequestDto request, CancellationToken cancellationToken) =>
         FromResult(await genesys.UpdateQueueMappingAsync(CallerEmployeeId, genesysQueueMappingId, request, cancellationToken));
-
-    /// <summary>Every department configured to receive Genesys inquiries, with the category its Genesys tickets start under.</summary>
-    [HttpGet("department-settings")]
-    [ProducesResponseType<IReadOnlyList<AdminGenesysDepartmentSettingsDto>>(StatusCodes.Status200OK)]
-    public async Task<IActionResult> ListDepartmentSettings(
-        [FromQuery] bool includeInactive = true, CancellationToken cancellationToken = default) =>
-        Ok(await genesys.ListDepartmentSettingsAsync(includeInactive, cancellationToken));
-
-    /// <summary>
-    /// Configures one department for Genesys inquiries. One row per
-    /// department, so this is an upsert. The category must be an ACTIVE
-    /// category of this same department — a Genesys ticket is never filed
-    /// under another department's category.
-    /// </summary>
-    [HttpPut("department-settings/{departmentId:int}")]
-    [ProducesResponseType<AdminGenesysDepartmentSettingsDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> SaveDepartmentSettings(
-        int departmentId, [FromBody] SaveGenesysDepartmentSettingsRequestDto request, CancellationToken cancellationToken) =>
-        FromResult(await genesys.SaveDepartmentSettingsAsync(CallerEmployeeId, departmentId, request, cancellationToken));
 }

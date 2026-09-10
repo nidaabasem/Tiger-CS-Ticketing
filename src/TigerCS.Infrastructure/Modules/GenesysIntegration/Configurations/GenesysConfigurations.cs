@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 
@@ -37,42 +36,6 @@ public class GenesysQueueMappingConfiguration : IEntityTypeConfiguration<Genesys
         builder.HasOne<Department>()
             .WithMany()
             .HasForeignKey(m => m.DepartmentId)
-            .OnDelete(DeleteBehavior.Restrict);
-    }
-}
-
-/// <summary>
-/// Per-department Genesys settings — one row per department (unique), naming
-/// the category unclassified Genesys tickets are created under.
-/// </summary>
-public class GenesysDepartmentSettingsConfiguration : IEntityTypeConfiguration<GenesysDepartmentSettings>
-{
-    public void Configure(EntityTypeBuilder<GenesysDepartmentSettings> builder)
-    {
-        builder.ToTable("GenesysDepartmentSettings");
-
-        builder.HasKey(s => s.GenesysDepartmentSettingsId);
-        builder.Property(s => s.GenesysDepartmentSettingsId).ValueGeneratedOnAdd();
-
-        builder.Property(s => s.DepartmentId).IsRequired();
-        builder.Property(s => s.DefaultCategoryId).IsRequired();
-        builder.Property(s => s.IsActive).IsRequired();
-        builder.Property(s => s.CreatedAtUtc).IsRequired();
-        builder.Property(s => s.UpdatedAtUtc).IsRequired();
-
-        builder.HasIndex(s => s.DepartmentId)
-            .IsUnique()
-            .HasDatabaseName("UX_GenesysDepartmentSettings_DepartmentId");
-
-        builder.HasOne<Department>()
-            .WithMany()
-            .HasForeignKey(s => s.DepartmentId)
-            .OnDelete(DeleteBehavior.Restrict);
-
-        // Categories are deactivated, never deleted, for the same reason.
-        builder.HasOne<Category>()
-            .WithMany()
-            .HasForeignKey(s => s.DefaultCategoryId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

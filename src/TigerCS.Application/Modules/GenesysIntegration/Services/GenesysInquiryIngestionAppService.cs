@@ -65,21 +65,23 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>No Request Type, Category or Priority is inferred.</b> The department
-/// (the website form's Leasing / Customer Service / Maintenance choice, or
-/// the queue mapping) is a department and nothing else. The ticket starts
-/// under the department's configured Genesys category with the default
-/// priority and no request type — classification is the agent's or the
-/// workflow's later decision.
+/// <b>The ticket is created Unclassified, and nothing is inferred.</b> The
+/// department (the website form's Leasing / Customer Service / Maintenance
+/// choice, or the queue mapping) is a department and nothing else: it is not
+/// a Category, not a Request Type, and not a Priority. An inquiry reaches an
+/// agent before anyone has read the request, so the ticket is created with
+/// <c>CategoryId = null</c> and <c>RequestTypeId = null</c> rather than
+/// filed under a placeholder — and consequently with <b>no SLA period</b>,
+/// since the SLA policy is chosen by priority and no real priority exists
+/// yet. <c>TicketClassificationAppService</c> completes all of it, on the
+/// same ticket, when the agent classifies.
 /// </para>
 /// </summary>
 public sealed class GenesysInquiryIngestionAppService(
     GenesysOptions options,
     IGenesysConversationRepository conversationRepository,
     IGenesysQueueMappingRepository queueMappingRepository,
-    IGenesysDepartmentSettingsRepository departmentSettingsRepository,
     IDepartmentRepository departmentRepository,
-    ICategoryRepository categoryRepository,
     IChannelRepository channelRepository,
     ITicketRepository ticketRepository,
     IntakeRecordAppService intakeRecordAppService,
@@ -89,12 +91,19 @@ public sealed class GenesysInquiryIngestionAppService(
     ITicketingUnitOfWork unitOfWork)
 {
     /// <summary>
-    /// The priority a Genesys inquiry starts on. Deliberately a fixed,
-    /// documented default rather than anything derived from the channel,
-    /// the queue or the department: priority is a classification decision,
-    /// and this phase does not classify.
+    /// The <b>provisional</b> working priority an unclassified inquiry
+    /// carries until an agent classifies it. It is never derived from the
+    /// channel, the queue or the department — priority is a classification
+    /// decision this phase does not make.
+    ///
+    /// <para>
+    /// Critically, it selects <b>no SLA policy</b>: ticket creation opens no
+    /// SLA period for an unclassified ticket precisely so that a provisional
+    /// priority cannot start a real clock against a target nobody chose. The
+    /// clock starts at classification, from the agent's real priority.
+    /// </para>
     /// </summary>
-    private const byte DefaultPriorityId = (byte)PriorityLevel.Medium;
+    private const byte ProvisionalPriorityId = (byte)PriorityLevel.Medium;
 
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
@@ -145,22 +154,6 @@ public sealed class GenesysInquiryIngestionAppService(
                     : $"Genesys queue '{inquiry.QueueId}' has no active department mapping.");
         }
 
-        var settings = await departmentSettingsRepository.GetByDepartmentIdAsync(department.DepartmentId, cancellationToken);
-        if (settings is null || !settings.IsActive)
-        {
-            return GenesysIngestionResult.Failure(
-                GenesysIngestionOutcome.DepartmentNotConfiguredForGenesys,
-                $"Department '{department.Name}' has no active Genesys category configured.");
-        }
-
-        var category = await categoryRepository.GetByIdAsync(settings.DefaultCategoryId, cancellationToken);
-        if (category is null || !category.IsActive || category.DepartmentId != department.DepartmentId)
-        {
-            return GenesysIngestionResult.Failure(
-                GenesysIngestionOutcome.DepartmentNotConfiguredForGenesys,
-                $"Department '{department.Name}' points at a category that is missing, inactive, or belongs to another department.");
-        }
-
         // Customer lookup through the EXISTING flow — enrichment only, and
         // never able to stop the inquiry (see this type's remarks).
         var lookup = await LookUpCustomerAsync(inquiry.CustomerPhone, cancellationToken);
@@ -199,14 +192,18 @@ public sealed class GenesysInquiryIngestionAppService(
             IntakeRecordId: intake.Response.IntakeRecordId,
             UnitReferenceId: null,
             ContactReferenceId: null,
-            CategoryId: category.CategoryId,
-            PriorityId: DefaultPriorityId,
+            // Unclassified, on purpose: the agent has taken the inquiry but
+            // has not read the request yet, so there is no category to give.
+            // The department — which IS known — places the ticket instead.
+            CategoryId: null,
+            PriorityId: ProvisionalPriorityId,
             RequestSummary: BuildRequestSummary(inquiry),
             // The website form's tower/unit, when the customer typed one —
             // the same manual snapshot an agent would enter by hand. Never a
             // verified match, and never used to run a second lookup.
             ManualProjectName: NullIfBlank(inquiry.TowerName),
             ManualUnitNumber: NullIfBlank(inquiry.UnitNumber),
+            DepartmentId: department.DepartmentId,
             // Deliberately no RequestTypeId: nothing about a department, a
             // queue or a channel implies a request type.
             GenesysContext: new GenesysInteractionContextDto(
@@ -258,7 +255,7 @@ public sealed class GenesysInquiryIngestionAppService(
             afterValue:
                 $"TicketId={creation.Response.TicketId};TicketNumber={creation.Response.TicketNumber};"
                 + $"Channel={inquiry.Channel};Event={inquiry.Event};DepartmentId={department.DepartmentId};"
-                + $"QueueId={inquiry.QueueId ?? "(none)"};CustomerLookup={lookup.Status}",
+                + $"QueueId={inquiry.QueueId ?? "(none)"};CustomerLookup={lookup.Status};Classification=Unclassified",
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);

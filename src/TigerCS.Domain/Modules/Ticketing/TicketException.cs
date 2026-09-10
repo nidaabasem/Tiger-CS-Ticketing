@@ -104,3 +104,17 @@ public sealed class TicketWorkflowVersionAlreadyPinnedException(long ticketId, i
     public long TicketId { get; } = ticketId;
     public int WorkflowTemplateId { get; } = workflowTemplateId;
 }
+
+/// <summary>
+/// <see cref="Ticket.Classify"/> is write-once for the category: a ticket
+/// that already carries one is already classified. Re-categorising an
+/// existing ticket is a different operation — with its own SLA consequences
+/// — and is not built in this phase, so a second attempt is refused rather
+/// than silently moving a ticket's business meaning.
+/// </summary>
+public sealed class TicketAlreadyClassifiedException(long ticketId, int categoryId)
+    : TicketException($"Ticket {ticketId} is already classified under category {categoryId}.")
+{
+    public long TicketId { get; } = ticketId;
+    public int CategoryId { get; } = categoryId;
+}

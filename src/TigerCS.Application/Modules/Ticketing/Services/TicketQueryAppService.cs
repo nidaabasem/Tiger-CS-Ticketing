@@ -202,5 +202,6 @@ public sealed class TicketQueryAppService(
         ticket.ExternalCustomerId,
         ticket.ExternalUnitId,
         RequestTypeId: ticket.RequestTypeId,
-        WorkflowTemplateId: ticket.WorkflowTemplateId);
+        WorkflowTemplateId: ticket.WorkflowTemplateId,
+        IsClassified: ticket.IsClassified);
 }

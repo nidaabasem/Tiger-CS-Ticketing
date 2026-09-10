@@ -349,4 +349,89 @@ public class TicketTests
 
         Assert.Throws<TicketClosedException>(() => ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null));
     }
+
+    // ---- Unclassified tickets ----
+    //
+    // A ticket created from an inquiry an agent has picked up but nobody has
+    // read yet: the department is known, the request is not. CategoryId is
+    // null because that is the truth, and a placeholder category would drive
+    // reporting, queues and the agent's screen with a classification nobody
+    // made.
+
+    [Fact]
+    public void CreateUnclassified_HasNoCategory_AndDeliberatelyNoSlaClock()
+    {
+        var ticket = Ticket.CreateUnclassified(
+            "TG-CS-20260910-0001", departmentId: 2, priorityId: (byte)PriorityLevel.Medium,
+            "Customer asked about an NOC", DateTime.UtcNow);
+
+        Assert.Null(ticket.CategoryId);
+        Assert.False(ticket.IsClassified);
+        Assert.Null(ticket.RequestTypeId);
+        // The SLA policy is chosen by priority, and this ticket's priority is
+        // provisional — so no period is opened rather than the wrong one.
+        Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+        Assert.Equal(CrmVerificationStatus.Unverified, ticket.VerificationStatus);
+        Assert.Equal(2, ticket.OriginatingDepartmentId);
+        Assert.Equal(2, ticket.CurrentDepartmentId);
+    }
+
+    [Fact]
+    public void Classify_FillsInTheCategoryAndPriority_OnTheSameTicket()
+    {
+        var ticket = Ticket.CreateUnclassified(
+            "TG-CS-20260910-0001", 2, (byte)PriorityLevel.Medium, "Customer asked about an NOC", DateTime.UtcNow);
+
+        ticket.Classify(categoryId: 5, priorityId: (byte)PriorityLevel.High);
+
+        Assert.True(ticket.IsClassified);
+        Assert.Equal(5, ticket.CategoryId);
+        Assert.Equal((byte)PriorityLevel.High, ticket.PriorityId);
+        Assert.Equal("TG-CS-20260910-0001", ticket.TicketNumber);
+    }
+
+    [Fact]
+    public void Classify_IsWriteOnce_SoAClassifiedTicketIsNeverSilentlyReCategorised()
+    {
+        var ticket = Ticket.CreateUnclassified(
+            "TG-CS-20260910-0001", 2, (byte)PriorityLevel.Medium, "Customer asked about an NOC", DateTime.UtcNow);
+        ticket.Classify(categoryId: 5, priorityId: (byte)PriorityLevel.High);
+
+        var refused = Assert.Throws<TicketAlreadyClassifiedException>(
+            () => ticket.Classify(categoryId: 6, priorityId: (byte)PriorityLevel.Low));
+
+        Assert.Equal(5, refused.CategoryId);
+        Assert.Equal(5, ticket.CategoryId);
+        Assert.Equal((byte)PriorityLevel.High, ticket.PriorityId);
+    }
+
+    [Fact]
+    public void Classify_AlsoRefusesATicketThatWasCreatedWithACategory()
+    {
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260910-0002", departmentId: 2, categoryId: 7,
+            priorityId: (byte)PriorityLevel.Medium, "AC not cooling", DateTime.UtcNow);
+
+        Assert.Throws<TicketAlreadyClassifiedException>(
+            () => ticket.Classify(categoryId: 8, priorityId: (byte)PriorityLevel.High));
+    }
+
+    [Fact]
+    public void StartSlaClock_MovesOnlyANotApplicableTicket_AndNeverRestartsARunningOne()
+    {
+        var unclassified = Ticket.CreateUnclassified(
+            "TG-CS-20260910-0001", 2, (byte)PriorityLevel.Medium, "Customer asked about an NOC", DateTime.UtcNow);
+        unclassified.StartSlaClock();
+        Assert.Equal(SlaState.Running, unclassified.SlaState);
+
+        // A ticket already being measured is untouched: the SLA dimension is
+        // owned by the SLA services, and this transition only closes the gap
+        // an unclassified ticket left open.
+        var paused = Ticket.CreateUnverified(
+            "TG-CS-20260910-0002", 2, categoryId: 7, priorityId: (byte)PriorityLevel.Medium, "AC not cooling", DateTime.UtcNow);
+        paused.MarkSlaBreached();
+        paused.StartSlaClock();
+        Assert.Equal(SlaState.Breached, paused.SlaState);
+    }
 }

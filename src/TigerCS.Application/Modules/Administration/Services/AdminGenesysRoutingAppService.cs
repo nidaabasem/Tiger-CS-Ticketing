@@ -9,7 +9,15 @@ namespace TigerCS.Application.Modules.Administration.Services;
 
 /// <summary>
 /// Administration of the Genesys routing configuration: the Genesys Queue →
-/// Department mapping, and each department's Genesys ticket category.
+/// Department mapping.
+///
+/// <para>
+/// <b>Queue → Department, and nothing else.</b> A Genesys queue tells
+/// TigerCS which department an inquiry belongs to; it says nothing about
+/// what the customer wants. There is deliberately no queue → category
+/// mapping and no per-department default category: a ticket whose request
+/// nobody has read yet is created Unclassified, and an agent classifies it.
+/// </para>
 ///
 /// <para>
 /// <b>This exists so nothing about routing is hard-coded.</b> Real Genesys
@@ -28,9 +36,7 @@ namespace TigerCS.Application.Modules.Administration.Services;
 /// </summary>
 public sealed class AdminGenesysRoutingAppService(
     IGenesysQueueMappingRepository queueMappingRepository,
-    IGenesysDepartmentSettingsRepository departmentSettingsRepository,
     IDepartmentRepository departmentRepository,
-    ICategoryRepository categoryRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider)
@@ -139,89 +145,6 @@ public sealed class AdminGenesysRoutingAppService(
                 mapping.DepartmentId, department.Name, mapping.IsActive));
     }
 
-    public async Task<IReadOnlyList<AdminGenesysDepartmentSettingsDto>> ListDepartmentSettingsAsync(
-        bool includeInactive, CancellationToken cancellationToken = default)
-    {
-        var settings = await departmentSettingsRepository.ListAsync(includeInactive, cancellationToken);
-        var departments = await departmentRepository.ListAsync(activeOnly: false, cancellationToken);
-        var departmentNames = departments.ToDictionary(d => d.DepartmentId, d => d.Name);
-
-        var result = new List<AdminGenesysDepartmentSettingsDto>(settings.Count);
-        foreach (var row in settings)
-        {
-            var category = await categoryRepository.GetByIdAsync(row.DefaultCategoryId, cancellationToken);
-            result.Add(new AdminGenesysDepartmentSettingsDto(
-                row.DepartmentId,
-                departmentNames.GetValueOrDefault(row.DepartmentId, $"#{row.DepartmentId}"),
-                row.DefaultCategoryId,
-                category?.Name,
-                row.IsActive));
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Creates or replaces one department's Genesys settings (one row per
-    /// department, so this is deliberately an upsert rather than separate
-    /// create/edit endpoints). The category must be active AND belong to the
-    /// same department — a Genesys ticket must never be filed under another
-    /// department's category.
-    /// </summary>
-    public async Task<AdminResult<AdminGenesysDepartmentSettingsDto>> SaveDepartmentSettingsAsync(
-        Guid actorEmployeeId, int departmentId, SaveGenesysDepartmentSettingsRequestDto request,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var department = await departmentRepository.GetByIdAsync(departmentId, cancellationToken);
-        if (department is null)
-        {
-            return AdminResult<AdminGenesysDepartmentSettingsDto>.NotFound();
-        }
-
-        var category = await categoryRepository.GetByIdAsync(request.DefaultCategoryId, cancellationToken);
-        if (category is null || !category.IsActive)
-        {
-            return AdminResult<AdminGenesysDepartmentSettingsDto>.Invalid("The default category was not found, or is deactivated.");
-        }
-
-        if (category.DepartmentId != departmentId)
-        {
-            return AdminResult<AdminGenesysDepartmentSettingsDto>.Invalid(
-                $"Category '{category.Name}' belongs to another department — a Genesys ticket is never filed under another department's category.");
-        }
-
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        var existing = await departmentSettingsRepository.GetByDepartmentIdAsync(departmentId, cancellationToken);
-        string? before = null;
-
-        if (existing is null)
-        {
-            existing = new GenesysDepartmentSettings(departmentId, request.DefaultCategoryId, now, request.IsActive);
-            await departmentSettingsRepository.AddAsync(existing, cancellationToken);
-        }
-        else
-        {
-            before = Describe(existing);
-            existing.Update(request.DefaultCategoryId, request.IsActive, now);
-        }
-
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        await auditWriter.WriteAsync(
-            actorEmployeeId, "AdminSaveGenesysDepartmentSettings", "GenesysDepartmentSettings", departmentId.ToString(),
-            before, Describe(existing), Guid.NewGuid(), cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return AdminResult<AdminGenesysDepartmentSettingsDto>.Success(
-            new AdminGenesysDepartmentSettingsDto(
-                departmentId, department.Name, existing.DefaultCategoryId, category.Name, existing.IsActive));
-    }
-
     private static string Describe(GenesysQueueMapping mapping) =>
         $"QueueId={mapping.QueueId};QueueName={mapping.QueueName ?? "(none)"};DepartmentId={mapping.DepartmentId};IsActive={mapping.IsActive}";
-
-    private static string Describe(GenesysDepartmentSettings settings) =>
-        $"DepartmentId={settings.DepartmentId};DefaultCategoryId={settings.DefaultCategoryId};IsActive={settings.IsActive}";
 }

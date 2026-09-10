@@ -459,40 +459,6 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("VerificationSessions", (string)null);
                 });
 
-            modelBuilder.Entity("TigerCS.Domain.Modules.GenesysIntegration.GenesysDepartmentSettings", b =>
-                {
-                    b.Property<int>("GenesysDepartmentSettingsId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("GenesysDepartmentSettingsId"));
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("DefaultCategoryId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("DepartmentId")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("GenesysDepartmentSettingsId");
-
-                    b.HasIndex("DefaultCategoryId");
-
-                    b.HasIndex("DepartmentId")
-                        .IsUnique()
-                        .HasDatabaseName("UX_GenesysDepartmentSettings_DepartmentId");
-
-                    b.ToTable("GenesysDepartmentSettings", (string)null);
-                });
-
             modelBuilder.Entity("TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping", b =>
                 {
                     b.Property<int>("GenesysQueueMappingId")
@@ -1080,7 +1046,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("AcknowledgementSentAtUtc")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("CategoryId")
+                    b.Property<int?>("CategoryId")
                         .HasColumnType("int");
 
                     b.Property<int?>("ContactReferenceId")
@@ -2358,21 +2324,6 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("TigerCS.Domain.Modules.GenesysIntegration.GenesysDepartmentSettings", b =>
-                {
-                    b.HasOne("TigerCS.Domain.Modules.ClassificationAndRouting.Category", null)
-                        .WithMany()
-                        .HasForeignKey("DefaultCategoryId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
-                        .WithMany()
-                        .HasForeignKey("DepartmentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Department", null)
@@ -2539,8 +2490,7 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.ClassificationAndRouting.Category", null)
                         .WithMany()
                         .HasForeignKey("CategoryId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("TigerCS.Domain.Modules.CustomerVerification.ContactReference", null)
                         .WithMany()

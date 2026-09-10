@@ -45,7 +45,7 @@
 
 | Requirement | Decision/Issue | ADR | Entity/Table | API Endpoint | UI Screen | Test Scenario |
 |---|---|---|---|---|---|---|
-| FR-CLS-01 (single primary category) | — | — | `Tickets.CategoryId` | §3.1 | 6 | Category is single-select, mandatory |
+| FR-CLS-01 (single primary category) | — | — | `Tickets.CategoryId` | §3.1, `POST /api/tickets/{id}/classification` | 6 | Category is single-select and mandatory **to classify**. A Genesys inquiry becomes a ticket before anyone has read the request, so it may exist *Unclassified* first (`CategoryId` null) and is classified on the same ticket — never a second one. See `architecture/Genesys-Integration-Phase1.md` §4a. |
 | FR-CLS-02 (FM sub-category mandatory) | — | — | `Categories.ParentCategoryId` | §3.1 (category picker logic) | 6 | Sub-category required when parent = Facility Management |
 | FR-CLS-03 (priority selection, mandatory) | — | ADR-0008 | `Tickets.PriorityId` | §3.1 | 6 | Priority mandatory, single-select |
 | FR-RTE-01 (auto-route by category/sub-category, data-driven) | — | — | `Categories.DepartmentId` | §3.1 (derives `OriginatingDepartmentId`) | 6 | Ticket routes to the department the selected category maps to |

@@ -20,17 +20,6 @@ public interface IGenesysQueueMappingRepository
     Task AddAsync(GenesysQueueMapping mapping, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Per-department Genesys settings — chiefly which category unclassified Genesys tickets are created under.</summary>
-public interface IGenesysDepartmentSettingsRepository
-{
-    /// <summary>The department's settings row, active or not (the caller decides what an inactive row means), or null when none is configured.</summary>
-    Task<GenesysDepartmentSettings?> GetByDepartmentIdAsync(int departmentId, CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<GenesysDepartmentSettings>> ListAsync(bool includeInactive, CancellationToken cancellationToken = default);
-
-    Task AddAsync(GenesysDepartmentSettings settings, CancellationToken cancellationToken = default);
-}
-
 /// <summary>
 /// Reads and writes over a Genesys conversation's interaction — the
 /// conversation-scoped half of <c>ITicketInteractionRepository</c> (which

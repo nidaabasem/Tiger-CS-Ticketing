@@ -33,7 +33,8 @@ public class TicketsController(
     CustomerHistoryAppService customerHistoryAppService,
     CustomerProfileAppService customerProfileAppService,
     TicketApprovalAppService ticketApprovalAppService,
-    TicketInteractionQueryAppService ticketInteractionQueryAppService) : ControllerBase
+    TicketInteractionQueryAppService ticketInteractionQueryAppService,
+    TicketClassificationAppService ticketClassificationAppService) : ControllerBase
 {
     /// <summary>Create a ticket from an IntakeRecord. CS Agent/CS Supervisor only.</summary>
     /// <remarks>
@@ -233,6 +234,61 @@ public class TicketsController(
             TicketQueryOutcome.Forbidden => Forbid(),
             _ => NotFound()
         };
+    }
+
+    /// <summary>Classify an Unclassified ticket — record what the customer actually wants.</summary>
+    /// <remarks>
+    /// A ticket created from an inquiry nobody had read yet carries no
+    /// Category at all (never a placeholder one). Once the agent has read the
+    /// conversation, this records the real Category, Priority and — where
+    /// they can name it — Request Type.
+    ///
+    /// <para>
+    /// <b>The same ticket is classified in place.</b> No second ticket is
+    /// created: TCK-1001 keeps its number, department, conversation history
+    /// and audit trail, and simply stops being Unclassified.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>This is where the SLA clock starts</b> for such a ticket. The SLA
+    /// policy is selected by priority, so an unclassified ticket deliberately
+    /// had no SLA period rather than one measured against a provisional
+    /// value. The period opened here is backdated to the ticket's own
+    /// creation time, so classifying late never buys extra time.
+    /// </para>
+    ///
+    /// <para>
+    /// A ticket that was already classified is refused with <c>422</c>:
+    /// re-categorising an existing ticket has its own SLA consequences and is
+    /// a different operation, not built in this phase.
+    /// </para>
+    /// </remarks>
+    /// <param name="ticketId">The unclassified ticket.</param>
+    /// <param name="request">The real category, priority, optional request type, and the ticket's current rowVersion.</param>
+    /// <response code="200">The now-classified ticket.</response>
+    /// <response code="400">The request body was malformed.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The ticket is already classified or closed, or the category/priority/request type is not valid for it.</response>
+    [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [HttpPost("{ticketId:long}/classification")]
+    [Tags(OpenApiTags.TicketLifecycle)]
+    public async Task<IActionResult> Classify(
+        long ticketId, [FromBody] ClassifyTicketRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketClassificationAppService.ClassifyAsync(
+            employeeId.Value, GetRoles(), ticketId, request, cancellationToken);
+        return ToActionResult(result);
     }
 
     /// <summary>Assign a ticket to an employee — self-claim or reassign.</summary>
@@ -896,6 +952,29 @@ public class TicketsController(
             type: "https://tigercs.internal/problems/not-allowed-for-request-type",
             title: "Not allowed for this request type",
             detail: "The ticket's request-type workflow configuration does not allow this action.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.AlreadyClassified => Problem(
+            type: "https://tigercs.internal/problems/ticket-already-classified",
+            title: "Ticket is already classified",
+            detail: "This ticket already has a category. Re-categorising an existing ticket is a separate operation and is not available.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.CategoryNotFound => Problem(
+            type: "https://tigercs.internal/problems/category-not-found",
+            title: "Category not found",
+            detail: "The selected category was not found, or is deactivated.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.CategoryDepartmentMismatch => Problem(
+            type: "https://tigercs.internal/problems/category-department-mismatch",
+            title: "Category belongs to another department",
+            detail: "Classification records what the customer wants; it never re-routes the ticket to another department.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.PriorityNotFound => Problem(
+            type: "https://tigercs.internal/problems/priority-not-found",
+            title: "Priority not found",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.DisabledByDepartmentSettings => Problem(
