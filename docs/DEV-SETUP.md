@@ -93,6 +93,26 @@ regardless of environment name, given valid configuration — whoever
 controls the deployment pipeline is responsible for not pointing it at a
 production environment until that's actually authorized.
 
+### Secrets inventory — what is never committed
+
+Every committed `appsettings*.json` (in `src/` and in the `publish/` output)
+carries **empty placeholders** for these values. Each real environment must
+supply them through user-secrets (Development) or environment variables
+(UAT / Production, `__` separator):
+
+| Configuration key | Environment variable | Purpose |
+|---|---|---|
+| `ConnectionStrings:TigerCsDatabase` | `ConnectionStrings__TigerCsDatabase` | SQL Server connection string (the shipped `appsettings.json` has an empty `Password=`; Development points at the local Docker SQL Server) |
+| `Jwt:SigningKey` | `Jwt__SigningKey` | JWT signing key (§3) |
+| `Crm:SecretKey` | `Crm__SecretKey` | CRM Buyer Lookup shared secret (§3a) |
+| `PactApi:ApiKey` | `PactApi__ApiKey` | PACT customer lookup API key (§3b) |
+| `EmailNotifications:Password` | `EmailNotifications__Password` | Microsoft 365 SMTP mailbox password (§3d) |
+| `DevAdmin:Password` | `DevAdmin__Password` | Development-only seeded administrator (§3) |
+
+`publish/` is committed build output whose binaries are only as current as
+the last `dotnet publish`; regenerate it from `src/` before any deployment
+and never edit the values above inside it.
+
 ## 3a. Configure CRM Buyer Lookup (`Crm:BaseUrl` / `Crm:SecretKey`)
 
 The CRM Buyer Lookup integration (`CrmBuyerHttpGateway`, `GET /api/crm/buyers`)
