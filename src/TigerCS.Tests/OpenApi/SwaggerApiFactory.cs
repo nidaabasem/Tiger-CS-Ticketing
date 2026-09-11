@@ -46,11 +46,11 @@ public sealed class SwaggerApiFactory(string environment) : WebApplicationFactor
             // Same reasoning for the email adapter (EmailSenderSafety):
             // RecordingEmailSender never delivers anything, so a Production
             // host refuses to start with the repository's default
-            // Notifications:Email:Provider of "Recording". These tests only
-            // read the Swagger surface and never resolve IEmailSender, so
-            // naming a different provider satisfies the startup guard without
-            // needing a real adapter to exist.
-            ["Notifications:Email:Provider"] = environment == "Production" ? "NotRecording" : "Recording"
+            // EmailNotifications:Provider of "Recording" once delivery is
+            // enabled. Delivery is disabled here (the repository default),
+            // so the Production host names the real "Smtp" adapter and the
+            // others keep "Recording"; IEmailSender is never resolved.
+            ["EmailNotifications:Provider"] = environment == "Production" ? "Smtp" : "Recording"
         }));
 
         builder.ConfigureServices(services =>

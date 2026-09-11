@@ -302,6 +302,33 @@ the business/resolution SLA period opens, timed from the classification
 moment. How quickly a human first responded is measured separately and is
 unaffected by any of this.
 
+## 3d. Configure customer email notifications (`EmailNotifications`)
+
+Customer-facing email (ticket received / resolved / closed / reopened) ships
+**switched off** and is delivered through the Microsoft 365 SMTP account when
+enabled. Full reference: `docs/Customer-Email-Notifications.md`.
+
+```jsonc
+// src/TigerCS.Api/appsettings.json — the shipped default (password deliberately empty)
+"EmailNotifications": { "Enabled": false, "Provider": "Smtp", "Password": "", ... }
+```
+
+Locally the Development override uses the in-memory `Recording` adapter, so
+deliveries are logged (`NOTHING WAS SENT`) and nothing leaves your machine. To
+exercise real SMTP from a developer machine (from `src/TigerCS.Api`):
+
+```bash
+dotnet user-secrets set "EmailNotifications:Provider" "Smtp"
+dotnet user-secrets set "EmailNotifications:Password" "<the no_reply_tiger mailbox password>"
+dotnet user-secrets set "BackgroundJobs:Enabled" "true"   # the Outbox dispatcher does the sending
+```
+
+UAT / Production supply the same keys as environment variables
+(`EmailNotifications__Enabled=true`, `EmailNotifications__Password=...`,
+`BackgroundJobs__Enabled=true`). **Never put the password in any committed
+file.** Startup refuses to run when delivery is enabled without
+`SmtpHost`/`Username`/`Password`/`FromEmail`, naming the missing key.
+
 ## 4. Apply the database migration
 
 From `src/`:

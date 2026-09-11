@@ -45,7 +45,7 @@ public class TicketLifecycleAppServiceTests
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
             timeProvider ?? TimeProvider.System, reopenPolicy ?? ReopenPolicy.Default,
-            pendingRecords, requestTypes, workflowTemplates);
+            pendingRecords, requestTypes, workflowTemplates, new Notifications.Fakes.FakeOutboxWriter());
 
         return new Fixture(
             service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla,
