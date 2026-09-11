@@ -33,8 +33,8 @@ namespace TigerCS.Api.Controllers;
 /// <param name="CalledNumber">The Tiger number the customer dialed. Recorded, never used for routing.</param>
 /// <param name="QueueId">The Genesys queue — resolved to a department via the configured queue mapping when the customer chose no department.</param>
 /// <param name="QueueName">The queue's display name, where available.</param>
-/// <param name="AgentId">The handling Genesys agent, where available.</param>
-/// <param name="AgentName">The handling agent's display name, where available.</param>
+/// <param name="AgentId">The handling Genesys agent's <b>Genesys User ID</b> (the immutable id, not a name), where available. When supplied, it is resolved server-side to the mapped Ticketing user and that user is recorded as the interaction's handler; an unmapped id is recorded verbatim with no handler.</param>
+/// <param name="AgentName">The handling agent's display name, where available. Display only — never an identity key.</param>
 /// <param name="StartedAtUtc">When the interaction started, UTC.</param>
 /// <param name="DepartmentId">The department the customer explicitly selected (website chat). Wins over the queue mapping.</param>
 /// <param name="DepartmentCode">The same explicit selection as a TigerCS department code, for a caller that knows codes rather than ids.</param>
@@ -127,8 +127,8 @@ public sealed record GenesysConversationEndResponse(
 /// </para>
 /// </summary>
 /// <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
-/// <param name="AgentId">The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</param>
-/// <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
+/// <param name="AgentId">The Genesys User ID of the agent handling it, when known. Applied only if the interaction does not already name one; when it maps to a Ticketing user, that user is recorded as the interaction's handler (same apply-if-absent rule).</param>
+/// <param name="AgentName">That agent's display name, same apply-if-absent rule. Display only — never an identity key.</param>
 /// <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
 /// <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
 public sealed record GenesysTicketUpdateRequest(
@@ -182,6 +182,54 @@ public sealed record GenesysTicketUpdateResponse(
     int TranscriptMessageCount,
     string? HandoffStatus,
     long? TicketAgentHandoffId);
+
+/// <summary>
+/// The transport shape of a Genesys <b>agent action</b>: the Ticketing screen
+/// opened from Genesys identifying which agent is working, and on which
+/// conversation. This is the strict agent endpoint — <c>genesysUserId</c> is
+/// required and must be mapped to an active Ticketing user.
+///
+/// <para>
+/// <b>There is deliberately no Ticketing user id in this body.</b> Which
+/// Ticketing user handled the interaction is resolved on the server from
+/// <paramref name="GenesysUserId"/> alone; any such property a client sends
+/// is ignored by model binding, never honoured.
+/// </para>
+/// </summary>
+/// <param name="GenesysUserId">Required. The agent's immutable Genesys User ID — the only value used to identify the agent.</param>
+/// <param name="AgentEmail">The agent's email as Genesys knows it. Informational only: recorded on the audit trail, never used to resolve the agent.</param>
+/// <param name="ConversationId">The conversation the agent is working, when there is one. Its interaction then records the resolved user as the handler.</param>
+public sealed record GenesysAgentContextRequest(
+    string? GenesysUserId,
+    string? AgentEmail = null,
+    string? ConversationId = null);
+
+/// <summary>What the agent-context endpoint answers: who the agent is in Ticketing, and — when a conversation was named — which ticket and interaction it belongs to.</summary>
+/// <param name="Outcome">"Resolved".</param>
+/// <param name="GenesysUserId">The Genesys User ID, echoed back as stored on the mapping.</param>
+/// <param name="UserId">The Ticketing user id the agent resolved to.</param>
+/// <param name="UserName">That user's account name.</param>
+/// <param name="DisplayName">That user's display name.</param>
+/// <param name="Roles">The user's Ticketing roles.</param>
+/// <param name="DepartmentIds">The departments the user is a member of.</param>
+/// <param name="ConversationId">The conversation, echoed back, when one was supplied.</param>
+/// <param name="TicketId">The ticket that conversation belongs to, when one was supplied.</param>
+/// <param name="TicketNumber">That ticket's number.</param>
+/// <param name="TicketInteractionId">The interaction that now records the handler.</param>
+/// <param name="HandledByUserId">The Ticketing user recorded as the interaction's handler — the first agent to be resolved on it, which may differ from <paramref name="UserId"/> after a transfer.</param>
+public sealed record GenesysAgentContextResponse(
+    string Outcome,
+    string GenesysUserId,
+    Guid UserId,
+    string? UserName,
+    string? DisplayName,
+    IReadOnlyCollection<string> Roles,
+    IReadOnlyCollection<int> DepartmentIds,
+    string? ConversationId,
+    long? TicketId,
+    string? TicketNumber,
+    long? TicketInteractionId,
+    Guid? HandledByUserId);
 
 /// <summary>
 /// Translates the transport records above into the normalized application
@@ -247,6 +295,9 @@ internal static class GenesysContractMapper
                 request.Handoff.Reason,
                 request.Handoff.WorkItemId,
                 request.Handoff.AssignedAgentId));
+
+    internal static GenesysAgentContextDto Map(GenesysAgentContextRequest request) =>
+        new(request.GenesysUserId, request.AgentEmail, request.ConversationId);
 
     internal static GenesysConversationEndDto Map(GenesysConversationEndRequest request) => new(
         request.ConversationId,

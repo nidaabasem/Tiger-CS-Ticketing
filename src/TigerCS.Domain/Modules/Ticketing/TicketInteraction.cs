@@ -63,6 +63,7 @@ public class TicketInteraction
     public const int CustomerNameMaxLength = 200;
     public const int CustomerEmailMaxLength = 256;
     public const int EndReasonMaxLength = 100;
+    public const int GenesysAgentUserIdMaxLength = 64;
 
     public long TicketInteractionId { get; private set; }
     public long TicketId { get; private set; }
@@ -91,6 +92,29 @@ public class TicketInteraction
     public string? GenesysQueueName { get; private set; }
     public string? GenesysAgentId { get; private set; }
     public string? GenesysAgentName { get; private set; }
+
+    /// <summary>
+    /// Interaction ownership (Genesys agent identity mapping): the immutable
+    /// Genesys User ID of the agent that handled this interaction, exactly as
+    /// Genesys sent it — recorded only once that id has been resolved to a
+    /// Ticketing user (<see cref="HandledByUserId"/>), so the pair is always
+    /// written together. Distinct from <see cref="GenesysAgentId"/>, which
+    /// is the verbatim (unresolved) agent context Genesys reported.
+    /// </summary>
+    public string? GenesysAgentUserId { get; private set; }
+
+    /// <summary>
+    /// The Ticketing user (<c>AspNetUsers.Id</c>) that handled this
+    /// interaction, resolved <b>server-side</b> from
+    /// <see cref="GenesysAgentUserId"/> via <c>AspNetUsers.GenesysUserId</c>
+    /// — never taken from a client. Null for historical rows, for
+    /// system-generated interactions, and for a Genesys agent that is not
+    /// mapped to a Ticketing user. This is "who handled the interaction";
+    /// it is deliberately <b>not</b> the ticket's assignee/current owner,
+    /// which lives on the <see cref="Ticket"/> and moves through its own
+    /// assignment rules.
+    /// </summary>
+    public Guid? HandledByUserId { get; private set; }
 
     /// <summary>When the interaction started on the Genesys side, where provided — may precede ticket creation.</summary>
     public DateTime? InteractionStartedAtUtc { get; private set; }
@@ -223,6 +247,38 @@ public class TicketInteraction
         {
             GenesysAgentName = genesysAgentName;
         }
+    }
+
+    /// <summary>
+    /// Records which Ticketing user handled this interaction, as resolved
+    /// server-side from the Genesys User ID. Apply-if-absent, mirroring
+    /// <see cref="RecordAgentIfAbsent"/>: the first resolved agent is the
+    /// one recorded, and a later, different agent never overwrites it.
+    /// Returns true when the ownership was written by this call, false when
+    /// it was already recorded. Both values are required together — a
+    /// Genesys agent id without its resolved user (or the reverse) is never
+    /// stored, because the pair is what makes the row auditable.
+    /// </summary>
+    public bool RecordHandlingAgentIfAbsent(string genesysAgentUserId, Guid handledByUserId)
+    {
+        if (string.IsNullOrWhiteSpace(genesysAgentUserId))
+        {
+            throw new ArgumentException("GenesysAgentUserId is required to record interaction ownership.", nameof(genesysAgentUserId));
+        }
+
+        if (handledByUserId == Guid.Empty)
+        {
+            throw new ArgumentException("HandledByUserId must be a resolved Ticketing user id.", nameof(handledByUserId));
+        }
+
+        if (HandledByUserId is not null)
+        {
+            return false;
+        }
+
+        GenesysAgentUserId = Truncate(genesysAgentUserId, GenesysAgentUserIdMaxLength);
+        HandledByUserId = handledByUserId;
+        return true;
     }
 
     private static string? Truncate(string? value, int maxLength)

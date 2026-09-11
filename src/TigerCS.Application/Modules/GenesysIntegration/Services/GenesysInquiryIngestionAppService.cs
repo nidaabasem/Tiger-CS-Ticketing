@@ -87,7 +87,8 @@ public sealed class GenesysInquiryIngestionAppService(
     TicketCreationAppService ticketCreationAppService,
     CustomerSearchAppService customerSearchAppService,
     IAuditEntryWriter auditWriter,
-    ITicketingUnitOfWork unitOfWork)
+    ITicketingUnitOfWork unitOfWork,
+    GenesysAgentResolutionAppService agentResolution)
 {
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
@@ -134,6 +135,16 @@ public sealed class GenesysInquiryIngestionAppService(
         // Customer lookup through the EXISTING flow — enrichment only, and
         // never able to stop the inquiry (see this type's remarks).
         var lookup = await LookUpCustomerAsync(inquiry.CustomerPhone, cancellationToken);
+
+        // Agent identity mapping — server-side, from the Genesys User ID
+        // (the existing agentId field) alone. This event may legitimately
+        // name no agent (a queued chat, a system-created conversation), and
+        // like the customer lookup it never gates the inquiry: an unmapped
+        // agent is recorded as such on the audit entry, the verbatim Genesys
+        // agent context is still stored, and ownership stays null. The
+        // strict, refusing path for an agent acting is the agent-context
+        // endpoint (GenesysAgentContextAppService).
+        var agent = await ResolveAgentAsync(inquiry.AgentId, cancellationToken);
 
         var intake = await intakeRecordAppService.CreateAsync(
             callerEmployeeId,
@@ -222,6 +233,17 @@ public sealed class GenesysInquiryIngestionAppService(
             return GenesysIngestionResult.CreationFailed(creation.Outcome);
         }
 
+        // Interaction ownership: the resolved Ticketing user is recorded on
+        // the originating interaction the creation just wrote (it is the
+        // one row carrying this conversation id). Ticket assignment is NOT
+        // touched — who handled the call and who owns the ticket are
+        // different facts.
+        if (agent is { IsResolved: true }
+            && await conversationRepository.GetByConversationIdAsync(conversationId, cancellationToken) is { } originating)
+        {
+            originating.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId);
+        }
+
         // The integration-level audit entry, written after the ticket's own
         // transaction has committed. The ticket's essential "Create" audit is
         // written INSIDE that transaction by ticket creation itself and is
@@ -237,7 +259,8 @@ public sealed class GenesysInquiryIngestionAppService(
             afterValue:
                 $"TicketId={creation.Response.TicketId};TicketNumber={creation.Response.TicketNumber};"
                 + $"Channel={inquiry.Channel};DepartmentId={department.DepartmentId};"
-                + $"QueueId={inquiry.QueueId ?? "(none)"};CustomerLookup={lookup.Status};Classification=Unclassified",
+                + $"QueueId={inquiry.QueueId ?? "(none)"};CustomerLookup={lookup.Status};Classification=Unclassified;"
+                + $"AgentMapping={DescribeAgentMapping(inquiry.AgentId, agent)}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -369,6 +392,24 @@ public sealed class GenesysInquiryIngestionAppService(
         };
     }
 
+    /// <summary>
+    /// Resolves the event's agent, when it names one, to a Ticketing user.
+    /// Absent means "no agent yet" — not a failure. Every other outcome is
+    /// returned as-is so the audit entry can say exactly what happened
+    /// (NotMapped is reported as NotMapped, never flattened into "unknown").
+    /// </summary>
+    private async Task<GenesysAgentResolutionResult?> ResolveAgentAsync(string? genesysAgentId, CancellationToken cancellationToken) =>
+        string.IsNullOrWhiteSpace(genesysAgentId)
+            ? null
+            : await agentResolution.ResolveByGenesysUserIdAsync(genesysAgentId, cancellationToken);
+
+    private static string DescribeAgentMapping(string? genesysAgentId, GenesysAgentResolutionResult? agent) =>
+        agent is null
+            ? "(no agent)"
+            : agent.IsResolved
+                ? $"Resolved(HandledByUserId={agent.Agent!.UserId})"
+                : $"{agent.Outcome}(GenesysUserId={genesysAgentId?.Trim()})";
+
     private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private sealed record CustomerLookupSummary(string Status, string? CustomerName);
@@ -380,4 +421,7 @@ public static class GenesysAuditActions
     public const string ConversationEntityType = "GenesysConversation";
     public const string InquiryIngested = "GenesysInquiryIngested";
     public const string ConversationEnded = "GenesysConversationEnded";
+
+    /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
+    public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";
 }

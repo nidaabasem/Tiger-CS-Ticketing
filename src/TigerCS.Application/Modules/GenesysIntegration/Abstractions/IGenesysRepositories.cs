@@ -43,3 +43,20 @@ public interface IGenesysConversationRepository
 
     Task AddMessageAsync(TicketInteractionMessage message, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// The Genesys agent → Ticketing user mapping (<c>AspNetUsers.GenesysUserId</c>),
+/// read-only from the integration's side. Implemented in Infrastructure over
+/// Identity's user store; Application never sees the Identity user type.
+/// <b>Nothing here creates a user</b> — mapping is an administrative act.
+/// </summary>
+public interface IGenesysAgentMappingRepository
+{
+    /// <summary>
+    /// The Ticketing user mapped to one Genesys User ID, or null when no user
+    /// carries that id. Matches on <c>GenesysUserId</c> only — never on
+    /// email, user name or display name — and relies on the filtered unique
+    /// index <c>UX_AspNetUsers_GenesysUserId</c> for there being at most one.
+    /// </summary>
+    Task<Dto.GenesysMappedAgent?> FindByGenesysUserIdAsync(string genesysUserId, CancellationToken cancellationToken = default);
+}

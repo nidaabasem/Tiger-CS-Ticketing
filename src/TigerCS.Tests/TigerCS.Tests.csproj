@@ -13,6 +13,10 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <!-- A real relational engine for the tests that must prove a database
+         constraint (filtered unique index, FK restrict) is enforced — the
+         InMemory provider enforces neither. Test-only. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
   </ItemGroup>
 
   <ItemGroup>

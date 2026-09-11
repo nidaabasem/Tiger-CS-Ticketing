@@ -40,8 +40,16 @@ namespace TigerCS.Api.Controllers;
 public class GenesysController(
     GenesysInquiryIngestionAppService ingestionAppService,
     GenesysTicketUpdateAppService ticketUpdateAppService,
-    GenesysCustomerLookupAppService customerLookupAppService) : ControllerBase
+    GenesysCustomerLookupAppService customerLookupAppService,
+    GenesysAgentContextAppService agentContextAppService) : ControllerBase
 {
+    /// <summary>Stable, machine-readable error codes for the agent identity mapping — carried as the <c>code</c> member of the standard ProblemDetails body.</summary>
+    public static class ErrorCodes
+    {
+        public const string AgentNotMapped = "GENESYS_AGENT_NOT_MAPPED";
+        public const string AgentInactive = "GENESYS_AGENT_INACTIVE";
+    }
+
     /// <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
     /// <remarks>
     /// <b>Idempotent on <c>conversationId</c>.</b> The first accepted event
@@ -323,6 +331,138 @@ public class GenesysController(
                 detail: "Genesys:Enabled is false — no Genesys request is processed while the integration is switched off.",
                 statusCode: StatusCodes.Status503ServiceUnavailable)
             : Ok(result);
+    }
+
+    /// <summary>Identify the Genesys agent working in Ticketing, and record them as the handler of the conversation's interaction.</summary>
+    /// <remarks>
+    /// The <b>agent action</b> endpoint: when an agent opens or works with
+    /// Ticketing from Genesys, this resolves exactly which Ticketing user that
+    /// agent is — by the immutable Genesys User ID, never by name or email —
+    /// and answers with that user's id, roles and departments.
+    ///
+    /// <para>
+    /// <b>Mapping is administrative, never automatic.</b> A Genesys User ID
+    /// that no Ticketing user carries is refused with <c>403</c> and the code
+    /// <c>GENESYS_AGENT_NOT_MAPPED</c>; no user is ever created here. Set the
+    /// mapping on the Ticketing user (<c>AspNetUsers.GenesysUserId</c>) first.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The handler is resolved on the server.</b> The request carries no
+    /// Ticketing user id, and none would be honoured: the interaction's
+    /// <c>HandledByUserId</c> is whatever the Genesys User ID maps to. When
+    /// <c>conversationId</c> is supplied it must resolve to an ingested
+    /// conversation; the first agent resolved on an interaction is the one
+    /// recorded, and a later agent does not overwrite it.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Records who handled the interaction and nothing else.</b> The
+    /// ticket's assignee, department, queue, status and workflow are not
+    /// changed by this call.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The agent's Genesys identity, and the conversation being worked.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <response code="200">The agent resolved to a Ticketing user; when a conversation was supplied, its interaction now records that user as the handler.</response>
+    /// <response code="400">genesysUserId was missing or blank.</response>
+    /// <response code="403">The Genesys agent is not mapped to a Ticketing user (<c>GENESYS_AGENT_NOT_MAPPED</c>), or the mapped user is deactivated (<c>GENESYS_AGENT_INACTIVE</c>).</response>
+    /// <response code="404">A conversation id was supplied but no interaction exists for it.</response>
+    /// <response code="503">The Genesys integration is switched off.</response>
+    [HttpPost("agent-context")]
+    [ProducesResponseType<GenesysAgentContextResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ResolveAgentContext(
+        [FromBody] GenesysAgentContextRequest request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        // The ordinary validation answer, before any lookup: an agent action
+        // without the agent's id is a malformed request, not a mapping gap.
+        if (string.IsNullOrWhiteSpace(request.GenesysUserId))
+        {
+            ModelState.AddModelError(nameof(request.GenesysUserId), "genesysUserId is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        var result = await agentContextAppService.ResolveAsync(
+            employeeId.Value, GenesysContractMapper.Map(request), cancellationToken);
+
+        return result.Outcome switch
+        {
+            GenesysAgentContextOutcome.Resolved => Ok(
+                new GenesysAgentContextResponse(
+                    nameof(GenesysAgentContextOutcome.Resolved),
+                    result.Agent!.GenesysUserId,
+                    result.Agent.UserId,
+                    result.Agent.UserName,
+                    result.Agent.DisplayName,
+                    result.Roles ?? [],
+                    result.DepartmentIds ?? [],
+                    string.IsNullOrWhiteSpace(request.ConversationId) ? null : request.ConversationId.Trim(),
+                    result.TicketId,
+                    result.TicketNumber,
+                    result.TicketInteractionId,
+                    result.HandledByUserId)),
+
+            GenesysAgentContextOutcome.IntegrationDisabled => Problem(
+                type: "https://tigercs.internal/problems/genesys-integration-disabled",
+                title: "The Genesys integration is disabled",
+                detail: "Genesys:Enabled is false — no Genesys request is processed while the integration is switched off.",
+                statusCode: StatusCodes.Status503ServiceUnavailable),
+
+            GenesysAgentContextOutcome.AgentIdRequired => ValidationProblem(
+                new ValidationProblemDetails(new Dictionary<string, string[]>
+                {
+                    [nameof(request.GenesysUserId)] = [result.Detail ?? "genesysUserId is required."]
+                })),
+
+            GenesysAgentContextOutcome.AgentNotMapped => CodedProblem(
+                ErrorCodes.AgentNotMapped,
+                type: "https://tigercs.internal/problems/genesys-agent-not-mapped",
+                title: "Genesys agent is not mapped to a Ticketing user",
+                detail: "Genesys agent is not mapped to a Ticketing user.",
+                statusCode: StatusCodes.Status403Forbidden),
+
+            GenesysAgentContextOutcome.AgentInactive => CodedProblem(
+                ErrorCodes.AgentInactive,
+                type: "https://tigercs.internal/problems/genesys-agent-inactive",
+                title: "The Ticketing user mapped to this Genesys agent is deactivated",
+                detail: result.Detail ?? "The Ticketing user mapped to this Genesys agent is deactivated.",
+                statusCode: StatusCodes.Status403Forbidden),
+
+            GenesysAgentContextOutcome.ConversationNotFound => Problem(
+                type: "https://tigercs.internal/problems/genesys-conversation-not-found",
+                title: "No interaction exists for this conversation",
+                detail: result.Detail ?? "This conversation never produced a ticket.",
+                statusCode: StatusCodes.Status404NotFound),
+
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
+        };
+    }
+
+    /// <summary>
+    /// The standard ProblemDetails body every other refusal on this API uses,
+    /// plus a stable machine-readable <c>code</c> member — so an integrator
+    /// can branch on the code while the human-facing title/detail stay free
+    /// to change. Not a second error format.
+    /// </summary>
+    private ObjectResult CodedProblem(string code, string type, string title, string detail, int statusCode)
+    {
+        var result = Problem(type: type, title: title, detail: detail, statusCode: statusCode);
+        if (result.Value is ProblemDetails problem)
+        {
+            problem.Extensions["code"] = code;
+        }
+
+        return result;
     }
 
     private Guid? GetEmployeeId()

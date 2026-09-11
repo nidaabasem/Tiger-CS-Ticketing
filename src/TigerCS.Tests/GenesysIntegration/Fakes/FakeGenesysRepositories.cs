@@ -1,4 +1,5 @@
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
+using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.Ticketing.Fakes;
@@ -96,4 +97,41 @@ public sealed class FakeGenesysConversationRepository(FakeTicketInteractionRepos
         _messages.Add(message);
         return Task.CompletedTask;
     }
+}
+
+/// <summary>
+/// The Genesys agent → Ticketing user mapping (<c>AspNetUsers.GenesysUserId</c>
+/// joined to the active-employee rule), as the resolver reads it. Mirrors
+/// the database's filtered unique index <c>UX_AspNetUsers_GenesysUserId</c>:
+/// mapping the same Genesys User ID to a second user is refused here exactly
+/// as SQL Server refuses it, so no test can pass while relying on a
+/// many-to-one mapping. Nothing here creates a user from a request.
+/// </summary>
+public sealed class FakeGenesysAgentMappingRepository : IGenesysAgentMappingRepository
+{
+    private readonly List<GenesysMappedAgent> _mappings = [];
+
+    public IReadOnlyList<GenesysMappedAgent> All => _mappings;
+
+    public GenesysMappedAgent Map(Guid userId, string genesysUserId, string? genesysEmail = null, string displayName = "Mapped Agent", bool isActive = true)
+    {
+        if (_mappings.Any(m => string.Equals(m.GenesysUserId, genesysUserId, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"Genesys user '{genesysUserId}' is already mapped to a Ticketing user (UX_AspNetUsers_GenesysUserId).");
+        }
+
+        if (_mappings.Any(m => m.UserId == userId))
+        {
+            throw new InvalidOperationException($"Ticketing user {userId} already carries a Genesys mapping.");
+        }
+
+        var mapped = new GenesysMappedAgent(userId, genesysUserId, genesysEmail, $"user-{userId:N}", displayName, isActive);
+        _mappings.Add(mapped);
+        return mapped;
+    }
+
+    public Task<GenesysMappedAgent?> FindByGenesysUserIdAsync(string genesysUserId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_mappings.FirstOrDefault(m =>
+            string.Equals(m.GenesysUserId, genesysUserId.Trim(), StringComparison.OrdinalIgnoreCase)));
 }

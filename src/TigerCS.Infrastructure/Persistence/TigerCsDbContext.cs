@@ -140,6 +140,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     {
         base.OnModelCreating(builder);
 
+        builder.ApplyConfiguration(new ApplicationUserConfiguration());
         builder.ApplyConfiguration(new ApplicationRoleConfiguration());
         builder.ApplyConfiguration(new EmployeeConfiguration());
         builder.ApplyConfiguration(new DepartmentConfiguration());

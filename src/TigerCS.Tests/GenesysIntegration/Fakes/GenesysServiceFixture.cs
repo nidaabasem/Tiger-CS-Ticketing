@@ -82,6 +82,18 @@ public sealed class GenesysServiceFixture
     /// <summary>Genesys contract #3 — the one update facade.</summary>
     public GenesysTicketUpdateAppService TicketUpdate { get; }
 
+    /// <summary>The Genesys agent → Ticketing user mapping (AspNetUsers.GenesysUserId), mirroring the filtered unique index.</summary>
+    public FakeGenesysAgentMappingRepository AgentMappings { get; } = new();
+
+    /// <summary>Roles of the mapped Ticketing users, as the resolver reports them.</summary>
+    public FakeUserRoleReader UserRoles { get; } = new();
+
+    /// <summary>Genesys User ID → Ticketing user resolution.</summary>
+    public GenesysAgentResolutionAppService AgentResolution { get; }
+
+    /// <summary>The strict agent-action entry point (agent-context endpoint).</summary>
+    public GenesysAgentContextAppService AgentContext { get; }
+
     public GenesysServiceFixture(bool enabled = true)
     {
         Options = new GenesysOptions { Enabled = enabled };
@@ -124,9 +136,12 @@ public sealed class GenesysServiceFixture
         CustomerLookup = new GenesysCustomerLookupAppService(
             Options, customerSearch, IntakeRecords, Tickets);
 
+        AgentResolution = new GenesysAgentResolutionAppService(AgentMappings, UserRoles, DepartmentAssignments);
+
         Ingestion = new GenesysInquiryIngestionAppService(
             Options, Conversations, QueueMappings, Departments, Channels,
-            Tickets, intakeRecordAppService, ticketCreationAppService, customerSearch, Audit, UnitOfWork);
+            Tickets, intakeRecordAppService, ticketCreationAppService, customerSearch, Audit, UnitOfWork,
+            AgentResolution);
 
         Classification = new TicketClassificationAppService(
             Tickets, Categories, new FakePriorityRepository(), new FakeRequestTypeRepository(),
@@ -151,7 +166,10 @@ public sealed class GenesysServiceFixture
 
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(
-            Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff);
+            Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution);
+
+        AgentContext = new GenesysAgentContextAppService(
+            Options, AgentResolution, Conversations, Tickets, UnitOfWork, Audit);
     }
 
     /// <summary>
@@ -170,6 +188,23 @@ public sealed class GenesysServiceFixture
         var department = Departments.AddDepartment(name, code);
         var category = Categories.Seed(department.DepartmentId, $"{name} Enquiry");
         return (department, category);
+    }
+
+    /// <summary>
+    /// Maps a Genesys User ID to a Ticketing user for a test — the same
+    /// administrative act UAT performs with the documented UPDATE statement.
+    /// Returns the Ticketing user id.
+    /// </summary>
+    public Guid MapAgent(string genesysUserId, string? genesysEmail = null, bool isActive = true, string displayName = "Mapped Agent", params string[] roles)
+    {
+        var userId = Guid.NewGuid();
+        AgentMappings.Map(userId, genesysUserId, genesysEmail, displayName, isActive);
+        if (roles.Length > 0)
+        {
+            UserRoles.Add(userId, roles);
+        }
+
+        return userId;
     }
 
     /// <summary>The originating interaction recorded for one Genesys conversation, or null.</summary>
