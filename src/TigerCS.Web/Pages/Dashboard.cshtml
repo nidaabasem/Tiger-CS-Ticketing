@@ -1,20 +1,28 @@
 @page "/Dashboard"
+@using System.Globalization
 @model TigerCS.Web.Pages.DashboardModel
 @{
     ViewData["Title"] = "Dashboard";
     ViewData["ActiveNav"] = "dashboard";
     Layout = "_Layout";
     var nowUtc = DateTime.UtcNow;
+    var options = Model.Overview?.FilterOptions;
+    string DateValue(DateOnly? d) => d?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
 }
 
 <div class="page">
     <div class="page-header">
         <div>
             <h1 class="page-title">Dashboard</h1>
+            @if (Model.Overview is not null)
+            {
+                <p class="page-subtitle">Volume for @Model.PeriodLabel · KPIs and backlog reflect the current open work in your scope.</p>
+            }
         </div>
         <a class="btn btn-gold" href="/NewTicket">+ New Ticket</a>
     </div>
 
+    @* Quick action: the existing customer-first flow — phone search → CRM/PACT lookup → summary → units → previous tickets → new/reopen ticket. Unchanged. *@
     <section class="workspace-search" aria-label="Customer search">
         <form action="/Customers" method="get" class="workspace-search__form" role="search">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" /><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
@@ -25,7 +33,7 @@
         <p class="workspace-search__hint">Find the customer first — see their units, open tickets and history before deciding to open, reopen, or create a ticket.</p>
     </section>
 
-    @if (Model.Summary is null)
+    @if (Model.Overview is null)
     {
         <div class="panel">
             <div class="error-state">
@@ -43,36 +51,157 @@
     }
     else
     {
-        <section class="kpi-grid" aria-label="Operational counters">
+        var f = Model.Overview.Filters;
+
+        @* ---- Filters: a real GET form over the master data the Api returned for this caller's scope. ---- *@
+        <form class="filter-bar dash-filters" id="dashboardFilters" method="get" action="/Dashboard" aria-label="Dashboard filters">
+            <div class="field-group">
+                <label class="field-label" for="dateFrom">Date from</label>
+                <input class="field-input" type="date" id="dateFrom" name="dateFrom" value="@DateValue(Model.DateFrom ?? f.DateFrom)" />
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="dateTo">Date to</label>
+                <input class="field-input" type="date" id="dateTo" name="dateTo" value="@DateValue(Model.DateTo ?? f.DateTo)" />
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="departmentId">Department</label>
+                <select class="field-select" id="departmentId" name="departmentId" data-autosubmit>
+                    <option value="">All my departments</option>
+                    @foreach (var d in options!.Departments)
+                    {
+                        <option value="@d.Id" selected="@(Model.DepartmentId?.ToString(CultureInfo.InvariantCulture) == d.Id)">@d.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="ownerEmployeeId">Agent</label>
+                <select class="field-select" id="ownerEmployeeId" name="ownerEmployeeId">
+                    <option value="">All agents</option>
+                    @foreach (var a in options.Agents)
+                    {
+                        <option value="@a.Id" selected="@(Model.OwnerEmployeeId?.ToString() == a.Id)">@a.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="channelId">Channel</label>
+                <select class="field-select" id="channelId" name="channelId">
+                    <option value="">All channels</option>
+                    @foreach (var c in options.Channels)
+                    {
+                        <option value="@c.Id" selected="@(Model.ChannelId?.ToString(CultureInfo.InvariantCulture) == c.Id)">@c.Label@(c.IsActive ? "" : " (inactive)")</option>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="requestTypeId">Request type</label>
+                <select class="field-select" id="requestTypeId" name="requestTypeId">
+                    <option value="">All request types</option>
+                    @foreach (var group in options.RequestTypes.GroupBy(r => r.GroupId))
+                    {
+                        <optgroup label="@Model.DepartmentLabel(group.Key)">
+                            @foreach (var r in group)
+                            {
+                                <option value="@r.Id" selected="@(Model.RequestTypeId?.ToString(CultureInfo.InvariantCulture) == r.Id)">@r.Label</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="ticketStatus">Status</label>
+                <select class="field-select" id="ticketStatus" name="ticketStatus">
+                    <option value="">All statuses</option>
+                    @foreach (var s in options.Statuses)
+                    {
+                        <option value="@s.Id" selected="@(string.Equals(Model.TicketStatus, s.Id, StringComparison.OrdinalIgnoreCase))">@TicketDisplay.TicketStatusLabel(s.Id)</option>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="priorityId">Priority</label>
+                <select class="field-select" id="priorityId" name="priorityId">
+                    <option value="">All priorities</option>
+                    @foreach (var p in options.Priorities)
+                    {
+                        <option value="@p.Id" selected="@(Model.PriorityId?.ToString(CultureInfo.InvariantCulture) == p.Id)">@p.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-bar__submit">
+                <button type="submit" class="btn btn-sm">Apply</button>
+                <a class="btn btn-ghost btn-sm" href="/Dashboard">Clear</a>
+            </div>
+        </form>
+
+        @* ---- KPI cards: current open work in scope; every card drills into the ticket queue. ---- *@
+        <section class="kpi-grid kpi-grid--six" aria-label="Operational counters">
             @foreach (var card in Model.Cards)
             {
-                if (card.Href is not null)
-                {
-                    <a class="kpi-card @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")" href="@card.Href">
-                        <strong>@card.Value</strong>
-                        <span>@card.Label</span>
-                    </a>
-                }
-                else
-                {
-                    <div class="kpi-card @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")">
-                        <strong>@card.Value</strong>
-                        <span>@card.Label</span>
-                    </div>
-                }
+                <a class="kpi-card @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")" href="@card.Href" title="@card.Hint">
+                    <strong>@card.Value</strong>
+                    <span>@card.Label</span>
+                </a>
             }
         </section>
 
-        <section class="panel" aria-label="Tickets requiring attention">
+        @* ---- Operational breakdowns: label left, bar centre, count + percentage right. ---- *@
+        <section class="dash-grid" aria-label="Operational breakdown">
+            @foreach (var card in Model.BreakdownCards)
+            {
+                <div class="panel dash-card">
+                    <div class="panel__header">
+                        <div>
+                            <span class="panel__title">@card.Title</span>
+                            <div class="dash-card__subtitle">@card.Subtitle</div>
+                        </div>
+                        <a class="link-muted" href="@card.TotalHref" title="Open the matching tickets">@card.Total total</a>
+                    </div>
+                    @if (card.Rows.Count == 0 || (card.Total == 0 && card.Rows.All(r => r.Count == 0)))
+                    {
+                        <div class="empty-state empty-state--compact">
+                            <p>@card.EmptyText</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <ul class="bar-list">
+                            @foreach (var row in card.TopRows)
+                            {
+                                @await Html.PartialAsync("_DashboardBarRow", row)
+                            }
+                        </ul>
+                        @if (card.MoreRows.Count > 0)
+                        {
+                            <details class="bar-list__more">
+                                <summary>View all (@card.Rows.Count)</summary>
+                                <ul class="bar-list">
+                                    @foreach (var row in card.MoreRows)
+                                    {
+                                        @await Html.PartialAsync("_DashboardBarRow", row)
+                                    }
+                                </ul>
+                            </details>
+                        }
+                    }
+                </div>
+            }
+        </section>
+
+        @* ---- Recent / Critical tickets: breached, then due soon, then Critical/High, then newest. ---- *@
+        <section class="panel" aria-label="Recent / Critical Tickets">
             <div class="panel__header">
-                <span class="panel__title">Tickets Requiring Attention</span>
-                <a class="link-muted" href="/Tickets">View full queue</a>
+                <div>
+                    <span class="panel__title">Recent / Critical Tickets</span>
+                    <div class="dash-card__subtitle">SLA breached first, then due soon, then Critical and High priority, then newest.</div>
+                </div>
+                <a class="link-muted" href="@DashboardLinks.ViewAll(f)">View all</a>
             </div>
-            @if (Model.AttentionRows.Count == 0)
+            @if (Model.Overview.RecentTickets.Count == 0)
             {
                 <div class="empty-state">
                     <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                    <p>Nothing needs attention right now.</p>
+                    <p>No open tickets need attention in the current scope.</p>
                 </div>
             }
             else
@@ -81,27 +210,53 @@
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th scope="col">Ticket</th>
-                                <th scope="col" class="col-subject">Issue</th>
+                                <th scope="col">Ticket #</th>
                                 <th scope="col">Customer</th>
-                                <th scope="col">Unit</th>
+                                <th scope="col">Unit / Project</th>
+                                <th scope="col">Department</th>
+                                <th scope="col">Request Type</th>
                                 <th scope="col">Priority</th>
                                 <th scope="col">Status</th>
-                                <th scope="col">SLA</th>
-                                <th scope="col">Assigned To</th>
+                                <th scope="col">Assigned Agent</th>
                                 <th scope="col">Created</th>
+                                <th scope="col">SLA</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var (ticket, departmentName, ownerName) in Model.AttentionRows)
+                            @foreach (var ticket in Model.Overview.RecentTickets)
                             {
                                 <tr>
                                     <td><a class="ticket-id-link" href="/Tickets/@ticket.TicketId">@ticket.TicketNumber</a></td>
-                                    <td class="col-subject"><span class="cell-truncate">@ticket.RequestSummary</span></td>
                                     <td>@(string.IsNullOrWhiteSpace(ticket.CustomerName) ? "—" : ticket.CustomerName)</td>
-                                    <td>@(string.IsNullOrWhiteSpace(ticket.UnitNumber) ? "—" : ticket.UnitNumber)</td>
+                                    <td>
+                                        @if (string.IsNullOrWhiteSpace(ticket.UnitNumber) && string.IsNullOrWhiteSpace(ticket.ProjectName))
+                                        {
+                                            <span>—</span>
+                                        }
+                                        else
+                                        {
+                                            <span>@ticket.UnitNumber</span>
+                                            @if (!string.IsNullOrWhiteSpace(ticket.ProjectName))
+                                            {
+                                                <div class="cell-sub">@ticket.ProjectName</div>
+                                            }
+                                        }
+                                    </td>
+                                    <td>@TicketDisplay.AssignedDepartmentLabel(ticket.CurrentDepartmentId, ticket.DepartmentName)</td>
+                                    <td>@(string.IsNullOrWhiteSpace(ticket.RequestTypeName) ? "—" : ticket.RequestTypeName)</td>
                                     <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(ticket.PriorityId)">@TicketDisplay.PriorityLabel(ticket.PriorityId)</span></td>
                                     <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(ticket.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(ticket.TicketStatus)</span></td>
+                                    <td>
+                                        @if (TicketDisplay.IsDepartmentQueue(ticket.CurrentOwnerEmployeeId))
+                                        {
+                                            <span class="text-secondary">@TicketDisplay.AssignedToLabel(ticket.CurrentOwnerEmployeeId, ticket.OwnerName, ticket.CurrentDepartmentId, ticket.DepartmentName)</span>
+                                        }
+                                        else
+                                        {
+                                            @(ticket.OwnerName ?? $"Employee #{ticket.CurrentOwnerEmployeeId!.Value.ToString()[..8]}")
+                                        }
+                                    </td>
+                                    <td class="text-secondary text-mono">@ticket.CreatedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</td>
                                     <td>
                                         @if (ticket.SlaState == "Breached")
                                         {
@@ -118,17 +273,6 @@
                                             <span class="badge badge-sla-@TicketDisplay.SlaStateCssKey(ticket.SlaState)">@TicketDisplay.SlaStateLabel(ticket.SlaState)</span>
                                         }
                                     </td>
-                                    <td>
-                                        @if (TicketDisplay.IsDepartmentQueue(ticket.CurrentOwnerEmployeeId))
-                                        {
-                                            <span class="text-secondary">@TicketDisplay.AssignedToLabel(ticket.CurrentOwnerEmployeeId, ownerName, ticket.CurrentDepartmentId, departmentName)</span>
-                                        }
-                                        else
-                                        {
-                                            @(ownerName ?? $"Employee #{ticket.CurrentOwnerEmployeeId!.Value.ToString()[..8]}")
-                                        }
-                                    </td>
-                                    <td>@ticket.CreatedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</td>
                                 </tr>
                             }
                         </tbody>

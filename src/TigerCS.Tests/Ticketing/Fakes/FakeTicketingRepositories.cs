@@ -544,3 +544,21 @@ public sealed class FakeTicketingUnitOfWork : ITicketingUnitOfWork
         }
     }
 }
+
+/// <summary>
+/// A stand-in for the Dashboard Phase 1 read model in tests that exercise
+/// the older KPI summary only. The real aggregates are proven against SQL
+/// in <c>Ticketing.Dashboard.DashboardOverviewTests</c>; this stub simply
+/// reports nothing.
+/// </summary>
+public sealed class FakeDashboardQueryRepository : IDashboardQueryRepository
+{
+    public Task<DashboardOverviewSnapshot> GetOverviewAsync(DashboardOverviewQuery query, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new DashboardOverviewSnapshot(0, 0, 0, 0, 0, 0, 0, [], [], [], [], [],
+            Enum.GetValues<BacklogAgeBucket>().Select(b => new DashboardCountRow<BacklogAgeBucket>(b, b.ToString(), 0)).ToList(), []));
+
+    public Task<DashboardFilterOptionsSnapshot> GetFilterOptionsAsync(
+        IReadOnlyCollection<int>? scopeDepartmentIds, IReadOnlyCollection<int>? agentDepartmentIds,
+        IReadOnlyCollection<int>? requestTypeDepartmentIds, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new DashboardFilterOptionsSnapshot([], [], [], [], []));
+}

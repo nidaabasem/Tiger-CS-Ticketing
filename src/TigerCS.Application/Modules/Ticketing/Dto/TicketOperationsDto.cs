@@ -16,6 +16,16 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="SortDir">Sort direction — asc or desc.</param>
 /// <param name="Page">1-based page number.</param>
 /// <param name="PageSize">Page size.</param>
+/// <param name="ChannelId">Narrow to tickets whose originating interaction arrived on one channel (Dashboard drill-down).</param>
+/// <param name="RequestTypeId">Narrow to one request type (Dashboard drill-down).</param>
+/// <param name="ActiveOnly">True: only active tickets — Open, InProgress, PendingCustomer, PendingThirdParty (the Dashboard's Open Tickets).</param>
+/// <param name="InDepartmentQueue">True: only active tickets with no current owner — sitting in their department's queue.</param>
+/// <param name="SlaBreached">True: only active tickets whose SLA state is Breached.</param>
+/// <param name="DueToday">True: only active tickets whose current, unbreached SLA resolution deadline falls today (UTC calendar day).</param>
+/// <param name="BacklogAge">Narrow active tickets to one age bucket by CreatedAtUtc: Under24Hours, OneToThreeDays, ThreeToSevenDays, OverSevenDays.</param>
+/// <param name="PendingApproval">True: only tickets carrying a Pending approval the caller is authorized to action.</param>
+/// <param name="CreatedFrom">Only tickets created on or after this UTC calendar day.</param>
+/// <param name="CreatedTo">Only tickets created on or before this UTC calendar day.</param>
 public sealed record TicketListRequestDto(
     int? DepartmentId,
     int? CategoryId,
@@ -27,7 +37,17 @@ public sealed record TicketListRequestDto(
     string? SortBy,
     string? SortDir,
     int Page,
-    int PageSize);
+    int PageSize,
+    byte? ChannelId = null,
+    int? RequestTypeId = null,
+    bool? ActiveOnly = null,
+    bool? InDepartmentQueue = null,
+    bool? SlaBreached = null,
+    bool? DueToday = null,
+    string? BacklogAge = null,
+    bool? PendingApproval = null,
+    DateOnly? CreatedFrom = null,
+    DateOnly? CreatedTo = null);
 
 /// <summary>One row of the ticket queue (MVP-API-Contracts.md §3.2).</summary>
 /// <param name="TicketId">The ticket.</param>

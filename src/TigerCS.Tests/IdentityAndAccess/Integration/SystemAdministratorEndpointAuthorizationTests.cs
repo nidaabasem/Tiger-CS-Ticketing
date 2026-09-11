@@ -966,6 +966,15 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task GetDashboardOverview_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.GetAsync("/api/dashboard/overview?dateFrom=2026-08-01&dateTo=2026-09-01");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     // ---------------------------------------------------------------
     // Notes
     // ---------------------------------------------------------------

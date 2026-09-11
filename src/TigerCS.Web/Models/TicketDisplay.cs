@@ -149,6 +149,16 @@ public static class TicketDisplay
         _ => source
     };
 
+    /// <summary>The Open Backlog Ageing bucket names (Dashboard Phase 1) — keyed on the Api's <c>BacklogAgeBucket</c> enum names.</summary>
+    public static string BacklogAgeLabel(string bucket) => bucket switch
+    {
+        "Under24Hours" => "< 24h",
+        "OneToThreeDays" => "1–3 days",
+        "ThreeToSevenDays" => "3–7 days",
+        "OverSevenDays" => "> 7 days",
+        _ => bucket
+    };
+
     public static string TicketStatusLabel(string ticketStatus) => ticketStatus switch
     {
         "Open" => "Open",

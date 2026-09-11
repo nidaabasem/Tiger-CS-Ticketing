@@ -31,7 +31,7 @@ public class DashboardAppServiceTests
         var queryService = new TicketQueryAppService(
             tickets, departmentAssignments, resolutions, ReopenPolicy.Default, TimeProvider.System);
         return new Fixture(
-            new DashboardAppService(tickets, queryService, TimeProvider.System),
+            new DashboardAppService(tickets, queryService, TimeProvider.System, new FakeDashboardQueryRepository(), departmentAssignments),
             tickets, departmentAssignments, resolutions);
     }
 

@@ -37,6 +37,18 @@ public sealed class TicketQueryAppService(
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize is < 1 or > 200 ? 50 : request.PageSize;
 
+        // Dashboard drill-down (Dashboard Phase 1): the Pending Approval
+        // filter needs the caller's approver scope — resolved here from
+        // their own roles and memberships, never from the request.
+        ApprovalApproverScope? approverScope = null;
+        if (request.PendingApproval == true)
+        {
+            var memberships = await userDepartmentAssignmentRepository.GetByEmployeeIdAsync(callerEmployeeId, cancellationToken);
+            approverScope = ApprovalApproverScope.Resolve(
+                callerEmployeeId, callerRoles, memberships.Select(m => m.DepartmentId),
+                TicketApprovalAppService.DepartmentTargetDefaultApproverRoles);
+        }
+
         var query = new TicketQuery(
             visibleDepartmentIds,
             request.DepartmentId,
@@ -49,7 +61,19 @@ public sealed class TicketQueryAppService(
             string.Equals(request.SortBy, "priority", StringComparison.OrdinalIgnoreCase) ? TicketSortBy.Priority : TicketSortBy.CreatedAtUtc,
             !string.Equals(request.SortDir, "asc", StringComparison.OrdinalIgnoreCase),
             page,
-            pageSize);
+            pageSize,
+            ChannelId: request.ChannelId,
+            RequestTypeId: request.RequestTypeId,
+            ActiveOnly: request.ActiveOnly == true,
+            InDepartmentQueue: request.InDepartmentQueue == true,
+            SlaBreached: request.SlaBreached == true,
+            DueToday: request.DueToday == true,
+            BacklogAge: ParseEnum<BacklogAgeBucket>(request.BacklogAge),
+            PendingApprovalFor: approverScope,
+            // Calendar days are UTC days — the dashboard's existing "today" convention.
+            CreatedFromUtc: request.CreatedFrom?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            CreatedToUtc: request.CreatedTo?.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            NowUtc: timeProvider.GetUtcNow().UtcDateTime);
 
         var result = await ticketRepository.SearchAsync(query, cancellationToken);
 
