@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
+using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Persistence;
@@ -91,4 +92,49 @@ public sealed class GenesysConversationRepository(TigerCsDbContext dbContext) : 
 
     public async Task AddMessageAsync(TicketInteractionMessage message, CancellationToken cancellationToken = default) =>
         await dbContext.TicketInteractionMessages.AddAsync(message, cancellationToken);
+}
+
+/// <summary>
+/// The Genesys agent → Ticketing user mapping, read from
+/// <c>AspNetUsers.GenesysUserId</c> joined to <c>Employees</c> for the
+/// active-employee rule. Matches on the Genesys User ID and nothing else;
+/// the filtered unique index <c>UX_AspNetUsers_GenesysUserId</c> is what
+/// makes "at most one" a database fact. Read-only: no code path creates a
+/// user from a Genesys request.
+/// </summary>
+public sealed class GenesysAgentMappingRepository(TigerCsDbContext dbContext) : IGenesysAgentMappingRepository
+{
+    public async Task<GenesysMappedAgent?> FindByGenesysUserIdAsync(
+        string genesysUserId, CancellationToken cancellationToken = default)
+    {
+        var value = genesysUserId.Trim();
+
+        var row = await dbContext.Users.AsNoTracking()
+            .Where(u => u.GenesysUserId == value)
+            .Select(u => new
+            {
+                u.Id,
+                u.GenesysUserId,
+                u.GenesysEmail,
+                u.UserName,
+                Employee = dbContext.Employees.AsNoTracking()
+                    .Where(e => e.EmployeeId == u.Id)
+                    .Select(e => new { e.DisplayName, e.DeactivatedAtUtc })
+                    .FirstOrDefault()
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is null
+            ? null
+            : new GenesysMappedAgent(
+                row.Id,
+                row.GenesysUserId!,
+                row.GenesysEmail,
+                row.UserName,
+                row.Employee?.DisplayName,
+                // The existing rule (ActiveEmployeeRequirement): an Employee
+                // row that is not deactivated. No Employee row is not a
+                // valid, active Ticketing user either.
+                IsActive: row.Employee is not null && row.Employee.DeactivatedAtUtc == null);
+    }
 }

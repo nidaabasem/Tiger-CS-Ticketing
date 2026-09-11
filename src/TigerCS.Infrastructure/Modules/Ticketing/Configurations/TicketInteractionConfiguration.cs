@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Infrastructure.Identity;
 
 namespace TigerCS.Infrastructure.Modules.Ticketing.Configurations;
 
@@ -42,6 +43,12 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
         builder.Property(i => i.GenesysAgentId).HasMaxLength(64);
         builder.Property(i => i.GenesysAgentName).HasMaxLength(200);
         builder.Property(i => i.Direction).HasMaxLength(32);
+
+        // Interaction ownership (Genesys agent identity mapping). The Genesys
+        // User ID is stored verbatim next to the Ticketing user it resolved
+        // to, so a row is auditable even if the mapping is later changed.
+        builder.Property(i => i.GenesysAgentUserId).HasMaxLength(TicketInteraction.GenesysAgentUserIdMaxLength);
+        builder.Property(i => i.HandledByUserId);
 
         // Two distinct indexes over TicketId — both created via the
         // named-index overload, because an unnamed HasIndex on the same
@@ -87,5 +94,17 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
             .WithMany()
             .HasForeignKey(i => i.ChannelId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Who handled the interaction → AspNetUsers.Id. Optional: historical
+        // rows, system-generated interactions and unmapped Genesys agents
+        // carry none. Restrict, never cascade — interaction history outlives
+        // a user (deactivation is the only retirement path anyway, matching
+        // Employees → AspNetUsers).
+        builder.HasIndex(i => i.HandledByUserId, "IX_TicketInteractions_HandledByUserId");
+        builder.HasOne<ApplicationUser>()
+            .WithMany()
+            .HasForeignKey(i => i.HandledByUserId)
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired(false);
     }
 }

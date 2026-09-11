@@ -51,7 +51,8 @@ public sealed class GenesysTicketUpdateAppService(
     ITicketAgentHandoffRepository handoffRepository,
     ITicketingUnitOfWork unitOfWork,
     GenesysConversationEndAppService conversationEndAppService,
-    GenesysAgentHandoffAppService agentHandoffAppService)
+    GenesysAgentHandoffAppService agentHandoffAppService,
+    GenesysAgentResolutionAppService agentResolution)
 {
     public async Task<GenesysTicketUpdateResult> UpdateAsync(
         Guid callerEmployeeId, long ticketId, GenesysTicketUpdateDto request, CancellationToken cancellationToken = default)
@@ -168,6 +169,22 @@ public sealed class GenesysTicketUpdateAppService(
             interaction.RecordAgentIfAbsent(request.AgentId, request.AgentName);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+        }
+
+        // Interaction ownership from the agent this update names — resolved
+        // server-side from the Genesys User ID (agentId), apply-if-absent
+        // like the verbatim agent context above. An update may name no agent
+        // at all, and an unmapped one changes nothing here: the verbatim
+        // agentId is still kept, and ownership stays null. The strict path
+        // for an agent acting is the agent-context endpoint.
+        if (!string.IsNullOrWhiteSpace(request.AgentId)
+            && interaction.HandledByUserId is null
+            && await agentResolution.ResolveByGenesysUserIdAsync(request.AgentId, cancellationToken) is { IsResolved: true } agent
+            && interaction.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId))
+        {
+            await using var ownershipTransaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await ownershipTransaction.CommitAsync(cancellationToken);
         }
 
         // The handoff state is reported on EVERY update, not only on one that

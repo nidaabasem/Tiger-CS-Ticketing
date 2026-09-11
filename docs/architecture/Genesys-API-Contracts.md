@@ -8,9 +8,11 @@ surface: **there is nothing else on `api/genesys`.**
 | 1 | Create Ticket, any channel | `POST /api/genesys/tickets` |
 | 2 | Customer lookup on call pickup | `GET /api/genesys/customers/lookup?phoneNumber=` |
 | 3 | Update Ticket | `PATCH /api/genesys/tickets/{ticketId}` |
+| 4 | Agent context (agent identity mapping) | `POST /api/genesys/agent-context` |
 
-All three are behind the `Genesys:Enabled` feature flag and answer `503` while
-it is off.
+All four are behind the `Genesys:Enabled` feature flag and answer `503` while
+it is off. Contract 4 is the agent-identity addition described under
+*Agent identity mapping* below; it changes nothing about contracts 1–3.
 
 ---
 
@@ -393,6 +395,138 @@ update never leaves a half-stored conversation.
 
 ---
 
+## 4. Agent context — Genesys agent → Ticketing user
+
+`POST /api/genesys/agent-context`
+
+When an agent opens or works with Ticketing from Genesys, Ticketing must know
+**exactly which authenticated Ticketing user that agent is**. The mapping is:
+
+```text
+Genesys User ID  →  AspNetUsers.GenesysUserId  →  Ticketing user  →  user id / roles / departments
+```
+
+The immutable **Genesys User ID** is the only key. The agent's display name
+and email are never used to identify an agent: `agentEmail` is informational
+and is recorded on the audit trail only.
+
+### Request
+
+```json
+{
+  "genesysUserId": "6f1d2c3b-0a9e-4b8d-9c7f-1e2d3c4b5a69",
+  "agentEmail": "agent@tigerproperties.ae",
+  "conversationId": "e2c4a1b0-7d3f-4c9e-9a1b-2f3e4d5c6b7a"
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `genesysUserId` | **yes** | The agent's Genesys User ID. |
+| `agentEmail` | no | Informational only. Never trusted as identity. |
+| `conversationId` | no | The conversation the agent is working. When present, its interaction records the resolved user as the handler. |
+
+There is deliberately **no Ticketing user id** in this body. Which user
+handled the interaction is resolved on the server from `genesysUserId` alone;
+a `handledByUserId` (or any similar property) sent by a client is ignored.
+
+### Response — `200 OK`
+
+```json
+{
+  "outcome": "Resolved",
+  "genesysUserId": "6f1d2c3b-0a9e-4b8d-9c7f-1e2d3c4b5a69",
+  "userId": "0a1b2c3d-…",
+  "userName": "layla.agent",
+  "displayName": "Layla",
+  "roles": ["CS Agent"],
+  "departmentIds": [3],
+  "conversationId": "e2c4a1b0-…",
+  "ticketId": 1042,
+  "ticketNumber": "TG-CS-260911-0007",
+  "ticketInteractionId": 2210,
+  "handledByUserId": "0a1b2c3d-…"
+}
+```
+
+`ticketId`, `ticketNumber`, `ticketInteractionId` and `handledByUserId` are
+null when no `conversationId` was supplied. `handledByUserId` is the user
+recorded on the interaction — the **first** agent resolved on it; a later,
+different agent (a transfer) does not overwrite it.
+
+### What it records — and what it does not
+
+The resolved user is stored on the conversation's `TicketInteractions` row:
+
+```text
+TicketInteractions.GenesysAgentUserId = the incoming Genesys User ID
+TicketInteractions.HandledByUserId    = the resolved Ticketing user (FK → AspNetUsers.Id)
+```
+
+This is *who handled the interaction*. It is **not** the ticket's assignee:
+the ticket's owner, department, queue, status and workflow are untouched, and
+move only through their own TigerCS operations exactly as before.
+
+### Other responses
+
+| Code | Body | When |
+|---|---|---|
+| `400` | standard validation problem, `errors.GenesysUserId` | `genesysUserId` missing or blank |
+| `403` | ProblemDetails with `"code": "GENESYS_AGENT_NOT_MAPPED"` | No Ticketing user carries this Genesys User ID. **No user is created.** |
+| `403` | ProblemDetails with `"code": "GENESYS_AGENT_INACTIVE"` | The mapped Ticketing user is deactivated |
+| `404` | ProblemDetails | `conversationId` supplied but never ingested |
+| `503` | ProblemDetails | `Genesys:Enabled` is false |
+
+The `403` body is the API's standard ProblemDetails shape plus the stable
+`code` member:
+
+```json
+{
+  "type": "https://tigercs.internal/problems/genesys-agent-not-mapped",
+  "title": "Genesys agent is not mapped to a Ticketing user",
+  "status": 403,
+  "detail": "Genesys agent is not mapped to a Ticketing user.",
+  "code": "GENESYS_AGENT_NOT_MAPPED"
+}
+```
+
+### The same mapping on contracts 1 and 3
+
+`agentId` on Create Ticket and Update Ticket **is the Genesys User ID** (it
+always was the handling agent's identifier; `agentName` is display-only).
+When it is supplied and maps to an active Ticketing user, that user is
+recorded as the interaction's handler exactly as above, apply-if-absent.
+Those two contracts are integration events — a queue or system may send them
+before any agent exists — so an absent or unmapped `agentId` there is **not**
+refused: the ticket is still created/updated, the verbatim `agentId` is kept,
+ownership stays null, and the ingestion audit entry names the outcome
+(`AgentMapping=NotMapped(...)`). Only contract 4 — an agent acting — refuses
+an unmapped agent.
+
+### Setting up the mapping (UAT)
+
+There is no administration screen for this yet. For UAT the mapping is set
+directly on the Ticketing user. Each Genesys User ID may be mapped to at most
+one Ticketing user (`UX_AspNetUsers_GenesysUserId`, filtered unique); users
+that are not Genesys agents simply keep `NULL`.
+
+```sql
+-- @TicketingUserId : AspNetUsers.Id of the existing Ticketing user (uniqueidentifier)
+-- @GenesysUserId   : the agent's immutable Genesys User ID
+-- @GenesysEmail    : informational; may be NULL
+UPDATE AspNetUsers
+SET
+    GenesysUserId = @GenesysUserId,
+    GenesysEmail  = @GenesysEmail
+WHERE Id = @TicketingUserId;
+```
+
+To remove a mapping, set both columns back to `NULL`. Never create a user
+this way — the Ticketing account must already exist (Administration →
+Users), with its role and department assignments, before it is mapped.
+
+---
+
 ## The digital / chatbot conversation flow
 
 Mandatory for chatbot, website chat, WhatsApp and social conversations.
@@ -435,3 +569,7 @@ that touch these three contracts directly:
    only the end-of-conversation path is wired.
 7. **Bot-authored lines** — how Genesys labels a virtual agent's messages, so
    they map to `VirtualAgent` rather than `System`.
+8. **Agent identity** — confirmation that the `agentId` Genesys sends (and
+   `genesysUserId` on the agent-context call) is the agent's immutable Genesys
+   User ID, and the list of agent Genesys User IDs (+ emails) to map to the
+   UAT Ticketing accounts.

@@ -260,6 +260,12 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddScoped<IGenesysQueueMappingRepository, GenesysQueueMappingRepository>();
         services.AddScoped<IGenesysConversationRepository, GenesysConversationRepository>();
+        // Genesys agent identity mapping — AspNetUsers.GenesysUserId → Ticketing
+        // user, and the interaction-ownership record it enables. Read-only
+        // over Identity's store; nothing provisions a user.
+        services.AddScoped<IGenesysAgentMappingRepository, GenesysAgentMappingRepository>();
+        services.AddScoped<GenesysAgentResolutionAppService>();
+        services.AddScoped<GenesysAgentContextAppService>();
         services.AddScoped<GenesysInquiryIngestionAppService>();
         services.AddScoped<GenesysConversationEndAppService>();
         services.AddScoped<GenesysAgentHandoffAppService>();

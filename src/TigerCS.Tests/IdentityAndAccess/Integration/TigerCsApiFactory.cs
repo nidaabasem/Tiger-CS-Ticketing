@@ -235,6 +235,57 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         return (username, password, user.Id);
     }
 
+    /// <summary>
+    /// Maps a Ticketing user to a Genesys agent — the same administrative act
+    /// UAT performs directly on <c>AspNetUsers</c> (see
+    /// docs/architecture/Genesys-API-Contracts.md), done here through the
+    /// Identity store. Test setup, not the thing under test: no endpoint
+    /// creates or edits this mapping.
+    /// </summary>
+    public async Task MapGenesysAgentAsync(Guid employeeId, string genesysUserId, string? genesysEmail = null)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var user = await db.Users.FirstAsync(u => u.Id == employeeId);
+        user.GenesysUserId = genesysUserId;
+        user.GenesysEmail = genesysEmail;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>How many Ticketing users carry this Genesys User ID — the proof that an unmapped agent never provisioned one.</summary>
+    public async Task<int> CountUsersMappedToAsync(string genesysUserId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.Users.CountAsync(u => u.GenesysUserId == genesysUserId);
+    }
+
+    /// <summary>Deactivates an employee directly — the existing retirement path (never a delete).</summary>
+    public async Task DeactivateEmployeeAsync(Guid employeeId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var employee = await db.Employees.FirstAsync(e => e.EmployeeId == employeeId);
+        employee.Deactivate(DateTime.UtcNow);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Reads the interaction recorded for one Genesys conversation, for assertions on stored ownership rather than on the API projection.</summary>
+    public async Task<TicketInteraction?> GetInteractionByConversationAsync(string conversationId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return await db.TicketInteractions.AsNoTracking().FirstOrDefaultAsync(i => i.GenesysConversationId == conversationId);
+    }
+
+    /// <summary>Reads a ticket's stored owner, so a test can prove that recording an interaction's handler never moved the ticket's assignment.</summary>
+    public async Task<Guid?> GetTicketCurrentOwnerAsync(long ticketId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        return (await db.Tickets.AsNoTracking().FirstAsync(t => t.TicketId == ticketId)).CurrentOwnerEmployeeId;
+    }
+
     /// <summary>Creates a department directly (bypassing the app services — this is test setup, not the thing under test).</summary>
     public async Task<int> CreateDepartmentAsync(string name, string code)
     {
