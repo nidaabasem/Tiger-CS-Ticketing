@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
 using TigerCS.Web.Services.Auth;
@@ -57,6 +58,8 @@ builder.Services.AddHttpClient<DepartmentsApiClient>(client => client.BaseAddres
 builder.Services.AddHttpClient<ChannelsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<CustomerHistoryApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddHttpClient<CustomersApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<DashboardApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
@@ -121,6 +124,25 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapRazorPages();
+
+// The former standalone Pending Customer Interactions page is now the
+// Pending Interactions view of the Tickets workspace. Old links and
+// bookmarks land there with their filters intact (the parameter names are
+// unchanged); nothing is rendered at the old address.
+app.MapGet("/PendingCustomerInteractions", (HttpRequest request) =>
+{
+    var query = QueryString.Create(TicketsViews.QueryKey, TicketsView.Pending.Key());
+    foreach (var (key, values) in request.Query)
+    {
+        if (string.Equals(key, TicketsViews.QueryKey, StringComparison.OrdinalIgnoreCase)) continue;
+        foreach (var value in values)
+        {
+            if (value is not null) query = query.Add(key, value);
+        }
+    }
+
+    return Results.Redirect($"/Tickets{query}", permanent: true);
+});
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
 

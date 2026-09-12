@@ -1,4 +1,8 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Primitives;
+using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Web.Models;
@@ -10,13 +14,35 @@ namespace TigerCS.Web.Pages;
 
 public sealed record TicketQueueRow(TicketSummaryDto Ticket, string? DepartmentName, string? OwnerName, TicketSlaSummaryResponseDto? Sla);
 
+/// <summary>One row of the Pending Interactions view, with the department and channel resolved to names.</summary>
+public sealed record PendingInteractionRow(AgentHandoffDto Handoff, string? DepartmentName, string? ChannelName);
+
+/// <summary>
+/// The unified Tickets workspace: one page, four views — Queue, Pending
+/// Interactions, My Tickets and Closed — selected by <c>?view=</c> (see
+/// <see cref="TicketsView"/>). Queue, My Tickets and Closed are the same
+/// ticket-queue query as ever (<c>GET api/tickets</c>), My Tickets with the
+/// owner fixed to the viewer and Closed with the status fixed to Closed;
+/// Pending Interactions is the same agent work list as ever
+/// (<c>GET api/pending-customer-interactions</c>) with its Start/Complete/
+/// Cancel actions. No ticket rule or permission moved: every view calls the
+/// endpoint its former page called, and the Api still decides.
+/// </summary>
 public sealed class TicketsModel(
     TicketsApiClient ticketsApiClient,
     TicketSlaApiClient slaApiClient,
     TicketNameResolver nameResolver,
     ChannelsApiClient? channelsApiClient = null,
-    RequestTypesApiClient? requestTypesApiClient = null) : PageModel
+    RequestTypesApiClient? requestTypesApiClient = null,
+    PendingCustomerInteractionsApiClient? handoffsApiClient = null,
+    UsersApiClient? usersApiClient = null) : PageModel
 {
+    // ---- which view ----
+    public TicketsView View { get; private set; } = TicketsView.Queue;
+
+    /// <summary>Whether the signed-in user may create tickets (the Api's own role set for POST api/tickets) — decides only whether the "+ New Ticket" action is shown.</summary>
+    public bool CanCreateTicket { get; private set; }
+
     // ---- bound filter state (query string) ----
     public int? DepartmentId { get; set; }
     public byte? PriorityId { get; set; }
@@ -32,7 +58,10 @@ public sealed class TicketsModel(
     // ---- Dashboard drill-down filters (Dashboard Phase 1) — bound from the
     // query string and passed straight through to the same queue endpoint;
     // the Api evaluates each one with the exact predicate the dashboard
-    // counted with. ----
+    // counted with. The SLA and Assignee filter controls on the page set
+    // the same parameters (slaBreached/dueToday and ownerEmployeeId/
+    // inDepartmentQueue), so a drill-down and a hand-picked filter are one
+    // and the same state. ----
     public byte? ChannelId { get; set; }
     public int? RequestTypeId { get; set; }
     public bool ActiveOnly { get; set; }
@@ -43,6 +72,18 @@ public sealed class TicketsModel(
     public bool PendingApproval { get; set; }
     public DateOnly? CreatedFrom { get; set; }
     public DateOnly? CreatedTo { get; set; }
+
+    /// <summary>The value of the page's SLA filter control, derived from the underlying slaBreached/dueToday flags.</summary>
+    public string SlaFilterValue => SlaBreached ? "breached" : DueToday ? "dueToday" : string.Empty;
+
+    /// <summary>The value of the page's Assignee filter control, derived from ownerEmployeeId/inDepartmentQueue.</summary>
+    public string AssigneeFilterValue => InDepartmentQueue ? "queue" : OwnerEmployeeId?.ToString() ?? string.Empty;
+
+    /// <summary>The department whose members the Assignee filter offers: the selected department filter, or the viewer's only department. Null when no single department is in scope.</summary>
+    public int? AssigneeDepartmentId { get; private set; }
+
+    /// <summary>The Assignee filter's options — the active members of <see cref="AssigneeDepartmentId"/>; empty when there is none or the directory call failed.</summary>
+    public IReadOnlyList<DepartmentUserDto> AssigneeOptions { get; private set; } = [];
 
     /// <summary>True when any dashboard drill-down criterion is active — the page then shows what it is filtering by, with a way to clear it.</summary>
     public bool HasDrilldown =>
@@ -94,15 +135,99 @@ public sealed class TicketsModel(
     public int? PendingCustomerCount { get; private set; }
     public int? ClosedCount { get; private set; }
 
+    // ---- tab counts: each tab's own default total, from the query that tab runs ----
+    /// <summary>Every ticket the viewer may see (the Queue tab's unfiltered total).</summary>
+    public int? QueueCount { get; private set; }
+
+    /// <summary>Interactions still waiting for anyone to take them — the number the Pending Interactions page always led with.</summary>
+    public int? PendingCount { get; private set; }
+
+    /// <summary>Tickets the viewer owns, in any status (what the old "My Tickets" link listed).</summary>
+    public int? MyCount { get; private set; }
+
+    public int? TabCount(TicketsView view) => view switch
+    {
+        TicketsView.Pending => PendingCount,
+        TicketsView.My => MyCount,
+        TicketsView.Closed => ClosedCount,
+        _ => QueueCount,
+    };
+
+    // ---- Pending Interactions view state ----
+    public bool MineOnly { get; set; }
+    public bool UnassignedOnly { get; set; }
+    public bool IncludeResolved { get; set; }
+    public ApiOutcome PendingOutcome { get; private set; } = ApiOutcome.Success;
+    public IReadOnlyList<PendingInteractionRow> PendingRows { get; private set; } = [];
+    public IReadOnlyList<ChannelDto> Channels { get; private set; } = [];
+    public int PendingTotalCount { get; private set; }
+    public int PendingTotalPages => PendingTotalCount == 0 ? 1 : (int)Math.Ceiling(PendingTotalCount / (double)PageSize);
+
+    /// <summary>Set when a Start/Complete/Cancel action failed — carried across the redirect and shown above the list rather than swallowed.</summary>
+    [TempData]
+    public string? PendingActionError { get; set; }
+
+    /// <summary>The route values that keep the Pending Interactions filters and page when one of its action forms posts.</summary>
+    public IDictionary<string, string> PendingRouteValues
+    {
+        get
+        {
+            var values = new Dictionary<string, string>(StringComparer.Ordinal) { [TicketsViews.QueryKey] = TicketsView.Pending.Key() };
+            if (ChannelId is { } channelId) values["channelId"] = channelId.ToString();
+            if (DepartmentId is { } departmentId) values["departmentId"] = departmentId.ToString();
+            if (MineOnly) values["mineOnly"] = "true";
+            if (UnassignedOnly) values["unassignedOnly"] = "true";
+            if (IncludeResolved) values["includeResolved"] = "true";
+            if (PageNumber > 1) values["page"] = PageNumber.ToString();
+            if (PageSize != 20) values["pageSize"] = PageSize.ToString();
+            return values;
+        }
+    }
+
     public async Task OnGetAsync(
         int? departmentId, byte? priorityId, string? ticketStatus, string? verificationStatus,
         Guid? ownerEmployeeId, string? search, string? sortBy, string? sortDir, int page, int pageSize,
         CancellationToken cancellationToken,
         byte? channelId = null, int? requestTypeId = null, bool activeOnly = false, bool inDepartmentQueue = false,
         bool slaBreached = false, bool dueToday = false, string? backlogAge = null, bool pendingApproval = false,
-        DateOnly? createdFrom = null, DateOnly? createdTo = null)
+        DateOnly? createdFrom = null, DateOnly? createdTo = null,
+        string? view = null, string? sla = null, string? assignee = null,
+        bool mineOnly = false, bool unassignedOnly = false, bool includeResolved = false)
     {
         Viewer = CurrentUser.FromPrincipal(User);
+        CanCreateTicket = TicketCreationPolicy.AppliesTo(Viewer);
+
+        // The page's own filter controls express the SLA and Assignee
+        // choices through the queue endpoint's existing parameters.
+        switch (sla)
+        {
+            case "breached": slaBreached = true; break;
+            case "dueToday": dueToday = true; break;
+        }
+
+        if (assignee == "queue")
+        {
+            inDepartmentQueue = true;
+        }
+        else if (Guid.TryParse(assignee, out var assigneeId))
+        {
+            ownerEmployeeId = assigneeId;
+        }
+
+        View = TicketsViews.Resolve(view, ownerEmployeeId, Viewer?.EmployeeId, ticketStatus);
+
+        // Each view's fixed predicate is exactly what its former navigation
+        // link carried: My Tickets = ownerEmployeeId of the viewer, Closed =
+        // ticketStatus=Closed.
+        if (View == TicketsView.My && Viewer is not null)
+        {
+            ownerEmployeeId = Viewer.EmployeeId;
+        }
+
+        if (View == TicketsView.Closed)
+        {
+            ticketStatus = "Closed";
+        }
 
         DepartmentId = departmentId;
         PriorityId = priorityId;
@@ -124,13 +249,104 @@ public sealed class TicketsModel(
         PendingApproval = pendingApproval;
         CreatedFrom = createdFrom;
         CreatedTo = createdTo;
+        MineOnly = mineOnly;
+        UnassignedOnly = unassignedOnly;
+        IncludeResolved = includeResolved;
+
+        RememberContext();
 
         // Own memberships drive the "my departments" filter; the directory
         // puts a name on every row's department, member or not.
         await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var statsTask = LoadStatsAsync(cancellationToken);
+        var tabCountsTask = LoadTabCountsAsync(cancellationToken);
+
+        if (View == TicketsView.Pending)
+        {
+            await LoadPendingAsync(cancellationToken);
+        }
+        else
+        {
+            await LoadTicketListAsync(cancellationToken);
+        }
+
+        await statsTask;
+        await tabCountsTask;
+    }
+
+    // ---- Pending Interactions actions: the same three Api calls the
+    // former page made, then back to the very same filtered view (post →
+    // redirect → get, so a refresh never repeats the action). ----
+
+    public async Task<IActionResult> OnPostStartAsync(long handoffId, CancellationToken cancellationToken)
+    {
+        if (handoffsApiClient is null) return RedirectToPendingView();
+        var result = await handoffsApiClient.StartAsync(handoffId, cancellationToken);
+        return AfterPendingAction(result.IsSuccess ? null : "The interaction could not be started.");
+    }
+
+    public async Task<IActionResult> OnPostCompleteAsync(long handoffId, string? resolutionNote, CancellationToken cancellationToken)
+    {
+        if (handoffsApiClient is null) return RedirectToPendingView();
+        var result = await handoffsApiClient.CompleteAsync(
+            handoffId, new CompleteAgentHandoffRequestDto(resolutionNote), cancellationToken);
+        return AfterPendingAction(result.IsSuccess ? null : "The interaction could not be completed.");
+    }
+
+    public async Task<IActionResult> OnPostCancelAsync(long handoffId, string? reason, CancellationToken cancellationToken)
+    {
+        if (handoffsApiClient is null) return RedirectToPendingView();
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return AfterPendingAction("A reason is required to cancel pending customer work.");
+        }
+
+        var result = await handoffsApiClient.CancelAsync(
+            handoffId, new CancelAgentHandoffRequestDto(reason), cancellationToken);
+        return AfterPendingAction(result.IsSuccess ? null : "The interaction could not be cancelled.");
+    }
+
+    private IActionResult AfterPendingAction(string? error)
+    {
+        PendingActionError = error;
+        return RedirectToPendingView();
+    }
+
+    /// <summary>Back to the Pending Interactions view with whatever filters and page the action form carried — never anywhere else.</summary>
+    private IActionResult RedirectToPendingView()
+    {
+        var query = new List<KeyValuePair<string, StringValues>>
+        {
+            new(TicketsViews.QueryKey, TicketsView.Pending.Key()),
+        };
+        query.AddRange(Request.Query.Where(pair =>
+            !string.Equals(pair.Key, TicketsViews.QueryKey, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(pair.Key, "handler", StringComparison.OrdinalIgnoreCase)));
+
+        return LocalRedirect($"/Tickets{QueryString.Create(query)}");
+    }
+
+    /// <summary>Remembers this view, its filters and its page for the Ticket Details breadcrumb and back links.</summary>
+    private void RememberContext()
+    {
+        Response.Cookies.Append(
+            TicketsContext.CookieName,
+            TicketsContext.ToCookieValue(View, Request.Query),
+            new CookieOptions
+            {
+                HttpOnly = true,
+                SameSite = SameSiteMode.Strict,
+                Secure = Request.IsHttps,
+                IsEssential = true,
+                Path = "/",
+            });
+    }
+
+    private async Task LoadTicketListAsync(CancellationToken cancellationToken)
+    {
         var drilldownNamesTask = LoadDrilldownNamesAsync(cancellationToken);
+        var assigneeOptionsTask = LoadAssigneeOptionsAsync(cancellationToken);
 
         var request = new TicketListRequestDto(
             DepartmentId, null, PriorityId, TicketStatus, VerificationStatus, OwnerEmployeeId,
@@ -148,8 +364,46 @@ public sealed class TicketsModel(
             Rows = await BuildRowsAsync(result.Value.Items, cancellationToken);
         }
 
-        await statsTask;
         await drilldownNamesTask;
+        await assigneeOptionsTask;
+    }
+
+    /// <summary>The Pending Interactions list — the former page's load, unchanged in what it asks the Api.</summary>
+    private async Task LoadPendingAsync(CancellationToken cancellationToken)
+    {
+        if (handoffsApiClient is null)
+        {
+            PendingOutcome = ApiOutcome.Unreachable;
+            return;
+        }
+
+        var channelsTask = channelsApiClient?.GetChannelsAsync(activeOnly: false, cancellationToken);
+
+        var result = await handoffsApiClient.ListAsync(
+            new AgentHandoffListRequestDto(
+                DepartmentId, ChannelId,
+                MineOnly ? Viewer?.EmployeeId : null,
+                UnassignedOnly, IncludeResolved, PageNumber, PageSize),
+            cancellationToken);
+
+        PendingOutcome = result.Outcome;
+
+        if (channelsTask is not null)
+        {
+            var channelsResult = await channelsTask;
+            Channels = channelsResult.IsSuccess ? channelsResult.Value ?? [] : [];
+        }
+
+        if (result.IsSuccess && result.Value is not null)
+        {
+            PendingTotalCount = result.Value.TotalCount;
+            PendingRows = result.Value.Items
+                .Select(h => new PendingInteractionRow(
+                    h,
+                    nameResolver.TryGetDepartmentName(h.DepartmentId),
+                    Channels.FirstOrDefault(c => c.ChannelId == h.ChannelId)?.Name))
+                .ToList();
+        }
     }
 
     /// <summary>Best-effort names for the channel/request-type drill-down chips; a failed directory call only degrades the chip's wording.</summary>
@@ -168,6 +422,25 @@ public sealed class TicketsModel(
         }
     }
 
+    /// <summary>The Assignee filter's member list — only when exactly one department is in scope, and never on My Tickets (where the assignee is fixed).</summary>
+    private async Task LoadAssigneeOptionsAsync(CancellationToken cancellationToken)
+    {
+        if (View == TicketsView.My || usersApiClient is null)
+        {
+            return;
+        }
+
+        AssigneeDepartmentId = DepartmentId
+            ?? (nameResolver.OwnDepartments.Count == 1 ? nameResolver.OwnDepartments.First().DepartmentId : null);
+        if (AssigneeDepartmentId is not { } departmentId)
+        {
+            return;
+        }
+
+        var members = await usersApiClient.GetDepartmentUsersAsync(departmentId, 1, 100, cancellationToken);
+        AssigneeOptions = members.IsSuccess ? members.Value?.Items.ToList() ?? [] : [];
+    }
+
     private async Task LoadStatsAsync(CancellationToken cancellationToken)
     {
         var open = ticketsApiClient.GetQueueAsync(new TicketListRequestDto(null, null, null, "Open", null, null, null, null, null, 1, 1), cancellationToken);
@@ -181,6 +454,31 @@ public sealed class TicketsModel(
         InProgressCount = inProgress.Result.IsSuccess ? inProgress.Result.Value?.TotalCount : null;
         PendingCustomerCount = pendingCustomer.Result.IsSuccess ? pendingCustomer.Result.Value?.TotalCount : null;
         ClosedCount = closed.Result.IsSuccess ? closed.Result.Value?.TotalCount : null;
+    }
+
+    /// <summary>Each tab's count is that tab's own query at page size 1 — the same endpoint and predicate the tab lists with, so a badge and its list never disagree. A failed count just shows no badge.</summary>
+    private async Task LoadTabCountsAsync(CancellationToken cancellationToken)
+    {
+        var queue = ticketsApiClient.GetQueueAsync(new TicketListRequestDto(null, null, null, null, null, null, null, null, null, 1, 1), cancellationToken);
+        var mine = Viewer is null
+            ? null
+            : ticketsApiClient.GetQueueAsync(new TicketListRequestDto(null, null, null, null, null, Viewer.EmployeeId, null, null, null, 1, 1), cancellationToken);
+        var pending = handoffsApiClient?.ListAsync(new AgentHandoffListRequestDto(UnassignedOnly: true, Page: 1, PageSize: 1), cancellationToken);
+
+        var queueResult = await queue;
+        QueueCount = queueResult.IsSuccess ? queueResult.Value?.TotalCount : null;
+
+        if (mine is not null)
+        {
+            var mineResult = await mine;
+            MyCount = mineResult.IsSuccess ? mineResult.Value?.TotalCount : null;
+        }
+
+        if (pending is not null)
+        {
+            var pendingResult = await pending;
+            PendingCount = pendingResult.IsSuccess ? pendingResult.Value?.TotalCount : null;
+        }
     }
 
     private async Task<IReadOnlyList<TicketQueueRow>> BuildRowsAsync(IReadOnlyList<TicketSummaryDto> items, CancellationToken cancellationToken)

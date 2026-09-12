@@ -1,101 +1,219 @@
-@page "/Tickets/{ticketId:long}/Customer"
+@page "/Customers/{customerKey}"
 @model TigerCS.Web.Pages.CustomerProfileModel
 @{
-    ViewData["ActiveNav"] = "queue";
-    ViewData["Title"] = "Customer Profile";
+    ViewData["ActiveNav"] = "customers";
+    ViewData["Title"] = Model.Profile is null ? "Customer Profile" : $"{Model.DisplayName} · Customer";
     Layout = "_Layout";
+    var nowUtc = DateTime.UtcNow;
 }
 
-@if (Model.Outcome == ApiOutcome.NotFound)
-{
-    <div class="page">
-        <div class="error-state">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
-            <p>This ticket could not be found.</p>
-            <a class="btn btn-sm" href="/Tickets">Back to Ticket Queue</a>
-        </div>
-    </div>
-}
-else
-{
-    <div class="page">
-        <nav class="breadcrumb" aria-label="Breadcrumb">
-            <a href="/Tickets">Tickets</a>
-            <span class="sep">/</span>
-            <a href="/Tickets/@Model.TicketId">Ticket</a>
-            <span class="sep">/</span>
-            <span class="current">Customer Profile</span>
-        </nav>
+<div class="page customer-workspace">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="@Model.CustomersHref">Customers</a>
+        <span class="sep">/</span>
+        <span class="current">@Model.DisplayName</span>
+    </nav>
 
-        <div class="page-header">
-            <h1 class="page-title">Customer Profile</h1>
-        </div>
-
-        @if (Model.Outcome == ApiOutcome.Forbidden)
-        {
+    @if (Model.Profile is null)
+    {
+        <div class="panel">
             <div class="error-state">
-                <p>You don't have permission to view this customer's profile.</p>
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+                <p>
+                    @(Model.Outcome switch
+                    {
+                        ApiOutcome.Forbidden => "You don't have permission to view this customer.",
+                        ApiOutcome.Unauthorized => "Your session is no longer valid. Sign in again.",
+                        ApiOutcome.Unreachable or ApiOutcome.BadGateway => "Tiger Ticketing System could not reach the ticketing service.",
+                        _ => "This customer profile could not be loaded."
+                    })
+                </p>
+                <a class="btn btn-sm" href="@Model.CustomersHref">Back to Customers</a>
             </div>
-        }
-        else if (Model.Profile is null)
-        {
-            <div class="error-state">
-                <p>Customer profile is unavailable right now.</p>
+        </div>
+    }
+    else
+    {
+        var profile = Model.Profile;
+        var crm = Model.CrmProfile;
+        var primaryUnit = Model.PrimaryUnit;
+        var liveUnits = crm is { Status: "Found" } ? crm.Units : null;
+
+        <header class="customer-header">
+            <div class="customer-header__identity">
+                <span class="customer-header__avatar" aria-hidden="true">@TicketDisplay.Initials(Model.DisplayName)</span>
+                <div>
+                    <h1 class="customer-header__name">@Model.DisplayName</h1>
+                    <div class="customer-header__meta">
+                        <span class="badge badge-source-@CustomerProfileModel.SourceCssKey(profile.VerificationSource)">
+                            @(profile.IdentityKind == "Phone" ? "Unverified · phone only" : $"Verified via {CustomerProfileModel.SourceLabel(profile.VerificationSource)}")
+                        </span>
+                        @if (Model.PrimaryPhone is { } phone)
+                        {
+                            <span class="customer-header__fact"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3h4l2 5-2.5 1.5a11 11 0 0 0 5 5L16 12l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 4 5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg><span class="text-mono">@phone</span></span>
+                        }
+                        @if (primaryUnit is not null)
+                        {
+                            <span class="customer-header__fact"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 21V8l8-5 8 5v13M9 21v-6h6v6" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>@(primaryUnit.UnitNumber ?? "—")@(primaryUnit.ProjectName is null ? "" : $" · {primaryUnit.ProjectName}")@(profile.Units.Count > 1 ? $" · +{profile.Units.Count - 1} more" : "")</span>
+                        }
+                        @if (profile.CrmBuyerCustomerId is { } crmId)
+                        {
+                            <span class="customer-header__fact id-fallback">CRM #@crmId</span>
+                        }
+                        else if (profile.ExternalCustomerId is { } externalId)
+                        {
+                            <span class="customer-header__fact id-fallback">@CustomerProfileModel.SourceLabel(profile.VerificationSource) ID @externalId</span>
+                        }
+                    </div>
+                </div>
             </div>
-        }
-        else
-        {
-            var profile = Model.Profile;
-            var history = Model.History;
+            <div class="customer-header__actions">
+                @if (Model.FromTicketId is { } fromTicketId)
+                {
+                    <a class="btn btn-ghost" href="/Tickets/@fromTicketId">← Back to @(Model.FromTicketNumber ?? "ticket")</a>
+                }
+                <a class="btn" href="@Model.CustomersHref">All customers</a>
+                @if (Model.CanCreateTicket)
+                {
+                    <a class="btn btn-gold" href="@Model.NewTicketHref">+ New Ticket</a>
+                }
+            </div>
+        </header>
 
-            <div class="tabs-card tabs-card--page">
-                <input type="radio" name="customerProfileTab" id="tab-overview" class="tab-input" checked />
-                <label class="tab-label" for="tab-overview">Overview</label>
-                <input type="radio" name="customerProfileTab" id="tab-contact" class="tab-input" />
-                <label class="tab-label" for="tab-contact">Contact Info</label>
-                <input type="radio" name="customerProfileTab" id="tab-units" class="tab-input" />
-                <label class="tab-label" for="tab-units">Units</label>
-                <input type="radio" name="customerProfileTab" id="tab-history" class="tab-input" />
-                <label class="tab-label" for="tab-history">Previous Tickets@(history is not null ? $" ({history.TotalTickets})" : "")</label>
+        <section class="kpi-grid" aria-label="Customer counters">
+            <div class="kpi-card @(profile.OpenTickets > 0 ? "kpi-card--attention" : "")">
+                <strong>@profile.OpenTickets</strong>
+                <span>Open Tickets</span>
+            </div>
+            <div class="kpi-card">
+                <strong>@profile.TotalTickets</strong>
+                <span>Total Tickets</span>
+            </div>
+            <div class="kpi-card">
+                <strong>@(liveUnits?.Count ?? profile.Units.Count)</strong>
+                <span>Units</span>
+            </div>
+            <div class="kpi-card">
+                <strong>@TicketDisplay.AgoLabel(profile.LastSeenAtUtc, nowUtc)</strong>
+                <span>Last Ticket</span>
+            </div>
+            <div class="kpi-card">
+                <strong>@(profile.Interactions.Count > 0 ? TicketDisplay.AgoLabel(profile.Interactions[0].StartedAtUtc, nowUtc) : "—")</strong>
+                <span>Last Interaction</span>
+            </div>
+        </section>
 
-                <div class="tabs-body">
-                    <div class="tab-panel" id="panel-overview">
-                        @if (profile.Status != "Found")
-                        {
-                            <div class="alert alert-info" role="status"><span>@TicketDisplay.CustomerProfileStatusMessage(profile.Status)</span></div>
-                        }
-                        <dl>
-                            <div class="facts-row"><dt>Customer Name</dt><dd>@(profile.FullNameEnglish ?? profile.FullNameArabic ?? "—")</dd></div>
-                            <div class="facts-row"><dt>CRM Customer ID</dt><dd class="id-fallback">@(profile.CrmBuyerCustomerId is int overviewId ? $"#{overviewId}" : "—")</dd></div>
-                            <div class="facts-row"><dt>Phone</dt><dd>@(profile.MobileNumber ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Email</dt><dd>@(profile.Email ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Total Units</dt><dd>@profile.Units.Count</dd></div>
-                            <div class="facts-row"><dt>Total Previous Tickets</dt><dd>@(history is not null ? history.TotalTickets.ToString() : "—")</dd></div>
-                        </dl>
+        <div class="tabs-card tabs-card--page">
+            <input type="radio" name="customerProfileTab" id="tab-overview" class="tab-input" checked />
+            <label class="tab-label" for="tab-overview">Overview</label>
+            <input type="radio" name="customerProfileTab" id="tab-contact" class="tab-input" />
+            <label class="tab-label" for="tab-contact">Contact Info</label>
+            <input type="radio" name="customerProfileTab" id="tab-units" class="tab-input" />
+            <label class="tab-label" for="tab-units">Units <span class="tab-count">@(liveUnits?.Count ?? profile.Units.Count)</span></label>
+            <input type="radio" name="customerProfileTab" id="tab-history" class="tab-input" />
+            <label class="tab-label" for="tab-history">Tickets <span class="tab-count">@profile.TotalTickets</span></label>
+            <input type="radio" name="customerProfileTab" id="tab-interactions" class="tab-input" />
+            <label class="tab-label" for="tab-interactions">Interactions <span class="tab-count">@profile.Interactions.Count</span></label>
+
+            <div class="tabs-body">
+                @* ---- Overview ---- *@
+                <div class="tab-panel" id="panel-overview">
+                    <div class="two-col">
+                        <div class="facts-panel facts-panel--flat">
+                            <div class="facts-section__title">Customer</div>
+                            <dl>
+                                <div class="facts-row"><dt>Customer Name</dt><dd>@Model.DisplayName</dd></div>
+                                <div class="facts-row"><dt>Phone</dt><dd class="text-mono">@(Model.PrimaryPhone ?? "—")</dd></div>
+                                <div class="facts-row"><dt>Verification</dt><dd>@(profile.IdentityKind == "Phone" ? "Unverified" : $"Verified via {CustomerProfileModel.SourceLabel(profile.VerificationSource)}")</dd></div>
+                                @if (profile.CrmBuyerCustomerId is { } overviewCrmId)
+                                {
+                                    <div class="facts-row"><dt>CRM Customer ID</dt><dd class="id-fallback">#@overviewCrmId</dd></div>
+                                }
+                                @if (profile.ExternalCustomerId is { } overviewExternalId)
+                                {
+                                    <div class="facts-row"><dt>@CustomerProfileModel.SourceLabel(profile.VerificationSource) Customer ID</dt><dd class="id-fallback">@overviewExternalId</dd></div>
+                                }
+                                <div class="facts-row"><dt>Primary unit</dt><dd>@(primaryUnit is null ? "—" : $"{primaryUnit.UnitNumber ?? "—"}{(primaryUnit.ProjectName is null ? "" : $" · {primaryUnit.ProjectName}")}")</dd></div>
+                                <div class="facts-row"><dt>Customer since</dt><dd>@profile.FirstSeenAtUtc.ToLocalTime().ToString("MMM d, yyyy")</dd></div>
+                            </dl>
+                        </div>
+                        <div class="facts-panel facts-panel--flat">
+                            <div class="facts-section__title">Recent tickets</div>
+                            @if (profile.Tickets.Count == 0)
+                            {
+                                <div class="empty-state empty-state--compact"><p>No tickets yet.</p></div>
+                            }
+                            else
+                            {
+                                <ul class="mini-list">
+                                    @foreach (var recent in profile.Tickets.Take(5))
+                                    {
+                                        <li class="mini-list__row">
+                                            <a class="ticket-id-link" href="/Tickets/@recent.TicketId">@recent.TicketNumber</a>
+                                            <span class="mini-list__text cell-truncate">@recent.RequestSummary</span>
+                                            <span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(recent.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(recent.TicketStatus)</span>
+                                        </li>
+                                    }
+                                </ul>
+                                @if (profile.Tickets.Count > 5)
+                                {
+                                    <label class="link-muted tab-jump" for="tab-history">View all @profile.TotalTickets tickets</label>
+                                }
+                            }
+                        </div>
                     </div>
+                </div>
 
-                    <div class="tab-panel" id="panel-contact">
-                        @if (profile.Status != "Found")
-                        {
-                            <div class="alert alert-info" role="status"><span>@TicketDisplay.CustomerProfileStatusMessage(profile.Status)</span></div>
-                        }
-                        <dl>
-                            <div class="facts-row"><dt>Full Name English</dt><dd>@(profile.FullNameEnglish ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Full Name Arabic</dt><dd>@(profile.FullNameArabic ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Mobile Number</dt><dd>@(profile.MobileNumber ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Email</dt><dd>@(profile.Email ?? "—")</dd></div>
-                            <div class="facts-row"><dt>CRM Customer ID</dt><dd class="id-fallback">@(profile.CrmBuyerCustomerId is int contactId ? $"#{contactId}" : "—")</dd></div>
-                        </dl>
+                @* ---- Contact Info ---- *@
+                <div class="tab-panel" id="panel-contact">
+                    @if (profile.IdentityKind == "Crm" && crm is not { Status: "Found" })
+                    {
+                        <div class="alert alert-info" role="status"><span>@(crm is null ? "Live CRM data is unavailable right now — showing what TigerCS has on record." : TicketDisplay.CustomerProfileStatusMessage(crm.Status))</span></div>
+                    }
+                    <div class="two-col">
+                        <div class="facts-panel facts-panel--flat">
+                            <div class="facts-section__title">Identity</div>
+                            <dl>
+                                <div class="facts-row"><dt>Full Name English</dt><dd>@(crm?.FullNameEnglish ?? profile.DisplayName ?? "—")</dd></div>
+                                <div class="facts-row"><dt>Full Name Arabic</dt><dd>@(crm?.FullNameArabic ?? "—")</dd></div>
+                                <div class="facts-row"><dt>Verification source</dt><dd>@(profile.IdentityKind == "Phone" ? "None — identified by phone" : CustomerProfileModel.SourceLabel(profile.VerificationSource))</dd></div>
+                                @if (profile.CrmBuyerCustomerId is { } contactCrmId)
+                                {
+                                    <div class="facts-row"><dt>CRM Customer ID</dt><dd class="id-fallback">#@contactCrmId</dd></div>
+                                }
+                                @if (profile.ExternalCustomerId is { } contactExternalId)
+                                {
+                                    <div class="facts-row"><dt>@CustomerProfileModel.SourceLabel(profile.VerificationSource) Customer ID</dt><dd class="id-fallback">@contactExternalId</dd></div>
+                                }
+                            </dl>
+                        </div>
+                        <div class="facts-panel facts-panel--flat">
+                            <div class="facts-section__title">Reach</div>
+                            <dl>
+                                <div class="facts-row"><dt>Mobile Number</dt><dd class="text-mono">@(crm?.MobileNumber ?? Model.PrimaryPhone ?? "—")</dd></div>
+                                @foreach (var otherPhone in profile.PhoneNumbers.Where(p => p != (crm?.MobileNumber ?? Model.PrimaryPhone)))
+                                {
+                                    <div class="facts-row"><dt>Also called from</dt><dd class="text-mono">@otherPhone</dd></div>
+                                }
+                                <div class="facts-row"><dt>Email</dt><dd>@(crm?.Email ?? profile.Emails.FirstOrDefault() ?? "—")</dd></div>
+                                @foreach (var otherEmail in profile.Emails.Where(e => !string.Equals(e, crm?.Email, StringComparison.OrdinalIgnoreCase)).Skip(crm?.Email is null ? 1 : 0))
+                                {
+                                    <div class="facts-row"><dt>Other email</dt><dd>@otherEmail</dd></div>
+                                }
+                            </dl>
+                            <p class="field-hint">Phone numbers and emails are the ones captured on this customer's intakes and conversations@(crm is { Status: "Found" } ? ", with the CRM record first" : "").</p>
+                        </div>
                     </div>
+                </div>
 
-                    <div class="tab-panel" id="panel-units">
-                        @if (profile.Status != "Found")
+                @* ---- Units ---- *@
+                <div class="tab-panel" id="panel-units">
+                    @if (liveUnits is not null)
+                    {
+                        <p class="panel-intro">Eligible units on the customer's CRM Buyer record.</p>
+                        @if (liveUnits.Count == 0)
                         {
-                            <div class="alert alert-info" role="status"><span>@TicketDisplay.CustomerProfileStatusMessage(profile.Status)</span></div>
-                        }
-                        else if (profile.Units.Count == 0)
-                        {
-                            <div class="empty-state"><p>No eligible units found for this customer.</p></div>
+                            <div class="empty-state"><p>No eligible units found on the CRM record.</p></div>
                         }
                         else
                         {
@@ -108,79 +226,150 @@ else
                                             <th>Lead Status</th>
                                             <th>Unit Type</th>
                                             <th>Floor</th>
+                                            <th class="col-num">Tickets</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        @foreach (var unit in profile.Units)
+                                        @foreach (var unit in liveUnits)
                                         {
+                                            var ticketsForUnit = profile.Units.FirstOrDefault(u => u.CrmBuyerUnitId == unit.UnitId
+                                                || string.Equals(u.UnitNumber, unit.UnitNumber, StringComparison.OrdinalIgnoreCase))?.TicketCount ?? 0;
                                             <tr>
                                                 <td>@(unit.ProjectName ?? "—")</td>
-                                                <td>@(unit.UnitNumber ?? "—")</td>
+                                                <td class="cell-primary">@(unit.UnitNumber ?? "—")</td>
                                                 <td>@(unit.LeadStatusName ?? unit.LeadStatus.ToString())</td>
                                                 <td><span class="id-fallback">Type #@unit.UnitType</span></td>
                                                 <td>@(unit.FloorNumber?.ToString() ?? "—")</td>
+                                                <td class="col-num"><span class="count-pill">@ticketsForUnit</span></td>
                                             </tr>
                                         }
                                     </tbody>
                                 </table>
                             </div>
                         }
-                    </div>
+                    }
+                    else if (profile.Units.Count == 0)
+                    {
+                        <div class="empty-state"><p>No unit or property has been recorded on this customer's tickets.</p></div>
+                    }
+                    else
+                    {
+                        <p class="panel-intro">Units and properties this customer's tickets were raised for@(profile.IdentityKind == "Crm" ? " (live CRM unit data is unavailable right now)" : "").</p>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Project</th>
+                                        <th>Unit Number</th>
+                                        <th>Source</th>
+                                        <th class="col-num">Tickets</th>
+                                        <th>Last Ticket</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var unit in profile.Units)
+                                    {
+                                        <tr>
+                                            <td>@(unit.ProjectName ?? "—")</td>
+                                            <td class="cell-primary">@(unit.UnitNumber ?? "—")</td>
+                                            <td>@(unit.Source == "Manual" ? "Manual entry" : $"{TicketDisplay.LookupSourceLabel(unit.Source)}{(unit.ExternalUnitId is null ? "" : $" · {unit.ExternalUnitId}")}")</td>
+                                            <td class="col-num"><span class="count-pill">@unit.TicketCount</span></td>
+                                            <td class="text-secondary text-mono">@unit.LastTicketAtUtc.ToLocalTime().ToString("MMM d, yyyy")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
 
-                    <div class="tab-panel" id="panel-history">
-                        @if (history is null)
-                        {
-                            <div class="empty-state"><p>Customer history is unavailable right now.</p></div>
-                        }
-                        else
-                        {
-                            @if (history.VerificationType == "Unverified")
-                            {
-                                <p class="badge badge-verification-unverified">Unverified Customer History</p>
-                            }
+                @* ---- Tickets ---- *@
+                <div class="tab-panel" id="panel-history">
+                    @if (profile.IdentityKind == "Phone")
+                    {
+                        <p class="badge badge-verification-unverified">Unverified — tickets grouped by the caller's phone number</p>
+                    }
+                    @if (profile.Tickets.Count == 0)
+                    {
+                        <div class="empty-state"><p>No tickets found for this customer.</p></div>
+                    }
+                    else
+                    {
+                        <div class="table-scroll">
+                            <table class="data-table data-table--clickable">
+                                <thead>
+                                    <tr>
+                                        <th>Ticket</th>
+                                        <th class="col-subject">Summary</th>
+                                        <th>Status</th>
+                                        <th>Priority</th>
+                                        <th>Department</th>
+                                        <th>Created</th>
+                                        <th>Unit</th>
+                                        <th>Last activity</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in profile.Tickets)
+                                    {
+                                        var isFinished = !CustomerProfileModel.IsActive(row.TicketStatus);
+                                        <tr class="is-link" data-href="/Tickets/@row.TicketId">
+                                            <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
+                                            <td class="col-subject"><span class="cell-truncate">@row.RequestSummary</span></td>
+                                            <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
+                                            <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>
+                                            <td>@TicketDisplay.AssignedDepartmentLabel(row.CurrentDepartmentId, Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId))</td>
+                                            <td class="text-secondary text-mono">@row.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")</td>
+                                            <td>@(row.UnitNumber ?? "—")@(row.ProjectName is null ? "" : $" · {row.ProjectName}")</td>
+                                            <td class="text-secondary" title="@row.LastActivityAtUtc.ToLocalTime().ToString("MMM d, yyyy HH:mm")">@TicketDisplay.AgoLabel(row.LastActivityAtUtc, nowUtc)</td>
+                                            <td class="col-actions"><a class="btn btn-sm" href="/Tickets/@row.TicketId">@(isFinished ? "View" : "Open")</a></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
 
-                            @if (history.Tickets.Count == 0)
-                            {
-                                <div class="empty-state"><p>No previous tickets found for this customer.</p></div>
-                            }
-                            else
-                            {
-                                <div class="table-scroll">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Ticket</th>
-                                                <th>Category</th>
-                                                <th>Department</th>
-                                                <th>Status</th>
-                                                <th>Priority</th>
-                                                <th>Created</th>
-                                                <th>Closed</th>
-                                                <th></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach (var row in history.Tickets)
-                                            {
-                                                <tr>
-                                                    <td><a class="ticket-id-link" href="/Tickets/@row.TicketId">@row.TicketNumber</a></td>
-                                                    <td><span class="id-fallback">@(row.CategoryId is int rowCat ? $"Category #{rowCat}" : "Unclassified")</span></td>
-                                                    <td>@TicketDisplay.AssignedDepartmentLabel(row.CurrentDepartmentId, Model.NameResolver.TryGetDepartmentName(row.CurrentDepartmentId))</td>
-                                                    <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(row.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(row.TicketStatus)</span></td>
-                                                    <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(row.PriorityId)">@TicketDisplay.PriorityLabel(row.PriorityId)</span></td>
-                                                    <td class="text-secondary text-mono">@row.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")</td>
-                                                    <td class="text-secondary text-mono">—</td>
-                                                    <td><a class="btn btn-sm" href="/Tickets/@row.TicketId">Open</a></td>
-                                                </tr>
-                                            }
-                                        </tbody>
-                                    </table>
-                                </div>
-                            }
-                        }
-                    </div>
+                @* ---- Interactions ---- *@
+                <div class="tab-panel" id="panel-interactions">
+                    @if (profile.Interactions.Count == 0)
+                    {
+                        <div class="empty-state"><p>No calls or chats are recorded for this customer.</p></div>
+                    }
+                    else
+                    {
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>When</th>
+                                        <th>Channel</th>
+                                        <th>Direction</th>
+                                        <th>Ticket</th>
+                                        <th>Agent</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var interaction in profile.Interactions)
+                                    {
+                                        <tr>
+                                            <td class="text-mono">@interaction.StartedAtUtc.ToLocalTime().ToString("MMM d, yyyy HH:mm")</td>
+                                            <td>@(interaction.ChannelName ?? "Unknown channel")@if (interaction.IsOriginatingInteraction) { <span class="badge badge-neutral">Originating</span> }</td>
+                                            <td>@(interaction.Direction ?? "—")</td>
+                                            <td><a class="ticket-id-link" href="/Tickets/@interaction.TicketId">@interaction.TicketNumber</a></td>
+                                            <td>@(interaction.AgentName ?? "—")</td>
+                                            <td>@(interaction.Status == "Ended" ? "Ended" : "Active")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
                 </div>
             </div>
-        }
-    </div>
-}
+        </div>
+    }
+</div>

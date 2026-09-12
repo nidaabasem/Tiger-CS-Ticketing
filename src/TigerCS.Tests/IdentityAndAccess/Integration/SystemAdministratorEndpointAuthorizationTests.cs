@@ -779,6 +779,46 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
+    public async Task ListCustomers_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateCrmBuyerVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync("/api/customers?page=1&pageSize=50");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var directory = await response.Content.ReadFromJsonAsync<CustomerDirectoryListResultDto>();
+        // The directory is built from persisted tickets, deduplicated by
+        // identity: the CRM Buyer this ticket was verified against is one row
+        // however many tests created tickets for it (see the shared-database
+        // note on GetCrmCustomerTicketHistory_Returns200).
+        var row = Assert.Single(directory!.Items, r => r.CustomerKey == $"crm:{ticket.CrmBuyerCustomerId}");
+        Assert.Equal("Crm", row.VerificationSource);
+        Assert.True(row.TotalTickets >= 1);
+        Assert.Equal(ticket.CrmBuyerCustomerName, row.DisplayName);
+    }
+
+    [Fact]
+    public async Task GetCustomerProfileByKey_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateCrmBuyerVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/customers/profile/crm:{ticket.CrmBuyerCustomerId}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var profile = await response.Content.ReadFromJsonAsync<CustomerDirectoryProfileDto>();
+        Assert.Equal($"crm:{ticket.CrmBuyerCustomerId}", profile!.CustomerKey);
+        Assert.Contains(profile.Tickets, t => t.TicketId == ticket.TicketId);
+        Assert.Contains("+971500000900", profile.PhoneNumbers);
+
+        var unknown = await client.GetAsync("/api/customers/profile/crm:987654321");
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        var invalid = await client.GetAsync("/api/customers/profile/nonsense");
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+    }
+
+    [Fact]
     public async Task GetCrmCustomerTicketHistory_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();

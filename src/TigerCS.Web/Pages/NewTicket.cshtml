@@ -2,7 +2,7 @@
 @model TigerCS.Web.Pages.NewTicketModel
 @{
     ViewData["Title"] = "New Ticket";
-    ViewData["ActiveNav"] = "queue";
+    ViewData["ActiveNav"] = "tickets";
     Layout = "_Layout";
 
     var viewerCanReopen = TicketActions.CanReopen(CurrentUser.FromPrincipal(User)?.Roles);
@@ -46,7 +46,7 @@
                 ? candidate.Key
                 : null;
 
-    var steps = new[] { "Customer", "Property", "Issue", "Review" };
+    var steps = new[] { ("Customer", "Who is calling"), ("Property", "Unit or project"), ("Issue", "What they need"), ("Review", "Confirm & create") };
 }
 
 <div class="page">
@@ -65,8 +65,17 @@
                 ? "is-complete"
                 : number == Model.StepIndex ? "is-current" : "";
             <li class="wizard-stepper__item @state" aria-current="@(state == "is-current" ? "step" : null)">
-                <span class="wizard-stepper__num" aria-hidden="true">@number</span>
-                <span>@steps[i]</span>
+                <span class="wizard-stepper__num" aria-hidden="true">
+                    @if (state == "is-complete")
+                    {
+                        <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    }
+                    else
+                    {
+                        @number
+                    }
+                </span>
+                <span class="wizard-stepper__label">@steps[i].Item1<small>@steps[i].Item2</small></span>
             </li>
         }
     </ol>
@@ -86,7 +95,13 @@
             @if (Model.Step == NewTicketModel.StepCustomer)
             {
                 <section class="section-card" aria-label="Customer search">
-                    <div class="section-card__title">Step 1 — Customer</div>
+                    <header class="section-card__head">
+                        <div>
+                            <p class="page-eyebrow">Step 1 of 4</p>
+                            <h2 class="section-card__heading">Customer</h2>
+                            <p class="section-card__lead">Search the customer by phone across Tiger CRM, PACT and Tasleeh — or continue with manual entry.</p>
+                        </div>
+                    </header>
                     @if (Model.ChannelsErrorMessage is not null)
                     {
                         <div class="alert alert-error" role="alert"><span>@Model.ChannelsErrorMessage</span></div>
@@ -220,7 +235,9 @@
                                         @if (WorkspaceCustomerKey(candidate) is { } workspaceKey && Model.PhoneNumber is not null)
                                         {
                                             <a class="btn btn-sm"
-                                               href="/Customers?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber)&customer=@Uri.EscapeDataString(workspaceKey)">View all tickets</a>
+                                               href="@(history is { TotalTickets: > 0 }
+                                                   ? $"/Customers/{Uri.EscapeDataString(workspaceKey)}"
+                                                   : $"/Customers/Lookup?phoneNumber={Uri.EscapeDataString(Model.PhoneNumber)}&customer={Uri.EscapeDataString(workspaceKey)}")">View all tickets</a>
                                         }
                                     </div>
                                 </section>
@@ -249,8 +266,13 @@
             @if (Model.Step == NewTicketModel.StepProperty)
             {
                 <section class="section-card" aria-label="Select property">
-                    <div class="section-card__title">Step 2 — Select property</div>
-                    <p class="wizard-support">Choose the unit related to this request.</p>
+                    <header class="section-card__head">
+                        <div>
+                            <p class="page-eyebrow">Step 2 of 4</p>
+                            <h2 class="section-card__heading">Property / Unit</h2>
+                            <p class="section-card__lead">Choose the unit related to this request.</p>
+                        </div>
+                    </header>
 
                     @if (Model.HasUnitSelection)
                     {
@@ -417,7 +439,13 @@
             @if (Model.Step == NewTicketModel.StepIssue)
             {
                 <section class="section-card" aria-label="Issue details">
-                    <div class="section-card__title">Step 3 — Issue</div>
+                    <header class="section-card__head">
+                        <div>
+                            <p class="page-eyebrow">Step 3 of 4</p>
+                            <h2 class="section-card__heading">Issue</h2>
+                            <p class="section-card__lead">Classify the request so it routes to the team that owns it.</p>
+                        </div>
+                    </header>
 
                     @if (Model.CategoriesErrorMessage is not null)
                     {
@@ -517,7 +545,18 @@
             @if (Model.Step == NewTicketModel.StepReview)
             {
                 <section class="section-card" aria-label="Review and create">
-                    <div class="section-card__title">Step 4 — Review &amp; Create</div>
+                    <header class="section-card__head">
+                        <div>
+                            <p class="page-eyebrow">Step 4 of 4</p>
+                            <h2 class="section-card__heading">Review &amp; Create</h2>
+                            <p class="section-card__lead">Check the details below. Nothing is created until you confirm.</p>
+                        </div>
+                    </header>
+
+                    <div class="review-banner" role="status">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" /></svg>
+                        <span>You are about to create a <strong>@(Model.SelectedCategory?.Name ?? "new")</strong> ticket for <strong>@(Model.SummaryCustomerName ?? "a manually entered customer")</strong>@(Model.SummaryDepartmentName is { } bannerDept ? $", routed to {bannerDept}" : "").</span>
+                    </div>
 
                     <dl class="review-grid">
                         <div class="review-block">
@@ -528,6 +567,7 @@
                                 @(Model.SummarySourceKey is { } srcKey && srcKey != "Manual"
                                     ? $"Verified via {TicketDisplay.LookupSourceLabel(srcKey)}"
                                     : "Manual entry")
+                                <div class="review-block__edit"><a class="link-muted" asp-page="/NewTicket" asp-all-route-data="@StepRoute(NewTicketModel.StepCustomer, keepCustomer: false, keepUnit: false)">Change customer</a></div>
                             </dd>
                         </div>
                         <div class="review-block">
@@ -535,6 +575,7 @@
                             <dd>
                                 <strong>@(Model.SummaryProjectName ?? "—")</strong><br />
                                 Unit @(Model.SummaryUnitNumber ?? "—")
+                                <div class="review-block__edit"><a class="link-muted" asp-page="/NewTicket" asp-all-route-data="@StepRoute(NewTicketModel.StepProperty, keepUnit: false)">Change property</a></div>
                             </dd>
                         </div>
                         <div class="review-block">
@@ -562,7 +603,10 @@
                         <input type="hidden" asp-for="CreateStep.ManualUnitNumber" />
                         <div class="wizard-actions">
                             <button type="submit" class="btn" asp-page-handler="IssueRefresh">Back to Edit</button>
-                            <button type="submit" class="btn btn-gold">Create Ticket</button>
+                            <button type="submit" class="btn btn-gold">
+                                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                                Create Ticket
+                            </button>
                         </div>
                     </form>
                 </section>
@@ -590,7 +634,10 @@
         @if (Model.Step != NewTicketModel.StepDone)
         {
             <aside class="wizard-summary" aria-label="Ticket summary so far">
-                <div class="wizard-summary__title">Summary</div>
+                <div class="wizard-summary__head">
+                    <div class="wizard-summary__title">Ticket summary</div>
+                    <span class="wizard-summary__step">Step @Model.StepIndex of 4</span>
+                </div>
                 <dl>
                     <div class="wizard-summary__row">
                         <dt>Customer</dt>

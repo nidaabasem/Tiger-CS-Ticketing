@@ -23,6 +23,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="Tickets">The newest tickets first, limited to the caller's requested page size — never the customer's entire history unbounded.</param>
 /// <param name="ExternalSource">The external verification source this history was queried for, when <paramref name="VerificationType"/> is "ExternalVerified" (e.g. "Pact"/"Tasleeh"); otherwise null.</param>
 /// <param name="ExternalCustomerId">The source's own customer identifier this history was queried for, when <paramref name="VerificationType"/> is "ExternalVerified"; otherwise null.</param>
+/// <param name="CustomerKey">The Customers directory key of this customer (crm:{id}, ext:{source}:{id} or phone:{number}) — the Customer Profile the Web links to; null when the anchor ticket has no customer identity.</param>
 public sealed record CustomerHistoryDto(
     string VerificationType,
     int? CrmBuyerCustomerId,
@@ -33,7 +34,8 @@ public sealed record CustomerHistoryDto(
     int ClosedTickets,
     IReadOnlyList<CustomerHistoryTicketDto> Tickets,
     string? ExternalSource = null,
-    string? ExternalCustomerId = null);
+    string? ExternalCustomerId = null,
+    string? CustomerKey = null);
 
 /// <summary>One row of a customer's ticket history — fields drawn from the Ticket aggregate alone, no other lookup performed per row.</summary>
 /// <param name="TicketId">The ticket — links to <c>GET /api/tickets/{ticketId}</c> / the Ticket Details page.</param>

@@ -57,8 +57,20 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
+            // Free-text search over what a ticket carries about itself: its
+            // number and summary, the customer name and unit number it
+            // snapshotted (CRM Buyer or manual entry), and the phone number
+            // captured by the intake it was promoted from. A plain
+            // substring match on each — no ranking, no fuzzy matching —
+            // and nothing here widens which tickets the caller may see.
+            var search = query.Search.Trim();
             filtered = filtered.Where(t =>
-                t.TicketNumber.Contains(query.Search) || t.RequestSummary.Contains(query.Search));
+                t.TicketNumber.Contains(search)
+                || t.RequestSummary.Contains(search)
+                || (t.CrmBuyerCustomerName != null && t.CrmBuyerCustomerName.Contains(search))
+                || (t.CrmBuyerUnitNumber != null && t.CrmBuyerUnitNumber.Contains(search))
+                || (t.ManualUnitNumber != null && t.ManualUnitNumber.Contains(search))
+                || dbContext.IntakeRecords.Any(i => i.LinkedTicketId == t.TicketId && i.PhoneNumber.Contains(search)));
         }
 
         // Dashboard drill-down filters (Dashboard Phase 1) — the same shared

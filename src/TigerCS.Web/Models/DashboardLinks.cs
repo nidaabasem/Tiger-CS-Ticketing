@@ -22,7 +22,7 @@ public static class DashboardLinks
 
     /// <summary>My Tickets: active tickets the signed-in user owns — the agent filter is replaced by the viewer themself.</summary>
     public static string MyTickets(DashboardAppliedFiltersDto f, Guid viewerEmployeeId) =>
-        Build(f with { OwnerEmployeeId = viewerEmployeeId }, includeDates: false, ("activeOnly", "true"));
+        Build(f with { OwnerEmployeeId = viewerEmployeeId }, includeDates: false, ("activeOnly", "true"), (TicketsViews.QueryKey, TicketsView.My.Key()));
 
     public static string InDepartmentQueue(DashboardAppliedFiltersDto f) => Build(f, includeDates: false, ("inDepartmentQueue", "true"));
 

@@ -1,13 +1,18 @@
 @model TigerCS.Web.Pages.DashboardBarRow
 @* One breakdown line: label, horizontal bar, count, percentage. A row with a
    drill-down is a link into the ticket queue; an informational row (a value
-   not recorded on the ticket) is plain text. *@
+   not recorded on the ticket) is plain text.
+
+   The bar's width is a stylesheet class (BarWidthClass -> .bar-fill--w0 …
+   .bar-fill--w100), never an inline style attribute: the app's
+   Content-Security-Policy allows only self-hosted styles, so an inline
+   width would be dropped and the bar would render empty. *@
 @if (Model.Href is not null)
 {
     <li>
         <a class="bar-row" href="@Model.Href" title="Open these tickets">
             <span class="bar-row__label">@Model.Label</span>
-            <span class="bar-track" aria-hidden="true"><span class="bar-fill" style="width: @Model.BarWidth"></span></span>
+            <span class="bar-track" aria-hidden="true"><span class="bar-fill @Model.BarWidthClass"></span></span>
             <span class="bar-row__count">@Model.Count</span>
             <span class="bar-row__pct">@Model.PercentageText</span>
         </a>
@@ -18,7 +23,7 @@ else
     <li>
         <span class="bar-row bar-row--static">
             <span class="bar-row__label text-secondary">@Model.Label</span>
-            <span class="bar-track" aria-hidden="true"><span class="bar-fill bar-fill--muted" style="width: @Model.BarWidth"></span></span>
+            <span class="bar-track" aria-hidden="true"><span class="bar-fill bar-fill--muted @Model.BarWidthClass"></span></span>
             <span class="bar-row__count">@Model.Count</span>
             <span class="bar-row__pct">@Model.PercentageText</span>
         </span>

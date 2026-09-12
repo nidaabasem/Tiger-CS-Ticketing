@@ -133,7 +133,7 @@ public sealed class DashboardUiTests
         var channel = model.BreakdownCards.Single(c => c.Title == "Volume by Channel");
         Assert.Equal(10, channel.Total);
         Assert.Equal("70%", channel.Rows[0].PercentageText);
-        Assert.Equal("70%", channel.Rows[0].BarWidth);
+        Assert.Equal("bar-fill--w70", channel.Rows[0].BarWidthClass);
         // Status labels are humanized from the lifecycle names, never invented.
         var status = model.BreakdownCards.Single(c => c.Title == "Status");
         Assert.Equal(["In Progress", "Resolved"], status.Rows.Select(r => r.Label).ToArray());
@@ -155,7 +155,7 @@ public sealed class DashboardUiTests
         Assert.All(model.BreakdownCards.SelectMany(c => c.Rows), r =>
         {
             Assert.Equal("0%", r.PercentageText);
-            Assert.Equal("0%", r.BarWidth);
+            Assert.Equal("bar-fill--w0", r.BarWidthClass);
         });
         Assert.Empty(model.Overview.RecentTickets);
         Assert.Equal("Aug 12 – Sep 10, 2026", model.PeriodLabel);
@@ -318,8 +318,9 @@ public sealed class DashboardUiTests
         Assert.Equal(3, card.MoreRows.Count);
 
         var html = View("Dashboard.cshtml");
-        Assert.Contains("View all (@card.Rows.Count)", html);
-        Assert.Contains("_DashboardBarRow", html);
+        Assert.Contains("View all (@Model.Rows.Count)", View("Shared", "_DashboardBarCard.cshtml"));
+        Assert.Contains("_DashboardBarCard", html);
+        Assert.Contains("_DashboardBarRow", View("Shared", "_DashboardBarCard.cshtml"));
     }
 
     [Fact]
@@ -328,7 +329,92 @@ public sealed class DashboardUiTests
         Assert.Equal("33.3%", new DashboardBarRow("a", 1, 33.3, null).PercentageText);
         Assert.Equal("50%", new DashboardBarRow("a", 1, 50.0, null).PercentageText);
         Assert.Equal("0%", new DashboardBarRow("a", 0, 0, null).PercentageText);
-        Assert.Equal("100%", new DashboardBarRow("a", 1, 140, null).BarWidth);
+        Assert.Equal("bar-fill--w100", new DashboardBarRow("a", 1, 140, null).BarWidthClass);
+    }
+
+    // ---------------------------------------------------------------
+    // Bar width without an inline style (Content-Security-Policy)
+    // ---------------------------------------------------------------
+
+    [Theory]
+    // The percentage still drives the visual width: the class carries it,
+    // rounded to the nearest whole point and clamped to the track.
+    [InlineData(0, "bar-fill--w0")]
+    [InlineData(0.4, "bar-fill--w0")]
+    [InlineData(0.6, "bar-fill--w1")]
+    [InlineData(33.3, "bar-fill--w33")]
+    [InlineData(58.3, "bar-fill--w58")]
+    [InlineData(41.7, "bar-fill--w42")]
+    [InlineData(99.9, "bar-fill--w100")]
+    [InlineData(100, "bar-fill--w100")]
+    [InlineData(140, "bar-fill--w100")]
+    [InlineData(-5, "bar-fill--w0")]
+    [InlineData(double.NaN, "bar-fill--w0")]
+    [InlineData(double.PositiveInfinity, "bar-fill--w0")]
+    public void BarRow_TurnsThePercentageIntoAWidthClass_NeverAnInlineStyle(double percentage, string expectedClass)
+    {
+        var row = new DashboardBarRow("a", 1, percentage, null);
+
+        Assert.Equal(expectedClass, row.BarWidthClass);
+        Assert.InRange(row.BarWidthPercent, 0, 100);
+    }
+
+    [Fact]
+    public void BarRowView_DrawsTheFillWithAClass_AndEmitsNoStyleAttribute()
+    {
+        var partial = View("Shared", "_DashboardBarRow.cshtml");
+
+        Assert.Contains("class=\"bar-fill @Model.BarWidthClass\"", partial);
+        Assert.Contains("class=\"bar-fill bar-fill--muted @Model.BarWidthClass\"", partial);
+        Assert.DoesNotContain("style=", partial);
+        Assert.DoesNotContain("BarWidth\"", partial);
+    }
+
+    [Fact]
+    public void NoViewEmitsAnInlineStyleAttribute_BecauseTheCspForbidsInlineStyles()
+    {
+        // A style attribute would be dropped by the browser under
+        // "style-src 'self'", so it can never carry anything the page needs.
+        var pagesDirectory = Path.Combine(SourceFile("TigerCS.Web"), "Pages");
+        var offenders = Directory
+            .EnumerateFiles(pagesDirectory, "*.cshtml", SearchOption.AllDirectories)
+            .Where(file => File.ReadAllText(file).Contains("style=", StringComparison.Ordinal))
+            .Select(file => Path.GetRelativePath(pagesDirectory, file))
+            .ToList();
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void SiteCss_DefinesEveryBarWidthClass_ZeroToOneHundred()
+    {
+        var css = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "wwwroot", "css", "site.css")));
+
+        for (var percent = 0; percent <= 100; percent++)
+        {
+            // Each class the page can ask for resolves, and to its own width.
+            Assert.Contains($".bar-fill--w{percent} {{ width: {percent}%; }}", css, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void ContentSecurityPolicy_IsUnchanged_AndStillForbidsInlineStyles()
+    {
+        // The fix must not have relaxed the policy: styles and scripts stay
+        // self-hosted only, with no 'unsafe-inline' / 'unsafe-eval' anywhere.
+        var programCs = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Program.cs")));
+        var policyStart = programCs.IndexOf("\"Content-Security-Policy\"", StringComparison.Ordinal);
+        Assert.True(policyStart > 0, "The Content-Security-Policy header is missing.");
+        var policy = programCs[policyStart..(programCs.IndexOf("await next();", policyStart, StringComparison.Ordinal))];
+
+        foreach (var directive in new[] { "default-src 'self'", "script-src 'self'", "style-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'" })
+        {
+            Assert.Contains(directive, policy, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("unsafe-inline", policy, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsafe-eval", policy, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsafe-hashes", policy, StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------
@@ -340,7 +426,7 @@ public sealed class DashboardUiTests
     {
         var html = View("Dashboard.cshtml");
 
-        foreach (var column in new[] { "Ticket #", "Customer", "Unit / Project", "Department", "Request Type", "Priority", "Status", "Assigned Agent", "Created", "SLA" })
+        foreach (var column in new[] { "Ticket", "Customer", "Unit / Project", "Department", "Request Type", "Priority", "Status", "Assigned To", "Created", "SLA" })
         {
             Assert.Contains($"<th scope=\"col\">{column}</th>", html);
         }
@@ -366,7 +452,9 @@ public sealed class DashboardUiTests
         var kpis = html.IndexOf("class=\"kpi-grid", StringComparison.Ordinal);
 
         Assert.True(search > 0, "The customer search section is missing.");
-        Assert.True(search < filters && filters < kpis, "Customer search must sit above the filters and KPI cards.");
+        // The redesigned dashboard leads with the customer search and the
+        // KPI cards; the filter form folds behind a disclosure below them.
+        Assert.True(search < kpis && kpis < filters, "Customer search must sit above the KPI cards, with the filters folded below.");
         // The same phone-search flow as before: GET /Customers?phoneNumber=…
         Assert.Contains("action=\"/Customers\" method=\"get\"", html);
         Assert.Contains("name=\"phoneNumber\"", html);
@@ -425,8 +513,9 @@ public sealed class DashboardUiTests
         Assert.Contains("Request type: Payment Reminder", model.DrilldownLabels);
         Assert.DoesNotContain(model.DrilldownLabels, l => l.Contains('#'));
 
-        // The queue view carries the criteria through its own filter form and pagination.
-        var view = View("Tickets.cshtml");
+        // The queue view (the Tickets workspace page plus its ticket-list
+        // partial) carries the criteria through its own filter form and pagination.
+        var view = View("Tickets.cshtml") + View("Shared", "_TicketListView.cshtml");
         foreach (var name in new[] { "channelId", "requestTypeId", "activeOnly", "inDepartmentQueue", "slaBreached", "dueToday", "backlogAge", "pendingApproval", "createdFrom", "createdTo" })
         {
             Assert.Contains($"name=\"{name}\"", view);

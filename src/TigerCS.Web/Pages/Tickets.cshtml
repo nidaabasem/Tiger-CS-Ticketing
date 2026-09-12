@@ -1,45 +1,35 @@
 @page "/Tickets"
 @model TigerCS.Web.Pages.TicketsModel
 @{
-    ViewData["Title"] = "Tickets";
-    var active = "queue";
-    if (Model.Viewer is not null && Model.OwnerEmployeeId == Model.Viewer.EmployeeId) { active = "my"; }
-    else if (Model.TicketStatus == "Closed") { active = "closed"; }
-    ViewData["ActiveNav"] = active;
+    // One workspace, four views. The primary navigation has a single
+    // "Tickets" item; Queue / Pending Interactions / My Tickets / Closed are
+    // the tabs below, each a bookmarkable ?view= of this same page.
+    ViewData["Title"] = Model.View == TicketsView.Queue ? "Tickets" : $"{Model.View.Label()} · Tickets";
+    ViewData["ActiveNav"] = "tickets";
     Layout = "_Layout";
-
-    string PageUrl(int p) => Url.Page("/Tickets", new
-    {
-        departmentId = Model.DepartmentId,
-        priorityId = Model.PriorityId,
-        ticketStatus = Model.TicketStatus,
-        verificationStatus = Model.VerificationStatus,
-        ownerEmployeeId = Model.OwnerEmployeeId,
-        search = Model.Search,
-        sortBy = Model.SortBy,
-        sortDir = Model.SortDir,
-        page = p,
-        pageSize = Model.PageSize,
-        channelId = Model.ChannelId,
-        requestTypeId = Model.RequestTypeId,
-        activeOnly = Model.ActiveOnly ? "true" : null,
-        inDepartmentQueue = Model.InDepartmentQueue ? "true" : null,
-        slaBreached = Model.SlaBreached ? "true" : null,
-        dueToday = Model.DueToday ? "true" : null,
-        backlogAge = Model.BacklogAge,
-        pendingApproval = Model.PendingApproval ? "true" : null,
-        createdFrom = Model.CreatedFrom?.ToString("yyyy-MM-dd"),
-        createdTo = Model.CreatedTo?.ToString("yyyy-MM-dd")
-    }) ?? "/Tickets";
 }
 
-<div class="page">
+<div class="page tickets-workspace">
     <div class="page-header">
-        <h1 class="page-title">Ticket Queue</h1>
-        <a class="btn btn-gold" href="/NewTicket">+ New Ticket</a>
+        <div>
+            <h1 class="page-title">Tickets</h1>
+            <p class="page-subtitle text-secondary">
+                @(Model.View switch
+                {
+                    TicketsView.Pending => "Customer interactions waiting for a human agent — on every channel. Genesys still delivers the reply; this list is what is waiting and who is on it.",
+                    TicketsView.My => "Tickets assigned to you, in every status.",
+                    TicketsView.Closed => "Tickets that have been closed.",
+                    _ => "Every ticket you can see, across your departments."
+                })
+            </p>
+        </div>
+        @if (Model.CanCreateTicket)
+        {
+            <a class="btn btn-gold" href="/NewTicket">+ New Ticket</a>
+        }
     </div>
 
-    <section class="kpi-grid" aria-label="Queue counters">
+    <section class="kpi-grid" aria-label="Ticket status counters">
         <div class="kpi-card kpi-card--attention">
             <strong>@(Model.OpenCount?.ToString() ?? "—")</strong>
             <span>Open</span>
@@ -58,180 +48,31 @@
         </div>
     </section>
 
-    <form class="filter-bar" id="ticketFilters" method="get">
-        <div class="search-field filter-bar__search">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" /><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
-            <input type="search" name="search" value="@Model.Search" placeholder="Search by ticket number or summary…" aria-label="Search tickets" />
-        </div>
-
-        <div class="field-group">
-            <label class="field-label" for="ticketStatus">Status</label>
-            <select class="field-select" id="ticketStatus" name="ticketStatus" data-autosubmit>
-                <option value="">All statuses</option>
-                @foreach (var s in new[] { "Open", "InProgress", "PendingCustomer", "PendingThirdParty", "Resolved", "Closed" })
-                {
-                    <option value="@s" selected="@(Model.TicketStatus == s)">@TicketDisplay.TicketStatusLabel(s)</option>
-                }
-            </select>
-        </div>
-
-        <div class="field-group">
-            <label class="field-label" for="priorityId">Priority</label>
-            <select class="field-select" id="priorityId" name="priorityId" data-autosubmit>
-                <option value="">All priorities</option>
-                @for (byte p = 1; p <= 4; p++)
-                {
-                    <option value="@p" selected="@(Model.PriorityId == p)">@TicketDisplay.PriorityLabel(p)</option>
-                }
-            </select>
-        </div>
-
-        <div class="field-group">
-            <label class="field-label" for="verificationStatus">Verification</label>
-            <select class="field-select" id="verificationStatus" name="verificationStatus" data-autosubmit>
-                <option value="">All</option>
-                @foreach (var v in new[] { "Unverified", "PendingCrmVerification", "Verified" })
-                {
-                    <option value="@v" selected="@(Model.VerificationStatus == v)">@TicketDisplay.VerificationStatusLabel(v)</option>
-                }
-            </select>
-        </div>
-
-        @if (Model.NameResolver.OwnDepartments.Count > 0)
-        {
-            <div class="field-group">
-                <label class="field-label" for="departmentId">Department</label>
-                <select class="field-select" id="departmentId" name="departmentId" data-autosubmit>
-                    <option value="">All my departments</option>
-                    @foreach (var d in Model.NameResolver.OwnDepartments)
-                    {
-                        <option value="@d.DepartmentId" selected="@(Model.DepartmentId == d.DepartmentId)">@d.Name</option>
-                    }
-                </select>
-            </div>
-        }
-
-        <input type="hidden" name="pageSize" value="@Model.PageSize" />
-        @* Dashboard drill-down criteria survive a re-filter on this page; the
-           "Clear" action drops everything, drill-down included. *@
-        @if (Model.OwnerEmployeeId is { } ownerEmployeeId) { <input type="hidden" name="ownerEmployeeId" value="@ownerEmployeeId" /> }
-        @if (Model.DepartmentId is { } drilldownDepartmentId && Model.NameResolver.OwnDepartments.Count == 0) { <input type="hidden" name="departmentId" value="@drilldownDepartmentId" /> }
-        @if (Model.ChannelId is { } channelId) { <input type="hidden" name="channelId" value="@channelId" /> }
-        @if (Model.RequestTypeId is { } requestTypeId) { <input type="hidden" name="requestTypeId" value="@requestTypeId" /> }
-        @if (Model.ActiveOnly) { <input type="hidden" name="activeOnly" value="true" /> }
-        @if (Model.InDepartmentQueue) { <input type="hidden" name="inDepartmentQueue" value="true" /> }
-        @if (Model.SlaBreached) { <input type="hidden" name="slaBreached" value="true" /> }
-        @if (Model.DueToday) { <input type="hidden" name="dueToday" value="true" /> }
-        @if (Model.BacklogAge is { } backlogAge) { <input type="hidden" name="backlogAge" value="@backlogAge" /> }
-        @if (Model.PendingApproval) { <input type="hidden" name="pendingApproval" value="true" /> }
-        @if (Model.CreatedFrom is { } createdFrom) { <input type="hidden" name="createdFrom" value="@createdFrom.ToString("yyyy-MM-dd")" /> }
-        @if (Model.CreatedTo is { } createdTo) { <input type="hidden" name="createdTo" value="@createdTo.ToString("yyyy-MM-dd")" /> }
-        <div class="filter-bar__submit">
-            <button type="submit" class="btn btn-sm">Apply</button>
-            <a class="btn btn-ghost btn-sm" href="/Tickets">Clear</a>
-        </div>
-    </form>
-
-    @if (Model.HasDrilldown)
-    {
-        <div class="drilldown-bar" role="status">
-            <span class="drilldown-bar__label">Filtered from Dashboard:</span>
-            @foreach (var label in Model.DrilldownLabels)
+    <nav class="view-tabs" aria-label="Ticket views">
+        <ul class="view-tabs__list">
+            @foreach (var view in TicketsViews.All)
             {
-                <span class="badge badge-drilldown">@label</span>
-            }
-            <a class="link-muted" href="/Dashboard">Back to Dashboard</a>
-        </div>
-    }
-
-    <div class="panel">
-        <div class="panel__header">
-            <span class="panel__title">Tickets</span>
-            <span class="text-secondary">@Model.TotalCount total</span>
-        </div>
-
-        @if (Model.Outcome == ApiOutcome.Unauthorized)
-        {
-            <div class="error-state">
-                <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
-                <p>Your session is no longer valid. <a class="link-muted" href="/Logout">Sign in again</a>.</p>
-            </div>
-        }
-        else if (Model.Outcome == ApiOutcome.Forbidden)
-        {
-            <div class="error-state">
-                <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
-                <p>You don't have permission to view this queue.</p>
-            </div>
-        }
-        else if (Model.Outcome == ApiOutcome.Unreachable || Model.Outcome == ApiOutcome.BadGateway)
-        {
-            <div class="error-state">
-                <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
-                <p>Tiger Ticketing System could not reach the ticketing service. Try again in a moment.</p>
-            </div>
-        }
-        else if (Model.Outcome != ApiOutcome.Success)
-        {
-            <div class="error-state">
-                <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
-                <p>Something went wrong loading the queue.</p>
-            </div>
-        }
-        else if (Model.Rows.Count == 0)
-        {
-            <div class="empty-state">
-                <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="16" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M9 9h6M9 13h6M9 17h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-                <p>No tickets match the current filters.</p>
-            </div>
-        }
-        else
-        {
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Status</th>
-                            <th>Ticket</th>
-                            <th class="col-subject">Summary</th>
-                            <th>Priority</th>
-                            <th>Assigned Department</th>
-                            <th>Assigned To</th>
-                            <th>Verification</th>
-                            <th>SLA</th>
-                            <th>Created</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in Model.Rows)
+                var isActive = view == Model.View;
+                var count = Model.TabCount(view);
+                <li>
+                    <a class="view-tabs__link @(isActive ? "is-active" : "")" href="@view.Href()" aria-current="@(isActive ? "page" : null)">
+                        @view.Label()
+                        @if (count is not null)
                         {
-                            @await Html.PartialAsync("_TicketRow", row)
+                            <span class="view-tabs__count" aria-label="@count @view.Label()">@count</span>
                         }
-                    </tbody>
-                </table>
-            </div>
-        }
+                    </a>
+                </li>
+            }
+        </ul>
+    </nav>
 
-        <div class="panel__footer">
-            <span>Page @Model.PageNumber of @Model.TotalPages</span>
-            <nav class="pagination" aria-label="Pagination">
-                @if (Model.PageNumber > 1)
-                {
-                    <a href="@PageUrl(Model.PageNumber - 1)">Prev</a>
-                }
-                else
-                {
-                    <span class="is-disabled">Prev</span>
-                }
-                @if (Model.PageNumber < Model.TotalPages)
-                {
-                    <a href="@PageUrl(Model.PageNumber + 1)">Next</a>
-                }
-                else
-                {
-                    <span class="is-disabled">Next</span>
-                }
-            </nav>
-        </div>
-    </div>
+    @if (Model.View == TicketsView.Pending)
+    {
+        @await Html.PartialAsync("_PendingInteractionsView", Model)
+    }
+    else
+    {
+        @await Html.PartialAsync("_TicketListView", Model)
+    }
 </div>

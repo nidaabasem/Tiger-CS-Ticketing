@@ -1,15 +1,15 @@
 @model (string Section, string SectionHref, string? Current)
 <nav class="breadcrumb" aria-label="Breadcrumb">
     <a href="/Admin">Administration</a>
-    <span aria-hidden="true">›</span>
+    <span class="sep">/</span>
     @if (Model.Current is null)
     {
-        <span>@Model.Section</span>
+        <span class="current">@Model.Section</span>
     }
     else
     {
         <a href="@Model.SectionHref">@Model.Section</a>
-        <span aria-hidden="true">›</span>
-        <span>@Model.Current</span>
+        <span class="sep">/</span>
+        <span class="current">@Model.Current</span>
     }
 </nav>

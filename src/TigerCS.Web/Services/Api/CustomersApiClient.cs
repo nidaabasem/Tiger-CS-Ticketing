@@ -1,0 +1,31 @@
+using System.Globalization;
+using System.Web;
+using Microsoft.Extensions.Logging;
+using TigerCS.Application.Modules.Ticketing.Dto;
+
+namespace TigerCS.Web.Services.Api;
+
+/// <summary>
+/// Calls TigerCS.Api's Customers directory — <c>GET api/customers</c> (the
+/// paginated list of customers TigerCS already knows, from its own persisted
+/// tickets) and <c>GET api/customers/profile/{customerKey}</c> (one customer's
+/// tickets, units, phones and interactions). Never a CRM call.
+/// </summary>
+public sealed class CustomersApiClient(HttpClient httpClient, ILogger<CustomersApiClient> logger) : ApiClientBase(httpClient, logger)
+{
+    public Task<ApiResult<CustomerDirectoryListResultDto>> ListAsync(CustomerDirectoryListRequestDto request, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (!string.IsNullOrWhiteSpace(request.Search)) query["search"] = request.Search;
+        if (!string.IsNullOrWhiteSpace(request.VerificationSource)) query["verificationSource"] = request.VerificationSource;
+        if (request.DepartmentId is int departmentId) query["departmentId"] = departmentId.ToString(CultureInfo.InvariantCulture);
+        if (request.OpenOnly) query["openOnly"] = "true";
+        query["page"] = request.Page.ToString(CultureInfo.InvariantCulture);
+        query["pageSize"] = request.PageSize.ToString(CultureInfo.InvariantCulture);
+
+        return GetAsync<CustomerDirectoryListResultDto>($"api/customers?{query}", cancellationToken);
+    }
+
+    public Task<ApiResult<CustomerDirectoryProfileDto>> GetProfileAsync(string customerKey, CancellationToken cancellationToken) =>
+        GetAsync<CustomerDirectoryProfileDto>($"api/customers/profile/{Uri.EscapeDataString(customerKey)}", cancellationToken);
+}

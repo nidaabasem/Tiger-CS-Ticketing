@@ -1,0 +1,42 @@
+@model TigerCS.Web.Pages.DashboardBarCard
+@{
+    // One operational breakdown card (Dashboard Phase 1): label left, bar
+    // centre, count + percentage right; the header's total drills into the
+    // matching tickets and the long tail folds behind "View all".
+}
+<div class="panel dash-card">
+    <div class="panel__header">
+        <div>
+            <span class="panel__title">@Model.Title</span>
+            <div class="dash-card__subtitle">@Model.Subtitle</div>
+        </div>
+        <a class="link-muted" href="@Model.TotalHref" title="Open the matching tickets">@Model.Total total</a>
+    </div>
+    @if (Model.Rows.Count == 0 || (Model.Total == 0 && Model.Rows.All(r => r.Count == 0)))
+    {
+        <div class="empty-state empty-state--compact">
+            <p>@Model.EmptyText</p>
+        </div>
+    }
+    else
+    {
+        <ul class="bar-list">
+            @foreach (var row in Model.TopRows)
+            {
+                @await Html.PartialAsync("_DashboardBarRow", row)
+            }
+        </ul>
+        @if (Model.MoreRows.Count > 0)
+        {
+            <details class="bar-list__more">
+                <summary>View all (@Model.Rows.Count)</summary>
+                <ul class="bar-list">
+                    @foreach (var row in Model.MoreRows)
+                    {
+                        @await Html.PartialAsync("_DashboardBarRow", row)
+                    }
+                </ul>
+            </details>
+        }
+    }
+</div>

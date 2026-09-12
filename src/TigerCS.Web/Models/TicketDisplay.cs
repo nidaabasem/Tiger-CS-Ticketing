@@ -88,6 +88,35 @@ public static class TicketDisplay
         _ => mode
     };
 
+    /// <summary>A "3 h ago" / "2 d ago" style age for list cells, coarsest honest unit — "just now" under a minute.</summary>
+    public static string AgoLabel(DateTime atUtc, DateTime nowUtc)
+    {
+        var age = nowUtc - atUtc;
+        if (age < TimeSpan.Zero)
+        {
+            age = TimeSpan.Zero;
+        }
+
+        return age.TotalMinutes < 1 ? "just now"
+            : age.TotalHours < 1 ? $"{(int)age.TotalMinutes} min ago"
+            : age.TotalDays < 1 ? $"{(int)age.TotalHours} h ago"
+            : age.TotalDays < 30 ? $"{(int)age.TotalDays} d ago"
+            : atUtc.ToLocalTime().ToString("MMM d, yyyy");
+    }
+
+    /// <summary>Up to two initials for an avatar chip — the first letters of the first and last words, or "?" for an empty name.</summary>
+    public static string Initials(string? name)
+    {
+        var parts = (name ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => char.IsLetterOrDigit(p[0])).ToArray();
+        return parts.Length switch
+        {
+            0 => "?",
+            1 => parts[0][..Math.Min(2, parts[0].Length)].ToUpperInvariant(),
+            _ => $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant(),
+        };
+    }
+
     /// <summary>How long a customer has been waiting for a human, in the coarsest unit that is still honest.</summary>
     public static string WaitingSinceLabel(DateTime requestedAtUtc, DateTime nowUtc)
     {

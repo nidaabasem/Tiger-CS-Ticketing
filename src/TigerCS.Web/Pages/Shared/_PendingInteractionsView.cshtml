@@ -1,0 +1,247 @@
+@model TigerCS.Web.Pages.TicketsModel
+@{
+    // The Pending Interactions view: the agent work list for customer
+    // interactions waiting on a human, on every channel — the same list,
+    // filters and Start/Complete/Cancel actions the former standalone page
+    // offered, framed like every other Tickets view. A row is a piece of
+    // pending human work (a handoff), so its columns and actions differ
+    // from a ticket row's; the shell around it does not.
+    //
+    // Deliberately no "Call" or "Reply on WhatsApp" here — Genesys owns
+    // channel delivery and no supported action has been confirmed.
+    var nowUtc = DateTime.UtcNow;
+    var viewKey = TicketsView.Pending.Key();
+
+    string PageUrl(int p) => Url.Page("/Tickets", new
+    {
+        view = viewKey,
+        channelId = Model.ChannelId,
+        departmentId = Model.DepartmentId,
+        mineOnly = Model.MineOnly ? "true" : null,
+        unassignedOnly = Model.UnassignedOnly ? "true" : null,
+        includeResolved = Model.IncludeResolved ? "true" : null,
+        page = p,
+        pageSize = Model.PageSize
+    }) ?? TicketsView.Pending.Href();
+}
+
+@if (Model.PendingActionError is not null)
+{
+    <div class="alert alert-error" role="alert">@Model.PendingActionError</div>
+}
+
+<form class="filter-bar" id="pendingFilters" method="get">
+    <input type="hidden" name="view" value="@viewKey" />
+
+    <div class="field-group">
+        <label class="field-label" for="channelId">Channel</label>
+        <select class="field-select" id="channelId" name="channelId" data-autosubmit>
+            <option value="">All channels</option>
+            @foreach (var channel in Model.Channels)
+            {
+                <option value="@channel.ChannelId" selected="@(Model.ChannelId == channel.ChannelId)">@channel.Name</option>
+            }
+        </select>
+    </div>
+
+    @if (Model.NameResolver.OwnDepartments.Count > 0)
+    {
+        <div class="field-group">
+            <label class="field-label" for="departmentId">Department</label>
+            <select class="field-select" id="departmentId" name="departmentId" data-autosubmit>
+                <option value="">All my departments</option>
+                @foreach (var department in Model.NameResolver.OwnDepartments)
+                {
+                    <option value="@department.DepartmentId" selected="@(Model.DepartmentId == department.DepartmentId)">@department.Name</option>
+                }
+            </select>
+        </div>
+    }
+
+    <label class="field-check">
+        <input type="checkbox" name="mineOnly" value="true" checked="@Model.MineOnly" data-autosubmit />
+        Assigned to me
+    </label>
+    <label class="field-check">
+        <input type="checkbox" name="unassignedOnly" value="true" checked="@Model.UnassignedOnly" data-autosubmit />
+        Nobody has taken it
+    </label>
+    <label class="field-check">
+        <input type="checkbox" name="includeResolved" value="true" checked="@Model.IncludeResolved" data-autosubmit />
+        Include completed
+    </label>
+
+    <input type="hidden" name="pageSize" value="@Model.PageSize" />
+    <div class="filter-bar__submit">
+        <button type="submit" class="btn btn-sm">Apply</button>
+        <a class="btn btn-ghost btn-sm" href="@TicketsView.Pending.Href()">Clear</a>
+    </div>
+</form>
+
+<div class="panel">
+    <div class="panel__header">
+        <span class="panel__title">Pending Interactions</span>
+        <span class="text-secondary">
+            @Model.PendingTotalCount in this view
+            @if (Model.PendingCount is { } waiting)
+            {
+                <text>· @waiting waiting for an agent</text>
+            }
+        </span>
+    </div>
+
+    @if (Model.PendingOutcome == ApiOutcome.Unauthorized)
+    {
+        <div class="error-state">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+            <p>Your session is no longer valid. <a class="link-muted" href="/Logout">Sign in again</a>.</p>
+        </div>
+    }
+    else if (Model.PendingOutcome == ApiOutcome.Forbidden)
+    {
+        <div class="error-state">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+            <p>You don't have permission to view pending interactions.</p>
+        </div>
+    }
+    else if (Model.PendingOutcome != ApiOutcome.Success)
+    {
+        <div class="error-state">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+            <p>The pending interactions could not be loaded.</p>
+        </div>
+    }
+    else if (Model.PendingRows.Count == 0)
+    {
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="4" width="14" height="16" rx="1.5" stroke="currentColor" stroke-width="1.4" /><path d="M9 9h6M9 13h6M9 17h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+            <p>Nothing is waiting for a human agent right now.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Status</th>
+                        <th scope="col">Ticket</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Mobile</th>
+                        <th scope="col">Channel</th>
+                        <th scope="col">Follow-up</th>
+                        <th scope="col">Department</th>
+                        <th scope="col">Waiting since</th>
+                        <th scope="col">Agent</th>
+                        <th scope="col">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in Model.PendingRows)
+                {
+                    var h = row.Handoff;
+                    <tr>
+                        <td>
+                            <span class="badge badge-handoff-@TicketDisplay.HandoffStatusCssKey(h.Status)">
+                                @TicketDisplay.HandoffStatusLabel(h.Status)
+                            </span>
+                        </td>
+                        <td>
+                            <a class="ticket-id-link" href="/Tickets/@h.TicketId">@h.TicketNumber</a>
+                            @if (!h.TicketIsClassified)
+                            {
+                                @* Pending human work never waits for classification — often the
+                                   agent classifies it BECAUSE they picked it up from here. *@
+                                <span class="badge badge-priority-none" title="No category or priority has been set yet">Unclassified</span>
+                            }
+                        </td>
+                        <td>@(h.CustomerName ?? "—")</td>
+                        <td class="text-mono">@(string.IsNullOrWhiteSpace(h.CustomerPhone) ? "—" : h.CustomerPhone)</td>
+                        <td>@(row.ChannelName ?? "—")</td>
+                        <td>
+                            <span class="@(h.Mode is null ? "text-secondary" : null)">@TicketDisplay.HandoffModeLabel(h.Mode)</span>
+                        </td>
+                        <td>@TicketDisplay.AssignedDepartmentLabel(h.DepartmentId, row.DepartmentName)</td>
+                        <td class="text-mono" title="@h.RequestedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")">
+                            @TicketDisplay.WaitingSinceLabel(h.RequestedAtUtc, nowUtc)
+                            @if (h.InteractionEnded)
+                            {
+                                @* The live session ended; the business case did not. *@
+                                <span class="text-secondary" title="The customer's live session has ended — the work is still actionable">· session ended</span>
+                            }
+                        </td>
+                        <td>
+                            @if (h.AssignedEmployeeId is Guid assigned)
+                            {
+                                <span class="id-fallback" title="@assigned">Employee #@assigned.ToString()[..8]</span>
+                            }
+                            else if (h.GenesysAgentId is not null)
+                            {
+                                <span class="text-secondary" title="Reported by Genesys">@h.GenesysAgentId</span>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">Nobody yet</span>
+                            }
+                        </td>
+                        <td class="col-actions">
+                            @* Open Ticket first: the ticket carries the customer, the units, the
+                               transcript and the history the agent needs before acting. *@
+                            <a class="btn btn-sm" href="/Tickets/@h.TicketId">Open Ticket</a>
+                            @if (h.ResolvedAtUtc is null)
+                            {
+                                @if (h.Status != "InProgress")
+                                {
+                                    <form method="post" asp-page="/Tickets" asp-page-handler="Start" asp-all-route-data="@Model.PendingRouteValues" class="inline-form">
+                                        <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
+                                        <button class="btn btn-sm btn-gold" type="submit">Start Handling</button>
+                                    </form>
+                                }
+                                <form method="post" asp-page="/Tickets" asp-page-handler="Complete" asp-all-route-data="@Model.PendingRouteValues" class="inline-form">
+                                    <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
+                                    <button class="btn btn-sm" type="submit">Complete</button>
+                                </form>
+                                <details class="inline-details">
+                                    <summary class="btn btn-sm btn-quiet">Cancel</summary>
+                                    <form method="post" asp-page="/Tickets" asp-page-handler="Cancel" asp-all-route-data="@Model.PendingRouteValues" class="inline-form inline-form--stacked">
+                                        <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
+                                        <input class="field-input" type="text" name="reason" required
+                                               placeholder="Why is this no longer needed?" aria-label="Cancellation reason" />
+                                        <button class="btn btn-sm" type="submit">Confirm cancel</button>
+                                    </form>
+                                </details>
+                            }
+                            else if (h.ResolutionNote is not null)
+                            {
+                                <span class="text-secondary" title="@h.ResolutionNote">Note recorded</span>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <div class="panel__footer">
+        <span>Page @Model.PageNumber of @Model.PendingTotalPages</span>
+        <nav class="pagination" aria-label="Pagination">
+            @if (Model.PageNumber > 1)
+            {
+                <a href="@PageUrl(Model.PageNumber - 1)">Prev</a>
+            }
+            else
+            {
+                <span class="is-disabled">Prev</span>
+            }
+            @if (Model.PageNumber < Model.PendingTotalPages)
+            {
+                <a href="@PageUrl(Model.PageNumber + 1)">Next</a>
+            }
+            else
+            {
+                <span class="is-disabled">Next</span>
+            }
+        </nav>
+    </div>
+</div>

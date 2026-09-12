@@ -63,14 +63,14 @@ public sealed class CustomerWorkspaceTests
             new DepartmentsApiClient(new HttpClient(departmentsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<DepartmentsApiClient>.Instance));
     }
 
-    private static (CustomersModel Model, FakeApiHandler Customers) CreateCustomersModel(
+    private static (CustomerLookupModel Model, FakeApiHandler Customers) CreateCustomerLookupModel(
         Func<HttpRequestMessage, string?, HttpResponseMessage> customersResponder,
         params string[] roles)
     {
         var handler = new FakeApiHandler(customersResponder);
         var client = new CustomerHistoryApiClient(
             new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CustomerHistoryApiClient>.Instance);
-        var model = new CustomersModel(client, NameResolver());
+        var model = new CustomerLookupModel(client, NameResolver());
         GivePageContext(model, PrincipalWithRoles(roles.Length == 0 ? [Roles.CsAgent] : roles));
         return (model, handler);
     }
@@ -118,7 +118,7 @@ public sealed class CustomerWorkspaceTests
     [Fact]
     public async Task OnGet_SingleCrmMatch_AutoSelects_AndLoadsHistoryByTheStableCrmCustomerId()
     {
-        var (model, handler) = CreateCustomersModel(
+        var (model, handler) = CreateCustomerLookupModel(
             RespondingWith(CrmOnlySearchResult(), History(HistoryRow(1, "1506"), HistoryRow(2, "1204"))));
 
         await model.OnGetAsync(Phone, customer: null, unit: null, CancellationToken.None);
@@ -137,7 +137,7 @@ public sealed class CustomerWorkspaceTests
     [Fact]
     public async Task OnGet_UnitFilter_NarrowsTheTicketList_ButAllUnitsRemainsTheDefault()
     {
-        var (model, _) = CreateCustomersModel(
+        var (model, _) = CreateCustomerLookupModel(
             RespondingWith(CrmOnlySearchResult(), History(HistoryRow(1, "1506"), HistoryRow(2, "1204"))));
 
         await model.OnGetAsync(Phone, customer: null, unit: "1204", CancellationToken.None);
@@ -163,7 +163,7 @@ public sealed class CustomerWorkspaceTests
         var externalHistory = new CustomerHistoryDto(
             "ExternalVerified", null, null, "Aisha Rahman", 1, 0, 1,
             [HistoryRow(7, "1506")], "Pact", "PACT-CUST-77");
-        var (model, handler) = CreateCustomersModel(RespondingWith(search, externalHistory));
+        var (model, handler) = CreateCustomerLookupModel(RespondingWith(search, externalHistory));
 
         await model.OnGetAsync(Phone, customer: null, unit: null, CancellationToken.None);
 
@@ -185,7 +185,7 @@ public sealed class CustomerWorkspaceTests
                     [new CustomerLookupCustomerDto("PACT-CUST-77", "Aisha Rahman", Phone, null, null, [])]),
                 CustomerLookupSourceResultDto.NotFound("Tasleeh")
             ]);
-        var (model, handler) = CreateCustomersModel(RespondingWith(search, new object()));
+        var (model, handler) = CreateCustomerLookupModel(RespondingWith(search, new object()));
 
         await model.OnGetAsync(Phone, customer: null, unit: null, CancellationToken.None);
 
@@ -206,7 +206,7 @@ public sealed class CustomerWorkspaceTests
                 CustomerLookupSourceResultDto.NotFound("Tasleeh")
             ]);
         var externalHistory = new CustomerHistoryDto("ExternalVerified", null, null, "Aisha Rahman", 0, 0, 0, [], "Pact", "PACT-CUST-77");
-        var (model, handler) = CreateCustomersModel(RespondingWith(search, externalHistory));
+        var (model, handler) = CreateCustomerLookupModel(RespondingWith(search, externalHistory));
 
         await model.OnGetAsync(Phone, customer: "ext:Pact:PACT-CUST-77", unit: null, CancellationToken.None);
 
@@ -232,7 +232,7 @@ public sealed class CustomerWorkspaceTests
     [Fact]
     public async Task ViewerCanReopen_IsFalseForADepartmentEmployee_SoNoReopenControlRenders()
     {
-        var (model, _) = CreateCustomersModel(
+        var (model, _) = CreateCustomerLookupModel(
             RespondingWith(CrmOnlySearchResult(), History(HistoryRow(1, "1506", reopenEligible: true))),
             Roles.DepartmentEmployee);
 
@@ -253,7 +253,7 @@ public sealed class CustomerWorkspaceTests
     }
 
     private static string CustomersViewHtml() =>
-        File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Customers.cshtml")));
+        File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "CustomerLookup.cshtml")));
 
     private static string DashboardViewHtml() =>
         File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Dashboard.cshtml")));

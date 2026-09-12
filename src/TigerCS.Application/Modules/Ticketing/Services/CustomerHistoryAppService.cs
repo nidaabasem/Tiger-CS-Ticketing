@@ -239,7 +239,12 @@ public sealed class CustomerHistoryAppService(
             result.ClosedCount,
             result.Tickets.Select(t => ToTicketDto(t, currentResolutions, nowUtc)).ToList(),
             externalSource,
-            externalCustomerId);
+            externalCustomerId,
+            // The Customers directory key this history belongs to (CRM id,
+            // else external identity, else intake phone) — what the Web
+            // links to as the customer's profile. Null when the anchor
+            // ticket has no customer identity at all.
+            CustomerIdentity.FromTicketFacts(crmBuyerCustomerId, externalSource, externalCustomerId, phoneNumberSnapshot)?.Key);
     }
 
     private CustomerHistoryTicketDto ToTicketDto(

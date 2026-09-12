@@ -42,16 +42,23 @@ public sealed class TicketDetailsCustomerHistoryTests
     }
 
     [Fact]
-    public void View_HasSeparateDetailsAndPreviousTicketsTabs()
+    public void View_HasSeparateOverviewAndCustomerTabs()
     {
+        // The redesigned Ticket Details: Overview | Activity | Customer |
+        // Interactions | Approvals | Attachments — Previous Tickets live on
+        // the Customer tab, never competing with the primary ticket facts.
         var html = TicketDetailsViewHtml();
 
         Assert.Contains("id=\"tab-details\"", html);
         Assert.Contains("for=\"tab-details\"", html);
-        Assert.Contains("id=\"tab-history\"", html);
-        Assert.Contains("for=\"tab-history\"", html);
+        Assert.Contains("id=\"tab-customer\"", html);
+        Assert.Contains("for=\"tab-customer\"", html);
         Assert.Contains("id=\"panel-details\"", html);
-        Assert.Contains("id=\"panel-history\"", html);
+        Assert.Contains("id=\"panel-customer\"", html);
+        foreach (var tab in new[] { "tab-activity", "tab-conversations", "tab-approvals", "tab-attachments" })
+        {
+            Assert.Contains($"id=\"{tab}\"", html);
+        }
     }
 
     [Fact]
@@ -63,7 +70,7 @@ public sealed class TicketDetailsCustomerHistoryTests
         var detailsInputEnd = html.IndexOf("/>", detailsInputStart, StringComparison.Ordinal);
         var detailsInputTag = html[detailsInputStart..detailsInputEnd];
 
-        var historyInputStart = html.IndexOf("id=\"tab-history\"", StringComparison.Ordinal);
+        var historyInputStart = html.IndexOf("id=\"tab-customer\"", StringComparison.Ordinal);
         var historyInputEnd = html.IndexOf("/>", historyInputStart, StringComparison.Ordinal);
         var historyInputTag = html[historyInputStart..historyInputEnd];
 
@@ -88,7 +95,7 @@ public sealed class TicketDetailsCustomerHistoryTests
         var html = TicketDetailsViewHtml();
 
         var factsPanelEnd = html.IndexOf("</aside>", StringComparison.Ordinal);
-        var panelHistoryStart = html.IndexOf("id=\"panel-history\"", StringComparison.Ordinal);
+        var panelHistoryStart = html.IndexOf("id=\"panel-customer\"", StringComparison.Ordinal);
 
         Assert.True(factsPanelEnd > 0, "Expected a facts-panel <aside> in the view.");
         Assert.True(panelHistoryStart > factsPanelEnd, "The Previous Tickets tab panel must be a sibling of, not nested inside, the facts-panel.");
