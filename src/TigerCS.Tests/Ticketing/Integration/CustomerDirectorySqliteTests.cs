@@ -213,6 +213,66 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         Assert.Equal(2, profile.TotalTickets);
         // Newest first, and one entry per mailbox.
         Assert.Equal(["youssef@example.com", "youssef.old@example.com"], profile.Emails.ToArray());
+
+        // And the DIRECTORY ROW agrees: a customer the profile can name must
+        // never read as a placeholder one screen earlier.
+        var row = Assert.Single((await ListAsync()).Items);
+        Assert.Equal("ext:Pact:PACT-7002", row.CustomerKey);
+        Assert.Equal("Youssef Noor", row.DisplayName);
+    }
+
+    /// <summary>
+    /// The list and the profile must never name the same customer
+    /// differently. Whatever the newest ticket happens to carry, both screens
+    /// resolve to the newest ticket that actually snapshotted a name.
+    /// </summary>
+    [Fact]
+    public async Task ListAndProfile_NeverNameTheSameCustomerDifferently()
+    {
+        using (var context = _db.CreateContext())
+        {
+            // Newest ticket has no name; an older one does.
+            AddExternalTicket(context, "Pact", "PACT-7500", "P-01", createdAtUtc: Now.AddDays(-9), customerName: "Youssef Noor");
+            AddExternalTicket(context, "Pact", "PACT-7500", "P-02", createdAtUtc: Now.AddDays(-1), customerName: null);
+            // A CRM customer in the same shape, to prove the widening is not PACT-specific.
+            var namedCrm = AddCrmTicket(context, 9301, "Mariam Al Falasi", "T-1", createdAtUtc: Now.AddDays(-8));
+            var namelessCrm = AddCrmTicket(context, 9301, null!, "T-2", createdAtUtc: Now.AddDays(-2));
+            Assert.NotEqual(namedCrm.TicketId, namelessCrm.TicketId);
+        }
+
+        var rows = (await ListAsync()).Items;
+        foreach (var row in rows)
+        {
+            var profile = (await ProfileAsync(row.CustomerKey)).Response!;
+            Assert.Equal(profile.DisplayName, row.DisplayName);
+        }
+
+        Assert.Equal("Youssef Noor", rows.Single(r => r.CustomerKey == "ext:Pact:PACT-7500").DisplayName);
+        Assert.Equal("Mariam Al Falasi", rows.Single(r => r.CustomerKey == "crm:9301").DisplayName);
+    }
+
+    /// <summary>
+    /// A search term is only matched as a phone number when it is SHAPED like
+    /// one. "M-401" is a unit code: it must keep finding unit M-401 and must
+    /// not drag in every caller whose number merely contains 401.
+    /// </summary>
+    [Fact]
+    public async Task List_ASearchTermThatIsNotPhoneShaped_IsNotMatchedAgainstPhoneNumbers()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddPhoneTicket(context, "+971 50 401 9988", "X-1");
+            AddExternalTicket(context, "Pact", "PACT-7600", "M-401", customerName: "Fatima Noor");
+        }
+
+        // The unit code finds the unit, and nothing else.
+        var row = Assert.Single((await ListAsync(new CustomerDirectoryListRequestDto(Search: "M-401"))).Items);
+        Assert.Equal("ext:Pact:PACT-7600", row.CustomerKey);
+
+        // A phone-shaped term still matches the caller canonically.
+        Assert.Equal(
+            "phone:971504019988",
+            Assert.Single((await ListAsync(new CustomerDirectoryListRequestDto(Search: "+971504019988"))).Items).CustomerKey);
     }
 
     /// <summary>

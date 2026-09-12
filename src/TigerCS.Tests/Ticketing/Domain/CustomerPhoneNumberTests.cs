@@ -49,6 +49,29 @@ public sealed class CustomerPhoneNumberTests
         Assert.False(CustomerPhoneNumber.AreSameNumber(null, null));
     }
 
+    /// <summary>
+    /// The gate that decides whether a free-text search term is matched as a
+    /// phone number: digits and separators only. Without it, Normalize would
+    /// reduce the unit code "M-401" to "401" and match it against every
+    /// caller whose number contains those digits.
+    /// </summary>
+    [Theory]
+    [InlineData("+971501234567", true)]
+    [InlineData("971501234567", true)]
+    [InlineData("+971 50 123 4567", true)]
+    [InlineData("971-50-123-4567", true)]
+    [InlineData("(971) 50 123 4567", true)]
+    [InlineData("  50123  ", true)]
+    [InlineData("M-401", false)]
+    [InlineData("P-08", false)]
+    [InlineData("TG-CS-00005", false)]
+    [InlineData("Falasi", false)]
+    [InlineData("+", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void LooksLikeNumber_AcceptsOnlyDigitsAndSeparators(string? value, bool expected) =>
+        Assert.Equal(expected, CustomerPhoneNumber.LooksLikeNumber(value));
+
     /// <summary>PACT's request form is deliberately narrower — only the '+' goes, so a number reaches PACT as PACT holds it.</summary>
     [Fact]
     public void WithoutPlus_IsThePactRequestForm_NotTheCanonicalForm()

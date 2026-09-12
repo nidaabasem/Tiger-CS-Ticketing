@@ -209,6 +209,10 @@ public class Ticket
     public string? ExternalCustomerName { get; private set; }
     public string? ExternalCustomerEmail { get; private set; }
 
+    /// <summary>Column widths for the external snapshot — the same limits <see cref="TicketInteraction"/> holds externally-supplied customer text to.</summary>
+    public const int ExternalCustomerNameMaxLength = 200;
+    public const int ExternalCustomerEmailMaxLength = 256;
+
     public TicketStatus TicketStatus { get; private set; }
     public CrmVerificationStatus VerificationStatus { get; private set; }
     public EscalationLevel EscalationLevel { get; private set; }
@@ -396,13 +400,26 @@ public class Ticket
         ticket.ExternalUnitId = externalUnitId;
         // Blank is the same as absent: a source that returned "" or "   " has
         // no name/email on file, and an empty snapshot must not out-rank the
-        // fallbacks the Customers directory would otherwise use.
-        ticket.ExternalCustomerName = NullIfBlank(externalCustomerName);
-        ticket.ExternalCustomerEmail = NullIfBlank(externalCustomerEmail);
+        // fallbacks the Customers directory would otherwise use. Over-long
+        // text is truncated rather than allowed to fail the write — a
+        // corporate tenant's name-plus-trade-licence can exceed the column,
+        // and losing the tail of a display snapshot beats losing the ticket
+        // (the same call TicketInteraction makes for the same two fields).
+        ticket.ExternalCustomerName = Truncate(externalCustomerName, ExternalCustomerNameMaxLength);
+        ticket.ExternalCustomerEmail = Truncate(externalCustomerEmail, ExternalCustomerEmailMaxLength);
         return ticket;
     }
 
-    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
 
     /// <summary>
     /// The <b>Unclassified</b> path: an inquiry reached an agent and must

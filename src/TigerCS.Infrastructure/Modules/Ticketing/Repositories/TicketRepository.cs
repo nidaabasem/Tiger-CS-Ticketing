@@ -66,17 +66,17 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             // predicate only narrows the already-scoped set above.
             var search = query.Search.Trim();
 
-            // A term carrying digits is ALSO matched as a phone number, on the
+            // A term SHAPED LIKE A PHONE NUMBER is also matched as one, on the
             // number's canonical form, so "+971501234567", "971501234567" and
             // "+971 50 123 4567" find the same ticket whichever way the intake
-            // captured it. Same rule and same characters as
-            // CustomerPhoneNumber.Normalize / .SeparatorCharacters, written out
-            // because EF Core translates string.Replace to SQL REPLACE() but
-            // cannot call the helper itself. Blank for a term with no digits,
-            // and then the clause is switched off rather than matching every
-            // row on an empty Contains.
-            var searchDigits = CustomerPhoneNumber.Normalize(search);
-            var searchHasDigits = searchDigits.Length > 0;
+            // captured it. The gate is LooksLikeNumber, not "has a digit":
+            // the unit code "M-401" must keep matching unit numbers, not every
+            // caller whose number happens to contain 401. For a term that does
+            // pass the gate, the SQL below strips exactly the characters
+            // Normalize does, written out because EF Core translates
+            // string.Replace to SQL REPLACE() but cannot call the helper.
+            var searchIsPhoneShaped = CustomerPhoneNumber.LooksLikeNumber(search);
+            var searchDigits = searchIsPhoneShaped ? CustomerPhoneNumber.Normalize(search) : string.Empty;
 
             filtered = filtered.Where(t =>
                 t.TicketNumber.Contains(search)
@@ -87,7 +87,7 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
                 || (t.ManualUnitNumber != null && t.ManualUnitNumber.Contains(search))
                 || dbContext.IntakeRecords.Any(i => i.LinkedTicketId == t.TicketId
                     && (i.PhoneNumber.Contains(search)
-                        || (searchHasDigits && i.PhoneNumber.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
+                        || (searchIsPhoneShaped && i.PhoneNumber.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
         }
 
         // Dashboard drill-down filters (Dashboard Phase 1) — the same shared

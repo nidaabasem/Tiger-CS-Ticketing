@@ -62,6 +62,43 @@ public static class CustomerPhoneNumber
         return length == 0 ? string.Empty : new string(digits, 0, length);
     }
 
+    /// <summary>
+    /// True when a search term is shaped like a phone number — it has at
+    /// least one digit and contains nothing but digits and
+    /// <see cref="SeparatorCharacters"/>.
+    ///
+    /// <para>
+    /// This is the gate for matching a free-text search term canonically.
+    /// <see cref="Normalize"/> alone is not that test: it strips every
+    /// non-digit, so it happily reduces the unit code "M-401" to "401" and
+    /// would then match it against any caller whose number merely contains
+    /// those digits. A term is only matched as a phone number when it
+    /// actually looks like one; everything else is matched as the text it is.
+    /// </para>
+    /// </summary>
+    public static bool LooksLikeNumber(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var hasDigit = false;
+        foreach (var character in value.Trim())
+        {
+            if (char.IsAsciiDigit(character))
+            {
+                hasDigit = true;
+            }
+            else if (!SeparatorCharacters.Contains(character))
+            {
+                return false;
+            }
+        }
+
+        return hasDigit;
+    }
+
     /// <summary>True when both numbers name the same customer once written the same way; false when either has no digits.</summary>
     public static bool AreSameNumber(string? left, string? right)
     {

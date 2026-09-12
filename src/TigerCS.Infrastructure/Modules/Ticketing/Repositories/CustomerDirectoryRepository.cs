@@ -114,14 +114,14 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         // EXISTS over the same identity columns.
         if (query.Search is { } search)
         {
-            // A search term that carries digits is also matched as a phone
-            // number, canonically: "+971501234567", "971501234567" and
+            // A search term SHAPED LIKE A PHONE NUMBER is also matched as one,
+            // canonically: "+971501234567", "971501234567" and
             // "+971 50 123 4567" all find the same customer, whichever of
-            // those forms was captured. Blank when the term has no digits at
-            // all, and then the phone clauses are switched off rather than
-            // matching everything on an empty Contains.
-            var searchDigits = CustomerPhoneNumber.Normalize(search);
-            var searchHasDigits = searchDigits.Length > 0;
+            // those forms was captured. The gate is LooksLikeNumber rather
+            // than "has a digit", so a unit code like "M-401" is still matched
+            // as the text it is and not against every number containing 401.
+            var searchIsPhoneShaped = CustomerPhoneNumber.LooksLikeNumber(search);
+            var searchDigits = searchIsPhoneShaped ? CustomerPhoneNumber.Normalize(search) : string.Empty;
 
             var matching = identified.Where(m =>
                 m.Ticket.TicketNumber.Contains(search)
@@ -134,11 +134,11 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 || (m.Ticket.ManualProjectName != null && m.Ticket.ManualProjectName.Contains(search))
                 || (m.Ticket.ExternalCustomerId != null && m.Ticket.ExternalCustomerId.Contains(search))
                 || (m.IntakePhone != null && m.IntakePhone.Contains(search))
-                || (searchHasDigits && m.CanonicalIntakePhone != null && m.CanonicalIntakePhone.Contains(searchDigits))
+                || (searchIsPhoneShaped && m.CanonicalIntakePhone != null && m.CanonicalIntakePhone.Contains(searchDigits))
                 || dbContext.TicketInteractions.Any(i => i.TicketId == m.Ticket.TicketId
                     && ((i.CustomerName != null && i.CustomerName.Contains(search))
                         || i.CustomerPhone.Contains(search)
-                        || (searchHasDigits && i.CustomerPhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
+                        || (searchIsPhoneShaped && i.CustomerPhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
             candidates = candidates.Where(x => matching.Any(m =>
                 m.Kind == x.Kind
                 && ((x.Kind == CrmKind && m.CrmId == x.CrmId)
@@ -181,6 +181,16 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 // Ticket ids are assigned in creation order, so the highest id
                 // is the latest ticket — the row's name/unit/phone snapshot.
                 LastTicketId = g.Max(x => x.Ticket.TicketId),
+                // The newest ticket that actually snapshotted a customer name.
+                // Usually the same ticket; it differs when the latest one came
+                // from a source that returned no name (PACT's customerName is
+                // routinely null), and without it the row would fall back to a
+                // placeholder for a customer the profile can name — the list
+                // and the profile would show two different people.
+                LastNamedTicketId = g.Max(x =>
+                    x.Ticket.CrmBuyerCustomerName != null || x.Ticket.ExternalCustomerName != null
+                        ? (long?)x.Ticket.TicketId
+                        : null),
                 LastTicketCreatedAtUtc = g.Max(x => x.Ticket.CreatedAtUtc),
                 LastInteractionAtUtc = g.Max(x => x.LastInteractionAtUtc),
             });
@@ -204,10 +214,16 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         }
 
         // Dress each row with its latest ticket's snapshot — one query per
-        // fact table for the whole page, never one per row.
+        // fact table for the whole page, never one per row. The newest NAMED
+        // ticket is read in the same batch, so widening the name costs no
+        // extra round trip.
         var lastTicketIds = page.Select(g => g.LastTicketId).ToList();
+        var ticketIdsToLoad = lastTicketIds
+            .Concat(page.Select(g => g.LastNamedTicketId).OfType<long>())
+            .Distinct()
+            .ToList();
         var lastTickets = await dbContext.Tickets.AsNoTracking()
-            .Where(t => lastTicketIds.Contains(t.TicketId))
+            .Where(t => ticketIdsToLoad.Contains(t.TicketId))
             .ToDictionaryAsync(t => t.TicketId, cancellationToken);
         var snapshots = await LoadSnapshotsAsync(lastTicketIds, cancellationToken);
 
@@ -218,10 +234,16 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             var last = lastTickets[g.LastTicketId];
             var snapshot = snapshots.GetValueOrDefault(g.LastTicketId);
 
+            // Same precedence the profile applies, and the same answer: the
+            // latest ticket's name, else the newest ticket that carried one.
+            var namedTicket = g.LastNamedTicketId is { } namedId ? lastTickets.GetValueOrDefault(namedId) : null;
+            var displayName = DisplayNameFor(last, snapshot)
+                ?? FirstNonEmpty(namedTicket?.CrmBuyerCustomerName, namedTicket?.ExternalCustomerName);
+
             rows.Add(new CustomerDirectoryRowDto(
                 identity.Key,
                 identity.Kind.ToString(),
-                DisplayNameFor(last, snapshot),
+                displayName,
                 // The number as the latest ticket captured it — the canonical
                 // form identifies the customer, it is not how they are shown.
                 snapshot.IntakePhone ?? snapshot.InteractionPhone ?? identity.PhoneNumber,

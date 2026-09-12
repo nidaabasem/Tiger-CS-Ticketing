@@ -154,6 +154,39 @@ public sealed class TicketQueueSearchSqliteTests : IDisposable
         Assert.Equal([match.TicketNumber], await SearchAsync("+971509724162"));
     }
 
+    /// <summary>
+    /// A term that merely CONTAINS digits is not a phone number. Searching a
+    /// unit code must keep finding the unit and must not drag in every caller
+    /// whose number happens to contain the same digits.
+    /// </summary>
+    [Fact]
+    public async Task Search_AUnitCode_IsNotMatchedAgainstPhoneNumbersThatContainItsDigits()
+    {
+        Ticket unitMatch;
+        string unitCode;
+        using (var context = _db.CreateContext())
+        {
+            unitMatch = _db.AddTicket(context, _db.CustomerServiceId, customerName: "Unit Owner");
+            unitCode = unitMatch.CrmBuyerUnitNumber!;
+            var unitDigits = new string(unitCode.Where(char.IsAsciiDigit).ToArray());
+
+            // A completely unrelated caller whose number happens to contain
+            // the unit code's digits.
+            var unrelated = _db.AddTicket(context, _db.CustomerServiceId);
+            var intake = new IntakeRecord(
+                1, $"+971 50 {unitDigits}11 9988", _db.CustomerServiceId, false, null, null, _db.CsAgentId,
+                DashboardSqliteFixture.Now.AddHours(-3));
+            intake.LinkToTicket(unrelated.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            context.IntakeRecords.Add(intake);
+            context.SaveChanges();
+        }
+
+        // The unit code has a letter, so it is not phone-shaped: it finds the
+        // unit and nothing else. Before the LooksLikeNumber gate it was
+        // reduced to its bare digits and matched the caller too.
+        Assert.Equal([unitMatch.TicketNumber], await SearchAsync(unitCode));
+    }
+
     /// <summary>A term with no digits is never treated as a phone number — it must not match every ticket that has one.</summary>
     [Fact]
     public async Task Search_ATermWithNoDigits_DoesNotMatchEveryTicketWithAPhone()
