@@ -67,14 +67,17 @@ public sealed class ShellRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task Login_RendersTheSplitLayout_WithBrandingAndTheSignInForm()
+    public async Task Login_RendersTheBackgroundShell_WithBrandingAndTheSignInForm()
     {
         var html = await Ok(await Client().GetAsync("/Login"));
 
         Assert.Contains("class=\"login-shell\"", html, StringComparison.Ordinal);
         Assert.Contains("class=\"login-aside\"", html, StringComparison.Ordinal);
         Assert.Contains("Tiger <span>Ticketing</span>", html, StringComparison.Ordinal);
-        Assert.Contains("<div class=\"login-brand__product\">Sign in</div>", html, StringComparison.Ordinal);
+        // The card: brand, welcome, subtitle, the two fields, one action.
+        Assert.Contains("class=\"login-card__mark\"", html, StringComparison.Ordinal);
+        Assert.Contains("<div class=\"login-brand__product\">Welcome back</div>", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"login-brand__subtitle\"", html, StringComparison.Ordinal);
         Assert.Contains("name=\"Input.Identifier\"", html, StringComparison.Ordinal);
         Assert.Contains("name=\"Input.Password\"", html, StringComparison.Ordinal);
         Assert.Contains("class=\"btn btn-gold btn-block\">Sign In</button>", html, StringComparison.Ordinal);
@@ -83,11 +86,39 @@ public sealed class ShellRenderTests : IDisposable
         Assert.DoesNotContain("login-corner", html, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// bg.png is the Login/Access Denied background, painted full-viewport
+    /// from the self-hosted stylesheet — never an inline style attribute,
+    /// which "style-src 'self'" would drop, and never hidden behind a solid
+    /// panel over it.
+    /// </summary>
+    [Fact]
+    public async Task Login_PaintsBgPngAsTheFullViewportBackground_FromTheStylesheet()
+    {
+        var html = await Ok(await Client().GetAsync("/Login"));
+        Assert.DoesNotContain("style=", html, StringComparison.Ordinal);
+
+        var css = await Ok(await Client().GetAsync("/css/site.css"));
+        var shell = css[css.IndexOf(".login-shell {", StringComparison.Ordinal)..];
+        shell = shell[..shell.IndexOf('}')];
+        Assert.Contains("background-image: url(\"../img/bg.png\")", shell, StringComparison.Ordinal);
+        Assert.Contains("background-size: cover", shell, StringComparison.Ordinal);
+        Assert.Contains("background-position: center center", shell, StringComparison.Ordinal);
+        Assert.Contains("min-height: 100vh", shell, StringComparison.Ordinal);
+
+        // The image is served, and the brand panel over it is not a slab.
+        Assert.Equal(HttpStatusCode.OK, (await Client().GetAsync("/img/bg.png")).StatusCode);
+        var aside = css[css.IndexOf(".login-aside {", StringComparison.Ordinal)..];
+        aside = aside[..aside.IndexOf('}')];
+        Assert.DoesNotContain("background", aside, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AccessDenied_UsesTheSameLayout()
     {
         var html = await Ok(await Client().GetAsync("/AccessDenied"));
 
+        Assert.Contains("class=\"login-shell\"", html, StringComparison.Ordinal);
         Assert.Contains("class=\"login-aside\"", html, StringComparison.Ordinal);
         Assert.Contains("Access denied", html, StringComparison.Ordinal);
         Assert.Contains("href=\"/Tickets\">Back to Tickets</a>", html, StringComparison.Ordinal);
@@ -104,9 +135,17 @@ public sealed class ShellRenderTests : IDisposable
         Assert.Contains("href=\"/Customers/Lookup\"", html, StringComparison.Ordinal);
         Assert.Contains("href=\"/Tickets\">Open Tickets workspace</a>", html, StringComparison.Ordinal);
 
-        foreach (var (href, label) in new[] { ("/Tickets", "Queue"), ("/Tickets?view=pending", "Pending Interactions"), ("/Tickets?view=my", "My Tickets"), ("/Tickets?view=closed", "Closed") })
+        // Each shortcut keeps its semantic tone — the same vocabulary the KPI
+        // row and the breakdown cards use.
+        foreach (var (href, label, tone) in new[]
         {
-            Assert.Contains($"<a class=\"dash-shortcut\" href=\"{href}\">", html, StringComparison.Ordinal);
+            ("/Tickets", "Queue", "info"),
+            ("/Tickets?view=pending", "Pending Interactions", "secondary"),
+            ("/Tickets?view=my", "My Tickets", "progress"),
+            ("/Tickets?view=closed", "Closed", "success"),
+        })
+        {
+            Assert.Contains($"<a class=\"dash-shortcut tone-{tone}\" href=\"{href}\">", html, StringComparison.Ordinal);
             Assert.Contains($"<span class=\"dash-shortcut__title\">{label}</span>", html, StringComparison.Ordinal);
         }
 
@@ -127,12 +166,17 @@ public sealed class ShellRenderTests : IDisposable
         finally { FakeApi.Populated = false; }
 
         Assert.Equal(6, Count(html, "class=\"kpi-card kpi-card--icon"));
+        // Six KPIs, six semantic identities — gold is spent on one card only.
+        foreach (var tone in new[] { "tone-info", "tone-secondary", "tone-progress", "tone-critical", "tone-warning", "tone-brand" })
+        {
+            Assert.Equal(1, Count(html, $"kpi-card--icon {tone} "));
+        }
         Assert.Contains("class=\"filter-disclosure\"", html, StringComparison.Ordinal);
         Assert.Contains("id=\"dashboardFilters\"", html, StringComparison.Ordinal);
         Assert.Contains("Tickets Requiring Attention", html, StringComparison.Ordinal);
         Assert.Contains("data-href=\"/Tickets/5\"", html, StringComparison.Ordinal);
         Assert.Contains("Volume by Department", html, StringComparison.Ordinal);
-        Assert.Equal(6, Count(html, "class=\"panel dash-card\""));
+        Assert.Equal(6, Count(html, "class=\"panel dash-card tone-"));
         // KPI drill-downs land on the Tickets workspace; My Tickets on its own tab.
         Assert.Contains("href=\"/Tickets?", html, StringComparison.Ordinal);
         Assert.Contains("view=my", html, StringComparison.Ordinal);
