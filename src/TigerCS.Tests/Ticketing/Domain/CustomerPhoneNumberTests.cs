@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.Ticketing;
 
@@ -54,6 +56,60 @@ public sealed class CustomerPhoneNumberTests
         Assert.Equal("971501234567", CustomerPhoneNumber.WithoutPlus("  +971501234567  "));
         Assert.Equal("971 50 123 4567", CustomerPhoneNumber.WithoutPlus("+971 50 123 4567"));
         Assert.Equal(string.Empty, CustomerPhoneNumber.WithoutPlus("+"));
+    }
+
+    /// <summary>
+    /// A database query cannot call <see cref="CustomerPhoneNumber.Normalize"/>,
+    /// so the repositories drop the separators in SQL with a chained
+    /// <c>REPLACE()</c>. That is a mirror of the canonical rule, not a second
+    /// implementation of it — and a mirror is only safe while it still
+    /// matches. This asserts that every copy strips exactly
+    /// <see cref="CustomerPhoneNumber.SeparatorCharacters"/> and that they are
+    /// all character-identical, so one of them cannot quietly drift.
+    /// </summary>
+    [Fact]
+    public void EverySqlSideCopyOfTheRule_StripsExactlyTheCanonicalSeparators_AndIsIdentical()
+    {
+        var chains = new List<(string File, string Chain)>();
+        foreach (var file in new[] { "TicketRepository.cs", "CustomerDirectoryRepository.cs" })
+        {
+            var path = RepositorySource(file);
+            Assert.True(File.Exists(path), $"{path} not found — did the repository move?");
+
+            foreach (Match match in Regex.Matches(File.ReadAllText(path), @"Trim\(\)(?:\.Replace\(""[^""]*"", """"\))+"))
+            {
+                chains.Add((file, match.Value));
+            }
+        }
+
+        // Both search predicates and the directory's canonical projection.
+        Assert.True(chains.Count >= 3, $"Expected at least three SQL-side copies, found {chains.Count}.");
+        Assert.Single(chains.Select(c => c.Chain).Distinct(StringComparer.Ordinal));
+
+        // The characters the chain removes ARE the canonical separator set —
+        // no more (which would drop a digit) and no fewer (which would leave
+        // "+971…" and "971…" as two customers again).
+        var stripped = Regex.Matches(chains[0].Chain, @"\.Replace\(""([^""]*)"", """"\)")
+            .Select(m => m.Groups[1].Value)
+            .ToList();
+        Assert.Equal(
+            CustomerPhoneNumber.SeparatorCharacters.Select(c => c.ToString()).OrderBy(c => c, StringComparer.Ordinal).ToArray(),
+            stripped.OrderBy(c => c, StringComparer.Ordinal).ToArray());
+
+        // And the mirror agrees with the authority on a real number.
+        var sqlResult = "+971 50 972-4162".Trim();
+        foreach (var separator in stripped)
+        {
+            sqlResult = sqlResult.Replace(separator, string.Empty, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(CustomerPhoneNumber.Normalize("+971 50 972-4162"), sqlResult);
+    }
+
+    private static string RepositorySource(string fileName, [CallerFilePath] string testFilePath = "")
+    {
+        var srcDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(testFilePath)!, "..", "..", ".."));
+        return Path.Combine(srcDir, "TigerCS.Infrastructure", "Modules", "Ticketing", "Repositories", fileName);
     }
 
     // ---- the identity built on it ----

@@ -52,9 +52,10 @@ public sealed class CustomerProfileModel(
 
     /// <summary>
     /// The one number this customer is reached on: CRM's live record when
-    /// there is one, else the most recently captured number.
+    /// there is one, else the most recently captured number. A CRM record
+    /// that came back with a blank number counts as having none.
     /// </summary>
-    public string? PrimaryPhone => CrmProfile?.MobileNumber ?? Profile?.PhoneNumbers.FirstOrDefault();
+    public string? PrimaryPhone => FirstNonBlank(CrmProfile?.MobileNumber) ?? Profile?.PhoneNumbers.FirstOrDefault();
 
     /// <summary>
     /// The customer's OTHER numbers — genuinely different ones only.
