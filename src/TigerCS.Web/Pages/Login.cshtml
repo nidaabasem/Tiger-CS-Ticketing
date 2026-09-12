@@ -6,21 +6,28 @@
 }
 
 <div class="login-shell">
-    <div class="login-corner" aria-hidden="true">
-        <div class="band"></div>
-        <div class="band2"></div>
-        <div class="tag">Tiger Group</div>
-    </div>
+    <aside class="login-aside" aria-label="About Tiger Ticketing">
+        <div class="login-aside__brand">
+            <img src="~/img/tiger-logo.png" alt="" />
+            <strong>Tiger <span>Ticketing</span></strong>
+        </div>
+        <div class="login-aside__statement">
+            <h2>Customer service, in one workspace.</h2>
+            <p>Find the customer, see their units and history, and route every request to the team that owns it — with SLAs, approvals and escalations tracked end to end.</p>
+            <ul class="login-aside__points">
+                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>Customers verified against Tiger CRM, PACT and Tasleeh</li>
+                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>One Tickets workspace for the queue, pending interactions and your work</li>
+                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>Every change recorded in the audit trail</li>
+            </ul>
+        </div>
+        <div class="login-aside__foot">Tiger Group · Customer Service &amp; Operations</div>
+    </aside>
 
     <div class="login-stack">
         <div class="login-card">
             <div class="login-brand">
-@*                 @await Html.PartialAsync("_BrandMark")
-
- *@   
- <div><img src="~/img/tiger-logo.png" width="120" /></div>
- <div class="login-brand__product">Ticketing System</div>
-                <div class="login-brand__subtitle">Customer Service &amp; Operations Workspace</div>
+                <div class="login-brand__product">Sign in</div>
+                <div class="login-brand__subtitle">Use your Tiger Group account to continue.</div>
             </div>
 
             @if (Model.SessionExpired)
@@ -39,12 +46,12 @@
                 </div>
             }
 
-            <form method="post">
+            <form method="post" novalidate>
                 <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
 
                 <div class="form-group">
                     <label class="form-label" asp-for="Input.Identifier">Email or Employee ID</label>
-                    <input asp-for="Input.Identifier" class="form-control" autocomplete="username" placeholder="e.g. n.basem or name@tigergroup.com" />
+                    <input asp-for="Input.Identifier" class="form-control" autocomplete="username" autofocus placeholder="name@tigergroup.com" />
                     <span asp-validation-for="Input.Identifier" class="field-error"></span>
                 </div>
 
@@ -62,11 +69,10 @@
                 </div>
 
                 <div class="form-row">
-                    <label class="checkbox-field-login">
+                    <label class="checkbox-field">
                         <input asp-for="Input.RememberMe" />
                         Remember me
                     </label>
-                    <a class="link-muted" href="#">Forgot password?</a>
                 </div>
 
                 <button type="submit" class="btn btn-gold btn-block">Sign In</button>

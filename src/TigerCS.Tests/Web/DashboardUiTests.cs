@@ -318,8 +318,9 @@ public sealed class DashboardUiTests
         Assert.Equal(3, card.MoreRows.Count);
 
         var html = View("Dashboard.cshtml");
-        Assert.Contains("View all (@card.Rows.Count)", html);
-        Assert.Contains("_DashboardBarRow", html);
+        Assert.Contains("View all (@Model.Rows.Count)", View("Shared", "_DashboardBarCard.cshtml"));
+        Assert.Contains("_DashboardBarCard", html);
+        Assert.Contains("_DashboardBarRow", View("Shared", "_DashboardBarCard.cshtml"));
     }
 
     [Fact]
@@ -340,7 +341,7 @@ public sealed class DashboardUiTests
     {
         var html = View("Dashboard.cshtml");
 
-        foreach (var column in new[] { "Ticket #", "Customer", "Unit / Project", "Department", "Request Type", "Priority", "Status", "Assigned Agent", "Created", "SLA" })
+        foreach (var column in new[] { "Ticket", "Customer", "Unit / Project", "Department", "Request Type", "Priority", "Status", "Assigned To", "Created", "SLA" })
         {
             Assert.Contains($"<th scope=\"col\">{column}</th>", html);
         }
@@ -366,7 +367,9 @@ public sealed class DashboardUiTests
         var kpis = html.IndexOf("class=\"kpi-grid", StringComparison.Ordinal);
 
         Assert.True(search > 0, "The customer search section is missing.");
-        Assert.True(search < filters && filters < kpis, "Customer search must sit above the filters and KPI cards.");
+        // The redesigned dashboard leads with the customer search and the
+        // KPI cards; the filter form folds behind a disclosure below them.
+        Assert.True(search < kpis && kpis < filters, "Customer search must sit above the KPI cards, with the filters folded below.");
         // The same phone-search flow as before: GET /Customers?phoneNumber=…
         Assert.Contains("action=\"/Customers\" method=\"get\"", html);
         Assert.Contains("name=\"phoneNumber\"", html);

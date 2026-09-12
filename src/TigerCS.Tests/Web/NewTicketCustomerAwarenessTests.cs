@@ -67,7 +67,7 @@ public sealed class NewTicketCustomerAwarenessTests
         var html = NewTicketViewHtml();
 
         Assert.Contains("View all tickets", html);
-        Assert.Contains("/Customers?phoneNumber=", html);
+        Assert.Contains("/Customers/Lookup?phoneNumber=", html);
     }
 
     [Fact]

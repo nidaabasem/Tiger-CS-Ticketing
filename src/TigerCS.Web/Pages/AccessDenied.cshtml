@@ -6,14 +6,27 @@
 }
 
 <div class="login-shell">
+    <aside class="login-aside" aria-label="About Tiger Ticketing">
+        <div class="login-aside__brand">
+            <img src="~/img/tiger-logo.png" alt="" />
+            <strong>Tiger <span>Ticketing</span></strong>
+        </div>
+        <div class="login-aside__statement">
+            <h2>This page is restricted.</h2>
+            <p>Your account is signed in, but its roles do not include access to this area. Ask a System Administrator if you believe you should have it.</p>
+        </div>
+        <div class="login-aside__foot">Tiger Group · Customer Service &amp; Operations</div>
+    </aside>
+
     <div class="login-stack">
-        <div class="login-card">
+        <div class="login-card login-card--message">
             <div class="login-brand">
                 @await Html.PartialAsync("_BrandMark")
                 <div class="login-brand__product">Access denied</div>
                 <div class="login-brand__subtitle">Your account does not have permission to view this page.</div>
             </div>
             <a class="btn btn-gold btn-block" href="/Tickets">Back to Tickets</a>
+            <div class="login-footer"><a class="link-muted" href="/Dashboard">Go to the Dashboard</a></div>
         </div>
     </div>
 </div>
