@@ -1,55 +1,85 @@
+using System.Net.Mail;
+
 namespace TigerCS.Integrations.Modules.EmailIntegration;
 
 /// <summary>
-/// The startup guard's decision logic for the email adapter, extracted so it
-/// is unit-testable without booting a host. Deliberately identical in shape to
-/// <c>CrmGatewaySafety</c> — one pattern for "a test double must never run
-/// where it could be mistaken for the real thing".
-///
-/// <para>
-/// The risk this guards is specific: <see cref="RecordingEmailSender"/>
-/// reports every send as successful without contacting any provider. Running
-/// it outside Development/Testing would mark tickets acknowledged, write
-/// <c>Sent</c> notification rows, and satisfy every dashboard and audit query
-/// — while no customer ever received anything. A silent, total failure that
-/// looks exactly like success is worse than a loud one, so it is refused at
-/// startup instead.
-/// </para>
+/// Startup guards for the email pipeline, evaluated by <c>Program.cs</c>
+/// before the host serves a request, so a misconfigured environment fails
+/// loudly at deploy time rather than quietly recording "Sent" rows that no
+/// customer ever received — or crashing on the first delivery.
 /// </summary>
 public static class EmailSenderSafety
 {
-    /// <summary>
-    /// An allow-list, not a deny-list, so a future environment name ("UAT",
-    /// "Staging", a real "Production") is refused by default rather than
-    /// permitted because nobody remembered to add it. "Testing" is
-    /// <c>TigerCsApiFactory</c>'s WebApplicationFactory environment name.
-    /// </summary>
     public static readonly IReadOnlyCollection<string> RecordingAllowedEnvironments = ["Development", "Testing"];
 
-    /// <summary>
-    /// True only when <paramref name="provider"/> resolves to the recording
-    /// adapter (case-insensitive "Recording") and
-    /// <paramref name="environmentName"/> is outside
-    /// <see cref="RecordingAllowedEnvironments"/>. A future real adapter is
-    /// never flagged unsafe by this method — an unknown provider value is
-    /// service registration's problem, not this guard's.
-    /// </summary>
+    /// <summary>The recording adapter pretends to deliver; outside Development/Testing that is a lie the dashboards would believe.</summary>
     public static bool IsUnsafe(string? provider, string environmentName) =>
-        string.Equals(provider, "Recording", StringComparison.OrdinalIgnoreCase)
+        string.Equals(provider, EmailNotificationOptions.RecordingProvider, StringComparison.OrdinalIgnoreCase)
         && !RecordingAllowedEnvironments.Contains(environmentName);
 
-    /// <summary>
-    /// The form <c>Program.cs</c> actually calls. When
-    /// <paramref name="emailEnabled"/> is <c>false</c>
-    /// (<c>Notifications:Email:Enabled</c>, see
-    /// <see cref="EmailSenderOptions.Enabled"/>) email delivery is not part
-    /// of the current phase, so the recording adapter is never mistaken for
-    /// a delivering one and startup is allowed in every environment — UAT
-    /// and Production included. Nothing is sent either way: the flag does not
-    /// change which adapter is wired up. When <paramref name="emailEnabled"/>
-    /// is <c>true</c> the decision is exactly
-    /// <see cref="IsUnsafe(string?, string)"/>.
-    /// </summary>
+    /// <summary>With delivery disabled the adapter is never asked to send, so the recording adapter is harmless anywhere.</summary>
     public static bool IsUnsafe(bool emailEnabled, string? provider, string environmentName) =>
         emailEnabled && IsUnsafe(provider, environmentName);
+
+    /// <summary>
+    /// Configuration errors that would make SMTP delivery fail on first use.
+    /// Only evaluated when delivery is enabled with the SMTP provider — a
+    /// disabled or recording configuration needs no credentials. Messages
+    /// name the missing <i>key</i>, never a value.
+    /// </summary>
+    public static IReadOnlyList<string> Validate(EmailNotificationOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var errors = new List<string>();
+
+        if (!options.Enabled)
+        {
+            return errors;
+        }
+
+        if (!options.IsSmtp && !options.IsRecording)
+        {
+            errors.Add($"EmailNotifications:Provider '{options.Provider}' is not supported. Use \"Smtp\" or \"Recording\".");
+            return errors;
+        }
+
+        if (!options.IsSmtp)
+        {
+            return errors;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.SmtpHost))
+        {
+            errors.Add("EmailNotifications:SmtpHost is required when EmailNotifications:Enabled is true.");
+        }
+
+        if (options.SmtpPort is < 1 or > 65535)
+        {
+            errors.Add("EmailNotifications:SmtpPort must be between 1 and 65535.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Username))
+        {
+            errors.Add("EmailNotifications:Username is required when EmailNotifications:Enabled is true.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Password))
+        {
+            errors.Add(
+                "EmailNotifications:Password is required when EmailNotifications:Enabled is true. Supply it through "
+                + "user-secrets or the EmailNotifications__Password environment variable — never in appsettings.json.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.FromEmail))
+        {
+            errors.Add("EmailNotifications:FromEmail is required when EmailNotifications:Enabled is true.");
+        }
+        else if (!MailAddress.TryCreate(options.FromEmail, out _))
+        {
+            errors.Add("EmailNotifications:FromEmail is not a valid email address.");
+        }
+
+        return errors;
+    }
 }

@@ -37,6 +37,14 @@ public static class NotificationAuditActions
     /// <summary>Terminal. Retries exhausted, or a failure no retry could fix. The message and its notification row are retained, not discarded (FR-NOT-05).</summary>
     public const string NotificationDeadLettered = "NotificationDeadLettered";
 
+    /// <summary>
+    /// Customer Email Notifications increment — a notification that was
+    /// deliberately not sent (no customer email, notifications disabled,
+    /// event too old). The <c>AfterValue</c> carries the reason so the
+    /// outcome is diagnosable without a log search.
+    /// </summary>
+    public const string NotificationSkipped = "NotificationSkipped";
+
     /// <summary><c>AuditEntries.EntityType</c> values used alongside the actions above.</summary>
     public const string OutboxMessageEntityType = "OutboxMessage";
 

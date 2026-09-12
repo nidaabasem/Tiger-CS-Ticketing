@@ -125,9 +125,25 @@ public class Notification
         DeliveryStatus = NotificationDeliveryStatus.DeadLettered;
     }
 
+    /// <summary>
+    /// Terminal "not sent on purpose" — see <see cref="NotificationDeliveryStatus.Skipped"/>.
+    /// Refuses to overwrite a row that was already delivered.
+    /// </summary>
+    public void MarkSkipped()
+    {
+        if (DeliveryStatus == NotificationDeliveryStatus.Sent)
+        {
+            throw new InvalidOperationException($"Notification {NotificationId} has already been sent and cannot be skipped.");
+        }
+
+        DeliveryStatus = NotificationDeliveryStatus.Skipped;
+    }
+
     /// <summary>True once the delivery reached a state no further attempt may change.</summary>
     public bool IsTerminal =>
-        DeliveryStatus is NotificationDeliveryStatus.Sent or NotificationDeliveryStatus.DeadLettered;
+        DeliveryStatus is NotificationDeliveryStatus.Sent
+            or NotificationDeliveryStatus.DeadLettered
+            or NotificationDeliveryStatus.Skipped;
 }
 
 /// <summary>MVP-Data-Dictionary.md §2.21: "Acknowledgement/Warning/Breach/Escalation". Only <see cref="Acknowledgement"/> is produced by this increment.</summary>
@@ -136,7 +152,16 @@ public enum NotificationType : byte
     Acknowledgement = 1,
     Warning = 2,
     Breach = 3,
-    Escalation = 4
+    Escalation = 4,
+
+    /// <summary>Customer Email Notifications increment — the customer-facing "your request has been resolved" email.</summary>
+    Resolved = 5,
+
+    /// <summary>Customer Email Notifications increment — the customer-facing "your request has been closed" email.</summary>
+    Closed = 6,
+
+    /// <summary>Customer Email Notifications increment — the customer-facing "your request has been reopened" email.</summary>
+    Reopened = 7
 }
 
 /// <summary>MVP-Data-Dictionary.md §2.21: "MVP: Email only". SMS/WhatsApp/push are Phase 2 (Solution-Analysis.md §2.7) and deliberately have no value here.</summary>
@@ -151,5 +176,16 @@ public enum NotificationDeliveryStatus : byte
     Pending = 1,
     Sent = 2,
     Failed = 3,
-    DeadLettered = 4
+    DeadLettered = 4,
+
+    /// <summary>
+    /// Customer Email Notifications increment — deliberately not sent, and
+    /// never will be: no usable customer email address exists for the
+    /// ticket, customer email notifications are disabled by configuration,
+    /// or the event was too old to still be worth emailing. Terminal, like
+    /// <see cref="Sent"/>; distinct from <see cref="DeadLettered"/> so that
+    /// an expected outcome (most phone-only tickets have no email) never
+    /// inflates the dead-letter count operators are alerted on.
+    /// </summary>
+    Skipped = 5
 }

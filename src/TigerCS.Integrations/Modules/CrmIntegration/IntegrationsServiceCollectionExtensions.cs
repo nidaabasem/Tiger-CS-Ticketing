@@ -4,7 +4,9 @@ using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
+using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Abstractions;
+using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Integrations.Modules.PactIntegration;
 using TigerCS.Integrations.Modules.TasleehIntegration;
@@ -194,26 +196,46 @@ public static class IntegrationsServiceCollectionExtensions
     /// care.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The customer email pipeline's outer edge: the <c>EmailNotifications</c>
+    /// section, the provider adapter behind <see cref="IEmailSender"/>, and
+    /// the <see cref="ICustomerEmailSender"/> façade the Outbox handlers call.
+    ///   "Smtp"      — <see cref="SmtpEmailSender"/>, the Microsoft 365 SMTP
+    ///                 account; the standard for UAT and Production.
+    ///   "Recording" — <see cref="RecordingEmailSender"/>, in-memory; the
+    ///                 automated test host and local development only
+    ///                 (<see cref="EmailSenderSafety"/> refuses it elsewhere
+    ///                 when delivery is enabled).
+    /// </summary>
     private static void AddEmailSender(IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<EmailSenderOptions>(configuration.GetSection(EmailSenderOptions.SectionName));
+        services.Configure<EmailNotificationOptions>(configuration.GetSection(EmailNotificationOptions.SectionName));
 
+        services.AddSingleton(sp =>
+            sp.GetRequiredService<IOptions<EmailNotificationOptions>>().Value.ToPolicy());
+
+        services.AddSingleton<ISmtpTransport, SmtpClientTransport>();
+        services.AddSingleton<SmtpEmailSender>();
         services.AddSingleton<RecordingEmailSender>();
         services.AddSingleton<IEmailSender>(sp =>
         {
-            var options = sp.GetRequiredService<IOptions<EmailSenderOptions>>().Value;
-            return options.Provider switch
+            var options = sp.GetRequiredService<IOptions<EmailNotificationOptions>>().Value;
+            if (options.IsSmtp)
             {
-                "Recording" => sp.GetRequiredService<RecordingEmailSender>(),
-                _ => throw new NotSupportedException(
-                    $"Notifications:Email:Provider '{options.Provider}' is not supported. Only 'Recording' is "
-                    + "implemented at this pilot phase: no real email provider is confirmed. Module-Design.md names "
-                    + "\"Office 365 Email\" and Solution-Analysis.md INT-05 marks its authentication "
-                    + "[ASSUMPTION] SMTP relay/API key - no tenant, sender identity, relay host or credential exists "
-                    + "in any merged document. A real IEmailSender implementation and confirmed operational "
-                    + "configuration are required before any other provider value can be used, and no email is "
-                    + "actually delivered until then. See RecordingEmailSender's own remarks.")
-            };
+                return sp.GetRequiredService<SmtpEmailSender>();
+            }
+
+            if (options.IsRecording)
+            {
+                return sp.GetRequiredService<RecordingEmailSender>();
+            }
+
+            throw new NotSupportedException(
+                $"EmailNotifications:Provider '{options.Provider}' is not supported. Use \"Smtp\" (the Microsoft 365 "
+                + "SMTP account — the standard for UAT and Production) or \"Recording\" (the in-memory adapter for the "
+                + "automated test host and local development; never delivers anything).");
         });
+
+        services.AddSingleton<ICustomerEmailSender, CustomerEmailSender>();
     }
 }

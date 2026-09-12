@@ -38,9 +38,10 @@ public interface IEmailSender
 /// </summary>
 /// <param name="ToAddress">The verified requester's address. Resolution is the caller's job; an adapter never guesses one.</param>
 /// <param name="Subject">Rendered subject line.</param>
-/// <param name="Body">Rendered plain-text body.</param>
+/// <param name="Body">Rendered plain-text body — always present, so a client that cannot render HTML still gets the message.</param>
 /// <param name="CorrelationId">ADR-0014's correlation ID, propagated into provider calls so a delivery is traceable end-to-end.</param>
-public sealed record EmailMessage(string ToAddress, string Subject, string Body, Guid CorrelationId);
+/// <param name="HtmlBody">Optional rendered HTML alternative. Adapters that support multipart mail send both; the plain text is the fallback.</param>
+public sealed record EmailMessage(string ToAddress, string Subject, string Body, Guid CorrelationId, string? HtmlBody = null);
 
 /// <summary>Whether a send succeeded, may succeed later, or never will.</summary>
 public enum EmailSendOutcome

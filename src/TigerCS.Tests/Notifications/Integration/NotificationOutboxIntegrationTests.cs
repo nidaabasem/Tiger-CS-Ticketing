@@ -155,25 +155,29 @@ public class NotificationOutboxIntegrationTests : IClassFixture<TigerCsApiFactor
     /// guessed, nothing is sent, and the failure is retained and visible.
     /// </summary>
     [Fact]
-    public async Task TicketWhoseVerifiedContactIsAPhoneNumber_DeadLettersWithoutSending()
+    public async Task TicketWhoseVerifiedContactIsAPhoneNumber_SkipsWithoutSending()
     {
         var (client, _) = await CreateClientAsync(Roles.CsAgent);
         var ticket = await CreateTicketAsync(client, PhoneContactIndex);
 
         var result = await _factory.RunOutboxDispatchAsync();
 
-        Assert.True(result.DeadLettered >= 1);
+        // A phone-only customer is an expected, successful outcome — the
+        // message is processed and the notification recorded as Skipped,
+        // never dead-lettered (which would trip the operator alert).
+        Assert.True(result.Processed >= 1);
+        Assert.Equal(0, result.DeadLettered);
         Assert.DoesNotContain(_factory.EmailSender.Recorded, e => e.Subject.Contains(ticket.TicketNumber, StringComparison.Ordinal));
 
         var notification = Assert.Single(await _factory.GetNotificationsAsync(ticket.TicketId));
-        Assert.Equal(NotificationDeliveryStatus.DeadLettered, notification.DeliveryStatus);
+        Assert.Equal(NotificationDeliveryStatus.Skipped, notification.DeliveryStatus);
         Assert.Null(notification.RecipientAddress);
 
         var message = Assert.Single(
             await _factory.GetOutboxMessagesAsync(),
             m => m.Payload.Contains($"\"ticketId\":{ticket.TicketId}", StringComparison.Ordinal));
-        Assert.Equal(OutboxMessageStatus.DeadLettered, message.Status);
-        Assert.NotNull(message.LastError);
+        Assert.Equal(OutboxMessageStatus.Processed, message.Status);
+        Assert.Null(message.LastError);
 
         var stored = await _factory.GetTicketAsync(ticket.TicketId);
         Assert.Null(stored!.AcknowledgementSentAtUtc);

@@ -89,36 +89,30 @@ public class TicketAcknowledgementHandlerTests
     {
         var f = new NotificationServiceFixture();
         var ticket = await f.SeedVerifiedTicketAsync(ticketNumber: "TG-CS-20260822-0042");
+        f.Categories.Seed(ticket.CurrentDepartmentId, "Maintenance Request");
         var message = f.EnqueueTicketCreated(ticket.TicketId);
 
         await f.CreateHandler().HandleAsync(message);
 
         var email = Assert.Single(f.Email.Sent);
+        Assert.Equal("Your request has been received – Ticket TG-CS-20260822-0042", email.Subject);
         Assert.Contains("TG-CS-20260822-0042", email.Body, StringComparison.Ordinal);
-        Assert.Contains("Customer Service", email.Body, StringComparison.Ordinal);
-        Assert.Contains("2026-08-22", email.Body, StringComparison.Ordinal);
+        Assert.Contains("22 August 2026", email.Body, StringComparison.Ordinal);
+        Assert.Contains("Ahmed Al-Farsi", email.Body, StringComparison.Ordinal);
+        Assert.Contains("Maintenance Request", email.Body, StringComparison.Ordinal);
+        Assert.Contains("Tiger Properties", email.Body, StringComparison.Ordinal);
+        Assert.NotNull(email.HtmlBody);
+        Assert.Contains("TG-CS-20260822-0042", email.HtmlBody, StringComparison.Ordinal);
 
-        // Excluded deliberately, each for a stated reason — see
-        // TicketAcknowledgementContent's remarks. RequestSummary and status
-        // are gated on approvals no merged document grants; "Geyness
-        // reference" has no data source at MVP.
+        // Excluded deliberately: the free-text request summary, anything
+        // internal, and any identifier that is not the ticket number.
         Assert.DoesNotContain("AC unit not cooling", email.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Geyness", email.Body, StringComparison.OrdinalIgnoreCase);
-
-        // Never any internal detail.
         Assert.DoesNotContain("EscalationLevel", email.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Audit", email.Body, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("Ahmed Al-Farsi", email.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain($"TicketId", email.Body, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// The reported CRITICAL gap. No approved column holds a requester's email
-    /// address: MVP-Data-Dictionary.md §2.8 stores one untyped
-    /// <c>SnapshotContactChannel</c> that Internal-CRM-API-Contract.md §5
-    /// defines as "the phone/email on file", and MVP intake is phone-only. The
-    /// handler must refuse to guess, and must leave a visible record rather
-    /// than a silent skip.
-    /// </summary>
     [Theory]
     [InlineData("+971 50 123 4567")]
     [InlineData("0501234567")]
@@ -127,7 +121,7 @@ public class TicketAcknowledgementHandlerTests
     [InlineData("Ahmed Al-Farsi")]
     [InlineData("ahmed@localhost")]
     [InlineData("not an @ address")]
-    public async Task NonEmailContactChannel_DeadLettersWithoutSendingOrGuessing(string channel)
+    public async Task NonEmailContactChannel_SkipsWithoutSendingOrGuessing(string channel)
     {
         var f = new NotificationServiceFixture();
         var ticket = await f.SeedVerifiedTicketAsync(channel);
@@ -135,39 +129,33 @@ public class TicketAcknowledgementHandlerTests
 
         var result = await f.CreateHandler().HandleAsync(message);
 
-        // Permanent, not transient: no number of retries turns a phone number
-        // into an address.
-        Assert.Equal(OutboxHandlingOutcome.PermanentFailure, result.Outcome);
+        // Skipped is a successful, terminal outcome: the Outbox message is
+        // processed, never dead-lettered, and no retry is attempted.
+        Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
         Assert.Empty(f.Email.Sent);
         Assert.Null(ticket.AcknowledgementSentAtUtc);
 
-        // Retained and visible — never silently discarded (FR-NOT-05).
         var notification = Assert.Single(f.Notifications.Notifications);
-        Assert.Equal(NotificationDeliveryStatus.DeadLettered, notification.DeliveryStatus);
+        Assert.Equal(NotificationDeliveryStatus.Skipped, notification.DeliveryStatus);
+        Assert.True(notification.IsTerminal);
         Assert.Null(notification.RecipientAddress);
         Assert.Equal(ticket.TicketId, notification.TicketId);
 
-        var audit = Assert.Single(f.Audit.Entries, e => e.Action == NotificationAuditActions.NotificationDeadLettered);
-        Assert.Contains("NoDeliverableRecipient", audit.AfterValue, StringComparison.Ordinal);
+        var audit = Assert.Single(f.Audit.Entries, e => e.Action == NotificationAuditActions.NotificationSkipped);
+        var expectedReason = string.IsNullOrWhiteSpace(channel)
+            ? CustomerEmailSkipReasons.NoCustomerEmail
+            : CustomerEmailSkipReasons.InvalidCustomerEmail;
+        Assert.Contains($"Reason={expectedReason}", audit.AfterValue, StringComparison.Ordinal);
 
-        // The rejected value is customer contact data and must not reach an
-        // operator-visible diagnostic (Security-Architecture.md §11).
+        // The diagnostic never echoes the contact value itself.
         if (!string.IsNullOrWhiteSpace(channel))
         {
-            Assert.DoesNotContain(channel, result.Error!, StringComparison.Ordinal);
             Assert.DoesNotContain(channel, audit.AfterValue!, StringComparison.Ordinal);
         }
     }
 
-    /// <summary>
-    /// An unverified ticket (no customer match at creation) has no verified
-    /// requester snapshot at all. The event is still enqueued so "email
-    /// attempted for every ticket" holds, and it dead-letters visibly rather
-    /// than being skipped — which would make it indistinguishable from a
-    /// ticket that was acknowledged.
-    /// </summary>
     [Fact]
-    public async Task UnverifiedTicketWithNoSnapshot_DeadLettersVisibly()
+    public async Task UnverifiedTicketWithNoSnapshotOrInteractionEmail_SkipsVisibly()
     {
         var f = new NotificationServiceFixture();
         var ticket = await f.SeedUnverifiedTicketAsync();
@@ -175,10 +163,69 @@ public class TicketAcknowledgementHandlerTests
 
         var result = await f.CreateHandler().HandleAsync(message);
 
-        Assert.Equal(OutboxHandlingOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
         Assert.Empty(f.Email.Sent);
         Assert.Null(ticket.AcknowledgementSentAtUtc);
-        Assert.Equal(NotificationDeliveryStatus.DeadLettered, Assert.Single(f.Notifications.Notifications).DeliveryStatus);
+        var notification = Assert.Single(f.Notifications.Notifications);
+        Assert.Equal(NotificationDeliveryStatus.Skipped, notification.DeliveryStatus);
+        Assert.Contains(
+            $"Reason={CustomerEmailSkipReasons.NoCustomerEmail}",
+            Assert.Single(f.Audit.Entries, e => e.Action == NotificationAuditActions.NotificationSkipped).AfterValue,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GenesysTicket_UsesTheOriginatingInteractionEmailWhenNoSnapshotExists()
+    {
+        var f = new NotificationServiceFixture();
+        var ticket = await f.SeedGenesysTicketAsync("fatima@example.com");
+        var message = f.EnqueueTicketCreated(ticket.TicketId);
+
+        var result = await f.CreateHandler().HandleAsync(message);
+
+        Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
+        var email = Assert.Single(f.Email.Sent);
+        Assert.Equal("fatima@example.com", email.ToAddress);
+        Assert.Contains("Fatima Al-Mansoori", email.Body, StringComparison.Ordinal);
+        Assert.NotNull(ticket.AcknowledgementSentAtUtc);
+    }
+
+    [Fact]
+    public async Task NotificationsDisabled_SkipsWithoutTouchingTheProvider()
+    {
+        var f = new NotificationServiceFixture { NotificationPolicy = CustomerNotificationPolicy.Disabled };
+        var ticket = await f.SeedVerifiedTicketAsync("ahmed@example.com");
+        var message = f.EnqueueTicketCreated(ticket.TicketId);
+
+        var result = await f.CreateHandler().HandleAsync(message);
+
+        Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
+        Assert.Empty(f.Email.Sent);
+        Assert.Null(ticket.AcknowledgementSentAtUtc);
+        var notification = Assert.Single(f.Notifications.Notifications);
+        Assert.Equal(NotificationDeliveryStatus.Skipped, notification.DeliveryStatus);
+        Assert.Contains(
+            $"Reason={CustomerEmailSkipReasons.NotificationsDisabled}",
+            Assert.Single(f.Audit.Entries, e => e.Action == NotificationAuditActions.NotificationSkipped).AfterValue,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EventOlderThanTheConfiguredMaximum_SkipsInsteadOfMailingAStaleReceipt()
+    {
+        var f = new NotificationServiceFixture();
+        var ticket = await f.SeedVerifiedTicketAsync("ahmed@example.com");
+        var message = f.EnqueueTicketCreated(ticket.TicketId, occurredAtUtc: f.Time.GetUtcNow().UtcDateTime.AddDays(-3));
+
+        var result = await f.CreateHandler().HandleAsync(message);
+
+        Assert.Equal(OutboxHandlingOutcome.Succeeded, result.Outcome);
+        Assert.Empty(f.Email.Sent);
+        Assert.Equal(NotificationDeliveryStatus.Skipped, Assert.Single(f.Notifications.Notifications).DeliveryStatus);
+        Assert.Contains(
+            $"Reason={CustomerEmailSkipReasons.EventTooOld}",
+            Assert.Single(f.Audit.Entries, e => e.Action == NotificationAuditActions.NotificationSkipped).AfterValue,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -57,7 +57,8 @@ public class SlaResolutionBreachTests
             sla.UnitOfWork, sla.Audit, sla.BreachProcessor, new FakeTimeProvider(nowUtc), ReopenPolicy.Default,
             new Ticketing.Fakes.FakeTicketPendingRecordRepository(),
             new Ticketing.Fakes.FakeRequestTypeRepository(),
-            new Ticketing.Fakes.FakeWorkflowTemplateRepository());
+            new Ticketing.Fakes.FakeWorkflowTemplateRepository(),
+            new Notifications.Fakes.FakeOutboxWriter());
 
         return new Harness(sla, service, ticket, ownerId);
     }
