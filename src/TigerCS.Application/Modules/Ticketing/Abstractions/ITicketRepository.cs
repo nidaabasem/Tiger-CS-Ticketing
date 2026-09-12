@@ -15,6 +15,23 @@ public enum TicketSortBy
 /// membership before this query is built, so department visibility is
 /// enforced at the query itself, not filtered out after the fact.
 /// </summary>
+/// <remarks>
+/// Dashboard Phase 1 adds the drill-down filters the Operational Dashboard
+/// needs so every KPI/bar-row links into this same queue rather than a
+/// one-off page. Each is optional and combines with AND like the rest:
+/// <list type="bullet">
+/// <item><see cref="ChannelId"/> — the ticket's originating interaction channel.</item>
+/// <item><see cref="RequestTypeId"/> — the ticket's request type.</item>
+/// <item><see cref="ActiveOnly"/> — any active status (Open/InProgress/PendingCustomer/PendingThirdParty).</item>
+/// <item><see cref="InDepartmentQueue"/> — active, with no current owner (it sits in its department's queue).</item>
+/// <item><see cref="SlaBreached"/> — active, SlaState Breached.</item>
+/// <item><see cref="DueToday"/> — active, current SLA period's unbreached resolution deadline falls on <see cref="NowUtc"/>'s UTC calendar day.</item>
+/// <item><see cref="BacklogAge"/> — active, aged (from CreatedAtUtc to <see cref="NowUtc"/>) into that bucket.</item>
+/// <item><see cref="PendingApprovalFor"/> — carries a current Pending approval this caller is authorized to action.</item>
+/// <item><see cref="CreatedFromUtc"/>/<see cref="CreatedToUtc"/> — created within [from, to).</item>
+/// </list>
+/// <see cref="NowUtc"/> is the evaluation instant for the time-relative filters — supplied by the application service, never read from the clock inside the repository.
+/// </remarks>
 public sealed record TicketQuery(
     IReadOnlyCollection<int>? VisibleDepartmentIds,
     int? DepartmentId,
@@ -27,7 +44,18 @@ public sealed record TicketQuery(
     TicketSortBy SortBy,
     bool SortDescending,
     int Page,
-    int PageSize);
+    int PageSize,
+    byte? ChannelId = null,
+    int? RequestTypeId = null,
+    bool ActiveOnly = false,
+    bool InDepartmentQueue = false,
+    bool SlaBreached = false,
+    bool DueToday = false,
+    BacklogAgeBucket? BacklogAge = null,
+    ApprovalApproverScope? PendingApprovalFor = null,
+    DateTime? CreatedFromUtc = null,
+    DateTime? CreatedToUtc = null,
+    DateTime? NowUtc = null);
 
 public sealed record TicketQueryResult(IReadOnlyList<Ticket> Items, int TotalCount);
 

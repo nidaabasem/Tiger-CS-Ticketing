@@ -19,6 +19,17 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
         if (!string.IsNullOrWhiteSpace(request.Search)) query["search"] = request.Search;
         if (!string.IsNullOrWhiteSpace(request.SortBy)) query["sortBy"] = request.SortBy;
         if (!string.IsNullOrWhiteSpace(request.SortDir)) query["sortDir"] = request.SortDir;
+        // Dashboard drill-down filters (Dashboard Phase 1).
+        if (request.ChannelId is byte channelId) query["channelId"] = channelId.ToString();
+        if (request.RequestTypeId is int requestTypeId) query["requestTypeId"] = requestTypeId.ToString();
+        if (request.ActiveOnly == true) query["activeOnly"] = "true";
+        if (request.InDepartmentQueue == true) query["inDepartmentQueue"] = "true";
+        if (request.SlaBreached == true) query["slaBreached"] = "true";
+        if (request.DueToday == true) query["dueToday"] = "true";
+        if (!string.IsNullOrWhiteSpace(request.BacklogAge)) query["backlogAge"] = request.BacklogAge;
+        if (request.PendingApproval == true) query["pendingApproval"] = "true";
+        if (request.CreatedFrom is DateOnly createdFrom) query["createdFrom"] = createdFrom.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        if (request.CreatedTo is DateOnly createdTo) query["createdTo"] = createdTo.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         query["page"] = request.Page.ToString();
         query["pageSize"] = request.PageSize.ToString();
 

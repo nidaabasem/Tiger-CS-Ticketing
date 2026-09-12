@@ -157,6 +157,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IIntakeRecordRepository, IntakeRecordRepository>();
         services.AddScoped<IDepartmentCustomerLookupSourceRepository, DepartmentCustomerLookupSourceRepository>();
         services.AddScoped<ITicketRepository, TicketRepository>();
+        services.AddScoped<IDashboardQueryRepository, DashboardQueryRepository>();
         services.AddScoped<ITicketRequesterSnapshotRepository, TicketRequesterSnapshotRepository>();
         services.AddScoped<ITicketStatusHistoryRepository, TicketStatusHistoryRepository>();
         services.AddScoped<ITicketAssignmentRepository, TicketAssignmentRepository>();

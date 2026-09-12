@@ -19,7 +19,17 @@
         sortBy = Model.SortBy,
         sortDir = Model.SortDir,
         page = p,
-        pageSize = Model.PageSize
+        pageSize = Model.PageSize,
+        channelId = Model.ChannelId,
+        requestTypeId = Model.RequestTypeId,
+        activeOnly = Model.ActiveOnly ? "true" : null,
+        inDepartmentQueue = Model.InDepartmentQueue ? "true" : null,
+        slaBreached = Model.SlaBreached ? "true" : null,
+        dueToday = Model.DueToday ? "true" : null,
+        backlogAge = Model.BacklogAge,
+        pendingApproval = Model.PendingApproval ? "true" : null,
+        createdFrom = Model.CreatedFrom?.ToString("yyyy-MM-dd"),
+        createdTo = Model.CreatedTo?.ToString("yyyy-MM-dd")
     }) ?? "/Tickets";
 }
 
@@ -102,11 +112,37 @@
         }
 
         <input type="hidden" name="pageSize" value="@Model.PageSize" />
+        @* Dashboard drill-down criteria survive a re-filter on this page; the
+           "Clear" action drops everything, drill-down included. *@
+        @if (Model.OwnerEmployeeId is { } ownerEmployeeId) { <input type="hidden" name="ownerEmployeeId" value="@ownerEmployeeId" /> }
+        @if (Model.DepartmentId is { } drilldownDepartmentId && Model.NameResolver.OwnDepartments.Count == 0) { <input type="hidden" name="departmentId" value="@drilldownDepartmentId" /> }
+        @if (Model.ChannelId is { } channelId) { <input type="hidden" name="channelId" value="@channelId" /> }
+        @if (Model.RequestTypeId is { } requestTypeId) { <input type="hidden" name="requestTypeId" value="@requestTypeId" /> }
+        @if (Model.ActiveOnly) { <input type="hidden" name="activeOnly" value="true" /> }
+        @if (Model.InDepartmentQueue) { <input type="hidden" name="inDepartmentQueue" value="true" /> }
+        @if (Model.SlaBreached) { <input type="hidden" name="slaBreached" value="true" /> }
+        @if (Model.DueToday) { <input type="hidden" name="dueToday" value="true" /> }
+        @if (Model.BacklogAge is { } backlogAge) { <input type="hidden" name="backlogAge" value="@backlogAge" /> }
+        @if (Model.PendingApproval) { <input type="hidden" name="pendingApproval" value="true" /> }
+        @if (Model.CreatedFrom is { } createdFrom) { <input type="hidden" name="createdFrom" value="@createdFrom.ToString("yyyy-MM-dd")" /> }
+        @if (Model.CreatedTo is { } createdTo) { <input type="hidden" name="createdTo" value="@createdTo.ToString("yyyy-MM-dd")" /> }
         <div class="filter-bar__submit">
             <button type="submit" class="btn btn-sm">Apply</button>
             <a class="btn btn-ghost btn-sm" href="/Tickets">Clear</a>
         </div>
     </form>
+
+    @if (Model.HasDrilldown)
+    {
+        <div class="drilldown-bar" role="status">
+            <span class="drilldown-bar__label">Filtered from Dashboard:</span>
+            @foreach (var label in Model.DrilldownLabels)
+            {
+                <span class="badge badge-drilldown">@label</span>
+            }
+            <a class="link-muted" href="/Dashboard">Back to Dashboard</a>
+        </div>
+    }
 
     <div class="panel">
         <div class="panel__header">

@@ -39,6 +39,33 @@ public class DashboardController(DashboardAppService dashboardAppService) : Cont
         return Ok(result);
     }
 
+    /// <summary>The Operational Dashboard: filters, KPI cards, the six operational breakdowns and the Recent/Critical list, scoped to the caller's visible departments.</summary>
+    /// <remarks>
+    /// Dashboard Phase 1. Every filter is optional and can only narrow the
+    /// caller's visible scope — a department outside it yields empty
+    /// numbers, never someone else's. KPIs, Open Backlog Ageing and the
+    /// Recent/Critical list are current-state (all active tickets in scope,
+    /// whatever their age); the volume breakdowns cover tickets created in
+    /// the date range, which defaults to the last 30 UTC calendar days. The
+    /// response echoes the filters as applied and the picker options
+    /// (departments, agents, channels, request types, statuses, priorities)
+    /// drawn from the existing master data within the caller's scope.
+    /// </remarks>
+    /// <response code="200">The dashboard overview. Counts cover only tickets the caller may view.</response>
+    [HttpGet("overview")]
+    [ProducesResponseType<DashboardOverviewDto>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOverview([FromQuery] DashboardOverviewRequestDto request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await dashboardAppService.GetOverviewAsync(employeeId.Value, GetRoles(), request, cancellationToken);
+        return Ok(result);
+    }
+
     private Guid? GetEmployeeId()
     {
         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);

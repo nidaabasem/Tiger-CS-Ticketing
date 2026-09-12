@@ -525,6 +525,50 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 .kpi-card--attention strong { color: var(--color-gold-dark); }
 .kpi-card--critical strong { color: var(--color-critical); }
 a.kpi-card:hover { border-color: var(--color-text-secondary); }
+/* Six KPIs share one row on desktop; they wrap to three and two below. */
+.kpi-grid--six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+/* ---------- Operational Dashboard (Dashboard Phase 1) ---------- */
+
+.page-subtitle { margin-top: 2px; font-size: 12.5px; color: var(--color-text-secondary); }
+.dash-filters .field-input[type="date"] { min-width: 140px; }
+.dash-filters .field-select { min-width: 150px; }
+
+/* Six breakdown cards, three per row on desktop. */
+.dash-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.dash-card { margin-bottom: 0; display: flex; flex-direction: column; min-width: 0; }
+.dash-card .panel__header { align-items: flex-start; gap: var(--space-3); }
+.dash-card .panel__header .link-muted { white-space: nowrap; }
+.dash-card__subtitle { margin-top: 2px; font-size: 11.5px; color: var(--color-text-secondary); text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+/* Bar list: label left, bar centre, count and percentage right. */
+.bar-list { list-style: none; margin: 0; padding: var(--space-2) var(--space-4); }
+.bar-row {
+  display: grid; grid-template-columns: minmax(0, 38%) minmax(0, 1fr) 2.75em 3.5em; align-items: center;
+  gap: var(--space-3); padding: 5px 0; font-size: 12.5px; color: var(--color-text); text-decoration: none;
+}
+.bar-row__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { display: block; height: 8px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 4px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--color-gold); border-radius: 4px; }
+.bar-fill--muted { background: var(--color-border); }
+.bar-row__count { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.bar-row__pct { color: var(--color-text-secondary); font-variant-numeric: tabular-nums; text-align: right; }
+a.bar-row:hover .bar-row__label { color: var(--color-gold-dark); text-decoration: underline; }
+a.bar-row:hover .bar-fill { background: var(--color-gold-dark); }
+.bar-list__more { padding: 0 var(--space-4) var(--space-2); }
+.bar-list__more > summary { cursor: pointer; font-size: 12px; color: var(--color-text-secondary); padding: var(--space-1) 0; }
+.bar-list__more > summary:hover { color: var(--color-gold-dark); }
+.bar-list__more .bar-list { padding-left: 0; padding-right: 0; }
+.empty-state--compact { padding: var(--space-4); }
+.empty-state--compact p { font-size: 12.5px; }
+
+/* The ticket queue's "Filtered from Dashboard" line. */
+.drilldown-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); font-size: 12.5px; }
+.drilldown-bar__label { color: var(--color-text-secondary); font-weight: 600; }
+.badge-drilldown { background: var(--color-gold-tint); color: var(--color-gold-dark); border-color: var(--color-gold-line); }
 
 /* One-line, ellipsized table cell for request summaries — long
    descriptions never render in lists. */
@@ -662,6 +706,8 @@ a.kpi-card:hover { border-color: var(--color-text-secondary); }
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1180px) {
+  .kpi-grid--six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-layout { grid-template-columns: 1fr; }
   /* The summary collapses below the main content on smaller screens. */
   .wizard-layout { grid-template-columns: 1fr; }
@@ -674,6 +720,10 @@ a.kpi-card:hover { border-color: var(--color-text-secondary); }
 }
 
 @media (max-width: 720px) {
+  .kpi-grid--six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-filters .field-group { flex: 1 1 45%; }
+  .dash-filters .field-select, .dash-filters .field-input { width: 100%; min-width: 0; }
   .app-header { flex-wrap: wrap; height: auto; padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   .app-header__search { order: 3; max-width: none; width: 100%; }
   .ticket-header__top { flex-direction: column; }

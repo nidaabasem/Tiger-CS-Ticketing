@@ -41,7 +41,7 @@ public class UnclassifiedTicketPriorityTests
         var queries = new TicketQueryAppService(
             tickets, departmentAssignments, resolutions, ReopenPolicy.Default, TimeProvider.System);
         return new Fixture(
-            queries, new DashboardAppService(tickets, queries, TimeProvider.System),
+            queries, new DashboardAppService(tickets, queries, TimeProvider.System, new FakeDashboardQueryRepository(), departmentAssignments),
             tickets, departmentAssignments, resolutions);
     }
 
