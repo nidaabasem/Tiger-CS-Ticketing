@@ -126,6 +126,8 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             var matching = identified.Where(m =>
                 m.Ticket.TicketNumber.Contains(search)
                 || (m.Ticket.CrmBuyerCustomerName != null && m.Ticket.CrmBuyerCustomerName.Contains(search))
+                || (m.Ticket.ExternalCustomerName != null && m.Ticket.ExternalCustomerName.Contains(search))
+                || (m.Ticket.ExternalCustomerEmail != null && m.Ticket.ExternalCustomerEmail.Contains(search))
                 || (m.Ticket.CrmBuyerUnitNumber != null && m.Ticket.CrmBuyerUnitNumber.Contains(search))
                 || (m.Ticket.CrmBuyerProjectName != null && m.Ticket.CrmBuyerProjectName.Contains(search))
                 || (m.Ticket.ManualUnitNumber != null && m.Ticket.ManualUnitNumber.Contains(search))
@@ -342,15 +344,25 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             .Select(p => p!.Trim())
             .DistinctBy(p => CustomerPhoneNumber.Normalize(p) is { Length: > 0 } canonical ? canonical : p, StringComparer.Ordinal)
             .ToList();
-        var emails = interactions.Select(i => i.CustomerEmail)
+        // Emails, best-known first: the address the verifying source holds
+        // for this customer, then whatever a conversation captured. Newest
+        // ticket first (tickets is already ordered that way), deduplicated
+        // case-insensitively because "F.Noor@Example.com" and
+        // "f.noor@example.com" are one mailbox.
+        var emails = tickets.Select(x => x.Ticket.ExternalCustomerEmail)
+            .Concat(interactions.Select(i => i.CustomerEmail))
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .Select(e => e!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         var last = tickets[0].Ticket;
+        // The latest ticket first; then the same precedence widened across
+        // every ticket this customer has, so a name captured once is not lost
+        // because their most recent ticket happened not to carry one.
         var displayName = DisplayNameFor(last, snapshots.GetValueOrDefault(last.TicketId))
             ?? tickets.Select(x => x.Ticket.CrmBuyerCustomerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
+            ?? tickets.Select(x => x.Ticket.ExternalCustomerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
             ?? interactions.Select(i => i.CustomerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
 
         return new CustomerDirectoryProfileDto(
@@ -426,9 +438,23 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         _ => "Unverified",
     };
 
-    /// <summary>The best persisted name: the CRM Buyer snapshot, else what the originating call/chat reported, else the legacy requester snapshot — never an id dressed as a name.</summary>
+    /// <summary>
+    /// The best REAL name this customer's latest ticket persisted, in
+    /// descending order of how well the source knew them:
+    /// <list type="number">
+    /// <item>the CRM Buyer snapshot — a name from the system of record;</item>
+    /// <item>the verified external snapshot (PACT/Tasleeh's own
+    /// <c>customerName</c>) — a name from a source that verified them;</item>
+    /// <item>what the originating call/chat reported — a name a human typed
+    /// or a channel supplied;</item>
+    /// <item>the legacy requester snapshot.</item>
+    /// </list>
+    /// Never an id dressed as a name, and never a manufactured one: when all
+    /// four are empty this returns null and the Web decides what placeholder
+    /// to show.
+    /// </summary>
     private static string? DisplayNameFor(Ticket last, TicketSnapshot snapshot) =>
-        FirstNonEmpty(last.CrmBuyerCustomerName, snapshot.InteractionName, snapshot.SnapshotName);
+        FirstNonEmpty(last.CrmBuyerCustomerName, last.ExternalCustomerName, snapshot.InteractionName, snapshot.SnapshotName);
 
     private static string? FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
 }

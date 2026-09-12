@@ -59,18 +59,35 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
         {
             // Free-text search over what a ticket carries about itself: its
             // number and summary, the customer name and unit number it
-            // snapshotted (CRM Buyer or manual entry), and the phone number
-            // captured by the intake it was promoted from. A plain
-            // substring match on each — no ranking, no fuzzy matching —
-            // and nothing here widens which tickets the caller may see.
+            // snapshotted (CRM Buyer, external lookup or manual entry), and
+            // the phone number captured by the intake it was promoted from. A
+            // plain substring match on each — no ranking, no fuzzy matching —
+            // and nothing here widens which tickets the caller may see: this
+            // predicate only narrows the already-scoped set above.
             var search = query.Search.Trim();
+
+            // A term carrying digits is ALSO matched as a phone number, on the
+            // number's canonical form, so "+971501234567", "971501234567" and
+            // "+971 50 123 4567" find the same ticket whichever way the intake
+            // captured it. Same rule and same characters as
+            // CustomerPhoneNumber.Normalize / .SeparatorCharacters, written out
+            // because EF Core translates string.Replace to SQL REPLACE() but
+            // cannot call the helper itself. Blank for a term with no digits,
+            // and then the clause is switched off rather than matching every
+            // row on an empty Contains.
+            var searchDigits = CustomerPhoneNumber.Normalize(search);
+            var searchHasDigits = searchDigits.Length > 0;
+
             filtered = filtered.Where(t =>
                 t.TicketNumber.Contains(search)
                 || t.RequestSummary.Contains(search)
                 || (t.CrmBuyerCustomerName != null && t.CrmBuyerCustomerName.Contains(search))
+                || (t.ExternalCustomerName != null && t.ExternalCustomerName.Contains(search))
                 || (t.CrmBuyerUnitNumber != null && t.CrmBuyerUnitNumber.Contains(search))
                 || (t.ManualUnitNumber != null && t.ManualUnitNumber.Contains(search))
-                || dbContext.IntakeRecords.Any(i => i.LinkedTicketId == t.TicketId && i.PhoneNumber.Contains(search)));
+                || dbContext.IntakeRecords.Any(i => i.LinkedTicketId == t.TicketId
+                    && (i.PhoneNumber.Contains(search)
+                        || (searchHasDigits && i.PhoneNumber.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
         }
 
         // Dashboard drill-down filters (Dashboard Phase 1) — the same shared

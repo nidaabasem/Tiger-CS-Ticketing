@@ -242,7 +242,12 @@ public sealed class TicketCreationAppService(
                     ticketNumber, category.DepartmentId,
                     request.CustomerVerificationSource!, request.ExternalCustomerId, request.ExternalUnitId,
                     request.ManualProjectName, request.ManualUnitNumber,
-                    category.CategoryId, priority!.PriorityId, request.RequestSummary, now),
+                    category.CategoryId, priority!.PriorityId, request.RequestSummary, now,
+                    // The verified customer's own name/email, as the source
+                    // returned them — snapshotted like the CRM Buyer name
+                    // beside it, so the Customers directory has a real name
+                    // to show instead of "Pact customer".
+                    request.ExternalCustomerName, request.ExternalCustomerEmail),
                 _ => Ticket.CreateUnverified(
                     ticketNumber, category.DepartmentId, category.CategoryId, priority!.PriorityId, request.RequestSummary, now,
                     request.ManualProjectName, request.ManualUnitNumber)

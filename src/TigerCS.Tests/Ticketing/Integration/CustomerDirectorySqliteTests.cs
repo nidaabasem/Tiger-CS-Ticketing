@@ -64,12 +64,15 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         return ticket;
     }
 
-    private Ticket AddExternalTicket(TigerCsDbContext context, string source, string externalId, string unit, TicketStatus status = TicketStatus.Open, DateTime? createdAtUtc = null)
+    private Ticket AddExternalTicket(
+        TigerCsDbContext context, string source, string externalId, string unit, TicketStatus status = TicketStatus.Open,
+        DateTime? createdAtUtc = null, string? customerName = null, string? customerEmail = null)
     {
         var seq = ++_sequence;
         var ticket = Ticket.CreateFromExternalLookup(
             $"TG-EXT-{seq:D5}", _db.CustomerServiceId, source, externalId, $"{externalId}-U", "Palm Residence", unit,
-            _db.CsCategoryId, (byte)PriorityLevel.Medium, $"External ticket {seq}", createdAtUtc ?? Now.AddHours(-seq));
+            _db.CsCategoryId, (byte)PriorityLevel.Medium, $"External ticket {seq}", createdAtUtc ?? Now.AddHours(-seq),
+            customerName, customerEmail);
         Finish(ticket, status);
         context.Tickets.Add(ticket);
         context.SaveChanges();
@@ -159,6 +162,176 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         Assert.Equal("Pact", external.VerificationSource);
         Assert.Equal("P-08", external.UnitNumber);
         Assert.Equal(1, external.TotalTickets);
+    }
+
+    // ---- the verified external customer's own name and email ----
+
+    /// <summary>
+    /// PACT returns the customer's own <c>customerName</c> and
+    /// <c>customerEmail</c>; once they are snapshotted on the ticket, the
+    /// directory and the profile show the real person instead of falling back
+    /// to a "Pact customer" placeholder.
+    /// </summary>
+    [Fact]
+    public async Task ExternalCustomer_WithNameAndEmailOnFile_ShowsThemInTheDirectoryAndTheProfile()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddExternalTicket(context, "Pact", "PACT-7001", "P-08", createdAtUtc: Now.AddDays(-2),
+                customerName: "Fatima Noor", customerEmail: "fatima@example.com");
+        }
+
+        var row = Assert.Single((await ListAsync()).Items);
+        Assert.Equal("ext:Pact:PACT-7001", row.CustomerKey);
+        Assert.Equal("Fatima Noor", row.DisplayName);
+        Assert.Equal("Pact", row.VerificationSource);
+
+        var profile = (await ProfileAsync(row.CustomerKey)).Response!;
+        Assert.Equal("Fatima Noor", profile.DisplayName);
+        Assert.Equal(["fatima@example.com"], profile.Emails.ToArray());
+    }
+
+    /// <summary>
+    /// The snapshot is per-ticket, so a customer whose latest ticket carried
+    /// no name is still named from an earlier one that did — and the newest
+    /// email on file leads.
+    /// </summary>
+    [Fact]
+    public async Task ExternalCustomer_NameAndEmail_AreFoundAcrossAllOfTheirTickets()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddExternalTicket(context, "Pact", "PACT-7002", "P-01", createdAtUtc: Now.AddDays(-9),
+                customerName: "Youssef Noor", customerEmail: "youssef.old@example.com");
+            // The newest ticket happens to carry no name at all.
+            AddExternalTicket(context, "Pact", "PACT-7002", "P-02", createdAtUtc: Now.AddDays(-1),
+                customerName: null, customerEmail: "youssef@example.com");
+        }
+
+        var profile = (await ProfileAsync("ext:Pact:PACT-7002")).Response!;
+        Assert.Equal("Youssef Noor", profile.DisplayName);
+        Assert.Equal(2, profile.TotalTickets);
+        // Newest first, and one entry per mailbox.
+        Assert.Equal(["youssef@example.com", "youssef.old@example.com"], profile.Emails.ToArray());
+    }
+
+    /// <summary>
+    /// A source that holds no name and no email must not be papered over: the
+    /// directory reports no name rather than inventing one, and no email
+    /// rather than borrowing another customer's. The Web then chooses the
+    /// "Pact customer" placeholder — a label, not a fabricated identity.
+    /// </summary>
+    [Fact]
+    public async Task ExternalCustomer_WithNeitherNameNorEmail_FallsBackSafely_AndInventsNothing()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddExternalTicket(context, "Tasleeh", "TAS-1", "X-1", customerName: null, customerEmail: null);
+        }
+
+        var row = Assert.Single((await ListAsync()).Items);
+        Assert.Null(row.DisplayName);
+
+        var profile = (await ProfileAsync(row.CustomerKey)).Response!;
+        Assert.Null(profile.DisplayName);
+        Assert.Empty(profile.Emails);
+    }
+
+    /// <summary>Blank is the same as absent — a source that answered "" or "   " has nothing on file and must not out-rank the real fallbacks.</summary>
+    [Fact]
+    public async Task ExternalCustomer_WithBlankNameOrEmail_IsTreatedAsHavingNone()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddExternalTicket(context, "Pact", "PACT-7003", "P-03", customerName: "   ", customerEmail: "  ");
+        }
+
+        var profile = (await ProfileAsync("ext:Pact:PACT-7003")).Response!;
+        Assert.Null(profile.DisplayName);
+        Assert.Empty(profile.Emails);
+    }
+
+    /// <summary>
+    /// The snapshot is display only. Two PACT customers with the same name and
+    /// the same email are still two customers — identity is source + external
+    /// customer id, and nothing else.
+    /// </summary>
+    [Fact]
+    public async Task ExternalCustomerNameAndEmail_NeverMergeTwoDifferentExternalCustomers()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddExternalTicket(context, "Pact", "PACT-8001", "P-01", customerName: "Fatima Noor", customerEmail: "shared@example.com");
+            AddExternalTicket(context, "Pact", "PACT-8002", "P-02", customerName: "Fatima Noor", customerEmail: "shared@example.com");
+            // Same name and email again, on a different source entirely.
+            AddExternalTicket(context, "Tasleeh", "PACT-8001", "X-1", customerName: "Fatima Noor", customerEmail: "shared@example.com");
+        }
+
+        var result = await ListAsync();
+
+        Assert.Equal(3, result.TotalCount);
+        Assert.Equal(
+            ["ext:Pact:PACT-8001", "ext:Pact:PACT-8002", "ext:Tasleeh:PACT-8001"],
+            result.Items.Select(r => r.CustomerKey).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// Identity precedence is untouched by the new snapshot: a CRM id still
+    /// wins over an external identity, which still wins over the canonical
+    /// phone — and a CRM-verified ticket never adopts an external name.
+    /// </summary>
+    [Fact]
+    public async Task IdentityPrecedence_IsUnchangedByTheExternalCustomerSnapshot()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddCrmTicket(context, 9201, "Mariam Al Falasi", "T-1");
+            AddExternalTicket(context, "Pact", "PACT-9001", "P-01", customerName: "Fatima Noor", customerEmail: "fatima@example.com");
+            AddPhoneTicket(context, "+971501234567");
+        }
+
+        var result = await ListAsync();
+
+        Assert.Equal(
+            ["crm:9201", "ext:Pact:PACT-9001", "phone:971501234567"],
+            result.Items.Select(r => r.CustomerKey).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+        Assert.Equal("Mariam Al Falasi", result.Items.Single(r => r.CustomerKey == "crm:9201").DisplayName);
+        Assert.Equal("Fatima Noor", result.Items.Single(r => r.CustomerKey == "ext:Pact:PACT-9001").DisplayName);
+    }
+
+    /// <summary>The CRM Buyer snapshot still leads: an external name never displaces the system of record's own.</summary>
+    [Fact]
+    public async Task CrmCustomerName_StillLeads_AndCrmCustomersAreUnaffected()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddCrmTicket(context, 9202, "Mariam Al Falasi", "T-1204", createdAtUtc: Now.AddDays(-1));
+        }
+
+        var row = Assert.Single((await ListAsync()).Items);
+        Assert.Equal("crm:9202", row.CustomerKey);
+        Assert.Equal("Mariam Al Falasi", row.DisplayName);
+        Assert.Equal("Crm", row.VerificationSource);
+
+        var profile = (await ProfileAsync("crm:9202")).Response!;
+        Assert.Equal("Mariam Al Falasi", profile.DisplayName);
+        // TigerCS persists no CRM email — the Customer Profile reads that live
+        // from CRM — so the directory reports none rather than guessing.
+        Assert.Empty(profile.Emails);
+    }
+
+    /// <summary>The external customer's name is searchable, like the CRM Buyer name beside it.</summary>
+    [Fact]
+    public async Task List_SearchMatchesTheExternalCustomerName()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddExternalTicket(context, "Pact", "PACT-7100", "P-08", customerName: "Fatima Noor", customerEmail: null);
+            AddExternalTicket(context, "Pact", "PACT-7200", "P-09", customerName: "Omar Haddad", customerEmail: null);
+        }
+
+        var row = Assert.Single((await ListAsync(new CustomerDirectoryListRequestDto(Search: "Fatima"))).Items);
+        Assert.Equal("ext:Pact:PACT-7100", row.CustomerKey);
     }
 
     // ---- one phone, one customer, however it was written ----

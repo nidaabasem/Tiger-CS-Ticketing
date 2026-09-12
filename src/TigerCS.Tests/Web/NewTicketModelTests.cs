@@ -154,12 +154,21 @@ public sealed class NewTicketModelTests
         (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.Created, new TicketResponseDto(
             ticketId, ticketNumber, 7, 7, null, null, 2, 3, "Open", "Unverified", "None", "Running", "x", DateTime.UtcNow, "AAAA"));
 
+    /// <summary>The seven-part packed external selection the wizard carries: source, customer id, unit id, customer name, project, unit number, customer email.</summary>
     private static string PackedExternal(
         string source = "Pact", string customerId = "7001", string unitId = "701",
-        string name = "Fatima Noor", string project = "Tiger Bay Towers", string unit = "1105") =>
+        string name = "Fatima Noor", string project = "Tiger Bay Towers", string unit = "1105",
+        string email = "fatima@example.com") =>
         string.Join(':',
             Uri.EscapeDataString(source), Uri.EscapeDataString(customerId), Uri.EscapeDataString(unitId),
-            Uri.EscapeDataString(name), Uri.EscapeDataString(project), Uri.EscapeDataString(unit));
+            Uri.EscapeDataString(name), Uri.EscapeDataString(project), Uri.EscapeDataString(unit),
+            Uri.EscapeDataString(email));
+
+    /// <summary>The six-part packed value the wizard used before the customer email joined it — an in-flight query string must still unpack.</summary>
+    private static string PackedExternalWithoutEmail() =>
+        string.Join(':',
+            Uri.EscapeDataString("Pact"), Uri.EscapeDataString("7001"), Uri.EscapeDataString("701"),
+            Uri.EscapeDataString("Fatima Noor"), Uri.EscapeDataString("Tiger Bay Towers"), Uri.EscapeDataString("1105"));
 
     private static IDictionary<string, object?> RouteValues(RedirectToPageResult redirect) =>
         redirect.RouteValues is null
@@ -1024,8 +1033,53 @@ public sealed class NewTicketModelTests
         Assert.Equal("Pact", body.RootElement.GetProperty("customerVerificationSource").GetString());
         Assert.Equal("7001", body.RootElement.GetProperty("externalCustomerId").GetString());
         Assert.Equal("701", body.RootElement.GetProperty("externalUnitId").GetString());
+        // The source's own customer name and email travel with the ids, so
+        // ticket creation can snapshot them (PACT's customerName/customerEmail).
+        Assert.Equal("Fatima Noor", body.RootElement.GetProperty("externalCustomerName").GetString());
+        Assert.Equal("fatima@example.com", body.RootElement.GetProperty("externalCustomerEmail").GetString());
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("crmBuyerCustomerId").ValueKind);
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("crmBuyerUnitId").ValueKind);
+    }
+
+    /// <summary>
+    /// A customer name or email containing the packing delimiter still
+    /// round-trips: every part is percent-encoded, and Uri.EscapeDataString
+    /// escapes ':' as %3A, so nothing is truncated at the wrong colon.
+    /// </summary>
+    [Fact]
+    public async Task OnPostCreateAsync_ExternalSelection_RoundTripsANameAndEmailContainingTheDelimiter()
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            ticketsResponder: TicketCreated(402, "TG-LS-20260903-0003"));
+        model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = 2, PriorityId = 3, RequestSummary = "AC fault" };
+
+        await model.OnPostCreateAsync(
+            42, "+971509990002", "ext:Pact:7001", null, null, null, null, null, null, null,
+            PackedExternal(name: "Noor: Fatima", email: "fatima:noor@example.com"), null, null, CancellationToken.None);
+
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        Assert.Equal("Noor: Fatima", body.RootElement.GetProperty("externalCustomerName").GetString());
+        Assert.Equal("fatima:noor@example.com", body.RootElement.GetProperty("externalCustomerEmail").GetString());
+        Assert.Equal("1105", body.RootElement.GetProperty("manualUnitNumber").GetString());
+    }
+
+    /// <summary>An older six-part selection still in a query string unpacks with no email, rather than failing or shifting the other fields.</summary>
+    [Fact]
+    public async Task OnPostCreateAsync_ALegacySixPartExternalSelection_StillUnpacks_WithNoEmail()
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            ticketsResponder: TicketCreated(403, "TG-LS-20260903-0004"));
+        model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = 2, PriorityId = 3, RequestSummary = "AC fault" };
+
+        await model.OnPostCreateAsync(
+            42, "+971509990002", "ext:Pact:7001", null, null, null, null, null, null, null,
+            PackedExternalWithoutEmail(), null, null, CancellationToken.None);
+
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        Assert.Equal("Fatima Noor", body.RootElement.GetProperty("externalCustomerName").GetString());
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("externalCustomerEmail").ValueKind);
+        Assert.Equal("Tiger Bay Towers", body.RootElement.GetProperty("manualProjectName").GetString());
+        Assert.Equal("1105", body.RootElement.GetProperty("manualUnitNumber").GetString());
     }
 
     [Fact]

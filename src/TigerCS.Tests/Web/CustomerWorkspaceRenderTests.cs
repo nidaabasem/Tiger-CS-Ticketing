@@ -190,6 +190,68 @@ public sealed class CustomerWorkspaceRenderTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
+    /// <summary>
+    /// PACT returns the customer's own <c>customerName</c> and
+    /// <c>customerEmail</c>; once snapshotted they reach the page, so the
+    /// profile shows the real person instead of the "Pact customer"
+    /// placeholder and a "—" email.
+    /// </summary>
+    [Fact]
+    public async Task CustomerProfile_PactVerifiedCustomer_ShowsTheSourcesOwnNameAndEmail()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext%3APact%3A7001"));
+
+        Assert.Contains("Fatima Noor", html, StringComparison.Ordinal);
+        // The placeholder the page falls back to is "PACT customer" (the
+        // source label); with a real name on file it must not appear at all.
+        Assert.DoesNotContain("PACT customer", html, StringComparison.Ordinal);
+        Assert.Contains("<dd>fatima@example.com</dd>", html, StringComparison.Ordinal);
+
+        // PACT has no Arabic name field, so the Arabic row stays blank —
+        // the English name is never copied across to fill it.
+        Assert.Contains("<dt>Full Name Arabic</dt><dd>&#x2014;</dd>", html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The four spellings of one mobile are one contact number. Only the
+    /// genuinely different second line is listed as "Also called from".
+    /// </summary>
+    [Fact]
+    public async Task CustomerProfile_ShowsOneRowPerRealNumber_NotOnePerSpelling()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext%3APact%3A7001"));
+
+        // Razor HTML-encodes the leading '+' as &#x2B;.
+        Assert.Equal(1, Count(html, "<dt>Mobile Number</dt>"));
+        Assert.Contains("<dt>Mobile Number</dt><dd class=\"text-mono\">971509724162</dd>", html, StringComparison.Ordinal);
+
+        // "971509724162", "+971509724162", "+971 50 972 4162" and
+        // "971-50-972-4162" all normalize to the same number: exactly one
+        // alias row, for the one number that is genuinely different.
+        Assert.Equal(1, Count(html, "<dt>Also called from</dt>"));
+        Assert.Contains("<dt>Also called from</dt><dd class=\"text-mono\">&#x2B;971559998877</dd>", html, StringComparison.Ordinal);
+
+        // None of the other spellings is rendered anywhere as a contact value.
+        foreach (var spelling in new[] { "&#x2B;971509724162", "&#x2B;971 50 972 4162", "971-50-972-4162" })
+        {
+            Assert.DoesNotContain(spelling, html, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>When the source holds neither, the page falls back to a source label and an em dash — it never fabricates a name or an address.</summary>
+    [Fact]
+    public async Task CustomerProfile_PactCustomerWithNoNameOrEmail_FallsBackSafely()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext%3APact%3A7002"));
+
+        Assert.Contains("PACT customer", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Email</dt><dd>&#x2014;</dd>", html, StringComparison.Ordinal);
+        // Arabic stays blank — PACT has no Arabic name and the English one is never copied into it.
+        Assert.Contains("<dt>Full Name Arabic</dt><dd>&#x2014;</dd>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<dt>Other email</dt>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<dt>Also called from</dt>", html, StringComparison.Ordinal);
+    }
+
     // ---------------------------------------------------------------
     // Ticket Details <-> Customer Profile
     // ---------------------------------------------------------------
@@ -274,6 +336,28 @@ public sealed class CustomerWorkspaceRenderTests : IDisposable
                 new CustomerDirectoryInteractionDto(1, 6, "TG-CS-00006", 3, "WhatsApp", "Inbound", Now.AddHours(-3), Now.AddHours(-2), "Ended", "Amal Agent", true),
             ]);
 
+        /// <summary>
+        /// A PACT-verified customer: PACT supplied customerName and
+        /// customerEmail, and the four captured numbers are the SAME mobile
+        /// written four ways plus one genuinely different second line.
+        /// </summary>
+        private static readonly CustomerDirectoryProfileDto PactProfile = new(
+            "ext:Pact:7001", "External", "Fatima Noor",
+            ["971509724162", "+971509724162", "+971 50 972 4162", "971-50-972-4162", "+971559998877"],
+            ["fatima@example.com"],
+            "Pact", null, "Pact", "7001", 1, 1, Now.AddDays(-4), Now.AddDays(-4), 8,
+            [new CustomerDirectoryUnitDto("Palm Residence", "P-08", "Pact", 1, Now.AddDays(-4), null, "41230")],
+            [new CustomerDirectoryTicketDto(8, "TG-CS-00008", "Open", 3, 2, Now.AddDays(-4), "Palm Residence", "P-08", "Handover query", Now.AddDays(-4), null, "Unverified")],
+            []);
+
+        /// <summary>A PACT-verified customer PACT holds no name or email for — the page must fall back, never invent.</summary>
+        private static readonly CustomerDirectoryProfileDto NamelessPactProfile = new(
+            "ext:Pact:7002", "External", null, ["+971500000009"], [], "Pact", null, "Pact", "7002", 1, 1,
+            Now.AddDays(-6), Now.AddDays(-6), 9,
+            [],
+            [new CustomerDirectoryTicketDto(9, "TG-CS-00009", "Open", 3, 2, Now.AddDays(-6), null, null, "Handover query", Now.AddDays(-6), null, "Unverified")],
+            []);
+
         private static readonly CustomerDirectoryProfileDto CallerProfile = new(
             "phone:%2B971501112222", "Phone", null, ["+971501112222"], [], "Unverified", null, null, null, 1, 1, Now.AddDays(-3), Now.AddDays(-3), 7,
             [new CustomerDirectoryUnitDto("Marina Heights", "M-401", "Manual", 1, Now.AddDays(-3), null, null)],
@@ -296,6 +380,8 @@ public sealed class CustomerWorkspaceRenderTests : IDisposable
                     : new CustomerDirectoryListResultDto([Mariam, Caller], 2, 1, 25),
                 "/api/customers/profile/crm:9001" => MariamProfile,
                 "/api/customers/profile/phone:%2B971501112222" => CallerProfile,
+                "/api/customers/profile/ext:Pact:7001" => PactProfile,
+                "/api/customers/profile/ext:Pact:7002" => NamelessPactProfile,
                 "/api/tickets/5" => Detail(5, "T-1204"),
                 "/api/tickets/6" => Detail(6, "T-1310"),
                 "/api/tickets/5/customer-history" or "/api/tickets/6/customer-history" => new CustomerHistoryDto(
