@@ -1,15 +1,16 @@
 @{
-    var active = ViewData["ActiveNav"] as string ?? "queue";
+    // The primary navigation: four workspaces. The former ticket-list
+    // shortcuts are no longer top-level items — they are the views (tabs)
+    // of the single Tickets workspace (see TicketsView), so every
+    // ticket-related page (the list, Ticket Details, Customer Profile,
+    // New Ticket) lights the same "Tickets" item.
+    var active = ViewData["ActiveNav"] as string ?? "tickets";
     var currentUser = CurrentUser.FromPrincipal(User);
     (string Key, string Label, string Href)[] items =
     [
         ("dashboard", "Dashboard", "/Dashboard"),
         ("customers", "Customers", "/Customers"),
-        ("queue", "Queue", "/Tickets"),
-        // Not "Callbacks": most of what waits here is chat, WhatsApp or social.
-        ("pending", "Pending Interactions", "/PendingCustomerInteractions"),
-        ("my", "My Tickets", currentUser is null ? "/Tickets" : $"/Tickets?ownerEmployeeId={currentUser.EmployeeId}"),
-        ("closed", "Closed", "/Tickets?ticketStatus=Closed"),
+        ("tickets", "Tickets", "/Tickets"),
     ];
     if (AdministrationPolicy.AppliesTo(currentUser))
     {

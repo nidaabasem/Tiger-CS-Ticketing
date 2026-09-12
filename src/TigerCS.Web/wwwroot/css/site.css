@@ -233,6 +233,29 @@ table { border-collapse: collapse; width: 100%; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
 .page-title { font-size: 19px; font-weight: 700; }
 
+/* ---------- Tickets workspace: segmented view tabs ----------
+   Queue / Pending Interactions / My Tickets / Closed are views of one page
+   (each a ?view= of /Tickets), so they read as tabs under one title rather
+   than as separate destinations. The count is the tab's own default total. */
+
+.page-subtitle { font-size: 12.5px; margin-top: 2px; }
+.view-tabs { margin-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); }
+.view-tabs__list { display: flex; align-items: stretch; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.view-tabs__list::-webkit-scrollbar { display: none; }
+.view-tabs__link {
+  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 var(--space-3);
+  font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
+}
+.view-tabs__link:hover { color: var(--color-text); }
+.view-tabs__link.is-active { color: var(--color-text); border-bottom-color: var(--color-gold); }
+.view-tabs__count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px;
+  border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border);
+  font-size: 11px; font-weight: 700; color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+}
+.view-tabs__link.is-active .view-tabs__count { background: var(--color-gold-tint); border-color: var(--color-gold-line); color: var(--color-gold-dark); }
+
 .breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--color-text-secondary); margin-bottom: var(--space-3); }
 .breadcrumb a:hover { color: var(--color-text); text-decoration: underline; }
 .breadcrumb .sep { color: var(--color-border); }
@@ -726,6 +749,10 @@ a.bar-row:hover .bar-fill { background: var(--color-gold-dark); }
   .dash-filters .field-select, .dash-filters .field-input { width: 100%; min-width: 0; }
   .app-header { flex-wrap: wrap; height: auto; padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   .app-header__search { order: 3; max-width: none; width: 100%; }
+  .view-tabs__link { padding: 0 var(--space-2); }
+  .tickets-workspace .filter-bar .field-group { flex: 1 1 45%; }
+  .tickets-workspace .filter-bar .field-select, .tickets-workspace .filter-bar .field-input { width: 100%; min-width: 0; }
+  .tickets-workspace .filter-bar__submit { width: 100%; margin-left: 0; justify-content: flex-end; }
   .ticket-header__top { flex-direction: column; }
   .login-corner { height: 220px; width: 100%; clip-path: none; }
   .page { padding: var(--space-3); }

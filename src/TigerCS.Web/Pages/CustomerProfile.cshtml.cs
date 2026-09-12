@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
 
@@ -28,6 +29,9 @@ public sealed class CustomerProfileModel(TicketsApiClient ticketsApiClient, Tick
     private const int PreviousTicketsLimit = 20;
 
     public long TicketId { get; private set; }
+
+    /// <summary>The Tickets view the agent came from (see <see cref="TicketDetailsModel.ReturnContext"/>) — this page sits under Ticket Details, which sits under that list.</summary>
+    public TicketsContext ReturnContext { get; private set; } = TicketsContext.Default;
     public ApiOutcome Outcome { get; private set; }
     public CustomerProfileDto? Profile { get; private set; }
     public CustomerHistoryDto? History { get; private set; }
@@ -36,6 +40,7 @@ public sealed class CustomerProfileModel(TicketsApiClient ticketsApiClient, Tick
     public async Task<IActionResult> OnGetAsync(long ticketId, CancellationToken cancellationToken)
     {
         TicketId = ticketId;
+        ReturnContext = TicketsContext.FromCookieValue(Request.Cookies[TicketsContext.CookieName]);
         await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var profileTask = ticketsApiClient.GetCustomerProfileAsync(ticketId, cancellationToken);

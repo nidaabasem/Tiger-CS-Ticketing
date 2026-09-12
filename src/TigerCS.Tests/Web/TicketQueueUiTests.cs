@@ -30,8 +30,9 @@ public sealed class TicketQueueUiTests
         Assert.DoesNotContain("\"pendingcrm\"", nav, StringComparison.Ordinal);
         Assert.DoesNotContain("verificationStatus=PendingCrmVerification", nav, StringComparison.Ordinal);
 
-        // The rest of the primary navigation is untouched.
-        foreach (var label in new[] { "\"Dashboard\"", "\"Customers\"", "\"Queue\"", "\"My Tickets\"", "\"Closed\"", "\"Administration\"" })
+        // The primary navigation is the four workspaces (Queue / My Tickets /
+        // Closed moved into the Tickets workspace — see TicketsWorkspaceTests).
+        foreach (var label in new[] { "\"Dashboard\"", "\"Customers\"", "\"Tickets\"", "\"Administration\"" })
         {
             Assert.Contains(label, nav, StringComparison.Ordinal);
         }
@@ -40,10 +41,11 @@ public sealed class TicketQueueUiTests
     [Fact]
     public void TicketQueue_NoLongerMapsToTheRemovedPendingCrmNavKey_ButKeepsTheVerificationFilter()
     {
-        var queue = View("Tickets.cshtml");
+        var queue = View("Shared", "_TicketListView.cshtml");
 
         // No view may highlight a nav item that no longer exists.
         Assert.DoesNotContain("\"pendingcrm\"", queue, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"pendingcrm\"", View("Tickets.cshtml"), StringComparison.Ordinal);
 
         // Navigation cleanup only: the CRM verification filter (and every
         // verification status it offers) still exists on the queue.
@@ -79,8 +81,9 @@ public sealed class TicketQueueUiTests
         // Gold is an accent only: exactly one card (Open) carries the emphasis modifier.
         Assert.Equal(1, CountOccurrences(queue, "kpi-card--attention"));
 
-        // Title on the left and the primary action on the right are unchanged.
-        Assert.Contains("<h1 class=\"page-title\">Ticket Queue</h1>", queue, StringComparison.Ordinal);
+        // Title on the left and the primary action on the right: the page is
+        // now the whole Tickets workspace, so it is titled "Tickets".
+        Assert.Contains("<h1 class=\"page-title\">Tickets</h1>", queue, StringComparison.Ordinal);
         Assert.Contains("<a class=\"btn btn-gold\" href=\"/NewTicket\">+ New Ticket</a>", queue, StringComparison.Ordinal);
     }
 

@@ -119,6 +119,7 @@ public class DepartmentPrimaryAssignmentTests
     [InlineData("TigerCS.Web/Pages/Shared/_TicketRow.cshtml")]
     [InlineData("TigerCS.Web/Pages/Dashboard.cshtml")]
     [InlineData("TigerCS.Web/Pages/Tickets.cshtml")]
+    [InlineData("TigerCS.Web/Pages/Shared/_TicketListView.cshtml")]
     public void TicketViews_NeverRenderOwnerUnassigned(string relativePath)
     {
         var html = File.ReadAllText(SourceFile(relativePath.Replace('/', Path.DirectorySeparatorChar)));
@@ -139,7 +140,7 @@ public class DepartmentPrimaryAssignmentTests
         Assert.Contains("Assigned Department", details, StringComparison.Ordinal);
         Assert.Contains("Assigned To", details, StringComparison.Ordinal);
 
-        var queue = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Tickets.cshtml")));
+        var queue = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Shared", "_TicketListView.cshtml")));
         Assert.Contains("<th>Assigned Department</th>", queue, StringComparison.Ordinal);
         Assert.Contains("<th>Assigned To</th>", queue, StringComparison.Ordinal);
     }

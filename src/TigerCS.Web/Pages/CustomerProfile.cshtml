@@ -1,7 +1,7 @@
 @page "/Tickets/{ticketId:long}/Customer"
 @model TigerCS.Web.Pages.CustomerProfileModel
 @{
-    ViewData["ActiveNav"] = "queue";
+    ViewData["ActiveNav"] = "tickets";
     ViewData["Title"] = "Customer Profile";
     Layout = "_Layout";
 }
@@ -12,7 +12,7 @@
         <div class="error-state">
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
             <p>This ticket could not be found.</p>
-            <a class="btn btn-sm" href="/Tickets">Back to Ticket Queue</a>
+            <a class="btn btn-sm" href="@Model.ReturnContext.Href">Back to @Model.ReturnContext.View.Label()</a>
         </div>
     </div>
 }
@@ -21,6 +21,8 @@ else
     <div class="page">
         <nav class="breadcrumb" aria-label="Breadcrumb">
             <a href="/Tickets">Tickets</a>
+            <span class="sep">/</span>
+            <a href="@Model.ReturnContext.Href">@Model.ReturnContext.View.Label()</a>
             <span class="sep">/</span>
             <a href="/Tickets/@Model.TicketId">Ticket</a>
             <span class="sep">/</span>

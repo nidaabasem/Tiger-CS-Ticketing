@@ -27,6 +27,15 @@ public sealed class TicketDetailsModel(
     TicketNameResolver nameResolver) : PageModel
 {
     public long TicketId { get; private set; }
+
+    /// <summary>
+    /// The Tickets view (tab, filters, page) the agent came from, as the
+    /// Tickets page remembered it — Ticket Details is a child workspace of
+    /// Tickets, and its breadcrumb and back links lead back to that exact
+    /// list. Falls back to the bare Tickets workspace when nothing is
+    /// remembered (a deep link, a fresh session).
+    /// </summary>
+    public TicketsContext ReturnContext { get; private set; } = TicketsContext.Default;
     public ApiOutcome Outcome { get; private set; }
     public TicketDetailDto? Ticket { get; private set; }
     public TicketSlaSummaryResponseDto? Sla { get; private set; }
@@ -350,6 +359,7 @@ public sealed class TicketDetailsModel(
     private async Task LoadAsync(CancellationToken cancellationToken)
     {
         Viewer = CurrentUser.FromPrincipal(User);
+        ReturnContext = TicketsContext.FromCookieValue(Request.Cookies[TicketsContext.CookieName]);
         await nameResolver.PrimeDepartmentsAsync(cancellationToken);
 
         var detailResult = await ticketsApiClient.GetByIdAsync(TicketId, cancellationToken);

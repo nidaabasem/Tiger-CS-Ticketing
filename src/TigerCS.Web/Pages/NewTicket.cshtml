@@ -2,7 +2,7 @@
 @model TigerCS.Web.Pages.NewTicketModel
 @{
     ViewData["Title"] = "New Ticket";
-    ViewData["ActiveNav"] = "queue";
+    ViewData["ActiveNav"] = "tickets";
     Layout = "_Layout";
 
     var viewerCanReopen = TicketActions.CanReopen(CurrentUser.FromPrincipal(User)?.Roles);

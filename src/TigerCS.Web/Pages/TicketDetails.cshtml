@@ -1,7 +1,7 @@
 @page "/Tickets/{id:long}"
 @model TigerCS.Web.Pages.TicketDetailsModel
 @{
-    ViewData["ActiveNav"] = "queue";
+    ViewData["ActiveNav"] = "tickets";
     Layout = "_Layout";
 }
 
@@ -20,7 +20,7 @@
                     _ => "This ticket could not be loaded."
                 })
             </p>
-            <a class="btn btn-sm" href="/Tickets">Back to Ticket Queue</a>
+            <a class="btn btn-sm" href="@Model.ReturnContext.Href">Back to @Model.ReturnContext.View.Label()</a>
         </div>
     </div>
 }
@@ -49,6 +49,8 @@ else
     <div class="page">
         <nav class="breadcrumb" aria-label="Breadcrumb">
             <a href="/Tickets">Tickets</a>
+            <span class="sep">/</span>
+            <a href="@Model.ReturnContext.Href">@Model.ReturnContext.View.Label()</a>
             <span class="sep">/</span>
             <span class="current">@t.TicketNumber</span>
         </nav>

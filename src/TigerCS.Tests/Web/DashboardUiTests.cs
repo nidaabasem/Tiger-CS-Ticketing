@@ -425,8 +425,9 @@ public sealed class DashboardUiTests
         Assert.Contains("Request type: Payment Reminder", model.DrilldownLabels);
         Assert.DoesNotContain(model.DrilldownLabels, l => l.Contains('#'));
 
-        // The queue view carries the criteria through its own filter form and pagination.
-        var view = View("Tickets.cshtml");
+        // The queue view (the Tickets workspace page plus its ticket-list
+        // partial) carries the criteria through its own filter form and pagination.
+        var view = View("Tickets.cshtml") + View("Shared", "_TicketListView.cshtml");
         foreach (var name in new[] { "channelId", "requestTypeId", "activeOnly", "inDepartmentQueue", "slaBreached", "dueToday", "backlogAge", "pendingApproval", "createdFrom", "createdTo" })
         {
             Assert.Contains($"name=\"{name}\"", view);

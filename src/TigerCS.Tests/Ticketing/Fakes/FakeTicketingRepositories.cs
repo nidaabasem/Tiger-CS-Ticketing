@@ -229,9 +229,16 @@ public sealed class FakeTicketRepository : ITicketRepository
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
+            // Mirrors TicketRepository: number, summary, and the customer
+            // name / unit number the ticket snapshotted (the intake-phone
+            // leg needs the intake table and stays with the SQLite tests).
+            var search = query.Search.Trim();
             filtered = filtered.Where(t =>
-                t.TicketNumber.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
-                || t.RequestSummary.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
+                t.TicketNumber.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || t.RequestSummary.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || (t.CrmBuyerCustomerName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (t.CrmBuyerUnitNumber?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (t.ManualUnitNumber?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
         }
 
         var all = filtered.ToList();
