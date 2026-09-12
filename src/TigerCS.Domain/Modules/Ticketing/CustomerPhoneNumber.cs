@@ -25,14 +25,32 @@ public static class CustomerPhoneNumber
 {
     /// <summary>
     /// The separator characters a phone number is written with, which
-    /// <see cref="Normalize"/> drops: '+', space, hyphen and parentheses.
+    /// <see cref="Normalize"/> drops: '+', space, hyphen, parentheses, dot
+    /// and slash.
+    ///
+    /// <para>
     /// A database query cannot run <see cref="Normalize"/>, so the Customers
-    /// directory drops exactly these in SQL with chained <c>REPLACE()</c>;
-    /// for a value made of digits and separators — which is what a phone
-    /// number is — the two agree, and <see cref="Normalize"/> stays the
-    /// authority: it is applied again, in memory, to every directory key.
+    /// directory and the ticket queue drop exactly these in SQL with chained
+    /// <c>REPLACE()</c>. For a value made of digits and separators — which is
+    /// what a phone number is — the two agree exactly, and
+    /// <see cref="Normalize"/> stays the authority: it is applied again, in
+    /// memory, to every directory key. Keep this set and those SQL mirrors in
+    /// step; a test asserts they match character for character.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Known limit.</b> <see cref="Normalize"/> drops every non-digit,
+    /// while the SQL mirror drops only these. A stored number carrying
+    /// something else entirely — a letter, as in a free-typed
+    /// "0501234567 (mobile)" — therefore canonicalizes differently on the two
+    /// sides, and the Customers directory can group it as its own customer
+    /// while emitting the same phone key as the clean one. Widening this set
+    /// shrinks that window to values a phone number would not realistically
+    /// contain; closing it entirely needs the grouping itself to be
+    /// digits-only, which SQL cannot express without a computed column.
+    /// </para>
     /// </summary>
-    public const string SeparatorCharacters = "+ -()";
+    public const string SeparatorCharacters = "+ -().\u002F";
 
     /// <summary>
     /// The canonical form: the number's digits, in order, and nothing else.

@@ -81,7 +81,7 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             x.LastInteractionAtUtc,
             CanonicalIntakePhone = x.IntakePhone == null
                 ? null
-                : x.IntakePhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", ""),
+                : x.IntakePhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Replace(".", "").Replace("/", ""),
         });
 
         return canonicalized.Select(x => new IdentifiedTicket
@@ -138,7 +138,7 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 || dbContext.TicketInteractions.Any(i => i.TicketId == m.Ticket.TicketId
                     && ((i.CustomerName != null && i.CustomerName.Contains(search))
                         || i.CustomerPhone.Contains(search)
-                        || (searchIsPhoneShaped && i.CustomerPhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
+                        || (searchIsPhoneShaped && i.CustomerPhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Replace(".", "").Replace("/", "").Contains(searchDigits)))));
             candidates = candidates.Where(x => matching.Any(m =>
                 m.Kind == x.Kind
                 && ((x.Kind == CrmKind && m.CrmId == x.CrmId)
@@ -187,8 +187,13 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 // routinely null), and without it the row would fall back to a
                 // placeholder for a customer the profile can name — the list
                 // and the profile would show two different people.
+                // Blank counts as no name, exactly as FirstNonEmpty below
+                // decides: CrmBuyerCustomerName is stored verbatim, so a
+                // whitespace-only one must not shadow an older real name and
+                // put the list back out of step with the profile.
                 LastNamedTicketId = g.Max(x =>
-                    x.Ticket.CrmBuyerCustomerName != null || x.Ticket.ExternalCustomerName != null
+                    (x.Ticket.CrmBuyerCustomerName != null && x.Ticket.CrmBuyerCustomerName.Trim() != "")
+                    || (x.Ticket.ExternalCustomerName != null && x.Ticket.ExternalCustomerName.Trim() != "")
                         ? (long?)x.Ticket.TicketId
                         : null),
                 LastTicketCreatedAtUtc = g.Max(x => x.Ticket.CreatedAtUtc),
@@ -234,8 +239,12 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             var last = lastTickets[g.LastTicketId];
             var snapshot = snapshots.GetValueOrDefault(g.LastTicketId);
 
-            // Same precedence the profile applies, and the same answer: the
-            // latest ticket's name, else the newest ticket that carried one.
+            // The latest ticket's name, else the newest ticket that
+            // snapshotted one. This matches the profile for every name a
+            // TICKET carries. The profile additionally scans conversation
+            // names across all of a customer's tickets, which a list page
+            // cannot do without a query per row; the row sees the latest
+            // ticket's conversation name only, as it always has.
             var namedTicket = g.LastNamedTicketId is { } namedId ? lastTickets.GetValueOrDefault(namedId) : null;
             var displayName = DisplayNameFor(last, snapshot)
                 ?? FirstNonEmpty(namedTicket?.CrmBuyerCustomerName, namedTicket?.ExternalCustomerName);

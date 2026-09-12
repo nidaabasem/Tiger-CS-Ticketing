@@ -87,7 +87,7 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
                 || (t.ManualUnitNumber != null && t.ManualUnitNumber.Contains(search))
                 || dbContext.IntakeRecords.Any(i => i.LinkedTicketId == t.TicketId
                     && (i.PhoneNumber.Contains(search)
-                        || (searchIsPhoneShaped && i.PhoneNumber.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
+                        || (searchIsPhoneShaped && i.PhoneNumber.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Replace(".", "").Replace("/", "").Contains(searchDigits)))));
         }
 
         // Dashboard drill-down filters (Dashboard Phase 1) — the same shared

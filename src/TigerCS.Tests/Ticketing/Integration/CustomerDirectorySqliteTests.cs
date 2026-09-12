@@ -251,6 +251,52 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
     }
 
     /// <summary>
+    /// A whitespace-only name is no name. CrmBuyerCustomerName is stored
+    /// verbatim, so a blank one on the newest ticket must not shadow the real
+    /// name an older ticket carries — otherwise the list and the profile
+    /// disagree again.
+    /// </summary>
+    [Fact]
+    public async Task ABlankNameOnTheNewestTicket_DoesNotShadowAnOlderRealName()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddCrmTicket(context, 9401, "Mariam Al Falasi", "T-1", createdAtUtc: Now.AddDays(-8));
+            AddCrmTicket(context, 9401, "   ", "T-2", createdAtUtc: Now.AddDays(-1));
+        }
+
+        var row = Assert.Single((await ListAsync()).Items);
+        var profile = (await ProfileAsync("crm:9401")).Response!;
+
+        Assert.Equal("Mariam Al Falasi", row.DisplayName);
+        Assert.Equal(profile.DisplayName, row.DisplayName);
+    }
+
+    /// <summary>
+    /// The SQL mirror of the canonical rule strips the same separators the
+    /// authority does, so a number typed with dots or slashes is still one
+    /// customer — one row, one key.
+    /// </summary>
+    [Fact]
+    public async Task PhoneNumbersWrittenWithDotsOrSlashes_AreStillOneCustomer()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddPhoneTicket(context, "+971501234567", createdAtUtc: Now.AddDays(-4));
+            AddPhoneTicket(context, "971.50.123.4567", createdAtUtc: Now.AddDays(-3));
+            AddPhoneTicket(context, "971/50/123/4567", createdAtUtc: Now.AddDays(-2));
+        }
+
+        var result = await ListAsync();
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal("phone:971501234567", row.CustomerKey);
+        Assert.Equal(3, row.TotalTickets);
+        // No two rows may ever carry the same key.
+        Assert.Equal(result.Items.Count, result.Items.Select(r => r.CustomerKey).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>
     /// A search term is only matched as a phone number when it is SHAPED like
     /// one. "M-401" is a unit code: it must keep finding unit M-401 and must
     /// not drag in every caller whose number merely contains 401.
