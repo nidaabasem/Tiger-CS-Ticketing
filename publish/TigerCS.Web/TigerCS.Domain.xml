@@ -405,6 +405,34 @@
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.VerificationSessionStatus">
             <summary>MVP-Data-Dictionary.md §2.24 (VerificationSessions.Status).</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping">
+             <summary>
+             Genesys integration phase 1 — the configured <b>Genesys Queue → TigerCS
+             Department</b> mapping. Genesys owns routing (which queue an inquiry
+             lands in); TigerCS only needs to know which department a queue's
+             inquiries belong to when the customer did not choose one explicitly
+             (WhatsApp, social media, phone). Configuration rows, never code: no
+             queue id or department name is hard-coded anywhere in the integration,
+             and the real Genesys queue ids are entered by an administrator once the
+             Genesys team supplies them — none are seeded, because none are known.
+            
+             <para>
+             <see cref="P:TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping.QueueId"/> is Genesys' own identifier, stored as an opaque
+             string (case-insensitive unique). Rows are deactivated, never deleted,
+             so an inquiry that arrived under a retired mapping can still be
+             explained by history.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping.QueueId">
+            <summary>Genesys' queue identifier — the routing key an inbound inquiry carries.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping.QueueName">
+            <summary>Display name for administrators (Genesys' queue name, where known). Never used for matching.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.GenesysIntegration.GenesysQueueMapping.Update(System.String,System.Int32,System.Boolean,System.DateTime)">
+            <summary>Administration edit — re-points the queue at another department and/or renames it; the queue id itself is the identity and never changes.</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.IdentityAndAccess.AuthorizationOverride">
              <summary>
              The single, solution-wide definition of the platform-administration
@@ -467,6 +495,9 @@
             referenced (Categories, Tickets) — IsActive=0 is the only removal path.
             </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.IdentityAndAccess.Department.Rename(System.String,System.String)">
+            <summary>Administration rename. Historical tickets keep referencing the same DepartmentId, so they display the new name — the identity is the id, never the text.</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.IdentityAndAccess.DepartmentAssignmentException">
             <summary>Base type for violations of the department-assignment invariants.</summary>
         </member>
@@ -480,6 +511,9 @@
             1:1 relationship) — never a hard delete; DeactivatedAtUtc is the only
             removal path (FR-ADM-02).
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.IdentityAndAccess.Employee.UpdateProfile(System.String,System.Boolean)">
+            <summary>Administration edit of the supported profile fields (display name and the Geyness-staff flag) — never identity credentials.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.IdentityAndAccess.ICurrentUserContext">
             <summary>
@@ -1074,12 +1108,64 @@
             <returns><c>true</c> if this call is what flipped the flag.</returns>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.Channel">
+             <summary>
+             FR-CH-02 — the configurable catalogue of channels a customer interaction
+             can arrive on (Phone, WhatsApp, Live Chat, Website, Walk in / Kiosk,
+             Mobile App, Instagram, Facebook, …). Was a fixed <c>enum</c>; is now a
+             <c>Channels</c> table administered under Admin → Configuration → Channels,
+             so a new channel is a row, not a release. The original enum members keep
+             their exact ids (<see cref="T:TigerCS.Domain.Modules.Ticketing.WellKnownChannels"/>) — including the retired
+             legacy rows (ids 2 and 3) — so every existing IntakeRecord and
+             TicketInteraction row still references the same channel.
+            
+             <para>
+             <b>Never hard-deleted.</b> IntakeRecords and TicketInteractions reference
+             a channel as the originating channel of the interaction/ticket; those
+             references are history and must keep displaying the original channel
+             name even after it is retired. <see cref="P:TigerCS.Domain.Modules.Ticketing.Channel.IsActive"/> = false is the only
+             retirement path — an inactive channel disappears from the Create Ticket
+             channel list and nowhere else.
+             </para>
+            
+             <para>
+             <b>Configuration, not hard-coded rules.</b> <see cref="P:TigerCS.Domain.Modules.Ticketing.Channel.RequiresPhone"/>
+             drives whether Create Ticket Step 1 demands a phone number (a Phone call
+             has one; a walk-in at a kiosk may not), and <see cref="P:TigerCS.Domain.Modules.Ticketing.Channel.IsGenesysEnabled"/>
+             records which channels originate/interact through Genesys so later
+             routing/integration work reads configuration instead of comparing channel
+             names. Neither flag is consulted through a channel-name comparison
+             anywhere in the codebase.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Channel.Name">
+            <summary>Human-readable channel name shown in pickers and on ticket history.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Channel.Code">
+            <summary>Stable, unique code — the API contract identifier (the original enum names are the seeded codes).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Channel.RequiresPhone">
+            <summary>Whether Create Ticket Step 1 must capture a phone number for an interaction on this channel.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Channel.IsGenesysEnabled">
+            <summary>Whether interactions on this channel originate/interact through Genesys — configuration metadata for later routing, never a routing rule itself.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Channel.IsActive">
+            <summary>Whether users may select this channel for a NEW ticket. Historical references are unaffected.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Channel.DisplayOrder">
+            <summary>Position in the Create Ticket channel list (ascending), ties broken by <see cref="P:TigerCS.Domain.Modules.Ticketing.Channel.Name"/>.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Channel.Seeded(System.Byte,System.String,System.String,System.Boolean,System.Boolean,System.Int32,System.Boolean)">
             <summary>
-            FR-CH-02 — a fixed, extensible enum so later channels are additive, not
-            a rework. MVP scope is Phone only (FR-CH-01); the other members are
-            Phase 2/3 (Solution-Analysis.md §2.2) and are not reachable through any
-            endpoint in this increment.
+            The seeded reference rows, constructed with their fixed ids so the
+            original enum values keep resolving to the same channels. Only for
+            reference-data seeding (<c>ChannelReferenceData</c>) — new channels
+            added through administration are identity-generated.
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Channel.Update(System.String,System.String,System.Boolean,System.Boolean,System.Int32)">
+            <summary>Administration edit. Historical records keep referencing the same ChannelId, so they display the new name — the identity is the id, never the text.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.CrmVerificationStatus">
             <summary>
@@ -1152,7 +1238,10 @@
              Tasleeh (<c>CustomerLookupAppService</c>). It never changes based on what
              that search finds — Found, NotFound, or Failed all leave it exactly as the
              agent entered it, so a later re-lookup or manual reconciliation always has
-             the original value to search with.
+             the original value to search with. Whether it is <i>required</i> is the
+             selected <see cref="T:TigerCS.Domain.Modules.Ticketing.Channel"/>'s <c>RequiresPhone</c> configuration
+             (enforced by <c>IntakeRecordAppService</c>); a channel that does not
+             require one stores an empty string.
              </para>
             
              <para>
@@ -1195,6 +1284,9 @@
              both may be set (or omitted) independently.
              </para>
              </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.IntakeRecord.ChannelId">
+            <summary>The <see cref="T:TigerCS.Domain.Modules.Ticketing.Channel"/> the interaction arrived on — the ticket's originating channel once promoted.</summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.IntakeRecord.LinkToTicket(System.Int64,TigerCS.Domain.Modules.Ticketing.CrmVerificationStatus,System.Boolean)">
              <summary>
@@ -1328,6 +1420,59 @@
              </para>
              </summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Ticket.CategoryId">
+             <summary>
+             The ticket's business classification — <b>null while the ticket is
+             Unclassified</b>.
+            
+             <para>
+             A ticket may legitimately exist before anyone knows what the customer
+             is asking for: a Genesys inquiry reaches an agent with the department
+             known (the queue, or the customer's own website-chat choice) but the
+             actual request still unread. The ticket must be created immediately so
+             the inquiry is never lost, and inventing a placeholder category to
+             satisfy a NOT NULL column would be worse than null — it would feed
+             real business machinery (routing, reporting, and anything later keyed
+             on category) with a value nobody chose.
+             </para>
+            
+             <para>
+             Set exactly once, by <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/>, when an agent reads the
+             inquiry and selects the real category. Tickets created through the
+             classified factories carry it from the start and are never Unclassified.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Ticket.PriorityId">
+             <summary>
+             The ticket's priority tier — <b>null while the ticket is
+             Unclassified</b>, for the same reason <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.CategoryId"/> is.
+            
+             <para>
+             A provisional priority is not harmless. Priority drives the dashboard
+             KPI counts, queue sorting, the Tickets Requiring Attention ranking and
+             the badge on every list row, so a defaulted Medium would place a
+             ticket nobody has read yet among tickets whose urgency a human
+             actually judged. Null says "not judged yet" and every one of those
+             readers now handles it explicitly — never by coalescing it into a
+             tier, and never by letting SQL's NULLs-sort-first put an unclassified
+             ticket above Critical.
+             </para>
+            
+             <para>
+             Set exactly once, together with <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.CategoryId"/>, by
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/>. That is also the point at which an SLA policy
+             becomes selectable, since the policy is keyed on this value.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Ticket.IsClassified">
+            <summary>
+            Whether the ticket carries a real business classification. False only
+            for a ticket created from an inquiry whose request had not yet been
+            read — see <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.CategoryId"/>.
+            </summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.Ticket.RequestTypeId">
             <summary>
             Workflow/SLA Configuration phase 2 — which configured
@@ -1339,6 +1484,19 @@
             type is present, never guessed. Set once at creation via
             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ClassifyRequestType(System.Int32)"/>; validation that it belongs to the
             ticket's department is the creating application service's job.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.Ticket.WorkflowTemplateId">
+            <summary>
+            Administration / Workflow Designer phase — the exact workflow VERSION
+            (<c>WorkflowTemplates</c> row) that was Published for the ticket's
+            request type when the ticket was created. Write-once via
+            <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.PinWorkflowVersion(System.Int32)"/>: publishing a later version never
+            changes it, so the ticket keeps following the flow it started on.
+            Nullable: tickets without a request type carry null (no workflow
+            governs them, exactly as before), and pre-versioning tickets were
+            backfilled with the single template that governed them at the time —
+            never a fabricated later version.
             </summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.Ticket.CrmBuyerCustomerId">
@@ -1471,6 +1629,41 @@
              </para>
              </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateUnclassified(System.String,System.Int32,System.String,System.DateTime,System.String,System.String)">
+             <summary>
+             The <b>Unclassified</b> path: an inquiry reached an agent and must
+             become a ticket immediately, but nobody has read the request yet, so
+             its Category — and usually its Request Type — are genuinely unknown.
+             Today's only producer is Genesys inquiry ingestion, where the
+             department is known (the customer's website-chat choice, or the queue
+             mapping) well before the request is.
+            
+             <para>
+             <b>Nothing about the request is guessed.</b>
+             <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.CategoryId"/>, <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.RequestTypeId"/> and
+             <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.PriorityId"/> are all null, and no SLA period exists —
+             <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.SlaState"/> is <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.NotApplicable"/>. The
+             SLA policy is selected by priority, and a priority nobody has judged
+             would measure the wrong target and breach against a deadline nobody
+             set. <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/> is what supplies all three and starts the
+             clock, from the moment the agent actually classifies.
+             </para>
+            
+             <para>
+             Everything else behaves exactly as any other new ticket: it is Open,
+             it belongs to a real department, it is assignable, notable and
+             transferable, its first human response is recordable, and its customer
+             identification follows the same enrichment-never-a-gate rule as
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateUnverified(System.String,System.Int32,System.Int32,System.Byte,System.String,System.DateTime,System.String,System.String)"/>.
+             </para>
+             </summary>
+             <param name="ticketNumber">The generated, unique ticket number.</param>
+             <param name="departmentId">The resolved (and initial current) department — known, never guessed.</param>
+             <param name="requestSummary">What is known of the request — for a raw inquiry, how it arrived.</param>
+             <param name="createdAtUtc">Creation time, in UTC.</param>
+             <param name="manualProjectName">Optional project/tower snapshot the channel collected, same as <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateUnverified(System.String,System.Int32,System.Int32,System.Byte,System.String,System.DateTime,System.String,System.String)"/>.</param>
+             <param name="manualUnitNumber">Optional unit-number snapshot the channel collected.</param>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ReconcileVerification(System.Int32,System.Int32)">
              <summary>
              Links a unit/contact pair onto a ticket that did not have one at
@@ -1496,13 +1689,54 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.ClassifyRequestType(System.Int32)">
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)">
+             <summary>
+             Records which configured RequestType this ticket follows — write-once,
+             at creation, by the creating application service (the same bare
+             state-transition division of responsibility as
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ReconcileVerification(System.Int32,System.Int32)"/>: department/active validation
+             happens before this is called).
+             </summary>
+             <summary>
+             Records the real business classification an agent selected after
+             reading the inquiry — the Unclassified → Classified transition of the
+             lifecycle. <b>The same ticket is classified in place; classification
+             never creates a second ticket.</b>
+            
+             <para>
+             <b>Initial classification only — a Phase 1 safeguard, not a settled
+             business rule.</b> A ticket that already carries a category is
+             refused, because <i>re</i>classification has consequences nobody has
+             specified yet: whether the SLA period is recomputed or restarted, what
+             happens to a pinned workflow version mid-flight, and what happens to
+             approvals already raised under the old request type. Until those are
+             decided, refusing is the safe answer — it is not a statement that a
+             classification may never change. <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ClassifyRequestType(System.Int32)"/>
+             already guards its own field the same way, for the same reason.
+             </para>
+            
+             <para>
+             Priority is set rather than replaced: an unclassified ticket has none
+             (<see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.PriorityId"/> is null), and this is the first judgement
+             anyone has made about the ticket's urgency.
+             </para>
+            
+             <para>
+             <b>A bare state transition, deliberately.</b> Validating that the
+             category is active and belongs to the ticket's department, classifying
+             the request type, pinning its workflow version, and starting the SLA
+             clock are the calling application service's job, done in one
+             transaction — the same division of responsibility as
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.CreateVerified(System.String,System.Int32,System.Int32,System.Int32,System.Int32,System.Byte,System.String,System.DateTime)"/> and <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ReconcileVerification(System.Int32,System.Int32)"/>.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.PinWorkflowVersion(System.Int32)">
             <summary>
-            Records which configured RequestType this ticket follows — write-once,
-            at creation, by the creating application service (the same bare
-            state-transition division of responsibility as
-            <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.ReconcileVerification(System.Int32,System.Int32)"/>: department/active validation
-            happens before this is called).
+            Pins the workflow version the ticket follows — write-once, at creation,
+            by the creating application service after it resolved the request
+            type's currently Published version. Requires the request type to be
+            classified first: a version is only ever pinned through a request type.
             </summary>
         </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.AssignTo(System.Guid)">
@@ -1663,8 +1897,237 @@
             time still reports Breached.
             </summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.StartSlaClock">
+             <summary>
+             Moves the <see cref="P:TigerCS.Domain.Modules.Ticketing.Ticket.SlaState"/> dimension from
+             <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.NotApplicable"/> to <see cref="F:TigerCS.Domain.Modules.Ticketing.SlaState.Running"/>
+             when an Unclassified ticket's first SLA period is opened at
+             classification.
+            
+             <para>
+             Deliberately narrow: it only ever makes that one transition, so it
+             cannot resurrect a Met or Breached clock, and it is a no-op on a
+             ticket whose clock was already running (every classified ticket).
+             The period itself is opened by the calling application service — same
+             bare state-transition division of responsibility as
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/>.
+             </para>
+             </summary>
+        </member>
         <member name="M:TigerCS.Domain.Modules.Ticketing.Ticket.EnsureNotClosed">
             <summary>Closed-ticket immutability (PR correction): every mutating method above calls this first — a Closed ticket accepts no further Assign/Transfer/ChangeStatus/Resolve/Close.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus">
+            <summary>
+            Where a piece of pending human work stands. <b>TigerCS-owned values</b> —
+            deliberately not Genesys-native status names, because none has been
+            confirmed and Ticketing must not become a mirror of another system's
+            vocabulary.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.NotRequired">
+            <summary>
+            No human handoff is required for this interaction. <b>No row ever
+            stores this</b> — a <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff"/> exists only once
+            human involvement has actually been requested. It is the value the
+            ticket-level view reports when no handoff row exists, so "does this
+            ticket need a human?" has an answer either way.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.WaitingForAgent">
+            <summary>A human is needed and none has taken it — the state the agent work list is built on.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.Assigned">
+            <summary>An agent is named (by Genesys routing, or by taking it in TigerCS) but work has not started.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.InProgress">
+            <summary>An agent is actively handling it.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.Completed">
+            <summary>The human work is done. <b>This says nothing about the ticket</b>, which continues under the existing lifecycle.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.Cancelled">
+            <summary>The human work is no longer needed (a duplicate request, the customer resolved it themselves, the business case went away).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.AgentHandoffMode">
+             <summary>
+             How the human is expected to continue the interaction.
+            
+             <para>
+             <b>Callback is one mode, not the concept.</b> Modelling all pending human
+             work as a callback would be phone-shaped thinking: a website chat, a
+             WhatsApp thread and a social-media message each continue differently, and
+             several of them never involve dialling anyone.
+             </para>
+            
+             <para>
+             <b>Never inferred from the channel.</b> Which mode applies to which
+             channel is Genesys' behaviour to state, and it has not stated it — so the
+             mode is whatever the caller supplies, normalized into these values, and
+             stays <c>null</c> when nothing was supplied. TigerCS does not guess that
+             "phone means callback"; it records what it is told. Executing any of these
+             is Genesys' job — see <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff"/>.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffMode.Callback">
+            <summary>Reach the customer back on a voice call (typically phone, but never assumed from the channel).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffMode.ContinueChat">
+            <summary>Resume the same chat conversation, where the platform supports resuming it.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffMode.ReplyInChannel">
+            <summary>Reply in the channel the customer used (a WhatsApp thread, a social-media message).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffMode.HumanTakeover">
+            <summary>A human takes over an interaction a bot or virtual agent was handling.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff">
+             <summary>
+             One piece of <b>pending human work</b> raised from a customer interaction:
+             something needs a human agent, on any channel.
+            
+             <para>
+             <b>Why this is not "a callback".</b> Genesys carries phone, website chat,
+             chatbot, WhatsApp, social media and whatever it adds next. On every one of
+             them the same thing can happen — the routing or the virtual agent decides
+             a human is needed, and no human is immediately available. The business
+             requirement is identical across channels (do not lose the inquiry; make it
+             visible to agents); only the <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.Mode"/> of continuing differs, and
+             a callback is just one of those modes.
+             </para>
+            
+             <para>
+             <b>Genesys owns the channel; TigerCS owns the business state.</b> Nothing
+             here dials a number, sends a WhatsApp message, resumes a chat, or routes to
+             an agent. Genesys does all of that. This row exists so the work is visible
+             in TigerCS, attached to its ticket and its context, and so the business can
+             see how long a customer has been waiting for a human. TigerCS is not a
+             second routing engine.
+             </para>
+            
+             <para>
+             <b>Separate from the ticket's own lifecycle.</b> Completing the human work
+             does not close, resolve or otherwise touch the <see cref="T:TigerCS.Domain.Modules.Ticketing.Ticket"/> — a
+             customer whose chat was handled may still have an NOC workflow running for
+             days. The two statuses are read together and never conflated.
+             </para>
+            
+             <para>
+             <b>Separate from the interaction's lifecycle too.</b> A customer who closes
+             the browser while waiting ends the <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketInteraction"/>, and the
+             pending work deliberately survives that: the business case did not go away
+             because the live session did. That independence is exactly why this is its
+             own row rather than fields on the interaction, which is a settled audit
+             record once ended.
+             </para>
+            
+             <para>
+             <b>At most one open handoff per interaction.</b> <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.ResolvedAtUtc"/>
+             is null while the work is outstanding, and a filtered unique index on
+             (interaction, unresolved) is the database-level half of "a retried Genesys
+             handoff event never creates a second work item" — the same shape as the
+             conversation-id uniqueness behind "one inquiry, one ticket".
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.TicketInteractionId">
+            <summary>The interaction this arose from — and, through it, the Genesys conversation, so the agent can open the transcript that led here.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.DepartmentId">
+            <summary>The department the work belongs to, copied at request time from the ticket's current department so the work list can be scoped without joining.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.ChannelId">
+            <summary>The channel the customer used — what the agent needs to know to continue, and why a single "callback" model would not do.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.Mode">
+            <summary>How the human is expected to continue, when the caller said. Null means "not stated" — never a channel-derived guess.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.RequestReason">
+            <summary>Why a human was needed, as reported (a virtual agent's escalation reason, a routing note). Free text: no vocabulary for this has been confirmed. Null when not supplied.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.ExternalWorkItemId">
+            <summary>Genesys' own identifier for this routing task / work item, when it supplies one. Unique across the table when present; external identifier only, never a foreign key.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.AssignedEmployeeId">
+            <summary>The TigerCS employee handling it, when known. Null while waiting, and null when Genesys names an agent TigerCS cannot map to an employee.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.GenesysAgentId">
+            <summary>Genesys' own agent identifier, when supplied — recorded verbatim even if no TigerCS employee matches it.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.CompletedAtUtc">
+            <summary>When the work reached <see cref="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.Completed"/> — distinct from <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.ResolvedAtUtc"/>, which a cancellation also sets.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.ResolvedAtUtc">
+            <summary>When the work stopped being outstanding, by either completion or cancellation. Null exactly while it is still pending — the filtered unique index depends on that.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.ResolutionNote">
+            <summary>What the agent recorded on finishing or cancelling. Required on cancellation — work is never dropped without a why.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.IsOpen">
+            <summary>Whether the work is still outstanding — the agent work list's filter, and the invariant the database enforces one of per interaction.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.RequiresHumanAgent">
+            <summary>True for every stored row: a handoff exists only because a human was asked for. Present so the ticket-level projection and this row answer the same question the same way.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.#ctor(System.Int64,System.Int64,System.Int32,System.Byte,System.DateTime,System.DateTime,System.Nullable{TigerCS.Domain.Modules.Ticketing.AgentHandoffMode},System.String,System.String,System.Nullable{System.Guid},System.String,System.Nullable{System.DateTime})">
+            <summary>
+            Records that an interaction needs a human. The status depends on
+            whether one is already taking it: Genesys performing a live transfer
+            reports the agent, and the work is <see cref="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.Assigned"/>
+            from the start; nobody available means
+            <see cref="F:TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus.WaitingForAgent"/> and the work list.
+            Either way it is <b>the same ticket and the same interaction</b> — a
+            handoff never creates a ticket.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.AssignTo(System.Nullable{System.Guid},System.String,System.DateTime)">
+             <summary>
+             Names (or renames) the agent handling the work — whether Genesys
+             routed it or an agent took it in TigerCS.
+            
+             <para>
+             <b>Idempotent by design.</b> Re-reporting the same agent changes
+             nothing and does not move <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.AssignedAtUtc"/>, so a redelivered
+             Genesys assignment event is harmless. Assigning work already in
+             progress is allowed (a real reassignment mid-handling) and does not
+             rewind <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.Status"/>.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.Start(System.Guid,System.DateTime)">
+            <summary>
+            The agent has begun handling the work. Idempotent: calling it again
+            does not move <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.StartedAtUtc"/>.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.Complete(System.Guid,System.DateTime,System.String)">
+            <summary>
+            The human work is finished. <b>Deliberately touches nothing on the
+            ticket</b> — the ticket keeps following the existing TigerCS workflow,
+            and the two statuses are read side by side.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketAgentHandoff.Cancel(System.DateTime,System.String)">
+            <summary>
+            The human work is no longer needed. A reason is required: pending
+            customer work is never dropped without a recorded why — the same rule
+            <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketPendingRecord"/> applies to a pending ticket.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.AgentHandoffAlreadyResolvedException">
+            <summary>
+            The handoff is already Completed or Cancelled, so it accepts no further
+            assignment, start, completion or cancellation. Callers treat a redelivered
+            terminal event as "already processed" rather than as an error.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.AgentHandoffAlreadyResolvedException.#ctor(System.Int64,TigerCS.Domain.Modules.Ticketing.AgentHandoffStatus,System.DateTime)">
+            <summary>
+            The handoff is already Completed or Cancelled, so it accepts no further
+            assignment, start, completion or cancellation. Callers treat a redelivered
+            terminal event as "already processed" rather than as an error.
+            </summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.ApprovalStatus">
             <summary>How one approval cycle stands. A small dedicated state model — deliberately NOT <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketStatus"/> values: approval state and ticket lifecycle are different concerns and stay in different records.</summary>
@@ -1828,6 +2291,46 @@
         <member name="M:TigerCS.Domain.Modules.Ticketing.TicketRequestTypeAlreadySetException.#ctor(System.Int64,System.Int32)">
             <summary>Workflow/SLA Configuration phase 2: a ticket's request type is write-once — re-classification is not a supported operation in this phase.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.TicketWorkflowVersionAlreadyPinnedException">
+            <summary>A ticket's workflow version is pinned once at creation and never re-pinned.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketWorkflowVersionAlreadyPinnedException.#ctor(System.Int64,System.Int32)">
+            <summary>A ticket's workflow version is pinned once at creation and never re-pinned.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.TicketAlreadyClassifiedException">
+             <summary>
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/> performs a ticket's <i>initial</i>
+             classification, so a ticket that already carries a category is refused.
+            
+             <para>
+             This is a <b>Phase 1 safeguard, not a confirmed final business rule.</b>
+             Reclassification is deferred because its semantics are undefined: whether
+             the SLA period is recomputed, restarted or left alone, what happens to a
+             workflow version already pinned and executing, and what happens to
+             approvals raised under the previous request type. Refusing keeps a
+             ticket's business meaning from moving underneath machinery that has
+             already acted on it; when those semantics are decided, a deliberate
+             reclassification operation replaces this refusal.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketAlreadyClassifiedException.#ctor(System.Int64,System.Int32)">
+             <summary>
+             <see cref="M:TigerCS.Domain.Modules.Ticketing.Ticket.Classify(System.Int32,System.Byte)"/> performs a ticket's <i>initial</i>
+             classification, so a ticket that already carries a category is refused.
+            
+             <para>
+             This is a <b>Phase 1 safeguard, not a confirmed final business rule.</b>
+             Reclassification is deferred because its semantics are undefined: whether
+             the SLA period is recomputed, restarted or left alone, what happens to a
+             workflow version already pinned and executing, and what happens to
+             approvals raised under the previous request type. Refusing keeps a
+             ticket's business meaning from moving underneath machinery that has
+             already acted on it; when those semantics are decided, a deliberate
+             reclassification operation replaces this refusal.
+             </para>
+             </summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.TicketInteraction">
              <summary>
              One customer interaction associated with a ticket — a ticket accumulates
@@ -1864,6 +2367,20 @@
              </para>
             
              <para>
+             <b>One Genesys conversation is exactly one interaction, on exactly one
+             ticket</b> (Genesys integration phase 1). <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.GenesysConversationId"/>
+             is unique across the whole table (filtered unique index), which is the
+             database-level half of "a retried or duplicated Genesys event never
+             creates a second ticket": the application checks first, and a lost race
+             surfaces as a unique-constraint violation the caller treats as "already
+             ingested". The conversation's lifecycle is recorded here too —
+             <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.EndedAtUtc"/>/<see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.EndReason"/> via <see cref="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.End(System.DateTime,System.String)"/> —
+             and its transcript lives in <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage"/> rows
+             keyed by this interaction. Ending an interaction never changes the
+             ticket's own status: the chat ends, the NOC workflow continues.
+             </para>
+            
+             <para>
              <b>CustomerPhone here is the customer's identity input</b> (the number
              CRM/PACT/Tasleeh verification searches with), distinct from
              <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CalledNumber"/> — the Tiger number the customer dialed,
@@ -1877,8 +2394,17 @@
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsOriginatingInteraction">
             <summary>True on the one interaction the ticket was created from — at most one per ticket (filtered unique index). Set at construction, never mutated.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.ChannelId">
+            <summary>The <see cref="T:TigerCS.Domain.Modules.Ticketing.Channel"/> this interaction happened on. On the originating interaction, this is the ticket's originating channel.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CustomerPhone">
             <summary>The customer's phone number for this interaction — the identity input for customer verification, preserved per interaction for reporting.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CustomerName">
+            <summary>The customer's name as the channel reported it (e.g. the website chat form's Full Name), where available. Display/audit only — never a verified identity.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CustomerEmail">
+            <summary>The customer's email as the channel reported it, where available. Display/audit only — never a verified identity.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CalledNumber">
             <summary>The company/destination number the interaction arrived on (Genesys side), or null — never used by Ticketing for routing.</summary>
@@ -1889,18 +2415,112 @@
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.Direction">
             <summary>Interaction direction as reported by Genesys (e.g. "Inbound"), where available. Free text until the integration contract fixes an enumeration.</summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.EndedAtUtc">
+            <summary>When the conversation ended/disconnected (Genesys' clock where it supplies one), or null while the interaction is still live or was never reported ended.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.EndReason">
+            <summary>Why the conversation ended, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout") — free text until the Genesys contract fixes an enumeration; null when not reported.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreatedAtUtc">
             <summary>When this row was recorded by Ticketing (creation/audit timestamp), as distinct from <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.InteractionStartedAtUtc"/> — Genesys' own clock.</summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreateLocal(System.Int64,TigerCS.Domain.Modules.Ticketing.Channel,System.String,System.DateTime,System.Boolean)">
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteraction.IsEnded">
+            <summary>Whether <see cref="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.End(System.DateTime,System.String)"/> has been recorded. Derived — the interaction's own lifecycle, independent of the ticket's <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketStatus"/>.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreateLocal(System.Int64,System.Byte,System.String,System.DateTime,System.Boolean)">
             <summary>A Face-to-Face / locally-created interaction: channel and phone the agent entered; every Genesys field stays null, by construction.</summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreateFromGenesys(System.Int64,TigerCS.Domain.Modules.Ticketing.Channel,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.Nullable{System.DateTime},System.String,System.DateTime,System.Boolean)">
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.CreateFromGenesys(System.Int64,System.Byte,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.Nullable{System.DateTime},System.String,System.DateTime,System.Boolean,System.String,System.String)">
             <summary>
             A Genesys-provided interaction. Only the conversation id is mandatory —
             every other field is optional until the Genesys API contract is
             finalized, and absent values are stored as null rather than guessed.
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.End(System.DateTime,System.String)">
+            <summary>
+            Records that the conversation ended or was disconnected — for any
+            reason: the agent ended it, the customer closed the browser, the
+            connection dropped, Genesys timed it out. Write-once: a redelivered
+            end event for an already-ended interaction is refused here
+            (<see cref="T:TigerCS.Domain.Modules.Ticketing.TicketInteractionAlreadyEndedException"/>) so the caller
+            can treat it as "already processed" rather than moving the recorded
+            end time. Deliberately touches nothing on the <see cref="T:TigerCS.Domain.Modules.Ticketing.Ticket"/>:
+            an ended chat is not a closed ticket — the ticket keeps following the
+            existing TigerCS workflow.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.RecordAgentIfAbsent(System.String,System.String)">
+            <summary>
+            Fills in the handling agent when a later event names one and the
+            interaction does not yet know it (the start event of a queued chat
+            often precedes agent assignment) — apply-if-absent, so an agent
+            recorded at creation is never overwritten by a later, different value.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.TicketInteractionAlreadyEndedException">
+            <summary>
+            <see cref="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.End(System.DateTime,System.String)"/> is write-once: a second end event for
+            the same conversation (an at-least-once redelivery) must not move the
+            recorded end time. The application layer treats this as "already
+            processed" and answers idempotently rather than as a failure.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Ticketing.TicketInteractionAlreadyEndedException.#ctor(System.Int64,System.DateTime)">
+            <summary>
+            <see cref="M:TigerCS.Domain.Modules.Ticketing.TicketInteraction.End(System.DateTime,System.String)"/> is write-once: a second end event for
+            the same conversation (an at-least-once redelivery) must not move the
+            recorded end time. The application layer treats this as "already
+            processed" and answers idempotently rather than as a failure.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender">
+            <summary>Who authored one transcript message of an interaction.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender.HumanAgent">
+            <summary>A human agent speaking to the customer — distinct from <see cref="F:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender.VirtualAgent"/>, so an agent reading a chatbot conversation can tell which lines a person wrote.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender.System">
+            <summary>A platform/bot/system line in the transcript (e.g. "Conversation transferred", an automated greeting) — kept so the record is complete, rendered distinctly.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender.VirtualAgent">
+            <summary>
+            A virtual agent / chatbot speaking to the customer. Distinct from
+            <see cref="F:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender.HumanAgent"/> because an agent taking over a bot conversation
+            must be able to see which lines a human said and which the bot did —
+            and distinct from <see cref="F:TigerCS.Domain.Modules.Ticketing.InteractionMessageSender.System"/> because a bot asking "Are you
+            asking about an NOC for resale?" is conversation, not platform noise.
+            A TigerCS-owned normalized value; no Genesys vocabulary is assumed.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage">
+            <summary>
+            One message of a text conversation's transcript (website chat, WhatsApp,
+            social media chat), belonging to exactly one <see cref="T:TigerCS.Domain.Modules.Ticketing.TicketInteraction"/>
+            (Genesys integration phase 1). Structured on purpose — one row per
+            message with sender, timestamp and body — rather than one display blob,
+            so Ticket Details can render "Customer: … / Agent: …" in order and later
+            reporting can count/measure exchanges; <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.Sequence"/> is the
+            authoritative order (the position in the transcript as delivered), with
+            <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.SentAtUtc"/> as the displayed time, because two messages may
+            share a timestamp and a provider clock is not guaranteed monotonic.
+            Append-only; never edited or deleted. Voice calls have no rows here.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.Sequence">
+            <summary>1-based position within the interaction's transcript — unique per interaction, the authoritative ordering.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.SenderName">
+            <summary>The sender's display name as the channel reported it (the customer's name, the agent's name), where available.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.SenderId">
+            <summary>The sender's identifier on the Genesys side (participant/agent id), where available — an external identifier, never a foreign key.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.ExternalMessageId">
+            <summary>Genesys' own id for the message, where provided — stored for traceability and for a future incremental-append path to dedupe on.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Ticketing.TicketInteractionMessage.Body">
+            <summary>The message text, verbatim. Empty bodies are rejected: a transcript line with nothing said is a data error, not a message.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.Ticketing.TicketNote">
             <summary>
@@ -2068,6 +2688,31 @@
         <member name="P:TigerCS.Domain.Modules.Ticketing.TicketWorkflowEvent.Note">
             <summary>Short human context (e.g. the recorded reason) — display only; consumers key on <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketWorkflowEvent.EventType"/> and <see cref="P:TigerCS.Domain.Modules.Ticketing.TicketWorkflowEvent.OccurredAtUtc"/>, never on this text.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Ticketing.WellKnownChannels">
+            <summary>
+            The ids of the channels seeded with the system, so every existing
+            <c>IntakeRecords.ChannelId</c> / <c>TicketInteractions.ChannelId</c>
+            value keeps pointing at the same channel. Ids 1..5 are the members of
+            the former <c>Channel</c> enum, kept at their exact original values for
+            historical compatibility; ids 2 and 3 are now retained only as inactive
+            legacy rows (<c>AppOrWebsite</c>, <c>WhatsAppOrLiveChat</c>) that
+            historical records still resolve. Ids 6..11 are the additional approved
+            production channels. Any channel an administrator adds later has an
+            identity-generated id above these; nothing in the application branches
+            on these constants to decide behaviour — the channel's own configuration
+            (<see cref="P:TigerCS.Domain.Modules.Ticketing.Channel.RequiresPhone"/>, <see cref="P:TigerCS.Domain.Modules.Ticketing.Channel.IsGenesysEnabled"/>)
+            does.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.WellKnownChannels.AppOrWebsite">
+            <summary>Legacy, inactive — retained so historical records resolve.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.WellKnownChannels.WhatsAppOrLiveChat">
+            <summary>Legacy, inactive — retained so historical records resolve.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Ticketing.WellKnownChannels.FaceToFaceKiosk">
+            <summary>Id 5 — now "Walk in / Kiosk" (formerly "Face to Face / Kiosk").</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType">
             <summary>
             The controlled set of approval types (Workflow/Automation phase 3) —
@@ -2193,9 +2838,11 @@
              <summary>
              The operational configuration unit of the Department → Request Type →
              Workflow → SLA model (Workflow/SLA Configuration phase 1). Each request
-             type belongs to exactly one department, selects one reusable
-             <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate"/>, and carries the business flags that
-             gate lifecycle actions for tickets of that type (enforcement is phase 2).
+             type belongs to exactly one department, selects one logical
+             <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow"/> (whose currently Published version — a
+             <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate"/> — is what new tickets are pinned to), and
+             carries the business flags that gate lifecycle actions for tickets of
+             that type (enforcement is phase 2).
             
              <para>
              <b>Deliberately distinct from <c>Category</c>.</b> Category remains the
@@ -2218,6 +2865,15 @@
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.Name">
             <summary>Unique within the department (e.g. "Ticketing System" exists under both Customer Service and Collections).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.WorkflowId">
+            <summary>
+            The logical workflow this request type follows (Administration /
+            Workflow Designer phase; before it, this was a direct template id).
+            Which VERSION applies is resolved per ticket: new tickets pin the
+            workflow's currently Published version at creation, existing tickets
+            keep theirs.
+            </summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.DefaultPriorityId">
             <summary>The priority a new ticket of this type starts at, from the existing fixed Priorities set — no second priority model.</summary>
@@ -2246,6 +2902,17 @@
             the required-fields feature is built; null means no extra requirement.
             Required attachments are deliberately not modeled yet (attachments are
             a later increment).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.Update(System.String,System.Int32,System.Byte,System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.String)">
+            <summary>Administration edit of the configurable fields. The department is deliberately not here — see <see cref="M:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.ChangeDepartment(System.Int32)"/>.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.ChangeDepartment(System.Int32)">
+            <summary>
+            Moves the request type to another responsible department. The
+            application service only allows this while no ticket references the
+            request type: a request type that governed tickets historically keeps
+            its department so those tickets' configuration stays truthful.
             </summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement">
@@ -2286,6 +2953,9 @@
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement.BlocksWorkUntilApproved">
             <summary>Whether operational work is expected to wait for the decision (both seeded requirements: true, per the SLA document's sequencing). Informational for the workflow/UI in this phase — SLA consequences are phase 4.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement.Update(TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalTargetKind,System.Nullable{System.Int32},System.String,System.Nullable{System.Guid},System.Boolean,System.Boolean)">
+            <summary>Administration edit — re-points the target (the business's documented path for resolving Accounting's provisional status) without creating a second requirement row.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeAssignmentRule">
              <summary>
@@ -2421,6 +3091,14 @@
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy.WarningThresholdPercent">
             <summary>Pre-breach warning threshold in percent of the target elapsed, mirroring <see cref="P:TigerCS.Domain.Modules.SlaAndEscalation.SlaPolicy.WarningThresholdPercent"/>. Null = use the escalation configuration's default (phase 5).</summary>
         </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy.Update(TigerCS.Domain.Modules.WorkflowConfiguration.SlaTriggerType,TigerCS.Domain.Modules.WorkflowConfiguration.SlaDurationUnit,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.Int32},System.Boolean,System.Nullable{TigerCS.Domain.Modules.SlaAndEscalation.SlaClockBasis},System.Nullable{System.Boolean},System.Nullable{System.Boolean},System.Nullable{System.Decimal},System.Boolean)">
+            <summary>
+            Administration edit of the existing, confirmed SLA values of this
+            (request type, priority) row — the same validation as construction.
+            No new SLA rule is introduced here; the tri-state pause flags keep
+            their "null = not yet decided" meaning.
+            </summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.SlaDurationUnit">
              <summary>
              The unit a <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeSlaPolicy"/>'s duration values are
@@ -2470,10 +3148,42 @@
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.SlaTriggerType.PrerequisitesCompleted">
             <summary>The clock starts once prerequisites are satisfied (Registration / Register Unit: 1–3 days "when everything is OK").</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow">
+             <summary>
+             The LOGICAL workflow an administrator names and a <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType"/>
+             selects (Administration / Workflow Designer phase) — e.g. "Send Receipts
+             Workflow". It carries identity only; the actual step sequence lives in
+             its numbered, immutable-once-published versions
+             (<see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate"/> rows sharing this <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow.WorkflowId"/>).
+            
+             <para>
+             At most one version of a workflow is <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionStatus.Published"/>
+             at a time (enforced by a filtered unique index): that is the version new
+             tickets are pinned to. Earlier published versions become
+             <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionStatus.Historical"/> and remain readable forever,
+             because tickets created under them keep referencing them. Nothing here is
+             ever physically deleted once referenced — deactivation is the only
+             retirement mechanism.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow.Code">
+            <summary>Stable machine identifier (e.g. "STANDARD") — seeds and version codes derive from it; never shown to management as the workflow's name.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow.CodeFromName(System.String)">
+            <summary>
+            Derives a stable code from a management-facing name ("Send Receipts
+            Workflow" → "SEND-RECEIPTS-WORKFLOW"), truncated to
+            <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow.CodeMaxLength"/>. Uniqueness is the caller's job (it appends
+            a numeric suffix on collision).
+            </summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowCapabilities">
             <summary>
             The effective lifecycle capabilities for tickets of one request type —
-            the template's capability flags combined with the request type's own,
+            the workflow VERSION's capability flags (for an existing ticket, the
+            version it is pinned to; for a new one, the request type's currently
+            Published version) combined with the request type's own,
             each gate an AND (a request type can only narrow what its template
             allows, never widen it). This is the single place the combination rule
             lives, so phase-2 transition enforcement and the Ticket Details action
@@ -2488,7 +3198,9 @@
         <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowCapabilities.#ctor(System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Boolean)">
             <summary>
             The effective lifecycle capabilities for tickets of one request type —
-            the template's capability flags combined with the request type's own,
+            the workflow VERSION's capability flags (for an existing ticket, the
+            version it is pinned to; for a new one, the request type's currently
+            Published version) combined with the request type's own,
             each gate an AND (a request type can only narrow what its template
             allows, never widen it). This is the single place the combination rule
             lives, so phase-2 transition enforcement and the Ticket Details action
@@ -2515,115 +3227,372 @@
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowCapabilities.CanChangePriority">
             <summary>Whether the agent may change priority away from the request type's default.</summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowConfigurationException">
+            <summary>Base of every workflow-configuration rule violation, so the API layer can map the family to one problem shape.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowConfigurationException.#ctor(System.String)">
+            <summary>Base of every workflow-configuration rule violation, so the API layer can map the family to one problem shape.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionNotEditableException">
+            <summary>A Published or Historical version was asked to change — versions are immutable after publication; create a new version instead.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionNotEditableException.#ctor(System.Int32,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionStatus)">
+            <summary>A Published or Historical version was asked to change — versions are immutable after publication; create a new version instead.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionInvalidException">
+            <summary>Publication was refused because the Draft is structurally invalid; <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionInvalidException.Issues"/> lists every problem in management-readable wording.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionInvalidException.#ctor(System.Int32,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowValidationIssue})">
+            <summary>Publication was refused because the Draft is structurally invalid; <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionInvalidException.Issues"/> lists every problem in management-readable wording.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepNotFoundException">
+            <summary>A step id did not belong to the version being edited.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepNotFoundException.#ctor(System.Int32,System.Int32)">
+            <summary>A step id did not belong to the version being edited.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepConfigurationException">
+            <summary>A step edit contradicted its kind's configuration rules (e.g. an outcome branch on a step that carries no decision).</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepConfigurationException.#ctor(System.String)">
+            <summary>A step edit contradicted its kind's configuration rules (e.g. an outcome branch on a step that carries no decision).</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind">
              <summary>
-             The conceptual step kinds a <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep"/> can carry.
+             The controlled step kinds a <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep"/> can carry.
             
              <para>
              <b>Deliberately not a second <c>TicketStatus</c>.</b> The values that
              correspond to lifecycle states (<see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Created"/>, <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.InProgress"/>,
              <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.PendingCustomer"/>, <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.PendingInternal"/>,
              <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Resolved"/>, <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Closed"/>) describe which existing
-             <c>TicketStatus</c>/lifecycle event a step maps onto; the three that do
+             <c>TicketStatus</c>/lifecycle event a step maps onto; the ones that do
              not (<see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Assigned"/> — the assignment dimension;
              <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Review"/>/<see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval"/> — the approval
-             concept) are workflow-step concepts realized as assignment/approval
-             records over the unchanged status machine, per the phase decision to
-             prefer approval records over new <c>TicketStatus</c> values. Nothing in
-             this enum is written to <c>Tickets.TicketStatus</c>.
+             concept; <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Prerequisite"/>/<see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.MaintenanceDependency"/> —
+             the phase-3 typed <c>TicketWorkflowEvents</c>) are workflow-step concepts
+             realized as assignment/approval/pending/event records over the unchanged
+             status machine. Nothing in this enum is written to
+             <c>Tickets.TicketStatus</c>, and the Workflow Designer offers exactly
+             this closed set — never a free-text or scripted step.
              </para>
              </summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Created">
-            <summary>Ticket created — maps to <c>TicketStatus.Open</c>.</summary>
+            <summary>Ticket created (the Start step) — maps to <c>TicketStatus.Open</c>.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Assigned">
-            <summary>Assignment to a department/employee — the assignment dimension, not a status value.</summary>
+            <summary>Assignment to a department queue / employee — the assignment dimension, governed by the existing assignment rules, not a status value.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Review">
             <summary>The responsible team reviews the request before work/approval — an approval-flow concept (Phase 3), not a status value.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval">
-            <summary>Waiting on a configured approver (e.g. Accounting for Send Receipts, Customer Service for Handover) — an approval-record concept (Phase 3), not a status value.</summary>
+            <summary>Waiting on a configured approver — an approval-record concept (Phase 3), not a status value. Carries a controlled <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType"/> and Approved/Rejected outcome branches.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.InProgress">
-            <summary>Active work — maps to <c>TicketStatus.InProgress</c>.</summary>
+            <summary>Active work by the responsible department — maps to <c>TicketStatus.InProgress</c>.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.PendingCustomer">
-            <summary>Waiting on the customer (payment, documents, response) — maps to <c>TicketStatus.PendingCustomer</c>.</summary>
+            <summary>Waiting on the customer (payment, documents, response) — maps to <c>TicketStatus.PendingCustomer</c> with a structured pending record.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.PendingInternal">
-            <summary>Waiting on another internal department or an external party — maps to <c>TicketStatus.PendingThirdParty</c>.</summary>
+            <summary>Waiting on another internal department or an external party — maps to <c>TicketStatus.PendingThirdParty</c> with a structured pending record.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Resolved">
             <summary>The responsible team considers its work completed — maps to <c>TicketStatus.Resolved</c>.</summary>
         </member>
         <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Closed">
-            <summary>Customer Service considers the case completed — maps to <c>TicketStatus.Closed</c>.</summary>
+            <summary>Customer Service considers the case completed — maps to <c>TicketStatus.Closed</c>. Always the last step.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Prerequisite">
+            <summary>Prerequisites must be satisfied before work proceeds (Registration / Register Unit) — anchored to the phase-3 <c>PrerequisitesCompleted</c> typed event; no duration or approval is invented.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.MaintenanceDependency">
+            <summary>A maintenance dependency that may or may not be required (Handover) — anchored to the phase-3 <c>MaintenanceRequired</c> / <c>MaintenanceNotRequired</c> / <c>MaintenanceCompleted</c> typed events.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo">
+            <summary>
+            Management-facing descriptions of every supported step kind — the single
+            catalog the Workflow Designer, its validation messages and the API's
+            step-type list all read, so a kind can never be offered in one place and
+            rejected in another.
+            </summary>
+            <param name="Kind">The enum value.</param>
+            <param name="Label">Short name shown in the designer ("Approval").</param>
+            <param name="Description">One-sentence explanation for Customer Service management.</param>
+            <param name="RequiresApprovalType">True when the step must carry a controlled <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType"/>.</param>
+            <param name="SupportsOutcomeBranches">True when the step may configure Approved/Rejected targets.</param>
+            <param name="IsStart">True for the mandatory first step.</param>
+            <param name="IsTerminal">True for the mandatory last step.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.#ctor(TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind,System.String,System.String,System.Boolean,System.Boolean,System.Boolean,System.Boolean)">
+            <summary>
+            Management-facing descriptions of every supported step kind — the single
+            catalog the Workflow Designer, its validation messages and the API's
+            step-type list all read, so a kind can never be offered in one place and
+            rejected in another.
+            </summary>
+            <param name="Kind">The enum value.</param>
+            <param name="Label">Short name shown in the designer ("Approval").</param>
+            <param name="Description">One-sentence explanation for Customer Service management.</param>
+            <param name="RequiresApprovalType">True when the step must carry a controlled <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType"/>.</param>
+            <param name="SupportsOutcomeBranches">True when the step may configure Approved/Rejected targets.</param>
+            <param name="IsStart">True for the mandatory first step.</param>
+            <param name="IsTerminal">True for the mandatory last step.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.Kind">
+            <summary>The enum value.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.Label">
+            <summary>Short name shown in the designer ("Approval").</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.Description">
+            <summary>One-sentence explanation for Customer Service management.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.RequiresApprovalType">
+            <summary>True when the step must carry a controlled <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType"/>.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.SupportsOutcomeBranches">
+            <summary>True when the step may configure Approved/Rejected targets.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.IsStart">
+            <summary>True for the mandatory first step.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKindInfo.IsTerminal">
+            <summary>True for the mandatory last step.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepOutcome">
+            <summary>
+            The controlled outcomes a step can branch on. Only decision-carrying
+            steps (<see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval"/>) may configure
+            them; every other step simply proceeds to the next step in sequence.
+            Deliberately a closed enum — never a free-text condition, expression or
+            script.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepOutcome.Approved">
+            <summary>The approval was granted (the phase-3 <c>ApprovalReceived</c> / <c>CustomerServiceApproved</c> events).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepOutcome.Rejected">
+            <summary>The approval was rejected (the phase-3 <c>ApprovalRejected</c> event).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepTransition">
+            <summary>
+            One configured outcome → target-step edge of a decision step, within
+            the same workflow version. Targets are object references (not stored
+            sequences) so reordering a Draft never silently re-points a branch, and
+            copying a version into a new Draft re-links by position.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepTransition.Step">
+            <summary>Navigation to the owning (source) step — set by that step's own configuration method, never independently.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepTransition.TargetStep">
+            <summary>Navigation to the step this outcome leads to.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate">
              <summary>
-             A reusable workflow pattern a <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType"/> selects — never a
-             per-request-type hard-coded flow. Three are seeded initially (Workflow/SLA
-             Configuration phase 1): Standard (A), With Pending (B), With Approval (C).
+             One VERSION of a logical <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.Workflow"/> — the table that was
+             "WorkflowTemplates" in Workflow/SLA Configuration phase 1, evolved in
+             place (Administration / Workflow Designer phase) rather than duplicated:
+             every pre-versioning template became version 1, Published, of a
+             same-named workflow, and the three seeded patterns (Standard, With
+             Pending, With Approval) still exist exactly as before.
             
              <para>
-             <b>A template configures which of the existing lifecycle's transitions and
+             <b>Immutable after publication.</b> Steps, transitions, capability flags,
+             name and description can only change while <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.Status"/> is
+             <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionStatus.Draft"/>; every mutator calls
+             <see cref="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.EnsureDraft"/>. A change to a published workflow is always a
+             new version: existing tickets keep the exact version they were pinned to
+             (<c>Tickets.WorkflowTemplateId</c>) and only tickets created after the
+             next publication use the new one.
+             </para>
+            
+             <para>
+             <b>A version configures which of the existing lifecycle's transitions and
              actions are available; it does not define a new lifecycle.</b> The
-             capability flags below gate the existing <c>TicketStatus</c> sub-machine
-             (<c>Ticket.ChangeStatus</c>) and the approval concept: a template with
-             <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AllowsPendingCustomer"/> false makes
-             <c>InProgress → PendingCustomer</c> unavailable for request types using
-             it (enforcement is phase 2); <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.RequiresApproval"/> marks the flow
-             as carrying an approval stage realized as approval records (phase 3), not
-             as new <c>TicketStatus</c> values. The ordered
-             <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep"/> rows carry the same flow as displayable
-             configuration for the workflow timeline/current-step UI.
+             capability flags gate the existing <c>TicketStatus</c> sub-machine
+             (<c>Ticket.ChangeStatus</c>) and the approval concept exactly as in
+             phases 1–3; the ordered steps and their outcome branches are the
+             structured definition the next runtime increment consumes. Publish-time
+             validation (<see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionValidator"/>) guarantees the
+             structure is sound before any ticket can be pinned to it.
              </para>
              </summary>
         </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.WorkflowId">
+            <summary>The logical workflow this version belongs to.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.VersionNumber">
+            <summary>1-based, unique per workflow, never reused.</summary>
+        </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.Code">
-            <summary>Stable machine identifier (e.g. "STANDARD") — seed data and tests reference templates by this, never by generated id.</summary>
+            <summary>Stable machine identifier (e.g. "STANDARD", "STANDARD-V2") — seed data and tests reference versions by this, never by generated id.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AllowsPendingCustomer">
-            <summary>Whether flows on this template may use <c>TicketStatus.PendingCustomer</c> at all. A request type further restricts via <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.AllowPendingCustomer"/> — see <see cref="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowCapabilities.Resolve(TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate,TigerCS.Domain.Modules.WorkflowConfiguration.RequestType)"/>.</summary>
+            <summary>Whether flows on this version may use <c>TicketStatus.PendingCustomer</c> at all. A request type further restricts via <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.RequestType.AllowPendingCustomer"/> — see <see cref="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowCapabilities.Resolve(TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate,TigerCS.Domain.Modules.WorkflowConfiguration.RequestType)"/>.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AllowsPendingInternal">
-            <summary>Whether flows on this template may use <c>TicketStatus.PendingThirdParty</c> (internal department / external party). Same further restriction as <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AllowsPendingCustomer"/>.</summary>
+            <summary>Whether flows on this version may use <c>TicketStatus.PendingThirdParty</c> (internal department / external party). Same further restriction as <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AllowsPendingCustomer"/>.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.RequiresApproval">
-            <summary>Whether this flow carries an approval stage (e.g. Accounting approval for Send Receipts, Customer Service approval for Handover) — approval records over the unchanged status machine, phase 3.</summary>
+            <summary>Whether this flow carries an approval stage — approval records over the unchanged status machine (phase 3).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.IsActive">
+            <summary>Kept from phase 1; a version is retired by becoming Historical, so this is informational only.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.CreatedByEmployeeId">
+            <summary>Null for versions created by the system (seed/backfill) — system actions carry no actor.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.PublishedByEmployeeId">
+            <summary>Null for versions published by the system (seed/backfill).</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.Steps">
-            <summary>The displayable step sequence, ordered by <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.Sequence"/>.</summary>
+            <summary>The step sequence, ordered by <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.Sequence"/>.</summary>
         </member>
-        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AddStep(System.Byte,System.String,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind,System.Boolean)">
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.#ctor(System.Int32,System.Int32,System.String,System.String,System.String,System.Boolean,System.Boolean,System.Boolean,System.DateTime,System.Nullable{System.Guid})">
+            <summary>Creates a new Draft version. Steps are added afterwards; <see cref="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.Publish(System.DateTime,System.Nullable{System.Guid})"/> validates the result.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.UpdateSettings(System.String,System.String,System.Boolean,System.Boolean,System.Boolean)">
+            <summary>Draft-only: name, description and the capability flags.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AddStep(System.Byte,System.String,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind,System.Boolean,System.Nullable{TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType})">
             <summary>
-            Appends the next step of the flow. Sequences must strictly increase so
-            the stored order is the display order and can never be ambiguous.
+            Appends a step at an explicit sequence (phase-1 signature, kept for
+            seeds and tests). Sequences must strictly increase so the stored order
+            is the flow order and can never be ambiguous.
             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AppendStep(System.String,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind,System.Boolean,System.Nullable{TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType})">
+            <summary>Appends a step after the current last one (the designer's "Add Step").</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.UpdateStep(System.Int32,System.String,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind,System.Boolean,System.Nullable{TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType})">
+            <summary>Draft-only: edits a step's name, kind, optionality and per-kind configuration. Changing the kind away from Approval drops its outcome branches.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.RemoveStep(System.Int32)">
+            <summary>Draft-only: removes a step, drops every branch pointing at it, and renumbers the remaining steps contiguously from 1.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.MoveStepUp(System.Int32)">
+            <summary>Draft-only: swaps the step with its predecessor. A no-op for the first step.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.MoveStepDown(System.Int32)">
+            <summary>Draft-only: swaps the step with its successor. A no-op for the last step.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.SetStepTransition(System.Int32,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepOutcome,System.Nullable{System.Int32})">
+            <summary>Draft-only: configures (or, with a null target, clears) where an outcome of a decision step leads. Both steps must belong to this version.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.CopyStepsFrom(TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate)">
+            <summary>
+            Draft-only: copies every step and outcome branch of another version
+            (the "Create New Version" action), re-linking branches by position so
+            the copy is structurally identical but independent.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.Validate">
+            <summary>Runs publish validation without changing anything — what the designer shows in its validation summary.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.Publish(System.DateTime,System.Nullable{System.Guid})">
+            <summary>
+            Draft → Published. Refuses (<see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionInvalidException"/>)
+            while any validation error remains. Capability flags are widened to
+            cover the steps actually present (a Pending Customer step implies
+            Pending Customer is allowed) so the flags and the designed flow can
+            never disagree at runtime. Marking the previously published version
+            Historical is the application service's job (it holds both rows).
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.PublishAsSeededBaseline(System.DateTime)">
+            <summary>
+            Stamps a pre-versioning template as version 1, Published, WITHOUT
+            publish validation — used only by the reference-data seed (and the
+            equivalent migration backfill) for the phase-1 templates that already
+            governed tickets before versioning existed. Their shared approval step
+            carries no approval type by design (the type came from the request
+            type's approval requirement), which today's stricter Draft validation
+            would reject; that historical configuration is preserved as-is, never
+            rewritten. Not reachable from any administration endpoint.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.MarkHistorical">
+            <summary>Published → Historical, when a newer version is published. Read-only either way; the version stays queryable forever.</summary>
         </member>
         <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep">
             <summary>
-            One displayable step of a <see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.WorkflowTemplate"/>'s flow —
-            configuration for the workflow timeline / "current workflow step" UI and,
-            for <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Review"/>/<see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval"/>
-            steps, the anchor the phase-3 approval records attach to. Steps never
-            drive the status machine themselves: <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind"/>'s
-            remarks explain the mapping onto the existing lifecycle.
+            One step of a workflow VERSION (<see cref="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.WorkflowTemplate"/>) — the
+            unit the Workflow Designer adds, edits, reorders and deletes while the
+            version is a Draft, and read-only configuration afterwards. It carries
+            the controlled step kind, the per-kind configuration the kind supports
+            (today: the approval type of an approval step) and, for decision steps,
+            the configured Approved/Rejected outcome branches. Steps never drive the
+            status machine themselves: <see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind"/>'s remarks
+            explain the mapping onto the existing lifecycle, and dynamic runtime
+            enforcement is the next increment.
             </summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.Sequence">
-            <summary>Display order within the template. Strictly increasing per template (enforced by <see cref="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate.AddStep(System.Byte,System.String,TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind,System.Boolean)"/> and a unique index).</summary>
+            <summary>Display/flow order within the version. Strictly increasing per version (unique index); the designer keeps it contiguous from 1.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.Name">
-            <summary>Human-readable step name shown in the timeline (e.g. "Waiting for Accounting Approval") — never a technical event name.</summary>
+            <summary>Human-readable step name shown in the designer and timeline (e.g. "Accounting Approval") — never a technical event name.</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.IsOptional">
-            <summary>True for steps a given ticket may skip entirely (e.g. the optional Pending Customer step of the With Pending template).</summary>
+            <summary>True for steps a given ticket may skip entirely (e.g. an optional Pending Customer step).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.ApprovalType">
+            <summary>
+            For <see cref="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval"/>: which controlled
+            approval this step waits for. Null only on pre-versioning (legacy) steps
+            whose shared template served several request types; publish validation
+            requires it on every new Draft.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.Transitions">
+            <summary>The configured outcome branches (decision steps only); an outcome with no branch falls through to the next step in sequence (Approved) or stays explicitly open (Rejected, per the phase-3 decision).</summary>
         </member>
         <member name="P:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep.WorkflowTemplate">
-            <summary>Navigation back to the owning template — set by the template's own <c>AddStep</c>, never independently.</summary>
+            <summary>Navigation back to the owning version — set by the version's own step methods, never independently.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionStatus">
+            <summary>
+            The lifecycle of one workflow version (<see cref="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate"/>):
+            <c>Draft → Published → Historical</c>, strictly forward. Only a Draft is
+            editable; a Published version is read-only and is what new tickets pin
+            to; a Historical version is read-only and kept because existing tickets
+            still reference it. There is no "back to draft" — a change is always a
+            new version.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowValidationSeverity.Error">
+            <summary>Blocks publication.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowValidationSeverity.Warning">
+            <summary>Shown in the designer; does not block publication.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowValidationIssue">
+            <summary>One publish-validation finding in management-readable wording; <paramref name="StepSequence"/> points at the offending step when there is one.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowValidationIssue.#ctor(TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowValidationSeverity,System.Nullable{System.Byte},System.String)">
+            <summary>One publish-validation finding in management-readable wording; <paramref name="StepSequence"/> points at the offending step when there is one.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionValidator">
+            <summary>
+            Structural publish validation for a workflow version — the rules a Draft
+            must satisfy before any ticket can be pinned to it. Every rule here is a
+            structural property of the controlled step model (start, terminal path,
+            reachability, branch targets, per-kind configuration); no business-
+            specific decision that has not been confirmed is encoded.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowVersionValidator.Reachable(System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplateStep})">
+            <summary>
+            The set of steps reachable from the first step: each non-terminal step
+            flows to the next in sequence (an Approval step's Approved branch
+            replaces that default when configured), and every configured branch
+            is an edge. A Rejected branch never counts as the way forward on its
+            own, but the step it points at is reachable.
+            </summary>
         </member>
     </members>
 </doc>

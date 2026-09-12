@@ -9,13 +9,18 @@
     --color-text-secondary: #66645F;
     --color-border: #E4E3DF;
     --color-gold: #e7b95e;
-    --color-gold-dark: #e7b95e;
+    --color-gold-dark: #daad55;
     --color-gold-pale: #f8f8f8;
     --color-critical: #B3261E;
     --color-critical-pale: #F8E6E4;
     --color-success: #3F6B4E;
     --color-success-pale: #E8EFE9;
     --color-note-bubble: #F1EFE7;
+    --color-ink: #1B2A3C;
+    --color-ink-tint: rgba(27, 42, 60, 0.08);
+    --color-ink-line: rgba(27, 42, 60, 0.22);
+    --color-gold-tint: rgba(231, 185, 94, 0.18);
+    --color-gold-line: #E9D9AF;
     --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
     --radius-sm: 5px;
     --radius-md: 6px;
@@ -110,6 +115,25 @@ table { border-collapse: collapse; width: 100%; }
 .badge-priority-critical { background: var(--color-critical-pale); color: var(--color-critical); border-color: #EBC5C1; }
 .badge-priority-high { background: #FBF1E4; color: #8A6A1E; border-color: #F0DDB8; }
 .badge-priority-medium, .badge-priority-low { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+/* An Unclassified ticket has no priority. Dashed, so it reads as "not judged
+   yet" rather than as a quiet tier alongside Medium and Low. */
+.badge-priority-none { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); border-style: dashed; }
+
+/* Pending human work, on any channel — its own scale, deliberately not reusing
+   the ticket-status colours: an interaction can be Completed here while its
+   ticket is still In Progress, and the two must not look like one thing. */
+.badge-handoff-waiting { background: #FBF1E4; color: #8A6A1E; border-color: #F0DDB8; }
+.badge-handoff-assigned { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-handoff-inprogress { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-handoff-completed { background: #EFEEEA; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-handoff-cancelled { background: transparent; color: var(--color-text-secondary); border-color: var(--color-border); border-style: dashed; }
+
+.inline-form { display: inline-block; margin: 0; }
+.inline-form--stacked { display: flex; gap: 6px; margin-top: 6px; }
+.inline-details { display: inline-block; }
+.inline-details > summary { list-style: none; cursor: pointer; }
+.inline-details > summary::-webkit-details-marker { display: none; }
+.col-actions { white-space: nowrap; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
 .badge-sla-running { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
 .badge-sla-met { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
@@ -222,16 +246,6 @@ table { border-collapse: collapse; width: 100%; }
 .alert-error { background: var(--color-critical-pale); border-color: #EBC5C1; color: var(--color-critical); }
 .alert-info { background: var(--color-gold-pale); border-color: #E9D9AF; color: var(--color-gold-dark); }
 .alert-success { background: var(--color-success-pale); border-color: #D3E2D8; color: var(--color-success); }
-
-/* ---------- Counters (small, secondary) ---------- */
-
-.stat-strip {
-  display: flex; flex-wrap: wrap; gap: var(--space-5); padding: var(--space-3) 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); font-size: 12px; color: var(--color-text-secondary);
-}
-.stat-strip strong { display: block; font-size: 18px; font-weight: 700; color: var(--color-text); line-height: 1.2; }
-.stat-strip .stat-open strong { color: var(--color-gold-dark); }
-.stat-strip .stat-breached strong { color: var(--color-critical); }
 
 /* ---------- Filters (a real GET form) ---------- */
 
@@ -346,6 +360,14 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 
 .form-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
 .checkbox-field { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--color-text); cursor: pointer; }
+.checkbox-field-login {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--color-text-login);
+    cursor: pointer;
+}
 .checkbox-field input { width: 15px; height: 15px; accent-color: var(--color-gold); }
 .link-muted { font-size: 12.5px; color: var(--color-text-secondary); }
 .link-muted:hover { color: var(--color-gold-dark); text-decoration: underline; }
@@ -396,6 +418,7 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-audit:checked ~ .tabs-body #panel-audit,
 #tab-details:checked ~ .tabs-body #panel-details,
 #tab-history:checked ~ .tabs-body #panel-history,
+#tab-conversations:checked ~ .tabs-body #panel-conversations,
 #tab-overview:checked ~ .tabs-body #panel-overview,
 #tab-contact:checked ~ .tabs-body #panel-contact,
 #tab-units:checked ~ .tabs-body #panel-units,
@@ -647,7 +670,6 @@ a.kpi-card:hover { border-color: var(--color-text-secondary); }
 }
 
 @media (max-width: 900px) {
-  .stat-strip { gap: var(--space-4); }
   .app-nav__list { padding: 0 var(--space-3); }
 }
 
@@ -658,4 +680,263 @@ a.kpi-card:hover { border-color: var(--color-text-secondary); }
   .login-corner { height: 220px; width: 100%; clip-path: none; }
   .page { padding: var(--space-3); }
   .disclosure__panel { position: fixed; left: var(--space-3); right: var(--space-3); top: auto; bottom: var(--space-3); width: auto; min-width: 0; }
+}
+
+/* ---------- Administration ----------
+   The management console shares the app shell and every primitive above
+   (page, panel, data-table, badge, btn, filter-bar, form-*). What follows
+   is only what the Administration area adds on top: a secondary nav bar,
+   area cards, version chips, the workflow designer's step rail, and the
+   grouped-form conventions every Add/Edit screen follows. */
+
+/* Secondary navigation: a slim bar under the primary nav, rendered by the
+   layout whenever the Administration nav item is active. */
+.admin-subnav { background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+.admin-subnav__inner {
+  display: flex; align-items: center; gap: var(--space-3); max-width: 1440px; margin: 0 auto;
+  padding: 0 var(--space-5); height: 44px; overflow-x: auto;
+}
+.admin-subnav__label {
+  flex: none; padding-right: var(--space-3); border-right: 1px solid var(--color-border);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-secondary); white-space: nowrap;
+}
+.admin-subnav__list { display: flex; align-items: center; gap: 4px; }
+.admin-subnav__link {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 var(--space-3);
+  border-radius: 999px; border: 1px solid transparent; font-size: 12.5px; font-weight: 600;
+  color: var(--color-text-secondary); white-space: nowrap;
+}
+.admin-subnav__link svg { width: 14px; height: 14px; flex: none; }
+.admin-subnav__link:hover { background: var(--color-bg); color: var(--color-text); }
+.admin-subnav__link.is-active { background: var(--color-ink); color: #FFFFFF; }
+.admin-subnav__link.is-active svg { color: var(--color-gold); }
+
+/* Page header additions shared by every admin screen. */
+.page-header__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); flex: none; flex-wrap: wrap; }
+.page-header__actions form { display: inline; }
+.page-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: 2px; }
+.page-title__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: 6px; font-size: 12.5px; color: var(--color-text-secondary); }
+.page-title__meta strong { color: var(--color-text); font-weight: 600; }
+.page-title--with-chip { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+/* Landing page: one card per management area. The whole card is the link;
+   the "Manage" control inside is presentational. */
+.admin-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-4); }
+.admin-card {
+  position: relative; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.admin-card::before {
+  content: ""; position: absolute; left: -1px; top: 12px; bottom: 12px; width: 3px; border-radius: 0 3px 3px 0;
+  background: transparent; transition: background .15s ease;
+}
+.admin-card:hover, .admin-card:focus-visible { border-color: var(--color-gold); box-shadow: 0 6px 18px rgba(28, 28, 26, 0.08); transform: translateY(-1px); }
+.admin-card:hover::before, .admin-card:focus-visible::before { background: var(--color-gold); }
+.admin-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.admin-card__icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none;
+  border-radius: var(--radius-md); background: var(--color-ink); color: var(--color-gold);
+}
+.admin-card__icon svg { width: 20px; height: 20px; }
+.admin-card__count { text-align: right; }
+.admin-card__count strong { display: block; font-size: 24px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.admin-card__count span { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-secondary); }
+.admin-card__title { font-size: 15.5px; font-weight: 700; }
+.admin-card__desc { font-size: 12.5px; color: var(--color-text-secondary); flex: 1; }
+.admin-card__footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--color-border); font-size: 12px; color: var(--color-text-secondary); }
+.admin-card:hover .admin-card__cta, .admin-card:focus-visible .admin-card__cta { background: var(--color-gold); border-color: var(--color-gold); color: #FFFFFF; }
+
+/* Two-column layouts: list + side form, designer + side panels. */
+.admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--space-4); align-items: start; }
+.admin-grid--list-form { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); }
+.admin-grid--designer { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); }
+.admin-grid__wide { grid-column: 1 / -1; }
+.admin-side { display: flex; flex-direction: column; gap: var(--space-4); position: sticky; top: var(--space-4); }
+.admin-stack { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.admin-grid > .panel, .admin-stack > .panel, .admin-side > .panel, .designer-side > .panel { margin-bottom: 0; }
+.admin-page .btn svg { width: 14px; height: 14px; flex: none; }
+.designer-side { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* Toolbar (a real GET form, same as the ticket queue). */
+.filter-bar__count { margin-left: auto; font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
+.filter-bar__count + .filter-bar__submit { margin-left: 0; }
+
+/* List tables. */
+.data-table .col-actions { text-align: right; width: 1%; }
+.data-table .col-num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table .cell-wrap { white-space: normal; min-width: 200px; }
+.data-table tbody tr.is-inactive .cell-primary { color: var(--color-text-secondary); }
+.chip-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.admin-actions { display: inline-flex; gap: var(--space-2); align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.admin-actions form { display: inline; }
+
+.empty-state__title { font-size: 13.5px; font-weight: 700; color: var(--color-text); }
+.empty-state .btn { margin-top: var(--space-2); }
+
+.panel__count { font-size: 11.5px; font-weight: 600; color: var(--color-text-secondary); margin-left: var(--space-2); }
+.panel__note { padding: var(--space-2) var(--space-4) var(--space-3); font-size: 12px; color: var(--color-text-secondary); }
+.panel__note--top { padding-top: var(--space-3); padding-bottom: 0; }
+.panel__footer--pager { border-top: 1px solid var(--color-border); }
+.panel__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); }
+.panel__actions form { display: inline; }
+.panel--danger { border-color: #EBC5C1; }
+.panel--danger .panel__header { border-bottom-color: #EBC5C1; background: var(--color-critical-pale); }
+.panel--danger .panel__title { color: var(--color-critical); }
+.panel--muted .panel__header { background: var(--color-bg); }
+
+/* Grouped forms: fieldsets with a small title, two-column rows that stack
+   on narrow widths, and one consistent action bar per form. */
+.admin-page .form-label { color: var(--color-text); }
+.admin-form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.admin-form--inline { flex-direction: row; align-items: flex-end; flex-wrap: wrap; }
+.admin-form--inline .form-group { flex: 1; min-width: 200px; }
+.admin-form .form-group { margin-bottom: 0; }
+.admin-form .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3) var(--space-4); align-items: start; margin-bottom: 0; }
+.admin-form .form-row--3 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.form-section { display: flex; flex-direction: column; gap: var(--space-3); border: 0; padding: 0; margin: 0; }
+.form-section + .form-section { padding-top: var(--space-3); border-top: 1px dashed var(--color-border); }
+.form-section__title { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); padding: 0; margin-bottom: var(--space-2); }
+.form-section__hint { font-size: 12px; color: var(--color-text-secondary); margin-top: calc(-1 * var(--space-2)); }
+.form-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
+.form-actions--split { justify-content: space-between; }
+.form-actions__note { font-size: 12px; color: var(--color-text-secondary); margin-right: auto; }
+.admin-form-panel .empty-state, .admin-form-panel .entry-list, .admin-form-panel .facts-panel { padding: var(--space-3) var(--space-4); }
+.admin-form-panel .facts-panel { border: 0; border-radius: 0; }
+.admin-form-panel .entry-list + .admin-form, .admin-form-panel .empty-state + .admin-form, .admin-form-panel .table-scroll + .admin-form { border-top: 1px solid var(--color-border); }
+.checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-2); }
+fieldset.form-group { border: 0; padding: 0; margin: 0; }
+fieldset.form-group legend { padding: 0; margin-bottom: var(--space-2); }
+.facts-panel--compact .facts-row { padding: var(--space-1) 0; }
+.facts-row dd .field-hint { font-weight: 400; }
+.facts-row--stack { flex-direction: column; align-items: flex-start; gap: 2px; }
+.facts-row--stack dd { text-align: left; font-weight: 400; }
+.alert a { text-decoration: underline; }
+.alert strong { font-weight: 700; }
+
+/* Status badges: one vocabulary across every admin list and detail. */
+.badge-active { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-active .badge-dot { background: var(--color-success); }
+.badge-inactive { background: #EFEEEA; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-inactive .badge-dot { background: var(--color-text-secondary); }
+.badge-neutral { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-warning { background: var(--color-critical-pale); color: var(--color-critical); border-color: #EBC5C1; }
+.badge-version-draft { background: var(--color-gold-tint); color: #8A6A1E; border-color: var(--color-gold-line); }
+.badge-version-draft .badge-dot { background: var(--color-gold); }
+.badge-version-published { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-version-published .badge-dot { background: var(--color-success); }
+.badge-version-historical { background: #EFEEEA; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-version-historical .badge-dot { background: var(--color-text-secondary); }
+a.badge:hover { text-decoration: underline; }
+
+/* Version chip: "V1" / "V2" / "V3" in the brand's ink + gold. */
+.version-tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.version-chip {
+  display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 30px; padding: 0 7px;
+  border-radius: var(--radius-sm); background: var(--color-ink); color: var(--color-gold);
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em; font-variant-numeric: tabular-nums;
+}
+.version-chip--lg { height: 32px; min-width: 44px; padding: 0 10px; font-size: 15px; }
+.version-chip--muted { background: #EFEEEA; color: var(--color-text-secondary); }
+
+/* Version list on a workflow's page: one row per version, accent by status. */
+.version-list { display: flex; flex-direction: column; }
+.version-card {
+  position: relative; display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: var(--space-4); align-items: center;
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5); border-bottom: 1px solid var(--color-border);
+}
+.version-card:last-child { border-bottom: 0; }
+.version-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; }
+.version-card--draft::before { background: var(--color-gold); }
+.version-card--published::before { background: var(--color-success); }
+.version-card--draft { background: var(--color-gold-tint); }
+.version-card__id { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.version-card__body { min-width: 0; }
+.version-card__name { font-size: 13.5px; font-weight: 700; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.version-card__meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); font-size: 12px; color: var(--color-text-secondary); margin-top: 3px; }
+.version-card__meta strong { color: var(--color-text); font-weight: 600; }
+.version-card__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+.version-card__actions form { display: inline; }
+.version-legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); font-size: 12px; color: var(--color-text-secondary); }
+.version-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Publish-readiness list on a Draft. */
+.validation-summary .validation-list { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.validation-item { display: flex; gap: var(--space-2); align-items: flex-start; font-size: 12.5px; line-height: 22px; }
+.validation-item .badge { flex: none; }
+.validation-item--error { color: var(--color-text); }
+
+/* Workflow Designer: steps as an ordered vertical rail. */
+.designer-steps { padding: var(--space-4); display: flex; flex-direction: column; }
+.designer-step {
+  position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--space-3); align-items: start;
+  padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface);
+}
+.designer-step + .designer-step { margin-top: var(--space-4); }
+.designer-step + .designer-step::before {
+  content: ""; position: absolute; left: calc(var(--space-4) + 15px); top: calc(-1 * var(--space-4) - 1px); height: var(--space-4); width: 2px;
+  background: var(--color-border);
+}
+.designer-step--editing { border-color: var(--color-gold); box-shadow: 0 0 0 3px var(--color-gold-tint); }
+.designer-step--readonly { background: var(--color-bg); }
+.designer-step__num {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--color-ink); color: #FFFFFF; font-weight: 700; font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.designer-step__body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.designer-step__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.designer-step__title { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; min-height: 32px; flex: 1; min-width: 200px; }
+.designer-step__name { font-size: 14px; font-weight: 700; }
+.designer-step__actions { display: flex; flex-wrap: nowrap; gap: var(--space-1); justify-content: flex-end; align-items: center; flex: none; }
+.designer-step__actions form { display: inline; }
+.designer-step__actions .btn svg { width: 14px; height: 14px; }
+.designer-edit-form { padding: var(--space-3) 0 0; border-top: 1px dashed var(--color-border); }
+.designer-edit-form .form-actions { border-top: 0; padding-top: 0; }
+
+/* Step-type badges keyed by WorkflowStepKind. */
+.badge-kind { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-kind-created { background: var(--color-gold-tint); color: #8A6A1E; border-color: var(--color-gold-line); }
+.badge-kind-inprogress, .badge-kind-resolved { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-kind-waitingforapproval, .badge-kind-review { background: var(--color-ink-tint); color: var(--color-ink); border-color: var(--color-ink-line); }
+.badge-kind-closed { background: var(--color-ink); color: #FFFFFF; border-color: var(--color-ink); }
+.badge-approval-type { background: var(--color-surface); color: var(--color-ink); border-color: var(--color-ink-line); }
+
+/* Approval branches: Approved / Rejected outcomes and where each one leads. */
+.designer-step__branches {
+  display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+  background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+}
+.designer-step__branches-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.designer-branch { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; font-size: 12.5px; }
+.designer-branch__outcome { min-width: 84px; }
+.badge-outcome-approved { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-outcome-rejected { background: var(--color-critical-pale); color: var(--color-critical); border-color: #EBC5C1; }
+.designer-branch__arrow { color: var(--color-text-secondary); display: inline-flex; }
+.designer-branch__arrow svg { width: 14px; height: 14px; }
+.designer-branch__target { font-weight: 600; }
+.designer-branch__target--default { font-weight: 400; color: var(--color-text-secondary); font-style: italic; }
+.designer-branch__form { display: inline-flex; gap: var(--space-1); align-items: center; margin-left: auto; }
+.designer-branch__form .field-select { height: 28px; font-size: 12px; }
+
+/* Read-only notice on a Published/Historical version. */
+.alert-info { background: var(--color-ink-tint); color: var(--color-ink); border: 1px solid var(--color-ink-line); }
+.alert-lock svg { color: var(--color-ink); }
+
+@media (max-width: 1180px) {
+  .admin-side { position: static; }
+}
+
+@media (max-width: 900px) {
+  .admin-grid--list-form, .admin-grid--designer { grid-template-columns: 1fr; }
+  .admin-subnav__inner { padding: 0 var(--space-3); }
+}
+
+@media (max-width: 720px) {
+  .admin-subnav__label { display: none; }
+  .page-header { flex-direction: column; }
+  .page-header__actions { justify-content: flex-start; }
+  .designer-step__actions { justify-content: flex-start; flex-wrap: wrap; }
+  .version-card { grid-template-columns: 64px minmax(0, 1fr); }
+  .version-card__actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .designer-branch__form { margin-left: 0; width: 100%; }
 }

@@ -34,17 +34,51 @@
     });
   });
 
-  // Filter forms: auto-submit on select change, so a mouse/keyboard user
-  // doesn't need to also press the Apply button. The button still works
+  // Filter forms: auto-submit on select/checkbox change, so a mouse/keyboard
+  // user doesn't need to also press the Apply button. The button still works
   // (and is the only way to apply filters) without this script. Applies to
-  // any select marked data-autosubmit (the ticket queue's filters, the
-  // customer workspace's unit filter).
-  document.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
+  // any select or checkbox marked data-autosubmit (the ticket queue's
+  // filters, the customer workspace's unit filter, the admin list toolbars).
+  document.querySelectorAll("select[data-autosubmit], input[type=checkbox][data-autosubmit]").forEach(function (el) {
     el.addEventListener("change", function () {
       if (el.form) {
         el.form.requestSubmit();
       }
     });
+  });
+
+  // Confirmation before a deactivation/archive/delete/publish action:
+  // forms marked data-confirm ask first. Without JS the form submits
+  // directly — the Api still enforces every rule server-side.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    var message = form.getAttribute("data-confirm");
+    if (message && !window.confirm(message)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
+
+  // New Ticket Step 1: the phone field's "required" state follows the
+  // selected channel's own configuration (each option carries the
+  // channel's RequiresPhone flag from Administration → Channels). Without
+  // JS the server-rendered state stands, and the PageModel and Api enforce
+  // the same rule regardless of what the browser did.
+  document.querySelectorAll("form[data-channel-form]").forEach(function (form) {
+    var select = form.querySelector("[data-channel-select]");
+    var phone = form.querySelector("[data-phone-input]");
+    var hint = form.querySelector("[data-phone-optional-hint]");
+    if (!select || !phone) return;
+    var apply = function () {
+      var option = select.options[select.selectedIndex];
+      var requiresPhone = !option || option.getAttribute("data-requires-phone") !== "false";
+      phone.required = requiresPhone;
+      phone.setAttribute("aria-required", requiresPhone ? "true" : "false");
+      if (hint) hint.hidden = requiresPhone;
+    };
+    select.addEventListener("change", apply);
+    apply();
   });
 
   // Prevent duplicate submission: disable a form's submit button(s) the

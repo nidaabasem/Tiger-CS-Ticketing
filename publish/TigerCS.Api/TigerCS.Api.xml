@@ -4,6 +4,225 @@
         <name>TigerCS.Api</name>
     </assembly>
     <members>
+        <member name="T:TigerCS.Api.Controllers.AdminChannelsController">
+            <summary>Channel administration (Admin → Configuration → Channels) — System Administrator only. Channels are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminChannelsController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminChannelAppService)">
+            <summary>Channel administration (Admin → Configuration → Channels) — System Administrator only. Channels are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminChannelsController.List(System.Boolean,System.Threading.CancellationToken)">
+            <summary>Every channel, ordered by display order then name, with its history reference count.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminChannelsController.Get(System.Byte,System.Threading.CancellationToken)">
+            <summary>One channel.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminChannelsController.Create(TigerCS.Application.Modules.Administration.Dto.SaveChannelRequestDto,System.Threading.CancellationToken)">
+            <summary>Adds a channel. Code must be unique.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminChannelsController.Update(System.Byte,TigerCS.Application.Modules.Administration.Dto.SaveChannelRequestDto,System.Threading.CancellationToken)">
+            <summary>Edits a channel. Historical intake records and interactions keep referencing it by id, so they display the new name.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminChannelsController.SetActivation(System.Byte,TigerCS.Application.Modules.Administration.Dto.SetActiveRequestDto,System.Threading.CancellationToken)">
+            <summary>Activate/deactivate — channels are never deleted; an inactive channel only disappears from new-ticket selection.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AdminControllerBase">
+            <summary>
+            Shared plumbing of every Administration controller: the SystemAdministrator
+            policy on the whole class (backend enforcement — the Web only hides the
+            menu), the caller identity, and the one mapping from
+            <see cref="T:TigerCS.Application.Modules.Administration.Dto.AdminOutcome"/> to HTTP problem responses.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AdminDepartmentsController">
+            <summary>Department administration — System Administrator only. Departments are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminDepartmentAppService)">
+            <summary>Department administration — System Administrator only. Departments are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.List(System.Boolean,System.Threading.CancellationToken)">
+            <summary>Every department with member, request-type and ticket-reference counts (inactive included by default).</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.Get(System.Int32,System.Threading.CancellationToken)">
+            <summary>One department with its members.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.Create(TigerCS.Application.Modules.Administration.Dto.SaveDepartmentRequestDto,System.Threading.CancellationToken)">
+            <summary>Creates a department (name and code must be unique).</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.Update(System.Int32,TigerCS.Application.Modules.Administration.Dto.SaveDepartmentRequestDto,System.Threading.CancellationToken)">
+            <summary>Renames a department / changes its code; historical tickets keep the same department id.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.SetActivation(System.Int32,TigerCS.Application.Modules.Administration.Dto.SetActiveRequestDto,System.Threading.CancellationToken)">
+            <summary>Activate/deactivate — an inactive department is never offered for new work and is never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.AddMember(System.Int32,TigerCS.Application.Modules.Administration.Dto.AddDepartmentMemberRequestDto,System.Threading.CancellationToken)">
+            <summary>Adds an existing user to the department using the existing membership model.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminDepartmentsController.RemoveMember(System.Int32,System.Guid,System.Threading.CancellationToken)">
+            <summary>Ends a member's department membership.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AdminGenesysController">
+             <summary>
+             Genesys routing configuration — System Administrator only.
+            
+             <para>
+             This is where the Genesys Queue → Department mapping is entered — and
+             only that: a queue says which department an inquiry belongs to, never
+             what the customer wants, so there is no queue → category mapping and no
+             default category anywhere. Nothing is seeded:
+             the real Genesys queue ids are not known to this repository, and none is
+             invented — an administrator enters them once the Genesys team supplies
+             them. Mappings are deactivated, never deleted, so an inquiry that arrived
+             under one stays explainable.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminGenesysController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminGenesysRoutingAppService)">
+             <summary>
+             Genesys routing configuration — System Administrator only.
+            
+             <para>
+             This is where the Genesys Queue → Department mapping is entered — and
+             only that: a queue says which department an inquiry belongs to, never
+             what the customer wants, so there is no queue → category mapping and no
+             default category anywhere. Nothing is seeded:
+             the real Genesys queue ids are not known to this repository, and none is
+             invented — an administrator enters them once the Genesys team supplies
+             them. Mappings are deactivated, never deleted, so an inquiry that arrived
+             under one stays explainable.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminGenesysController.ListQueueMappings(System.Boolean,System.Threading.CancellationToken)">
+            <summary>Every configured Genesys queue → department mapping.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminGenesysController.CreateQueueMapping(TigerCS.Application.Modules.Administration.Dto.SaveGenesysQueueMappingRequestDto,System.Threading.CancellationToken)">
+            <summary>Maps a Genesys queue to a department. The queue id must be unique — re-pointing an existing queue is an edit, not a second mapping.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminGenesysController.UpdateQueueMapping(System.Int32,TigerCS.Application.Modules.Administration.Dto.SaveGenesysQueueMappingRequestDto,System.Threading.CancellationToken)">
+            <summary>Re-points a queue at another department, renames it, or activates/deactivates it. The queue id itself is the identity and is never edited.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AdminRequestTypesController">
+            <summary>Request Type administration — System Administrator only. Request types are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminRequestTypeAppService)">
+            <summary>Request Type administration — System Administrator only. Request types are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.List(System.Nullable{System.Int32},System.Boolean,System.Threading.CancellationToken)">
+            <summary>Every request type, optionally scoped to one department, with its workflow, assignment summary and ticket count.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.Get(System.Int32,System.Threading.CancellationToken)">
+            <summary>One request type with its workflow link, assignment rule, approval requirements and SLA rows.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.Create(TigerCS.Application.Modules.Administration.Dto.SaveRequestTypeRequestDto,System.Threading.CancellationToken)">
+            <summary>Creates a request type in a department, following a workflow that already has a published version.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.Update(System.Int32,TigerCS.Application.Modules.Administration.Dto.SaveRequestTypeRequestDto,System.Threading.CancellationToken)">
+            <summary>Edits a request type; the department is immutable once tickets reference the request type.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.SetActivation(System.Int32,TigerCS.Application.Modules.Administration.Dto.SetActiveRequestDto,System.Threading.CancellationToken)">
+            <summary>Activate/deactivate — request types are never deleted; historical tickets keep them.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.SaveAssignmentRule(System.Int32,TigerCS.Application.Modules.Administration.Dto.SaveAssignmentRuleRequestDto,System.Threading.CancellationToken)">
+            <summary>Replaces the request type's assignment configuration (Department Queue / Specific Employee / Team).</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.SaveApprovalRequirement(System.Int32,TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType,TigerCS.Application.Modules.Administration.Dto.SaveApprovalRequirementRequestDto,System.Threading.CancellationToken)">
+            <summary>Creates or edits the requirement for one controlled approval type.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.SaveSlaPolicy(System.Int32,System.Byte,TigerCS.Application.Modules.Administration.Dto.SaveSlaPolicyRequestDto,System.Threading.CancellationToken)">
+            <summary>Creates or edits the SLA row for one (request type, priority) pair — existing confirmed values only.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AdminUsersController">
+            <summary>User administration — System Administrator only. Users are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminUserAppService)">
+            <summary>User administration — System Administrator only. Users are deactivated, never deleted.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.List(System.String,System.Boolean,System.Int32,System.Int32,System.Threading.CancellationToken)">
+            <summary>Lists users with optional search (display name, user name, e-mail) and inactive users included on request.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.Get(System.Guid,System.Threading.CancellationToken)">
+            <summary>One user with roles, department memberships and whether ticket history references them.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.Create(TigerCS.Application.Modules.Administration.Dto.CreateUserRequestDto,System.Threading.CancellationToken)">
+            <summary>Creates the Identity account (Identity validates the initial password) and the employee profile.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.UpdateProfile(System.Guid,TigerCS.Application.Modules.Administration.Dto.UpdateUserProfileRequestDto,System.Threading.CancellationToken)">
+            <summary>Edits the supported profile fields (display name, e-mail, Geyness-staff flag).</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.SetActivation(System.Guid,TigerCS.Application.Modules.Administration.Dto.SetActiveRequestDto,System.Threading.CancellationToken)">
+            <summary>Activate/deactivate — the existing last-active-administrator guard applies.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.SetRoles(System.Guid,TigerCS.Application.Modules.Administration.Dto.SetUserRolesRequestDto,System.Threading.CancellationToken)">
+            <summary>Replaces the user's roles with exactly the given fixed roles.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.AddDepartment(System.Guid,TigerCS.Application.Modules.Administration.Dto.AddDepartmentMembershipRequestDto,System.Threading.CancellationToken)">
+            <summary>Adds a department membership using the existing membership model.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.RemoveDepartment(System.Guid,System.Int32,System.Threading.CancellationToken)">
+            <summary>Ends a department membership; the primary membership cannot be removed while others remain.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AdminWorkflowsController">
+            <summary>
+            The Workflow Designer's API — System Administrator only. Logical
+            workflows, their versions, and the Draft-only editing operations; a
+            Published or Historical version answers every edit with 409.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminWorkflowAppService)">
+            <summary>
+            The Workflow Designer's API — System Administrator only. Logical
+            workflows, their versions, and the Draft-only editing operations; a
+            Published or Historical version answers every edit with 409.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.Catalog">
+            <summary>The controlled step types and approval types the designer may offer.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.List(System.Boolean,System.Threading.CancellationToken)">
+            <summary>Every workflow with its active and draft version numbers and usage counts.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.Get(System.Int32,System.Threading.CancellationToken)">
+            <summary>One workflow with every version (Draft / Active / Historical, ticket counts) and the request types using it.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.Create(TigerCS.Application.Modules.Administration.Dto.CreateWorkflowRequestDto,System.Threading.CancellationToken)">
+            <summary>Creates a workflow with a Draft version 1 pre-filled with the standard skeleton.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.Update(System.Int32,TigerCS.Application.Modules.Administration.Dto.UpdateWorkflowRequestDto,System.Threading.CancellationToken)">
+            <summary>Renames a workflow or changes its description.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.SetActivation(System.Int32,TigerCS.Application.Modules.Administration.Dto.SetActiveRequestDto,System.Threading.CancellationToken)">
+            <summary>Activate/deactivate a workflow; refused while active request types still use it.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.CreateVersion(System.Int32,System.Threading.CancellationToken)">
+            <summary>"Create New Version": a Draft copied from the Published version. 409 while a Draft already exists.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.GetVersion(System.Int32,System.Threading.CancellationToken)">
+            <summary>One version with its steps, branches and (for a Draft) the current validation summary.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.UpdateVersionSettings(System.Int32,TigerCS.Application.Modules.Administration.Dto.UpdateVersionSettingsRequestDto,System.Threading.CancellationToken)">
+            <summary>Draft only: name, description and capability flags of the version.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.AddStep(System.Int32,TigerCS.Application.Modules.Administration.Dto.SaveStepRequestDto,System.Threading.CancellationToken)">
+            <summary>Draft only: appends a step of a controlled type.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.UpdateStep(System.Int32,System.Int32,TigerCS.Application.Modules.Administration.Dto.SaveStepRequestDto,System.Threading.CancellationToken)">
+            <summary>Draft only: edits a step's name, type, optionality and approval type.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.RemoveStep(System.Int32,System.Int32,System.Threading.CancellationToken)">
+            <summary>Draft only: deletes a step and every branch pointing at it, renumbering the rest.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.MoveStep(System.Int32,System.Int32,TigerCS.Application.Modules.Administration.Dto.MoveStepRequestDto,System.Threading.CancellationToken)">
+            <summary>Draft only: moves a step one position up or down.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.SetTransition(System.Int32,System.Int32,TigerCS.Application.Modules.Administration.Dto.SetTransitionRequestDto,System.Threading.CancellationToken)">
+            <summary>Configures (or clears, with a null target) where an approval step's Approved/Rejected outcome leads.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.Publish(System.Int32,System.Threading.CancellationToken)">
+            <summary>Validates and publishes a Draft; the previously Published version becomes Historical. Existing tickets are untouched.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminWorkflowsController.DeleteDraft(System.Int32,System.Threading.CancellationToken)">
+            <summary>Deletes an unreferenced Draft. Published/Historical versions answer 409 — they are never deleted.</summary>
+        </member>
         <member name="T:TigerCS.Api.Controllers.AuthController">
             <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
         </member>
@@ -37,6 +256,25 @@
             unknown <c>departmentId</c>) returns an empty list, not an error —
             the caller decides how to present that.
             </summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.ChannelsController">
+            <summary>
+            The channel directory — what the Create Ticket wizard's Channel picker
+            reads, so no channel list is hard-coded in any UI. Any authenticated
+            staff member may view; management is under <c>api/admin/channels</c>.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.ChannelsController.#ctor(TigerCS.Application.Modules.Ticketing.Services.ChannelDirectoryAppService)">
+            <summary>
+            The channel directory — what the Create Ticket wizard's Channel picker
+            reads, so no channel list is hard-coded in any UI. Any authenticated
+            staff member may view; management is under <c>api/admin/channels</c>.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.ChannelsController.List(System.Boolean,System.Threading.CancellationToken)">
+            <summary>The configured channels, ordered by display order then name.</summary>
+            <param name="activeOnly">When true (the default), excludes deactivated channels — a new-ticket picker never offers those; false is for naming a channel a historical record references.</param>
+            <response code="200">The channel directory.</response>
         </member>
         <member name="T:TigerCS.Api.Controllers.CrmController">
              <summary>
@@ -306,6 +544,612 @@
             <response code="200">A page of department members, with the total count.</response>
             <response code="404">No such department.</response>
         </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysInquiryRequest">
+             <summary>
+             The <b>transport</b> shape of an inbound Genesys inquiry — the outermost
+             edge of the integration, and the only place a Genesys-facing wire format
+             is allowed to exist. Its whole job is to be mapped onto the normalized
+             <see cref="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysInquiryDto"/> the application layer understands, so no
+             domain or application code depends on how Genesys words anything.
+            
+             <para>
+             <b>This is TigerCS' contract, not a reproduction of Genesys'.</b> No
+             official Genesys webhook schema, event-topic vocabulary, authentication
+             mechanism or payload has been confirmed to this repository, so none is
+             invented here: this endpoint asks for exactly the facts Ticketing needs
+             and nothing more. In particular there is <b>no event field</b> — posting
+             this body means "create or reuse a ticket for this conversation", and
+             nothing else. A ringing call never reaches TigerCS. When the Genesys team supplies their real contract, the
+             adapter that translates it lives at this boundary — this record changes
+             or gains a sibling, and nothing behind it moves.
+             </para>
+             </summary>
+             <param name="ConversationId">Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</param>
+             <param name="Channel">Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</param>
+             <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id.</param>
+             <param name="ParticipantId">Genesys' customer-participant id, where available.</param>
+             <param name="CommunicationId">Genesys' communication id, where available.</param>
+             <param name="Direction">"Inbound"/"Outbound", where available.</param>
+             <param name="CustomerPhone">The customer's mobile number — what the existing TigerCS customer lookup searches with.</param>
+             <param name="CustomerName">The customer's name, where the channel collected one (e.g. the website chat form).</param>
+             <param name="CustomerEmail">The customer's email, where the channel collected one.</param>
+             <param name="CalledNumber">The Tiger number the customer dialed. Recorded, never used for routing.</param>
+             <param name="QueueId">The Genesys queue — resolved to a department via the configured queue mapping when the customer chose no department.</param>
+             <param name="QueueName">The queue's display name, where available.</param>
+             <param name="AgentId">The handling Genesys agent, where available.</param>
+             <param name="AgentName">The handling agent's display name, where available.</param>
+             <param name="StartedAtUtc">When the interaction started, UTC.</param>
+             <param name="DepartmentId">The department the customer explicitly selected (website chat). Wins over the queue mapping.</param>
+             <param name="DepartmentCode">The same explicit selection as a TigerCS department code, for a caller that knows codes rather than ids.</param>
+             <param name="TowerName">The tower/project the customer typed into the chat form, where collected.</param>
+             <param name="UnitNumber">The unit number the customer typed into the chat form, where collected.</param>
+             <param name="Subject">A short subject the channel collected, where available — becomes the ticket's request summary.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysInquiryRequest.#ctor(System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.String,System.Nullable{System.DateTime},System.Nullable{System.Int32},System.String,System.String,System.String,System.String)">
+             <summary>
+             The <b>transport</b> shape of an inbound Genesys inquiry — the outermost
+             edge of the integration, and the only place a Genesys-facing wire format
+             is allowed to exist. Its whole job is to be mapped onto the normalized
+             <see cref="T:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysInquiryDto"/> the application layer understands, so no
+             domain or application code depends on how Genesys words anything.
+            
+             <para>
+             <b>This is TigerCS' contract, not a reproduction of Genesys'.</b> No
+             official Genesys webhook schema, event-topic vocabulary, authentication
+             mechanism or payload has been confirmed to this repository, so none is
+             invented here: this endpoint asks for exactly the facts Ticketing needs
+             and nothing more. In particular there is <b>no event field</b> — posting
+             this body means "create or reuse a ticket for this conversation", and
+             nothing else. A ringing call never reaches TigerCS. When the Genesys team supplies their real contract, the
+             adapter that translates it lives at this boundary — this record changes
+             or gains a sibling, and nothing behind it moves.
+             </para>
+             </summary>
+             <param name="ConversationId">Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</param>
+             <param name="Channel">Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</param>
+             <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id.</param>
+             <param name="ParticipantId">Genesys' customer-participant id, where available.</param>
+             <param name="CommunicationId">Genesys' communication id, where available.</param>
+             <param name="Direction">"Inbound"/"Outbound", where available.</param>
+             <param name="CustomerPhone">The customer's mobile number — what the existing TigerCS customer lookup searches with.</param>
+             <param name="CustomerName">The customer's name, where the channel collected one (e.g. the website chat form).</param>
+             <param name="CustomerEmail">The customer's email, where the channel collected one.</param>
+             <param name="CalledNumber">The Tiger number the customer dialed. Recorded, never used for routing.</param>
+             <param name="QueueId">The Genesys queue — resolved to a department via the configured queue mapping when the customer chose no department.</param>
+             <param name="QueueName">The queue's display name, where available.</param>
+             <param name="AgentId">The handling Genesys agent, where available.</param>
+             <param name="AgentName">The handling agent's display name, where available.</param>
+             <param name="StartedAtUtc">When the interaction started, UTC.</param>
+             <param name="DepartmentId">The department the customer explicitly selected (website chat). Wins over the queue mapping.</param>
+             <param name="DepartmentCode">The same explicit selection as a TigerCS department code, for a caller that knows codes rather than ids.</param>
+             <param name="TowerName">The tower/project the customer typed into the chat form, where collected.</param>
+             <param name="UnitNumber">The unit number the customer typed into the chat form, where collected.</param>
+             <param name="Subject">A short subject the channel collected, where available — becomes the ticket's request summary.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.ConversationId">
+            <summary>Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.Channel">
+            <summary>Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.InteractionId">
+            <summary>Genesys' interaction id, where it differs from the conversation id.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.ParticipantId">
+            <summary>Genesys' customer-participant id, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CommunicationId">
+            <summary>Genesys' communication id, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.Direction">
+            <summary>"Inbound"/"Outbound", where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CustomerPhone">
+            <summary>The customer's mobile number — what the existing TigerCS customer lookup searches with.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CustomerName">
+            <summary>The customer's name, where the channel collected one (e.g. the website chat form).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CustomerEmail">
+            <summary>The customer's email, where the channel collected one.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CalledNumber">
+            <summary>The Tiger number the customer dialed. Recorded, never used for routing.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.QueueId">
+            <summary>The Genesys queue — resolved to a department via the configured queue mapping when the customer chose no department.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.QueueName">
+            <summary>The queue's display name, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.AgentId">
+            <summary>The handling Genesys agent, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.AgentName">
+            <summary>The handling agent's display name, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.StartedAtUtc">
+            <summary>When the interaction started, UTC.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.DepartmentId">
+            <summary>The department the customer explicitly selected (website chat). Wins over the queue mapping.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.DepartmentCode">
+            <summary>The same explicit selection as a TigerCS department code, for a caller that knows codes rather than ids.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.TowerName">
+            <summary>The tower/project the customer typed into the chat form, where collected.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.UnitNumber">
+            <summary>The unit number the customer typed into the chat form, where collected.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.Subject">
+            <summary>A short subject the channel collected, where available — becomes the ticket's request summary.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysConversationEndRequest">
+            <summary>The transport shape of a conversation-end report, with the transcript available up to that moment. See <see cref="T:TigerCS.Api.Controllers.GenesysInquiryRequest"/> for why this record exists at the edge.</summary>
+            <param name="ConversationId">Required. The conversation being ended — the id it was ingested under.</param>
+            <param name="EndedAtUtc">When it ended, UTC. The server's clock is used when absent.</param>
+            <param name="EndReason">Why it ended, as reported ("AgentDisconnect", "CustomerDisconnect", "Timeout", …).</param>
+            <param name="AgentId">The handling agent, where the end event names one.</param>
+            <param name="AgentName">The handling agent's display name.</param>
+            <param name="Transcript">The conversation's messages, in order. Absent/empty for a voice call.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysConversationEndRequest.#ctor(System.String,System.Nullable{System.DateTime},System.String,System.String,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Api.Controllers.GenesysTranscriptMessageRequest})">
+            <summary>The transport shape of a conversation-end report, with the transcript available up to that moment. See <see cref="T:TigerCS.Api.Controllers.GenesysInquiryRequest"/> for why this record exists at the edge.</summary>
+            <param name="ConversationId">Required. The conversation being ended — the id it was ingested under.</param>
+            <param name="EndedAtUtc">When it ended, UTC. The server's clock is used when absent.</param>
+            <param name="EndReason">Why it ended, as reported ("AgentDisconnect", "CustomerDisconnect", "Timeout", …).</param>
+            <param name="AgentId">The handling agent, where the end event names one.</param>
+            <param name="AgentName">The handling agent's display name.</param>
+            <param name="Transcript">The conversation's messages, in order. Absent/empty for a voice call.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndRequest.ConversationId">
+            <summary>Required. The conversation being ended — the id it was ingested under.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndRequest.EndedAtUtc">
+            <summary>When it ended, UTC. The server's clock is used when absent.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndRequest.EndReason">
+            <summary>Why it ended, as reported ("AgentDisconnect", "CustomerDisconnect", "Timeout", …).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndRequest.AgentId">
+            <summary>The handling agent, where the end event names one.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndRequest.AgentName">
+            <summary>The handling agent's display name.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndRequest.Transcript">
+            <summary>The conversation's messages, in order. Absent/empty for a voice call.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest">
+            <summary>One transcript message, at the transport edge.</summary>
+            <param name="Sender">Required. "Customer", "Agent" or "System" (case-insensitive).</param>
+            <param name="SentAtUtc">Required. When the message was sent, UTC.</param>
+            <param name="Body">Required. The message text, verbatim.</param>
+            <param name="SenderName">The sender's display name, where available.</param>
+            <param name="SenderId">The sender's Genesys participant/agent id, where available.</param>
+            <param name="ExternalMessageId">Genesys' own message id, where available.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.#ctor(System.String,System.DateTime,System.String,System.String,System.String,System.String)">
+            <summary>One transcript message, at the transport edge.</summary>
+            <param name="Sender">Required. "Customer", "Agent" or "System" (case-insensitive).</param>
+            <param name="SentAtUtc">Required. When the message was sent, UTC.</param>
+            <param name="Body">Required. The message text, verbatim.</param>
+            <param name="SenderName">The sender's display name, where available.</param>
+            <param name="SenderId">The sender's Genesys participant/agent id, where available.</param>
+            <param name="ExternalMessageId">Genesys' own message id, where available.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.Sender">
+            <summary>Required. "Customer", "Agent" or "System" (case-insensitive).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.SentAtUtc">
+            <summary>Required. When the message was sent, UTC.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.Body">
+            <summary>Required. The message text, verbatim.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.SenderName">
+            <summary>The sender's display name, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.SenderId">
+            <summary>The sender's Genesys participant/agent id, where available.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTranscriptMessageRequest.ExternalMessageId">
+            <summary>Genesys' own message id, where available.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse">
+            <summary>What the ingestion endpoint answers — always naming the ticket, so a retry and the original call are indistinguishable to the caller.</summary>
+            <param name="Outcome">"TicketCreated" or "AlreadyIngested".</param>
+            <param name="ConversationId">The conversation this refers to, echoed back.</param>
+            <param name="TicketId">The one ticket this conversation produced.</param>
+            <param name="TicketNumber">That ticket's human-facing number.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.#ctor(System.String,System.String,System.Int64,System.String)">
+            <summary>What the ingestion endpoint answers — always naming the ticket, so a retry and the original call are indistinguishable to the caller.</summary>
+            <param name="Outcome">"TicketCreated" or "AlreadyIngested".</param>
+            <param name="ConversationId">The conversation this refers to, echoed back.</param>
+            <param name="TicketId">The one ticket this conversation produced.</param>
+            <param name="TicketNumber">That ticket's human-facing number.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.Outcome">
+            <summary>"TicketCreated" or "AlreadyIngested".</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.ConversationId">
+            <summary>The conversation this refers to, echoed back.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.TicketId">
+            <summary>The one ticket this conversation produced.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysInquiryAcceptedResponse.TicketNumber">
+            <summary>That ticket's human-facing number.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysConversationEndResponse">
+            <summary>What the conversation-end endpoint answers. <paramref name="TicketStatus"/> is included deliberately: it shows that ending a conversation did NOT close the ticket.</summary>
+            <param name="Outcome">"Ended" or "AlreadyEnded".</param>
+            <param name="ConversationId">The conversation, echoed back.</param>
+            <param name="TicketId">The ticket the conversation belongs to.</param>
+            <param name="TicketNumber">That ticket's number.</param>
+            <param name="TicketStatus">The ticket's status — unchanged by the conversation ending.</param>
+            <param name="TranscriptMessageCount">How many transcript messages the interaction now holds.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysConversationEndResponse.#ctor(System.String,System.String,System.Nullable{System.Int64},System.String,System.String,System.Int32)">
+            <summary>What the conversation-end endpoint answers. <paramref name="TicketStatus"/> is included deliberately: it shows that ending a conversation did NOT close the ticket.</summary>
+            <param name="Outcome">"Ended" or "AlreadyEnded".</param>
+            <param name="ConversationId">The conversation, echoed back.</param>
+            <param name="TicketId">The ticket the conversation belongs to.</param>
+            <param name="TicketNumber">That ticket's number.</param>
+            <param name="TicketStatus">The ticket's status — unchanged by the conversation ending.</param>
+            <param name="TranscriptMessageCount">How many transcript messages the interaction now holds.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndResponse.Outcome">
+            <summary>"Ended" or "AlreadyEnded".</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndResponse.ConversationId">
+            <summary>The conversation, echoed back.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndResponse.TicketId">
+            <summary>The ticket the conversation belongs to.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndResponse.TicketNumber">
+            <summary>That ticket's number.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndResponse.TicketStatus">
+            <summary>The ticket's status — unchanged by the conversation ending.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndResponse.TranscriptMessageCount">
+            <summary>How many transcript messages the interaction now holds.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysTicketUpdateRequest">
+             <summary>
+             The one Genesys update body. Every part is optional and independently
+             idempotent — send only what changed, and resend freely.
+            
+             <para>
+             <b>Deliberately narrow.</b> There is no field for category, request type,
+             priority, status, owner, department, resolution or closure: Genesys owns
+             the conversation, TigerCS owns the ticket's business state, and a field
+             absent from this contract is one Genesys cannot reach.
+             </para>
+             </summary>
+             <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
+             <param name="AgentId">The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</param>
+             <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
+             <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
+             <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart)">
+             <summary>
+             The one Genesys update body. Every part is optional and independently
+             idempotent — send only what changed, and resend freely.
+            
+             <para>
+             <b>Deliberately narrow.</b> There is no field for category, request type,
+             priority, status, owner, department, resolution or closure: Genesys owns
+             the conversation, TigerCS owns the ticket's business state, and a field
+             absent from this contract is one Genesys cannot reach.
+             </para>
+             </summary>
+             <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
+             <param name="AgentId">The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</param>
+             <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
+             <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
+             <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.ConversationId">
+            <summary>Required. Must resolve to an interaction on the ticket in the route.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.AgentId">
+            <summary>The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.AgentName">
+            <summary>That agent's display name, same apply-if-absent rule.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.Ended">
+            <summary>Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.Handoff">
+            <summary>Set when the conversation needs a human agent, or when one has taken it.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysConversationEndPart">
+            <summary>The conversation has finished — for any reason: the agent ended it, the customer closed the browser, the connection dropped, Genesys timed it out.</summary>
+            <param name="EndedAtUtc">When it ended. Defaults to now.</param>
+            <param name="EndReason">Why, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout"). Free text — no vocabulary is confirmed.</param>
+            <param name="Transcript">The conversation in order, as far as available. Resending an already-stored transcript stores nothing twice.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysConversationEndPart.#ctor(System.Nullable{System.DateTime},System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Api.Controllers.GenesysTranscriptMessageRequest})">
+            <summary>The conversation has finished — for any reason: the agent ended it, the customer closed the browser, the connection dropped, Genesys timed it out.</summary>
+            <param name="EndedAtUtc">When it ended. Defaults to now.</param>
+            <param name="EndReason">Why, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout"). Free text — no vocabulary is confirmed.</param>
+            <param name="Transcript">The conversation in order, as far as available. Resending an already-stored transcript stores nothing twice.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndPart.EndedAtUtc">
+            <summary>When it ended. Defaults to now.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndPart.EndReason">
+            <summary>Why, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout"). Free text — no vocabulary is confirmed.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysConversationEndPart.Transcript">
+            <summary>The conversation in order, as far as available. Resending an already-stored transcript stores nothing twice.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysHandoffPart">
+            <summary>Human-agent state for the conversation, on any channel. A callback is one possible <paramref name="Mode"/>, never the concept.</summary>
+            <param name="Required">True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</param>
+            <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</param>
+            <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
+            <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
+            <param name="WorkItemId">Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</param>
+            <param name="AssignedAgentId">Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysHandoffPart.#ctor(System.Boolean,System.Boolean,System.String,System.String,System.String,System.String)">
+            <summary>Human-agent state for the conversation, on any channel. A callback is one possible <paramref name="Mode"/>, never the concept.</summary>
+            <param name="Required">True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</param>
+            <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</param>
+            <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
+            <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
+            <param name="WorkItemId">Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</param>
+            <param name="AssignedAgentId">Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.Required">
+            <summary>True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.AgentAvailable">
+            <summary>True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.Mode">
+            <summary>"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.Reason">
+            <summary>Why a human is needed (a virtual agent's escalation reason, a routing note).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.WorkItemId">
+            <summary>Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.AssignedAgentId">
+            <summary>Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysTicketUpdateResponse">
+            <summary>What the update endpoint answers. <paramref name="TicketStatus"/> is echoed deliberately: it is the proof that ending a conversation did not close the ticket.</summary>
+            <param name="Outcome">"Applied".</param>
+            <param name="ConversationId">The conversation, echoed back.</param>
+            <param name="TicketId">The ticket.</param>
+            <param name="TicketNumber">Its number.</param>
+            <param name="TicketStatus">Its status — unchanged by anything in this contract.</param>
+            <param name="ConversationEnded">Whether the interaction is now recorded as ended.</param>
+            <param name="TranscriptMessageCount">How many transcript messages the interaction holds after this update.</param>
+            <param name="HandoffStatus">The pending human work's status when there is any: WaitingForAgent, Assigned, InProgress, Completed or Cancelled. Null when this conversation never needed a human.</param>
+            <param name="TicketAgentHandoffId">That work item's id, when there is one.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.#ctor(System.String,System.String,System.Int64,System.String,System.String,System.Boolean,System.Int32,System.String,System.Nullable{System.Int64})">
+            <summary>What the update endpoint answers. <paramref name="TicketStatus"/> is echoed deliberately: it is the proof that ending a conversation did not close the ticket.</summary>
+            <param name="Outcome">"Applied".</param>
+            <param name="ConversationId">The conversation, echoed back.</param>
+            <param name="TicketId">The ticket.</param>
+            <param name="TicketNumber">Its number.</param>
+            <param name="TicketStatus">Its status — unchanged by anything in this contract.</param>
+            <param name="ConversationEnded">Whether the interaction is now recorded as ended.</param>
+            <param name="TranscriptMessageCount">How many transcript messages the interaction holds after this update.</param>
+            <param name="HandoffStatus">The pending human work's status when there is any: WaitingForAgent, Assigned, InProgress, Completed or Cancelled. Null when this conversation never needed a human.</param>
+            <param name="TicketAgentHandoffId">That work item's id, when there is one.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.Outcome">
+            <summary>"Applied".</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.ConversationId">
+            <summary>The conversation, echoed back.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.TicketId">
+            <summary>The ticket.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.TicketNumber">
+            <summary>Its number.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.TicketStatus">
+            <summary>Its status — unchanged by anything in this contract.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.ConversationEnded">
+            <summary>Whether the interaction is now recorded as ended.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.TranscriptMessageCount">
+            <summary>How many transcript messages the interaction holds after this update.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.HandoffStatus">
+            <summary>The pending human work's status when there is any: WaitingForAgent, Assigned, InProgress, Completed or Cancelled. Null when this conversation never needed a human.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.TicketAgentHandoffId">
+            <summary>That work item's id, when there is one.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysContractMapper">
+            <summary>
+            Translates the transport records above into the normalized application
+            contracts. The one place Genesys' vocabulary is interpreted — an
+            unrecognized channel or event is rejected here with a clear message,
+            never guessed at deeper in the system.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysController">
+             <summary>
+             The inbound Genesys boundary: Genesys tells TigerCS that an inquiry
+             reached an agent, and later that the conversation ended.
+            
+             <para>
+             <b>Authentication is TigerCS', not an invented Genesys scheme.</b> Genesys
+             calls these endpoints as an ordinary authenticated TigerCS service
+             account — the same JWT bearer authentication every other client of this
+             API uses (<c>POST /api/auth/login</c>), scoped to the same policy as
+             manual ticket creation because that is precisely what these endpoints do.
+             No webhook signature header, HMAC scheme or OAuth client is implemented,
+             because none has been confirmed by the Genesys team; when the real
+             mechanism is known it is added here, at the boundary, without touching
+             anything behind it.
+             </para>
+            
+             <para>
+             <b>The one ingestion path.</b> Phone, website chat, WhatsApp and social
+             media all post the same normalized inquiry to
+             <see cref="M:TigerCS.Api.Controllers.GenesysController.Ingest(TigerCS.Api.Controllers.GenesysInquiryRequest,System.Threading.CancellationToken)"/>; there is no per-channel endpoint and no per-channel
+             ticket-creation code. Genesys never reaches Tiger CRM, PACT or Tasleeh
+             directly — customer lookup happens inside TigerCS, through the services
+             the New Ticket wizard already uses.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.#ctor(TigerCS.Application.Modules.GenesysIntegration.Services.GenesysInquiryIngestionAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService)">
+             <summary>
+             The inbound Genesys boundary: Genesys tells TigerCS that an inquiry
+             reached an agent, and later that the conversation ended.
+            
+             <para>
+             <b>Authentication is TigerCS', not an invented Genesys scheme.</b> Genesys
+             calls these endpoints as an ordinary authenticated TigerCS service
+             account — the same JWT bearer authentication every other client of this
+             API uses (<c>POST /api/auth/login</c>), scoped to the same policy as
+             manual ticket creation because that is precisely what these endpoints do.
+             No webhook signature header, HMAC scheme or OAuth client is implemented,
+             because none has been confirmed by the Genesys team; when the real
+             mechanism is known it is added here, at the boundary, without touching
+             anything behind it.
+             </para>
+            
+             <para>
+             <b>The one ingestion path.</b> Phone, website chat, WhatsApp and social
+             media all post the same normalized inquiry to
+             <see cref="M:TigerCS.Api.Controllers.GenesysController.Ingest(TigerCS.Api.Controllers.GenesysInquiryRequest,System.Threading.CancellationToken)"/>; there is no per-channel endpoint and no per-channel
+             ticket-creation code. Genesys never reaches Tiger CRM, PACT or Tasleeh
+             directly — customer lookup happens inside TigerCS, through the services
+             the New Ticket wizard already uses.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.Ingest(TigerCS.Api.Controllers.GenesysInquiryRequest,System.Threading.CancellationToken)">
+             <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
+             <remarks>
+             <b>Idempotent on <c>conversationId</c>.</b> The first accepted event
+             for a conversation creates a ticket; every retry or duplicate returns
+             that same ticket with outcome <c>AlreadyIngested</c> and creates
+             nothing. A unique index on the conversation id makes this hold under
+             concurrent delivery, not merely under sequential retries.
+            
+             <para>
+             <b>This endpoint means exactly one thing:</b> create or reuse the
+             ticket for this conversation. It is not an event receiver for call
+             progress, and there is no event field — a ringing call simply never
+             reaches TigerCS. The phone flow starts at pickup: look the caller up,
+             then post this. Digital channels (website chat, chatbot, WhatsApp,
+             social) post it when the conversation starts.
+             </para>
+            
+             <para>
+             The department comes from the customer's explicit website-chat choice
+             (Leasing / Customer Service / Maintenance) when there is one, and
+             otherwise from the configured Genesys queue → department mapping.
+             Category, Request Type and Priority are never inferred from it: the
+             ticket is created <b>Unclassified</b> (no category at all — never a
+             placeholder one) and therefore starts no SLA clock. An agent
+             classifies it afterwards via
+             <c>POST /api/tickets/{ticketId}/classification</c>, on the same
+             ticket, and that is when the SLA clock starts.
+             </para>
+             </remarks>
+             <param name="request">The normalized inquiry.</param>
+             <response code="200">The conversation was already ingested — the same ticket is returned, and nothing was created.</response>
+             <response code="201">A ticket was created for this conversation.</response>
+             <response code="400">The channel was not recognized, or conversationId was blank.</response>
+             <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, or ticket creation itself was refused.</response>
+             <response code="503">The Genesys integration is switched off (<c>Genesys:Enabled</c> is false).</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.UpdateTicket(System.Int64,TigerCS.Api.Controllers.GenesysTicketUpdateRequest,System.Threading.CancellationToken)">
+             <summary>Update the Genesys-owned side of a ticket: agent context, conversation end and transcript, and human-handoff state.</summary>
+             <remarks>
+             The one update contract. Every part of the body is optional and
+             independently idempotent — send only what changed, and resend freely.
+            
+             <para>
+             <b>Genesys owns the conversation; TigerCS owns the ticket.</b> This
+             accepts conversation facts only. There is deliberately no field for
+             category, request type, priority, status, owner, department,
+             resolution or closure: those move through their own TigerCS
+             operations, with their own authorization and SLA consequences.
+             </para>
+            
+             <para>
+             <b>Nothing here closes the ticket.</b> Ending a conversation finalizes
+             the interaction and stores the transcript; the ticket carries on under
+             the existing workflow. The response echoes <c>ticketStatus</c> on
+             every call to make that visible.
+             </para>
+            
+             <para>
+             <c>conversationId</c> must resolve to an interaction on the ticket in
+             the route — that cross-check is what stops a transcript being applied
+             to the wrong ticket. A malformed transcript is refused before anything
+             is written, so a bad update never leaves a half-stored conversation.
+             </para>
+             </remarks>
+             <param name="ticketId">The ticket, as returned by <c>POST /api/genesys/tickets</c>.</param>
+             <param name="request">The conversation facts that changed.</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">Everything supplied was applied, or was already in that state.</response>
+             <response code="400">conversationId was blank, a transcript message had an unrecognized sender or empty body, or the handoff mode is not recognized.</response>
+             <response code="404">No such ticket, or no interaction exists for this conversation.</response>
+             <response code="409">The conversation belongs to a different ticket than the one in the route.</response>
+             <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to.</response>
+             <response code="503">The Genesys integration is switched off.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.LookUpCustomer(System.String,System.Threading.CancellationToken)">
+             <summary>Look a caller up by phone number when an agent picks up — customer, units, and their existing tickets.</summary>
+             <remarks>
+             The call-pickup flow: a ringing call does nothing, and when the agent
+             answers Genesys calls this to find out who is on the line before
+             creating the ticket.
+            
+             <para>
+             <b>Context, not a yes/no.</b> Where a customer is found this returns
+             the CRM Buyer with every eligible unit, the PACT/Tasleeh matches, and
+             the tickets that already arrived from this number — with the open ones
+             first, so an agent can see "this caller already has an NOC request
+             running" before they speak.
+             </para>
+            
+             <para>
+             <b>Never a gate.</b> <c>found: false</c> is a normal answer and
+             <c>200 OK</c>, not a 404 — and neither it nor a lookup source being
+             down stops the Create Ticket call that follows.
+             </para>
+            
+             <para>
+             This reuses the same CRM Buyer Lookup and PACT/Tasleeh services the
+             New Ticket wizard uses. There is no second CRM integration, and
+             Genesys never reaches those systems directly. Read-only: nothing is
+             created or persisted.
+             </para>
+             </remarks>
+             <param name="phoneNumber">Required. The caller's number.</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">What each source found — possibly nothing, which is a normal answer.</response>
+             <response code="400">phoneNumber was missing or blank.</response>
+             <response code="503">The Genesys integration is switched off.</response>
+        </member>
         <member name="T:TigerCS.Api.Controllers.IntakeRecordsController">
             <summary>
             Item 1 of this increment's scope: capture every customer interaction as
@@ -342,10 +1186,141 @@
             <param name="request">The channel, the phone number, an optional department (narrows customer lookup to its configured source(s)), whether the request concerns a unit, and the raw unit number if the caller happened to give one.</param>
             <response code="201">The intake record, with its initial crmVerificationStatus.</response>
             <response code="400">
-            channelId was not one of Phone, AppOrWebsite, WhatsAppOrLiveChat,
-            SocialMediaDirectMessage, FaceToFaceKiosk; or phoneNumber was blank.
+            channelId did not resolve to a configured channel (by id or code), or
+            resolved to a deactivated channel; or the channel's configuration
+            requires a phone number and phoneNumber was blank.
             </response>
             <response code="404">departmentId was supplied but does not reference a real department.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.PendingCustomerInteractionsController">
+             <summary>
+             Customer interactions waiting for a human agent — the agent work list, on
+             every channel.
+            
+             <para>
+             <b>Deliberately not "callbacks".</b> A callback is one way of continuing a
+             phone conversation; this list also carries website chats a bot could not
+             finish, WhatsApp threads, social-media messages and virtual-agent
+             handovers. Naming it after the phone case would have hidden most of it.
+             </para>
+            
+             <para>
+             <b>TigerCS shows the work; Genesys does the talking.</b> The actions here
+             are Start, Complete and Cancel — recording what a human is doing about the
+             work. There is deliberately no "Call" or "Reply on WhatsApp" action,
+             because Genesys owns channel delivery and no supported action for it has
+             been confirmed. The agent opens the ticket, which carries the customer, the
+             units, the department, the transcript and the history.
+             </para>
+            
+             <para>
+             <b>Completing a work item never closes its ticket.</b> The two lifecycles
+             are separate: the customer whose chat was answered may still have an NOC
+             workflow running for days.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.#ctor(TigerCS.Application.Modules.Ticketing.Services.AgentHandoffAppService)">
+             <summary>
+             Customer interactions waiting for a human agent — the agent work list, on
+             every channel.
+            
+             <para>
+             <b>Deliberately not "callbacks".</b> A callback is one way of continuing a
+             phone conversation; this list also carries website chats a bot could not
+             finish, WhatsApp threads, social-media messages and virtual-agent
+             handovers. Naming it after the phone case would have hidden most of it.
+             </para>
+            
+             <para>
+             <b>TigerCS shows the work; Genesys does the talking.</b> The actions here
+             are Start, Complete and Cancel — recording what a human is doing about the
+             work. There is deliberately no "Call" or "Reply on WhatsApp" action,
+             because Genesys owns channel delivery and no supported action for it has
+             been confirmed. The agent opens the ticket, which carries the customer, the
+             units, the department, the transcript and the history.
+             </para>
+            
+             <para>
+             <b>Completing a work item never closes its ticket.</b> The two lifecycles
+             are separate: the customer whose chat was answered may still have an NOC
+             workflow running for days.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.List(System.Nullable{System.Int32},System.Nullable{System.Byte},System.Nullable{System.Guid},System.Boolean,System.Boolean,System.Int32,System.Int32,System.Threading.CancellationToken)">
+             <summary>List customer interactions waiting for a human agent.</summary>
+             <remarks>
+             Scoped by exactly the same visible-department rule as the ticket queue,
+             so an agent never sees work on a ticket they could not open. Ordered by
+             longest wait first.
+            
+             <para>
+             Outstanding work only by default. A ticket that is still
+             <b>Unclassified</b> appears here like any other: pending human work
+             never waits for classification — often the agent classifies it
+             <i>because</i> they picked it up from this list.
+             </para>
+             </remarks>
+             <param name="departmentId">Narrow to one department.</param>
+             <param name="channelId">Narrow to one channel.</param>
+             <param name="assignedEmployeeId">Narrow to one agent's own work.</param>
+             <param name="unassignedOnly">Only work nobody has taken yet.</param>
+             <param name="includeResolved">Include completed and cancelled work.</param>
+             <param name="page">1-based page number.</param>
+             <param name="pageSize">Rows per page (1-200, default 50).</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">The work list.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.Start(System.Int64,System.Threading.CancellationToken)">
+            <summary>Start handling a waiting customer interaction — which also takes it, if nobody had.</summary>
+            <remarks>Idempotent: starting work already in progress changes nothing and does not move the recorded start time.</remarks>
+            <param name="handoffId">The work item.</param>
+            <param name="cancellationToken">Cancellation token.</param>
+            <response code="200">The work is now in progress.</response>
+            <response code="403">The caller may not act on work in this department.</response>
+            <response code="404">No such work item.</response>
+            <response code="409">The work was already completed or cancelled.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.Complete(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CompleteAgentHandoffRequestDto,System.Threading.CancellationToken)">
+            <summary>Record that the human work on this interaction is finished.</summary>
+            <remarks>
+            <b>This does not close, resolve or otherwise touch the ticket.</b> The
+            ticket keeps following the existing TigerCS workflow — the two statuses
+            are read side by side, never conflated.
+            </remarks>
+            <param name="handoffId">The work item.</param>
+            <param name="request">An optional note on what was done.</param>
+            <param name="cancellationToken">Cancellation token.</param>
+            <response code="200">The work is complete. The ticket is unchanged.</response>
+            <response code="403">The caller may not act on work in this department.</response>
+            <response code="404">No such work item.</response>
+            <response code="409">The work was already completed or cancelled.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.Cancel(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CancelAgentHandoffRequestDto,System.Threading.CancellationToken)">
+            <summary>Stand down pending human work that is no longer needed.</summary>
+            <remarks>
+            A reason is required — pending customer work is never dropped without a
+            recorded why. Note that a customer disconnecting is <b>not</b> a reason
+            to cancel: the live session ended, the business case did not.
+            </remarks>
+            <param name="handoffId">The work item.</param>
+            <param name="request">The required reason.</param>
+            <param name="cancellationToken">Cancellation token.</param>
+            <response code="200">The work is cancelled. The ticket is unchanged.</response>
+            <response code="403">The caller may not act on work in this department.</response>
+            <response code="404">No such work item.</response>
+            <response code="409">The work was already completed or cancelled.</response>
+            <response code="422">No reason was given.</response>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.RequestTypesController">
+            <summary>The Request Type directory for operational users — what the New Ticket wizard's Request Type picker reads.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.RequestTypesController.#ctor(TigerCS.Application.Modules.Administration.Services.AdminRequestTypeAppService)">
+            <summary>The Request Type directory for operational users — what the New Ticket wizard's Request Type picker reads.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.RequestTypesController.List(System.Nullable{System.Int32},System.Threading.CancellationToken)">
+            <summary>Active request types, filtered by department (the department the ticket's category routes to). Never includes inactive ones.</summary>
         </member>
         <member name="M:TigerCS.Api.Controllers.RolesController.List(System.Threading.CancellationToken)">
             <summary>The fixed role catalogue. System Administrator only.</summary>
@@ -365,7 +1340,7 @@
             §4.1 permission matrix grants ticket-Create to exactly these two roles.
             </summary>
         </member>
-        <member name="M:TigerCS.Api.Controllers.TicketsController.#ctor(TigerCS.Application.Modules.Ticketing.Services.TicketCreationAppService,TigerCS.Application.Modules.Ticketing.Services.TicketQueryAppService,TigerCS.Application.Modules.Ticketing.Services.TicketAssignmentAppService,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService,TigerCS.Application.Modules.Ticketing.Services.TicketNoteAppService,TigerCS.Application.Modules.Ticketing.Services.TicketReconciliationAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerHistoryAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerProfileAppService,TigerCS.Application.Modules.Ticketing.Services.TicketApprovalAppService)">
+        <member name="M:TigerCS.Api.Controllers.TicketsController.#ctor(TigerCS.Application.Modules.Ticketing.Services.TicketCreationAppService,TigerCS.Application.Modules.Ticketing.Services.TicketQueryAppService,TigerCS.Application.Modules.Ticketing.Services.TicketAssignmentAppService,TigerCS.Application.Modules.Ticketing.Services.TicketLifecycleAppService,TigerCS.Application.Modules.Ticketing.Services.TicketNoteAppService,TigerCS.Application.Modules.Ticketing.Services.TicketReconciliationAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerHistoryAppService,TigerCS.Application.Modules.Ticketing.Services.CustomerProfileAppService,TigerCS.Application.Modules.Ticketing.Services.TicketApprovalAppService,TigerCS.Application.Modules.Ticketing.Services.TicketInteractionQueryAppService,TigerCS.Application.Modules.Ticketing.Services.TicketClassificationAppService)">
             <summary>
             Items 3–8 of this increment's scope, plus a later business-rule change:
             a single ticket-creation path for every IntakeRecord. Customer
@@ -455,8 +1430,59 @@
             endpoint carries none of that.
             </remarks>
             <param name="ticketId">The ticket whose customer's profile to fetch.</param>
-            <response code="200">The customer's profile. <c>status</c> is one of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm" — only "Found" populates name/mobile/email/units.</response>
+            <response code="200">The customer's profile. <c>status</c> is one of "NotCrmVerified", "Found", "CrmUnavailable", "AmbiguousCustomerMatch", "NotFoundInCrm", "NoPhoneOnRecord" — only "Found" populates name/mobile/email/units, and only when CRM's Buyer is the ticket's own CrmBuyerCustomerId.</response>
             <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetInteractions(System.Int64,System.Threading.CancellationToken)">
+            <summary>The ticket's conversation history — every call/chat recorded against it, with transcripts.</summary>
+            <remarks>
+            Genesys integration phase 1. Returns each interaction the ticket
+            accumulated (the originating Genesys call or chat, plus any later
+            ones) in chronological order, each with its stored transcript for text
+            channels. An interaction's own <c>status</c> ("Active"/"Ended") is
+            independent of the ticket's status: a conversation that ended does not
+            close the ticket. Read-only, and scoped to the same department
+            visibility as <see cref="M:TigerCS.Api.Controllers.TicketsController.GetDetail(System.Int64,System.Threading.CancellationToken)"/>.
+            </remarks>
+            <param name="ticketId">The ticket whose conversation history to fetch.</param>
+            <response code="200">The ticket's interactions, oldest first, each with its transcript (possibly empty).</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.Classify(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ClassifyTicketRequestDto,System.Threading.CancellationToken)">
+             <summary>Classify an Unclassified ticket — record what the customer actually wants.</summary>
+             <remarks>
+             A ticket created from an inquiry nobody had read yet carries no
+             Category at all (never a placeholder one). Once the agent has read the
+             conversation, this records the real Category, Priority and — where
+             they can name it — Request Type.
+            
+             <para>
+             <b>The same ticket is classified in place.</b> No second ticket is
+             created: TCK-1001 keeps its number, department, conversation history
+             and audit trail, and simply stops being Unclassified.
+             </para>
+            
+             <para>
+             <b>This is where the SLA clock starts</b> for such a ticket. The SLA
+             policy is selected by priority, so an unclassified ticket deliberately
+             had no SLA period rather than one measured against a provisional
+             value. The period opened here is backdated to the ticket's own
+             creation time, so classifying late never buys extra time.
+             </para>
+            
+             <para>
+             A ticket that was already classified is refused with <c>422</c>:
+             re-categorising an existing ticket has its own SLA consequences and is
+             a different operation, not built in this phase.
+             </para>
+             </remarks>
+             <param name="ticketId">The unclassified ticket.</param>
+             <param name="request">The real category, priority, optional request type, and the ticket's current rowVersion.</param>
+             <response code="200">The now-classified ticket.</response>
+             <response code="400">The request body was malformed.</response>
+             <response code="404">No such ticket, or it is not visible to the caller.</response>
+             <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+             <response code="422">The ticket is already classified or closed, or the category/priority/request type is not valid for it.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketsController.Assign(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.AssignTicketRequestDto,System.Threading.CancellationToken)">
             <summary>Assign a ticket to an employee — self-claim or reassign.</summary>
