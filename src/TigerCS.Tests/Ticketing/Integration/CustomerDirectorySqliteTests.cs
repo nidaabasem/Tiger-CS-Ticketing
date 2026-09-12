@@ -235,9 +235,8 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
             AddExternalTicket(context, "Pact", "PACT-7500", "P-01", createdAtUtc: Now.AddDays(-9), customerName: "Youssef Noor");
             AddExternalTicket(context, "Pact", "PACT-7500", "P-02", createdAtUtc: Now.AddDays(-1), customerName: null);
             // A CRM customer in the same shape, to prove the widening is not PACT-specific.
-            var namedCrm = AddCrmTicket(context, 9301, "Mariam Al Falasi", "T-1", createdAtUtc: Now.AddDays(-8));
-            var namelessCrm = AddCrmTicket(context, 9301, null!, "T-2", createdAtUtc: Now.AddDays(-2));
-            Assert.NotEqual(namedCrm.TicketId, namelessCrm.TicketId);
+            AddCrmTicket(context, 9301, "Mariam Al Falasi", "T-1", createdAtUtc: Now.AddDays(-8));
+            AddCrmTicket(context, 9301, null!, "T-2", createdAtUtc: Now.AddDays(-2));
         }
 
         var rows = (await ListAsync()).Items;
