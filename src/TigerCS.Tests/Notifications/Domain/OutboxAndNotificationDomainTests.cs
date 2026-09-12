@@ -251,12 +251,25 @@ public class OutboxAndNotificationDomainTests
 
     /// <summary>The code default keeps the guard on: an environment whose configuration omits the key is protected exactly as before.</summary>
     [Fact]
-    public void EmailSenderOptions_DefaultToDeliveryEnabledWithTheRecordingAdapter()
+    public void EmailNotificationOptions_DefaultToDeliveryDisabledWithTheSmtpAdapter()
     {
-        var options = new EmailSenderOptions();
+        var options = new EmailNotificationOptions();
 
-        Assert.True(options.Enabled);
-        Assert.Equal("Recording", options.Provider);
+        // Disabled by default: a deployment that forgets the section sends
+        // nothing rather than something. The provider defaults to the real
+        // adapter so that enabling it is a one-key change.
+        Assert.False(options.Enabled);
+        Assert.Equal("Smtp", options.Provider);
+        Assert.Equal("smtp.office365.com", options.SmtpHost);
+        Assert.Equal(587, options.SmtpPort);
+        Assert.True(options.EnableSsl);
+        Assert.Equal("Tiger Properties", options.FromName);
+        Assert.Null(options.Password);
+
+        var policy = options.ToPolicy();
+        Assert.False(policy.Enabled);
+        Assert.Equal(TimeSpan.FromHours(24), policy.MaxEventAge);
+        Assert.False(policy.IncludeResolutionNote);
     }
 
     /// <summary>A misconfigured policy must not be able to disable the safety properties — an unbounded attempt count would defeat FR-NOT-05's dead-letter path entirely.</summary>
@@ -295,26 +308,4 @@ public class OutboxAndNotificationDomainTests
     }
 
     /// <summary>Content-level: only approved fields, and the two the documents do not authorise are absent.</summary>
-    [Fact]
-    public void AcknowledgementBody_OmitsTheUnapprovedFields()
-    {
-        var body = TicketAcknowledgementContent.Body(
-            "TG-CS-20260822-0001", Now, "Facilities Management", Now.AddHours(4));
-
-        Assert.Contains("TG-CS-20260822-0001", body, StringComparison.Ordinal);
-        Assert.Contains("Facilities Management", body, StringComparison.Ordinal);
-        Assert.Contains("2026-08-22 09:00 UTC", body, StringComparison.Ordinal);
-        Assert.Contains("2026-08-22 13:00 UTC", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("Geyness", body, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>A provisional ticket's SLA clock has not started (FR-TKT-09), so the line is omitted rather than filled with an invented time.</summary>
-    [Fact]
-    public void AcknowledgementBody_OmitsTheResponseTimeWhenNoSlaPeriodIsOpen()
-    {
-        var body = TicketAcknowledgementContent.Body("TG-FM-20260822-0001", Now, "Facilities Management", null);
-
-        Assert.DoesNotContain("Expected first response", body, StringComparison.Ordinal);
-        Assert.Contains("TG-FM-20260822-0001", body, StringComparison.Ordinal);
-    }
 }

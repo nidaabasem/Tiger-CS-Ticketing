@@ -136,7 +136,7 @@ using (var crmStartupScope = app.Services.CreateScope())
 // customer ever received anything. A silent, total failure that looks exactly
 // like success is worse than a loud one.
 //
-// Notifications:Email:Enabled = false (EmailSenderOptions.Enabled) declares
+// EmailNotifications:Enabled = false (EmailNotificationOptions.Enabled) declares
 // that email delivery is not part of the current phase (UAT / management
 // demo), so the recording adapter cannot be mistaken for a delivering one and
 // the host may start in any environment. The flag changes this guard only —
@@ -144,17 +144,29 @@ using (var crmStartupScope = app.Services.CreateScope())
 // Enabled = true the original protection applies unchanged.
 using (var emailStartupScope = app.Services.CreateScope())
 {
-    var emailOptions = emailStartupScope.ServiceProvider.GetRequiredService<IOptions<EmailSenderOptions>>().Value;
+    var emailOptions = emailStartupScope.ServiceProvider.GetRequiredService<IOptions<EmailNotificationOptions>>().Value;
     if (EmailSenderSafety.IsUnsafe(emailOptions.Enabled, emailOptions.Provider, app.Environment.EnvironmentName))
     {
         throw new InvalidOperationException(
-            $"Notifications:Email:Provider is 'Recording' with Notifications:Email:Enabled = true in environment "
+            $"EmailNotifications:Provider is 'Recording' with EmailNotifications:Enabled = true in environment "
             + $"'{app.Environment.EnvironmentName}'. RecordingEmailSender never delivers anything (see its own "
             + $"remarks) and may only run in {string.Join("/", EmailSenderSafety.RecordingAllowedEnvironments)} "
-            + "when delivery is enabled. No real email provider is confirmed for this pilot: either set "
-            + "Notifications:Email:Enabled to false while email delivery is out of scope for this phase, or "
-            + "configure a real IEmailSender implementation and set Notifications:Email:Provider accordingly "
-            + "before deploying to this environment.");
+            + "when delivery is enabled. Either set EmailNotifications:Enabled to false, or set "
+            + "EmailNotifications:Provider to \"Smtp\" and supply the Microsoft 365 SMTP settings "
+            + "(see docs/Customer-Email-Notifications.md) before deploying to this environment.");
+    }
+
+    // A configuration that enables SMTP delivery without the settings it
+    // needs would pass startup and then fail on the first customer email —
+    // in a background job, hours later. Refuse it now, naming the keys
+    // (never the values).
+    var emailConfigurationErrors = EmailSenderSafety.Validate(emailOptions);
+    if (emailConfigurationErrors.Count > 0)
+    {
+        throw new InvalidOperationException(
+            "Customer email notifications are enabled but not fully configured: "
+            + string.Join(" ", emailConfigurationErrors)
+            + " See docs/Customer-Email-Notifications.md.");
     }
 }
 

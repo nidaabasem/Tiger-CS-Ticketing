@@ -259,7 +259,36 @@ public static class OutboxEventTypes
     /// </summary>
     public const int TicketCreatedVersion = 1;
 
+    /// <summary>
+    /// Customer-facing lifecycle events (the Customer Email Notifications
+    /// increment). Each is written by <c>TicketLifecycleAppService</c> in the
+    /// same transaction as the state change it describes, and consumed by
+    /// one <c>IOutboxEventHandler</c> that emails the ticket's customer.
+    /// </summary>
+    public const string TicketResolved = "TicketResolved";
+
+    public const string TicketClosed = "TicketClosed";
+
+    public const string TicketReopened = "TicketReopened";
+
+    public const int TicketResolvedVersion = 1;
+
+    public const int TicketClosedVersion = 1;
+
+    public const int TicketReopenedVersion = 1;
+
     /// <summary>ADR-0014's key shape, composed in one place so producer and dedup check cannot drift apart.</summary>
     public static string IdempotencyKeyFor(string eventType, long ticketId, int eventVersion) =>
         $"Ticket:{ticketId}:{eventType}:v{eventVersion}";
+
+    /// <summary>
+    /// Idempotency key for a lifecycle event that can legitimately recur on
+    /// one ticket. A ticket is resolved, closed and reopened at most once per
+    /// <i>resolution cycle</i> — the only way to resolve or close again is to
+    /// reopen first, which increments <c>Ticket.ReopenCount</c> — so the
+    /// cycle number makes each occurrence a distinct logical event while a
+    /// retried request for the same occurrence still collapses to one row.
+    /// </summary>
+    public static string LifecycleIdempotencyKeyFor(string eventType, long ticketId, int eventVersion, int reopenCount) =>
+        $"Ticket:{ticketId}:{eventType}:v{eventVersion}:cycle{reopenCount}";
 }

@@ -2,10 +2,13 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
+using TigerCS.Application.Modules.Notifications;
+using TigerCS.Application.Modules.Notifications.Dto;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
+using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
@@ -34,7 +37,8 @@ public sealed class TicketLifecycleAppService(
     ReopenPolicy reopenPolicy,
     ITicketPendingRecordRepository pendingRecordRepository,
     IRequestTypeRepository requestTypeRepository,
-    IWorkflowTemplateRepository workflowTemplateRepository)
+    IWorkflowTemplateRepository workflowTemplateRepository,
+    IOutboxWriter outboxWriter)
 {
     public async Task<TicketMutationResult> ChangeStatusAsync(
         Guid callerEmployeeId,
@@ -260,6 +264,10 @@ public sealed class TicketLifecycleAppService(
             callerEmployeeId, "Resolve", "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(), afterValue: $"ResolutionOutcome={outcome}", correlationId, cancellationToken);
 
+        await EnqueueLifecycleEventAsync(
+            OutboxEventTypes.TicketResolved, OutboxEventTypes.TicketResolvedVersion,
+            ticket, callerEmployeeId, correlationId, now, cancellationToken);
+
         // Resolution is the Resolution SLA's achievement event
         // (SLA-Architecture.md §2 — closure deliberately is not), so this is
         // where a late resolution is finalized as a breach. Both clocks are
@@ -364,6 +372,10 @@ public sealed class TicketLifecycleAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "Close", "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(), afterValue: TicketStatus.Closed.ToString(), correlationId, cancellationToken);
+
+        await EnqueueLifecycleEventAsync(
+            OutboxEventTypes.TicketClosed, OutboxEventTypes.TicketClosedVersion,
+            ticket, callerEmployeeId, correlationId, now, cancellationToken);
 
         try
         {
@@ -479,6 +491,10 @@ public sealed class TicketLifecycleAppService(
             afterValue: $"{TicketStatus.InProgress};ReopenCount={ticket.ReopenCount}",
             correlationId, cancellationToken);
 
+        await EnqueueLifecycleEventAsync(
+            OutboxEventTypes.TicketReopened, OutboxEventTypes.TicketReopenedVersion,
+            ticket, callerEmployeeId, correlationId, now, cancellationToken);
+
         try
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -498,6 +514,53 @@ public sealed class TicketLifecycleAppService(
     /// applies", never "everything forbidden": enforcement in this service
     /// only narrows the existing status machine where configuration exists.
     /// </summary>
+    /// <summary>
+    /// Records a customer-facing lifecycle event in the transactional Outbox
+    /// (ADR-0013) — the same mechanism <c>TicketCreationAppService</c> uses
+    /// for <c>TicketCreated</c>. Added to the caller's unit of work, so the
+    /// event commits with the state change or not at all: a rolled-back
+    /// resolve/close/reopen leaves no event behind, and nothing is sent
+    /// from inside the request (NFR-REL-01). The customer email itself is
+    /// rendered and delivered later by the Outbox dispatcher, so an SMTP
+    /// failure can never fail this operation.
+    /// </summary>
+    private async Task EnqueueLifecycleEventAsync(
+        string eventType,
+        int eventVersion,
+        Ticket ticket,
+        Guid callerEmployeeId,
+        Guid correlationId,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var payload = new TicketLifecycleEventPayload(ticket.TicketId, eventVersion, ticket.ReopenCount);
+
+        var message = await outboxWriter.WriteAsync(
+            eventType,
+            payload.ToJson(),
+            correlationId,
+            OutboxEventTypes.LifecycleIdempotencyKeyFor(eventType, ticket.TicketId, eventVersion, ticket.ReopenCount),
+            nowUtc,
+            cancellationToken);
+
+        if (message is null)
+        {
+            // Already enqueued for this occurrence (a retried request); the
+            // first row stands.
+            return;
+        }
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            NotificationAuditActions.NotificationQueued,
+            NotificationAuditActions.OutboxMessageEntityType,
+            message.OutboxMessageId.ToString(),
+            beforeValue: null,
+            afterValue: $"EventType={eventType};TicketId={ticket.TicketId};Status=Pending",
+            correlationId,
+            cancellationToken);
+    }
+
     private async Task<WorkflowCapabilities?> ResolveCapabilitiesAsync(Ticket ticket, CancellationToken cancellationToken)
     {
         if (ticket.RequestTypeId is not { } requestTypeId)
