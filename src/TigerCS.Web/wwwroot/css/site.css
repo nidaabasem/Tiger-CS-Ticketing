@@ -583,7 +583,7 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 .status-banner { display: flex; align-items: center; gap: 8px; margin-top: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; border: 1px solid transparent; }
 .status-banner svg { width: 15px; height: 15px; flex: none; }
 .status-banner--critical { background: var(--color-critical-pale); border-color: var(--color-critical-line); color: var(--color-critical); }
-.status-banner--pending { background: var(--color-gold-pale); border-color: var(--color-gold-line); color: var(--color-gold-dark); }
+.status-banner--pending { background: var(--color-warning-tint); border-color: var(--color-warning-line); color: var(--color-warning); }
 .status-banner--closed { background: var(--color-neutral-tint); border-color: var(--color-border); color: var(--color-text-secondary); }
 
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--space-4); align-items: start; }
@@ -651,7 +651,7 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 }
 .timeline-icon svg { width: 10px; height: 10px; }
 .timeline-icon.icon-critical { background: var(--color-critical-pale); border-color: var(--color-critical-line); color: var(--color-critical); }
-.timeline-icon.icon-gold { background: var(--color-gold-pale); border-color: var(--color-gold-line); color: var(--color-gold-dark); }
+.timeline-icon.icon-info { background: var(--color-info-tint); border-color: var(--color-info-line); color: var(--color-info); }
 .timeline-icon.icon-quiet { background: var(--color-bg); border-color: var(--color-border); color: var(--color-text-secondary); }
 .timeline-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
 .timeline-text { font-size: 14px; }
@@ -1028,14 +1028,14 @@ a.bar-row:hover .bar-fill { filter: saturate(1.25) brightness(0.92); }
 /* Related tickets (duplicate-ticket awareness) — a quiet, inline advisory
    card on New Ticket Step 3; warns, never blocks. */
 .related-tickets {
-  background: var(--color-gold-pale); border: 1px solid var(--color-gold-line); border-radius: var(--radius-md);
+  background: var(--color-warning-tint); border: 1px solid var(--color-warning-line); border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4); margin-top: var(--space-3);
 }
-.related-tickets__title { font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-gold-dark); }
+.related-tickets__title { font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-warning); }
 .related-tickets__hint { font-size: 13px; color: var(--color-text-secondary); margin: var(--space-1) 0 var(--space-2); }
 .related-ticket-row {
   display: flex; flex-direction: column; gap: 4px; padding: var(--space-2) 0;
-  border-top: 1px solid var(--color-gold-line);
+  border-top: 1px solid var(--color-warning-line);
 }
 .related-ticket-row__main { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; font-size: 14px; }
 .related-ticket-row__main .cell-truncate { max-width: 100%; flex: 1; }
@@ -1072,13 +1072,13 @@ a.bar-row:hover .bar-fill { filter: saturate(1.25) brightness(0.92); }
 .section-card__lead { font-size: 14px; color: var(--color-text-secondary); margin-top: 3px; }
 .review-banner {
   display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
-  border: 1px solid var(--color-gold-line); border-radius: var(--radius-md); background: var(--color-gold-tint); font-size: 14px;
+  border: 1px solid var(--color-info-line); border-radius: var(--radius-md); background: var(--color-info-tint); font-size: var(--text-sm);
 }
-.review-banner svg { width: 20px; height: 20px; flex: none; color: var(--color-gold-dark); }
+.review-banner svg { width: 20px; height: 20px; flex: none; color: var(--color-info); }
 .review-block__edit { margin-top: var(--space-2); font-size: 13px; }
 .unit-option:hover, .candidate-card:hover { border-color: var(--color-text-secondary); }
 .wizard-summary__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
-.wizard-summary__step { font-size: 12px; font-weight: 600; color: var(--color-gold-dark); }
+.wizard-summary__step { font-size: var(--text-2xs); font-weight: var(--weight-strong); color: var(--color-info); }
 
 .wizard-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--space-4); align-items: start; }
 
@@ -1129,7 +1129,7 @@ a.bar-row:hover .bar-fill { filter: saturate(1.25) brightness(0.92); }
 .selected-check { color: var(--color-success); font-weight: 700; }
 
 .wizard-quiet-action { margin-top: var(--space-3); font-size: 14px; color: var(--color-text-secondary); }
-.wizard-quiet-action a { color: var(--color-gold-dark); text-decoration: underline; }
+.wizard-quiet-action a { color: var(--color-info); text-decoration: underline; }
 
 /* One clear primary action per step; Back stays quiet on the left. */
 .wizard-actions { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-top: var(--space-4); }
@@ -1147,7 +1147,7 @@ a.bar-row:hover .bar-fill { filter: saturate(1.25) brightness(0.92); }
 .success-card { display: flex; flex-direction: column; align-items: center; text-align: center; padding: var(--space-5) var(--space-4); }
 .success-card svg { width: 34px; height: 34px; color: var(--color-success); margin-bottom: var(--space-2); }
 .success-card__title { font-size: 15px; font-weight: 700; }
-.success-card__number { font-size: 22px; font-weight: 700; color: var(--color-gold-dark); margin: var(--space-1) 0 var(--space-3); }
+.success-card__number { font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.02em; color: var(--color-success); margin: var(--space-1) 0 var(--space-3); }
 
 /* ---------- Customers directory, Customer Profile, Ticket Details customer card ----------
    The same primitives as everywhere else (page, panel, data-table, badge,
@@ -1208,7 +1208,7 @@ a.bar-row:hover .bar-fill { filter: saturate(1.25) brightness(0.92); }
 .customer-card__avatar { width: 40px; height: 40px; font-size: 15px; }
 .customer-card__who { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .customer-card__name { font-size: 16px; font-weight: 700; color: var(--color-text); }
-a.customer-card__name { color: var(--color-gold-dark); }
+a.customer-card__name { color: var(--color-info); }
 a.customer-card__name:hover { text-decoration: underline; }
 .customer-card__facts { padding: var(--space-2) 0; }
 .customer-card__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
@@ -1412,8 +1412,8 @@ fieldset.form-group legend { padding: 0; margin-bottom: var(--space-2); }
 .badge-inactive { background: var(--color-neutral-tint); color: var(--color-text-secondary); border-color: var(--color-border); }
 .badge-inactive .badge-dot { background: var(--color-text-secondary); }
 .badge-warning { background: var(--color-critical-pale); color: var(--color-critical); border-color: var(--color-critical-line); }
-.badge-version-draft { background: var(--color-gold-tint); color: var(--color-warning); border-color: var(--color-gold-line); }
-.badge-version-draft .badge-dot { background: var(--color-gold); }
+.badge-version-draft { background: var(--color-warning-tint); color: var(--color-warning); border-color: var(--color-warning-line); }
+.badge-version-draft .badge-dot { background: var(--color-warning); }
 .badge-version-published { background: var(--color-success-pale); color: var(--color-success); border-color: var(--color-success-line); }
 .badge-version-published .badge-dot { background: var(--color-success); }
 .badge-version-historical { background: var(--color-neutral-tint); color: var(--color-text-secondary); border-color: var(--color-border); }
@@ -1438,9 +1438,9 @@ a.badge:hover { text-decoration: underline; }
 }
 .version-card:last-child { border-bottom: 0; }
 .version-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; }
-.version-card--draft::before { background: var(--color-gold); }
+.version-card--draft::before { background: var(--color-warning); }
 .version-card--published::before { background: var(--color-success); }
-.version-card--draft { background: var(--color-gold-tint); }
+.version-card--draft { background: var(--color-warning-tint); }
 .version-card__id { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .version-card__body { min-width: 0; }
 .version-card__name { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
@@ -1486,8 +1486,9 @@ a.badge:hover { text-decoration: underline; }
 
 /* Step-type badges keyed by WorkflowStepKind. */
 .badge-kind { background: var(--color-neutral-tint); color: var(--color-text-secondary); border-color: var(--color-border); }
-.badge-kind-created { background: var(--color-gold-tint); color: var(--color-warning); border-color: var(--color-gold-line); }
-.badge-kind-inprogress, .badge-kind-resolved { background: var(--color-success-pale); color: var(--color-success); border-color: var(--color-success-line); }
+.badge-kind-created { background: var(--color-info-tint); color: var(--color-info); border-color: var(--color-info-line); }
+.badge-kind-inprogress { background: var(--color-progress-tint); color: var(--color-progress); border-color: var(--color-progress-line); }
+.badge-kind-resolved { background: var(--color-success-pale); color: var(--color-success); border-color: var(--color-success-line); }
 .badge-kind-waitingforapproval, .badge-kind-review { background: var(--color-ink-tint); color: var(--color-ink); border-color: var(--color-ink-line); }
 .badge-kind-closed { background: var(--color-ink); color: #FFFFFF; border-color: var(--color-ink); }
 .badge-approval-type { background: var(--color-surface); color: var(--color-ink); border-color: var(--color-ink-line); }
