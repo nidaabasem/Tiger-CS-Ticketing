@@ -146,6 +146,46 @@ public sealed class ShellRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task Dashboard_DrawsBarWidthsWithStylesheetClasses_UnderTheStrictContentSecurityPolicy()
+    {
+        var client = Client();
+        client.DefaultRequestHeaders.Add("X-Test-Populated", "true");
+        FakeApi.Populated = true;
+        HttpResponseMessage response;
+        string html;
+        try
+        {
+            response = await client.GetAsync("/Dashboard");
+            html = await Ok(response);
+        }
+        finally { FakeApi.Populated = false; }
+
+        // The policy the browser will enforce: self-hosted styles only, so an
+        // inline width attribute would be dropped and the bars would be empty.
+        var policy = Assert.Single(response.Headers.GetValues("Content-Security-Policy"));
+        Assert.Contains("style-src 'self'", policy, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsafe-inline", policy, StringComparison.Ordinal);
+
+        // Nothing on the page carries an inline style, the bars least of all.
+        Assert.DoesNotContain("style=", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<span class=\"bar-fill\"></span>", html, StringComparison.Ordinal);
+
+        // The percentage still drives the width: each fed figure renders as
+        // its own class (50% → w50, 37.5% → w38, 58.3% → w58, 4.2% → w4).
+        foreach (var expected in new[] { "bar-fill--w50", "bar-fill--w38", "bar-fill--w13", "bar-fill--w58", "bar-fill--w42", "bar-fill--w67", "bar-fill--w4" })
+        {
+            Assert.Contains($"class=\"bar-fill {expected}\"", html, StringComparison.Ordinal);
+        }
+
+        // Every class the page asked for is defined in the served stylesheet.
+        var css = await Ok(await Client().GetAsync("/css/site.css"));
+        foreach (var used in new[] { "bar-fill--w50", "bar-fill--w38", "bar-fill--w13", "bar-fill--w58", "bar-fill--w42", "bar-fill--w67", "bar-fill--w4" })
+        {
+            Assert.Contains($".{used} {{ width: ", css, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task NewTicket_StepOne_RendersTheStepperAndTheSearchForm()
     {
         var html = await Ok(await Client().GetAsync("/NewTicket"));

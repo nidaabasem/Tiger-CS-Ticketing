@@ -16,8 +16,30 @@ public sealed record DashboardBarRow(string Label, int Count, double Percentage,
     /// <summary>The percentage as displayed — one decimal at most, invariant, never NaN.</summary>
     public string PercentageText => Percentage.ToString("0.#", CultureInfo.InvariantCulture) + "%";
 
-    /// <summary>The bar's fill, clamped to the track — percentages already sum to ≤ 100.</summary>
-    public string BarWidth => Math.Clamp(Percentage, 0, 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+    /// <summary>
+    /// The bar's fill width in whole percent, clamped to the track
+    /// (percentages already sum to ≤ 100) and rounded to the nearest
+    /// point — the exact figure stays in <see cref="PercentageText"/>
+    /// beside the bar. A non-finite percentage draws an empty bar rather
+    /// than an invalid width.
+    /// </summary>
+    public int BarWidthPercent =>
+        double.IsFinite(Percentage) ? (int)Math.Round(Math.Clamp(Percentage, 0, 100), MidpointRounding.AwayFromZero) : 0;
+
+    /// <summary>
+    /// The stylesheet class that draws the fill — <c>bar-fill--w0</c> …
+    /// <c>bar-fill--w100</c>, defined in site.css.
+    ///
+    /// <para>
+    /// A class, never an inline <c>style</c> attribute: the app serves a
+    /// strict Content-Security-Policy whose <c>style-src 'self'</c> has no
+    /// <c>'unsafe-inline'</c>, so a style attribute would be dropped by the
+    /// browser and every bar would render at zero width. Keeping the width
+    /// in the self-hosted stylesheet also means the bars are correct with
+    /// scripts disabled, with no width applied after paint.
+    /// </para>
+    /// </summary>
+    public string BarWidthClass => "bar-fill--w" + BarWidthPercent.ToString(CultureInfo.InvariantCulture);
 }
 
 /// <summary>One breakdown card. <see cref="TotalHref"/> links to the queue view of everything the card counted; <see cref="TopRows"/>/<see cref="MoreRows"/> keep long lists compact behind a "View all".</summary>
