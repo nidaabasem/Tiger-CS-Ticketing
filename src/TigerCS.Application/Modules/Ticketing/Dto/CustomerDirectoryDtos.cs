@@ -1,3 +1,5 @@
+using TigerCS.Domain.Modules.Ticketing;
+
 namespace TigerCS.Application.Modules.Ticketing.Dto;
 
 /// <summary>
@@ -18,11 +20,20 @@ public enum CustomerIdentityKind
     /// <summary>PACT / Tasleeh — <c>Ticket.CustomerVerificationSource</c> + <c>Ticket.ExternalCustomerId</c>.</summary>
     External = 2,
 
-    /// <summary>No verified identity — the phone number on the promoted <c>IntakeRecord</c>.</summary>
+    /// <summary>No verified identity — the phone number on the promoted <c>IntakeRecord</c>, in its canonical form (<see cref="CustomerPhoneNumber.Normalize"/>).</summary>
     Phone = 3,
 }
 
-/// <summary>One resolved customer identity — see <see cref="CustomerIdentityKind"/>.</summary>
+/// <summary>
+/// One resolved customer identity — see <see cref="CustomerIdentityKind"/>.
+/// <para>
+/// <see cref="PhoneNumber"/> is always canonical
+/// (<see cref="CustomerPhoneNumber.Normalize"/>): "+971501234567",
+/// "971501234567" and "+971 50 123 4567" are one customer, not three. Build
+/// a phone identity through <see cref="Phone"/> / <see cref="FromTicketFacts"/>
+/// / <see cref="TryParse"/> so that stays true.
+/// </para>
+/// </summary>
 public sealed record CustomerIdentity(
     CustomerIdentityKind Kind,
     int? CrmBuyerCustomerId,
@@ -35,13 +46,17 @@ public sealed record CustomerIdentity(
     public static CustomerIdentity External(string source, string externalCustomerId) =>
         new(CustomerIdentityKind.External, null, source, externalCustomerId, null);
 
-    public static CustomerIdentity Phone(string phoneNumber) => new(CustomerIdentityKind.Phone, null, null, null, phoneNumber);
+    /// <summary>The phone-fallback identity for a number in any written form — the number is canonicalized, so "+971501234567" and "971501234567" are the same customer.</summary>
+    public static CustomerIdentity Phone(string phoneNumber) =>
+        new(CustomerIdentityKind.Phone, null, null, null, CustomerPhoneNumber.Normalize(phoneNumber));
 
     /// <summary>
     /// The round-trippable key that names this customer in URLs and DTOs:
     /// <c>crm:{id}</c>, <c>ext:{source}:{externalCustomerId}</c> or
     /// <c>phone:{number}</c>. The external id and phone segments are
-    /// percent-encoded so a key is always one path segment.
+    /// percent-encoded so a key is always one path segment — a canonical
+    /// phone is digits only, so <c>phone:971501234567</c> needs no escaping
+    /// and reads as the number itself.
     /// </summary>
     public string Key => Kind switch
     {
@@ -63,7 +78,10 @@ public sealed record CustomerIdentity(
             return External(verificationSource, externalCustomerId);
         }
 
-        return string.IsNullOrWhiteSpace(intakePhoneNumber) ? null : Phone(intakePhoneNumber);
+        // Only then the phone, canonicalized: a number with no digits at
+        // all ("", " ", "+") is not an identity.
+        var canonicalPhone = CustomerPhoneNumber.Normalize(intakePhoneNumber);
+        return canonicalPhone.Length == 0 ? null : Phone(canonicalPhone);
     }
 
     public static bool TryParse(string? key, out CustomerIdentity identity)
@@ -103,8 +121,11 @@ public sealed record CustomerIdentity(
 
         if (key.StartsWith("phone:", StringComparison.OrdinalIgnoreCase))
         {
-            var phone = Uri.UnescapeDataString(key[6..]);
-            if (string.IsNullOrWhiteSpace(phone))
+            // Canonicalized on the way in as well, so a key that still
+            // carries a '+' or spaces (an old bookmark, a hand-typed URL)
+            // resolves to the same customer as the canonical one.
+            var phone = CustomerPhoneNumber.Normalize(Uri.UnescapeDataString(key[6..]));
+            if (phone.Length == 0)
             {
                 return false;
             }

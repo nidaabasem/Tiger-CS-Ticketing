@@ -324,6 +324,18 @@ jobs:
           # AddExternalCustomerVerificationToTickets). External identifiers
           # only — deliberately no FK and no local cache table — and all
           # optional since only an external-lookup ticket carries them.
+          #
+          # The verified external customer's own name and email add two more
+          # nullable Tickets columns: ExternalCustomerName/ExternalCustomerEmail
+          # (Ticket.CreateFromExternalLookup,
+          # AddExternalCustomerSnapshotToTickets) — the external counterpart of
+          # the CrmBuyerCustomerName snapshot above, and nullable for the same
+          # reason plus one of its own: PACT's contracts response routinely
+          # returns customerEmail null, and a source may hold no name for a
+          # customer it has verified. Neither is ever invented to fill the
+          # column. There is deliberately no Arabic-name column beside them:
+          # PACT has no Arabic (or English/first/last) name field at all, so
+          # only CRM can supply one and it is read live, never persisted here.
           actual=$(sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -d TigerCsTicketing_CI -h -1 -W \
             -Q "SET NOCOUNT ON; SELECT TABLE_NAME + '.' + COLUMN_NAME + '=' + IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ('Tickets','IntakeRecords') ORDER BY TABLE_NAME, COLUMN_NAME;" | sed '/^$/d' | tr -d ' ')
           echo "--- actual nullability ---"
@@ -344,6 +356,7 @@ jobs:
             "Tickets.CrmBuyerProjectId=YES" "Tickets.CrmBuyerCustomerName=YES" "Tickets.CrmBuyerProjectName=YES" \
             "Tickets.CrmBuyerUnitNumber=YES" "Tickets.ManualProjectName=YES" "Tickets.ManualUnitNumber=YES" \
             "Tickets.CustomerVerificationSource=YES" "Tickets.ExternalCustomerId=YES" "Tickets.ExternalUnitId=YES" \
+            "Tickets.ExternalCustomerName=YES" "Tickets.ExternalCustomerEmail=YES" \
             "Tickets.RequestTypeId=YES" "Tickets.WorkflowTemplateId=YES" | sort)
           actual_sorted=$(echo "$actual" | sort)
           echo "--- expected nullability ---"
@@ -353,7 +366,7 @@ jobs:
             diff <(echo "$expected") <(echo "$actual_sorted") || true
             exit 1
           fi
-          echo "Column nullability matches the confirmed design exactly (46 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior. Tickets.WorkflowTemplateId (the pinned workflow version, AddWorkflowVersioning) is nullable for the same reason: only a ticket with a request type pins a version. Tickets.CategoryId and Tickets.PriorityId both became nullable in AddGenesysIntegration: an inquiry arriving through Genesys is turned into a ticket the moment an agent picks it up, before anyone has read the request, so neither its category nor its urgency has been judged. NULL says so honestly. A placeholder category would drive reporting and routing; a placeholder priority is no more harmless, since priority drives the dashboard KPI counts, the queue order and the attention ranking — the queries handle NULL explicitly (never sorting it ahead of Critical, never counting it as Critical/High). Ticket.Classify sets both later on the same ticket, and that is also when the SLA period is opened. TicketSlaInstances.PriorityId stays NOT NULL: an SLA period only ever exists for a classified ticket."
+          echo "Column nullability matches the confirmed design exactly (48 columns). Tickets.RequestTypeId is nullable by design: tickets predating the Workflow/Automation phases (and callers that do not classify) carry NULL and keep the pre-phase behavior. Tickets.WorkflowTemplateId (the pinned workflow version, AddWorkflowVersioning) is nullable for the same reason: only a ticket with a request type pins a version. Tickets.CategoryId and Tickets.PriorityId both became nullable in AddGenesysIntegration: an inquiry arriving through Genesys is turned into a ticket the moment an agent picks it up, before anyone has read the request, so neither its category nor its urgency has been judged. NULL says so honestly. A placeholder category would drive reporting and routing; a placeholder priority is no more harmless, since priority drives the dashboard KPI counts, the queue order and the attention ranking — the queries handle NULL explicitly (never sorting it ahead of Critical, never counting it as Critical/High). Ticket.Classify sets both later on the same ticket, and that is also when the SLA period is opened. TicketSlaInstances.PriorityId stays NOT NULL: an SLA period only ever exists for a classified ticket. Tickets.ExternalCustomerName/ExternalCustomerEmail are nullable because the verifying source may hold neither — PACT returns customerEmail null routinely — and a snapshot is never invented to fill a column."
 
       - name: Verify schema — TicketAssignments/TicketResolutions/TicketNotes column nullability
         run: |

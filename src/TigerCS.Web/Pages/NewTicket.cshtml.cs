@@ -232,7 +232,10 @@ public sealed class NewTicketModel(
     public string? ExternalCustomerId { get; private set; }
     /// <summary>The source's own identifier for the selected unit (for PACT, its unitID) — persisted on the Ticket as ExternalUnitId.</summary>
     public string? ExternalUnitId { get; private set; }
+    /// <summary>The source's own name for the customer (PACT's <c>customerName</c>) — carried through the wizard and snapshotted on the Ticket as ExternalCustomerName.</summary>
     public string? ExternalCustomerName { get; private set; }
+    /// <summary>The source's own email for the customer (PACT's <c>customerEmail</c>) — snapshotted on the Ticket as ExternalCustomerEmail. Null when the source holds none; never invented.</summary>
+    public string? ExternalCustomerEmail { get; private set; }
     public string? ExternalProjectName { get; private set; }
     public string? ExternalUnitNumber { get; private set; }
 
@@ -912,6 +915,8 @@ public sealed class NewTicketModel(
             ManualUnitNumber: hasCrmBuyerMatch ? null : manualUnit,
             CustomerVerificationSource: hasExternalSelection ? ExternalSource : null,
             ExternalCustomerId: hasExternalSelection ? ExternalCustomerId : null,
+            ExternalCustomerName: hasExternalSelection ? ExternalCustomerName : null,
+            ExternalCustomerEmail: hasExternalSelection ? ExternalCustomerEmail : null,
             ExternalUnitId: hasExternalSelection ? ExternalUnitId : null);
 
         var result = await ticketsClient.CreateAsync(request, cancellationToken);
@@ -995,13 +1000,17 @@ public sealed class NewTicketModel(
             return;
         }
 
-        var parts = ExternalSelection.Split(':', 6);
+        // Seven parts since the customer's email joined the packed value; an
+        // older six-part selection still in a query string simply leaves the
+        // email null rather than failing to unpack.
+        var parts = ExternalSelection.Split(':', 7);
         ExternalSource = UnescapeOrNull(parts, 0);
         ExternalCustomerId = UnescapeOrNull(parts, 1);
         ExternalUnitId = UnescapeOrNull(parts, 2);
         ExternalCustomerName = UnescapeOrNull(parts, 3);
         ExternalProjectName = UnescapeOrNull(parts, 4);
         ExternalUnitNumber = UnescapeOrNull(parts, 5);
+        ExternalCustomerEmail = UnescapeOrNull(parts, 6);
     }
 
     private static string? UnescapeOrNull(string[] parts, int index)

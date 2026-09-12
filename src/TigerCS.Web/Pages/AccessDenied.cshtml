@@ -5,6 +5,8 @@
     Layout = "_LoginLayout";
 }
 
+@* The same shell as Login: bg.png full-viewport, the statement on the
+   photograph, one compact card. *@
 <div class="login-shell">
     <aside class="login-aside" aria-label="About Tiger Ticketing">
         <div class="login-aside__brand">
@@ -20,8 +22,12 @@
 
     <div class="login-stack">
         <div class="login-card login-card--message">
+            <span class="login-card__mark">
+                <img src="~/img/tiger-logo.png" alt="" />
+                <strong>Tiger <span>Ticketing</span></strong>
+            </span>
+
             <div class="login-brand">
-                @await Html.PartialAsync("_BrandMark")
                 <div class="login-brand__product">Access denied</div>
                 <div class="login-brand__subtitle">Your account does not have permission to view this page.</div>
             </div>

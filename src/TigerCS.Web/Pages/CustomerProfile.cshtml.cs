@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
@@ -49,7 +50,29 @@ public sealed class CustomerProfileModel(
         : CrmProfile?.FullNameEnglish ?? CrmProfile?.FullNameArabic
         ?? (Profile.IdentityKind == "Phone" ? "Unnamed caller" : $"{CustomersModel.SourceLabel(Profile.VerificationSource)} customer");
 
-    public string? PrimaryPhone => Profile?.PhoneNumbers.FirstOrDefault() ?? CrmProfile?.MobileNumber;
+    /// <summary>
+    /// The one number this customer is reached on: CRM's live record when
+    /// there is one, else the most recently captured number. A CRM record
+    /// that came back with a blank number counts as having none.
+    /// </summary>
+    public string? PrimaryPhone => FirstNonBlank(CrmProfile?.MobileNumber) ?? Profile?.PhoneNumbers.FirstOrDefault();
+
+    /// <summary>
+    /// The customer's OTHER numbers — genuinely different ones only.
+    /// "+971509724162", "971509724162", "+971 50 972 4162" and
+    /// "971-50-972-4162" are one number written four ways, so they are never
+    /// listed as aliases of each other; a real second number still is. See
+    /// <see cref="CustomerContact.OtherPhones"/>.
+    /// </summary>
+    public IReadOnlyList<string> OtherPhones => CustomerContact.OtherPhones(PrimaryPhone, Profile?.PhoneNumbers);
+
+    /// <summary>The best real email: CRM's live record, else the verified external source's snapshot, else whatever a conversation captured. Never invented.</summary>
+    public string? PrimaryEmail => FirstNonBlank(CrmProfile?.Email) ?? Profile?.Emails.FirstOrDefault();
+
+    /// <summary>The customer's other emails, deduplicated against the primary case-insensitively.</summary>
+    public IReadOnlyList<string> OtherEmails => CustomerContact.OtherEmails(PrimaryEmail, Profile?.Emails);
+
+    private static string? FirstNonBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     /// <summary>The unit the customer's most recent ticket was raised for.</summary>
     public CustomerDirectoryUnitDto? PrimaryUnit => Profile?.Units.FirstOrDefault();

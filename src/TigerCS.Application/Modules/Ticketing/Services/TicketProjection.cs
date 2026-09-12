@@ -43,6 +43,8 @@ public static class TicketProjection
             ticket.ManualUnitNumber,
             ticket.CustomerVerificationSource,
             ticket.ExternalCustomerId,
-            ticket.ExternalUnitId);
+            ticket.ExternalUnitId,
+            ticket.ExternalCustomerName,
+            ticket.ExternalCustomerEmail);
     }
 }

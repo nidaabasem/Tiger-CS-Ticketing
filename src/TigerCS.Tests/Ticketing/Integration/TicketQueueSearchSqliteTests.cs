@@ -103,6 +103,126 @@ public sealed class TicketQueueSearchSqliteTests : IDisposable
         Assert.Equal([match.TicketNumber], await SearchAsync("50123"));
     }
 
+    /// <summary>
+    /// The same follow-up the Customers directory already had: a phone number
+    /// is one number however it was typed, so searching the ticket queue with
+    /// or without the '+', with spaces or with hyphens, finds the same ticket.
+    /// </summary>
+    [Theory]
+    [InlineData("+971501234567")]
+    [InlineData("971501234567")]
+    [InlineData("+971 50 123 4567")]
+    [InlineData("971-50-123-4567")]
+    [InlineData("(971) 50 123 4567")]
+    [InlineData("501234567")]
+    public async Task Search_MatchesTheIntakePhone_HoweverTheSearchTermIsWritten(string search)
+    {
+        Ticket match;
+        using (var context = _db.CreateContext())
+        {
+            match = _db.AddTicket(context, _db.CustomerServiceId);
+            var other = _db.AddTicket(context, _db.CustomerServiceId);
+
+            // Captured WITHOUT the '+' — every written form of the term must
+            // still find it, and the '+971559998877' ticket must not surface.
+            var intake = new IntakeRecord(1, "971501234567", _db.CustomerServiceId, false, null, null, _db.CsAgentId, DashboardSqliteFixture.Now.AddHours(-3));
+            intake.LinkToTicket(match.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            var otherIntake = new IntakeRecord(1, "+971559998877", _db.CustomerServiceId, false, null, null, _db.CsAgentId, DashboardSqliteFixture.Now.AddHours(-3));
+            otherIntake.LinkToTicket(other.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            context.IntakeRecords.AddRange(intake, otherIntake);
+            context.SaveChanges();
+        }
+
+        Assert.Equal([match.TicketNumber], await SearchAsync(search));
+    }
+
+    /// <summary>And the mirror case: a number captured WITH the '+' is found by a term written without one.</summary>
+    [Fact]
+    public async Task Search_FindsAPlusPrefixedIntakePhone_ByItsPlainDigits()
+    {
+        Ticket match;
+        using (var context = _db.CreateContext())
+        {
+            match = _db.AddTicket(context, _db.CustomerServiceId);
+            var intake = new IntakeRecord(1, "+971 50 972 4162", _db.CustomerServiceId, false, null, null, _db.CsAgentId, DashboardSqliteFixture.Now.AddHours(-3));
+            intake.LinkToTicket(match.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            context.IntakeRecords.Add(intake);
+            context.SaveChanges();
+        }
+
+        Assert.Equal([match.TicketNumber], await SearchAsync("971509724162"));
+        Assert.Equal([match.TicketNumber], await SearchAsync("+971509724162"));
+    }
+
+    /// <summary>
+    /// A term that merely CONTAINS digits is not a phone number. Searching a
+    /// unit code must keep finding the unit and must not drag in every caller
+    /// whose number happens to contain the same digits.
+    /// </summary>
+    [Fact]
+    public async Task Search_AUnitCode_IsNotMatchedAgainstPhoneNumbersThatContainItsDigits()
+    {
+        Ticket unitMatch;
+        string unitCode;
+        using (var context = _db.CreateContext())
+        {
+            unitMatch = _db.AddTicket(context, _db.CustomerServiceId, customerName: "Unit Owner");
+            unitCode = unitMatch.CrmBuyerUnitNumber!;
+            var unitDigits = new string(unitCode.Where(char.IsAsciiDigit).ToArray());
+
+            // A completely unrelated caller whose number happens to contain
+            // the unit code's digits.
+            var unrelated = _db.AddTicket(context, _db.CustomerServiceId);
+            var intake = new IntakeRecord(
+                1, $"+971 50 {unitDigits}11 9988", _db.CustomerServiceId, false, null, null, _db.CsAgentId,
+                DashboardSqliteFixture.Now.AddHours(-3));
+            intake.LinkToTicket(unrelated.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            context.IntakeRecords.Add(intake);
+            context.SaveChanges();
+        }
+
+        // The unit code has a letter, so it is not phone-shaped: it finds the
+        // unit and nothing else. Before the LooksLikeNumber gate it was
+        // reduced to its bare digits and matched the caller too.
+        Assert.Equal([unitMatch.TicketNumber], await SearchAsync(unitCode));
+    }
+
+    /// <summary>A term with no digits is never treated as a phone number — it must not match every ticket that has one.</summary>
+    [Fact]
+    public async Task Search_ATermWithNoDigits_DoesNotMatchEveryTicketWithAPhone()
+    {
+        using (var context = _db.CreateContext())
+        {
+            var ticket = _db.AddTicket(context, _db.CustomerServiceId);
+            var intake = new IntakeRecord(1, "+971501234567", _db.CustomerServiceId, false, null, null, _db.CsAgentId, DashboardSqliteFixture.Now.AddHours(-3));
+            intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            context.IntakeRecords.Add(intake);
+            context.SaveChanges();
+        }
+
+        Assert.Empty(await SearchAsync("zzzz-no-such-thing"));
+    }
+
+    /// <summary>Canonical phone matching narrows, never widens: a scoped employee still cannot see another department's ticket by searching its number either way.</summary>
+    [Fact]
+    public async Task Search_ByCanonicalPhone_NeverWidensDepartmentVisibility()
+    {
+        using (var context = _db.CreateContext())
+        {
+            var hidden = _db.AddTicket(context, _db.CollectionsId);
+            var intake = new IntakeRecord(1, "+971501234567", _db.CustomerServiceId, false, null, null, _db.CsAgentId, DashboardSqliteFixture.Now.AddHours(-3));
+            intake.LinkToTicket(hidden.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+            context.IntakeRecords.Add(intake);
+            context.SaveChanges();
+        }
+
+        foreach (var search in new[] { "+971501234567", "971501234567" })
+        {
+            Assert.Empty(await SearchAsync(search, roles: [Roles.DepartmentEmployee], caller: _db.RegistrationEmployeeId));
+            Assert.Single(await SearchAsync(search));
+        }
+    }
+
     [Fact]
     public async Task Search_NeverWidensDepartmentVisibility()
     {
