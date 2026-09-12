@@ -97,6 +97,15 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         return ticket;
     }
 
+    /// <summary>Attaches an intake with the given phone to an already-persisted ticket — the fallback identity's raw source.</summary>
+    private void LinkIntakePhone(TigerCsDbContext context, Ticket ticket, string phone)
+    {
+        var intake = new IntakeRecord(1, phone, _db.CustomerServiceId, false, null, null, _db.CsAgentId, ticket.CreatedAtUtc.AddMinutes(-5));
+        intake.LinkToTicket(ticket.TicketId, CrmVerificationStatus.Unverified, hasSelectedUnit: false);
+        context.IntakeRecords.Add(intake);
+        context.SaveChanges();
+    }
+
     private void Finish(Ticket ticket, TicketStatus status)
     {
         if (status == TicketStatus.Open) return;
@@ -126,7 +135,9 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         var result = await ListAsync();
 
         Assert.Equal(3, result.TotalCount);
-        Assert.Equal(["crm:9001", "phone:%2B971501112222", "ext:Pact:PACT-77"], result.Items.Select(r => r.CustomerKey).ToArray());
+        // The phone key is the number's canonical form — digits only —
+        // however the '+971501112222' on these tickets was captured.
+        Assert.Equal(["crm:9001", "phone:971501112222", "ext:Pact:PACT-77"], result.Items.Select(r => r.CustomerKey).ToArray());
 
         var crm = result.Items[0];
         Assert.Equal("Mariam Al Falasi", crm.DisplayName);
@@ -150,6 +161,154 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         Assert.Equal(1, external.TotalTickets);
     }
 
+    // ---- one phone, one customer, however it was written ----
+
+    /// <summary>
+    /// The Customer Directory identity bug: the same mobile captured with a
+    /// '+', without one, with spaces and with hyphens used to become four
+    /// customers. Every written form of one number is one row, one key and
+    /// one footprint.
+    /// </summary>
+    [Fact]
+    public async Task List_TheSamePhoneWrittenFourWays_IsOneCustomerWithOneCanonicalKey()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddPhoneTicket(context, "+971501234567", createdAtUtc: Now.AddDays(-8));
+            AddPhoneTicket(context, "971501234567", createdAtUtc: Now.AddDays(-6));
+            AddPhoneTicket(context, "+971 50 123 4567", createdAtUtc: Now.AddDays(-4));
+            AddPhoneTicket(context, "971-50-123-4567", "M-401", createdAtUtc: Now.AddDays(-2));
+        }
+
+        var result = await ListAsync();
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal("phone:971501234567", row.CustomerKey);
+        Assert.Equal("Unverified", row.VerificationSource);
+        Assert.Equal(4, row.TotalTickets);
+        Assert.Equal(4, row.OpenTickets);
+        // The row still shows the number as the latest ticket captured it.
+        Assert.Equal("971-50-123-4567", row.PhoneNumber);
+        Assert.Equal("M-401", row.UnitNumber);
+    }
+
+    /// <summary>
+    /// Searching with or without the '+', with spaces or with hyphens, finds
+    /// that one customer — and so does a plain fragment of the digits.
+    /// </summary>
+    [Theory]
+    [InlineData("+971501234567")]
+    [InlineData("971501234567")]
+    [InlineData("+971 50 123 4567")]
+    [InlineData("971-50-123-4567")]
+    [InlineData("(971) 50 123 4567")]
+    [InlineData("501234567")]
+    public async Task List_SearchByAnyWrittenFormOfThePhone_FindsTheSameCustomer(string search)
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddPhoneTicket(context, "+971501234567", createdAtUtc: Now.AddDays(-3));
+            AddPhoneTicket(context, "971501234567", createdAtUtc: Now.AddDays(-1));
+            AddPhoneTicket(context, "+971509999111", createdAtUtc: Now.AddDays(-2));
+        }
+
+        var result = await ListAsync(new CustomerDirectoryListRequestDto(Search: search));
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal("phone:971501234567", row.CustomerKey);
+        Assert.Equal(2, row.TotalTickets);
+    }
+
+    /// <summary>Every written form of the key opens the one profile, and it carries every ticket — old '+'-bearing bookmarks included.</summary>
+    [Theory]
+    [InlineData("phone:971501234567")]
+    [InlineData("phone:%2B971501234567")]
+    [InlineData("phone:+971501234567")]
+    [InlineData("phone:971%2050%20123%204567")]
+    public async Task Profile_ByAnyWrittenFormOfThePhoneKey_ResolvesToTheOneCustomer(string key)
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddPhoneTicket(context, "+971501234567", createdAtUtc: Now.AddDays(-5));
+            AddPhoneTicket(context, "971-50-123-4567", createdAtUtc: Now.AddDays(-1));
+        }
+
+        var result = await ProfileAsync(key);
+
+        Assert.Equal(CustomerDirectoryProfileOutcome.Success, result.Outcome);
+        var profile = result.Response!;
+        Assert.Equal("phone:971501234567", profile.CustomerKey);
+        Assert.Equal(2, profile.TotalTickets);
+        // Both tickets are the same phone, so the profile lists one number —
+        // the way it was most recently captured.
+        Assert.Equal(["971-50-123-4567"], profile.PhoneNumbers.ToArray());
+    }
+
+    /// <summary>
+    /// Canonicalizing the phone must not merge anything stronger: two CRM
+    /// customers, or two external customers, that happen to share a phone
+    /// stay two customers. Phone is only ever the last resort.
+    /// </summary>
+    [Fact]
+    public async Task List_ASharedPhoneNeverMergesTwoCrmOrTwoExternalCustomers()
+    {
+        using (var context = _db.CreateContext())
+        {
+            var first = AddCrmTicket(context, 9101, "Mariam Al Falasi", "T-1");
+            var second = AddCrmTicket(context, 9102, "Omar Haddad", "T-2");
+            var pact = AddExternalTicket(context, "Pact", "PACT-1", "P-1");
+            var tasleeh = AddExternalTicket(context, "Tasleeh", "TAS-1", "X-1");
+            // One household phone, written differently on each ticket.
+            LinkIntakePhone(context, first, "+971501234567");
+            LinkIntakePhone(context, second, "971501234567");
+            LinkIntakePhone(context, pact, "+971 50 123 4567");
+            LinkIntakePhone(context, tasleeh, "971-50-123-4567");
+            AddPhoneTicket(context, "+971501234567");
+        }
+
+        var result = await ListAsync();
+
+        // Two CRM customers, two external customers, one phone-only caller.
+        Assert.Equal(
+            ["crm:9101", "crm:9102", "ext:Pact:PACT-1", "ext:Tasleeh:TAS-1", "phone:971501234567"],
+            result.Items.Select(r => r.CustomerKey).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+        Assert.All(result.Items, r => Assert.Equal(1, r.TotalTickets));
+    }
+
+    /// <summary>A number that is nothing but separators identifies nobody — the ticket is not a customer, exactly as a missing number is not.</summary>
+    [Fact]
+    public async Task List_APhoneWithNoDigits_IsNotACustomer()
+    {
+        using (var context = _db.CreateContext())
+        {
+            AddPhoneTicket(context, "+");
+            AddPhoneTicket(context, "( ) - ");
+            AddPhoneTicket(context, "+971501234567");
+        }
+
+        var result = await ListAsync();
+
+        Assert.Equal(["phone:971501234567"], result.Items.Select(r => r.CustomerKey).ToArray());
+    }
+
+    [Fact]
+    public async Task List_TheSamePhoneOnAnInteraction_IsFoundByEitherWrittenForm()
+    {
+        using (var context = _db.CreateContext())
+        {
+            var ticket = AddPhoneTicket(context, "971501234567");
+            context.TicketInteractions.Add(TicketInteraction.CreateLocal(ticket.TicketId, 1, "+971 50 123 4567", Now.AddHours(-2), isOriginatingInteraction: true));
+            context.SaveChanges();
+        }
+
+        foreach (var search in new[] { "+971501234567", "971501234567", "+971-50-123-4567" })
+        {
+            var row = Assert.Single((await ListAsync(new CustomerDirectoryListRequestDto(Search: search))).Items);
+            Assert.Equal("phone:971501234567", row.CustomerKey);
+        }
+    }
+
     [Fact]
     public async Task List_PhoneIsOnlyAFallbackIdentity_AVerifiedTicketNeverJoinsAPhoneGroup()
     {
@@ -169,7 +328,7 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
 
         Assert.Equal(2, result.TotalCount);
         Assert.Contains(result.Items, r => r.CustomerKey == "crm:9002" && r.PhoneNumber == "+971509999000");
-        Assert.Contains(result.Items, r => r.CustomerKey == "phone:%2B971509999000" && r.TotalTickets == 1);
+        Assert.Contains(result.Items, r => r.CustomerKey == "phone:971509999000" && r.TotalTickets == 1);
     }
 
     [Fact]
@@ -188,7 +347,7 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         Assert.Equal("crm:9003", row.CustomerKey);
         // The match was on unit T-1204's ticket, but the row still counts both tickets.
         Assert.Equal(2, (await ListAsync(new CustomerDirectoryListRequestDto(Search: "1204"))).Items.Single().TotalTickets);
-        Assert.Equal("phone:%2B971501112222", (await ListAsync(new CustomerDirectoryListRequestDto(Search: "50111"))).Items.Single().CustomerKey);
+        Assert.Equal("phone:971501112222", (await ListAsync(new CustomerDirectoryListRequestDto(Search: "50111"))).Items.Single().CustomerKey);
         Assert.Equal("crm:9004", (await ListAsync(new CustomerDirectoryListRequestDto(Search: "Haddad"))).Items.Single().CustomerKey);
         Assert.Empty((await ListAsync(new CustomerDirectoryListRequestDto(Search: "nobody"))).Items);
     }

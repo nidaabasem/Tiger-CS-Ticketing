@@ -15,6 +15,20 @@ namespace TigerCS.Infrastructure.Modules.Ticketing.Repositories;
 /// are then dressed with what each customer's latest ticket snapshotted
 /// (name, project/unit, phone). A ticket with no identity at all is not a
 /// customer and is left out; nothing here calls CRM.
+///
+/// <para>
+/// The phone fallback groups on the number's <b>canonical</b> form, not on
+/// the string the agent typed: "+971501234567", "971501234567",
+/// "+971 50 123 4567" and "971-50-123-4567" are one customer with one row
+/// and one key, however they were captured. SQL cannot run
+/// <see cref="CustomerPhoneNumber.Normalize"/>, so the query drops
+/// <see cref="CustomerPhoneNumber.SeparatorCharacters"/> with chained
+/// <c>REPLACE()</c> — the same result for a value made of digits and
+/// separators — and <see cref="CustomerPhoneNumber.Normalize"/> is applied
+/// once more, in memory, to every key this repository emits, so a key is
+/// canonical whatever the column held. Stored numbers are never rewritten:
+/// the row still shows the customer's number as it was captured.
+/// </para>
 /// </summary>
 public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : ICustomerDirectoryRepository
 {
@@ -22,11 +36,12 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
     private const int ExternalKind = (int)CustomerIdentityKind.External;
     private const int PhoneKind = (int)CustomerIdentityKind.Phone;
 
-    /// <summary>One visible ticket with its resolved identity columns — exactly one of the three identity slots is populated, by kind.</summary>
+    /// <summary>One visible ticket with its resolved identity columns — exactly one of the three identity slots is populated, by kind. <see cref="Phone"/> is the canonical number; <see cref="IntakePhone"/> is what was captured.</summary>
     private sealed class IdentifiedTicket
     {
         public Ticket Ticket { get; init; } = null!;
         public string? IntakePhone { get; init; }
+        public string? CanonicalIntakePhone { get; init; }
         public int Kind { get; init; }
         public int? CrmId { get; init; }
         public string? Source { get; init; }
@@ -52,19 +67,39 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 .Max(i => (DateTime?)i.CreatedAtUtc),
         });
 
-        return withPhone.Select(x => new IdentifiedTicket
+        // The captured number, canonicalized in SQL. This is what the phone
+        // fallback groups, filters and searches on — never the raw column,
+        // which differs by however the agent typed the same number. The
+        // chain is written out because EF Core translates string.Replace to
+        // SQL REPLACE() but cannot call CustomerPhoneNumber.Normalize; it
+        // drops exactly CustomerPhoneNumber.SeparatorCharacters, and the
+        // keys this repository emits are normalized again in memory.
+        var canonicalized = withPhone.Select(x => new
+        {
+            x.Ticket,
+            x.IntakePhone,
+            x.LastInteractionAtUtc,
+            CanonicalIntakePhone = x.IntakePhone == null
+                ? null
+                : x.IntakePhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", ""),
+        });
+
+        return canonicalized.Select(x => new IdentifiedTicket
         {
             Ticket = x.Ticket,
             IntakePhone = x.IntakePhone,
+            CanonicalIntakePhone = x.CanonicalIntakePhone,
             LastInteractionAtUtc = x.LastInteractionAtUtc,
             Kind = x.Ticket.CrmBuyerCustomerId != null ? CrmKind
                 : x.Ticket.CustomerVerificationSource != null && x.Ticket.ExternalCustomerId != null ? ExternalKind
-                : x.IntakePhone != null ? PhoneKind
+                // A number that is nothing but separators ("+") canonicalizes
+                // to nothing and is no more an identity than a missing one.
+                : x.CanonicalIntakePhone != null && x.CanonicalIntakePhone != "" ? PhoneKind
                 : 0,
             CrmId = x.Ticket.CrmBuyerCustomerId,
             Source = x.Ticket.CrmBuyerCustomerId == null && x.Ticket.ExternalCustomerId != null ? x.Ticket.CustomerVerificationSource : null,
             ExternalId = x.Ticket.CrmBuyerCustomerId == null && x.Ticket.CustomerVerificationSource != null ? x.Ticket.ExternalCustomerId : null,
-            Phone = x.Ticket.CrmBuyerCustomerId == null && (x.Ticket.CustomerVerificationSource == null || x.Ticket.ExternalCustomerId == null) ? x.IntakePhone : null,
+            Phone = x.Ticket.CrmBuyerCustomerId == null && (x.Ticket.CustomerVerificationSource == null || x.Ticket.ExternalCustomerId == null) ? x.CanonicalIntakePhone : null,
         }).Where(x => x.Kind != 0);
     }
 
@@ -79,6 +114,15 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         // EXISTS over the same identity columns.
         if (query.Search is { } search)
         {
+            // A search term that carries digits is also matched as a phone
+            // number, canonically: "+971501234567", "971501234567" and
+            // "+971 50 123 4567" all find the same customer, whichever of
+            // those forms was captured. Blank when the term has no digits at
+            // all, and then the phone clauses are switched off rather than
+            // matching everything on an empty Contains.
+            var searchDigits = CustomerPhoneNumber.Normalize(search);
+            var searchHasDigits = searchDigits.Length > 0;
+
             var matching = identified.Where(m =>
                 m.Ticket.TicketNumber.Contains(search)
                 || (m.Ticket.CrmBuyerCustomerName != null && m.Ticket.CrmBuyerCustomerName.Contains(search))
@@ -88,8 +132,11 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 || (m.Ticket.ManualProjectName != null && m.Ticket.ManualProjectName.Contains(search))
                 || (m.Ticket.ExternalCustomerId != null && m.Ticket.ExternalCustomerId.Contains(search))
                 || (m.IntakePhone != null && m.IntakePhone.Contains(search))
+                || (searchHasDigits && m.CanonicalIntakePhone != null && m.CanonicalIntakePhone.Contains(searchDigits))
                 || dbContext.TicketInteractions.Any(i => i.TicketId == m.Ticket.TicketId
-                    && ((i.CustomerName != null && i.CustomerName.Contains(search)) || i.CustomerPhone.Contains(search))));
+                    && ((i.CustomerName != null && i.CustomerName.Contains(search))
+                        || i.CustomerPhone.Contains(search)
+                        || (searchHasDigits && i.CustomerPhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Contains(searchDigits)))));
             candidates = candidates.Where(x => matching.Any(m =>
                 m.Kind == x.Kind
                 && ((x.Kind == CrmKind && m.CrmId == x.CrmId)
@@ -173,7 +220,9 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 identity.Key,
                 identity.Kind.ToString(),
                 DisplayNameFor(last, snapshot),
-                identity.PhoneNumber ?? snapshot.IntakePhone ?? snapshot.InteractionPhone,
+                // The number as the latest ticket captured it — the canonical
+                // form identifies the customer, it is not how they are shown.
+                snapshot.IntakePhone ?? snapshot.InteractionPhone ?? identity.PhoneNumber,
                 last.CrmBuyerProjectName ?? last.ManualProjectName ?? snapshot.SnapshotProperty,
                 last.CrmBuyerUnitNumber ?? last.ManualUnitNumber ?? snapshot.SnapshotUnit,
                 VerificationSourceFor(identity),
@@ -197,6 +246,10 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         {
             CustomerIdentityKind.Crm => identified.Where(x => x.Kind == CrmKind && x.CrmId == identity.CrmBuyerCustomerId),
             CustomerIdentityKind.External => identified.Where(x => x.Kind == ExternalKind && x.Source == identity.ExternalSource && x.ExternalId == identity.ExternalCustomerId),
+            // identity.PhoneNumber is canonical (CustomerIdentity.Phone
+            // normalizes) and x.Phone is the column canonicalized in SQL, so
+            // phone:971501234567 and a bookmarked phone:%2B971501234567 open
+            // the same profile.
             _ => identified.Where(x => x.Kind == PhoneKind && x.Phone == identity.PhoneNumber),
         };
 
@@ -279,12 +332,15 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             .OrderByDescending(u => u.LastTicketAtUtc)
             .ToList();
 
+        // One entry per real number, newest capture first: the same number
+        // written "+971501234567" on one ticket and "971501234567" on the
+        // next is one phone, shown the way it was most recently captured.
         var phones = tickets.Select(x => x.IntakePhone)
             .Concat(interactions.Select(i => i.CustomerPhone))
             .Concat([identity.PhoneNumber])
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Select(p => p!.Trim())
-            .Distinct(StringComparer.Ordinal)
+            .DistinctBy(p => CustomerPhoneNumber.Normalize(p) is { Length: > 0 } canonical ? canonical : p, StringComparer.Ordinal)
             .ToList();
         var emails = interactions.Select(i => i.CustomerEmail)
             .Where(e => !string.IsNullOrWhiteSpace(e))
@@ -355,6 +411,7 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             requesterByTicket.GetValueOrDefault(id)?.SnapshotUnitNumber));
     }
 
+    /// <summary>The grouped columns as an identity. <see cref="CustomerIdentity.Phone"/> normalizes once more, so the emitted key is canonical whatever SQL left in the column.</summary>
     private static CustomerIdentity ToIdentity(int kind, int? crmId, string? source, string? externalId, string? phone) => kind switch
     {
         CrmKind => CustomerIdentity.Crm(crmId!.Value),
