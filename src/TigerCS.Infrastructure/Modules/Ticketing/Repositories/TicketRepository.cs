@@ -61,6 +61,61 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
                 t.TicketNumber.Contains(query.Search) || t.RequestSummary.Contains(query.Search));
         }
 
+        // Dashboard drill-down filters (Dashboard Phase 1) — the same shared
+        // predicates the dashboard aggregates are computed with, so a KPI
+        // and its list never disagree. The time-relative ones evaluate at
+        // the instant the application service supplied.
+        if (query.ChannelId is { } channelId)
+        {
+            filtered = filtered.WithOriginatingChannel(dbContext, channelId);
+        }
+
+        if (query.RequestTypeId is { } requestTypeId)
+        {
+            filtered = filtered.Where(t => t.RequestTypeId == requestTypeId);
+        }
+
+        if (query.ActiveOnly || query.InDepartmentQueue || query.SlaBreached || query.DueToday || query.BacklogAge is not null)
+        {
+            filtered = filtered.Active();
+        }
+
+        if (query.InDepartmentQueue)
+        {
+            filtered = filtered.Where(t => t.CurrentOwnerEmployeeId == null);
+        }
+
+        if (query.SlaBreached)
+        {
+            filtered = filtered.Where(t => t.SlaState == SlaState.Breached);
+        }
+
+        var nowUtc = query.NowUtc ?? DateTime.UtcNow;
+        if (query.DueToday)
+        {
+            filtered = filtered.DueOnUtcDay(dbContext, nowUtc.Date);
+        }
+
+        if (query.BacklogAge is { } bucket)
+        {
+            filtered = filtered.InBacklogAgeBucket(bucket, nowUtc);
+        }
+
+        if (query.PendingApprovalFor is { } approverScope)
+        {
+            filtered = filtered.WithPendingApprovalActionableBy(dbContext, approverScope);
+        }
+
+        if (query.CreatedFromUtc is { } createdFrom)
+        {
+            filtered = filtered.Where(t => t.CreatedAtUtc >= createdFrom);
+        }
+
+        if (query.CreatedToUtc is { } createdTo)
+        {
+            filtered = filtered.Where(t => t.CreatedAtUtc < createdTo);
+        }
+
         var totalCount = await filtered.CountAsync(cancellationToken);
 
         // Sorting by priority has to say where an unclassified ticket goes,

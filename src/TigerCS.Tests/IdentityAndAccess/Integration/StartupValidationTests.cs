@@ -8,6 +8,8 @@ using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Infrastructure.Persistence;
 using TigerCS.Integrations.Modules.CrmIntegration;
+using TigerCS.Application.Modules.Notifications;
+using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Integrations.Modules.EmailIntegration;
 
 namespace TigerCS.Tests.IdentityAndAccess.Integration;
@@ -148,7 +150,7 @@ public class StartupValidationTests
     /// CRM guard would fire first and the test would pass for the wrong
     /// reason. Email delivery is switched on explicitly because the
     /// committed <c>appsettings.json</c> sets
-    /// <c>Notifications:Email:Enabled</c> to <c>false</c> for the current
+    /// <c>EmailNotifications:Enabled</c> to <c>false</c> for the current
     /// no-delivery phase (see
     /// <see cref="UatEnvironment_WithRecordingEmailProviderAndEmailDisabled_StartsSuccessfully"/>);
     /// the guard only fires when delivery is expected.
@@ -161,22 +163,22 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "InternalCrmGateway";
-        config["Notifications:Email:Enabled"] = "true";
-        config["Notifications:Email:Provider"] = "Recording";
+        config["EmailNotifications:Enabled"] = "true";
+        config["EmailNotifications:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory(environment, config);
 
         var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
-        Assert.Contains("Notifications:Email:Provider", ex.ToString());
-        Assert.Contains("Notifications:Email:Enabled", ex.ToString());
+        Assert.Contains("EmailNotifications:Provider", ex.ToString());
+        Assert.Contains("EmailNotifications:Enabled", ex.ToString());
         Assert.Contains("Recording", ex.ToString());
     }
 
     /// <summary>
     /// Email delivery is not part of the UAT / management-demo phase and only
     /// the recording adapter exists, so a UAT host must be able to start with
-    /// <c>Notifications:Email:Provider</c> = <c>Recording</c> once
-    /// <c>Notifications:Email:Enabled</c> is <c>false</c>. The flag relaxes
+    /// <c>EmailNotifications:Provider</c> = <c>Recording</c> once
+    /// <c>EmailNotifications:Enabled</c> is <c>false</c>. The flag relaxes
     /// the email startup guard only: the CRM guard is still exercised (a
     /// non-Mock provider is required for the host to start at all), and the
     /// adapter that ends up wired is still <c>RecordingEmailSender</c>, which
@@ -187,8 +189,8 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "InternalCrmGateway";
-        config["Notifications:Email:Enabled"] = "false";
-        config["Notifications:Email:Provider"] = "Recording";
+        config["EmailNotifications:Enabled"] = "false";
+        config["EmailNotifications:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory("UAT", config);
 
@@ -204,8 +206,8 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "InternalCrmGateway";
-        config["Notifications:Email:Enabled"] = "false";
-        config["Notifications:Email:Provider"] = "Recording";
+        config["EmailNotifications:Enabled"] = "false";
+        config["EmailNotifications:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory("Production", config);
 
@@ -217,7 +219,7 @@ public class StartupValidationTests
 
     /// <summary>
     /// Disabling delivery must not weaken any other startup validation: a UAT
-    /// host with <c>Notifications:Email:Enabled</c> = <c>false</c> is still
+    /// host with <c>EmailNotifications:Enabled</c> = <c>false</c> is still
     /// refused for the Mock CRM adapter, exactly as
     /// <see cref="ProductionEnvironment_WithMockCrmProvider_FailsAtStartup"/>
     /// proves for Production.
@@ -227,8 +229,8 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "Mock";
-        config["Notifications:Email:Enabled"] = "false";
-        config["Notifications:Email:Provider"] = "Recording";
+        config["EmailNotifications:Enabled"] = "false";
+        config["EmailNotifications:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory("UAT", config);
 
@@ -250,8 +252,8 @@ public class StartupValidationTests
     public void DevelopmentAndTesting_WithRecordingEmailProvider_StartSuccessfully(string environment, string emailEnabled)
     {
         var config = ValidConfig();
-        config["Notifications:Email:Enabled"] = emailEnabled;
-        config["Notifications:Email:Provider"] = "Recording";
+        config["EmailNotifications:Enabled"] = emailEnabled;
+        config["EmailNotifications:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory(environment, config);
 
@@ -274,6 +276,51 @@ public class StartupValidationTests
     /// host itself from starting; it would only fail a request that
     /// actually resolves <c>ICrmGateway</c>, which this test never makes.
     /// </summary>
+    /// <summary>
+    /// Enabling SMTP delivery without the settings it needs would pass
+    /// startup and then fail on the first customer email, in a background
+    /// job. The guard names the missing keys — and never a value.
+    /// </summary>
+    [Fact]
+    public void ProductionEnvironment_WithSmtpEnabledButNoPassword_FailsAtStartupNamingTheKey()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["EmailNotifications:Enabled"] = "true";
+        config["EmailNotifications:Provider"] = "Smtp";
+        config["EmailNotifications:Username"] = "no_reply@example.com";
+        config["EmailNotifications:FromEmail"] = "no_reply@example.com";
+        config["EmailNotifications:Password"] = "";
+
+        using var factory = new ConfiguredFactory("Production", config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+
+        Assert.Contains("EmailNotifications:Password", ex.ToString());
+        Assert.Contains("docs/Customer-Email-Notifications.md", ex.ToString());
+    }
+
+    [Fact]
+    public void ProductionEnvironment_WithSmtpFullyConfigured_StartsAndResolvesTheSmtpAdapter()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["EmailNotifications:Enabled"] = "true";
+        config["EmailNotifications:Provider"] = "Smtp";
+        config["EmailNotifications:SmtpHost"] = "smtp.office365.com";
+        config["EmailNotifications:SmtpPort"] = "587";
+        config["EmailNotifications:Username"] = "no_reply@example.com";
+        config["EmailNotifications:FromEmail"] = "no_reply@example.com";
+        config["EmailNotifications:Password"] = "test-only-not-a-real-secret";
+
+        using var factory = new ConfiguredFactory("Production", config);
+
+        Assert.NotNull(factory.Server);
+        Assert.IsType<SmtpEmailSender>(factory.Services.GetRequiredService<IEmailSender>());
+        Assert.IsType<CustomerEmailSender>(factory.Services.GetRequiredService<ICustomerEmailSender>());
+        Assert.True(factory.Services.GetRequiredService<CustomerNotificationPolicy>().Enabled);
+    }
+
     [Fact]
     public void ProductionEnvironment_WithNonMockCrmProvider_StartsSuccessfully()
     {
@@ -286,7 +333,7 @@ public class StartupValidationTests
         // non-double provider for this test to still be about what it says it
         // is about — that Production is not refused by environment name
         // alone.
-        config["Notifications:Email:Provider"] = "Office365EmailSender";
+        config["EmailNotifications:Provider"] = "Smtp";
 
         using var factory = new ConfiguredFactory("Production", config);
 
@@ -311,8 +358,8 @@ public class StartupValidationTests
     {
         var config = ValidConfig();
         config["Crm:Provider"] = "Http";
-        config["Notifications:Email:Enabled"] = "false";
-        config["Notifications:Email:Provider"] = "Recording";
+        config["EmailNotifications:Enabled"] = "false";
+        config["EmailNotifications:Provider"] = "Recording";
 
         using var factory = new ConfiguredFactory(environment, config);
 

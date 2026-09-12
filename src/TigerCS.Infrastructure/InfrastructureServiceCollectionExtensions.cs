@@ -157,6 +157,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IIntakeRecordRepository, IntakeRecordRepository>();
         services.AddScoped<IDepartmentCustomerLookupSourceRepository, DepartmentCustomerLookupSourceRepository>();
         services.AddScoped<ITicketRepository, TicketRepository>();
+        services.AddScoped<IDashboardQueryRepository, DashboardQueryRepository>();
         services.AddScoped<ITicketRequesterSnapshotRepository, TicketRequesterSnapshotRepository>();
         services.AddScoped<ITicketStatusHistoryRepository, TicketStatusHistoryRepository>();
         services.AddScoped<ITicketAssignmentRepository, TicketAssignmentRepository>();
@@ -300,7 +301,11 @@ public static class InfrastructureServiceCollectionExtensions
         // discovered by the dispatcher and matched on its own EventType, so a
         // later consumer (SLA breach alerts, Genesys event processing) is one
         // registration with no dispatcher change.
+        services.AddScoped<CustomerContactResolver>();
         services.AddScoped<IOutboxEventHandler, TicketAcknowledgementHandler>();
+        services.AddScoped<IOutboxEventHandler, TicketResolvedNotificationHandler>();
+        services.AddScoped<IOutboxEventHandler, TicketClosedNotificationHandler>();
+        services.AddScoped<IOutboxEventHandler, TicketReopenedNotificationHandler>();
 
         services.AddScoped(sp => sp
             .GetRequiredService<IOptions<OutboxDispatchOptions>>().Value.ToPolicy());

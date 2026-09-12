@@ -112,6 +112,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/customers/search",
 
         "GET /api/dashboard",
+        "GET /api/dashboard/overview",
 
         // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
         // Automatic Level 2 escalation on breach has no entry here on

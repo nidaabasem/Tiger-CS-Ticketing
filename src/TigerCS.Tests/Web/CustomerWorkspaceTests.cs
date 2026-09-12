@@ -314,12 +314,14 @@ public sealed class CustomerWorkspaceTests
     {
         var html = DashboardViewHtml();
 
+        // The customer-first quick action is preserved on the Operational
+        // Dashboard, above the analytics: phone search → Customers page.
         Assert.Contains("action=\"/Customers\"", html);
         Assert.Contains("name=\"phoneNumber\"", html);
         Assert.Contains("href=\"/NewTicket\"", html);
-        Assert.Contains("Tickets Requiring Attention", html);
-        // Attention rows are compact: one-line summary, never a description block.
-        Assert.Contains("cell-truncate", html);
+        Assert.Contains("Recent / Critical Tickets", html);
+        // The recent list is compact: operational facts only, never the ticket description.
+        Assert.DoesNotContain("RequestSummary", html);
     }
 
     private static string NewTicketViewHtml() =>
@@ -385,62 +387,5 @@ public sealed class CustomerWorkspaceTests
 
         Assert.Contains("t.IsReopenEligible && TicketActions.CanReopen(Model.Viewer?.Roles)", html);
         Assert.Contains("asp-page-handler=\"Reopen\"", html);
-    }
-
-    // ---------------------------------------------------------------
-    // Dashboard role-appropriate KPI cards
-    // ---------------------------------------------------------------
-
-    private static DashboardModel CreateDashboardModel(DashboardSummaryDto summary, params string[] roles)
-    {
-        var handler = new FakeApiHandler((_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, summary));
-        var client = new DashboardApiClient(
-            new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<DashboardApiClient>.Instance);
-        var model = new DashboardModel(client, NameResolver());
-        GivePageContext(model, PrincipalWithRoles(roles));
-        return model;
-    }
-
-    private static DashboardSummaryDto Summary() => new(12, 3, 2, 1, 4, 5, 6, 1, 2, []);
-
-    [Fact]
-    public async Task Dashboard_SupervisoryRoles_SeeQueueHealthCards()
-    {
-        var model = CreateDashboardModel(Summary(), Roles.CsSupervisor);
-
-        await model.OnGetAsync(CancellationToken.None);
-
-        var labels = model.Cards.Select(c => c.Label).ToArray();
-        Assert.Contains("In Department Queue", labels);
-
-        // The old label claimed these tickets had no owner at all; they are
-        // queued to a responsible department, and the card must never say
-        // otherwise.
-        Assert.DoesNotContain("Unassigned", labels);
-        Assert.Contains("SLA Breached", labels);
-        Assert.Contains("Reopened", labels);
-        Assert.DoesNotContain("My Tickets", labels);
-    }
-
-    [Fact]
-    public async Task Dashboard_CsAgent_SeesTheirOwnWorkloadCards()
-    {
-        var model = CreateDashboardModel(Summary(), Roles.CsAgent);
-
-        await model.OnGetAsync(CancellationToken.None);
-
-        var labels = model.Cards.Select(c => c.Label).ToArray();
-        Assert.Equal(["My Tickets", "Open Tickets", "SLA At Risk", "Pending Customer"], labels);
-    }
-
-    [Fact]
-    public async Task Dashboard_DepartmentUser_SeesTheirDepartmentQueueCards()
-    {
-        var model = CreateDashboardModel(Summary(), Roles.DepartmentEmployee);
-
-        await model.OnGetAsync(CancellationToken.None);
-
-        var labels = model.Cards.Select(c => c.Label).ToArray();
-        Assert.Equal(["My Tickets", "Open Tickets", "SLA At Risk", "SLA Breached"], labels);
     }
 }

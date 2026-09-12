@@ -91,6 +91,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/customers/external/{source}/{externalCustomerId}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetExternalCustomerHistory_Returns200),
         ["GET /api/customers/search"] = nameof(SystemAdministratorEndpointAuthorizationTests.SearchCustomers_Returns200),
         ["GET /api/dashboard"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboard_Returns200),
+        ["GET /api/dashboard/overview"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboardOverview_Returns200),
 
         // SLA and Escalation. Automatic Level 2 escalation on breach has no
         // row here because it has no endpoint: MVP-API-Contracts.md §5.7

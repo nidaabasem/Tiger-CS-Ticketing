@@ -102,6 +102,12 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 ["Jwt:Audience"] = "TigerCS.Tests.Client",
                 ["Jwt:SigningKey"] = "test-only-signing-key-at-least-32-characters-long-1234567890",
                 ["Jwt:ExpirationMinutes"] = "60",
+                // The customer email pipeline runs end-to-end against the
+                // in-memory RecordingEmailSender: enabled, but nothing ever
+                // leaves the process (EmailSenderSafety allows Recording in
+                // the "Testing" environment).
+                ["EmailNotifications:Enabled"] = "true",
+                ["EmailNotifications:Provider"] = "Recording",
                 // Deterministic, offline test defaults regardless of what
                 // the deployable appsettings.json ships (production now sets
                 // Pact:Provider=Http with a real internal PACT address —

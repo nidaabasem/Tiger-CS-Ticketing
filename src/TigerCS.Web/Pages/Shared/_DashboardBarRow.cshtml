@@ -1,0 +1,26 @@
+@model TigerCS.Web.Pages.DashboardBarRow
+@* One breakdown line: label, horizontal bar, count, percentage. A row with a
+   drill-down is a link into the ticket queue; an informational row (a value
+   not recorded on the ticket) is plain text. *@
+@if (Model.Href is not null)
+{
+    <li>
+        <a class="bar-row" href="@Model.Href" title="Open these tickets">
+            <span class="bar-row__label">@Model.Label</span>
+            <span class="bar-track" aria-hidden="true"><span class="bar-fill" style="width: @Model.BarWidth"></span></span>
+            <span class="bar-row__count">@Model.Count</span>
+            <span class="bar-row__pct">@Model.PercentageText</span>
+        </a>
+    </li>
+}
+else
+{
+    <li>
+        <span class="bar-row bar-row--static">
+            <span class="bar-row__label text-secondary">@Model.Label</span>
+            <span class="bar-track" aria-hidden="true"><span class="bar-fill bar-fill--muted" style="width: @Model.BarWidth"></span></span>
+            <span class="bar-row__count">@Model.Count</span>
+            <span class="bar-row__pct">@Model.PercentageText</span>
+        </span>
+    </li>
+}

@@ -1,120 +1,167 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Ticketing.Dto;
-using TigerCS.Domain.Modules.IdentityAndAccess;
-using TigerCS.Web.Services;
+using TigerCS.Web.Models;
 using TigerCS.Web.Services.Api;
 using TigerCS.Web.Services.Auth;
 
 namespace TigerCS.Web.Pages;
 
-/// <summary>One KPI card on the Dashboard. <see cref="Href"/> links to a matching pre-filtered queue view when one exists; emphasis keys map to the fixed palette (critical for breach, gold for attention).</summary>
-public sealed record KpiCard(string Label, int Value, string? Emphasis = null, string? Href = null);
+/// <summary>One KPI card on the Dashboard. <see cref="Href"/> is the drill-down into the existing ticket queue; emphasis keys map to the fixed palette (critical for breach, gold for attention).</summary>
+public sealed record KpiCard(string Label, int Value, string? Emphasis = null, string? Href = null, string? Hint = null);
+
+/// <summary>One bar row of a breakdown card: label left, bar centre, count and percentage right. <see cref="Href"/> is null for an informational row (a value not recorded on the ticket), which is not a drill-down.</summary>
+public sealed record DashboardBarRow(string Label, int Count, double Percentage, string? Href)
+{
+    /// <summary>The percentage as displayed — one decimal at most, invariant, never NaN.</summary>
+    public string PercentageText => Percentage.ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    /// <summary>The bar's fill, clamped to the track — percentages already sum to ≤ 100.</summary>
+    public string BarWidth => Math.Clamp(Percentage, 0, 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+}
+
+/// <summary>One breakdown card. <see cref="TotalHref"/> links to the queue view of everything the card counted; <see cref="TopRows"/>/<see cref="MoreRows"/> keep long lists compact behind a "View all".</summary>
+public sealed record DashboardBarCard(string Title, string Subtitle, IReadOnlyList<DashboardBarRow> Rows, int Total, string TotalHref, string EmptyText)
+{
+    public const int TopRowCount = 8;
+
+    public IReadOnlyList<DashboardBarRow> TopRows => Rows.Take(TopRowCount).ToList();
+
+    public IReadOnlyList<DashboardBarRow> MoreRows => Rows.Skip(TopRowCount).ToList();
+}
 
 /// <summary>
-/// The operational landing page (Customer Workspace phase): a prominent
-/// customer search, role-appropriate KPI cards, and the Tickets Requiring
-/// Attention queue. All numbers come from <c>GET /api/dashboard</c>, which
-/// scopes them server-side to the caller's own visible departments — this
-/// page only chooses which of those numbers each role benefits from seeing;
-/// it never widens or computes data of its own. Card visibility here is a
-/// presentation choice, not an authorization boundary (the Api enforces
-/// those).
+/// The Operational Dashboard (Dashboard Phase 1): the customer search
+/// quick action, a filter bar over the existing master data, six KPI
+/// cards, six operational breakdown cards and the Recent/Critical list.
+/// Every number comes from <c>GET /api/dashboard/overview</c>, which scopes
+/// it server-side to the caller's own visible departments and echoes the
+/// filters it actually applied — this page never widens, re-filters or
+/// computes data of its own; it only renders and links. Each KPI and each
+/// bar row links into the existing ticket queue with the matching filters
+/// (<see cref="DashboardLinks"/>), never to a page of its own.
 /// </summary>
-public sealed class DashboardModel(
-    DashboardApiClient dashboardApiClient,
-    TicketNameResolver nameResolver) : PageModel
+public sealed class DashboardModel(DashboardApiClient dashboardApiClient) : PageModel
 {
-    private static readonly string[] SupervisoryRoles =
-    [
-        Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator
-    ];
+    // ---- bound filter state (query string) ----
+    public DateOnly? DateFrom { get; private set; }
+    public DateOnly? DateTo { get; private set; }
+    public int? DepartmentId { get; private set; }
+    public Guid? OwnerEmployeeId { get; private set; }
+    public byte? ChannelId { get; private set; }
+    public int? RequestTypeId { get; private set; }
+    public string? TicketStatus { get; private set; }
+    public byte? PriorityId { get; private set; }
 
     public CurrentUser? Viewer { get; private set; }
-    public DashboardSummaryDto? Summary { get; private set; }
+    public DashboardOverviewDto? Overview { get; private set; }
     public ApiOutcome Outcome { get; private set; }
     public IReadOnlyList<KpiCard> Cards { get; private set; } = [];
-    public IReadOnlyList<(DashboardAttentionTicketDto Ticket, string? DepartmentName, string? OwnerName)> AttentionRows { get; private set; } = [];
-    public TicketNameResolver NameResolver => nameResolver;
+    public IReadOnlyList<DashboardBarCard> BreakdownCards { get; private set; } = [];
 
-    public async Task OnGetAsync(CancellationToken cancellationToken)
+    /// <summary>True when the user narrowed anything beyond the defaults — the filter bar then offers "Clear".</summary>
+    public bool HasFilters =>
+        DateFrom is not null || DateTo is not null || DepartmentId is not null || OwnerEmployeeId is not null
+        || ChannelId is not null || RequestTypeId is not null || !string.IsNullOrWhiteSpace(TicketStatus) || PriorityId is not null;
+
+    /// <summary>The effective volume period, as the Api applied it ("Aug 12 – Sep 10, 2026").</summary>
+    public string PeriodLabel => Overview is null
+        ? string.Empty
+        : $"{Overview.Filters.DateFrom:MMM d} – {Overview.Filters.DateTo:MMM d, yyyy}";
+
+    /// <summary>Department name lookup for the request-type picker's groups — from the same picker options the Api returned.</summary>
+    public string DepartmentLabel(int? departmentId) =>
+        departmentId is { } id && Overview?.FilterOptions.Departments.FirstOrDefault(d => d.Id == id.ToString(CultureInfo.InvariantCulture)) is { } d
+            ? d.Label
+            : "Other departments";
+
+    public async Task OnGetAsync(
+        DateOnly? dateFrom, DateOnly? dateTo, int? departmentId, Guid? ownerEmployeeId,
+        byte? channelId, int? requestTypeId, string? ticketStatus, byte? priorityId,
+        CancellationToken cancellationToken)
     {
         Viewer = CurrentUser.FromPrincipal(User);
-        await nameResolver.PrimeDepartmentsAsync(cancellationToken);
+        DateFrom = dateFrom;
+        DateTo = dateTo;
+        DepartmentId = departmentId;
+        OwnerEmployeeId = ownerEmployeeId;
+        ChannelId = channelId;
+        RequestTypeId = requestTypeId;
+        TicketStatus = string.IsNullOrWhiteSpace(ticketStatus) ? null : ticketStatus;
+        PriorityId = priorityId;
 
-        var result = await dashboardApiClient.GetSummaryAsync(cancellationToken);
+        var result = await dashboardApiClient.GetOverviewAsync(
+            new DashboardOverviewRequestDto(DateFrom, DateTo, DepartmentId, OwnerEmployeeId, ChannelId, RequestTypeId, TicketStatus, PriorityId),
+            cancellationToken);
         Outcome = result.Outcome;
         if (!result.IsSuccess || result.Value is null)
         {
             return;
         }
 
-        Summary = result.Value;
-        Cards = BuildCards(Summary, Viewer);
-
-        var rows = new List<(DashboardAttentionTicketDto, string?, string?)>();
-        foreach (var ticket in Summary.AttentionTickets)
-        {
-            // The responsible department is resolved for every row, assigned
-            // or not: an employee-less ticket still shows its department
-            // queue as the accountable destination.
-            var departmentName = nameResolver.TryGetDepartmentName(ticket.CurrentDepartmentId);
-            var ownerName = ticket.CurrentOwnerEmployeeId is Guid ownerId
-                ? await nameResolver.ResolveOwnerNameAsync(ticket.CurrentDepartmentId, ownerId, cancellationToken)
-                : null;
-            rows.Add((ticket, departmentName, ownerName));
-        }
-
-        AttentionRows = rows;
+        Overview = result.Value;
+        Cards = BuildCards(Overview, Viewer);
+        BreakdownCards = BuildBreakdownCards(Overview);
     }
 
-    /// <summary>
-    /// The role-appropriate card set — the phase's approved recommendation:
-    /// supervisors/managers watch the queue's health (unassigned, SLA,
-    /// severity, reopens), agents watch their own workload, department users
-    /// their department queue (already scoped server-side).
-    /// </summary>
-    private static IReadOnlyList<KpiCard> BuildCards(DashboardSummaryDto s, CurrentUser? viewer)
+    /// <summary>The six KPI cards, each a drill-down into the queue. The numbers are already scoped by the Api; card visibility is not an authorization boundary.</summary>
+    public static IReadOnlyList<KpiCard> BuildCards(DashboardOverviewDto o, CurrentUser? viewer)
     {
-        var roles = viewer?.Roles ?? [];
-        var myTicketsHref = viewer is null ? "/Tickets" : $"/Tickets?ownerEmployeeId={viewer.EmployeeId}";
-
-        if (roles.Any(SupervisoryRoles.Contains))
-        {
-            return
-            [
-                new KpiCard("Open Tickets", s.OpenTickets),
-                // Label only — the count is unchanged: tickets that have a
-                // responsible department but no CurrentOwnerEmployeeId. Those
-                // tickets are not ownerless; they sit in their department's
-                // queue, so the card is named for where they actually are.
-                new KpiCard("In Department Queue", s.Unassigned, s.Unassigned > 0 ? "attention" : null),
-                new KpiCard("SLA At Risk", s.SlaAtRisk, s.SlaAtRisk > 0 ? "attention" : null),
-                new KpiCard("SLA Breached", s.SlaBreached, s.SlaBreached > 0 ? "critical" : null),
-                new KpiCard("Critical / High", s.CriticalOrHigh),
-                new KpiCard("Reopened", s.Reopened),
-                new KpiCard("Resolved Today", s.ResolvedToday)
-            ];
-        }
-
-        if (roles.Contains(Roles.CsAgent))
-        {
-            return
-            [
-                new KpiCard("My Tickets", s.MyTickets, null, myTicketsHref),
-                new KpiCard("Open Tickets", s.OpenTickets),
-                new KpiCard("SLA At Risk", s.SlaAtRisk, s.SlaAtRisk > 0 ? "attention" : null),
-                new KpiCard("Pending Customer", s.PendingCustomer, null, "/Tickets?ticketStatus=PendingCustomer")
-            ];
-        }
-
-        // Department users: their departments' queue only — the counts are
-        // already department-scoped by the Api.
+        var f = o.Filters;
+        var k = o.Kpis;
         return
         [
-            new KpiCard("My Tickets", s.MyTickets, null, myTicketsHref),
-            new KpiCard("Open Tickets", s.OpenTickets),
-            new KpiCard("SLA At Risk", s.SlaAtRisk, s.SlaAtRisk > 0 ? "attention" : null),
-            new KpiCard("SLA Breached", s.SlaBreached, s.SlaBreached > 0 ? "critical" : null)
+            new KpiCard("Open Tickets", k.OpenTickets, null, DashboardLinks.OpenTickets(f), "Active tickets in scope"),
+            new KpiCard("My Tickets", k.MyTickets, null,
+                viewer is null ? DashboardLinks.OpenTickets(f) : DashboardLinks.MyTickets(f, viewer.EmployeeId), "Active tickets assigned to you"),
+            // Tickets that have a responsible department but no assigned
+            // owner sit in that department's queue — never "ownerless".
+            new KpiCard("In Department Queue", k.InDepartmentQueue, k.InDepartmentQueue > 0 ? "attention" : null,
+                DashboardLinks.InDepartmentQueue(f), "Active, awaiting an assignee"),
+            new KpiCard("SLA Breached", k.SlaBreached, k.SlaBreached > 0 ? "critical" : null, DashboardLinks.SlaBreached(f), "Active, SLA state Breached"),
+            new KpiCard("Due Today", k.DueToday, k.DueToday > 0 ? "attention" : null, DashboardLinks.DueToday(f), "Resolution due today (UTC day)"),
+            new KpiCard("Pending Approval", k.PendingApproval, k.PendingApproval > 0 ? "attention" : null,
+                DashboardLinks.PendingApproval(f), "Approvals you can action")
         ];
     }
+
+    /// <summary>The six breakdown cards in the approved layout order: Channel, Request Type, Status / Department, Backlog Ageing, Priority.</summary>
+    public static IReadOnlyList<DashboardBarCard> BuildBreakdownCards(DashboardOverviewDto o)
+    {
+        var f = o.Filters;
+        var volumeHref = DashboardLinks.VolumeTotal(f);
+        var period = $"Tickets created {f.DateFrom:MMM d} – {f.DateTo:MMM d, yyyy}";
+
+        return
+        [
+            new DashboardBarCard("Volume by Channel", period,
+                Rows(o.VolumeByChannel, key => DashboardLinks.Channel(f, key), label => label),
+                o.VolumeTotal, volumeHref, "No tickets in this period."),
+            new DashboardBarCard("Volume by Request Type", period,
+                Rows(o.VolumeByRequestType, key => DashboardLinks.RequestType(f, key), label => label),
+                o.VolumeTotal, volumeHref, "No tickets in this period."),
+            new DashboardBarCard("Status", period,
+                Rows(o.StatusBreakdown, key => DashboardLinks.Status(f, key), TicketDisplay.TicketStatusLabel),
+                o.VolumeTotal, volumeHref, "No tickets in this period."),
+            new DashboardBarCard("Volume by Department", period,
+                Rows(o.VolumeByDepartment, key => DashboardLinks.Department(f, key), label => label),
+                o.VolumeTotal, volumeHref, "No tickets in this period."),
+            new DashboardBarCard("Open Backlog Ageing", "Current open backlog by age — not limited by the date range",
+                Rows(o.BacklogAgeing, key => DashboardLinks.BacklogAge(f, key), TicketDisplay.BacklogAgeLabel),
+                o.Kpis.OpenTickets, DashboardLinks.OpenTickets(f), "No open backlog in scope."),
+            new DashboardBarCard("Priority", period,
+                Rows(o.PriorityBreakdown, key => DashboardLinks.Priority(f, key), label => label),
+                o.VolumeTotal, volumeHref, "No tickets in this period.")
+        ];
+    }
+
+    private static IReadOnlyList<DashboardBarRow> Rows(
+        IReadOnlyList<DashboardBreakdownItemDto> items, Func<string, string> hrefForKey, Func<string, string> labelFor) =>
+        items.Select(i => new DashboardBarRow(
+            // Api labels are master-data names already; status and age
+            // bucket labels are enum names the display helpers humanize.
+            i.Key is null ? i.Label : labelFor(i.Label),
+            i.Count,
+            i.Percentage,
+            i.Key is null ? null : hrefForKey(i.Key))).ToList();
 }
