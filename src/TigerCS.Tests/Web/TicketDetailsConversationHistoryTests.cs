@@ -32,7 +32,9 @@ public sealed class TicketDetailsConversationHistoryTests
     {
         var html = TicketDetailsViewHtml();
 
-        Assert.Contains("Conversation History", html);
+        // The tab is labelled "Interactions" in the redesigned workspace; the
+        // panel is still the ticket's conversation history from Genesys.
+        Assert.Contains(">Interactions", html);
         Assert.Contains("id=\"tab-conversations\"", html);
         Assert.Contains("for=\"tab-conversations\"", html);
         Assert.Contains("id=\"panel-conversations\"", html);

@@ -110,6 +110,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/customers/crm/{crmCustomerId}/ticket-history",
         "GET /api/customers/external/{source}/{externalCustomerId}/ticket-history",
         "GET /api/customers/search",
+        "GET /api/customers",
+        "GET /api/customers/profile/{customerKey}",
 
         "GET /api/dashboard",
         "GET /api/dashboard/overview",

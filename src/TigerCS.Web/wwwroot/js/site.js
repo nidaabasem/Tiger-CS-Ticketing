@@ -47,6 +47,16 @@
     });
   });
 
+  // Clickable table rows (Customers directory, customer ticket lists): the
+  // first cell carries a real link; with JS the whole row follows it, except
+  // when the click was on another link, button or form control in the row.
+  document.querySelectorAll("tr.is-link[data-href]").forEach(function (row) {
+    row.addEventListener("click", function (event) {
+      if (event.target.closest("a, button, input, select, label, form, details")) return;
+      window.location.assign(row.getAttribute("data-href"));
+    });
+  });
+
   // Confirmation before a deactivation/archive/delete/publish action:
   // forms marked data-confirm ask first. Without JS the form submits
   // directly — the Api still enforces every rule server-side.

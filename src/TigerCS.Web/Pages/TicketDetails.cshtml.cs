@@ -64,6 +64,25 @@ public sealed class TicketDetailsModel(
 
     /// <summary>True when the interactions call failed, so the tab says so instead of implying the ticket has no conversations.</summary>
     public bool InteractionsUnavailable { get; private set; }
+
+    // ---- The customer behind this ticket (the Customer summary card). ----
+    // Identity comes from the ticket's own persisted facts as the Api's
+    // customer-history read resolves them: CRM Buyer id, else the external
+    // verification pair, else the intake phone — the same key the Customers
+    // directory uses, so the card's link opens exactly that customer.
+
+    /// <summary>The Customers directory key of this ticket's customer, or null when the ticket carries no customer identity at all.</summary>
+    public string? CustomerKey { get; private set; }
+
+    /// <summary>The Customer Profile for this ticket's customer, carrying this ticket so the profile can lead back — null when there is no identity to open.</summary>
+    public string? CustomerProfileHref =>
+        CustomerKey is null ? null : $"/Customers/{Uri.EscapeDataString(CustomerKey)}?fromTicket={TicketId}";
+
+    /// <summary>The best persisted customer name: the CRM Buyer snapshot, else what the originating call/chat reported, else the history's own name.</summary>
+    public string? CustomerDisplayName { get; private set; }
+
+    /// <summary>The customer's phone: the intake snapshot the history read reports, else the originating interaction's caller number.</summary>
+    public string? CustomerPhone { get; private set; }
     public string? DepartmentName { get; private set; }
     public string? OwnerName { get; private set; }
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
@@ -395,6 +414,12 @@ public sealed class TicketDetailsModel(
         AssignableEmployees = assignableTask.Result.IsSuccess && assignableTask.Result.Value is not null ? [.. assignableTask.Result.Value.Items] : [];
         CustomerHistory = customerHistoryTask.Result.IsSuccess ? customerHistoryTask.Result.Value : null;
 
+        var originating = Interactions.FirstOrDefault(i => i.IsOriginatingInteraction) ?? Interactions.FirstOrDefault();
+        CustomerPhone = FirstNonEmpty(CustomerHistory?.PhoneNumberSnapshot, originating?.CustomerPhone);
+        CustomerDisplayName = FirstNonEmpty(Ticket.CrmBuyerCustomerName, originating?.CustomerName, CustomerHistory?.CustomerDisplayName);
+        CustomerKey = CustomerHistory?.CustomerKey
+            ?? CustomerIdentity.FromTicketFacts(Ticket.CrmBuyerCustomerId, Ticket.CustomerVerificationSource, Ticket.ExternalCustomerId, CustomerPhone)?.Key;
+
         DepartmentName = nameResolver.TryGetDepartmentName(Ticket.CurrentDepartmentId);
         OwnerName = Ticket.CurrentOwnerEmployeeId is Guid ownerId
             ? await nameResolver.ResolveOwnerNameAsync(Ticket.CurrentDepartmentId, ownerId, cancellationToken)
@@ -447,6 +472,9 @@ public sealed class TicketDetailsModel(
                 .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
         ];
     }
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
 
     private static IReadOnlyList<ActivityEntry> BuildActivityFeed(
         TicketDetailDto ticket,

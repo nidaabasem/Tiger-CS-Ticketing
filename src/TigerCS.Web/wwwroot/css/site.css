@@ -447,7 +447,19 @@ textarea.form-control { min-height: 84px; resize: vertical; padding: var(--space
 #tab-units:checked ~ .tabs-body #panel-units,
 #tab-cust-tickets:checked ~ .tabs-body #panel-cust-tickets,
 #tab-cust-units:checked ~ .tabs-body #panel-cust-units,
-#tab-cust-info:checked ~ .tabs-body #panel-cust-info { display: block; }
+#tab-cust-info:checked ~ .tabs-body #panel-cust-info,
+#tab-customer:checked ~ .tabs-body #panel-customer,
+#tab-approvals:checked ~ .tabs-body #panel-approvals,
+#tab-attachments:checked ~ .tabs-body #panel-attachments,
+#tab-interactions:checked ~ .tabs-body #panel-interactions { display: block; }
+.tab-count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 17px; padding: 0 5px; margin-left: 4px;
+  border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: 10.5px; font-weight: 700;
+  color: var(--color-text-secondary); font-variant-numeric: tabular-nums; vertical-align: 1px;
+}
+.tab-input:checked + .tab-label .tab-count { background: var(--color-gold-tint); border-color: var(--color-gold-line); color: var(--color-gold-dark); }
+/* A label that targets a tab's radio input — jumps to that tab without JS. */
+.tab-jump { cursor: pointer; }
 
 /* Page-level Details/Previous Tickets tabs (Ticket Details) — same
    mechanism as the tabs above, one level up: wraps the whole detail-layout
@@ -726,6 +738,77 @@ a.bar-row:hover .bar-fill { background: var(--color-gold-dark); }
 .success-card__title { font-size: 14px; font-weight: 700; }
 .success-card__number { font-size: 20px; font-weight: 700; color: var(--color-gold-dark); margin: var(--space-1) 0 var(--space-3); }
 
+/* ---------- Customers directory, Customer Profile, Ticket Details customer card ----------
+   The same primitives as everywhere else (page, panel, data-table, badge,
+   btn, filter-bar, facts-*) plus what a customer-centric view adds: an
+   identity chip with initials, a header card, a summary card on the
+   ticket, source badges, count pills and clickable rows. */
+
+.page-header__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; flex: none; }
+.panel-intro { padding: 0 0 var(--space-3); font-size: 12.5px; color: var(--color-text-secondary); }
+.panel-note { margin-top: var(--space-3); font-size: 12.5px; }
+.empty-state__actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; justify-content: center; }
+.two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+
+/* Verification-source badges: CRM-verified reads as verified, PACT/Tasleeh as an external verification, phone-only as unverified. */
+.badge-source-verified { background: var(--color-success-pale); color: var(--color-success); border-color: #D3E2D8; }
+.badge-source-external { background: var(--color-ink-tint); color: var(--color-ink); border-color: var(--color-ink-line); }
+.badge-source-unverified { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+.badge-neutral { background: #F1EFE9; color: var(--color-text-secondary); border-color: var(--color-border); }
+
+.count-pill {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 22px; padding: 0 8px;
+  border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border);
+  font-size: 12px; font-weight: 700; color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+}
+.count-pill--attention { background: var(--color-gold-tint); border-color: var(--color-gold-line); color: var(--color-gold-dark); }
+
+/* Clickable rows: the first cell holds the real link; JS makes the whole row follow it. */
+.data-table--clickable tbody tr.is-link { cursor: pointer; }
+.data-table--clickable tbody tr.is-link:hover { background: var(--color-gold-pale); }
+.data-table--clickable tbody tr.is-link:hover .cell-primary { color: var(--color-gold-dark); }
+
+.customer-link { display: inline-flex; align-items: center; gap: var(--space-3); }
+.customer-link .cell-primary, .customer-link .cell-sub { display: block; }
+.customer-link:hover .cell-primary { text-decoration: underline; }
+.customer-link__avatar, .customer-header__avatar, .customer-card__avatar {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 50%;
+  background: var(--color-ink); color: var(--color-gold-pale); font-weight: 700; letter-spacing: 0.02em;
+}
+.customer-link__avatar { width: 32px; height: 32px; font-size: 12px; }
+
+/* Customer Profile header card. */
+.customer-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4);
+}
+.customer-header__identity { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.customer-header__avatar { width: 52px; height: 52px; font-size: 18px; }
+.customer-header__name { font-size: 20px; font-weight: 700; line-height: 1.2; }
+.customer-header__meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-top: var(--space-2); font-size: 12.5px; color: var(--color-text-secondary); }
+.customer-header__fact { display: inline-flex; align-items: center; gap: 6px; }
+.customer-header__fact svg { width: 14px; height: 14px; flex: none; }
+.customer-header__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; flex: none; }
+
+/* The Customer summary card on Ticket Details. */
+.detail-main { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.customer-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); }
+.customer-card__head { display: flex; align-items: center; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); }
+.customer-card__avatar { width: 40px; height: 40px; font-size: 14px; }
+.customer-card__who { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.customer-card__name { font-size: 15px; font-weight: 700; color: var(--color-text); }
+a.customer-card__name { color: var(--color-gold-dark); }
+a.customer-card__name:hover { text-decoration: underline; }
+.customer-card__facts { padding: var(--space-2) 0; }
+.customer-card__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
+.facts-panel--flat { margin-bottom: 0; }
+
+.mini-list { display: flex; flex-direction: column; }
+.mini-list__row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); font-size: 12.5px; }
+.mini-list__row:last-child { border-bottom: 0; }
+.mini-list__text { color: var(--color-text-secondary); }
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1180px) {
@@ -750,6 +833,10 @@ a.bar-row:hover .bar-fill { background: var(--color-gold-dark); }
   .app-header { flex-wrap: wrap; height: auto; padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   .app-header__search { order: 3; max-width: none; width: 100%; }
   .view-tabs__link { padding: 0 var(--space-2); }
+  .two-col { grid-template-columns: 1fr; }
+  .customer-header { padding: var(--space-4); }
+  .customer-header__identity { align-items: flex-start; }
+  .customer-header__actions { width: 100%; }
   .tickets-workspace .filter-bar .field-group { flex: 1 1 45%; }
   .tickets-workspace .filter-bar .field-select, .tickets-workspace .filter-bar .field-input { width: 100%; min-width: 0; }
   .tickets-workspace .filter-bar__submit { width: 100%; margin-left: 0; justify-content: flex-end; }

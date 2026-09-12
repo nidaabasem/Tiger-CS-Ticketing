@@ -174,6 +174,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<TicketReconciliationAppService>();
         services.AddScoped<CustomerHistoryAppService>();
         services.AddScoped<CustomerProfileAppService>();
+        services.AddScoped<ICustomerDirectoryRepository, CustomerDirectoryRepository>();
+        services.AddScoped<CustomerDirectoryAppService>();
 
         // Customer Workspace phase: standalone customer search (composes the
         // existing CRM Buyer + PACT/Tasleeh lookups), the Dashboard

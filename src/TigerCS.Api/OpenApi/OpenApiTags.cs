@@ -36,6 +36,7 @@ public static class OpenApiTags
     public const string Dashboard = "Dashboard";
     public const string Tickets = "Tickets";
     public const string CustomerHistory = "Customer History";
+    public const string CustomerDirectory = "Customer Directory";
     public const string CustomerProfile = "Customer Profile";
     public const string Assignment = "Assignment";
     public const string Transfer = "Transfer";
@@ -81,6 +82,10 @@ public static class OpenApiTags
             "Customer -> previous ticket history, sourced entirely from the Tickets table (never a live CRM call). "
             + "Verified history is keyed by the exact CrmBuyerCustomerId the agent selected; unverified history falls back "
             + "to the persisted phone-number snapshot and is always labelled as such."),
+        (CustomerDirectory,
+            "The Customers directory: the paginated list of customers TigerCS already knows, derived from its own "
+            + "persisted tickets, intakes and interactions (never a CRM list call), deduplicated by CRM Buyer id, then "
+            + "external-verification identity, then intake phone — and the per-customer profile behind each row."),
         (CustomerProfile,
             "Ticket-anchored, live CRM Customer Details/Profile (Overview/Contact Info/Units) for the exact "
             + "CrmBuyerCustomerId the ticket was verified against, via the same CRM Buyer Lookup service the New "

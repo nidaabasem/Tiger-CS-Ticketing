@@ -161,7 +161,6 @@ public sealed class TicketsWorkspaceTests
     [Theory]
     [InlineData("Tickets.cshtml")]
     [InlineData("TicketDetails.cshtml")]
-    [InlineData("CustomerProfile.cshtml")]
     [InlineData("NewTicket.cshtml")]
     public void EveryTicketPage_LightsTheTicketsNavItem(string page)
     {
@@ -497,8 +496,11 @@ public sealed class TicketsWorkspaceTests
         var details = View("TicketDetails.cshtml");
         Assert.Contains("<a href=\"@Model.ReturnContext.Href\">@Model.ReturnContext.View.Label()</a>", details, StringComparison.Ordinal);
         Assert.Contains("Back to @Model.ReturnContext.View.Label()", details, StringComparison.Ordinal);
+        // The Customer Profile now lives under Customers (its own workspace);
+        // Ticket Details links to it carrying the ticket, and the profile's
+        // "Back to ticket" returns here — see CustomerWorkspaceRenderTests.
         var profile = View("CustomerProfile.cshtml");
-        Assert.Contains("<a href=\"@Model.ReturnContext.Href\">@Model.ReturnContext.View.Label()</a>", profile, StringComparison.Ordinal);
+        Assert.Contains("ViewData[\"ActiveNav\"] = \"customers\";", profile, StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------

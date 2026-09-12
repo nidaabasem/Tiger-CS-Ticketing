@@ -90,6 +90,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/customers/crm/{crmCustomerId:int}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCrmCustomerTicketHistory_Returns200),
         ["GET /api/customers/external/{source}/{externalCustomerId}/ticket-history"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetExternalCustomerHistory_Returns200),
         ["GET /api/customers/search"] = nameof(SystemAdministratorEndpointAuthorizationTests.SearchCustomers_Returns200),
+        ["GET /api/customers"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListCustomers_Returns200),
+        ["GET /api/customers/profile/{customerKey}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCustomerProfileByKey_Returns200),
         ["GET /api/dashboard"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboard_Returns200),
         ["GET /api/dashboard/overview"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboardOverview_Returns200),
 
