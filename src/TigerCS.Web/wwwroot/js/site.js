@@ -39,11 +39,26 @@
   // (and is the only way to apply filters) without this script. Applies to
   // any select or checkbox marked data-autosubmit (the ticket queue's
   // filters, the customer workspace's unit filter, the admin list toolbars).
+  //
+  // Changes are coalesced before navigating. Each change starts a fresh
+  // navigation, so changing two filters in quick succession made the browser
+  // abort the first request the moment the second one started — the server
+  // was already mid-query, and the abort surfaced there as a cancelled
+  // query. Waiting out a short quiet period first means the pair of changes
+  // produces ONE request carrying both, and the user's latest choice is the
+  // one that travels (a plain guard that dropped the second change would
+  // navigate with the stale filter instead).
+  var AUTOSUBMIT_QUIET_MS = 250;
+  var autoSubmitTimers = new WeakMap();
   document.querySelectorAll("select[data-autosubmit], input[type=checkbox][data-autosubmit]").forEach(function (el) {
     el.addEventListener("change", function () {
-      if (el.form) {
-        el.form.requestSubmit();
-      }
+      var form = el.form;
+      if (!form) return;
+      window.clearTimeout(autoSubmitTimers.get(form));
+      autoSubmitTimers.set(form, window.setTimeout(function () {
+        autoSubmitTimers.delete(form);
+        form.requestSubmit();
+      }, AUTOSUBMIT_QUIET_MS));
     });
   });
 
@@ -91,14 +106,40 @@
     apply();
   });
 
-  // Prevent duplicate submission: disable a form's submit button(s) the
-  // moment it submits, so a double-click can't fire the request twice.
+  // Prevent duplicate submission: the first submit wins, and every submit of
+  // the same form until the browser leaves the page is dropped. Disabling the
+  // submit button alone was not enough — a filter marked data-autosubmit
+  // submits through requestSubmit(), which never touches a button — so the
+  // second submit is cancelled here instead, where both paths pass.
+  //
+  // Runs in the bubble phase so the data-confirm guard above (capture) has
+  // already had its say: a declined confirmation must not leave the form
+  // marked as submitted and therefore permanently inert.
+  //
   // Without JS the form still submits normally on every click.
   document.addEventListener("submit", function (event) {
     var form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
+    if (form.dataset.submitting === "true") {
+      event.preventDefault();
+      return;
+    }
+    form.dataset.submitting = "true";
     form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
       btn.disabled = true;
+    });
+  });
+
+  // Coming back to a page the browser kept alive (Back/Forward) restores the
+  // DOM exactly as it was left — mid-submit, with the button disabled and the
+  // form marked. Release both, or the filters are dead on return.
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    document.querySelectorAll("form[data-submitting]").forEach(function (form) {
+      delete form.dataset.submitting;
+      form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
+        btn.disabled = false;
+      });
     });
   });
 })();
