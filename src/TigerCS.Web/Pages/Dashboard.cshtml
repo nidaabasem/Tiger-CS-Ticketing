@@ -9,6 +9,22 @@
     var options = Model.Overview?.FilterOptions;
     string DateValue(DateOnly? d) => d?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
 
+    // The card's semantic tone, keyed on its label — decoration only, like
+    // the glyph below: the number, label and drill-down link come from the
+    // model. Open work is information, the department queue is operational,
+    // a breach is critical, a deadline today is a warning, approvals are
+    // the one card that asks the viewer to act and so carry the brand gold.
+    string KpiTone(string label) => label switch
+    {
+        "Open Tickets" => "info",
+        "My Tickets" => "secondary",
+        "In Department Queue" => "progress",
+        "SLA Breached" => "critical",
+        "Due Today" => "warning",
+        "Pending Approval" => "brand",
+        _ => "info",
+    };
+
     // A small leading glyph per KPI, keyed on the card's label — decoration
     // only; the number, label and drill-down link come from the model.
     string KpiIcon(string label) => label switch
@@ -23,12 +39,15 @@
 
     // The four views of the Tickets workspace — the same links the nav used
     // to carry, now one row of shortcuts that land on the matching tab.
-    (string Label, string Hint, string Href, string Icon)[] shortcuts =
+    // Each view keeps the tone it has everywhere else: the queue is general
+    // information, pending interactions are the secondary operational pile,
+    // your own work is in progress, closed work is resolved.
+    (string Label, string Hint, string Href, string Tone, string Icon)[] shortcuts =
     [
-        ("Queue", "Every ticket in your departments", TicketsView.Queue.Href(), "<path d=\"M4 6h16M4 12h16M4 18h10\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>"),
-        ("Pending Interactions", "Customers waiting for a human agent", TicketsView.Pending.Href(), "<path d=\"M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.1A8 8 0 1 1 21 12Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\"/>"),
-        ("My Tickets", "Assigned to you", TicketsView.My.Href(), "<circle cx=\"12\" cy=\"8\" r=\"4\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M4 20c1.8-3.2 4.5-5 8-5s6.2 1.8 8 5\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>"),
-        ("Closed", "Recently closed work", TicketsView.Closed.Href(), "<path d=\"M5 13l4 4L19 7\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"),
+        ("Queue", "Every ticket in your departments", TicketsView.Queue.Href(), "info", "<path d=\"M4 6h16M4 12h16M4 18h10\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>"),
+        ("Pending Interactions", "Customers waiting for a human agent", TicketsView.Pending.Href(), "secondary", "<path d=\"M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.1A8 8 0 1 1 21 12Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\"/>"),
+        ("My Tickets", "Assigned to you", TicketsView.My.Href(), "progress", "<circle cx=\"12\" cy=\"8\" r=\"4\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M4 20c1.8-3.2 4.5-5 8-5s6.2 1.8 8 5\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>"),
+        ("Closed", "Recently closed work", TicketsView.Closed.Href(), "success", "<path d=\"M5 13l4 4L19 7\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"),
     ];
 
     var activeFilterCount = new object?[] { Model.DepartmentId, Model.OwnerEmployeeId, Model.ChannelId, Model.RequestTypeId, Model.TicketStatus, Model.PriorityId, Model.DateFrom, Model.DateTo }
@@ -64,9 +83,9 @@
         </div>
 
         <nav class="dash-shortcuts" aria-label="Tickets workspace">
-            @foreach (var (label, hint, href, icon) in shortcuts)
+            @foreach (var (label, hint, href, tone, icon) in shortcuts)
             {
-                <a class="dash-shortcut" href="@href">
+                <a class="dash-shortcut tone-@tone" href="@href">
                     <span class="dash-shortcut__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">@Html.Raw(icon)</svg></span>
                     <span>
                         <span class="dash-shortcut__title">@label</span>
@@ -101,7 +120,7 @@
         <section class="kpi-grid kpi-grid--six" aria-label="Operational counters">
             @foreach (var card in Model.Cards)
             {
-                <a class="kpi-card kpi-card--icon @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")" href="@card.Href" title="@card.Hint">
+                <a class="kpi-card kpi-card--icon tone-@KpiTone(card.Label) @(card.Emphasis is not null ? $"kpi-card--{card.Emphasis}" : "")" href="@card.Href" title="@card.Hint">
                     <span class="kpi-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">@Html.Raw(KpiIcon(card.Label))</svg></span>
                     <span class="kpi-card__body">
                         <strong>@card.Value</strong>

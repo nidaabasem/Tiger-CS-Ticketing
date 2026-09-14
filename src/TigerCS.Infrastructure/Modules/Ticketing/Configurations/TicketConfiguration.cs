@@ -65,6 +65,11 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.Property(t => t.CustomerVerificationSource).HasMaxLength(32);
         builder.Property(t => t.ExternalCustomerId).HasMaxLength(64);
         builder.Property(t => t.ExternalUnitId).HasMaxLength(64);
+        // Snapshot text, sized like their CRM counterparts: the name matches
+        // CrmBuyerCustomerName's 200, the email matches the 256 every other
+        // email column in the schema uses.
+        builder.Property(t => t.ExternalCustomerName).HasMaxLength(200);
+        builder.Property(t => t.ExternalCustomerEmail).HasMaxLength(256);
         builder.HasIndex(t => new { t.CustomerVerificationSource, t.ExternalCustomerId })
             .HasFilter("[ExternalCustomerId] IS NOT NULL");
 

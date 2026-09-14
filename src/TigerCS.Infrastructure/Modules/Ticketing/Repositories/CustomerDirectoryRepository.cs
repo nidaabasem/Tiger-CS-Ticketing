@@ -15,6 +15,20 @@ namespace TigerCS.Infrastructure.Modules.Ticketing.Repositories;
 /// are then dressed with what each customer's latest ticket snapshotted
 /// (name, project/unit, phone). A ticket with no identity at all is not a
 /// customer and is left out; nothing here calls CRM.
+///
+/// <para>
+/// The phone fallback groups on the number's <b>canonical</b> form, not on
+/// the string the agent typed: "+971501234567", "971501234567",
+/// "+971 50 123 4567" and "971-50-123-4567" are one customer with one row
+/// and one key, however they were captured. SQL cannot run
+/// <see cref="CustomerPhoneNumber.Normalize"/>, so the query drops
+/// <see cref="CustomerPhoneNumber.SeparatorCharacters"/> with chained
+/// <c>REPLACE()</c> — the same result for a value made of digits and
+/// separators — and <see cref="CustomerPhoneNumber.Normalize"/> is applied
+/// once more, in memory, to every key this repository emits, so a key is
+/// canonical whatever the column held. Stored numbers are never rewritten:
+/// the row still shows the customer's number as it was captured.
+/// </para>
 /// </summary>
 public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : ICustomerDirectoryRepository
 {
@@ -22,11 +36,12 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
     private const int ExternalKind = (int)CustomerIdentityKind.External;
     private const int PhoneKind = (int)CustomerIdentityKind.Phone;
 
-    /// <summary>One visible ticket with its resolved identity columns — exactly one of the three identity slots is populated, by kind.</summary>
+    /// <summary>One visible ticket with its resolved identity columns — exactly one of the three identity slots is populated, by kind. <see cref="Phone"/> is the canonical number; <see cref="IntakePhone"/> is what was captured.</summary>
     private sealed class IdentifiedTicket
     {
         public Ticket Ticket { get; init; } = null!;
         public string? IntakePhone { get; init; }
+        public string? CanonicalIntakePhone { get; init; }
         public int Kind { get; init; }
         public int? CrmId { get; init; }
         public string? Source { get; init; }
@@ -52,19 +67,39 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 .Max(i => (DateTime?)i.CreatedAtUtc),
         });
 
-        return withPhone.Select(x => new IdentifiedTicket
+        // The captured number, canonicalized in SQL. This is what the phone
+        // fallback groups, filters and searches on — never the raw column,
+        // which differs by however the agent typed the same number. The
+        // chain is written out because EF Core translates string.Replace to
+        // SQL REPLACE() but cannot call CustomerPhoneNumber.Normalize; it
+        // drops exactly CustomerPhoneNumber.SeparatorCharacters, and the
+        // keys this repository emits are normalized again in memory.
+        var canonicalized = withPhone.Select(x => new
+        {
+            x.Ticket,
+            x.IntakePhone,
+            x.LastInteractionAtUtc,
+            CanonicalIntakePhone = x.IntakePhone == null
+                ? null
+                : x.IntakePhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Replace(".", "").Replace("/", ""),
+        });
+
+        return canonicalized.Select(x => new IdentifiedTicket
         {
             Ticket = x.Ticket,
             IntakePhone = x.IntakePhone,
+            CanonicalIntakePhone = x.CanonicalIntakePhone,
             LastInteractionAtUtc = x.LastInteractionAtUtc,
             Kind = x.Ticket.CrmBuyerCustomerId != null ? CrmKind
                 : x.Ticket.CustomerVerificationSource != null && x.Ticket.ExternalCustomerId != null ? ExternalKind
-                : x.IntakePhone != null ? PhoneKind
+                // A number that is nothing but separators ("+") canonicalizes
+                // to nothing and is no more an identity than a missing one.
+                : x.CanonicalIntakePhone != null && x.CanonicalIntakePhone != "" ? PhoneKind
                 : 0,
             CrmId = x.Ticket.CrmBuyerCustomerId,
             Source = x.Ticket.CrmBuyerCustomerId == null && x.Ticket.ExternalCustomerId != null ? x.Ticket.CustomerVerificationSource : null,
             ExternalId = x.Ticket.CrmBuyerCustomerId == null && x.Ticket.CustomerVerificationSource != null ? x.Ticket.ExternalCustomerId : null,
-            Phone = x.Ticket.CrmBuyerCustomerId == null && (x.Ticket.CustomerVerificationSource == null || x.Ticket.ExternalCustomerId == null) ? x.IntakePhone : null,
+            Phone = x.Ticket.CrmBuyerCustomerId == null && (x.Ticket.CustomerVerificationSource == null || x.Ticket.ExternalCustomerId == null) ? x.CanonicalIntakePhone : null,
         }).Where(x => x.Kind != 0);
     }
 
@@ -79,17 +114,31 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         // EXISTS over the same identity columns.
         if (query.Search is { } search)
         {
+            // A search term SHAPED LIKE A PHONE NUMBER is also matched as one,
+            // canonically: "+971501234567", "971501234567" and
+            // "+971 50 123 4567" all find the same customer, whichever of
+            // those forms was captured. The gate is LooksLikeNumber rather
+            // than "has a digit", so a unit code like "M-401" is still matched
+            // as the text it is and not against every number containing 401.
+            var searchIsPhoneShaped = CustomerPhoneNumber.LooksLikeNumber(search);
+            var searchDigits = searchIsPhoneShaped ? CustomerPhoneNumber.Normalize(search) : string.Empty;
+
             var matching = identified.Where(m =>
                 m.Ticket.TicketNumber.Contains(search)
                 || (m.Ticket.CrmBuyerCustomerName != null && m.Ticket.CrmBuyerCustomerName.Contains(search))
+                || (m.Ticket.ExternalCustomerName != null && m.Ticket.ExternalCustomerName.Contains(search))
+                || (m.Ticket.ExternalCustomerEmail != null && m.Ticket.ExternalCustomerEmail.Contains(search))
                 || (m.Ticket.CrmBuyerUnitNumber != null && m.Ticket.CrmBuyerUnitNumber.Contains(search))
                 || (m.Ticket.CrmBuyerProjectName != null && m.Ticket.CrmBuyerProjectName.Contains(search))
                 || (m.Ticket.ManualUnitNumber != null && m.Ticket.ManualUnitNumber.Contains(search))
                 || (m.Ticket.ManualProjectName != null && m.Ticket.ManualProjectName.Contains(search))
                 || (m.Ticket.ExternalCustomerId != null && m.Ticket.ExternalCustomerId.Contains(search))
                 || (m.IntakePhone != null && m.IntakePhone.Contains(search))
+                || (searchIsPhoneShaped && m.CanonicalIntakePhone != null && m.CanonicalIntakePhone.Contains(searchDigits))
                 || dbContext.TicketInteractions.Any(i => i.TicketId == m.Ticket.TicketId
-                    && ((i.CustomerName != null && i.CustomerName.Contains(search)) || i.CustomerPhone.Contains(search))));
+                    && ((i.CustomerName != null && i.CustomerName.Contains(search))
+                        || i.CustomerPhone.Contains(search)
+                        || (searchIsPhoneShaped && i.CustomerPhone.Trim().Replace("+", "").Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "").Replace(".", "").Replace("/", "").Contains(searchDigits)))));
             candidates = candidates.Where(x => matching.Any(m =>
                 m.Kind == x.Kind
                 && ((x.Kind == CrmKind && m.CrmId == x.CrmId)
@@ -132,6 +181,21 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
                 // Ticket ids are assigned in creation order, so the highest id
                 // is the latest ticket — the row's name/unit/phone snapshot.
                 LastTicketId = g.Max(x => x.Ticket.TicketId),
+                // The newest ticket that actually snapshotted a customer name.
+                // Usually the same ticket; it differs when the latest one came
+                // from a source that returned no name (PACT's customerName is
+                // routinely null), and without it the row would fall back to a
+                // placeholder for a customer the profile can name — the list
+                // and the profile would show two different people.
+                // Blank counts as no name, exactly as FirstNonEmpty below
+                // decides: CrmBuyerCustomerName is stored verbatim, so a
+                // whitespace-only one must not shadow an older real name and
+                // put the list back out of step with the profile.
+                LastNamedTicketId = g.Max(x =>
+                    (x.Ticket.CrmBuyerCustomerName != null && x.Ticket.CrmBuyerCustomerName.Trim() != "")
+                    || (x.Ticket.ExternalCustomerName != null && x.Ticket.ExternalCustomerName.Trim() != "")
+                        ? (long?)x.Ticket.TicketId
+                        : null),
                 LastTicketCreatedAtUtc = g.Max(x => x.Ticket.CreatedAtUtc),
                 LastInteractionAtUtc = g.Max(x => x.LastInteractionAtUtc),
             });
@@ -155,10 +219,16 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         }
 
         // Dress each row with its latest ticket's snapshot — one query per
-        // fact table for the whole page, never one per row.
+        // fact table for the whole page, never one per row. The newest NAMED
+        // ticket is read in the same batch, so widening the name costs no
+        // extra round trip.
         var lastTicketIds = page.Select(g => g.LastTicketId).ToList();
+        var ticketIdsToLoad = lastTicketIds
+            .Concat(page.Select(g => g.LastNamedTicketId).OfType<long>())
+            .Distinct()
+            .ToList();
         var lastTickets = await dbContext.Tickets.AsNoTracking()
-            .Where(t => lastTicketIds.Contains(t.TicketId))
+            .Where(t => ticketIdsToLoad.Contains(t.TicketId))
             .ToDictionaryAsync(t => t.TicketId, cancellationToken);
         var snapshots = await LoadSnapshotsAsync(lastTicketIds, cancellationToken);
 
@@ -169,11 +239,23 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             var last = lastTickets[g.LastTicketId];
             var snapshot = snapshots.GetValueOrDefault(g.LastTicketId);
 
+            // The latest ticket's name, else the newest ticket that
+            // snapshotted one. This matches the profile for every name a
+            // TICKET carries. The profile additionally scans conversation
+            // names across all of a customer's tickets, which a list page
+            // cannot do without a query per row; the row sees the latest
+            // ticket's conversation name only, as it always has.
+            var namedTicket = g.LastNamedTicketId is { } namedId ? lastTickets.GetValueOrDefault(namedId) : null;
+            var displayName = DisplayNameFor(last, snapshot)
+                ?? FirstNonEmpty(namedTicket?.CrmBuyerCustomerName, namedTicket?.ExternalCustomerName);
+
             rows.Add(new CustomerDirectoryRowDto(
                 identity.Key,
                 identity.Kind.ToString(),
-                DisplayNameFor(last, snapshot),
-                identity.PhoneNumber ?? snapshot.IntakePhone ?? snapshot.InteractionPhone,
+                displayName,
+                // The number as the latest ticket captured it — the canonical
+                // form identifies the customer, it is not how they are shown.
+                snapshot.IntakePhone ?? snapshot.InteractionPhone ?? identity.PhoneNumber,
                 last.CrmBuyerProjectName ?? last.ManualProjectName ?? snapshot.SnapshotProperty,
                 last.CrmBuyerUnitNumber ?? last.ManualUnitNumber ?? snapshot.SnapshotUnit,
                 VerificationSourceFor(identity),
@@ -197,6 +279,10 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         {
             CustomerIdentityKind.Crm => identified.Where(x => x.Kind == CrmKind && x.CrmId == identity.CrmBuyerCustomerId),
             CustomerIdentityKind.External => identified.Where(x => x.Kind == ExternalKind && x.Source == identity.ExternalSource && x.ExternalId == identity.ExternalCustomerId),
+            // identity.PhoneNumber is canonical (CustomerIdentity.Phone
+            // normalizes) and x.Phone is the column canonicalized in SQL, so
+            // phone:971501234567 and a bookmarked phone:%2B971501234567 open
+            // the same profile.
             _ => identified.Where(x => x.Kind == PhoneKind && x.Phone == identity.PhoneNumber),
         };
 
@@ -279,22 +365,35 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             .OrderByDescending(u => u.LastTicketAtUtc)
             .ToList();
 
+        // One entry per real number, newest capture first: the same number
+        // written "+971501234567" on one ticket and "971501234567" on the
+        // next is one phone, shown the way it was most recently captured.
         var phones = tickets.Select(x => x.IntakePhone)
             .Concat(interactions.Select(i => i.CustomerPhone))
             .Concat([identity.PhoneNumber])
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Select(p => p!.Trim())
-            .Distinct(StringComparer.Ordinal)
+            .DistinctBy(p => CustomerPhoneNumber.Normalize(p) is { Length: > 0 } canonical ? canonical : p, StringComparer.Ordinal)
             .ToList();
-        var emails = interactions.Select(i => i.CustomerEmail)
+        // Emails, best-known first: the address the verifying source holds
+        // for this customer, then whatever a conversation captured. Newest
+        // ticket first (tickets is already ordered that way), deduplicated
+        // case-insensitively because "F.Noor@Example.com" and
+        // "f.noor@example.com" are one mailbox.
+        var emails = tickets.Select(x => x.Ticket.ExternalCustomerEmail)
+            .Concat(interactions.Select(i => i.CustomerEmail))
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .Select(e => e!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         var last = tickets[0].Ticket;
+        // The latest ticket first; then the same precedence widened across
+        // every ticket this customer has, so a name captured once is not lost
+        // because their most recent ticket happened not to carry one.
         var displayName = DisplayNameFor(last, snapshots.GetValueOrDefault(last.TicketId))
             ?? tickets.Select(x => x.Ticket.CrmBuyerCustomerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
+            ?? tickets.Select(x => x.Ticket.ExternalCustomerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
             ?? interactions.Select(i => i.CustomerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
 
         return new CustomerDirectoryProfileDto(
@@ -355,6 +454,7 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
             requesterByTicket.GetValueOrDefault(id)?.SnapshotUnitNumber));
     }
 
+    /// <summary>The grouped columns as an identity. <see cref="CustomerIdentity.Phone"/> normalizes once more, so the emitted key is canonical whatever SQL left in the column.</summary>
     private static CustomerIdentity ToIdentity(int kind, int? crmId, string? source, string? externalId, string? phone) => kind switch
     {
         CrmKind => CustomerIdentity.Crm(crmId!.Value),
@@ -369,9 +469,23 @@ public sealed class CustomerDirectoryRepository(TigerCsDbContext dbContext) : IC
         _ => "Unverified",
     };
 
-    /// <summary>The best persisted name: the CRM Buyer snapshot, else what the originating call/chat reported, else the legacy requester snapshot — never an id dressed as a name.</summary>
+    /// <summary>
+    /// The best REAL name this customer's latest ticket persisted, in
+    /// descending order of how well the source knew them:
+    /// <list type="number">
+    /// <item>the CRM Buyer snapshot — a name from the system of record;</item>
+    /// <item>the verified external snapshot (PACT/Tasleeh's own
+    /// <c>customerName</c>) — a name from a source that verified them;</item>
+    /// <item>what the originating call/chat reported — a name a human typed
+    /// or a channel supplied;</item>
+    /// <item>the legacy requester snapshot.</item>
+    /// </list>
+    /// Never an id dressed as a name, and never a manufactured one: when all
+    /// four are empty this returns null and the Web decides what placeholder
+    /// to show.
+    /// </summary>
     private static string? DisplayNameFor(Ticket last, TicketSnapshot snapshot) =>
-        FirstNonEmpty(last.CrmBuyerCustomerName, snapshot.InteractionName, snapshot.SnapshotName);
+        FirstNonEmpty(last.CrmBuyerCustomerName, last.ExternalCustomerName, snapshot.InteractionName, snapshot.SnapshotName);
 
     private static string? FirstNonEmpty(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
 }

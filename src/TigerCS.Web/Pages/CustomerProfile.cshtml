@@ -174,6 +174,12 @@
                         <div class="facts-panel facts-panel--flat">
                             <div class="facts-section__title">Identity</div>
                             <dl>
+                                @* The best real name available: CRM's live record, else the name
+                                   persisted at ticket time (the CRM Buyer snapshot, the verifying
+                                   source's own customerName, or what a conversation captured).
+                                   Arabic comes from CRM alone — PACT and Tasleeh have no Arabic
+                                   name field, so it stays blank rather than repeating the English
+                                   name in an Arabic row. *@
                                 <div class="facts-row"><dt>Full Name English</dt><dd>@(crm?.FullNameEnglish ?? profile.DisplayName ?? "—")</dd></div>
                                 <div class="facts-row"><dt>Full Name Arabic</dt><dd>@(crm?.FullNameArabic ?? "—")</dd></div>
                                 <div class="facts-row"><dt>Verification source</dt><dd>@(profile.IdentityKind == "Phone" ? "None — identified by phone" : CustomerProfileModel.SourceLabel(profile.VerificationSource))</dd></div>
@@ -190,13 +196,16 @@
                         <div class="facts-panel facts-panel--flat">
                             <div class="facts-section__title">Reach</div>
                             <dl>
-                                <div class="facts-row"><dt>Mobile Number</dt><dd class="text-mono">@(crm?.MobileNumber ?? Model.PrimaryPhone ?? "—")</dd></div>
-                                @foreach (var otherPhone in profile.PhoneNumbers.Where(p => p != (crm?.MobileNumber ?? Model.PrimaryPhone)))
+                                @* One row per real contact point. "Also called from" is only for a
+                                   genuinely different number: the model compares canonically, so
+                                   "+971509724162" and "971509724162" are never listed as two. *@
+                                <div class="facts-row"><dt>Mobile Number</dt><dd class="text-mono">@(Model.PrimaryPhone ?? "—")</dd></div>
+                                @foreach (var otherPhone in Model.OtherPhones)
                                 {
                                     <div class="facts-row"><dt>Also called from</dt><dd class="text-mono">@otherPhone</dd></div>
                                 }
-                                <div class="facts-row"><dt>Email</dt><dd>@(crm?.Email ?? profile.Emails.FirstOrDefault() ?? "—")</dd></div>
-                                @foreach (var otherEmail in profile.Emails.Where(e => !string.Equals(e, crm?.Email, StringComparison.OrdinalIgnoreCase)).Skip(crm?.Email is null ? 1 : 0))
+                                <div class="facts-row"><dt>Email</dt><dd>@(Model.PrimaryEmail ?? "—")</dd></div>
+                                @foreach (var otherEmail in Model.OtherEmails)
                                 {
                                     <div class="facts-row"><dt>Other email</dt><dd>@otherEmail</dd></div>
                                 }
