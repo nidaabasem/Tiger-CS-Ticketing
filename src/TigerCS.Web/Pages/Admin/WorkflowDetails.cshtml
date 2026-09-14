@@ -6,13 +6,14 @@
     ViewData["ActiveNav"] = "admin";
     ViewData["AdminSection"] = "workflows";
     Layout = "_Layout";
+    var module = AdminModules.Workflows;
     var draft = w?.Versions.FirstOrDefault(v => v.Status == WorkflowVersionStatus.Draft);
     var active = w?.Versions.FirstOrDefault(v => v.Status == WorkflowVersionStatus.Published);
     var hasDraft = draft is not null;
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Workflows", "/Admin/Workflows", w?.Name ?? "Workflow"))
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, w?.Name ?? "Workflow"))
 
     @if (w is null)
     {
@@ -25,12 +26,18 @@
         return;
     }
 
-    <div class="page-header">
-        <div>
-            <p class="page-eyebrow">Workflow</p>
-            <h1 class="page-title">@w.Name</h1>
-            <div class="page-title__meta">
+    <header class="admin-head">
+        <div class="admin-head__main">
+            @await Html.PartialAsync("_AdminEyebrow", module.Key)
+            <h1 class="page-title page-title--with-chip">
+                <span>@w.Name</span>
                 @await Html.PartialAsync("_StatusBadge", w.IsActive)
+            </h1>
+            @if (!string.IsNullOrEmpty(w.Description))
+            {
+                <p class="page-subtitle">@w.Description</p>
+            }
+            <div class="admin-head__meta">
                 @if (active is not null)
                 {
                     <span>Active version <strong>V@(active.VersionNumber)</strong></span>
@@ -46,12 +53,8 @@
                 <span><strong>@w.Versions.Count</strong> @(w.Versions.Count == 1 ? "version" : "versions")</span>
                 <span><strong>@w.RequestTypes.Count</strong> @(w.RequestTypes.Count == 1 ? "request type" : "request types")</span>
             </div>
-            @if (!string.IsNullOrEmpty(w.Description))
-            {
-                <p class="page-subtitle">@w.Description</p>
-            }
         </div>
-        <div class="page-header__actions">
+        <div class="admin-head__actions">
             <a class="btn" href="/Admin/Workflows">Back to Workflows</a>
             @if (hasDraft)
             {
@@ -64,16 +67,16 @@
                 </form>
             }
         </div>
-    </div>
+    </header>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
-    <section class="panel" aria-labelledby="versions-title">
+    <section class="panel panel--tone" aria-labelledby="versions-title">
         <div class="panel__header">
-            <h2 class="panel__title" id="versions-title">Versions <span class="panel__count">@w.Versions.Count</span></h2>
+            <h2 class="panel__title" id="versions-title">Version history <span class="panel__count">@w.Versions.Count</span></h2>
             @if (hasDraft)
             {
-                <span class="text-secondary">Only one Draft exists at a time — publish or delete it to start another.</span>
+                <span class="panel__hint">Only one Draft exists at a time — publish or delete it to start another.</span>
             }
         </div>
         @if (w.Versions.Count == 0)
@@ -86,6 +89,8 @@
         }
         else
         {
+            @* Newest first, connected by a rail: the history reads as a sequence
+               of publishes, not as a list of unrelated records. *@
             <ol class="version-list">
                 @foreach (var v in w.Versions.OrderByDescending(x => x.VersionNumber))
                 {
@@ -109,14 +114,7 @@
                         <div class="version-card__body">
                             <div class="version-card__name">
                                 @v.Name
-                                @if (v.Status == WorkflowVersionStatus.Draft)
-                                {
-                                    <span class="text-secondary">· editable</span>
-                                }
-                                else
-                                {
-                                    <span class="text-secondary">· read-only</span>
-                                }
+                                <span class="text-secondary">· @(v.Status == WorkflowVersionStatus.Draft ? "editable" : "read-only")</span>
                             </div>
                             <div class="version-card__meta">
                                 <span><strong>@v.StepCount</strong> @(v.StepCount == 1 ? "step" : "steps")</span>
@@ -135,7 +133,7 @@
                             }
                             else
                             {
-                                <a class="btn btn-sm" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId">View</a>
+                                <a class="btn btn-sm" href="/Admin/Workflows/Versions/@v.WorkflowTemplateId">View steps</a>
                             }
                             @if (v.CanDelete)
                             {
@@ -157,7 +155,9 @@
 
     <div class="admin-grid">
         <section class="panel admin-form-panel" aria-labelledby="usage-title">
-            <div class="panel__header"><h2 class="panel__title" id="usage-title">Used by request types <span class="panel__count">@w.RequestTypes.Count</span></h2></div>
+            <div class="panel__header">
+                <h2 class="panel__title" id="usage-title">Used by request types <span class="panel__count">@w.RequestTypes.Count</span></h2>
+            </div>
             @if (w.RequestTypes.Count == 0)
             {
                 <div class="empty-state">
@@ -173,7 +173,7 @@
                     @foreach (var r in w.RequestTypes)
                     {
                         <li class="entry-row">
-                            <span><a class="ticket-id-link" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a> <span class="text-secondary">· @r.DepartmentName</span></span>
+                            <span><a class="identity__name" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a> <span class="text-secondary">· @r.DepartmentName</span></span>
                             @await Html.PartialAsync("_StatusBadge", r.IsActive)
                         </li>
                     }
@@ -184,15 +184,18 @@
         <section class="panel admin-form-panel" aria-labelledby="details-title">
             <div class="panel__header"><h2 class="panel__title" id="details-title">Details</h2></div>
             <form method="post" asp-page-handler="Edit" asp-route-id="@w.WorkflowId" class="admin-form">
-                <div class="form-group">
-                    <label class="form-label" asp-for="Edit.Name">Name *</label>
-                    <input class="form-control" asp-for="Edit.Name" required aria-required="true" />
-                </div>
-                <div class="form-group">
-                    <label class="form-label" asp-for="Edit.Description">Description</label>
-                    <textarea class="form-control" asp-for="Edit.Description" rows="2"></textarea>
-                </div>
-                <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
+                <fieldset class="form-section">
+                    <legend class="form-section__title">Naming</legend>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.Name">Name *</label>
+                        <input class="form-control" asp-for="Edit.Name" required aria-required="true" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="Edit.Description">Description</label>
+                        <textarea class="form-control" asp-for="Edit.Description" rows="2"></textarea>
+                    </div>
+                </fieldset>
+                <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save Details</button></div>
             </form>
         </section>
 

@@ -252,18 +252,31 @@ public sealed class ShellRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task Administration_Landing_RendersOnTheSharedShell_WithTheSubNavAndAreaCards()
+    public async Task Administration_Landing_RendersOnTheSharedShell_WithTheSubNavAndModuleCards()
     {
         var html = await Ok(await Client(Roles.SystemAdministrator).GetAsync("/Admin"));
 
         Assert.Contains("aria-current=\"page\">Administration</a>", html, StringComparison.Ordinal);
         Assert.Contains("class=\"admin-subnav\"", html, StringComparison.Ordinal);
         Assert.Contains("<h1 class=\"page-title\">Administration</h1>", html, StringComparison.Ordinal);
-        Assert.Contains("class=\"admin-card\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"admin-modules\"", html, StringComparison.Ordinal);
+
+        // One card per module, each carrying its own accent — Users blue,
+        // Departments teal, Request Types indigo, Workflows purple, Channels
+        // green — and the card itself is the link, so no "Manage" button and
+        // no identical dark icon box is repeated five times.
+        foreach (var tone in new[] { "tone-info", "tone-progress", "tone-secondary", "tone-purple", "tone-success" })
+        {
+            Assert.Contains($"class=\"admin-card {tone}\"", html, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("admin-card__open", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("admin-card__cta", html, StringComparison.Ordinal);
 
         var users = await Ok(await Client(Roles.SystemAdministrator).GetAsync("/Admin/Users"));
-        Assert.Contains("<nav class=\"breadcrumb\" aria-label=\"Breadcrumb\">", users, StringComparison.Ordinal);
-        Assert.Contains("<span class=\"sep\">/</span>", users, StringComparison.Ordinal);
+        Assert.Contains("<nav class=\"admin-crumbs tone-info\" aria-label=\"Breadcrumb\">", users, StringComparison.Ordinal);
+        Assert.Contains("class=\"admin-crumbs__current\">Users</span>", users, StringComparison.Ordinal);
+        Assert.Contains("class=\"admin-head__eyebrow\"", users, StringComparison.Ordinal);
         Assert.Contains("class=\"filter-bar\"", users, StringComparison.Ordinal);
     }
 

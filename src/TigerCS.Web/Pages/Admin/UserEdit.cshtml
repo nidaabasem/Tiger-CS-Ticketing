@@ -5,27 +5,28 @@
     ViewData["ActiveNav"] = "admin";
     ViewData["AdminSection"] = "users";
     Layout = "_Layout";
+    var module = AdminModules.Users;
     var u = Model.UserRecord;
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Users", "/Admin/Users", Model.IsNew ? "Add User" : u?.DisplayName ?? "User"))
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, Model.IsNew ? "Add User" : u?.DisplayName ?? "User"))
 
     @if (Model.IsNew)
     {
-        <div class="page-header">
-            <div>
-                <p class="page-eyebrow">Users</p>
+        <header class="admin-head">
+            <div class="admin-head__main">
+                @await Html.PartialAsync("_AdminEyebrow", module.Key)
                 <h1 class="page-title">Add User</h1>
-                <p class="page-subtitle">Creates the sign-in account and the employee profile. The initial password must satisfy the system's password policy.</p>
+                <p class="page-subtitle">Creates the sign-in account and the employee profile in one step. The initial password must satisfy the system's password policy.</p>
             </div>
-            <div class="page-header__actions">
+            <div class="admin-head__actions">
                 <a class="btn" href="/Admin/Users">Cancel</a>
             </div>
-        </div>
+        </header>
 
         <div class="admin-grid admin-grid--list-form">
-            <section class="panel admin-form-panel" aria-labelledby="new-user-title">
+            <section class="panel panel--tone admin-form-panel" aria-labelledby="new-user-title">
                 <div class="panel__header"><h2 class="panel__title" id="new-user-title">New account</h2></div>
                 <form method="post" asp-page-handler="Create" class="admin-form">
                     @await Html.PartialAsync("_AdminMessages", Model)
@@ -99,7 +100,7 @@
                         </label>
                     </fieldset>
 
-                    <div class="form-actions">
+                    <div class="form-actions form-actions--sticky">
                         <a class="btn" href="/Admin/Users">Cancel</a>
                         <button type="submit" class="btn btn-gold">Create User</button>
                     </div>
@@ -111,8 +112,6 @@
                     <div class="panel__header"><h2 class="panel__title">Good to know</h2></div>
                     <div class="panel__note panel__note--top">
                         <p>Users are never deleted. Once an account appears in ticket history it can only be deactivated, so its name stays valid on past tickets.</p>
-                    </div>
-                    <div class="panel__note">
                         <p>Department membership and the primary department can be changed at any time from the user's page.</p>
                     </div>
                 </section>
@@ -130,60 +129,71 @@
     }
     else
     {
-        <div class="page-header">
-            <div>
-                <p class="page-eyebrow">User</p>
-                <h1 class="page-title">@u.DisplayName</h1>
-                <div class="page-title__meta">
-                    <span><strong>@u.UserName</strong></span>
-                    @if (!string.IsNullOrEmpty(u.Email))
-                    {
-                        <span>@u.Email</span>
-                    }
-                    @await Html.PartialAsync("_StatusBadge", u.IsActive)
-                    @if (!u.IsActive && u.DeactivatedAtUtc is { } deactivated)
-                    {
-                        <span>since @deactivated.ToLocalTime().ToString("MMM d, yyyy")</span>
-                    }
-                    @if (u.IsLockedOut)
-                    {
-                        <span class="badge badge-warning">Locked out</span>
-                    }
-                    @if (u.IsGeynessStaff)
-                    {
-                        <span class="badge badge-neutral">Geyness staff</span>
-                    }
+        <header class="admin-head">
+            <div class="admin-head__main">
+                @await Html.PartialAsync("_AdminEyebrow", module.Key)
+                <div class="admin-head__identity">
+                    <span class="identity__avatar identity__avatar--lg @(u.IsActive ? "" : "identity__avatar--muted")" aria-hidden="true">@AdminDisplay.Initials(u.DisplayName)</span>
+                    <div>
+                        <h1 class="page-title">@u.DisplayName</h1>
+                        <div class="page-title__meta">
+                            <span><strong>@u.UserName</strong></span>
+                            @if (!string.IsNullOrEmpty(u.Email))
+                            {
+                                <span>@u.Email</span>
+                            }
+                            @await Html.PartialAsync("_StatusBadge", u.IsActive)
+                            @if (!u.IsActive && u.DeactivatedAtUtc is { } deactivated)
+                            {
+                                <span>since @deactivated.ToLocalTime().ToString("MMM d, yyyy")</span>
+                            }
+                            @if (u.IsLockedOut)
+                            {
+                                <span class="badge badge-warning">Locked out</span>
+                            }
+                            @if (u.IsGeynessStaff)
+                            {
+                                <span class="badge badge-neutral">Geyness staff</span>
+                            }
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="page-header__actions">
+            <div class="admin-head__actions">
                 <a class="btn" href="/Admin/Users">Back to Users</a>
             </div>
-        </div>
+        </header>
 
         @await Html.PartialAsync("_AdminMessages", Model)
 
         <div class="admin-grid">
-            <section class="panel admin-form-panel" aria-labelledby="profile-title">
+            <section class="panel panel--tone admin-form-panel" aria-labelledby="profile-title">
                 <div class="panel__header"><h2 class="panel__title" id="profile-title">Profile</h2></div>
                 <form method="post" asp-page-handler="Profile" asp-route-id="@u.EmployeeId" class="admin-form">
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Profile.DisplayName">Display name *</label>
-                        <input class="form-control" asp-for="Profile.DisplayName" required aria-required="true" />
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Profile.Email">E-mail</label>
-                        <input class="form-control" asp-for="Profile.Email" type="email" />
-                    </div>
-                    <label class="checkbox-field">
-                        <input type="checkbox" asp-for="Profile.IsGeynessStaff" />
-                        Geyness staff
-                    </label>
+                    <fieldset class="form-section">
+                        <legend class="form-section__title">Identity</legend>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Profile.DisplayName">Display name *</label>
+                            <input class="form-control" asp-for="Profile.DisplayName" required aria-required="true" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Profile.Email">E-mail</label>
+                            <input class="form-control" asp-for="Profile.Email" type="email" />
+                        </div>
+                        <label class="checkbox-field">
+                            <input type="checkbox" asp-for="Profile.IsGeynessStaff" />
+                            Geyness staff
+                        </label>
+                    </fieldset>
                     <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save Profile</button></div>
                 </form>
             </section>
 
-            <section class="panel admin-form-panel" aria-labelledby="roles-title">
-                <div class="panel__header"><h2 class="panel__title" id="roles-title">Roles</h2></div>
+            <section class="panel panel--tone admin-form-panel" aria-labelledby="roles-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="roles-title">Roles <span class="panel__count">@u.Roles.Count</span></h2>
+                    <span class="panel__hint">What this account may see and do</span>
+                </div>
                 <form method="post" asp-page-handler="Roles" asp-route-id="@u.EmployeeId" class="admin-form">
                     <div class="checkbox-grid">
                         @foreach (var role in Model.Roles)
@@ -202,6 +212,7 @@
             <section class="panel admin-form-panel admin-grid__wide" aria-labelledby="departments-title">
                 <div class="panel__header">
                     <h2 class="panel__title" id="departments-title">Departments <span class="panel__count">@u.Departments.Count</span></h2>
+                    <span class="panel__hint">Where this user receives assignments</span>
                 </div>
                 @if (u.Departments.Count == 0)
                 {
@@ -226,8 +237,8 @@
                                 @foreach (var d in u.Departments.OrderByDescending(d => d.IsPrimary))
                                 {
                                     <tr>
-                                        <td class="cell-primary"><a class="ticket-id-link" href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
-                                        <td>@if (d.IsPrimary) { <span class="badge badge-version-published">Primary</span> } else { <span class="badge badge-neutral">Additional</span> }</td>
+                                        <td class="cell-primary"><a href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
+                                        <td>@if (d.IsPrimary) { <span class="badge badge-version-published"><span class="badge-dot"></span>Primary</span> } else { <span class="badge badge-neutral">Additional</span> }</td>
                                         <td class="col-actions">
                                             <form method="post" asp-page-handler="RemoveDepartment" asp-route-id="@u.EmployeeId" asp-route-departmentId="@d.DepartmentId" data-confirm="Remove @u.DisplayName from @d.Name?">
                                                 <button type="submit" class="btn btn-sm btn-critical">Remove</button>

@@ -7,35 +7,48 @@
     Layout = "_Layout";
 }
 
-<div class="page admin-page">
-    <div class="page-header">
-        <div>
-            <p class="page-eyebrow">Management console</p>
+@* The overview carries the brand accent; every module page carries its own. *@
+<div class="page admin-page tone-brand">
+    <header class="admin-head">
+        <div class="admin-head__main">
             <h1 class="page-title">Administration</h1>
-            <p class="page-subtitle">System configuration for Customer Service management. Every change here is recorded in the audit trail.</p>
+            <p class="page-subtitle">Manage configuration, access and workflow settings. Every change here is recorded in the audit trail.</p>
         </div>
-    </div>
+    </header>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
-    <section class="admin-cards" aria-label="Administration areas">
+    @if (Model.SummaryIsComplete)
+    {
+        <section class="admin-summary" aria-label="Configuration summary">
+            <div class="admin-summary__item">
+                <span class="admin-summary__value">@Model.TotalConfigured</span>
+                <span class="admin-summary__label">Configuration records</span>
+            </div>
+            <div class="admin-summary__item tone-success">
+                <span class="admin-summary__value admin-summary__value--tone">@Model.TotalActive</span>
+                <span class="admin-summary__label">Active and offered</span>
+            </div>
+            <div class="admin-summary__item">
+                <span class="admin-summary__value">@Model.TotalInactive</span>
+                <span class="admin-summary__label">Inactive, kept for history</span>
+            </div>
+            <div class="admin-summary__item @(Model.NeedsAttention == 0 ? "tone-success" : "tone-warning")">
+                <span class="admin-summary__value admin-summary__value--tone">@Model.NeedsAttention</span>
+                <span class="admin-summary__label">@(Model.NeedsAttention == 0 ? "Nothing waiting on a publish" : "Waiting on a published workflow")</span>
+                @if (Model.NeedsAttention > 0)
+                {
+                    <a class="admin-summary__link" href="/Admin/Workflows">Review workflows @await Html.PartialAsync("_AdminIcon", "arrow-right")</a>
+                }
+            </div>
+        </section>
+    }
+
+    <span class="admin-section-label">Manage</span>
+    <section class="admin-modules" aria-label="Administration modules">
         @foreach (var card in Model.Cards)
         {
-            <a class="admin-card" href="@card.Href">
-                <span class="admin-card__top">
-                    <span class="admin-card__icon">@await Html.PartialAsync("_AdminIcon", card.Icon)</span>
-                    <span class="admin-card__count">
-                        <strong>@(card.Count?.ToString() ?? "—")</strong>
-                        <span>@card.CountLabel</span>
-                    </span>
-                </span>
-                <span class="admin-card__title">@card.Title</span>
-                <span class="admin-card__desc">@card.Description</span>
-                <span class="admin-card__footer">
-                    <span>@(card.Count is null ? "Count unavailable right now" : "Open to add, edit or deactivate")</span>
-                    <span class="btn btn-sm admin-card__cta">Manage @await Html.PartialAsync("_AdminIcon", "arrow-right")</span>
-                </span>
-            </a>
+            @await Html.PartialAsync("_AdminModuleCard", card)
         }
     </section>
 </div>

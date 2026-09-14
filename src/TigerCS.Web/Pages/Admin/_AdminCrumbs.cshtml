@@ -1,0 +1,27 @@
+@model (string? ModuleKey, string? Current)
+@*
+    Administration → module → record. The module's tone dot travels with the
+    breadcrumb, so a sub-page says which module it belongs to before its
+    title is read. Pass a null Current for a module's own landing page.
+*@
+@{
+    var module = AdminModules.Find(Model.ModuleKey);
+}
+<nav class="admin-crumbs @(module?.Tone ?? "tone-brand")" aria-label="Breadcrumb">
+    <a href="/Admin">Administration</a>
+    @if (module is not null)
+    {
+        <span class="admin-crumbs__sep" aria-hidden="true">/</span>
+        <span class="admin-crumbs__dot" aria-hidden="true"></span>
+        @if (Model.Current is null)
+        {
+            <span class="admin-crumbs__current">@module.Label</span>
+        }
+        else
+        {
+            <a href="@module.Href">@module.Label</a>
+            <span class="admin-crumbs__sep" aria-hidden="true">/</span>
+            <span class="admin-crumbs__current">@Model.Current</span>
+        }
+    }
+</nav>

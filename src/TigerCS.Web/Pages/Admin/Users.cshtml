@@ -5,6 +5,7 @@
     ViewData["ActiveNav"] = "admin";
     ViewData["AdminSection"] = "users";
     Layout = "_Layout";
+    var module = AdminModules.Users;
     var hasFilter = !string.IsNullOrWhiteSpace(Model.Search) || Model.IncludeInactive;
     var total = Model.Users?.TotalCount ?? 0;
     var shown = Model.Users?.Items.Count ?? 0;
@@ -13,17 +14,19 @@
     string PageUrl(int p) => $"/Admin/Users?search={Uri.EscapeDataString(Model.Search ?? string.Empty)}&includeInactive={(Model.IncludeInactive ? "true" : "false")}&page={p}";
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Users", "/Admin/Users", (string?)null))
-    <div class="page-header">
-        <div>
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, (string?)null))
+
+    <header class="admin-head">
+        <div class="admin-head__main">
+            @await Html.PartialAsync("_AdminEyebrow", module.Key)
             <h1 class="page-title">Users</h1>
             <p class="page-subtitle">Accounts, roles and department membership. Deactivate a user instead of deleting — their ticket history stays intact.</p>
         </div>
-        <div class="page-header__actions">
+        <div class="admin-head__actions">
             <a class="btn btn-gold" href="/Admin/Users/New">@await Html.PartialAsync("_AdminIcon", "plus") Add User</a>
         </div>
-    </div>
+    </header>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
@@ -32,13 +35,13 @@
             @await Html.PartialAsync("_AdminIcon", "search")
             <input type="search" name="search" value="@Model.Search" placeholder="Search by name, user name or e-mail…" aria-label="Search users" />
         </div>
-        <label class="checkbox-field">
+        <label class="toolbar-toggle">
             <input type="checkbox" name="includeInactive" value="true" checked="@(Model.IncludeInactive ? "checked" : null)" data-autosubmit />
-            Show inactive users
+            Include inactive
         </label>
         @if (Model.Users is not null)
         {
-            <span class="filter-bar__count">@(total == 0 ? "No users" : total == 1 ? "1 user" : $"{total} users")</span>
+            <span class="filter-bar__count">@AdminDisplay.Count(total, "user", "users")</span>
         }
         <div class="filter-bar__submit">
             @if (hasFilter)
@@ -79,37 +82,39 @@
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>Name</th>
-                            <th>User name</th>
+                            <th>Person</th>
                             <th>Roles</th>
                             <th>Departments</th>
                             <th>Status</th>
-                            <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                            <th>Added</th>
+                            <th class="col-actions"><span class="visually-hidden">Open</span></th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var user in Model.Users.Items)
                         {
-                            <tr class="@(user.IsActive ? "" : "is-inactive")">
-                                <td>
-                                    <a class="ticket-id-link" href="/Admin/Users/@user.EmployeeId">@user.DisplayName</a>
-                                    @if (!string.IsNullOrEmpty(user.Email))
-                                    {
-                                        <div class="cell-sub">@user.Email</div>
-                                    }
+                            @* The whole row opens the user; the name stays a real link for keyboard and no-JS use. *@
+                            <tr class="is-link @(user.IsActive ? "" : "is-inactive")" data-href="/Admin/Users/@user.EmployeeId">
+                                <td class="cell-wrap">
+                                    <span class="identity">
+                                        @await Html.PartialAsync("_AdminAvatar", (user.DisplayName, user.IsActive))
+                                        <span class="identity__body">
+                                            <a class="identity__name" href="/Admin/Users/@user.EmployeeId">@user.DisplayName</a>
+                                            <span class="identity__sub">@user.UserName@(string.IsNullOrEmpty(user.Email) ? "" : $" · {user.Email}")</span>
+                                        </span>
+                                    </span>
                                 </td>
-                                <td class="text-secondary">@user.UserName</td>
                                 <td class="cell-wrap">
                                     @if (user.Roles.Count == 0)
                                     {
-                                        <span class="text-secondary">—</span>
+                                        <span class="text-secondary">No role</span>
                                     }
                                     else
                                     {
                                         <span class="chip-list">
                                             @foreach (var role in user.Roles)
                                             {
-                                                <span class="badge badge-neutral">@role</span>
+                                                <span class="badge badge-role">@role</span>
                                             }
                                         </span>
                                     }
@@ -121,14 +126,33 @@
                                     }
                                     else
                                     {
-                                        foreach (var d in user.Departments.OrderByDescending(d => d.IsPrimary))
-                                        {
-                                            <div>@d.Name @if (d.IsPrimary) { <span class="text-secondary">(primary)</span> }</div>
-                                        }
+                                        <span class="chip-list">
+                                            @foreach (var d in user.Departments.OrderByDescending(d => d.IsPrimary))
+                                            {
+                                                <span class="badge @(d.IsPrimary ? "badge-tone" : "badge-neutral")" title="@(d.IsPrimary ? "Primary department" : "Additional department")">@d.Name</span>
+                                            }
+                                        </span>
                                     }
                                 </td>
-                                <td>@await Html.PartialAsync("_StatusBadge", user.IsActive)</td>
-                                <td class="col-actions"><a class="btn btn-sm" href="/Admin/Users/@user.EmployeeId">Manage</a></td>
+                                <td>
+                                    <span class="chip-list">
+                                        @await Html.PartialAsync("_StatusBadge", user.IsActive)
+                                        @if (user.IsLockedOut)
+                                        {
+                                            <span class="badge badge-warning">Locked out</span>
+                                        }
+                                    </span>
+                                </td>
+                                <td class="text-secondary">
+                                    @user.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")
+                                    @if (!user.IsActive && user.DeactivatedAtUtc is { } deactivated)
+                                    {
+                                        <div class="cell-sub">Deactivated @deactivated.ToLocalTime().ToString("MMM d, yyyy")</div>
+                                    }
+                                </td>
+                                <td class="col-actions">
+                                    <a class="row-open" href="/Admin/Users/@user.EmployeeId" aria-label="Manage @user.DisplayName">@await Html.PartialAsync("_AdminIcon", "chevron-right")</a>
+                                </td>
                             </tr>
                         }
                     </tbody>
