@@ -1,9 +1,16 @@
 @model TigerCS.Web.Pages.Admin.AdminPageModel
+@* The one-shot outcome of the last write, carried across the redirect. *@
 @if (!string.IsNullOrEmpty(Model.StatusMessage))
 {
-    <div class="alert alert-success" role="status">@Model.StatusMessage</div>
+    <div class="alert alert-success" role="status">
+        @await Html.PartialAsync("_AdminIcon", "check")
+        <span>@Model.StatusMessage</span>
+    </div>
 }
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
-    <div class="alert alert-error" role="alert">@Model.ErrorMessage</div>
+    <div class="alert alert-error" role="alert">
+        @await Html.PartialAsync("_AdminIcon", "warning")
+        <span>@Model.ErrorMessage</span>
+    </div>
 }

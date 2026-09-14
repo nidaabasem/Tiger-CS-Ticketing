@@ -8,10 +8,11 @@
     ViewData["AdminSection"] = "requesttypes";
     Layout = "_Layout";
     var priorities = new byte[] { 1, 2, 3, 4 };
+    var module = AdminModules.RequestTypes;
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Request Types", "/Admin/RequestTypes", Model.IsNew ? "Add Request Type" : r?.Name ?? "Request Type"))
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, Model.IsNew ? "Add Request Type" : r?.Name ?? "Request Type"))
 
     @if (!Model.IsNew && r is null)
     {
@@ -24,16 +25,22 @@
         return;
     }
 
-    <div class="page-header">
-        <div>
-            <p class="page-eyebrow">Request type</p>
-            <h1 class="page-title">@(Model.IsNew ? "Add Request Type" : r!.Name)</h1>
+    <header class="admin-head">
+        <div class="admin-head__main">
+            @await Html.PartialAsync("_AdminEyebrow", module.Key)
+            <h1 class="page-title page-title--with-chip">
+                <span>@(Model.IsNew ? "Add Request Type" : r!.Name)</span>
+                @if (r is not null)
+                {
+                    @await Html.PartialAsync("_StatusBadge", r.IsActive)
+                }
+            </h1>
             @if (r is not null)
             {
-                <div class="page-title__meta">
+                @* Department, workflow, approvals and SLA are the four facts that
+                   decide what a ticket of this type actually does. *@
+                <div class="admin-head__meta">
                     <span>Department <strong>@r.DepartmentName</strong></span>
-                    @await Html.PartialAsync("_StatusBadge", r.IsActive)
-                    <span><strong>@r.TicketCount</strong> @(r.TicketCount == 1 ? "ticket" : "tickets")</span>
                     <span>Workflow <strong>@r.Workflow.WorkflowName</strong></span>
                     @if (r.Workflow.ActiveVersionNumber is { } headAv)
                     {
@@ -43,6 +50,9 @@
                     {
                         <span class="badge badge-warning">No published version</span>
                     }
+                    <span><strong>@r.ApprovalRequirements.Count</strong> @(r.ApprovalRequirements.Count == 1 ? "approval requirement" : "approval requirements")</span>
+                    <span><strong>@r.SlaPolicies.Count</strong> SLA @(r.SlaPolicies.Count == 1 ? "value" : "values")</span>
+                    <span><strong>@r.TicketCount</strong> @(r.TicketCount == 1 ? "ticket" : "tickets")</span>
                 </div>
             }
             else
@@ -50,17 +60,17 @@
                 <p class="page-subtitle">A request type belongs to one responsible department and follows one workflow's currently published version.</p>
             }
         </div>
-        <div class="page-header__actions">
+        <div class="admin-head__actions">
             <a class="btn" href="/Admin/RequestTypes">@(Model.IsNew ? "Cancel" : "Back to Request Types")</a>
         </div>
-    </div>
+    </header>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
     @if (Model.IsNew)
     {
         <div class="admin-grid admin-grid--list-form">
-            <section class="panel admin-form-panel" aria-labelledby="details-title">
+            <section class="panel panel--tone admin-form-panel" aria-labelledby="details-title">
                 <div class="panel__header"><h2 class="panel__title" id="details-title">New request type</h2></div>
                 <form method="post" asp-page-handler="Create" class="admin-form">
                     <fieldset class="form-section">
@@ -119,7 +129,7 @@
                         </div>
                     </fieldset>
 
-                    <div class="form-actions">
+                    <div class="form-actions form-actions--sticky">
                         <a class="btn" href="/Admin/RequestTypes">Cancel</a>
                         <button type="submit" class="btn btn-gold">Create Request Type</button>
                     </div>
@@ -139,8 +149,11 @@
 
     <div class="admin-grid admin-grid--list-form">
         <div class="admin-stack">
-            <section class="panel admin-form-panel" aria-labelledby="details-title">
-                <div class="panel__header"><h2 class="panel__title" id="details-title">Details</h2></div>
+            <section class="panel panel--tone admin-form-panel" aria-labelledby="details-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="details-title">Details</h2>
+                    <span class="panel__hint">Name, department, workflow and priority</span>
+                </div>
                 <form method="post" asp-page-handler="Details" asp-route-id="@r!.RequestTypeId" class="admin-form">
                     <fieldset class="form-section">
                         <legend class="form-section__title">Basics</legend>
@@ -209,8 +222,8 @@
 
             <section class="panel admin-form-panel" aria-labelledby="assignment-title">
                 <div class="panel__header">
-                    <h2 class="panel__title" id="assignment-title">Assignment</h2>
-                    <span class="text-secondary">Current: <strong>@(r.AssignmentRule is null ? $"{r.DepartmentName} Queue (no rule configured)" : r.AssignmentRule.Mode switch { AssignmentMode.SpecificEmployee => r.AssignmentRule.PrimaryEmployeeName, AssignmentMode.Team => $"{r.AssignmentRule.TeamName ?? "Team"} — primary {r.AssignmentRule.PrimaryEmployeeName}", _ => $"{r.DepartmentName} Queue" })</strong></span>
+                    <h2 class="panel__title" id="assignment-title">Routing</h2>
+                    <span class="panel__hint">Current: <strong>@(r.AssignmentRule is null ? $"{r.DepartmentName} Queue (no rule configured)" : r.AssignmentRule.Mode switch { AssignmentMode.SpecificEmployee => r.AssignmentRule.PrimaryEmployeeName, AssignmentMode.Team => $"{r.AssignmentRule.TeamName ?? "Team"} — primary {r.AssignmentRule.PrimaryEmployeeName}", _ => $"{r.DepartmentName} Queue" })</strong></span>
                 </div>
                 <form method="post" asp-page-handler="Assignment" asp-route-id="@r.RequestTypeId" class="admin-form">
                     <fieldset class="form-section">
@@ -268,7 +281,10 @@
             </section>
 
             <section class="panel admin-form-panel" aria-labelledby="approvals-title">
-                <div class="panel__header"><h2 class="panel__title" id="approvals-title">Approval requirements <span class="panel__count">@r.ApprovalRequirements.Count</span></h2></div>
+                <div class="panel__header">
+                    <h2 class="panel__title" id="approvals-title">Approval requirements <span class="panel__count">@r.ApprovalRequirements.Count</span></h2>
+                    <span class="panel__hint">Who decides, and whether work waits</span>
+                </div>
                 @if (r.ApprovalRequirements.Count == 0)
                 {
                     <div class="empty-state">
@@ -294,15 +310,30 @@
                                 {
                                     <tr class="@(a.IsActive ? "" : "is-inactive")">
                                         <td class="cell-primary"><span class="badge badge-approval-type">@a.ApprovalTypeLabel</span></td>
+                                        @* Kind and name are separated: "a department" is a different
+                                           fact from "which one", and a department narrowed by a role
+                                           is two facts rather than one run-on sentence. *@
                                         <td class="cell-wrap">
-                                            @(a.TargetKind switch
-                                            {
-                                                ApprovalTargetKind.Department => $"{a.TargetDepartmentName ?? "Unknown department"}{(a.TargetRoleName is null ? "" : $" ({a.TargetRoleName})")}",
-                                                ApprovalTargetKind.Role => $"Anyone holding {a.TargetRoleName}",
-                                                _ => a.TargetEmployeeName ?? "Unknown user"
-                                            })
+                                            <span class="target">
+                                                <span class="target__kind">@(a.TargetKind switch
+                                                {
+                                                    ApprovalTargetKind.Department => "Department",
+                                                    ApprovalTargetKind.Role => "Role",
+                                                    _ => "Employee"
+                                                })</span>
+                                                <span class="target__name">@(a.TargetKind switch
+                                                {
+                                                    ApprovalTargetKind.Department => a.TargetDepartmentName ?? "Unknown department",
+                                                    ApprovalTargetKind.Role => a.TargetRoleName ?? "Unknown role",
+                                                    _ => a.TargetEmployeeName ?? "Unknown user"
+                                                })</span>
+                                                @if (a.TargetKind == ApprovalTargetKind.Department && a.TargetRoleName is not null)
+                                                {
+                                                    <span class="badge badge-role">@a.TargetRoleName</span>
+                                                }
+                                            </span>
                                         </td>
-                                        <td>@(a.BlocksWorkUntilApproved ? "Yes — blocks work until approved" : "No")</td>
+                                        <td>@await Html.PartialAsync("_AdminFlag", (a.BlocksWorkUntilApproved, a.BlocksWorkUntilApproved ? "Blocks work" : "Does not block"))</td>
                                         <td>@await Html.PartialAsync("_StatusBadge", a.IsActive)</td>
                                     </tr>
                                 }
@@ -376,7 +407,10 @@
             </section>
 
             <section class="panel admin-form-panel" aria-labelledby="sla-title">
-                <div class="panel__header"><h2 class="panel__title" id="sla-title">SLA values <span class="panel__count">@r.SlaPolicies.Count</span></h2></div>
+                <div class="panel__header">
+                    <h2 class="panel__title" id="sla-title">SLA values <span class="panel__count">@r.SlaPolicies.Count</span></h2>
+                    <span class="panel__hint">One row per priority</span>
+                </div>
                 <p class="panel__note panel__note--top">Durations are stored exactly as approved (e.g. 10–12 days). Whether a day is a business day, and whether Pending pauses the clock, remain pending business decisions — “Not decided” keeps them undecided.</p>
                 @if (r.SlaPolicies.Count == 0)
                 {
@@ -477,7 +511,7 @@
         </div>
 
         <aside class="admin-side">
-            <section class="panel admin-form-panel" aria-labelledby="workflow-title">
+            <section class="panel panel--tone tone-purple admin-form-panel" aria-labelledby="workflow-title">
                 <div class="panel__header"><h2 class="panel__title" id="workflow-title">Workflow</h2></div>
                 <dl class="facts-panel">
                     <div class="facts-row"><dt>Workflow</dt><dd>@r.Workflow.WorkflowName</dd></div>

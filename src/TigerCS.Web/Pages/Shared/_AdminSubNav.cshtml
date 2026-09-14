@@ -1,31 +1,25 @@
+@using TigerCS.Web.Pages.Admin
 @{
     // Rendered by the layout whenever the Administration nav item is active.
-    // Each admin page names its own section via ViewData["AdminSection"].
-    var section = ViewData["AdminSection"] as string ?? "overview";
-    (string Key, string Label, string Href, string Icon)[] items =
-    [
-        ("overview", "Overview", "/Admin", "overview"),
-        ("users", "Users", "/Admin/Users", "users"),
-        ("departments", "Departments", "/Admin/Departments", "departments"),
-        ("requesttypes", "Request Types", "/Admin/RequestTypes", "request-types"),
-        ("workflows", "Workflows", "/Admin/Workflows", "workflows"),
-        ("channels", "Channels", "/Admin/Channels", "channels"),
-    ];
+    // Each admin page names its own section via ViewData["AdminSection"]; the
+    // modules, their routes and their accents come from AdminModules, so the
+    // bar, the overview cards and every page header always agree.
+    var section = ViewData["AdminSection"] as string ?? AdminModules.OverviewKey;
+    var isOverview = AdminModules.Find(section) is null;
 }
 <nav class="admin-subnav" aria-label="Administration sections">
     <div class="admin-subnav__inner">
-        <span class="admin-subnav__label">Administration</span>
-        <ul class="admin-subnav__list">
-            @foreach (var item in items)
+        <div class="admin-subnav__track">
+            <a class="admin-subnav__link tone-brand @(isOverview ? "is-active" : "")" href="/Admin" aria-current="@(isOverview ? "page" : null)">
+                <span class="admin-subnav__dot" aria-hidden="true"></span>Overview
+            </a>
+            @foreach (var module in AdminModules.All)
             {
-                var isActive = item.Key == section;
-                <li>
-                    <a class="admin-subnav__link @(isActive ? "is-active" : "")" href="@item.Href" aria-current="@(isActive ? "page" : null)">
-                        @await Html.PartialAsync("_AdminIcon", item.Icon)
-                        @item.Label
-                    </a>
-                </li>
+                var isActive = module.Key == section;
+                <a class="admin-subnav__link @module.Tone @(isActive ? "is-active" : "")" href="@module.Href" aria-current="@(isActive ? "page" : null)">
+                    <span class="admin-subnav__dot" aria-hidden="true"></span>@module.Label
+                </a>
             }
-        </ul>
+        </div>
     </div>
 </nav>

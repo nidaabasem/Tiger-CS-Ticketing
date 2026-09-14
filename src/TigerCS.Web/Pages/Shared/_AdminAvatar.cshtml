@@ -1,0 +1,7 @@
+@using TigerCS.Web.Pages.Admin
+@model (string? Name, bool IsActive)
+@*
+    A person in a list: their initials in the section's tone, greyed out once
+    the account is inactive. Decorative — the name is beside it.
+*@
+<span class="identity__avatar @(Model.IsActive ? "" : "identity__avatar--muted")" aria-hidden="true">@AdminDisplay.Initials(Model.Name)</span>
