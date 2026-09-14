@@ -25,11 +25,19 @@ docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=YourStrong!Passw0rd" \
 `YourStrong!Passw0rd` is Microsoft's own widely-published example password
 for local SQL Server containers (used verbatim in Microsoft's official
 `mssql-server` Docker documentation) — not a real secret, and this
-connection targets `localhost` only. It's the value already in
-`src/TigerCS.Api/appsettings.Development.json`'s `ConnectionStrings:TigerCsDatabase`
-and in `TigerCsDbContextFactory`'s design-time fallback. If your local
-container uses a different password, override the connection string via
-user-secrets (step 3) rather than editing the committed file.
+connection targets `localhost` only. It's the value in
+`TigerCsDbContextFactory`'s design-time fallback, which is what
+`dotnet ef` uses when `TIGERCS_DESIGN_TIME_CONNECTION` is unset.
+
+The committed `appsettings*.json` do **not** carry it, and do not point at
+this container: both `src/TigerCS.Api/appsettings.json` and
+`appsettings.Development.json` ship a shared-server connection string whose
+`Password=` is empty, so neither can connect as it stands. Supply the whole
+connection string yourself — user-secrets locally (step 3), or
+`ConnectionStrings__TigerCsDatabase` in UAT/Production — rather than editing
+the committed file. To point at the Docker container above, set the
+connection string in user-secrets to
+`Server=localhost,1433;Database=TigerCsTicketing_Dev;User Id=sa;Password=<the MSSQL_SA_PASSWORD from the command above>;TrustServerCertificate=True;`.
 
 ## 3. Configure secrets (never committed)
 
@@ -102,7 +110,7 @@ supply them through user-secrets (Development) or environment variables
 
 | Configuration key | Environment variable | Purpose |
 |---|---|---|
-| `ConnectionStrings:TigerCsDatabase` | `ConnectionStrings__TigerCsDatabase` | SQL Server connection string (the shipped `appsettings.json` has an empty `Password=`; Development points at the local Docker SQL Server) |
+| `ConnectionStrings:TigerCsDatabase` | `ConnectionStrings__TigerCsDatabase` | SQL Server connection string. Both shipped Api `appsettings*.json` carry `Password=` empty — supply the whole connection string here (§2). Development does **not** point at the local Docker SQL Server; set it to that yourself if you want it |
 | `Jwt:SigningKey` | `Jwt__SigningKey` | JWT signing key (§3) |
 | `Crm:SecretKey` | `Crm__SecretKey` | CRM Buyer Lookup shared secret (§3a) |
 | `PactApi:ApiKey` | `PactApi__ApiKey` | PACT customer lookup API key (§3b) |
