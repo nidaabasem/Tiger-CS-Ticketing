@@ -385,13 +385,16 @@
                             <div class="unit-list" aria-label="Units">
                                 @foreach (var unit in externalCustomer.Units)
                                 {
+                                    @* The customer's email rides along with the name it belongs to, so
+                                       ticket creation can snapshot both without re-querying the source. *@
                                     var packedValue = string.Join(':',
                                         Uri.EscapeDataString(externalSource!.Source),
                                         Uri.EscapeDataString(externalCustomer.ExternalCustomerId),
                                         Uri.EscapeDataString(unit.ExternalUnitId),
                                         Uri.EscapeDataString(externalCustomer.DisplayName ?? string.Empty),
                                         Uri.EscapeDataString(unit.PropertyName ?? string.Empty),
-                                        Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
+                                        Uri.EscapeDataString(unit.UnitNumber ?? string.Empty),
+                                        Uri.EscapeDataString(externalCustomer.Email ?? string.Empty));
                                     <div class="unit-option">
                                         <div>
                                             <div class="unit-option__title">@(unit.PropertyName ?? "Project")</div>

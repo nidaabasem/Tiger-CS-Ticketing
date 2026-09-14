@@ -62,6 +62,8 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="CustomerVerificationSource">The external lookup source that verified the customer ("Pact"/"Tasleeh") when the agent selected a matched external customer/unit. Mutually exclusive with the CrmBuyer* identifiers; accompanies (never replaces) the manual Project/Unit snapshot.</param>
 /// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only, stored for audit/reconciliation; requires <paramref name="CustomerVerificationSource"/>.</param>
 /// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — same rule as <paramref name="ExternalCustomerId"/>.</param>
+/// <param name="ExternalCustomerName">The verified external customer's own name as the source returned it (PACT's <c>customerName</c>) — a ticket-time display snapshot, the external counterpart of <paramref name="CrmBuyerCustomerName"/>. Optional: null when the source holds no name.</param>
+/// <param name="ExternalCustomerEmail">The verified external customer's own email as the source returned it (PACT's <c>customerEmail</c>) — a ticket-time display snapshot. Optional: null when the source holds no email.</param>
 /// <param name="RequestTypeId">Optional (Workflow/Automation phase 2): the configured Request Type this ticket follows. Must be an active request type of the department the ticket routes to; when present it drives the workflow capabilities and the automatic assignment rule.</param>
 /// <param name="GenesysContext">Optional (Workflow/Automation phase 2): the Genesys-provided interaction context, persisted verbatim for traceability. Absent for Face-to-Face and every other locally-created interaction.</param>
 public sealed record CreateTicketRequestDto(
@@ -83,6 +85,8 @@ public sealed record CreateTicketRequestDto(
     string? CustomerVerificationSource = null,
     string? ExternalCustomerId = null,
     string? ExternalUnitId = null,
+    string? ExternalCustomerName = null,
+    string? ExternalCustomerEmail = null,
     int? RequestTypeId = null,
     GenesysIntegration.Dto.GenesysInteractionContextDto? GenesysContext = null,
     int? DepartmentId = null);
@@ -115,6 +119,8 @@ public sealed record CreateTicketRequestDto(
 /// <param name="CustomerVerificationSource">The external lookup source that verified the customer at creation ("Pact"/"Tasleeh"), or null for CRM Buyer tickets and plain manual entry.</param>
 /// <param name="ExternalCustomerId">The source's own customer identifier (for PACT, its tenantID) — an external identifier only.</param>
 /// <param name="ExternalUnitId">The source's own identifier for the selected unit (for PACT, its unitID) — an external identifier only.</param>
+/// <param name="ExternalCustomerName">Ticket-time display snapshot of the verified external customer's name, or null when the source held none.</param>
+/// <param name="ExternalCustomerEmail">Ticket-time display snapshot of the verified external customer's email, or null when the source held none.</param>
 public sealed record TicketResponseDto(
     long TicketId,
     string TicketNumber,
@@ -142,7 +148,9 @@ public sealed record TicketResponseDto(
     string? ManualUnitNumber = null,
     string? CustomerVerificationSource = null,
     string? ExternalCustomerId = null,
-    string? ExternalUnitId = null);
+    string? ExternalUnitId = null,
+    string? ExternalCustomerName = null,
+    string? ExternalCustomerEmail = null);
 
 public enum TicketCreationOutcome
 {

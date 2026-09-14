@@ -5,6 +5,11 @@
     Layout = "_LoginLayout";
 }
 
+@* wwwroot/img/bg.png is the page: .login-shell paints it full-viewport,
+   cover-sized and centred, from site.css (the Content-Security-Policy
+   allows self-hosted styles only, so it cannot be an inline background).
+   The brand statement sits directly on the photograph; the sign-in card is
+   the one surface, compact and right of centre. *@
 <div class="login-shell">
     <aside class="login-aside" aria-label="About Tiger Ticketing">
         <div class="login-aside__brand">
@@ -15,9 +20,9 @@
             <h2>Customer service, in one workspace.</h2>
             <p>Find the customer, see their units and history, and route every request to the team that owns it — with SLAs, approvals and escalations tracked end to end.</p>
             <ul class="login-aside__points">
-                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>Customers verified against Tiger CRM, PACT and Tasleeh</li>
-                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>One Tickets workspace for the queue, pending interactions and your work</li>
-                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>Every change recorded in the audit trail</li>
+                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>Customers verified against Tiger CRM, PACT and Tasleeh</li>
+                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>One Tickets workspace for the queue, pending interactions and your work</li>
+                <li><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>Every change recorded in the audit trail</li>
             </ul>
         </div>
         <div class="login-aside__foot">Tiger Group · Customer Service &amp; Operations</div>
@@ -25,9 +30,14 @@
 
     <div class="login-stack">
         <div class="login-card">
+            <span class="login-card__mark">
+                <img src="~/img/tiger-logo.png" alt="" />
+                <strong>Tiger <span>Ticketing</span></strong>
+            </span>
+
             <div class="login-brand">
-                <div class="login-brand__product">Sign in</div>
-                <div class="login-brand__subtitle">Use your Tiger Group account to continue.</div>
+                <div class="login-brand__product">Welcome back</div>
+                <div class="login-brand__subtitle">Sign in with your Tiger Group account to continue.</div>
             </div>
 
             @if (Model.SessionExpired)

@@ -3,8 +3,24 @@
     // One operational breakdown card (Dashboard Phase 1): label left, bar
     // centre, count + percentage right; the header's total drills into the
     // matching tickets and the long tail folds behind "View all".
+    //
+    // The card's tone is keyed on its title — decoration only, exactly like
+    // the Dashboard's KPI glyphs: it colours the bars and a 2px rule, never
+    // the card's surface. Where the tone has a meaning, it is the same one
+    // the rest of the app uses (ageing is a warning, priority is severity,
+    // status is operational); the rest simply keep the six apart.
+    var tone = Model.Title switch
+    {
+        "Volume by Channel" => "info",
+        "Volume by Request Type" => "secondary",
+        "Status" => "progress",
+        "Volume by Department" => "brand",
+        "Open Backlog Ageing" => "warning",
+        "Priority" => "critical",
+        _ => "info",
+    };
 }
-<div class="panel dash-card">
+<div class="panel dash-card tone-@tone">
     <div class="panel__header">
         <div>
             <span class="panel__title">@Model.Title</span>

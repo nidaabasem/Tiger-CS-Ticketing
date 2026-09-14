@@ -132,7 +132,14 @@ public sealed class CustomerProfileTests
         Assert.Contains("<dt>Email</dt>", panel);
         Assert.Contains("<dt>CRM Customer ID</dt>", panel);
         Assert.Contains("crm?.FullNameEnglish ?? profile.DisplayName", panel);
-        Assert.Contains("profile.PhoneNumbers", panel);
+        // Reach comes from the page model, which picks the primary and the
+        // genuinely-different aliases canonically — the view no longer
+        // string-compares raw phone numbers.
+        Assert.Contains("Model.PrimaryPhone", panel);
+        Assert.Contains("Model.OtherPhones", panel);
+        Assert.Contains("Model.PrimaryEmail", panel);
+        Assert.Contains("Model.OtherEmails", panel);
+        Assert.DoesNotContain("profile.PhoneNumbers.Where", panel);
         Assert.Contains("TicketDisplay.CustomerProfileStatusMessage(crm.Status)", panel);
     }
 

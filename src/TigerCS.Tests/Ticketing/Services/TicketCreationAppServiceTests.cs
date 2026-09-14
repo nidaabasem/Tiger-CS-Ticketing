@@ -374,6 +374,96 @@ public class TicketCreationAppServiceTests
         Assert.Equal("1105", stored.ManualUnitNumber);
     }
 
+    /// <summary>
+    /// PACT returns the customer's own <c>customerName</c> and
+    /// <c>customerEmail</c> alongside the ids; both are snapshotted at ticket
+    /// time, exactly like the CRM Buyer name beside them, so the Customers
+    /// directory has a real person to show.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_ExternalVerification_SnapshotsTheSourcesOwnCustomerNameAndEmail()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC fault",
+                ManualProjectName: "Tiger Bay Towers", ManualUnitNumber: "1105",
+                CustomerVerificationSource: "Pact", ExternalCustomerId: "7001", ExternalUnitId: "701",
+                ExternalCustomerName: "Fatima Noor", ExternalCustomerEmail: "fatima@example.com"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        Assert.Equal("Fatima Noor", result.Response!.ExternalCustomerName);
+        Assert.Equal("fatima@example.com", result.Response.ExternalCustomerEmail);
+
+        var stored = Assert.Single(f.Tickets.All);
+        Assert.Equal("Fatima Noor", stored.ExternalCustomerName);
+        Assert.Equal("fatima@example.com", stored.ExternalCustomerEmail);
+        // Snapshot only — it changes nothing about how the customer is identified.
+        Assert.Equal("Pact", stored.CustomerVerificationSource);
+        Assert.Equal("7001", stored.ExternalCustomerId);
+        Assert.Equal("Unverified", result.Response.VerificationStatus);
+    }
+
+    /// <summary>
+    /// A source that holds no name or no email — PACT returns
+    /// <c>"customerEmail": null</c> often enough — snapshots nothing rather
+    /// than a placeholder, and a blank string is the same as absent.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("Fatima Noor", null)]
+    [InlineData(null, "fatima@example.com")]
+    [InlineData("   ", "  ")]
+    public async Task CreateAsync_ExternalVerification_InventsNoNameOrEmailWhenTheSourceHasNone(string? name, string? email)
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC fault",
+                ManualProjectName: "Tiger Bay Towers", ManualUnitNumber: "1105",
+                CustomerVerificationSource: "Pact", ExternalCustomerId: "7001", ExternalUnitId: "701",
+                ExternalCustomerName: name, ExternalCustomerEmail: email));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var stored = Assert.Single(f.Tickets.All);
+        Assert.Equal(string.IsNullOrWhiteSpace(name) ? null : name.Trim(), stored.ExternalCustomerName);
+        Assert.Equal(string.IsNullOrWhiteSpace(email) ? null : email.Trim(), stored.ExternalCustomerEmail);
+    }
+
+    /// <summary>A CRM Buyer ticket never picks up an external customer snapshot — the two identification paths stay mutually exclusive.</summary>
+    [Fact]
+    public async Task CreateAsync_CrmBuyerMatch_CarriesNoExternalCustomerSnapshot()
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Leasing", "LS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.Medium, "AC fault",
+                CrmBuyerCustomerId: 5001, CrmBuyerLeadId: 10, CrmBuyerUnitId: 100, CrmBuyerProjectId: 1,
+                CrmBuyerCustomerName: "Mariam Al Falasi", CrmBuyerProjectName: "Tiger Tower", CrmBuyerUnitNumber: "1204"));
+
+        Assert.Equal(TicketCreationOutcome.Success, result.Outcome);
+        var stored = Assert.Single(f.Tickets.All);
+        Assert.Equal("Mariam Al Falasi", stored.CrmBuyerCustomerName);
+        Assert.Null(stored.ExternalCustomerName);
+        Assert.Null(stored.ExternalCustomerEmail);
+        Assert.Null(stored.CustomerVerificationSource);
+    }
+
     [Fact]
     public async Task CreateAsync_ExternalIdsWithoutSource_Rejected()
     {

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
+using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Integrations.Modules.PactIntegration;
 
@@ -309,18 +310,18 @@ public sealed class PactCustomerHttpGateway(
     /// customer returns not-found. Applied to nothing but the two PACT
     /// request paths this gateway builds; the number the caller holds (and
     /// everything CRM/Tasleeh/persistence see) stays exactly as entered.
+    ///
+    /// <para>
+    /// The rule itself lives with the rest of TigerCS's phone vocabulary
+    /// (<see cref="CustomerPhoneNumber.WithoutPlus"/>) rather than being a
+    /// private copy here. It stays deliberately narrower than the canonical
+    /// <see cref="CustomerPhoneNumber.Normalize"/> the Customers directory
+    /// identifies customers with: this is how a request is addressed to
+    /// PACT, which matches on the number as it holds it, and the rest of the
+    /// string is passed through as typed.
+    /// </para>
     /// </summary>
-    private static string NormalizePactPhone(string phoneNumber)
-    {
-        if (string.IsNullOrWhiteSpace(phoneNumber))
-        {
-            return string.Empty;
-        }
-
-        return phoneNumber
-            .Trim()
-            .Replace("+", "");
-    }
+    private static string NormalizePactPhone(string phoneNumber) => CustomerPhoneNumber.WithoutPlus(phoneNumber);
 
     private static string? FirstNonBlank(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();

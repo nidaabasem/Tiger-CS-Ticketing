@@ -181,6 +181,38 @@ public class Ticket
     /// <summary>The source's own identifier for the selected unit (for PACT, its unitID) — same external-identifier-only discipline as <see cref="ExternalCustomerId"/>.</summary>
     public string? ExternalUnitId { get; private set; }
 
+    /// <summary>
+    /// Immutable, ticket-time snapshot of the verified external customer's
+    /// own name and email, exactly as the source returned them at selection
+    /// — the external counterpart of <see cref="CrmBuyerCustomerName"/>, and
+    /// never re-read from the source afterward (ADR-0007, the same reasoning
+    /// as <see cref="TicketRequesterSnapshot"/>).
+    ///
+    /// <para>
+    /// PACT's <c>GET v1/contracts/{mobile}</c> returns exactly three customer
+    /// identity fields — <c>customerName</c>, <c>customerEmail</c> and
+    /// <c>customerMobile</c> — so these two are all there is to snapshot.
+    /// <b>There is deliberately no Arabic-name column here</b>: PACT has no
+    /// Arabic (or English/first/last) name field, and a column that no source
+    /// can fill would only invite the English name being copied into it.
+    /// Arabic names come from CRM alone, live, through
+    /// <c>CustomerProfileDto.FullNameArabic</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// Snapshot only: neither participates in customer identity. Two external
+    /// customers are the same customer when
+    /// <see cref="CustomerVerificationSource"/> + <see cref="ExternalCustomerId"/>
+    /// match — never because they share a name, an email or a phone.
+    /// </para>
+    /// </summary>
+    public string? ExternalCustomerName { get; private set; }
+    public string? ExternalCustomerEmail { get; private set; }
+
+    /// <summary>Column widths for the external snapshot — the same limits <see cref="TicketInteraction"/> holds externally-supplied customer text to.</summary>
+    public const int ExternalCustomerNameMaxLength = 200;
+    public const int ExternalCustomerEmailMaxLength = 256;
+
     public TicketStatus TicketStatus { get; private set; }
     public CrmVerificationStatus VerificationStatus { get; private set; }
     public EscalationLevel EscalationLevel { get; private set; }
@@ -328,6 +360,15 @@ public class Ticket
     /// source fields — display and reporting derive "Verified via PACT" from
     /// them — rather than by widening a CRM-scoped status.
     /// </para>
+    ///
+    /// <para>
+    /// <paramref name="externalCustomerName"/>/<paramref name="externalCustomerEmail"/>
+    /// snapshot the customer's own name and email as the source returned them
+    /// (for PACT, <c>customerName</c> and <c>customerEmail</c>) — see
+    /// <see cref="ExternalCustomerName"/>. Both are optional and default to
+    /// null: a source may hold no name or no email for a customer it has
+    /// verified, and neither is ever invented to fill the field.
+    /// </para>
     /// </summary>
     public static Ticket CreateFromExternalLookup(
         string ticketNumber,
@@ -340,7 +381,9 @@ public class Ticket
         int categoryId,
         byte priorityId,
         string requestSummary,
-        DateTime createdAtUtc)
+        DateTime createdAtUtc,
+        string? externalCustomerName = null,
+        string? externalCustomerEmail = null)
     {
         if (string.IsNullOrWhiteSpace(customerVerificationSource))
         {
@@ -355,7 +398,27 @@ public class Ticket
         ticket.CustomerVerificationSource = customerVerificationSource;
         ticket.ExternalCustomerId = externalCustomerId;
         ticket.ExternalUnitId = externalUnitId;
+        // Blank is the same as absent: a source that returned "" or "   " has
+        // no name/email on file, and an empty snapshot must not out-rank the
+        // fallbacks the Customers directory would otherwise use. Over-long
+        // text is truncated rather than allowed to fail the write — a
+        // corporate tenant's name-plus-trade-licence can exceed the column,
+        // and losing the tail of a display snapshot beats losing the ticket
+        // (the same call TicketInteraction makes for the same two fields).
+        ticket.ExternalCustomerName = Truncate(externalCustomerName, ExternalCustomerNameMaxLength);
+        ticket.ExternalCustomerEmail = Truncate(externalCustomerEmail, ExternalCustomerEmailMaxLength);
         return ticket;
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
     /// <summary>

@@ -317,7 +317,7 @@ else
                                     <ol class="timeline">
                                         @foreach (var entry in Model.ActivityFeed.Take(3))
                                         {
-                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-gold", _ => "icon-quiet" };
+                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", _ => "icon-quiet" };
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">
@@ -447,7 +447,7 @@ else
                                 <ol class="timeline">
                                     @foreach (var entry in Model.ActivityFeed)
                                     {
-                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-gold", _ => "icon-quiet" };
+                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", _ => "icon-quiet" };
                                         <li class="timeline-item">
                                             <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                             <div class="timeline-row">
@@ -668,7 +668,7 @@ else
                                         @foreach (var message in interaction.Messages)
                                         {
                                             var isCustomer = message.Sender == "Customer";
-                                            var iconCss = isCustomer ? "icon-gold" : "icon-quiet";
+                                            var iconCss = isCustomer ? "icon-info" : "icon-quiet";
                                             @* A bot line is labelled as a bot: an agent taking over
                                                must be able to tell what a human said from what the
                                                virtual agent said. *@
