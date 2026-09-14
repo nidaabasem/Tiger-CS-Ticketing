@@ -9,7 +9,7 @@
 
 @* The overview carries the brand accent; every module page carries its own. *@
 <div class="page admin-page tone-brand">
-    <header class="admin-head">
+    <header class="admin-head admin-head--flush">
         <div class="admin-head__main">
             <h1 class="page-title">Administration</h1>
             <p class="page-subtitle">Manage configuration, access and workflow settings. Every change here is recorded in the audit trail.</p>
@@ -20,20 +20,26 @@
 
     @if (Model.SummaryIsComplete)
     {
+        @* Each figure carries a small tinted chip so the four read apart at a
+           glance; the colour stays in the chip and a 2px edge, never the cell. *@
         <section class="admin-summary" aria-label="Configuration summary">
-            <div class="admin-summary__item">
+            <div class="admin-summary__item tone-neutral">
+                <span class="admin-summary__icon">@await Html.PartialAsync("_AdminIcon", "layers")</span>
                 <span class="admin-summary__value">@Model.TotalConfigured</span>
                 <span class="admin-summary__label">Configuration records</span>
             </div>
             <div class="admin-summary__item tone-success">
+                <span class="admin-summary__icon">@await Html.PartialAsync("_AdminIcon", "check")</span>
                 <span class="admin-summary__value admin-summary__value--tone">@Model.TotalActive</span>
                 <span class="admin-summary__label">Active and offered</span>
             </div>
-            <div class="admin-summary__item">
+            <div class="admin-summary__item tone-neutral">
+                <span class="admin-summary__icon">@await Html.PartialAsync("_AdminIcon", "minus")</span>
                 <span class="admin-summary__value">@Model.TotalInactive</span>
                 <span class="admin-summary__label">Inactive, kept for history</span>
             </div>
             <div class="admin-summary__item @(Model.NeedsAttention == 0 ? "tone-success" : "tone-warning")">
+                <span class="admin-summary__icon">@await Html.PartialAsync("_AdminIcon", Model.NeedsAttention == 0 ? "check" : "clock")</span>
                 <span class="admin-summary__value admin-summary__value--tone">@Model.NeedsAttention</span>
                 <span class="admin-summary__label">@(Model.NeedsAttention == 0 ? "Nothing waiting on a publish" : "Waiting on a published workflow")</span>
                 @if (Model.NeedsAttention > 0)

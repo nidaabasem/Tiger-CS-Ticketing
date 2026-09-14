@@ -125,23 +125,37 @@
             }
         </div>
 
-        <aside class="admin-side">
-            <section class="panel panel--tone admin-form-panel" id="create-workflow" aria-labelledby="create-workflow-title">
-                <div class="panel__header"><h2 class="panel__title" id="create-workflow-title">Create workflow</h2></div>
-                <form method="post" asp-page-handler="Create" class="admin-form">
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.Name">Name *</label>
-                        <input class="form-control" asp-for="Create.Name" required aria-required="true" placeholder="e.g. Send Receipts Workflow" />
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Create.Description">Description</label>
-                        <textarea class="form-control" asp-for="Create.Description" rows="3" placeholder="What this workflow is for, in one or two sentences."></textarea>
-                        <span class="field-hint">A Draft V1 with the standard steps (Start, Department Queue, Department Work, Resolve, Close) is created for you to adjust.</span>
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-gold btn-sm">Create Workflow</button>
-                    </div>
-                </form>
+        <aside class="admin-side" id="workflows-side">
+            @* A disclosure the page header's own "Create Workflow" button opens,
+               through :target — no script, and the form, its handler and its
+               fields are unchanged. A failed create re-renders it open so
+               nothing the viewer typed is hidden behind a closed panel. *@
+            <section class="panel panel--reveal admin-form-panel @(Model.ErrorMessage is null ? "" : "is-open")" id="create-workflow" aria-labelledby="create-workflow-title">
+                <a class="panel__reveal-toggle" href="#create-workflow">
+                    <span class="panel__reveal-icon">@await Html.PartialAsync("_AdminIcon", "plus")</span>
+                    <span class="panel__reveal-text">
+                        <span class="panel__title" id="create-workflow-title">Create workflow</span>
+                        <span class="panel__hint">Starts a Draft V1 with the standard steps</span>
+                    </span>
+                    <span class="panel__reveal-caret" aria-hidden="true">@await Html.PartialAsync("_AdminIcon", "chevron-right")</span>
+                </a>
+                <div class="panel__reveal-body">
+                    <form method="post" asp-page-handler="Create" class="admin-form">
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Create.Name">Name *</label>
+                            <input class="form-control" asp-for="Create.Name" required aria-required="true" placeholder="e.g. Send Receipts Workflow" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Create.Description">Description</label>
+                            <textarea class="form-control" asp-for="Create.Description" rows="3" placeholder="What this workflow is for, in one or two sentences."></textarea>
+                            <span class="field-hint">The standard steps (Start, Department Queue, Department Work, Resolve, Close) are created for you to adjust.</span>
+                        </div>
+                        <div class="form-actions">
+                            <a class="btn btn-sm" href="#workflows-side">Cancel</a>
+                            <button type="submit" class="btn btn-gold btn-sm">Create Workflow</button>
+                        </div>
+                    </form>
+                </div>
             </section>
 
             <section class="panel panel--muted">

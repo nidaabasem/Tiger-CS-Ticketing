@@ -149,7 +149,9 @@
                             }
                             @if (u.IsLockedOut)
                             {
-                                <span class="badge badge-warning">Locked out</span>
+                                <span class="status-note" title="Sign-in is blocked until the lock-out expires or is cleared">
+                                    @await Html.PartialAsync("_AdminIcon", "lock") Sign-in locked
+                                </span>
                             }
                             @if (u.IsGeynessStaff)
                             {

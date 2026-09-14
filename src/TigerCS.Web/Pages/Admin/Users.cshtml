@@ -134,14 +134,19 @@
                                         </span>
                                     }
                                 </td>
+                                @* The pill is the account; a lock-out is a separate,
+                                   quieter fact about signing in. Two pills side by side
+                                   would read as a contradiction. *@
                                 <td>
-                                    <span class="chip-list">
+                                    <div class="status-stack">
                                         @await Html.PartialAsync("_StatusBadge", user.IsActive)
                                         @if (user.IsLockedOut)
                                         {
-                                            <span class="badge badge-warning">Locked out</span>
+                                            <span class="status-note" title="Sign-in is blocked until the lock-out expires or is cleared">
+                                                @await Html.PartialAsync("_AdminIcon", "lock") Sign-in locked
+                                            </span>
                                         }
-                                    </span>
+                                    </div>
                                 </td>
                                 <td class="text-secondary">
                                     @user.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy")

@@ -135,6 +135,13 @@ public sealed class AdministrationRenderTests : IDisposable
             Assert.Contains($"class=\"admin-card__tagline\">{module.Tagline}</span>", html, StringComparison.Ordinal);
         }
 
+        // Each figure carries a tinted chip, and the two neutral ones say so
+        // rather than inheriting the page's brand tone.
+        Assert.Equal(4, html.Split("class=\"admin-summary__icon\"").Length - 1);
+        Assert.Equal(2, html.Split("class=\"admin-summary__item tone-neutral\"").Length - 1);
+        Assert.Contains("class=\"admin-summary__item tone-success\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"admin-summary__item tone-warning\"", html, StringComparison.Ordinal);
+
         // Counts split active from inactive, and the draft-only workflow is flagged.
         Assert.Contains("class=\"admin-card__count\"", html, StringComparison.Ordinal);
         Assert.Contains("inactive</em>", html, StringComparison.Ordinal);
@@ -154,7 +161,12 @@ public sealed class AdministrationRenderTests : IDisposable
 
         Assert.Contains("class=\"badge badge-role\">System Administrator</span>", html, StringComparison.Ordinal);
         Assert.Contains("class=\"badge badge-tone\" title=\"Primary department\">Collections</span>", html, StringComparison.Ordinal);
-        Assert.Contains("class=\"badge badge-warning\">Locked out</span>", html, StringComparison.Ordinal);
+        // Account state and sign-in state are said in two registers, so a live
+        // account that is locked out never shows a green and a red pill together.
+        Assert.Contains("class=\"status-stack\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"status-note\"", html, StringComparison.Ordinal);
+        Assert.Contains("Sign-in locked", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("badge-warning\">Locked out", html, StringComparison.Ordinal);
 
         // The row is the link; the arrow marks it, and "Manage" is gone.
         Assert.Contains($"<tr class=\"is-link \" data-href=\"/Admin/Users/{AlmaId}\">", html, StringComparison.Ordinal);
@@ -219,6 +231,16 @@ public sealed class AdministrationRenderTests : IDisposable
     public async Task Workflows_ReadAsVersionedCards_NotAsAConfigurationTable()
     {
         var html = await Ok(await GetAsync("/Admin/Workflows"));
+
+        // Creating a workflow is a disclosure the page header's own button
+        // opens (:target), so the form no longer competes with the list.
+        Assert.Contains("class=\"panel panel--reveal admin-form-panel \" id=\"create-workflow\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"panel__reveal-toggle\" href=\"#create-workflow\"", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"admin-head__actions\"", html, StringComparison.Ordinal);
+        // The form itself is untouched — same handler, same two fields.
+        Assert.Contains("handler=Create", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"Create.Name\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"Create.Description\"", html, StringComparison.Ordinal);
 
         Assert.Contains("class=\"wf-list\"", html, StringComparison.Ordinal);
         Assert.Contains("class=\"wf-item__rail\"", html, StringComparison.Ordinal);
