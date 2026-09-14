@@ -5,20 +5,23 @@
     ViewData["ActiveNav"] = "admin";
     ViewData["AdminSection"] = "departments";
     Layout = "_Layout";
+    var module = AdminModules.Departments;
     var activeCount = Model.Departments.Count(d => d.IsActive);
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Departments", "/Admin/Departments", (string?)null))
-    <div class="page-header">
-        <div>
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, (string?)null))
+
+    <header class="admin-head">
+        <div class="admin-head__main">
+            @await Html.PartialAsync("_AdminEyebrow", module.Key)
             <h1 class="page-title">Departments</h1>
-            <p class="page-subtitle">Responsible departments. An inactive department keeps its name on historical tickets but is never offered for new work.</p>
+            <p class="page-subtitle">The responsible teams work is routed to. An inactive department keeps its name on historical tickets but is never offered for new work.</p>
         </div>
-        <div class="page-header__actions">
+        <div class="admin-head__actions">
             <a class="btn btn-gold" href="#add-department">@await Html.PartialAsync("_AdminIcon", "plus") Add Department</a>
         </div>
-    </div>
+    </header>
 
     @await Html.PartialAsync("_AdminMessages", Model)
 
@@ -70,25 +73,34 @@
                             <thead>
                                 <tr>
                                     <th>Department</th>
-                                    <th>Code</th>
                                     <th class="col-num">Members</th>
                                     <th class="col-num">Request types</th>
                                     <th class="col-num">Tickets</th>
                                     <th>Status</th>
-                                    <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                                    <th class="col-actions"><span class="visually-hidden">Open</span></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach (var d in Model.Departments)
                                 {
-                                    <tr class="@(d.IsActive ? "" : "is-inactive")">
-                                        <td class="cell-primary"><a class="ticket-id-link" href="/Admin/Departments/@d.DepartmentId">@d.Name</a></td>
-                                        <td><span class="badge badge-neutral text-mono">@d.Code</span></td>
+                                    @* The row opens the department; its code travels with its name rather than in a column of its own. *@
+                                    <tr class="is-link @(d.IsActive ? "" : "is-inactive")" data-href="/Admin/Departments/@d.DepartmentId">
+                                        <td class="cell-wrap">
+                                            <span class="identity">
+                                                <span class="identity__avatar @(d.IsActive ? "" : "identity__avatar--muted")" aria-hidden="true">@AdminDisplay.Initials(d.Name)</span>
+                                                <span class="identity__body">
+                                                    <a class="identity__name" href="/Admin/Departments/@d.DepartmentId">@d.Name</a>
+                                                    <span class="identity__sub"><span class="badge badge-code text-mono">@d.Code</span></span>
+                                                </span>
+                                            </span>
+                                        </td>
                                         <td class="col-num">@d.MemberCount</td>
                                         <td class="col-num">@d.RequestTypeCount</td>
                                         <td class="col-num">@d.TicketReferenceCount</td>
                                         <td>@await Html.PartialAsync("_StatusBadge", d.IsActive)</td>
-                                        <td class="col-actions"><a class="btn btn-sm" href="/Admin/Departments/@d.DepartmentId">Manage</a></td>
+                                        <td class="col-actions">
+                                            <a class="row-open" href="/Admin/Departments/@d.DepartmentId" aria-label="Manage @d.Name">@await Html.PartialAsync("_AdminIcon", "chevron-right")</a>
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
@@ -99,8 +111,10 @@
         </div>
 
         <aside class="admin-side">
-            <section class="panel admin-form-panel" id="add-department" aria-labelledby="add-department-title">
-                <div class="panel__header"><h2 class="panel__title" id="add-department-title">Add department</h2></div>
+            <section class="panel panel--tone admin-form-panel" id="add-department" aria-labelledby="add-department-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="add-department-title">Add department</h2>
+                </div>
                 <form method="post" asp-page-handler="Create" class="admin-form">
                     <div class="form-group">
                         <label class="form-label" asp-for="Create.Name">Name *</label>
@@ -112,7 +126,7 @@
                         <span class="field-hint">Short code used in ticket numbers. Up to 10 characters.</span>
                     </div>
                     <div class="form-actions">
-                        <button type="submit" class="btn btn-gold">Add Department</button>
+                        <button type="submit" class="btn btn-gold btn-sm">Add Department</button>
                     </div>
                 </form>
             </section>

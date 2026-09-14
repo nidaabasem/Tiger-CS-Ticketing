@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCsWeb::TigerCS.Web.Pages.Admin;
 using TigerCsWeb::TigerCS.Web.Services.Auth;
 
 namespace TigerCS.Tests.Web;
@@ -108,14 +109,82 @@ public sealed class AdministrationWebTests
         }
     }
 
+    /// <summary>
+    /// The five modules are described once — name, route, icon and accent —
+    /// and the overview, the sub-navigation and every page header read that
+    /// one description. A module cannot be named or routed two ways.
+    /// </summary>
     [Fact]
-    public void AdminHome_OffersTheFiveAreas()
+    public void AdminHome_OffersTheFiveAreas_FromOneSharedDescription()
     {
-        var model = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Admin", "Index.cshtml.cs")));
-        foreach (var area in new[] { "\"Users\"", "\"Departments\"", "\"Request Types\"", "\"Workflows\"", "\"Channels\"" })
+        Assert.Equal(
+            ["Users", "Departments", "Request Types", "Workflows", "Channels"],
+            AdminModules.All.Select(m => m.Label));
+
+        Assert.Equal(
+            ["/Admin/Users", "/Admin/Departments", "/Admin/RequestTypes", "/Admin/Workflows", "/Admin/Channels"],
+            AdminModules.All.Select(m => m.Href));
+
+        // One accent each, and none of them is gold: gold stays the brand's.
+        Assert.Equal(AdminModules.All.Count, AdminModules.All.Select(m => m.Tone).Distinct().Count());
+        Assert.DoesNotContain("tone-brand", AdminModules.All.Select(m => m.Tone));
+
+        // A section key resolves to its module; the overview is not one.
+        Assert.Equal(AdminModules.Users, AdminModules.Find("users"));
+        Assert.Null(AdminModules.Find(AdminModules.OverviewKey));
+
+        // Both the overview and the sub-nav are built from the list, not from
+        // their own copies of it.
+        Assert.Contains("AdminModules.", View("Admin", "Index.cshtml.cs"));
+        Assert.Contains("AdminModules.All", View("Shared", "_AdminSubNav.cshtml"));
+    }
+
+    /// <summary>
+    /// Every Administration screen is built from the same header components
+    /// and carries its module's accent, so no page is left on an older shape.
+    /// </summary>
+    [Theory]
+    [InlineData("Users.cshtml", "users")]
+    [InlineData("UserEdit.cshtml", "users")]
+    [InlineData("Departments.cshtml", "departments")]
+    [InlineData("DepartmentEdit.cshtml", "departments")]
+    [InlineData("RequestTypes.cshtml", "requesttypes")]
+    [InlineData("RequestTypeEdit.cshtml", "requesttypes")]
+    [InlineData("Workflows.cshtml", "workflows")]
+    [InlineData("WorkflowDetails.cshtml", "workflows")]
+    [InlineData("WorkflowVersion.cshtml", "workflows")]
+    [InlineData("Channels.cshtml", "channels")]
+    [InlineData("ChannelEdit.cshtml", "channels")]
+    public void EveryModulePage_UsesTheSharedHeader_AndItsOwnAccent(string view, string moduleKey)
+    {
+        var html = View("Admin", view);
+        var module = AdminModules.Find(moduleKey)!;
+
+        Assert.Contains("_AdminCrumbs", html);
+        Assert.Contains("_AdminEyebrow", html);
+        Assert.Contains("<header class=\"admin-head\"", html);
+        Assert.Contains("admin-page @module.Tone", html);
+        Assert.Contains($"AdminModules.{module.Key switch
         {
-            Assert.Contains(area, model);
-        }
+            "users" => "Users",
+            "departments" => "Departments",
+            "requesttypes" => "RequestTypes",
+            "workflows" => "Workflows",
+            _ => "Channels"
+        }}", html);
+
+        // The retired chrome: a page-header block, the old breadcrumb partial,
+        // and a "Manage" button repeated on every row.
+        Assert.DoesNotContain("_AdminBreadcrumb", html);
+        Assert.DoesNotContain("class=\"page-header\"", html);
+        Assert.DoesNotContain(">Manage</a>", html);
+    }
+
+    /// <summary>The retired breadcrumb partial is gone, not merely unused.</summary>
+    [Fact]
+    public void OldBreadcrumbPartial_IsRemoved()
+    {
+        Assert.False(File.Exists(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Admin", "_AdminBreadcrumb.cshtml"))));
     }
 
     [Fact]

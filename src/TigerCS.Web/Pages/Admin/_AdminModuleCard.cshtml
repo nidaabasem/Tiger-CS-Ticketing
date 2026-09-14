@@ -1,0 +1,32 @@
+@model TigerCS.Web.Pages.Admin.AdminModuleCard
+@*
+    One module of the console. The whole card is the link — there is no
+    "Manage" button inside it — and everything coloured in it reads the tone
+    the module owns. When a count cannot be loaded the card still opens; it
+    simply says so instead of showing a number it does not have.
+*@
+<a class="admin-card @Model.Module.Tone" href="@Model.Module.Href">
+    <span class="admin-card__chip">@await Html.PartialAsync("_AdminIcon", Model.Module.Icon)</span>
+    <span class="admin-card__title">@Model.Module.Label</span>
+    <span class="admin-card__count">
+        @if (Model.ActiveCount is { } active)
+        {
+            <strong>@active</strong>
+            <span>@Model.Module.CountLabel(active)</span>
+            @if (Model.InactiveCount is > 0)
+            {
+                <em>· @Model.InactiveCount inactive</em>
+            }
+        }
+        else
+        {
+            <span>Count unavailable right now</span>
+        }
+    </span>
+    <span class="admin-card__tagline">@Model.Module.Tagline</span>
+    @if (Model.AttentionLabel is not null)
+    {
+        <span class="admin-card__flag">@await Html.PartialAsync("_AdminIcon", "warning") @Model.AttentionLabel</span>
+    }
+    <span class="admin-card__open">Open @await Html.PartialAsync("_AdminIcon", "arrow-right")</span>
+</a>

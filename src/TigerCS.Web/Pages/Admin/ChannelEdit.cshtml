@@ -6,10 +6,11 @@
     ViewData["ActiveNav"] = "admin";
     ViewData["AdminSection"] = "channels";
     Layout = "_Layout";
+    var module = AdminModules.Channels;
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Channels", "/Admin/Channels", c?.Name ?? "Channel"))
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, c?.Name ?? "Channel"))
 
     @if (c is null)
     {
@@ -22,56 +23,81 @@
     }
     else
     {
-        <div class="page-header">
-            <div>
-                <p class="page-eyebrow">Channel</p>
-                <h1 class="page-title">@c.Name</h1>
-                <div class="page-title__meta">
-                    <span class="badge badge-neutral text-mono">@c.Code</span>
-                    @await Html.PartialAsync("_StatusBadge", c.IsActive)
-                    <span><strong>@(c.RequiresPhone ? "Phone required" : "Phone optional")</strong></span>
-                    <span><strong>@(c.IsGenesysEnabled ? "Genesys enabled" : "Not Genesys")</strong></span>
+        <header class="admin-head">
+            <div class="admin-head__main">
+                @await Html.PartialAsync("_AdminEyebrow", module.Key)
+                <div class="admin-head__identity">
+                    <span class="identity__avatar identity__avatar--lg @(c.IsActive ? "" : "identity__avatar--muted")" aria-hidden="true">@await Html.PartialAsync("_AdminIcon", "channels")</span>
+                    <div>
+                        <h1 class="page-title">@c.Name</h1>
+                        <div class="page-title__meta">
+                            <span class="badge badge-code text-mono">@c.Code</span>
+                            @await Html.PartialAsync("_StatusBadge", c.IsActive)
+                        </div>
+                    </div>
+                </div>
+                <div class="admin-head__meta">
+                    <span class="chip-list">
+                        @await Html.PartialAsync("_AdminFlag", (c.IsActive, "Offered in Create Ticket"))
+                        @await Html.PartialAsync("_AdminFlag", (c.RequiresPhone, "Phone required"))
+                        @await Html.PartialAsync("_AdminFlag", (c.IsGenesysEnabled, "Genesys enabled"))
+                    </span>
                     <span><strong>@c.ReferenceCount</strong> historical @(c.ReferenceCount == 1 ? "reference" : "references")</span>
                 </div>
             </div>
-            <div class="page-header__actions">
+            <div class="admin-head__actions">
                 <a class="btn" href="/Admin/Channels">Back to Channels</a>
             </div>
-        </div>
+        </header>
 
         @await Html.PartialAsync("_AdminMessages", Model)
 
         <div class="admin-grid">
-            <section class="panel admin-form-panel" aria-labelledby="details-title">
-                <div class="panel__header"><h2 class="panel__title" id="details-title">Details</h2></div>
+            <section class="panel panel--tone admin-form-panel" aria-labelledby="details-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="details-title">Details</h2>
+                    <span class="panel__hint">Name, code and what Create Ticket asks for</span>
+                </div>
                 <form method="post" asp-page-handler="Edit" asp-route-id="@c.ChannelId" class="admin-form">
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Edit.Name">Channel Name *</label>
-                        <input class="form-control" asp-for="Edit.Name" maxlength="100" required aria-required="true" />
+                    <fieldset class="form-section">
+                        <legend class="form-section__title">Identity</legend>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Edit.Name">Channel Name *</label>
+                            <input class="form-control" asp-for="Edit.Name" maxlength="100" required aria-required="true" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Edit.Code">Channel Code *</label>
+                            <input class="form-control" asp-for="Edit.Code" maxlength="50" required aria-required="true" />
+                            <span class="field-hint">Stable, unique identifier used by integrations. Historical records reference the channel by id, so they keep displaying this channel under its current name.</span>
+                        </div>
+                    </fieldset>
+                    <fieldset class="form-section">
+                        <legend class="form-section__title">Customer entry behaviour</legend>
+                        <div class="checkbox-grid">
+                            <label class="checkbox-field">
+                                <input type="checkbox" asp-for="Edit.RequiresPhone" />
+                                Requires a phone number
+                            </label>
+                            <label class="checkbox-field">
+                                <input type="checkbox" asp-for="Edit.IsGenesysEnabled" />
+                                Genesys enabled
+                            </label>
+                            <label class="checkbox-field">
+                                <input type="checkbox" asp-for="Edit.IsActive" />
+                                Offered in Create Ticket
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="Edit.DisplayOrder">Display Order</label>
+                            <input class="form-control" asp-for="Edit.DisplayOrder" type="number" min="0" step="1" />
+                            <span class="field-hint">Lower numbers appear first in Create Ticket.</span>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions form-actions--split">
+                        <span class="form-actions__note">Changes are recorded in the audit trail.</span>
+                        <a class="btn btn-sm" href="/Admin/Channels">Cancel</a>
+                        <button type="submit" class="btn btn-gold btn-sm">Save Channel</button>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Edit.Code">Channel Code *</label>
-                        <input class="form-control" asp-for="Edit.Code" maxlength="50" required aria-required="true" />
-                        <span class="field-hint">Stable, unique identifier used by integrations. Historical records reference the channel by id, so they keep displaying this channel under its current name.</span>
-                    </div>
-                    <label class="checkbox-field">
-                        <input type="checkbox" asp-for="Edit.RequiresPhone" />
-                        Requires Phone Number
-                    </label>
-                    <label class="checkbox-field">
-                        <input type="checkbox" asp-for="Edit.IsGenesysEnabled" />
-                        Genesys Enabled
-                    </label>
-                    <label class="checkbox-field">
-                        <input type="checkbox" asp-for="Edit.IsActive" />
-                        Active
-                    </label>
-                    <div class="form-group">
-                        <label class="form-label" asp-for="Edit.DisplayOrder">Display Order</label>
-                        <input class="form-control" asp-for="Edit.DisplayOrder" type="number" min="0" step="1" />
-                        <span class="field-hint">Lower numbers appear first in Create Ticket.</span>
-                    </div>
-                    <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save</button></div>
                 </form>
             </section>
 

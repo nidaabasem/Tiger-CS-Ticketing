@@ -1,0 +1,16 @@
+@model string
+@*
+    The module badge above a page title: the module's icon in its own tinted
+    chip, then its name. The tone comes from the .tone-* class the page puts
+    on the surrounding .admin-head.
+*@
+@{
+    var module = AdminModules.Find(Model);
+}
+@if (module is not null)
+{
+    <p class="admin-head__eyebrow">
+        <span class="admin-head__chip">@await Html.PartialAsync("_AdminIcon", module.Icon)</span>
+        @module.Label
+    </p>
+}

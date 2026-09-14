@@ -5,23 +5,35 @@
     ViewData["ActiveNav"] = "admin";
     ViewData["AdminSection"] = "requesttypes";
     Layout = "_Layout";
+    var module = AdminModules.RequestTypes;
     var hasFilter = Model.DepartmentId is not null || !Model.IncludeInactive;
     var departmentName = Model.Departments.FirstOrDefault(d => d.DepartmentId == Model.DepartmentId)?.Name;
+    var blocked = Model.RequestTypes.Count(r => r.IsActive && r.ActiveVersionNumber is null);
 }
 
-<div class="page admin-page">
-    @await Html.PartialAsync("_AdminBreadcrumb", ("Request Types", "/Admin/RequestTypes", (string?)null))
-    <div class="page-header">
-        <div>
+<div class="page admin-page @module.Tone">
+    @await Html.PartialAsync("_AdminCrumbs", (module.Key, (string?)null))
+
+    <header class="admin-head">
+        <div class="admin-head__main">
+            @await Html.PartialAsync("_AdminEyebrow", module.Key)
             <h1 class="page-title">Request Types</h1>
-            <p class="page-subtitle">What each department handles: its workflow, assignment, approvals and SLA. Urgency is a ticket priority, never a second request type.</p>
+            <p class="page-subtitle">What each department handles: its workflow, routing, approvals and SLA. Urgency is a ticket priority, never a second request type.</p>
         </div>
-        <div class="page-header__actions">
+        <div class="admin-head__actions">
             <a class="btn btn-gold" href="/Admin/RequestTypes/New">@await Html.PartialAsync("_AdminIcon", "plus") Add Request Type</a>
         </div>
-    </div>
+    </header>
 
     @await Html.PartialAsync("_AdminMessages", Model)
+
+    @if (blocked > 0)
+    {
+        <div class="alert alert-info" role="status">
+            @await Html.PartialAsync("_AdminIcon", "warning")
+            <span><strong>@blocked active @(blocked == 1 ? "request type has" : "request types have")</strong> no published workflow version, so no ticket can be created against @(blocked == 1 ? "it" : "them") yet. Publish the workflow's draft to open @(blocked == 1 ? "it" : "them") up.</span>
+        </div>
+    }
 
     <form class="filter-bar" method="get" aria-label="Filter request types">
         <div class="field-group">
@@ -43,7 +55,7 @@
         </div>
         @if (Model.LoadError is null)
         {
-            <span class="filter-bar__count">@(Model.RequestTypes.Count == 1 ? "1 request type" : $"{Model.RequestTypes.Count} request types")@(departmentName is null ? "" : $" in {departmentName}")</span>
+            <span class="filter-bar__count">@AdminDisplay.Count(Model.RequestTypes.Count, "request type", "request types")@(departmentName is null ? "" : $" in {departmentName}")</span>
         }
         <div class="filter-bar__submit">
             @if (hasFilter)
@@ -85,22 +97,24 @@
                     <thead>
                         <tr>
                             <th>Request type</th>
-                            <th>Department</th>
                             <th>Workflow</th>
-                            <th>Assignment</th>
+                            <th>Routing</th>
                             <th>Default priority</th>
                             <th class="col-num">Tickets</th>
                             <th>Status</th>
-                            <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+                            <th class="col-actions"><span class="visually-hidden">Open</span></th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var r in Model.RequestTypes)
                         {
-                            <tr class="@(r.IsActive ? "" : "is-inactive")">
-                                <td class="cell-primary"><a class="ticket-id-link" href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a></td>
-                                <td>@r.DepartmentName</td>
-                                <td>
+                            @* Name and owning department travel together — a request type is only meaningful inside its department. *@
+                            <tr class="is-link @(r.IsActive ? "" : "is-inactive")" data-href="/Admin/RequestTypes/@r.RequestTypeId">
+                                <td class="cell-wrap cell-primary">
+                                    <a href="/Admin/RequestTypes/@r.RequestTypeId">@r.Name</a>
+                                    <div class="cell-sub">@r.DepartmentName</div>
+                                </td>
+                                <td class="cell-wrap">
                                     <div>@r.WorkflowName</div>
                                     <div class="cell-sub">
                                         @if (r.ActiveVersionNumber is { } v)
@@ -113,15 +127,20 @@
                                         }
                                     </div>
                                 </td>
-                                <td class="cell-wrap">@r.AssignmentSummary</td>
+                                <td class="cell-wrap text-secondary">@r.AssignmentSummary</td>
                                 <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(r.DefaultPriorityId)">@RequestTypesModel.PriorityLabel(r.DefaultPriorityId)</span></td>
                                 <td class="col-num">@r.TicketCount</td>
                                 <td>@await Html.PartialAsync("_StatusBadge", r.IsActive)</td>
-                                <td class="col-actions"><a class="btn btn-sm" href="/Admin/RequestTypes/@r.RequestTypeId">Manage</a></td>
+                                <td class="col-actions">
+                                    <a class="row-open" href="/Admin/RequestTypes/@r.RequestTypeId" aria-label="Manage @r.Name">@await Html.PartialAsync("_AdminIcon", "chevron-right")</a>
+                                </td>
                             </tr>
                         }
                     </tbody>
                 </table>
+            </div>
+            <div class="panel__footer">
+                <span>Approval requirements and SLA values are configured on each request type's own page.</span>
             </div>
         }
     </div>

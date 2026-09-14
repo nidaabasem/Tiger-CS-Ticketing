@@ -1,0 +1,11 @@
+@model (bool On, string Label)
+@*
+    A capability a configuration record either has or has not — phone
+    required, Genesys enabled, offered in Create Ticket. A tick or a dash
+    carries it; the label stays a label rather than becoming a "Yes"/"No"
+    column of its own.
+*@
+<span class="flag @(Model.On ? "flag--on" : "flag--off")">
+    <span class="flag__mark">@await Html.PartialAsync("_AdminIcon", Model.On ? "check" : "minus")</span>
+    <span>@Model.Label</span>
+</span>
