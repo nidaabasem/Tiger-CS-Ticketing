@@ -20,6 +20,19 @@ namespace TigerCS.Web.Services.Api;
 /// exception's type/message are logged — never the Authorization header,
 /// the bearer token, cookies, or request/response bodies that could carry
 /// credentials.
+/// <para>
+/// With one deliberate exception: a call cancelled because the CALLER went
+/// away. Every catch below is guarded by
+/// <c>when (!cancellationToken.IsCancellationRequested)</c>, and that token
+/// is the page's own <c>HttpContext.RequestAborted</c> — so when an agent
+/// abandons a page (clicking Customers or its Apply button twice, or
+/// navigating away mid-load) the resulting
+/// <see cref="TaskCanceledException"/> is neither logged as an error nor
+/// mapped to an <see cref="ApiOutcome"/>: it propagates, and
+/// <c>ClientDisconnectMiddleware</c> answers 499. A genuine timeout — the
+/// HttpClient's own, with this token uncancelled — still takes the
+/// Unreachable path and is still logged.
+/// </para>
 /// </remarks>
 public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
 {

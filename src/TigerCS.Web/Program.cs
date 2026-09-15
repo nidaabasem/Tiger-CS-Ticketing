@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using TigerCS.Infrastructure.Http;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
@@ -114,6 +115,16 @@ app.Use(async (context, next) =>
         "frame-ancestors 'none'");
     await next();
 });
+
+// An agent who clicks Customers twice, presses Enter twice on its filter, or
+// navigates away mid-load makes the browser reset the first connection. That
+// cancels this request's RequestAborted, which cancels the outbound call to
+// TigerCS.Api (and, there, the Customers query itself). The resulting
+// TaskCanceledException is expected: it is logged at Debug and answered 499
+// rather than left unhandled to be logged as an application error and turned
+// into a 500 for a browser that stopped listening. Anything that is not a
+// client disconnect is untouched and still surfaces as the failure it is.
+app.UseTigerCsClientDisconnectHandling();
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();

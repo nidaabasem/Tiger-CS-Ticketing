@@ -41,7 +41,11 @@
   // filters, the customer workspace's unit filter, the admin list toolbars).
   document.querySelectorAll("select[data-autosubmit], input[type=checkbox][data-autosubmit]").forEach(function (el) {
     el.addEventListener("change", function () {
-      if (el.form) {
+      // Never start a second navigation over one already in flight — the
+      // browser would abort the first, and the server would be left holding
+      // a cancelled query. The in-flight submit already carries this
+      // control's new value if it changed before the request left.
+      if (el.form && !el.form.hasAttribute("data-submitting")) {
         el.form.requestSubmit();
       }
     });
@@ -91,14 +95,56 @@
     apply();
   });
 
-  // Prevent duplicate submission: disable a form's submit button(s) the
-  // moment it submits, so a double-click can't fire the request twice.
-  // Without JS the form still submits normally on every click.
+  // Prevent duplicate submission: the FIRST submit of a form wins, and every
+  // further submit while that one is still in flight is dropped. This covers
+  // the double-click, the second Enter in a search box, and a filter control
+  // changing while the page is already navigating — on the Customers
+  // directory's search/filter bar (#customerFilters) as much as on the
+  // ticket forms.
+  //
+  // It matters beyond the duplicate itself: a second navigation makes the
+  // browser abort the first one, and an aborted request cancels
+  // HttpContext.RequestAborted all the way down to the Customers query in
+  // TigerCS.Api, which then throws TaskCanceledException out of
+  // CustomerDirectoryRepository. The server treats that as the expected
+  // client cancellation it is (ClientDisconnectMiddleware), but not starting
+  // the pointless second request is better than cancelling the first.
+  //
+  // Without JS every click still submits normally, and the server is
+  // unchanged either way — nothing here is a correctness guarantee, the
+  // Api enforces its own rules regardless.
   document.addEventListener("submit", function (event) {
     var form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
-    form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
-      btn.disabled = true;
+
+    if (form.hasAttribute("data-submitting")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+
+    form.setAttribute("data-submitting", "");
+    // Deferred by one turn so the submit button is still enabled while the
+    // browser builds the form data: a disabled control is barred from
+    // submission, and some forms (TicketDetails' Approve/Reject) submit
+    // their decision AS the button's own name/value. The attribute above,
+    // not the disabled state, is what actually blocks the second submit.
+    window.setTimeout(function () {
+      form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
+        btn.disabled = true;
+      });
+    }, 0);
+  });
+
+  // Back/forward can restore this page from the browser's cache exactly as
+  // it was left — mid-submit, with the guard set and the buttons disabled.
+  // Release it, or the agent returns to a filter bar that refuses to apply.
+  window.addEventListener("pageshow", function () {
+    document.querySelectorAll("form[data-submitting]").forEach(function (form) {
+      form.removeAttribute("data-submitting");
+      form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
+        btn.disabled = false;
+      });
     });
   });
 })();

@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using TigerCS.Api.OpenApi;
 using TigerCS.Infrastructure;
 using TigerCS.Infrastructure.BackgroundJobs;
+using TigerCS.Infrastructure.Http;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
 using TigerCS.Integrations.Modules.CrmIntegration;
@@ -203,6 +204,18 @@ using (var backgroundJobScope = app.Services.CreateScope())
 }
 
 app.UseExceptionHandler();
+
+// Inside the exception handler, so a request the browser abandoned is
+// recognised before the generic handler treats it as a defect. An agent who
+// clicks Customers (or Apply on its filter) twice in quick succession makes
+// the browser reset the first connection; RequestAborted then cancels the
+// CancellationToken the controller passed down, and the Customers query
+// throws TaskCanceledException from CustomerDirectoryRepository. That is
+// cancellation working, not a fault: it is logged at Debug and answered 499,
+// never logged at Error and never answered 500. A SQL timeout leaves
+// RequestAborted unsignalled and still reaches UseExceptionHandler as the
+// error it is.
+app.UseTigerCsClientDisconnectHandling();
 
 app.UseHttpsRedirection();
 
