@@ -87,13 +87,22 @@ public static class TicketRoleSets
     public static readonly IReadOnlyCollection<string> Close = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
 
     /// <summary>
-    /// Reopen: the same CS-layer roles as Close (ISSUE-022's approved
-    /// decision — "Geyness Agent/Supervisor/CS Manager closes … and
-    /// reopens"; Solution-Analysis.md §5.6's transition table names the same
-    /// three for Closed → In Progress). Cross-department for the same
-    /// Security-Architecture.md §3 reason as Close. A distinct set rather
-    /// than an alias of <see cref="Close"/>, so the two actions' authority
-    /// can diverge later without a call-site hunt.
+    /// Reopen: <b>CS Agent only</b> — the approved business rule names the
+    /// Agent as the reopening actor, superseding ISSUE-022's earlier
+    /// Agent/Supervisor/CS Manager reading. CS Supervisor and CS Manager are
+    /// deliberately absent: they hold Close above, but holding Close no
+    /// longer implies holding Reopen, which is precisely why this was always
+    /// a distinct set rather than an alias of <see cref="Close"/>.
+    ///
+    /// <para>
+    /// <b>Role membership alone is not authorization for Reopen.</b> Unlike
+    /// the other sets here, <c>TicketLifecycleAppService.ReopenAsync</c>
+    /// additionally requires the caller to have access to the ticket itself
+    /// under the existing visibility rules (<see cref="CrossDepartmentView"/>
+    /// or department membership, via <c>TicketQueryAppService</c>'s own
+    /// check) — the resource-level half of the decision, so an agent can only
+    /// reopen a ticket they were entitled to see in the first place.
+    /// </para>
     /// </summary>
-    public static readonly IReadOnlyCollection<string> Reopen = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
+    public static readonly IReadOnlyCollection<string> Reopen = [Roles.CsAgent];
 }

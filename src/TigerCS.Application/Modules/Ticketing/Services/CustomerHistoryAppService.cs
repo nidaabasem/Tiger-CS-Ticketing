@@ -40,6 +40,7 @@ public sealed class CustomerHistoryAppService(
     ITicketRepository ticketRepository,
     IIntakeRecordRepository intakeRecordRepository,
     ITicketResolutionRepository ticketResolutionRepository,
+    ITicketStatusHistoryRepository statusHistoryRepository,
     TicketQueryAppService ticketQueryAppService,
     ReopenPolicy reopenPolicy,
     TimeProvider timeProvider)
@@ -227,6 +228,20 @@ public sealed class CustomerHistoryAppService(
         var currentResolutions = resolvedTicketIds.Count > 0
             ? await ticketResolutionRepository.ListCurrentByTicketIdsAsync(resolvedTicketIds, cancellationToken)
             : new Dictionary<long, TicketResolution>();
+
+        // Reopen eligibility runs from the CLOSURE moment under the approved
+        // rule, which lives in lifecycle history rather than on the ticket —
+        // so it is batched here too, one query for the whole page, never one
+        // per row.
+        var closedTicketIds = result.Tickets
+            .Where(t => t.TicketStatus is TicketStatus.Closed)
+            .Select(t => t.TicketId)
+            .ToList();
+        var closedMoments = closedTicketIds.Count > 0
+            ? await statusHistoryRepository.ListLatestTransitionMomentsAsync(
+                closedTicketIds, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Closed, cancellationToken)
+            : new Dictionary<long, DateTime>();
+
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
 
         return new(
@@ -237,7 +252,7 @@ public sealed class CustomerHistoryAppService(
             result.TotalCount,
             result.OpenCount,
             result.ClosedCount,
-            result.Tickets.Select(t => ToTicketDto(t, currentResolutions, nowUtc)).ToList(),
+            result.Tickets.Select(t => ToTicketDto(t, currentResolutions, closedMoments, nowUtc)).ToList(),
             externalSource,
             externalCustomerId,
             // The Customers directory key this history belongs to (CRM id,
@@ -248,10 +263,17 @@ public sealed class CustomerHistoryAppService(
     }
 
     private CustomerHistoryTicketDto ToTicketDto(
-        Ticket ticket, IReadOnlyDictionary<long, TicketResolution> currentResolutions, DateTime nowUtc)
+        Ticket ticket,
+        IReadOnlyDictionary<long, TicketResolution> currentResolutions,
+        IReadOnlyDictionary<long, DateTime> closedMoments,
+        DateTime nowUtc)
     {
         var resolvedAtUtc = currentResolutions.TryGetValue(ticket.TicketId, out var resolution)
             ? resolution.ResolvedAtUtc
+            : (DateTime?)null;
+
+        var closedAtUtc = closedMoments.TryGetValue(ticket.TicketId, out var closedAt)
+            ? closedAt
             : (DateTime?)null;
 
         return new(
@@ -267,6 +289,6 @@ public sealed class CustomerHistoryAppService(
             ticket.VerificationStatus.ToString(),
             ticket.RequestSummary,
             resolvedAtUtc,
-            reopenPolicy.IsReopenEligible(ticket.TicketStatus, resolvedAtUtc, nowUtc));
+            reopenPolicy.IsReopenEligible(ticket.TicketStatus, ticket.ResolutionOutcome, closedAtUtc, nowUtc));
     }
 }

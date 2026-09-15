@@ -28,7 +28,8 @@ public class TicketLifecycleOutboxTests
         FakeTicketResolutionRepository Resolutions,
         FakeAuditEntryWriter Audit,
         FakeTicketingUnitOfWork UnitOfWork,
-        FakeOutboxWriter Outbox);
+        FakeOutboxWriter Outbox,
+        FakeDepartmentRepository Departments);
 
     private static Fixture CreateService()
     {
@@ -41,14 +42,25 @@ public class TicketLifecycleOutboxTests
         var outbox = new FakeOutboxWriter();
         unitOfWork.OutboxWriter = outbox;
         var sla = new SlaServiceFixture(tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork);
+        var departments = new FakeDepartmentRepository();
+        var departmentSettings = new FakeDepartmentWorkflowSettingsRepository();
 
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
             TimeProvider.System, ReopenPolicy.Default,
             new FakeTicketPendingRecordRepository(), new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(),
-            outbox);
+            outbox, departments, departmentSettings, new FakeTicketWorkflowEventRepository(),
+            new TicketAutoAssignmentService(
+                new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, departmentAssignments,
+                new FakeTicketAssignmentRepository(), audit),
+            sla.DueDates);
 
-        return new Fixture(service, tickets, resolutions, audit, unitOfWork, outbox);
+        // Two departments so the seeded tickets' department 2 really exists —
+        // Reopen validates its target against the directory.
+        departments.AddDepartment("Customer Service", "CS");
+        departments.AddDepartment("Handover", "HO");
+
+        return new Fixture(service, tickets, resolutions, audit, unitOfWork, outbox, departments);
     }
 
     private static async Task<(Ticket Ticket, Guid Owner)> SeedInProgressTicketAsync(Fixture f)
@@ -61,6 +73,13 @@ public class TicketLifecycleOutboxTests
         ticket.AssignTo(owner);
         ticket.ChangeStatus(TicketStatus.InProgress);
         return (ticket, owner);
+    }
+
+    /// <summary>Resolve then close — Reopen is Closed-only, and closing is what writes the lifecycle row its window is measured from.</summary>
+    private static async Task<TicketMutationResult> ResolveAndCloseAsync(Fixture f, Ticket ticket, Guid owner)
+    {
+        await ResolveAsync(f, ticket, owner);
+        return await f.Service.CloseAsync(owner, [Roles.CsAgent], ticket.TicketId, new CloseTicketRequestDto([]));
     }
 
     private static Task<TicketMutationResult> ResolveAsync(Fixture f, Ticket ticket, Guid owner) =>
@@ -112,9 +131,10 @@ public class TicketLifecycleOutboxTests
     {
         var f = CreateService();
         var (ticket, owner) = await SeedInProgressTicketAsync(f);
-        await ResolveAsync(f, ticket, owner);
+        await ResolveAndCloseAsync(f, ticket, owner);
 
-        var result = await f.Service.ReopenAsync(owner, [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Customer called back", []));
+        var result = await f.Service.ReopenAsync(
+            owner, [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Customer called back", 2, []));
 
         Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
         var reopened = Assert.Single(f.Outbox.Committed, m => m.EventType == OutboxEventTypes.TicketReopened);
@@ -125,18 +145,27 @@ public class TicketLifecycleOutboxTests
     }
 
     [Fact]
-    public async Task ResolveReopenResolve_ProducesADistinctResolvedEventPerCycle()
+    public async Task ResolveCloseReopenResolve_ProducesADistinctResolvedEventPerCycle()
     {
         var f = CreateService();
         var (ticket, owner) = await SeedInProgressTicketAsync(f);
 
-        await ResolveAsync(f, ticket, owner);
-        await f.Service.ReopenAsync(owner, [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Again", []));
+        await ResolveAndCloseAsync(f, ticket, owner);
+        await f.Service.ReopenAsync(owner, [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Again", 2, []));
+
+        // Reopen clears the owner, so the second resolve comes from whoever
+        // picks the work up — here the same employee, re-assigned.
+        ticket.AssignTo(owner);
         var second = await ResolveAsync(f, ticket, owner);
 
         Assert.Equal(TicketMutationOutcome.Success, second.Outcome);
         Assert.Equal(2, f.Outbox.Committed.Count(m => m.EventType == OutboxEventTypes.TicketResolved));
-        Assert.Equal(3, f.Outbox.Committed.Count);
+        Assert.Equal(
+            [
+                OutboxEventTypes.TicketResolved, OutboxEventTypes.TicketClosed,
+                OutboxEventTypes.TicketReopened, OutboxEventTypes.TicketResolved
+            ],
+            f.Outbox.Committed.Select(m => m.EventType).ToArray());
     }
 
     [Fact]

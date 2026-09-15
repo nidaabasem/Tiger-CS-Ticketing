@@ -32,7 +32,19 @@ public enum WorkflowEventType : byte
     MaintenanceNotRequired = 7,
 
     /// <summary>Handover: the maintenance dependency completed. Not customer-caused; how it affects the clock is a phase-4 decision.</summary>
-    MaintenanceCompleted = 8
+    MaintenanceCompleted = 8,
+
+    /// <summary>
+    /// The approved Reopen rule's lifecycle event: a Closed ticket was
+    /// reopened into InProgress. Recorded here — rather than in a new
+    /// activity store — because this table is already the ticket's typed,
+    /// append-only event log, and is already read by
+    /// <c>GET /api/tickets/{ticketId}/approvals</c>, which is what finally
+    /// lets Ticket Details show the reopen reason that TicketStatusHistory
+    /// has always recorded but nothing ever exposed. The column is a tinyint
+    /// with no value constraint, so this member needs no schema change.
+    /// </summary>
+    Reopened = 9
 }
 
 /// <summary>

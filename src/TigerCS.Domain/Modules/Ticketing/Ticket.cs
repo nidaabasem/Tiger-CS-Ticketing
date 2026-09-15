@@ -729,37 +729,95 @@ public class Ticket
 
     /// <summary>
     /// FR-RES-04 / MVP-API-Contracts.md §3.11 — Reopen is a domain event,
-    /// not a status value: a Resolved or Closed ticket returns to
-    /// InProgress, <see cref="ReopenCount"/> increments, and the live
-    /// <see cref="ResolutionOutcome"/>/<see cref="DuplicateOfTicketId"/>
-    /// return to unset (Solution-Analysis.md §5's "the field returns to
-    /// unset until the ticket is resolved/closed again"). The prior outcome
-    /// is preserved as history on its TicketResolutions row — flipping that
-    /// row's IsCurrent, writing status history and audit are the calling
+    /// not a status value: a <b>Closed</b> ticket returns to InProgress in a
+    /// caller-chosen department, <see cref="ReopenCount"/> increments, and
+    /// the live <see cref="ResolutionOutcome"/> returns to unset
+    /// (Solution-Analysis.md §5's "the field returns to unset until the
+    /// ticket is resolved/closed again"). The prior outcome is preserved as
+    /// history on its TicketResolutions row — flipping that row's IsCurrent,
+    /// writing status history, the workflow event and audit are the calling
     /// application service's job, done in the same transaction (same bare
     /// state-transition division of responsibility as <see cref="Resolve"/>/
     /// <see cref="Close"/>).
     ///
     /// <para>
-    /// Deliberately <i>not</i> gated on <see cref="EnsureNotClosed"/>:
-    /// Reopen is the single sanctioned exit from closed-ticket immutability
-    /// (System-Architecture.md's <c>Closed → InProgress: Reopen (within
-    /// window)</c> transition). The reopen window itself (ISSUE-011 — 7
-    /// days, configurable) is a business-rule check owned by the
+    /// <b>Closed is the only reopenable status</b> (approved business rule).
+    /// Resolved is deliberately NOT reopenable: work that is merely marked
+    /// done has not yet been confirmed to the customer, so it is corrected by
+    /// continuing the existing work item, never by a reopen cycle. This
+    /// method is therefore the single sanctioned exit from closed-ticket
+    /// immutability, and is for that reason not gated on
+    /// <see cref="EnsureNotClosed"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Only a Resolved outcome is reopenable.</b> Cancelled, Rejected and
+    /// Duplicate are terminal dispositions, not incomplete work: a customer
+    /// coming back on one of those raises a new ticket. Because a Duplicate
+    /// ticket can therefore never reach this method,
+    /// <see cref="DuplicateOfTicketId"/> is deliberately left untouched —
+    /// clearing it here would only ever be a no-op that implied otherwise.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The department moves and the owner is cleared</b>, exactly as
+    /// <see cref="TransferToDepartment"/> does: the closing department's
+    /// employee cannot stay accountable for work that has been handed back,
+    /// and the reopening agent names the department that now owns it (which
+    /// may legitimately be the same one). Re-assignment inside that
+    /// department is the calling service's job, through the one existing
+    /// assignment automation. The reopen window (ISSUE-011 — 7 days,
+    /// configurable) is a clock-dependent business rule owned by the
     /// application service; this method carries no clock.
     /// </para>
     /// </summary>
-    public void Reopen()
+    /// <param name="targetDepartmentId">The department that takes responsibility for the reopened work.</param>
+    public void Reopen(int targetDepartmentId)
     {
-        if (TicketStatus is not (TicketStatus.Resolved or TicketStatus.Closed))
+        if (TicketStatus is not TicketStatus.Closed)
         {
             throw new TicketNotEligibleForReopenException(TicketId, TicketStatus);
         }
 
+        if (ResolutionOutcome != (byte)ResolutionOutcomeValue.Resolved)
+        {
+            throw new TicketResolutionOutcomeNotReopenableException(TicketId, ResolutionOutcome);
+        }
+
+        if (targetDepartmentId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(targetDepartmentId), targetDepartmentId, "A reopened ticket must name the department that takes it on.");
+        }
+
         TicketStatus = TicketStatus.InProgress;
         ResolutionOutcome = null;
-        DuplicateOfTicketId = null;
+        CurrentDepartmentId = targetDepartmentId;
+        CurrentOwnerEmployeeId = null;
         ReopenCount++;
+    }
+
+    /// <summary>
+    /// Reopen's SLA-dimension counterpart: a reopened ticket has a brand new
+    /// Resolution SLA cycle running, so a clock that had settled on
+    /// <see cref="SlaState.Met"/> is running again.
+    ///
+    /// <para>
+    /// Deliberately narrow, mirroring <see cref="StartSlaClock"/>: it only
+    /// ever makes that one transition. <see cref="SlaState.Breached"/> is
+    /// sticky and is never resurrected (MVP-ERD.md §2.15's immutability
+    /// rule), and <see cref="SlaState.NotApplicable"/>/<see cref="SlaState.Paused"/>
+    /// are left alone — a ticket with no running clock does not acquire one
+    /// by being reopened. The period rows themselves are the calling
+    /// application service's job.
+    /// </para>
+    /// </summary>
+    public void RestartSlaClockForReopen()
+    {
+        if (SlaState == SlaState.Met)
+        {
+            SlaState = SlaState.Running;
+        }
     }
 
     /// <summary>

@@ -27,9 +27,10 @@ public class DashboardAppServiceTests
         var tickets = new FakeTicketRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
         var resolutions = new FakeTicketResolutionRepository();
+        var statusHistory = new FakeTicketStatusHistoryRepository();
         tickets.Resolutions = resolutions;
         var queryService = new TicketQueryAppService(
-            tickets, departmentAssignments, resolutions, ReopenPolicy.Default, TimeProvider.System);
+            tickets, departmentAssignments, resolutions, statusHistory, ReopenPolicy.Default, TimeProvider.System);
         return new Fixture(
             new DashboardAppService(tickets, queryService, TimeProvider.System, new FakeDashboardQueryRepository(), departmentAssignments),
             tickets, departmentAssignments, resolutions);
@@ -123,7 +124,8 @@ public class DashboardAppServiceTests
         var ticket = await SeedTicketAsync(f.Tickets, departmentId: 1, owner: caller);
         ticket.ChangeStatus(TicketStatus.InProgress);
         ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
-        ticket.Reopen();
+        ticket.Close();
+        ticket.Reopen(ticket.CurrentDepartmentId);
 
         var result = await f.Service.GetSummaryAsync(caller, [Roles.CsManager]);
 

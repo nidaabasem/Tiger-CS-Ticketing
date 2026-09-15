@@ -18,6 +18,7 @@ public sealed class TicketQueryAppService(
     ITicketRepository ticketRepository,
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     ITicketResolutionRepository ticketResolutionRepository,
+    ITicketStatusHistoryRepository statusHistoryRepository,
     ReopenPolicy reopenPolicy,
     TimeProvider timeProvider,
     IRequestTypeRepository? requestTypeRepository = null,
@@ -98,19 +99,29 @@ public sealed class TicketQueryAppService(
         }
 
         // Reopen display eligibility (FR-RES-04/ISSUE-011) rides on the
-        // detail read so the UI never re-derives the window rule: the same
+        // detail read so the UI never re-derives the rule: the same
         // ReopenPolicy that gates TicketLifecycleAppService.ReopenAsync
-        // computes the flag here. Lifecycle only — roles are enforced at the
-        // Reopen endpoint, never predicted on a read.
+        // computes the flag here. Lifecycle only — roles and the caller's
+        // access to the ticket are enforced at the Reopen endpoint, never
+        // predicted on a read.
         var currentResolution = ticket.TicketStatus is TicketStatus.Resolved or TicketStatus.Closed
             ? await ticketResolutionRepository.GetCurrentAsync(ticketId, cancellationToken)
+            : null;
+
+        // The window runs from closure, so the closure moment comes from the
+        // lifecycle history Close wrote — the same source ReopenAsync reads,
+        // so the button and the action can never disagree about the deadline.
+        var closedAt = ticket.TicketStatus is TicketStatus.Closed
+            ? (await statusHistoryRepository.GetLatestTransitionIntoAsync(
+                ticketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Closed, cancellationToken))?.OccurredAtUtc
             : null;
 
         var detail = ToDetailDto(ticket) with
         {
             ResolvedAtUtc = currentResolution?.ResolvedAtUtc,
+            ClosedAtUtc = closedAt,
             IsReopenEligible = reopenPolicy.IsReopenEligible(
-                ticket.TicketStatus, currentResolution?.ResolvedAtUtc, timeProvider.GetUtcNow().UtcDateTime)
+                ticket.TicketStatus, ticket.ResolutionOutcome, closedAt, timeProvider.GetUtcNow().UtcDateTime)
         };
 
         // Workflow identity (Administration / Workflow Designer phase): the
@@ -172,11 +183,77 @@ public sealed class TicketQueryAppService(
         return assignments.Select(a => a.DepartmentId).ToList();
     }
 
+    /// <summary>
+    /// The ticket's lifecycle history (ADR-0018's append-only
+    /// <c>TicketStatusHistory</c>), behind the same department-visibility
+    /// check as the detail read — history is as sensitive as the ticket it
+    /// describes.
+    ///
+    /// <para>
+    /// Added with the approved Reopen rule, which requires the reopen reason
+    /// to be visible in Ticket Details: the reason was already being written
+    /// to this table and had no read path, so exposing the table was the fix
+    /// rather than a parallel activity store. Every other dimension change
+    /// comes with it, which is why the Activity feed can finally show status,
+    /// verification and SLA transitions at all.
+    /// </para>
+    /// </summary>
+    public async Task<TicketQueryResultDto<TicketLifecycleHistoryDto>> GetLifecycleHistoryAsync(
+        Guid callerEmployeeId,
+        IReadOnlyCollection<string> callerRoles,
+        long ticketId,
+        CancellationToken cancellationToken = default)
+    {
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return TicketQueryResultDto<TicketLifecycleHistoryDto>.Failure(TicketQueryOutcome.NotFound);
+        }
+
+        if (!await CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        {
+            return TicketQueryResultDto<TicketLifecycleHistoryDto>.Failure(TicketQueryOutcome.Forbidden);
+        }
+
+        var entries = await statusHistoryRepository.ListByTicketIdAsync(ticketId, cancellationToken);
+
+        return TicketQueryResultDto<TicketLifecycleHistoryDto>.Success(
+            new TicketLifecycleHistoryDto([.. entries.Select(ToHistoryEntryDto)]));
+    }
+
+    /// <summary>Renders the stored bytes as their dimension's enum names, so no client re-implements ADR-0008's mappings.</summary>
+    private static TicketStatusHistoryEntryDto ToHistoryEntryDto(TicketStatusHistory entry) => new(
+        entry.Dimension.ToString(),
+        DescribeValue(entry.Dimension, entry.OldValue),
+        DescribeValue(entry.Dimension, entry.NewValue) ?? entry.NewValue.ToString(),
+        entry.ActorEmployeeId,
+        entry.ActorIsSystem,
+        entry.Note,
+        entry.CorrelationId,
+        entry.OccurredAtUtc);
+
+    private static string? DescribeValue(TicketStatusDimension dimension, byte? value) => value switch
+    {
+        null => null,
+        { } raw => dimension switch
+        {
+            TicketStatusDimension.TicketStatus => NameOf<TicketStatus>(raw),
+            TicketStatusDimension.VerificationStatus => NameOf<CrmVerificationStatus>(raw),
+            TicketStatusDimension.EscalationLevel => NameOf<EscalationLevel>(raw),
+            TicketStatusDimension.SlaState => NameOf<SlaState>(raw),
+            TicketStatusDimension.ResolutionOutcome => NameOf<ResolutionOutcome>(raw),
+            _ => raw.ToString()
+        }
+    };
+
+    /// <summary>Falls back to the raw byte rather than throwing: a value written by a newer version must still render in an older reader.</summary>
+    private static string NameOf<TEnum>(byte value) where TEnum : struct, Enum =>
+        Enum.IsDefined(typeof(TEnum), value) ? ((TEnum)Enum.ToObject(typeof(TEnum), value)).ToString() : value.ToString();
+
     internal Task<bool> CanViewDepartmentAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, int departmentId, CancellationToken cancellationToken) =>
-        AuthorizationGate.EvaluateAsync(callerRoles, async () =>
-            callerRoles.Any(TicketRoleSets.CrossDepartmentView.Contains)
-            || await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, departmentId, cancellationToken));
+        TicketVisibilityRule.CanViewDepartmentAsync(
+            userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, departmentId, cancellationToken);
 
     private static TEnum? ParseEnum<TEnum>(string? value) where TEnum : struct, Enum =>
         value is not null && Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : null;

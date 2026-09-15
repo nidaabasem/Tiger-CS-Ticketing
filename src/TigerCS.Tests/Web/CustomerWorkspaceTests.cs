@@ -220,13 +220,17 @@ public sealed class CustomerWorkspaceTests
 
     [Theory]
     [InlineData(Roles.CsAgent, true)]
-    [InlineData(Roles.CsSupervisor, true)]
-    [InlineData(Roles.CsManager, true)]
     [InlineData(Roles.SystemAdministrator, true)]
+    // The approved rule names the Agent. Supervisor and CS Manager keep Close
+    // and lose Reopen with it, so the control must disappear for them too —
+    // the UI reads TicketRoleSets.Reopen rather than a local copy, which is
+    // what keeps this in step with the endpoint.
+    [InlineData(Roles.CsSupervisor, false)]
+    [InlineData(Roles.CsManager, false)]
     [InlineData(Roles.DepartmentEmployee, false)]
     [InlineData(Roles.DepartmentHead, false)]
     [InlineData(Roles.GeneralManager, false)]
-    public void CanReopen_MirrorsTheCsLayerReopenRoleSet(string role, bool expected) =>
+    public void CanReopen_MirrorsTheAgentOnlyReopenRoleSet(string role, bool expected) =>
         Assert.Equal(expected, TicketActions.CanReopen([role]));
 
     [Fact]
@@ -385,7 +389,19 @@ public sealed class CustomerWorkspaceTests
     {
         var html = TicketDetailsViewHtml();
 
-        Assert.Contains("t.IsReopenEligible && TicketActions.CanReopen(Model.Viewer?.Roles)", html);
+        // Server-computed eligibility (Closed, closed as Resolved, inside the
+        // window) AND the viewer's role — never a rule re-derived in the view.
+        Assert.Contains("t.IsReopenEligible && Model.CanReopen", html);
         Assert.Contains("asp-page-handler=\"Reopen\"", html);
+    }
+
+    [Fact]
+    public void TicketDetailsView_ReopenForm_RequiresBothAReasonAndATargetDepartment()
+    {
+        var html = TicketDetailsViewHtml();
+
+        Assert.Contains("asp-for=\"Reopen.TargetDepartmentId\"", html);
+        Assert.Contains("Model.ReopenTargets", html);
+        Assert.Contains("asp-for=\"Reopen.Reason\"", html);
     }
 }

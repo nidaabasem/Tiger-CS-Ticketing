@@ -447,23 +447,42 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>Reopen a resolved/closed ticket. CS Agent/CS Supervisor/CS Manager only.</summary>
+    /// <summary>Reopen a closed ticket. CS Agent only.</summary>
     /// <remarks>
-    /// MVP-API-Contracts.md §3.11 / FR-RES-04: Reopen is a domain event, not
-    /// a status value — the ticket returns to InProgress, its ReopenCount
-    /// increments, and the prior resolution is archived (never deleted).
-    /// Only allowed within ISSUE-011's reopen window (7 days from the
-    /// current resolution, configurable); past it, create a new linked
-    /// ticket instead. The action is audited with the actor, the prior and
-    /// new status, and the caller's reason.
+    /// MVP-API-Contracts.md §3.11 / FR-RES-04, as approved: Reopen is a
+    /// domain event, not a status value. A <b>Closed</b> ticket that was
+    /// closed as Resolved returns to InProgress in the department the caller
+    /// names, its previous owner is cleared, the existing assignment
+    /// automation re-runs against that department (leaving it in the
+    /// department queue when no rule applies), its ReopenCount increments,
+    /// and the prior resolution is archived (never deleted). A Resolved
+    /// ticket is NOT reopenable, and neither is one closed as Cancelled,
+    /// Rejected or Duplicate.
+    ///
+    /// <para>
+    /// A new <b>Resolution</b> SLA cycle opens at the reopen moment, computed
+    /// from the ticket's existing SLA policy; the First Response clock is
+    /// carried across untouched and never restarts. The historical cycle is
+    /// retained, so the reopened ticket is not breached on the strength of the
+    /// original deadline.
+    /// </para>
+    ///
+    /// <para>
+    /// Only allowed within ISSUE-011's reopen window (7 days from CLOSURE,
+    /// configurable); past it, create a new linked ticket instead.
+    /// Authorization is the CS Agent role plus the caller's own access to the
+    /// ticket. The action is audited with the actor, the prior and new status,
+    /// both departments, both owners and the caller's reason, and appears in
+    /// the ticket's lifecycle history.
+    /// </para>
     /// </remarks>
     /// <param name="ticketId">The ticket to reopen.</param>
-    /// <param name="request">Why the ticket is being reopened, and the ticket's current rowVersion.</param>
+    /// <param name="request">Why the ticket is being reopened, which department takes it on, and the ticket's current rowVersion.</param>
     /// <response code="200">The reopened ticket, back InProgress.</response>
-    /// <response code="400">The request body was malformed, or Reason was missing/blank.</response>
-    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
-    /// <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
-    /// <response code="422">The ticket is not Resolved/Closed, or the reopen window has passed.</response>
+    /// <response code="400">The request body was malformed, Reason was missing/blank or too long, or TargetDepartmentId was missing.</response>
+    /// <response code="404">No such ticket, or the target department does not exist or is inactive.</response>
+    /// <response code="409">rowVersion did not match — another request (possibly a concurrent reopen) already modified this ticket. Reload it and retry.</response>
+    /// <response code="422">The ticket is not Closed, was closed as Cancelled/Rejected/Duplicate, its request type forbids reopening, or the reopen window has passed.</response>
     [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -479,9 +498,27 @@ public class TicketsController(
             return Unauthorized();
         }
 
+        // Shape validation only. The rules themselves live in
+        // TicketLifecycleAppService, which enforces them for every caller —
+        // these checks exist to answer a malformed request with 400 rather
+        // than 422, not to be the enforcement point.
         if (string.IsNullOrWhiteSpace(request.Reason))
         {
             ModelState.AddModelError(nameof(request.Reason), "Reason is required.");
+            return ValidationProblem();
+        }
+
+        if (request.Reason.Trim().Length > TicketLifecycleAppService.ReopenReasonMaxLength)
+        {
+            ModelState.AddModelError(
+                nameof(request.Reason),
+                $"Reason must be {TicketLifecycleAppService.ReopenReasonMaxLength} characters or fewer.");
+            return ValidationProblem();
+        }
+
+        if (request.TargetDepartmentId <= 0)
+        {
+            ModelState.AddModelError(nameof(request.TargetDepartmentId), "TargetDepartmentId is required.");
             return ValidationProblem();
         }
 
@@ -510,6 +547,41 @@ public class TicketsController(
         {
             TicketQueryOutcome.Success => Ok(result.Response),
             TicketQueryOutcome.Forbidden => NotFound(),
+            _ => NotFound()
+        };
+    }
+
+    /// <summary>The ticket's lifecycle history — every recorded change to its five lifecycle dimensions, oldest first.</summary>
+    /// <remarks>
+    /// ADR-0018's append-only <c>TicketStatusHistory</c>, served for the first
+    /// time so Ticket Details can show what actually happened to a ticket:
+    /// status changes with the note recorded against them (a reopen reason, a
+    /// resolution note), verification and escalation transitions, and
+    /// system-recorded SLA state changes. Visible to exactly the callers who
+    /// can see the ticket itself.
+    /// </remarks>
+    /// <param name="ticketId">The ticket.</param>
+    /// <response code="200">The ticket's lifecycle history.</response>
+    /// <response code="404">No such ticket, or it is not visible to the caller.</response>
+    [ProducesResponseType<TicketLifecycleHistoryDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [HttpGet("{ticketId:long}/history")]
+    [Tags(OpenApiTags.Tickets)]
+    public async Task<IActionResult> GetLifecycleHistory(long ticketId, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await ticketQueryAppService.GetLifecycleHistoryAsync(
+            employeeId.Value, GetRoles(), ticketId, cancellationToken);
+
+        return result.Outcome switch
+        {
+            TicketQueryOutcome.Success => Ok(result.Response),
+            TicketQueryOutcome.Forbidden => Forbid(),
             _ => NotFound()
         };
     }
@@ -899,7 +971,25 @@ public class TicketsController(
         TicketMutationOutcome.NotEligibleForReopen => Problem(
             type: "https://tigercs.internal/problems/not-eligible-for-reopen",
             title: "Ticket is not eligible for reopening",
-            detail: "Reopen is only valid on a Resolved or Closed ticket.",
+            detail: "Reopen is only valid on a Closed ticket — a Resolved ticket is still being worked and is corrected in place.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.ResolutionOutcomeNotReopenable => Problem(
+            type: "https://tigercs.internal/problems/resolution-outcome-not-reopenable",
+            title: "This ticket's outcome cannot be reopened",
+            detail: "Only a ticket closed as Resolved may be reopened — Cancelled, Rejected and Duplicate are final. Raise a new ticket instead.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.ReopenReasonRequired => Problem(
+            type: "https://tigercs.internal/problems/reopen-reason-required",
+            title: "A reopen reason is required",
+            detail: "Every reopen records why it happened.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.TargetDepartmentRequired => Problem(
+            type: "https://tigercs.internal/problems/target-department-required",
+            title: "A target department is required",
+            detail: "Name the department that takes the reopened ticket on.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.ReopenWindowExpired => Problem(

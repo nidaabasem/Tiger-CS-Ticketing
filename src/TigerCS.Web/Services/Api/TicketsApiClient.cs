@@ -51,6 +51,10 @@ public sealed class TicketsApiClient(HttpClient httpClient, ILogger<TicketsApiCl
     public Task<ApiResult<TicketApprovalsViewDto>> GetApprovalsAsync(long ticketId, CancellationToken cancellationToken) =>
         GetAsync<TicketApprovalsViewDto>($"api/tickets/{ticketId}/approvals", cancellationToken);
 
+    /// <summary>The ticket's lifecycle history (ADR-0018) — what the Activity feed renders status changes and their recorded reasons from.</summary>
+    public Task<ApiResult<TicketLifecycleHistoryDto>> GetLifecycleHistoryAsync(long ticketId, CancellationToken cancellationToken) =>
+        GetAsync<TicketLifecycleHistoryDto>($"api/tickets/{ticketId}/history", cancellationToken);
+
     public Task<ApiResult<TicketApprovalDto>> RequestApprovalAsync(
         long ticketId, RequestApprovalRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<RequestApprovalRequestDto, TicketApprovalDto>($"api/tickets/{ticketId}/approvals", request, cancellationToken);

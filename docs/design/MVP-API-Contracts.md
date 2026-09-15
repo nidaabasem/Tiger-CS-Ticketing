@@ -275,13 +275,19 @@ See §4.1 (kept together with attachments for module cohesion).
 - **Domain events:** `TicketClosed`; `TicketStatusHistory` row.
 
 ### 3.11 `POST /api/tickets/{ticketId}/reopen`
-- **Purpose:** Reopen a resolved/closed ticket (FR-RES-04).
-- **Auth:** Agent and above, or the action may originate from a customer-facing channel outside this MVP's scope — at MVP, always an internal actor.
+**[Revised — approved Reopen business rule.]** The `[ASSUMPTION]` markers this section previously carried (resulting status, SLA behaviour) are resolved; what follows is the decided rule, not a design guess.
+
+- **Purpose:** Reopen a **closed** ticket (FR-RES-04).
+- **Eligibility:** `TicketStatus = Closed` **only** — a Resolved ticket is still being worked and is corrected in place, never through a reopen cycle. The closing outcome must be `Resolved`: `Cancelled`, `Rejected` and `Duplicate` are terminal, and a customer returning on one of those raises a new ticket. Additionally: inside the ISSUE-011 reopen window, measured **from the closure moment** (read from the `TicketStatusHistory` row the close wrote — a Closed ticket has no closure timestamp column), and permitted by the ticket's request type (`RequestType.AllowReopen`, which can only narrow).
+- **Auth:** **CS Agent** (`TicketRoleSets.Reopen`), plus the ADR-0024 System Administrator override. CS Supervisor and CS Manager hold Close but no longer inherit Reopen from it. Enforced server-side, together with a resource-level check that the caller may act on this ticket under the existing visibility rules — role membership alone is not sufficient.
 - **Headers:** `If-Match`.
-- **Request DTO `ReopenTicketRequest`:** `Reason` (string, required).
-- **Success `200 OK`:** `TicketResponse.TicketStatus = Open` (or `InProgress`, `[ASSUMPTION]`), `ReopenCount` incremented.
-- **Side effect:** current `TicketResolutions.IsCurrent → false` (history preserved, `MVP-ERD.md` §2.14); a new SLA instance period may open depending on policy — flagged `[ASSUMPTION — whether reopen restarts the resolution SLA clock or resumes it is not an explicit requirement; this design assumes a fresh TicketSlaInstances period starts on reopen, consistent with §2.15's "one row per period" model, but this is a business-rule assumption, not an architecture fact]`.
-- **Domain events:** `TicketReopened`.
+- **Request DTO `ReopenTicketRequest`:** `Reason` (string, required — enforced in the application service, not only in model validation), `TargetDepartmentId` (int, required — must exist and be active; may be the ticket's current department), `RowVersion`.
+- **Success `200 OK`:** `TicketResponse.TicketStatus = InProgress`, `ReopenCount` incremented, `ResolutionOutcome` cleared. `TicketId`, `TicketNumber`, `OriginatingDepartmentId`, `RequestTypeId` and the pinned workflow version are unchanged — a reopen is the same ticket, never a copy.
+- **Routing:** `CurrentDepartmentId` is set to `TargetDepartmentId`, the previous owner is cleared, and the existing assignment automation is re-evaluated against the new department (`TicketAutoAssignmentService`, trigger `DepartmentTransfer`) — the one assignment engine, not a second one. Where no rule applies, the ticket waits in that department's queue.
+- **SLA:** **First Response never restarts** — its deadline, its breach flag and `FirstHumanResponseAtUtc` are carried forward untouched, and no first-response deadline check is scheduled. A **new Resolution cycle** opens at the reopen moment: the current `TicketSlaInstances` row is ended there and a successor is added with `ChangeReason = Reopen`, its due date computed from the ticket's existing SLA policy and calendar. The historical cycle is retained with its own flags intact, so the original and reopened cycles stay separately reportable (ISSUE-023) and the sweep — which reads current periods only — never breaches a reopened ticket on a deadline that belonged to work already delivered.
+- **Concurrency:** a stale `RowVersion` is answered `409` **before** the state-based eligibility checks, so a losing concurrent reopen is told its copy is stale rather than that the ticket is ineligible. The second request writes nothing: no second cycle, event, audit entry or email.
+- **Side effects:** current `TicketResolutions.IsCurrent → false` (history preserved, `MVP-ERD.md` §2.14); a `TicketStatusHistory` row carrying the caller's reason; a typed `TicketWorkflowEvents` row (`Reopened`) carrying the department move, the resulting owner and the new Resolution deadline; audit entries naming both departments and both owners.
+- **Domain events:** `TicketReopened` (exactly one customer email per reopen cycle, keyed by `ReopenCount`).
 
 ### 3.12 `POST /api/tickets/{ticketId}/duplicate-flag`
 - **Purpose:** Recommend/confirm a ticket as a duplicate outside the full resolution flow (a lighter-weight flag some workflows want before formally resolving) — kept as a distinct endpoint from §3.9 since "recommend" and "confirm" are two different actor actions per the requirement text.

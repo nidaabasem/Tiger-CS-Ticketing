@@ -4,6 +4,9 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Domain.Modules.SlaAndEscalation;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
@@ -13,12 +16,14 @@ namespace TigerCS.Web.Pages;
 
 /// <summary>
 /// One entry in the Activity feed — built from real, separately-fetched
-/// facts (the ticket's own CreatedAtUtc, its notes, and its escalations).
-/// Nothing here is synthesized: there is no audit-log endpoint, so no
-/// assignment/transfer/status-change history is shown — only what these
-/// three real sources actually report.
+/// facts: the ticket's own CreatedAtUtc, its notes, its escalations and, since
+/// the approved Reopen rule, its lifecycle history
+/// (<c>GET /api/tickets/{id}/history</c>) and typed workflow events. Nothing
+/// here is synthesized.
 /// </summary>
-public sealed record ActivityEntry(DateTime TimestampUtc, string Kind, string Actor, string Description, string? Note, bool IsHuman);
+/// <param name="Detail">A second line of already-resolved context (e.g. a reopen's department move and new SLA deadline). Never parsed by the view.</param>
+public sealed record ActivityEntry(
+    DateTime TimestampUtc, string Kind, string Actor, string Description, string? Note, bool IsHuman, string? Detail = null);
 
 public sealed class TicketDetailsModel(
     TicketsApiClient ticketsApiClient,
@@ -106,6 +111,21 @@ public sealed class TicketDetailsModel(
 
     /// <summary>True when the viewer may transfer but the department directory could not be loaded — the form says so instead of offering an empty picker.</summary>
     public bool TransferTargetsUnavailable { get; private set; }
+
+    /// <summary>
+    /// Departments the Reopen form offers. Unlike <see cref="TransferTargets"/>
+    /// this deliberately INCLUDES the ticket's current department: reopening
+    /// into the department that closed it is a legitimate choice the approved
+    /// rule allows, and the API accepts it. Populated only for a viewer who
+    /// <see cref="CanReopen"/> and only when the ticket is reopen-eligible.
+    /// </summary>
+    public IReadOnlyList<DepartmentDto> ReopenTargets { get; private set; } = [];
+
+    /// <summary>True when the Reopen form should be offered but the department directory could not be loaded — it says so rather than offering an empty picker.</summary>
+    public bool ReopenTargetsUnavailable { get; private set; }
+
+    /// <summary>Whether the viewer's roles allow Reopen at all — the Api still decides, including whether they may act on this ticket.</summary>
+    public bool CanReopen { get; private set; }
     public CurrentUser? Viewer { get; private set; }
     public TicketNameResolver NameResolver => nameResolver;
     public IReadOnlyList<ActivityEntry> ActivityFeed { get; private set; } = [];
@@ -265,12 +285,23 @@ public sealed class TicketDetailsModel(
             return await ReloadWithErrorAsync("reopen", "Enter a reason before reopening.", cancellationToken);
         }
 
+        if (Reopen.TargetDepartmentId <= 0)
+        {
+            return await ReloadWithErrorAsync("reopen", "Choose the department that will take this ticket on.", cancellationToken);
+        }
+
         if (!TryDecodeRowVersion(Reopen.RowVersionBase64, out var rowVersion))
         {
             return await ReloadWithErrorAsync("reopen", "Could not read the ticket's current version. Reloading.", cancellationToken);
         }
 
-        var result = await ticketsApiClient.ReopenAsync(id, new ReopenTicketRequestDto(Reopen.Reason, rowVersion), cancellationToken);
+        var result = await ticketsApiClient.ReopenAsync(
+            id, new ReopenTicketRequestDto(Reopen.Reason, Reopen.TargetDepartmentId, rowVersion), cancellationToken);
+
+        // Stays on this page: the redirect re-reads the ticket, so the agent
+        // sees In Progress, the department that now owns it, the resulting
+        // assignee (or the department queue), the new Resolution SLA deadline
+        // and the reopen in Activity — all as served facts, not as a message.
         return await HandleMutationAsync(result, "reopen", "Ticket reopened — it is In Progress again.", cancellationToken);
     }
 
@@ -398,9 +429,11 @@ public sealed class TicketDetailsModel(
         var customerHistoryTask = ticketsApiClient.GetCustomerHistoryAsync(TicketId, limit: 10, cancellationToken);
         var approvalsTask = ticketsApiClient.GetApprovalsAsync(TicketId, cancellationToken);
         var interactionsTask = ticketsApiClient.GetInteractionsAsync(TicketId, cancellationToken);
+        var historyTask = ticketsApiClient.GetLifecycleHistoryAsync(TicketId, cancellationToken);
 
         await Task.WhenAll(
-            slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask, approvalsTask, interactionsTask);
+            slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask, approvalsTask, interactionsTask,
+            historyTask);
 
         Interactions = interactionsTask.Result.IsSuccess && interactionsTask.Result.Value is not null
             ? interactionsTask.Result.Value.Interactions
@@ -426,8 +459,14 @@ public sealed class TicketDetailsModel(
             : null;
 
         await LoadTransferTargetsAsync(Ticket, cancellationToken);
+        await LoadReopenTargetsAsync(Ticket, cancellationToken);
 
-        ActivityFeed = BuildActivityFeed(Ticket, Notes, Escalations, Viewer);
+        var lifecycleHistory = historyTask.Result.IsSuccess && historyTask.Result.Value is not null
+            ? historyTask.Result.Value.Entries
+            : [];
+
+        ActivityFeed = BuildActivityFeed(
+            Ticket, Notes, Escalations, lifecycleHistory, Approvals?.Events ?? [], Viewer, nameResolver);
 
         // Pre-fill the RowVersion the forms will post back, and default the
         // employee/status pickers so an untouched form still submits something valid.
@@ -436,7 +475,15 @@ public sealed class TicketDetailsModel(
         Status = new StatusInput { RowVersionBase64 = Ticket.RowVersion, NewStatus = Ticket.TicketStatus };
         Resolve = new ResolveInput { RowVersionBase64 = Ticket.RowVersion, ResolutionOutcome = "Resolved" };
         Close = new RowVersionInput { RowVersionBase64 = Ticket.RowVersion };
-        Reopen = new ReopenInput { RowVersionBase64 = Ticket.RowVersion };
+        Reopen = new ReopenInput
+        {
+            RowVersionBase64 = Ticket.RowVersion,
+            // Defaults to the department that closed it — the common case, and
+            // an explicit choice the agent can change rather than a blank.
+            TargetDepartmentId = ReopenTargets.Any(d => d.DepartmentId == Ticket.CurrentDepartmentId)
+                ? Ticket.CurrentDepartmentId
+                : ReopenTargets.FirstOrDefault()?.DepartmentId ?? 0
+        };
         Escalate = new EscalateInput { RowVersionBase64 = Ticket.RowVersion, Level = NextEscalationLevel(Ticket.EscalationLevel) };
     }
 
@@ -473,6 +520,34 @@ public sealed class TicketDetailsModel(
         ];
     }
 
+    /// <summary>
+    /// The Reopen form's department picker. Role check first, then the
+    /// directory — and skipped entirely when the ticket is not reopen-eligible,
+    /// so a closed-but-expired ticket costs no directory call. Unlike transfer
+    /// this keeps the ticket's current department in the list: reopening into
+    /// the department that closed it is allowed.
+    /// </summary>
+    private async Task LoadReopenTargetsAsync(TicketDetailDto ticket, CancellationToken cancellationToken)
+    {
+        CanReopen = TicketActions.CanReopen(Viewer?.Roles);
+        ReopenTargets = [];
+        ReopenTargetsUnavailable = false;
+
+        if (!CanReopen || !ticket.IsReopenEligible)
+        {
+            return;
+        }
+
+        var active = await nameResolver.GetActiveDepartmentsAsync(cancellationToken);
+        if (active is null)
+        {
+            ReopenTargetsUnavailable = true;
+            return;
+        }
+
+        ReopenTargets = [.. active.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)];
+    }
+
     private static string? FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
 
@@ -480,7 +555,10 @@ public sealed class TicketDetailsModel(
         TicketDetailDto ticket,
         IReadOnlyList<TicketNoteResponseDto> notes,
         IReadOnlyList<TicketEscalationResponseDto> escalations,
-        CurrentUser? viewer)
+        IReadOnlyList<TicketStatusHistoryEntryDto> lifecycleHistory,
+        IReadOnlyList<TicketWorkflowEventDto> workflowEvents,
+        CurrentUser? viewer,
+        TicketNameResolver nameResolver)
     {
         var entries = new List<ActivityEntry>
         {
@@ -502,7 +580,93 @@ public sealed class TicketDetailsModel(
                 escalation.NotifiedRoles is null ? null : $"Notified: {escalation.NotifiedRoles}", false));
         }
 
+        // Reopens read from BOTH lifecycle stores, because each holds half of
+        // what the entry has to say: the status-history row carries the agent
+        // and the reason they typed, the typed Reopened event carries the
+        // department move, where ownership landed and the new SLA deadline.
+        // Matched by timestamp — one reopen writes both rows inside one
+        // transaction at one instant.
+        var reopenFacts = workflowEvents
+            .Where(e => string.Equals(e.EventType, nameof(WorkflowEventType.Reopened), StringComparison.Ordinal))
+            .ToDictionary(e => e.OccurredAtUtc, e => e.Note);
+
+        foreach (var change in lifecycleHistory)
+        {
+            if (DescribeLifecycleChange(change, ticket) is not { } description)
+            {
+                continue;
+            }
+
+            var actor = change.ActorIsSystem || change.ActorEmployeeId is not { } actorId
+                ? "System"
+                : TicketNameResolver.ResolveSelfAuthorName(actorId, viewer) ?? $"Employee #{actorId.ToString()[..8]}";
+
+            var isReopen = change is { Dimension: nameof(TicketStatusDimension.TicketStatus), NewValue: nameof(TicketStatus.InProgress) }
+                && change.OldValue == nameof(TicketStatus.Closed);
+
+            entries.Add(new ActivityEntry(
+                change.OccurredAtUtc,
+                isReopen ? "reopen" : "status",
+                actor,
+                description,
+                change.Note,
+                !change.ActorIsSystem,
+                isReopen && reopenFacts.TryGetValue(change.OccurredAtUtc, out var note)
+                    ? DescribeReopenFacts(note, nameResolver)
+                    : null));
+        }
+
         return [.. entries.OrderBy(e => e.TimestampUtc)];
+    }
+
+    /// <summary>
+    /// What one lifecycle row reads as in the feed, or null for rows worth
+    /// nothing to a reader: the seeding rows written at creation (already
+    /// covered by the "created" entry) and SLA-breach rows (already covered by
+    /// the escalation entries they raise).
+    /// </summary>
+    private static string? DescribeLifecycleChange(TicketStatusHistoryEntryDto change, TicketDetailDto ticket) => change switch
+    {
+        { OldValue: null } => null,
+        { Dimension: nameof(TicketStatusDimension.SlaState) } when change.NewValue == nameof(SlaState.Breached) => null,
+        { Dimension: nameof(TicketStatusDimension.TicketStatus) } when
+            change.OldValue == nameof(TicketStatus.Closed) && change.NewValue == nameof(TicketStatus.InProgress) =>
+            $"reopened ticket {ticket.TicketNumber} — from Closed",
+        { Dimension: nameof(TicketStatusDimension.TicketStatus) } =>
+            $"changed status: {TicketDisplay.TicketStatusLabel(change.OldValue!)} → {TicketDisplay.TicketStatusLabel(change.NewValue)}",
+        { Dimension: nameof(TicketStatusDimension.SlaState) } =>
+            $"SLA: {TicketDisplay.SlaStateLabel(change.OldValue!)} → {TicketDisplay.SlaStateLabel(change.NewValue)}",
+        { Dimension: nameof(TicketStatusDimension.VerificationStatus) } =>
+            $"verification: {TicketDisplay.VerificationStatusLabel(change.OldValue!)} → {TicketDisplay.VerificationStatusLabel(change.NewValue)}",
+        { Dimension: nameof(TicketStatusDimension.ResolutionOutcome) } =>
+            $"recorded outcome: {change.NewValue}",
+        _ => null
+    };
+
+    /// <summary>
+    /// The reopen entry's second line, from the typed event's facts. Read back
+    /// through the same <see cref="ReopenActivityFacts"/> the server wrote them
+    /// with — never hand-parsed here — and degrades to no detail line at all if
+    /// the note is not one this version understands.
+    /// </summary>
+    private static string? DescribeReopenFacts(string? note, TicketNameResolver nameResolver)
+    {
+        if (!ReopenActivityFacts.TryParse(note, out var facts))
+        {
+            return null;
+        }
+
+        var from = nameResolver.TryGetDepartmentName(facts.FromDepartmentId) ?? $"Department #{facts.FromDepartmentId}";
+        var to = nameResolver.TryGetDepartmentName(facts.ToDepartmentId) ?? $"Department #{facts.ToDepartmentId}";
+
+        var parts = new List<string> { $"Department: {from} → {to}" };
+        parts.Add(facts.ResultingOwnerEmployeeId is null ? "Assigned to: Department queue" : "Reassigned automatically");
+        if (facts.ResolutionSlaDueAtUtc is { } due)
+        {
+            parts.Add($"Resolution SLA due: {due:yyyy-MM-dd HH:mm} UTC");
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private static byte NextEscalationLevel(string current) => current switch
@@ -566,6 +730,11 @@ public sealed class TicketDetailsModel(
     {
         [Required]
         public string Reason { get; set; } = string.Empty;
+
+        /// <summary>The department that takes the reopened work on. Required by the approved rule; may be the ticket's current department.</summary>
+        [Required, Range(1, int.MaxValue)]
+        public int TargetDepartmentId { get; set; }
+
         public string? RowVersionBase64 { get; set; }
     }
 
