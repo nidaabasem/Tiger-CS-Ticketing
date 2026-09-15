@@ -69,10 +69,17 @@ public sealed class DashboardSqliteFixture : IDisposable
         SeedReferenceData(context);
     }
 
-    public TigerCsDbContext CreateContext() => new SqliteTigerCsDbContext(
+    /// <summary>
+    /// A context over this fixture's database. Optional EF Core interceptors
+    /// let a test observe or interrupt the real commands a repository issues
+    /// — counting round trips, or making one command fail the way a database
+    /// would.
+    /// </summary>
+    public TigerCsDbContext CreateContext(params IInterceptor[] interceptors) => new SqliteTigerCsDbContext(
         new DbContextOptionsBuilder<TigerCsDbContext>()
             .UseSqlite(_connection)
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.AmbientTransactionWarning))
+            .AddInterceptors(interceptors)
             .Options);
 
     /// <summary>The real application service over the real repositories — scope resolved from the real membership table.</summary>
