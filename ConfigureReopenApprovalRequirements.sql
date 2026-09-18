@@ -44,6 +44,19 @@
       IX_RequestTypes_DepartmentId_Name.
     * Transactional, with XACT_ABORT ON — it either applies fully or not at all.
 
+    VALIDATION STATUS — READ THIS BEFORE RUNNING
+    -------------------------------------------
+    This script has NOT been executed against a database. The repository's
+    test suite runs on SQLite and cannot execute T-SQL, and no SQL Server was
+    available to the author. Its logic was derived directly from the EF schema
+    (see column/index notes above), but "derived correctly" is not "seen to
+    work".
+
+    RUN IT AGAINST A STAGING COPY FIRST, review the verification output at the
+    end, and only then run it against production. It is transactional, so a
+    failure rolls back cleanly — but the verification sections are the point:
+    read them rather than trusting the row count alone.
+
     RUNNING IT
     ----------
         sqlcmd -S <server> -d <database> -U <user> -P <password> -C -b -I \
