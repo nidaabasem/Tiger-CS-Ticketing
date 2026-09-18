@@ -54,7 +54,7 @@ public class SlaResolutionBreachTests
 
         var service = new TicketLifecycleAppService(
             sla.Tickets, sla.Resolutions, sla.StatusHistory, sla.DepartmentAssignments,
-            sla.UnitOfWork, sla.Audit, sla.BreachProcessor, new FakeTimeProvider(nowUtc), ReopenPolicy.Default,
+            sla.UnitOfWork, sla.Audit, sla.BreachProcessor, new FakeTimeProvider(nowUtc),
             new Ticketing.Fakes.FakeTicketPendingRecordRepository(),
             new Ticketing.Fakes.FakeRequestTypeRepository(),
             new Ticketing.Fakes.FakeWorkflowTemplateRepository(),
@@ -66,7 +66,10 @@ public class SlaResolutionBreachTests
                 new Ticketing.Fakes.FakeRequestTypeAssignmentRuleRepository(),
                 new Ticketing.Fakes.FakeDepartmentWorkflowSettingsRepository(),
                 sla.DepartmentAssignments, new Ticketing.Fakes.FakeTicketAssignmentRepository(), sla.Audit),
-            sla.DueDates);
+            sla.DueDates,
+            new ReopenEligibilityService(
+                sla.StatusHistory, new Ticketing.Fakes.FakeRequestTypeRepository(),
+                new Ticketing.Fakes.FakeWorkflowTemplateRepository(), ReopenPolicy.Default));
 
         return new Harness(sla, service, ticket, ownerId);
     }

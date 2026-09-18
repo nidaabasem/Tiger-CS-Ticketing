@@ -169,6 +169,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<TicketCreationAppService>();
         services.AddScoped<TicketQueryAppService>();
         services.AddScoped<TicketAssignmentAppService>();
+        services.AddScoped<ReopenEligibilityService>();
         services.AddScoped<TicketLifecycleAppService>();
         services.AddScoped<TicketNoteAppService>();
         services.AddScoped<TicketReconciliationAppService>();

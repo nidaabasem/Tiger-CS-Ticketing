@@ -333,7 +333,7 @@ else
                                     <ol class="timeline">
                                         @foreach (var entry in Model.ActivityFeed.Take(3))
                                         {
-                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", _ => "icon-quiet" };
+                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", "approval" => "icon-info", _ => "icon-quiet" };
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">
@@ -463,7 +463,7 @@ else
                                 <ol class="timeline">
                                     @foreach (var entry in Model.ActivityFeed)
                                     {
-                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", _ => "icon-quiet" };
+                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", "approval" => "icon-info", _ => "icon-quiet" };
                                         <li class="timeline-item">
                                             <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                             <div class="timeline-row">
@@ -724,8 +724,10 @@ else
                     {
                         "AccountingApproval" => "Accounting Approval",
                         "CustomerServiceApproval" => "Customer Service Approval",
+                        "ReopenApproval" => "Reopen Approval",
                         _ => type
                     };
+                    static bool IsReopenApproval(string type) => string.Equals(type, "ReopenApproval", StringComparison.Ordinal);
                     var showApprovals = approvalsView is not null
                         && (approvalsView.Approvals.Count > 0
                             || approvalsView.RequestableApprovals.Count > 0
@@ -746,12 +748,28 @@ else
                                 {
                                     <div class="facts-row"><dt>Decided</dt><dd>@decidedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</dd></div>
                                 }
+                                @if (!string.IsNullOrEmpty(approval.RequestComment))
+                                {
+                                    <div class="facts-row"><dt>@(IsReopenApproval(approval.ApprovalType) ? "Reopen reason" : "Reason")</dt><dd>@approval.RequestComment</dd></div>
+                                }
                                 @if (!string.IsNullOrEmpty(approval.DecisionComment))
                                 {
                                     <div class="facts-row"><dt>Comment</dt><dd>@approval.DecisionComment</dd></div>
                                 }
                                 <div class="facts-row"><dt>Decided by</dt><dd>@approval.TargetSummary</dd></div>
                             </dl>
+                            @* An approved Reopen Approval authorizes the ask and nothing
+                               else — the ticket is still Closed, and the reopen itself is
+                               the normal Reopen action above, available only to the roles
+                               that hold it and still validating every rule at that moment. *@
+                            @if (IsReopenApproval(approval.ApprovalType) && approval.Status == "Approved")
+                            {
+                                <p class="field-hint">
+                                    Reopen request approved — the ticket stays Closed until someone with Reopen permission
+                                    performs the Reopen action, choosing the department that takes it on.
+                                    @(Model.CanReopen ? "" : " You do not hold that permission.")
+                                </p>
+                            }
                             @if (approval.CallerCanDecide)
                             {
                                 <form method="post" asp-page-handler="DecideApproval" class="action-form">
@@ -775,10 +793,21 @@ else
                             </dl>
                             @if (requestable.CallerCanRequest)
                             {
+                                var isReopenRequest = IsReopenApproval(requestable.ApprovalType);
                                 <form method="post" asp-page-handler="RequestApproval" class="action-form">
                                     <input type="hidden" name="ApprovalRequest.ApprovalType" value="@requestable.ApprovalType" />
                                     <div class="field-group">
-                                        <textarea class="form-control" name="ApprovalRequest.Comment" rows="2" placeholder="Request comment (optional)"></textarea>
+                                        @if (isReopenRequest)
+                                        {
+                                            <label class="field-label" for="reopen-approval-reason">Reopen reason</label>
+                                            <textarea class="form-control" id="reopen-approval-reason" name="ApprovalRequest.Comment" rows="2" required
+                                                      placeholder="Why does this ticket need to be reopened?"></textarea>
+                                            <span class="field-hint">This asks @requestable.TargetSummary to approve a reopen. It does not reopen the ticket.</span>
+                                        }
+                                        else
+                                        {
+                                            <textarea class="form-control" name="ApprovalRequest.Comment" rows="2" placeholder="Request comment (optional)"></textarea>
+                                        }
                                     </div>
                                     <div class="action-form__footer">
                                         <button type="submit" class="btn btn-gold btn-sm">Request @ApprovalLabel(requestable.ApprovalType)</button>

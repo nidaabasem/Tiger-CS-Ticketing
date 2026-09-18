@@ -47,13 +47,15 @@ public class TicketLifecycleOutboxTests
 
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
-            TimeProvider.System, ReopenPolicy.Default,
+            TimeProvider.System,
             new FakeTicketPendingRecordRepository(), new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(),
             outbox, departments, departmentSettings, new FakeTicketWorkflowEventRepository(),
             new TicketAutoAssignmentService(
                 new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, departmentAssignments,
                 new FakeTicketAssignmentRepository(), audit),
-            sla.DueDates);
+            sla.DueDates,
+            new ReopenEligibilityService(
+                statusHistory, new FakeRequestTypeRepository(), new FakeWorkflowTemplateRepository(), ReopenPolicy.Default));
 
         // Two departments so the seeded tickets' department 2 really exists —
         // Reopen validates its target against the directory.

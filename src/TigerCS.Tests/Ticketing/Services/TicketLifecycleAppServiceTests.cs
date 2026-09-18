@@ -72,9 +72,10 @@ public class TicketLifecycleAppServiceTests
 
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
-            timeProvider ?? TimeProvider.System, reopenPolicy ?? ReopenPolicy.Default,
+            timeProvider ?? TimeProvider.System,
             pendingRecords, requestTypes, workflowTemplates, outbox,
-            departments, departmentSettings, workflowEvents, autoAssignment, sla.DueDates);
+            departments, departmentSettings, workflowEvents, autoAssignment, sla.DueDates,
+            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, reopenPolicy ?? ReopenPolicy.Default));
 
         return new Fixture(
             service, tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork, sla,

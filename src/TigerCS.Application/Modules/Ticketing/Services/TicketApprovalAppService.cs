@@ -45,6 +45,21 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// Administrator override applies through <see cref="AuthorizationGate"/>
 /// exactly as it does for every other permission rule.
 /// </para>
+///
+/// <para>
+/// <b><see cref="ApprovalType.ReopenApproval"/> is a request, not a reopen.</b>
+/// It is the one type requestable on a <b>Closed</b> ticket — every other
+/// type stays refused there — and it exists so that a role without direct
+/// Reopen can ask for one. Granting it writes the decision, the typed event
+/// and the audit row and <b>touches nothing on the ticket</b>: no status
+/// change, no department move, no owner change, no SLA cycle, no customer
+/// email. The reopen itself remains
+/// <c>TicketLifecycleAppService.ReopenAsync</c>, performed afterwards by a
+/// CS user who supplies a target department and a current RowVersion, and
+/// which revalidates every rule at that moment. An approved cycle is
+/// therefore never a bypass and never a precondition — direct Reopen is
+/// unchanged and needs no approval.
+/// </para>
 /// </summary>
 public sealed class TicketApprovalAppService(
     ITicketRepository ticketRepository,
@@ -55,10 +70,37 @@ public sealed class TicketApprovalAppService(
     IDepartmentRepository departmentRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ReopenEligibilityService reopenEligibilityService)
 {
     /// <summary>Provisional: which department-side roles may decide a department-targeted approval when the requirement names no narrowing role. Deliberately the two department-scoped roles only — never CS-layer, never broad.</summary>
     public static readonly IReadOnlyCollection<string> DepartmentTargetDefaultApproverRoles =
+        [Roles.DepartmentEmployee, Roles.DepartmentHead];
+
+    /// <summary>
+    /// Cross-department roles that may REQUEST a
+    /// <see cref="ApprovalType.ReopenApproval"/> without belonging to the
+    /// ticket's department. Executive reach only — never CS-layer, who hold
+    /// direct Reopen instead and have nothing to ask for.
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> ReopenApprovalCrossDepartmentRequesterRoles =
+        [Roles.GeneralManager, Roles.ChairmanCeo];
+
+    /// <summary>
+    /// Department-side roles that may REQUEST a
+    /// <see cref="ApprovalType.ReopenApproval"/>, each scoped to membership
+    /// of the ticket's <c>CurrentDepartmentId</c>.
+    ///
+    /// <para>
+    /// <b>Ownership is deliberately not required.</b> Unlike
+    /// <see cref="IsOperationalActorAsync"/>, whose owner branch is the right
+    /// rule for an in-flight ticket, a Reopen Approval is raised on a
+    /// <b>Closed</b> ticket — the work is finished, and which employee
+    /// happened to hold it last is not what decides who may ask for it back.
+    /// Department membership is.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> ReopenApprovalDepartmentRequesterRoles =
         [Roles.DepartmentEmployee, Roles.DepartmentHead];
 
     /// <summary>The event types operational users may record directly. Approval events are produced by approval actions only.</summary>
@@ -96,15 +138,27 @@ public sealed class TicketApprovalAppService(
             return ApprovalMutationResult.Failure(ApprovalMutationOutcome.InvalidInput);
         }
 
-        if (!await IsOperationalActorAsync(callerEmployeeId, callerRoles, ticket, cancellationToken))
+        var isReopenApproval = approvalType is ApprovalType.ReopenApproval;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        // Reopen Approval has its own requester rule — department membership
+        // rather than the operational-actor rule's owner branch, because the
+        // ticket is Closed and ownership is not what decides who may ask.
+        var authorized = isReopenApproval
+            ? await IsReopenApprovalRequesterAsync(callerEmployeeId, callerRoles, ticket, cancellationToken)
+            : await IsOperationalActorAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
+        if (!authorized)
         {
             return ApprovalMutationResult.Failure(ApprovalMutationOutcome.Forbidden);
         }
 
-        if (ticket.TicketStatus == TicketStatus.Closed)
+        // The Closed carve-out, keyed on the one type it exists for: every
+        // other approval is refused on a Closed ticket exactly as before.
+        if (ticket.TicketStatus == TicketStatus.Closed && !isReopenApproval)
         {
             return ApprovalMutationResult.Failure(ApprovalMutationOutcome.TicketClosed);
         }
+
 
         // Configuration-driven, never ad hoc: the ticket's request type must
         // actively require this approval type.
@@ -114,6 +168,31 @@ public sealed class TicketApprovalAppService(
         if (requirement is null)
         {
             return ApprovalMutationResult.Failure(ApprovalMutationOutcome.ApprovalNotConfigured);
+        }
+
+        if (isReopenApproval)
+        {
+            // The carve-out is not a hole: a Reopen Approval may only be
+            // raised for a reopen that could actually happen — Closed, closed
+            // as Resolved, the request type still allows Reopen, and the
+            // window has not passed. Same shared computation the lifecycle
+            // service uses, never a second copy of the rule. Checked after the
+            // requirement lookup so a request type that does not offer this
+            // approval at all says exactly that, whatever state its ticket is
+            // in.
+            if (await reopenEligibilityService.EvaluateAsync(ticket, now, cancellationToken) is not ReopenEligibility.Eligible)
+            {
+                return ApprovalMutationResult.Failure(ApprovalMutationOutcome.ReopenNotEligible);
+            }
+
+            // The reopen reason is mandatory and is what the approver decides
+            // on. It rides the existing RequestComment column — no new field,
+            // and it is already surfaced in the approvals view, the typed
+            // event and the audit row.
+            if (string.IsNullOrWhiteSpace(request.Comment))
+            {
+                return ApprovalMutationResult.Failure(ApprovalMutationOutcome.ReasonRequired);
+            }
         }
 
         // No duplicate simultaneously-active cycles, and no silent
@@ -127,7 +206,6 @@ public sealed class TicketApprovalAppService(
             return ApprovalMutationResult.Failure(ApprovalMutationOutcome.DuplicateActiveApproval);
         }
 
-        var now = timeProvider.GetUtcNow().UtcDateTime;
         var correlationId = Guid.NewGuid();
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
@@ -137,7 +215,8 @@ public sealed class TicketApprovalAppService(
         // overwritten.
         currentCycle?.MarkSuperseded();
 
-        var approval = TicketApproval.Request(ticketId, requirement, callerEmployeeId, now, request.Comment, correlationId);
+        var requestComment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
+        var approval = TicketApproval.Request(ticketId, requirement, callerEmployeeId, now, requestComment, correlationId);
         await approvalRepository.AddAsync(approval, cancellationToken);
 
         // The approval's identity PK is needed by the event/audit rows —
@@ -147,7 +226,7 @@ public sealed class TicketApprovalAppService(
         await workflowEventRepository.AddAsync(
             new TicketWorkflowEvent(
                 ticketId, WorkflowEventType.ApprovalRequested, now, callerEmployeeId,
-                approval.TicketApprovalId, request.Comment, correlationId),
+                approval.TicketApprovalId, requestComment, correlationId),
             cancellationToken);
 
         await auditWriter.WriteAsync(
@@ -199,6 +278,29 @@ public sealed class TicketApprovalAppService(
         }
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        // Granting a Reopen Approval that can no longer be executed would
+        // create an Approved cycle nobody can ever act on — the window can
+        // pass, the request type can be re-configured, or someone with direct
+        // Reopen can have reopened and re-closed the ticket while this cycle
+        // sat Pending. So the same shared eligibility computation runs again
+        // at decision time, and only for Approve: Reject stays available
+        // precisely so a stale cycle can still be closed out deliberately
+        // rather than being stuck Pending forever.
+        if (isApprove && approval.ApprovalType is ApprovalType.ReopenApproval)
+        {
+            var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+            if (ticket is null)
+            {
+                return ApprovalMutationResult.Failure(ApprovalMutationOutcome.TicketNotFound);
+            }
+
+            if (await reopenEligibilityService.EvaluateAsync(ticket, now, cancellationToken) is not ReopenEligibility.Eligible)
+            {
+                return ApprovalMutationResult.Failure(ApprovalMutationOutcome.ReopenNotEligible);
+            }
+        }
+
         var correlationId = Guid.NewGuid();
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
@@ -442,6 +544,16 @@ public sealed class TicketApprovalAppService(
 
         var canOperate = await IsOperationalActorAsync(callerEmployeeId, callerRoles, ticket, cancellationToken);
 
+        // Reopen Approval's offer is computed once per view rather than per
+        // requirement: it is the only type whose availability depends on the
+        // ticket's reopen eligibility, and the caller not already holding
+        // direct Reopen.
+        var canRequestReopenApproval =
+            !HoldsDirectReopen(callerRoles)
+            && await IsReopenApprovalRequesterAsync(callerEmployeeId, callerRoles, ticket, cancellationToken)
+            && await reopenEligibilityService.EvaluateAsync(
+                ticket, timeProvider.GetUtcNow().UtcDateTime, cancellationToken) is ReopenEligibility.Eligible;
+
         var requestable = new List<RequestableApprovalDto>();
         if (ticket.RequestTypeId is { } requestTypeId)
         {
@@ -457,7 +569,9 @@ public sealed class TicketApprovalAppService(
                             requirement.TargetKind, requirement.TargetDepartmentId, requirement.TargetRoleName,
                             requirement.TargetEmployeeId, cancellationToken),
                         requirement.BlocksWorkUntilApproved,
-                        CallerCanRequest: canOperate && ticket.TicketStatus != TicketStatus.Closed));
+                        CallerCanRequest: requirement.ApprovalType is ApprovalType.ReopenApproval
+                            ? canRequestReopenApproval
+                            : canOperate && ticket.TicketStatus != TicketStatus.Closed));
                 }
             }
         }
@@ -507,6 +621,40 @@ public sealed class TicketApprovalAppService(
             return callerRoles.Contains(Roles.DepartmentHead)
                 && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken);
         });
+
+    /// <summary>
+    /// Who may REQUEST a <see cref="ApprovalType.ReopenApproval"/>: a
+    /// Department Employee or Department Head who belongs to the ticket's
+    /// current department, or a General Manager / Chairman-CEO anywhere.
+    /// Reporting User is in neither set and is refused, as is every CS-layer
+    /// role — they hold direct Reopen and have nothing to request.
+    ///
+    /// <para>
+    /// Routed through <see cref="AuthorizationGate"/> like every other rule
+    /// here, so ADR-0024's System Administrator override reaches the endpoint
+    /// exactly as it reaches all the others. The administrator is still not
+    /// <i>offered</i> the control — the approvals view suppresses it for
+    /// anyone who already holds direct Reopen, which the override makes true
+    /// of this role — but the endpoint is never closed to it, which is what
+    /// ADR-0024 requires.
+    /// </para>
+    /// </summary>
+    private Task<bool> IsReopenApprovalRequesterAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
+        AuthorizationGate.EvaluateAsync(callerRoles, async () =>
+            callerRoles.Any(ReopenApprovalCrossDepartmentRequesterRoles.Contains)
+            || (callerRoles.Any(ReopenApprovalDepartmentRequesterRoles.Contains)
+                && await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken)));
+
+    /// <summary>
+    /// Whether the caller already holds direct Reopen — the CS-layer role set
+    /// plus ADR-0024's override. Read from <see cref="TicketRoleSets.Reopen"/>
+    /// rather than a local list, so widening or narrowing direct Reopen moves
+    /// this with it: someone who can simply reopen the ticket is never offered
+    /// a form to ask permission to.
+    /// </summary>
+    private static bool HoldsDirectReopen(IReadOnlyCollection<string> callerRoles) =>
+        callerRoles.Any(TicketRoleSets.Reopen.Contains) || AuthorizationOverride.AppliesTo(callerRoles);
 
     /// <summary>The target-snapshot gate — see this type's remarks on the provisional, fail-safe rules per target kind.</summary>
     private Task<bool> IsAuthorizedApproverAsync(

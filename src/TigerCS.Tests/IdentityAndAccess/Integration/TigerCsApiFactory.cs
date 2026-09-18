@@ -324,9 +324,15 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
     /// requirement for it targeting the given department — direct test
     /// setup for the phase-3 approval flow, bypassing the app services.
     /// </summary>
+    /// <summary>
+    /// <paramref name="approvalTargetRoleName"/> configures the requirement as
+    /// role-targeted instead of department-targeted, and suppresses the
+    /// Waiting-for-Approval step: ReopenApproval is a request raised against a
+    /// finished ticket, not a stage in the ticket's forward workflow.
+    /// </summary>
     public async Task<int> CreateRequestTypeAsync(
         string name, int departmentId, TigerCS.Domain.Modules.WorkflowConfiguration.ApprovalType? requiredApproval = null,
-        int? approvalTargetDepartmentId = null)
+        int? approvalTargetDepartmentId = null, string? approvalTargetRoleName = null, bool allowReopen = true)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
@@ -344,7 +350,7 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
             DateTime.UtcNow, createdByEmployeeId: null);
         version.AppendStep("Ticket Created", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Created);
         version.AppendStep("Assigned", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.Assigned);
-        if (requiredApproval is { } approvalStepType)
+        if (requiredApproval is { } approvalStepType && approvalTargetRoleName is null)
         {
             version.AppendStep("Waiting for Approval", TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowStepKind.WaitingForApproval,
                 approvalType: approvalStepType);
@@ -362,15 +368,18 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         var requestType = new TigerCS.Domain.Modules.WorkflowConfiguration.RequestType(
             departmentId, name, workflow.WorkflowId,
             (byte)TigerCS.Domain.Modules.SlaAndEscalation.PriorityLevel.Medium,
-            allowAgentPriorityChange: false, allowPendingCustomer: true, allowPendingInternal: true, allowReopen: true);
+            allowAgentPriorityChange: false, allowPendingCustomer: true, allowPendingInternal: true, allowReopen);
         db.RequestTypes.Add(requestType);
         await db.SaveChangesAsync();
 
         if (requiredApproval is { } approvalType)
         {
             db.RequestTypeApprovalRequirements.Add(
-                TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement.ForDepartment(
-                    requestType.RequestTypeId, approvalType, approvalTargetDepartmentId ?? departmentId));
+                approvalTargetRoleName is { } roleName
+                    ? TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement.ForRole(
+                        requestType.RequestTypeId, approvalType, roleName)
+                    : TigerCS.Domain.Modules.WorkflowConfiguration.RequestTypeApprovalRequirement.ForDepartment(
+                        requestType.RequestTypeId, approvalType, approvalTargetDepartmentId ?? departmentId));
             await db.SaveChangesAsync();
         }
 

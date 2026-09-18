@@ -320,7 +320,13 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         // Catalog offers only controlled step and approval types.
         var catalog = await ReadAsync<WorkflowDesignerCatalogDto>(await admin.GetAsync("/api/admin/workflows/catalog"));
         Assert.Contains(catalog.StepKinds, k => k.Kind == WorkflowStepKind.WaitingForApproval && k.RequiresApprovalType);
-        Assert.Equal(2, catalog.ApprovalTypes.Count);
+
+        // Every controlled approval type, and nothing outside the enum —
+        // derived rather than a fixed count, so adding a type (ReopenApproval
+        // was the first) does not make this assertion stale.
+        Assert.Equal(
+            Enum.GetValues<ApprovalType>().Order(),
+            catalog.ApprovalTypes.Select(a => a.ApprovalType).Order());
 
         // Create → Draft V1 skeleton.
         var created = await ReadAsync<AdminWorkflowDetailDto>(await admin.PostAsJsonAsync("/api/admin/workflows",
