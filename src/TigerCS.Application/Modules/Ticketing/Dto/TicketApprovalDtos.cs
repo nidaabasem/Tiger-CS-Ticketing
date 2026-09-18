@@ -97,8 +97,17 @@ public enum ApprovalMutationOutcome
     /// <summary>The cycle is already decided — decisions are write-once; open a new cycle instead.</summary>
     ApprovalAlreadyDecided,
 
-    /// <summary>A rejection requires a reason.</summary>
+    /// <summary>A rejection requires a reason — and so does a ReopenApproval request, whose comment IS the reopen reason the approver decides on.</summary>
     ReasonRequired,
+
+    /// <summary>
+    /// The ticket is not (or is no longer) reopenable, so a ReopenApproval
+    /// cannot be raised or granted: not Closed, not closed as Resolved, its
+    /// request type forbids reopening, or the reopen window has passed.
+    /// Returned at request time AND again at approve time, so an Approved
+    /// cycle that could never be executed is never created.
+    /// </summary>
+    ReopenNotEligible,
 
     /// <summary>The approval type / decision / event type did not parse to a supported value.</summary>
     InvalidInput,

@@ -580,6 +580,27 @@ public sealed class TicketDetailsModel(
                 escalation.NotifiedRoles is null ? null : $"Notified: {escalation.NotifiedRoles}", false));
         }
 
+        // Approval cycles read from the typed workflow events the approval
+        // service writes — the request (whose note is the reason, and for a
+        // Reopen Approval that reason is the whole point) and the decision.
+        // Deliberately separate entries from the reopen below: an approval
+        // authorizes an ask, the reopen is the state change, and merging them
+        // would claim the ticket moved when it did not.
+        foreach (var approvalEvent in workflowEvents)
+        {
+            if (DescribeApprovalEvent(approvalEvent.EventType) is not { } description)
+            {
+                continue;
+            }
+
+            var actor = approvalEvent.ActorEmployeeId is { } approvalActorId
+                ? TicketNameResolver.ResolveSelfAuthorName(approvalActorId, viewer) ?? $"Employee #{approvalActorId.ToString()[..8]}"
+                : "System";
+
+            entries.Add(new ActivityEntry(
+                approvalEvent.OccurredAtUtc, "approval", actor, description, approvalEvent.Note, true));
+        }
+
         // Reopens read from BOTH lifecycle stores, because each holds half of
         // what the entry has to say: the status-history row carries the agent
         // and the reason they typed, the typed Reopened event carries the
@@ -618,6 +639,21 @@ public sealed class TicketDetailsModel(
 
         return [.. entries.OrderBy(e => e.TimestampUtc)];
     }
+
+    /// <summary>
+    /// What an approval-cycle workflow event reads as in the feed, or null
+    /// for the dependency events (prerequisites/maintenance), which the
+    /// Approvals panel already states as a current condition rather than a
+    /// moment, and for <c>Reopened</c>, which the lifecycle row below owns.
+    /// </summary>
+    private static string? DescribeApprovalEvent(string eventType) => eventType switch
+    {
+        nameof(WorkflowEventType.ApprovalRequested) => "requested an approval",
+        nameof(WorkflowEventType.ApprovalReceived) => "approved the request",
+        nameof(WorkflowEventType.CustomerServiceApproved) => "approved the request (Customer Service)",
+        nameof(WorkflowEventType.ApprovalRejected) => "rejected the request",
+        _ => null
+    };
 
     /// <summary>
     /// What one lifecycle row reads as in the feed, or null for rows worth

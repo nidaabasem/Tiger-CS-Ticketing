@@ -52,13 +52,14 @@ public class TicketWorkflowEnforcementTests
 
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
-            timeProvider ?? TimeProvider.System, ReopenPolicy.Default,
+            timeProvider ?? TimeProvider.System,
             pendingRecords, requestTypes, workflowTemplates, new Notifications.Fakes.FakeOutboxWriter(),
             departments, departmentSettings, new FakeTicketWorkflowEventRepository(),
             new TicketAutoAssignmentService(
                 new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, departmentAssignments,
                 new FakeTicketAssignmentRepository(), audit),
-            sla.DueDates);
+            sla.DueDates,
+            new ReopenEligibilityService(statusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
 
         return new Fixture(
             service, tickets, resolutions, statusHistory, audit, unitOfWork, pendingRecords, requestTypes, workflowTemplates);

@@ -1119,7 +1119,16 @@ public class TicketsController(
 
         ApprovalMutationOutcome.ReasonRequired => Problem(
             type: "https://tigercs.internal/problems/rejection-reason-required",
-            title: "A rejection requires a reason",
+            title: "A reason is required",
+            detail: "A rejection always carries its why, and a Reopen Approval request carries the reopen reason.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        ApprovalMutationOutcome.ReopenNotEligible => Problem(
+            type: "https://tigercs.internal/problems/reopen-not-eligible",
+            title: "This ticket is not reopenable",
+            detail: "A Reopen Approval is only valid while the ticket could actually be reopened — Closed, closed as Resolved, "
+                + "allowed by its request type, and inside the reopen window. Approving one that is no longer executable is refused "
+                + "so it can never be granted and then not carried out; the pending request can still be rejected to close it out.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         ApprovalMutationOutcome.InvalidInput => Problem(

@@ -35,7 +35,6 @@ public sealed class TicketLifecycleAppService(
     IAuditEntryWriter auditWriter,
     SlaBreachProcessor breachProcessor,
     TimeProvider timeProvider,
-    ReopenPolicy reopenPolicy,
     ITicketPendingRecordRepository pendingRecordRepository,
     IRequestTypeRepository requestTypeRepository,
     IWorkflowTemplateRepository workflowTemplateRepository,
@@ -44,7 +43,8 @@ public sealed class TicketLifecycleAppService(
     IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository,
     ITicketWorkflowEventRepository workflowEventRepository,
     TicketAutoAssignmentService autoAssignmentService,
-    SlaDueDateService slaDueDateService)
+    SlaDueDateService slaDueDateService,
+    ReopenEligibilityService reopenEligibilityService)
 {
     /// <summary>Matches the <c>TicketStatusHistory.Note</c> column, so a long reason is never lost to a database truncation error mid-transaction.</summary>
     public const int ReopenReasonMaxLength = 1000;
@@ -492,43 +492,25 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
         }
 
-        if (ticket.TicketStatus is not TicketStatus.Closed)
-        {
-            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
-        }
-
-        if (ticket.ResolutionOutcome != (byte)ResolutionOutcome.Resolved)
-        {
-            return TicketMutationResult.Failure(TicketMutationOutcome.ResolutionOutcomeNotReopenable);
-        }
-
-        // Workflow/Automation phase 2 — a request type may switch Reopen off
-        // entirely. This gate only ever narrows: where reopen stays allowed
-        // (or the ticket has no request type), the rules below remain the
-        // final enforcement point, exactly as before.
-        var capabilities = await ResolveCapabilitiesAsync(ticket, cancellationToken);
-        if (capabilities is { CanReopen: false })
-        {
-            return TicketMutationResult.Failure(TicketMutationOutcome.NotAllowedForRequestType);
-        }
-
-        // ISSUE-011's window, measured from the moment the ticket was CLOSED —
-        // read from the lifecycle history Close itself wrote, because a Closed
-        // ticket carries no closure timestamp column and the resolution
-        // timestamp is a different (earlier) moment. A Closed ticket with no
-        // such row is data damage: treated as not eligible rather than
-        // silently substituting some other timestamp.
-        var closedAt = await statusHistoryRepository.GetLatestTransitionIntoAsync(
-            ticketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Closed, cancellationToken);
-        if (closedAt is null)
-        {
-            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
-        }
-
+        // The approved rule's lifecycle half — Closed, closed as Resolved, the
+        // request type still allows Reopen, and the ISSUE-011 window measured
+        // from the closure moment in lifecycle history — evaluated by the
+        // shared ReopenEligibilityService so this path and the Reopen Approval
+        // request/decision path can never disagree about whether a ticket is
+        // reopenable. The outcomes below are exactly the ones this method
+        // returned when the sequence was inline here.
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        if (!reopenPolicy.IsWithinWindow(closedAt.OccurredAtUtc, now))
+        switch (await reopenEligibilityService.EvaluateAsync(ticket, now, cancellationToken))
         {
-            return TicketMutationResult.Failure(TicketMutationOutcome.ReopenWindowExpired);
+            case ReopenEligibility.NotClosed:
+            case ReopenEligibility.ClosureMomentUnknown:
+                return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
+            case ReopenEligibility.OutcomeNotReopenable:
+                return TicketMutationResult.Failure(TicketMutationOutcome.ResolutionOutcomeNotReopenable);
+            case ReopenEligibility.NotAllowedForRequestType:
+                return TicketMutationResult.Failure(TicketMutationOutcome.NotAllowedForRequestType);
+            case ReopenEligibility.WindowExpired:
+                return TicketMutationResult.Failure(TicketMutationOutcome.ReopenWindowExpired);
         }
 
         // A Closed ticket always has a current resolution; a missing one would
