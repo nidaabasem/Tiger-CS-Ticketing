@@ -12,10 +12,13 @@ namespace TigerCS.Web.Models;
 public static class TicketActions
 {
     /// <summary>
-    /// Reads the Api's own <see cref="TicketRoleSets.Reopen"/> — CS Agent
-    /// under the approved rule — rather than a local copy, plus the System
+    /// Reads the Api's own <see cref="TicketRoleSets.Reopen"/> — the CS layer
+    /// (CS Agent, CS Supervisor, CS Manager) under the final approved rule —
+    /// rather than a local copy, plus the System
     /// Administrator override (ADR-0024) the Api honors through its
-    /// AuthorizationGate. Lifecycle eligibility (Closed, closed as Resolved,
+    /// AuthorizationGate. There is deliberately no second role list here: the
+    /// control and the endpoint decide from the same set, so they cannot
+    /// drift. Lifecycle eligibility (Closed, closed as Resolved,
     /// inside the reopen window) is the server-computed IsReopenEligible flag,
     /// never re-derived here.
     ///
