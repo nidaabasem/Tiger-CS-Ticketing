@@ -503,7 +503,7 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
     }
 
     [Fact]
-    public async Task Reopen_Lifecycle_DepartmentEmployeeIsForbidden_CsAgentSucceeds_AndEligibilityRidesTheDetail()
+    public async Task Reopen_Lifecycle_NonCsRolesAreForbidden_CsAgentSucceeds_AndEligibilityRidesTheDetail()
     {
         var agentClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
         var (ticketId, departmentId, initialRowVersion) = await CreateVerifiedTicketAsync(agentClient);
@@ -563,12 +563,14 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
             new ReopenTicketRequestDto("Trying to reopen my own work.", departmentId, Convert.FromBase64String(afterClose!.RowVersion)));
         Assert.Equal(HttpStatusCode.Forbidden, forbiddenReopen.StatusCode);
 
-        // Nor may a CS Supervisor or CS Manager, who hold Close but no longer
-        // inherit Reopen from it.
-        foreach (var role in new[] { Roles.CsSupervisor, Roles.CsManager })
+        // Nor may any other non-CS role — the direct endpoint is the rule's
+        // enforcement point, so hitting it straight cannot bypass the missing
+        // UI control. Department Head and General Manager are here on purpose:
+        // both reach the ticket, neither holds direct Reopen.
+        foreach (var role in new[] { Roles.DepartmentHead, Roles.GeneralManager, Roles.ChairmanCeo, Roles.ReportingUser })
         {
-            var otherCsClient = await CreateAuthenticatedClientAsync(role);
-            var refused = await otherCsClient.PostAsJsonAsync(
+            var refusedClient = await CreateAuthenticatedClientAsync(role);
+            var refused = await refusedClient.PostAsJsonAsync(
                 $"/api/tickets/{ticketId}/reopen",
                 new ReopenTicketRequestDto("Not mine to reopen.", departmentId, Convert.FromBase64String(afterClose.RowVersion)));
             Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
@@ -702,6 +704,109 @@ public class TicketingEndpointsTests : IClassFixture<TigerCsApiFactory>
             .Content.ReadFromJsonAsync<TicketDetailDto>();
         Assert.Equal("InProgress", detail!.TicketStatus);
         Assert.False(detail.IsReopenEligible);
+    }
+
+    [Theory]
+    [InlineData(Roles.CsAgent)]
+    [InlineData(Roles.CsSupervisor)]
+    [InlineData(Roles.CsManager)]
+    [InlineData(Roles.SystemAdministrator)]
+    public async Task Reopen_ByEveryAuthorizedRole_Returns200(string role)
+    {
+        // The final approved rule end to end, through the real endpoint: the
+        // CS layer holds direct Reopen, and System Administrator arrives at
+        // the same place through ADR-0024's central override rather than
+        // through TicketRoleSets.Reopen, which does not name it.
+        var setupClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, departmentId, closedRowVersion) = await DriveTicketToClosedAsync(setupClient);
+
+        var client = await CreateAuthenticatedClientAsync(role);
+        var response = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/reopen",
+            new ReopenTicketRequestDto("Customer called back.", departmentId, closedRowVersion));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reopened = await response.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("InProgress", reopened!.TicketStatus);
+        Assert.Equal(ticketId, reopened.TicketId);
+        Assert.Equal(1, reopened.ReopenCount);
+    }
+
+    [Theory]
+    [InlineData(Roles.DepartmentEmployee)]
+    [InlineData(Roles.DepartmentHead)]
+    [InlineData(Roles.GeneralManager)]
+    [InlineData(Roles.ChairmanCeo)]
+    [InlineData(Roles.ReportingUser)]
+    public async Task Reopen_ByEveryUnauthorizedRole_Returns403_AndLeavesTheTicketClosed(string role)
+    {
+        // Direct endpoint access is the bypass worth closing: these roles see
+        // no Reopen control, and calling the endpoint anyway changes nothing.
+        // The department-scoped ones are given membership of the ticket's own
+        // department first, so the refusal is the role rule, not visibility.
+        var setupClient = await CreateAuthenticatedClientAsync(Roles.CsAgent);
+        var (ticketId, departmentId, closedRowVersion) = await DriveTicketToClosedAsync(setupClient);
+
+        var (username, password, employeeId) = await _factory.SeedEmployeeAsync(role);
+        await _factory.AssignPrimaryDepartmentAsync(employeeId, departmentId);
+        var client = _factory.CreateClient();
+        var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password)))
+            .Content.ReadFromJsonAsync<LoginResponseDto>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/reopen",
+            new ReopenTicketRequestDto("Let me reopen this.", departmentId, closedRowVersion));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // ...and the ticket is untouched, so a refused call cannot be a
+        // partial one: still Closed, still reopen-eligible for CS.
+        var detail = await (await setupClient.GetAsync($"/api/tickets/{ticketId}"))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Closed", detail!.TicketStatus);
+        Assert.Equal(0, detail.ReopenCount);
+        Assert.True(detail.IsReopenEligible);
+    }
+
+    /// <summary>
+    /// Creates a ticket and drives it through the normal lifecycle actors to
+    /// Closed/Resolved — the one state Reopen applies to — returning the
+    /// RowVersion a reopen must present.
+    /// </summary>
+    private async Task<(long TicketId, int DepartmentId, byte[] ClosedRowVersion)> DriveTicketToClosedAsync(HttpClient csClient)
+    {
+        var (ticketId, departmentId, initialRowVersion) = await CreateVerifiedTicketAsync(csClient);
+
+        var (workerUsername, workerPassword, workerId) = await _factory.SeedEmployeeAsync(Roles.DepartmentEmployee);
+        await _factory.AssignPrimaryDepartmentAsync(workerId, departmentId);
+        var workerClient = _factory.CreateClient();
+        var workerLogin = await (await workerClient.PostAsJsonAsync(
+            "/api/auth/login", new LoginRequestDto(workerUsername, workerPassword))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        workerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", workerLogin!.AccessToken);
+
+        var (headUsername, headPassword, headId) = await _factory.SeedEmployeeAsync(Roles.DepartmentHead);
+        await _factory.AssignPrimaryDepartmentAsync(headId, departmentId);
+        var headClient = _factory.CreateClient();
+        var headLogin = await (await headClient.PostAsJsonAsync(
+            "/api/auth/login", new LoginRequestDto(headUsername, headPassword))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        headClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", headLogin!.AccessToken);
+
+        var afterAssign = await (await headClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/assignment", new AssignTicketRequestDto(workerId, initialRowVersion)))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var afterStatus = await (await workerClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/status", new ChangeStatusRequestDto("InProgress", Convert.FromBase64String(afterAssign!.RowVersion))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var afterResolve = await (await workerClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/resolution",
+                new ResolveTicketRequestDto("Resolved", "Fixed the AC unit.", null, null, Convert.FromBase64String(afterStatus!.RowVersion))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var afterClose = await (await csClient.PostAsJsonAsync(
+                $"/api/tickets/{ticketId}/close", new CloseTicketRequestDto(Convert.FromBase64String(afterResolve!.RowVersion))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+
+        return (ticketId, departmentId, Convert.FromBase64String(afterClose!.RowVersion));
     }
 
     private static async Task<IReadOnlyList<long>> QueueTicketIdsAsync(

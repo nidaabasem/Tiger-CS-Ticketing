@@ -403,12 +403,13 @@ public sealed class TicketLifecycleAppService(
     /// Reopen (MVP-API-Contracts.md §3.11, FR-RES-04), implementing the
     /// approved business rule. A <b>Closed</b> ticket — and only a Closed one,
     /// closed as Resolved — returns to InProgress in a department the
-    /// reopening agent names, unowned, with a fresh Resolution SLA cycle.
+    /// reopening CS user names, unowned, with a fresh Resolution SLA cycle.
     ///
     /// <para>
-    /// <b>Authorization is two-part.</b> The role gate is CS Agent
-    /// (<see cref="TicketRoleSets.Reopen"/>) — Supervisor and CS Manager no
-    /// longer qualify merely by holding Close — and it is followed by a
+    /// <b>Authorization is two-part.</b> The role gate is the CS layer —
+    /// CS Agent, CS Supervisor and CS Manager
+    /// (<see cref="TicketRoleSets.Reopen"/>), the final approved rule — and it
+    /// is followed by a
     /// resource-level check that the caller could see this ticket at all
     /// (<see cref="TicketVisibilityRule"/>), so enumerating ticket ids reaches
     /// nothing the agent was not already entitled to. Both run through
@@ -452,8 +453,11 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        // Approved rule: the Agent reopens. The role set is consulted through
-        // the gate, never inline, so the ADR-0024 override stays in one place.
+        // Approved rule: the CS layer reopens (Agent/Supervisor/CS Manager).
+        // The role set is consulted through the gate, never inline, so the
+        // ADR-0024 System Administrator override stays in one place and every
+        // other role — Department Employee/Head, GM, Chairman/CEO, Reporting
+        // User — is refused here.
         if (!AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.Reopen.Contains)))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);

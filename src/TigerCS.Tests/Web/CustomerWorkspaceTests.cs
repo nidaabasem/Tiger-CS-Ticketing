@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Tests.Web.Fakes;
 using TigerCsWeb::TigerCS.Web.Models;
@@ -219,19 +220,64 @@ public sealed class CustomerWorkspaceTests
     // ---------------------------------------------------------------
 
     [Theory]
+    // The final approved rule: the CS layer reopens...
     [InlineData(Roles.CsAgent, true)]
+    [InlineData(Roles.CsSupervisor, true)]
+    [InlineData(Roles.CsManager, true)]
+    // ...and System Administrator through ADR-0024's override, which the UI
+    // applies the same way the Api's AuthorizationGate does.
     [InlineData(Roles.SystemAdministrator, true)]
-    // The approved rule names the Agent. Supervisor and CS Manager keep Close
-    // and lose Reopen with it, so the control must disappear for them too —
-    // the UI reads TicketRoleSets.Reopen rather than a local copy, which is
-    // what keeps this in step with the endpoint.
-    [InlineData(Roles.CsSupervisor, false)]
-    [InlineData(Roles.CsManager, false)]
+    // Everyone else sees no Reopen control at all. The UI reads
+    // TicketRoleSets.Reopen rather than a local copy, which is what keeps this
+    // in step with the endpoint rather than drifting from it.
     [InlineData(Roles.DepartmentEmployee, false)]
     [InlineData(Roles.DepartmentHead, false)]
     [InlineData(Roles.GeneralManager, false)]
-    public void CanReopen_MirrorsTheAgentOnlyReopenRoleSet(string role, bool expected) =>
+    [InlineData(Roles.ChairmanCeo, false)]
+    [InlineData(Roles.ReportingUser, false)]
+    public void CanReopen_MirrorsTheCsLayerReopenRoleSet(string role, bool expected) =>
         Assert.Equal(expected, TicketActions.CanReopen([role]));
+
+    [Theory]
+    [InlineData(Roles.CsAgent)]
+    [InlineData(Roles.CsSupervisor)]
+    [InlineData(Roles.CsManager)]
+    [InlineData(Roles.DepartmentEmployee)]
+    [InlineData(Roles.DepartmentHead)]
+    [InlineData(Roles.GeneralManager)]
+    [InlineData(Roles.ChairmanCeo)]
+    [InlineData(Roles.ReportingUser)]
+    [InlineData(Roles.SystemAdministrator)]
+    public void CanReopen_AgreesWithTheServersOwnRoleRule_ForEveryApprovedRole(string role)
+    {
+        // The UI gate and the server's role gate are the same decision, taken
+        // from the same set: no Razor page may carry its own list.
+        var serverWouldAllow =
+            TicketRoleSets.Reopen.Contains(role) || AuthorizationOverride.AppliesTo([role]);
+
+        Assert.Equal(serverWouldAllow, TicketActions.CanReopen([role]));
+    }
+
+    [Fact]
+    public void NoRazorPage_CarriesItsOwnReopenRoleList()
+    {
+        // Every Reopen affordance routes through TicketActions.CanReopen, so a
+        // role added to (or removed from) TicketRoleSets.Reopen moves the UI
+        // with it. A page naming a role inline would silently drift.
+        foreach (var page in new[] { "CustomerLookup.cshtml", "NewTicket.cshtml", "TicketDetails.cshtml", "TicketDetails.cshtml.cs", "CustomerProfile.cshtml.cs", "CustomerLookup.cshtml.cs" })
+        {
+            var source = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", page)));
+            var reopenLines = source.Split('\n').Where(l => l.Contains("Reopen", StringComparison.Ordinal));
+
+            foreach (var line in reopenLines)
+            {
+                Assert.DoesNotContain("CS Agent", line, StringComparison.Ordinal);
+                Assert.DoesNotContain("CS Supervisor", line, StringComparison.Ordinal);
+                Assert.DoesNotContain("CS Manager", line, StringComparison.Ordinal);
+                Assert.DoesNotContain("Roles.Cs", line, StringComparison.Ordinal);
+            }
+        }
+    }
 
     [Fact]
     public async Task ViewerCanReopen_IsFalseForADepartmentEmployee_SoNoReopenControlRenders()

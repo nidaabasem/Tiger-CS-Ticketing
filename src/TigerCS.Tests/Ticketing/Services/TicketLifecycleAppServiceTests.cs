@@ -538,16 +538,37 @@ public class TicketLifecycleAppServiceTests
     // -- Authorization --
 
     [Theory]
+    [InlineData(Roles.CsAgent)]
     [InlineData(Roles.CsSupervisor)]
     [InlineData(Roles.CsManager)]
+    public async Task ReopenAsync_ByAnyCsLayerRole_Succeeds(string role)
+    {
+        // The final approved rule: Reopen is the CS layer, not the Agent
+        // alone. All three are cross-department for View, so the resource
+        // half passes for them without a department assignment.
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new FakeTimeProvider(now));
+        var (ticket, _) = await SeedClosedTicketAsync(f, closedAtUtc: now.AddDays(-1));
+
+        var result = await f.Service.ReopenAsync(Guid.NewGuid(), [role], ticket.TicketId, ReopenRequest());
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Equal(1, ticket.ReopenCount);
+    }
+
+    [Theory]
     [InlineData(Roles.DepartmentEmployee)]
     [InlineData(Roles.DepartmentHead)]
     [InlineData(Roles.GeneralManager)]
+    [InlineData(Roles.ChairmanCeo)]
     [InlineData(Roles.ReportingUser)]
-    public async Task ReopenAsync_ByAnyRoleOtherThanAgent_ReturnsForbidden_NoStateChange(string role)
+    public async Task ReopenAsync_ByAnyNonCsRole_ReturnsForbidden_NoStateChange(string role)
     {
-        // Supervisor and CS Manager are here on purpose: they still hold
-        // Close, and the approved rule no longer lets that imply Reopen.
+        // Department Head and General Manager are here on purpose: neither
+        // holds direct Reopen under the final rule, whatever else they may do
+        // with the ticket. The caller is the ticket's own owner, so this is
+        // the role gate refusing them, not the resource gate.
         var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
         var f = CreateService(new FakeTimeProvider(now));
         var (ticket, owner) = await SeedClosedTicketAsync(f, closedAtUtc: now.AddDays(-1));
@@ -559,6 +580,20 @@ public class TicketLifecycleAppServiceTests
         Assert.Equal(0, ticket.ReopenCount);
         Assert.True(Assert.Single(f.Resolutions.Added).IsCurrent);
         Assert.Equal(0, f.UnitOfWork.TransactionsBegun);
+    }
+
+    [Fact]
+    public void ReopenRoleSet_IsTheCsLayer_AndNamesNoOtherRole()
+    {
+        // One source of truth for both the endpoint and the UI control — this
+        // asserts its exact contents so a widening goes through this test.
+        Assert.Equal(
+            new[] { Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager }.Order(),
+            TicketRoleSets.Reopen.Order());
+
+        // System Administrator is deliberately NOT a member: ADR-0024's
+        // central override is what authorizes it (asserted below).
+        Assert.DoesNotContain(Roles.SystemAdministrator, TicketRoleSets.Reopen);
     }
 
     [Fact]
@@ -1103,7 +1138,7 @@ public class TicketLifecycleAppServiceTests
         var (ticket, _) = await SeedClosedTicketAsync(f, closedAtUtc: now.AddDays(-1));
 
         // Rejected on every ground the rule defines: nothing is queued.
-        await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.CsSupervisor], ticket.TicketId, ReopenRequest());
+        await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.DepartmentHead], ticket.TicketId, ReopenRequest());
         await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, ReopenRequest(reason: "  "));
         await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, ReopenRequest(targetDepartmentId: 999));
         Assert.Empty(f.Outbox.Committed);

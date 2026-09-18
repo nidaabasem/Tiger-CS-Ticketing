@@ -447,7 +447,7 @@ public class TicketsController(
         return ToActionResult(result);
     }
 
-    /// <summary>Reopen a closed ticket. CS Agent only.</summary>
+    /// <summary>Reopen a closed ticket. CS Agent, CS Supervisor or CS Manager (System Administrator through ADR-0024's override).</summary>
     /// <remarks>
     /// MVP-API-Contracts.md §3.11 / FR-RES-04, as approved: Reopen is a
     /// domain event, not a status value. A <b>Closed</b> ticket that was
@@ -470,8 +470,10 @@ public class TicketsController(
     /// <para>
     /// Only allowed within ISSUE-011's reopen window (7 days from CLOSURE,
     /// configurable); past it, create a new linked ticket instead.
-    /// Authorization is the CS Agent role plus the caller's own access to the
-    /// ticket. The action is audited with the actor, the prior and new status,
+    /// Authorization is the CS-layer role set — CS Agent, CS Supervisor,
+    /// CS Manager (<c>TicketRoleSets.Reopen</c>), plus System Administrator
+    /// through ADR-0024 — together with the caller's own access to the
+    /// ticket. Every other role receives 403. The action is audited with the actor, the prior and new status,
     /// both departments, both owners and the caller's reason, and appears in
     /// the ticket's lifecycle history.
     /// </para>
@@ -479,12 +481,14 @@ public class TicketsController(
     /// <param name="ticketId">The ticket to reopen.</param>
     /// <param name="request">Why the ticket is being reopened, which department takes it on, and the ticket's current rowVersion.</param>
     /// <response code="200">The reopened ticket, back InProgress.</response>
+    /// <response code="403">The caller is not CS-layer, or has no access to this ticket.</response>
     /// <response code="400">The request body was malformed, Reason was missing/blank or too long, or TargetDepartmentId was missing.</response>
     /// <response code="404">No such ticket, or the target department does not exist or is inactive.</response>
     /// <response code="409">rowVersion did not match — another request (possibly a concurrent reopen) already modified this ticket. Reload it and retry.</response>
     /// <response code="422">The ticket is not Closed, was closed as Cancelled/Rejected/Duplicate, its request type forbids reopening, or the reopen window has passed.</response>
     [ProducesResponseType<TicketDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
