@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Seed;
@@ -212,13 +213,17 @@ public class WorkflowReferenceDataSeedTests
 
         var departmentIdsByCode = await db.Departments.ToDictionaryAsync(d => d.Code, d => d.DepartmentId);
         var requirements = await db.RequestTypeApprovalRequirements.ToListAsync();
-        Assert.Equal(2, requirements.Count);
+
+        // The source document's two, plus one ReopenApproval per
+        // Reopen-permitting request type (asserted in its own test below).
+        var documentRequirements = requirements.Where(r => r.ApprovalType != ApprovalType.ReopenApproval).ToList();
+        Assert.Equal(2, documentRequirements.Count);
 
         // Collections / Send Receipts depends on Accounting Approval —
         // targeted at the provisionally seeded Accounting department.
         var sendReceipts = await db.RequestTypes.SingleAsync(
             r => r.Name == "Send Receipts" && r.DepartmentId == departmentIdsByCode[WorkflowReferenceData.CollectionsCode]);
-        var accounting = requirements.Single(r => r.RequestTypeId == sendReceipts.RequestTypeId);
+        var accounting = documentRequirements.Single(r => r.RequestTypeId == sendReceipts.RequestTypeId);
         Assert.Equal(ApprovalType.AccountingApproval, accounting.ApprovalType);
         Assert.Equal(ApprovalTargetKind.Department, accounting.TargetKind);
         Assert.Equal(departmentIdsByCode[WorkflowReferenceData.AccountingCode], accounting.TargetDepartmentId);
@@ -228,7 +233,7 @@ public class WorkflowReferenceDataSeedTests
         // target, provisional until business names the exact CS role.
         var handover = await db.RequestTypes.SingleAsync(
             r => r.Name == "Handover Request" && r.DepartmentId == departmentIdsByCode[WorkflowReferenceData.HandoverCode]);
-        var csApproval = requirements.Single(r => r.RequestTypeId == handover.RequestTypeId);
+        var csApproval = documentRequirements.Single(r => r.RequestTypeId == handover.RequestTypeId);
         Assert.Equal(ApprovalType.CustomerServiceApproval, csApproval.ApprovalType);
         Assert.Equal(ApprovalTargetKind.Role, csApproval.TargetKind);
         Assert.Equal(WorkflowReferenceData.ProvisionalCustomerServiceApproverRole, csApproval.TargetRoleName);
@@ -239,7 +244,75 @@ public class WorkflowReferenceDataSeedTests
             .Where(r => r.DepartmentId == departmentIdsByCode[WorkflowReferenceData.RegistrationCode])
             .Select(r => r.RequestTypeId)
             .ToListAsync();
-        Assert.DoesNotContain(requirements, r => registrationTypeIds.Contains(r.RequestTypeId));
+        Assert.DoesNotContain(documentRequirements, r => registrationTypeIds.Contains(r.RequestTypeId));
+    }
+
+    [Fact]
+    public async Task Reopen_approval_is_seeded_for_every_reopen_permitting_request_type_targeting_cs_manager()
+    {
+        // The approved business rule as a predicate, not a list: whatever
+        // supports Reopen supports asking for one.
+        await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+
+        var reopenPermitting = await db.RequestTypes.Where(r => r.AllowReopen).ToListAsync();
+        var reopenApprovals = await db.RequestTypeApprovalRequirements
+            .Where(r => r.ApprovalType == ApprovalType.ReopenApproval)
+            .ToListAsync();
+
+        Assert.NotEmpty(reopenPermitting);
+        Assert.Equal(
+            reopenPermitting.Select(r => r.RequestTypeId).Order(),
+            reopenApprovals.Select(r => r.RequestTypeId).Order());
+
+        foreach (var requirement in reopenApprovals)
+        {
+            Assert.Equal(ApprovalTargetKind.Role, requirement.TargetKind);
+            Assert.Equal(Roles.CsManager, requirement.TargetRoleName);
+            Assert.Equal(WorkflowReferenceData.ReopenApprovalApproverRole, requirement.TargetRoleName);
+            Assert.Null(requirement.TargetDepartmentId);
+            Assert.Null(requirement.TargetEmployeeId);
+            Assert.True(requirement.IsActive);
+
+            // A Closed ticket has no work in flight for the request to block.
+            Assert.False(requirement.BlocksWorkUntilApproved);
+        }
+
+        // A request type that forbids Reopen gets none.
+        var nonReopenable = await db.RequestTypes.Where(r => !r.AllowReopen).Select(r => r.RequestTypeId).ToListAsync();
+        Assert.DoesNotContain(reopenApprovals, r => nonReopenable.Contains(r.RequestTypeId));
+    }
+
+    [Fact]
+    public async Task Reopen_approval_is_additive_leaving_the_existing_requirements_untouched()
+    {
+        // Send Receipts and Handover Request must end up with TWO independent
+        // requirements — the document's, unchanged, plus Reopen Approval.
+        await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+        var departmentIdsByCode = await db.Departments.ToDictionaryAsync(d => d.Code, d => d.DepartmentId);
+
+        foreach (var (departmentCode, name, existingType, blocksWork) in new[]
+                 {
+                     (WorkflowReferenceData.CollectionsCode, "Send Receipts", ApprovalType.AccountingApproval, true),
+                     (WorkflowReferenceData.HandoverCode, "Handover Request", ApprovalType.CustomerServiceApproval, true)
+                 })
+        {
+            var requestType = await db.RequestTypes.SingleAsync(
+                r => r.Name == name && r.DepartmentId == departmentIdsByCode[departmentCode]);
+            var requirements = await db.RequestTypeApprovalRequirements
+                .Where(r => r.RequestTypeId == requestType.RequestTypeId)
+                .ToListAsync();
+
+            Assert.Equal(2, requirements.Count);
+
+            var existing = Assert.Single(requirements, r => r.ApprovalType == existingType);
+            Assert.Equal(blocksWork, existing.BlocksWorkUntilApproved);
+            Assert.True(existing.IsActive);
+
+            var reopen = Assert.Single(requirements, r => r.ApprovalType == ApprovalType.ReopenApproval);
+            Assert.Equal(ApprovalTargetKind.Role, reopen.TargetKind);
+            Assert.Equal(Roles.CsManager, reopen.TargetRoleName);
+            Assert.False(reopen.BlocksWorkUntilApproved);
+        }
     }
 
     [Fact]

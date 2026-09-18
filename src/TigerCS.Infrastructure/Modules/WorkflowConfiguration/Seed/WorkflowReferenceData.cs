@@ -286,14 +286,58 @@ public static class WorkflowReferenceData
     /// decision, and re-pointing this row resolves it); Handover Request
     /// depends on Customer Service approval (target:
     /// <see cref="ProvisionalCustomerServiceApproverRole"/>). Registration
-    /// deliberately gets NO approval requirement — the source defines none,
-    /// only the PrerequisitesCompleted trigger.
+    /// deliberately gets NO approval requirement from the source document —
+    /// it defines none, only the PrerequisitesCompleted trigger.
+    ///
+    /// <para>
+    /// <b>Reopen Approval is separate and rule-driven</b>, added for every
+    /// request type whose <c>AllowReopen</c> is true (the approved business
+    /// decision: whatever supports Reopen supports asking for one), targeting
+    /// <see cref="ReopenApprovalApproverRole"/>. It is additive — Send
+    /// Receipts and Handover Request keep their existing requirement and gain
+    /// this as an independent second one, which the unique key
+    /// (RequestTypeId, ApprovalType) allows by design.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>This reaches new databases only.</b> <see cref="SeedAsync"/> skips
+    /// the whole block once <c>RequestTypeApprovalRequirements</c> holds any
+    /// row, so an existing environment is updated by the deployment script
+    /// <c>ConfigureReopenApprovalRequirements.sql</c> instead — never by
+    /// re-running the seed.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<(string DepartmentCode, string RequestTypeName, ApprovalType ApprovalType)> ApprovalRequirements() =>
     [
         (CollectionsCode, "Send Receipts", ApprovalType.AccountingApproval),
-        (HandoverCode, "Handover Request", ApprovalType.CustomerServiceApproval)
+        (HandoverCode, "Handover Request", ApprovalType.CustomerServiceApproval),
+
+        // Reopen Approval on every request type that permits Reopen —
+        // DERIVED from the request types themselves rather than a second
+        // list of names, so a request type added (or its AllowReopen
+        // flipped) above cannot leave this out of step. The approved
+        // business rule is exactly this predicate: whatever supports Reopen
+        // supports asking for one.
+        .. RequestTypes()
+            .Where(r => r.AllowReopen)
+            .Select(r => (r.DepartmentCode, r.Name, ApprovalType.ReopenApproval))
     ];
+
+    /// <summary>
+    /// Who decides a <see cref="ApprovalType.ReopenApproval"/> — the approved
+    /// business decision, CS Manager. Unlike
+    /// <see cref="ProvisionalCustomerServiceApproverRole"/> this is not
+    /// provisional; it is still a configuration edit if it ever changes.
+    /// </summary>
+    public const string ReopenApprovalApproverRole = Roles.CsManager;
+
+    /// <summary>
+    /// A Reopen Approval never blocks work: it is raised against a
+    /// <b>Closed</b> ticket, so there is no work in flight for it to hold up
+    /// — unlike Accounting/Customer Service approval, which the SLA document
+    /// sequences work behind.
+    /// </summary>
+    public const bool ReopenApprovalBlocksWork = false;
 
     /// <summary>
     /// Seeds templates, departments, request types, SLA rows, and department
@@ -398,6 +442,9 @@ public static class WorkflowReferenceData
                         requestType.RequestTypeId, approvalType, departmentIdsByCode[AccountingCode]),
                     ApprovalType.CustomerServiceApproval => RequestTypeApprovalRequirement.ForRole(
                         requestType.RequestTypeId, approvalType, ProvisionalCustomerServiceApproverRole),
+                    ApprovalType.ReopenApproval => RequestTypeApprovalRequirement.ForRole(
+                        requestType.RequestTypeId, approvalType, ReopenApprovalApproverRole,
+                        blocksWorkUntilApproved: ReopenApprovalBlocksWork),
                     _ => throw new InvalidOperationException($"Unseeded approval type {approvalType}.")
                 });
             }

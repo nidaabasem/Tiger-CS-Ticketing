@@ -763,3 +763,88 @@ jobs:
           export PATH="$PATH:$HOME/.dotnet/tools"
           dotnet ef migrations has-pending-model-changes \
             --project TigerCS.Infrastructure --startup-project TigerCS.Infrastructure
+
+      - name: Validate ConfigureReopenApprovalRequirements.sql against real SQL Server
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          DB=TigerCsTicketing_CI_Script
+          run_sql() { sqlcmd -S localhost,1433 -U sa -P "$SA_PASSWORD" -C -b -I -d "$DB" "$@"; }
+          scalar() { run_sql -h -1 -W -Q "SET NOCOUNT ON; $1" | tr -d '[:space:]'; }
+
+          # The deployment script configures DATA, so it needs rows to act on.
+          # This fixture is deliberately adversarial rather than a happy path:
+          # one eligible request type, one INACTIVE, one with AllowReopen = 0,
+          # and one that already carries an AccountingApproval — so the run
+          # proves what the script must NOT touch as well as what it must add.
+          run_sql -Q "
+            SET XACT_ABORT ON;
+            INSERT INTO [Departments] ([Name],[Code],[IsActive]) VALUES (N'CI Collections', N'CICOL', 1);
+            DECLARE @dept int = SCOPE_IDENTITY();
+            IF NOT EXISTS (SELECT 1 FROM [Priorities] WHERE [PriorityId] = 3)
+                INSERT INTO [Priorities] ([PriorityId],[Name],[DisplayOrder]) VALUES (3, N'Medium', 3);
+            INSERT INTO [Workflows] ([Code],[Name],[Description],[IsActive],[CreatedAtUtc])
+                VALUES (N'CIWF', N'CI Workflow', NULL, 1, SYSUTCDATETIME());
+            DECLARE @wf int = SCOPE_IDENTITY();
+            INSERT INTO [RequestTypes]
+              ([DepartmentId],[Name],[WorkflowId],[DefaultPriorityId],[AllowAgentPriorityChange],
+               [AllowPendingCustomer],[AllowPendingInternal],[AllowReopen],[RequiredFieldsJson],[IsActive])
+            VALUES
+              (@dept, N'CI Eligible',        @wf, 3, 0, 0, 0, 1, NULL, 1),
+              (@dept, N'CI Also Eligible',   @wf, 3, 0, 0, 0, 1, NULL, 1),
+              (@dept, N'CI Inactive',        @wf, 3, 0, 0, 0, 1, NULL, 0),
+              (@dept, N'CI No Reopen',       @wf, 3, 0, 0, 0, 0, NULL, 1),
+              (@dept, N'CI Has Accounting',  @wf, 3, 0, 0, 0, 1, NULL, 1);
+            INSERT INTO [RequestTypeApprovalRequirements]
+              ([RequestTypeId],[ApprovalType],[TargetKind],[TargetDepartmentId],[TargetRoleName],
+               [TargetEmployeeId],[BlocksWorkUntilApproved],[IsActive])
+            SELECT [RequestTypeId], 1, 1, @dept, NULL, NULL, 1, 1
+            FROM [RequestTypes] WHERE [Name] = N'CI Has Accounting';
+            IF NOT EXISTS (SELECT 1 FROM [AspNetRoles] WHERE [Name] = N'CS Manager')
+                INSERT INTO [AspNetRoles] ([Id],[Name],[NormalizedName],[ConcurrencyStamp])
+                VALUES (NEWID(), N'CS Manager', N'CS MANAGER', NEWID());
+          "
+
+          echo "::group::First run"
+          run_sql -i ConfigureReopenApprovalRequirements.sql
+          echo "::endgroup::"
+
+          after_first=$(scalar "SELECT COUNT(*) FROM [RequestTypeApprovalRequirements] WHERE [ApprovalType] = 3;")
+          echo "ReopenApproval rows after first run: $after_first"
+          # CI Eligible, CI Also Eligible, CI Has Accounting — and NOT the
+          # inactive one or the AllowReopen = 0 one.
+          if [ "$after_first" != "3" ]; then
+            echo "::error::Expected 3 ReopenApproval rows after the first run, got '$after_first'."
+            exit 1
+          fi
+
+          echo "::group::Second run (idempotency)"
+          run_sql -i ConfigureReopenApprovalRequirements.sql
+          echo "::endgroup::"
+
+          after_second=$(scalar "SELECT COUNT(*) FROM [RequestTypeApprovalRequirements] WHERE [ApprovalType] = 3;")
+          if [ "$after_second" != "$after_first" ]; then
+            echo "::error::Script is not idempotent: $after_first rows after run 1, $after_second after run 2."
+            exit 1
+          fi
+
+          # Target shape is exactly the approved configuration.
+          wrong=$(scalar "SELECT COUNT(*) FROM [RequestTypeApprovalRequirements]
+                          WHERE [ApprovalType] = 3
+                            AND NOT ([TargetKind] = 2 AND [TargetRoleName] = N'CS Manager'
+                                     AND [TargetDepartmentId] IS NULL AND [TargetEmployeeId] IS NULL
+                                     AND [BlocksWorkUntilApproved] = 0 AND [IsActive] = 1);")
+          if [ "$wrong" != "0" ]; then
+            echo "::error::$wrong ReopenApproval row(s) do not match Role -> CS Manager, BlocksWork = 0, Active."
+            exit 1
+          fi
+
+          # The pre-existing AccountingApproval must be byte-for-byte untouched.
+          untouched=$(scalar "SELECT COUNT(*) FROM [RequestTypeApprovalRequirements]
+                              WHERE [ApprovalType] = 1 AND [TargetKind] = 1
+                                AND [BlocksWorkUntilApproved] = 1 AND [IsActive] = 1;")
+          if [ "$untouched" != "1" ]; then
+            echo "::error::The pre-existing AccountingApproval requirement was modified (expected 1 unchanged row, got '$untouched')."
+            exit 1
+          fi
+
+          echo "ConfigureReopenApprovalRequirements.sql: applied, idempotent on re-run, correct target, existing approvals untouched."
