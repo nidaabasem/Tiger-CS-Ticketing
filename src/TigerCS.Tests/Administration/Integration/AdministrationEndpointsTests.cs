@@ -256,6 +256,20 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
             new SaveApprovalRequirementRequestDto(ApprovalTargetKind.Department, accounting, null, null)));
         Assert.Equal(ApprovalType.AccountingApproval, Assert.Single(approval.ApprovalRequirements).ApprovalType);
 
+        // ReopenApproval is configurable here — this is the runtime
+        // configuration mechanism, and it accepts every defined type. Being
+        // absent from the Workflow Designer's step dropdown does not make a
+        // type unconfigurable; the two answer different questions.
+        var reopenApproval = await ReadAsync<AdminRequestTypeDetailDto>(await admin.PutAsJsonAsync(
+            $"/api/admin/request-types/{created.RequestTypeId}/approval-requirements/ReopenApproval",
+            new SaveApprovalRequirementRequestDto(ApprovalTargetKind.Role, null, Roles.CsManager, null)));
+        var reopenRequirement = Assert.Single(
+            reopenApproval.ApprovalRequirements, r => r.ApprovalType == ApprovalType.ReopenApproval);
+        Assert.Equal(ApprovalTargetKind.Role, reopenRequirement.TargetKind);
+        Assert.Equal(Roles.CsManager, reopenRequirement.TargetRoleName);
+        Assert.Equal("Reopen Approval", reopenRequirement.ApprovalTypeLabel);
+        Assert.Equal(2, reopenApproval.ApprovalRequirements.Count);
+
         var sla = await ReadAsync<AdminRequestTypeDetailDto>(await admin.PutAsJsonAsync(
             $"/api/admin/request-types/{created.RequestTypeId}/sla-policies/{(byte)PriorityLevel.Medium}",
             new SaveSlaPolicyRequestDto(SlaTriggerType.ApprovalReceived, SlaDurationUnit.Days, null, null, 1, null, false, null, null, null, null)));
@@ -321,12 +335,18 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         var catalog = await ReadAsync<WorkflowDesignerCatalogDto>(await admin.GetAsync("/api/admin/workflows/catalog"));
         Assert.Contains(catalog.StepKinds, k => k.Kind == WorkflowStepKind.WaitingForApproval && k.RequiresApprovalType);
 
-        // Every controlled approval type, and nothing outside the enum —
-        // derived rather than a fixed count, so adding a type (ReopenApproval
-        // was the first) does not make this assertion stale.
+        // The designer offers exactly the workflow-step-eligible types —
+        // derived from ApprovalTypeRules rather than a fixed count, so adding
+        // a type does not make this assertion stale.
         Assert.Equal(
-            Enum.GetValues<ApprovalType>().Order(),
+            ApprovalTypeRules.WorkflowStepEligible.Order(),
             catalog.ApprovalTypes.Select(a => a.ApprovalType).Order());
+
+        // Concretely: the two forward-flow approvals are offered, and the
+        // post-closure request type is not.
+        Assert.Contains(catalog.ApprovalTypes, a => a.ApprovalType == ApprovalType.AccountingApproval);
+        Assert.Contains(catalog.ApprovalTypes, a => a.ApprovalType == ApprovalType.CustomerServiceApproval);
+        Assert.DoesNotContain(catalog.ApprovalTypes, a => a.ApprovalType == ApprovalType.ReopenApproval);
 
         // Create → Draft V1 skeleton.
         var created = await ReadAsync<AdminWorkflowDetailDto>(await admin.PostAsJsonAsync("/api/admin/workflows",

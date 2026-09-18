@@ -14,6 +14,7 @@ using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -270,6 +271,21 @@ public sealed class AdministrationRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task WorkflowDesigner_ApprovalTypeDropdown_OffersTheForwardFlowApprovalsOnly()
+    {
+        // A Reopen Approval is raised against a ticket that has already
+        // reached the terminal step, so it can never be a stage the ticket
+        // passes through — the designer must not offer a step no ticket can
+        // occupy. Accounting and Customer Service approvals are unaffected.
+        var draft = await Ok(await GetAsync("/Admin/Workflows/Versions/2"));
+
+        Assert.Contains("Accounting Approval", draft, StringComparison.Ordinal);
+        Assert.Contains("Customer Service Approval", draft, StringComparison.Ordinal);
+        Assert.DoesNotContain("Reopen Approval", draft, StringComparison.Ordinal);
+        Assert.DoesNotContain(nameof(ApprovalType.ReopenApproval), draft, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task WorkflowVersion_DrawsTheStepsAsATimeline_WithApprovalsMarked()
     {
         var draft = await Ok(await GetAsync("/Admin/Workflows/Versions/2"));
@@ -505,7 +521,10 @@ public sealed class AdministrationRenderTests : IDisposable
                 new(WorkflowStepKind.Resolved, "Resolved", "The work is done.", false, false, false, false),
                 new(WorkflowStepKind.Closed, "Closed", "The ticket is closed.", false, false, false, true)
             ],
-            [new(ApprovalType.AccountingApproval, "Accounting Approval"), new(ApprovalType.CustomerServiceApproval, "Customer Service Approval")]);
+            // The real catalog, not a transcription of it — so the designer's
+            // dropdown is rendered from exactly what the Api would serve, and
+            // a type excluded by ApprovalTypeRules is genuinely absent here.
+            AdminWorkflowAppService.Catalog().ApprovalTypes);
 
         private static List<AdminChannelDto> Channels(bool includeInactive) =>
             includeInactive

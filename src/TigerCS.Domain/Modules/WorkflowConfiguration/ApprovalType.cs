@@ -41,6 +41,56 @@ public enum ApprovalType : byte
 }
 
 /// <summary>
+/// Where each approval type may legitimately be used. One policy, read by
+/// every surface that offers or accepts an approval type, so the Workflow
+/// Designer and the domain can never disagree about what a workflow step may
+/// carry.
+///
+/// <para>
+/// <b>Why this exists rather than a list typed into Razor.</b> Two different
+/// questions were being answered by the same enum: "which approvals can a
+/// request type require?" (all of them) and "which approvals can a
+/// <see cref="WorkflowStepKind.WaitingForApproval"/> step represent?" (only
+/// the ones that are a stage of the ticket's forward flow). Naming the
+/// eligible types in a view would freeze the answer in the UI and drift the
+/// moment a type is added; expressing it as a rule here keeps the two
+/// questions distinguishable and the answer in one place.
+/// </para>
+/// </summary>
+public static class ApprovalTypeRules
+{
+    /// <summary>
+    /// Whether <paramref name="type"/> may be attached to a
+    /// <see cref="WorkflowStepKind.WaitingForApproval"/> step.
+    ///
+    /// <para>
+    /// <see cref="ApprovalType.ReopenApproval"/> is the one exclusion, and it
+    /// is excluded by what it is rather than by name-checking a list: it is a
+    /// <b>post-closure action request</b>, raised against a ticket that has
+    /// already reached the workflow's terminal step, so it can never be a
+    /// stage the ticket passes through on its way there. A designer offering
+    /// it would be offering a step that no ticket can ever occupy.
+    /// </para>
+    ///
+    /// <para>
+    /// This is an eligibility rule for <i>workflow steps only</i>. It says
+    /// nothing about <see cref="RequestTypeApprovalRequirement"/>, which is
+    /// the runtime configuration mechanism and accepts every defined type —
+    /// including ReopenApproval, which is configured exactly that way.
+    /// </para>
+    /// </summary>
+    public static bool IsWorkflowStepEligible(ApprovalType type) => type is not ApprovalType.ReopenApproval;
+
+    /// <summary>
+    /// The approval types a workflow step may carry, in enum order — the
+    /// Workflow Designer's dropdown, derived rather than transcribed, so a
+    /// type added later appears (or is excluded) by the rule above alone.
+    /// </summary>
+    public static IReadOnlyList<ApprovalType> WorkflowStepEligible { get; } =
+        [.. Enum.GetValues<ApprovalType>().Where(IsWorkflowStepEligible)];
+}
+
+/// <summary>
 /// How an approval's authorized approver is expressed — configuration,
 /// never a hard-coded employee name. Deliberately covers the three shapes
 /// the business may settle on, so Accounting's still-provisional status

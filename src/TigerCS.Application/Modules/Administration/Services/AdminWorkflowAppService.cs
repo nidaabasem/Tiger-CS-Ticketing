@@ -27,7 +27,11 @@ public sealed class AdminWorkflowAppService(
         WorkflowStepKinds.All
             .Select(k => new WorkflowStepKindDto(k.Kind, k.Label, k.Description, k.RequiresApprovalType, k.SupportsOutcomeBranches, k.IsStart, k.IsTerminal))
             .ToList(),
-        Enum.GetValues<ApprovalType>().Select(t => new ApprovalTypeOptionDto(t, ApprovalTypeLabels.Label(t))).ToList());
+        // Only the types a workflow step may carry (ApprovalTypeRules) — not
+        // every defined type. ReopenApproval is configured on a request type,
+        // never as a stage of the forward flow.
+        ApprovalTypeRules.WorkflowStepEligible
+            .Select(t => new ApprovalTypeOptionDto(t, ApprovalTypeLabels.Label(t))).ToList());
 
     public async Task<IReadOnlyList<AdminWorkflowSummaryDto>> ListAsync(bool includeInactive, CancellationToken cancellationToken = default)
     {

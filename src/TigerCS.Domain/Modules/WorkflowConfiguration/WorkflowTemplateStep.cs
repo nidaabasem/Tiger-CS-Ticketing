@@ -74,6 +74,16 @@ public class WorkflowTemplateStep
             throw new ArgumentException($"ApprovalType {type} is not a defined approval type.", nameof(approvalType));
         }
 
+        // The designer does not offer it, and the domain does not accept it
+        // either — otherwise the exclusion would hold only for callers who
+        // came through the dropdown.
+        if (approvalType is { } stepType && !ApprovalTypeRules.IsWorkflowStepEligible(stepType))
+        {
+            throw new WorkflowStepConfigurationException(
+                $"Step '{name}' cannot carry {stepType} — it is a post-closure action request, not a stage of the workflow. "
+                + "Configure it as an approval requirement on the request type instead.");
+        }
+
         var info = WorkflowStepKinds.Describe(kind);
         if (approvalType is not null && !info.RequiresApprovalType)
         {

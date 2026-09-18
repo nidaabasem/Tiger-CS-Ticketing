@@ -166,4 +166,55 @@ public class WorkflowConfigurationEntityInvariantTests
         var supervisor = new DepartmentWorkflowSettings(1, true, true, true, Roles.CsSupervisor);
         Assert.Equal(Roles.CsSupervisor, supervisor.HeadRoleName);
     }
+
+    // ---- ApprovalTypeRules: where each approval type may be used ----
+
+    [Fact]
+    public void ApprovalTypeRules_admit_the_forward_flow_approvals_to_workflow_steps()
+    {
+        Assert.True(ApprovalTypeRules.IsWorkflowStepEligible(ApprovalType.AccountingApproval));
+        Assert.True(ApprovalTypeRules.IsWorkflowStepEligible(ApprovalType.CustomerServiceApproval));
+        Assert.Contains(ApprovalType.AccountingApproval, ApprovalTypeRules.WorkflowStepEligible);
+        Assert.Contains(ApprovalType.CustomerServiceApproval, ApprovalTypeRules.WorkflowStepEligible);
+    }
+
+    [Fact]
+    public void ApprovalTypeRules_exclude_reopen_approval_from_workflow_steps_only()
+    {
+        // A post-closure action request is not a stage of the forward flow...
+        Assert.False(ApprovalTypeRules.IsWorkflowStepEligible(ApprovalType.ReopenApproval));
+        Assert.DoesNotContain(ApprovalType.ReopenApproval, ApprovalTypeRules.WorkflowStepEligible);
+
+        // ...but it is still a defined type, configurable as a request type's
+        // approval requirement, which is a different question entirely.
+        Assert.Contains(ApprovalType.ReopenApproval, Enum.GetValues<ApprovalType>());
+        var requirement = RequestTypeApprovalRequirement.ForRole(1, ApprovalType.ReopenApproval, Roles.CsManager);
+        Assert.Equal(ApprovalType.ReopenApproval, requirement.ApprovalType);
+        Assert.Equal(Roles.CsManager, requirement.TargetRoleName);
+    }
+
+    [Fact]
+    public void ApprovalTypeRules_eligible_list_is_derived_from_the_rule_not_transcribed()
+    {
+        Assert.Equal(
+            Enum.GetValues<ApprovalType>().Where(ApprovalTypeRules.IsWorkflowStepEligible),
+            ApprovalTypeRules.WorkflowStepEligible);
+    }
+
+    [Fact]
+    public void WorkflowStep_refuses_reopen_approval_so_the_dropdown_is_not_the_only_guard()
+    {
+        var draft = new WorkflowTemplate(
+            workflowId: 1, versionNumber: 1, "REOPENSTEP", "Reopen Step Draft", null,
+            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: true,
+            DateTime.UtcNow, createdByEmployeeId: null);
+
+        var refused = Assert.Throws<WorkflowStepConfigurationException>(() =>
+            draft.AppendStep("Reopen Approval", WorkflowStepKind.WaitingForApproval, approvalType: ApprovalType.ReopenApproval));
+        Assert.Contains("post-closure action request", refused.Message, StringComparison.Ordinal);
+
+        // The forward-flow approvals still configure exactly as before.
+        draft.AppendStep("Accounting Approval", WorkflowStepKind.WaitingForApproval, approvalType: ApprovalType.AccountingApproval);
+        Assert.Equal(ApprovalType.AccountingApproval, Assert.Single(draft.Steps).ApprovalType);
+    }
 }
