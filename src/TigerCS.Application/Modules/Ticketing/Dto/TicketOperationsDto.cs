@@ -120,7 +120,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="OriginatingChannelId">The channel the ticket ENTERED the system on (its originating interaction's channel) — never changed by later interactions on other channels; null for tickets predating the interaction model. Populated on detail reads.</param>
 /// <param name="OriginatingChannelName">The originating channel's display name, resolved from channel configuration — still shown for a channel that has since been deactivated. Populated on detail reads.</param>
 /// <param name="IsClassified">False while the ticket has no Category yet — an inquiry captured before anyone read the request. The UI shows "Unclassified" and offers the classify action rather than rendering a missing category.</param>
-/// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Resolved/Closed and within the ISSUE-011 window. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen. Populated on detail reads; false on write responses.</param>
+/// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Closed, closed as Resolved, and within the ISSUE-011 window measured from closure. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen AND the caller's access to the ticket. Populated on detail reads; false on write responses.</param>
+/// <param name="ClosedAtUtc">When the ticket reached Closed, in UTC, read from lifecycle history — the moment the reopen window is measured from. Null while the ticket is not closed. Populated on detail reads.</param>
 public sealed record TicketDetailDto(
     long TicketId,
     string TicketNumber,
@@ -155,6 +156,7 @@ public sealed record TicketDetailDto(
     string? ExternalUnitId = null,
     DateTime? ResolvedAtUtc = null,
     bool IsReopenEligible = false,
+    DateTime? ClosedAtUtc = null,
     int? RequestTypeId = null,
     string? RequestTypeName = null,
     int? WorkflowTemplateId = null,
@@ -215,11 +217,20 @@ public enum TicketMutationOutcome
     NotYetResolved,
     DuplicateChainNotAllowed,
 
-    /// <summary>FR-RES-04: Reopen is only valid from Resolved or Closed.</summary>
+    /// <summary>FR-RES-04 (approved rule): Reopen is only valid from Closed — never from Resolved or an actively-worked status.</summary>
     NotEligibleForReopen,
+
+    /// <summary>Approved rule: the ticket was closed as Cancelled, Rejected or Duplicate — terminal dispositions that are never reopened.</summary>
+    ResolutionOutcomeNotReopenable,
 
     /// <summary>ISSUE-011/BR-020: the reopen window has passed — create a new linked ticket instead.</summary>
     ReopenWindowExpired,
+
+    /// <summary>Approved rule: Reopen requires a reason, enforced in the application service so no caller can bypass it by not going through the controller.</summary>
+    ReopenReasonRequired,
+
+    /// <summary>Approved rule: Reopen requires the department that takes the reopened work on.</summary>
+    TargetDepartmentRequired,
 
     /// <summary>Reconciliation-specific: the session's raw unit context doesn't match the ticket's originating raw unit number.</summary>
     ReconciliationUnitMismatch,
@@ -282,10 +293,11 @@ public sealed record ResolveTicketRequestDto(
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
 public sealed record CloseTicketRequestDto(byte[] RowVersion);
 
-/// <summary>Reopen a resolved/closed ticket (MVP-API-Contracts.md §3.11, FR-RES-04).</summary>
-/// <param name="Reason">Required. Why the ticket is being reopened — recorded on the status-history row.</param>
-/// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
-public sealed record ReopenTicketRequestDto(string Reason, byte[] RowVersion);
+/// <summary>Reopen a closed ticket (MVP-API-Contracts.md §3.11, FR-RES-04).</summary>
+/// <param name="Reason">Required. Why the ticket is being reopened — recorded on the status-history row, on the Reopened workflow event Ticket Details renders, and in the audit trail. Enforced by the application service, not only by model validation.</param>
+/// <param name="TargetDepartmentId">Required. The department that takes responsibility for the reopened work. Must exist and be active; may be the ticket's current department. The previous owner is cleared either way and the existing assignment automation re-runs against this department.</param>
+/// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409 — including when a concurrent reopen already won the race.</param>
+public sealed record ReopenTicketRequestDto(string Reason, int TargetDepartmentId, byte[] RowVersion);
 
 // ---- Notes (MVP-API-Contracts.md §4.1/§4.2) ----
 

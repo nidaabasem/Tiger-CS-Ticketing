@@ -20,9 +20,10 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// Core ticket lifecycle: status change (§3.7), resolve (§3.9), close
 /// (§3.10) — three deliberately distinct operations, per ISSUE-022's
 /// approved Resolve/Department-Employee vs. Close/CS-layer split — and, as
-/// of the Customer Workspace phase, reopen (§3.11, FR-RES-04): the CS-layer
-/// exit from Resolved/Closed back to InProgress, within ISSUE-011's
-/// configurable window (<see cref="ReopenPolicy"/>), archiving — never
+/// of the Customer Workspace phase, reopen (§3.11, FR-RES-04): the Agent's
+/// exit from Closed back to InProgress, within ISSUE-011's configurable
+/// window (<see cref="ReopenPolicy"/>), re-routing the ticket to a chosen
+/// department and opening a new Resolution SLA cycle, while archiving — never
 /// deleting — the prior resolution.
 /// </summary>
 public sealed class TicketLifecycleAppService(
@@ -38,8 +39,16 @@ public sealed class TicketLifecycleAppService(
     ITicketPendingRecordRepository pendingRecordRepository,
     IRequestTypeRepository requestTypeRepository,
     IWorkflowTemplateRepository workflowTemplateRepository,
-    IOutboxWriter outboxWriter)
+    IOutboxWriter outboxWriter,
+    IDepartmentRepository departmentRepository,
+    IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository,
+    ITicketWorkflowEventRepository workflowEventRepository,
+    TicketAutoAssignmentService autoAssignmentService,
+    SlaDueDateService slaDueDateService)
 {
+    /// <summary>Matches the <c>TicketStatusHistory.Note</c> column, so a long reason is never lost to a database truncation error mid-transaction.</summary>
+    public const int ReopenReasonMaxLength = 1000;
+
     public async Task<TicketMutationResult> ChangeStatusAsync(
         Guid callerEmployeeId,
         IReadOnlyCollection<string> callerRoles,
@@ -391,23 +400,41 @@ public sealed class TicketLifecycleAppService(
     }
 
     /// <summary>
-    /// Reopen (MVP-API-Contracts.md §3.11, FR-RES-04). Follows
-    /// <see cref="CloseAsync"/>'s shape exactly: role gate → pre-transaction
-    /// eligibility guards → RowVersion → one transaction carrying the domain
-    /// transition, the archived resolution, the status-history row (with the
-    /// caller's reason as its note), and the audit entry, all under one
-    /// correlation id. The window check (ISSUE-011 — <see cref="ReopenPolicy"/>,
-    /// 7 days configurable, measured from the current resolution's
-    /// ResolvedAtUtc) runs here, not in the domain: the domain owns the
-    /// status rule, the service owns the clock/config-dependent business
-    /// rule, same division as every other lifecycle guard above.
+    /// Reopen (MVP-API-Contracts.md §3.11, FR-RES-04), implementing the
+    /// approved business rule. A <b>Closed</b> ticket — and only a Closed one,
+    /// closed as Resolved — returns to InProgress in a department the
+    /// reopening agent names, unowned, with a fresh Resolution SLA cycle.
     ///
     /// <para>
-    /// No new SLA period is opened on reopen — MVP-API-Contracts.md §3.11
-    /// flags "reopen restarts the resolution SLA clock" as an explicit
-    /// business-rule <c>[ASSUMPTION]</c>, not a requirement, so the sticky
-    /// SlaState and the closed SLA instance are left untouched until that
-    /// rule is actually decided.
+    /// <b>Authorization is two-part.</b> The role gate is CS Agent
+    /// (<see cref="TicketRoleSets.Reopen"/>) — Supervisor and CS Manager no
+    /// longer qualify merely by holding Close — and it is followed by a
+    /// resource-level check that the caller could see this ticket at all
+    /// (<see cref="TicketVisibilityRule"/>), so enumerating ticket ids reaches
+    /// nothing the agent was not already entitled to. Both run through
+    /// <see cref="AuthorizationGate"/>, so ADR-0024's System Administrator
+    /// override applies as it does to every other operation.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Concurrency is checked before eligibility</b>, deliberately
+    /// inverting the order this method used to run in. Two agents reopening at
+    /// once both hold the pre-reopen RowVersion; the loser used to find the
+    /// ticket already InProgress and be told "not eligible for reopen", which
+    /// is true but misleading — nothing is wrong with the ticket, their copy
+    /// is stale. Comparing the token first answers that race with the
+    /// concurrency conflict it actually is, and the optimistic check at
+    /// SaveChanges still covers the narrower window between this read and the
+    /// commit. Either way the second request writes nothing: no second cycle,
+    /// no second event, no second email.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Everything commits together</b> — the domain transition, the
+    /// archived resolution, the new SLA cycle, the re-run of the existing
+    /// assignment automation, the lifecycle history, the typed Reopened event
+    /// Ticket Details renders, the audit entries and the customer-email Outbox
+    /// row — under one correlation id, or nothing does.
     /// </para>
     /// </summary>
     public async Task<TicketMutationResult> ReopenAsync(
@@ -417,78 +444,215 @@ public sealed class TicketLifecycleAppService(
         ReopenTicketRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+
         var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
         if (ticket is null)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
         }
 
-        // ISSUE-022: Reopen is CS-layer, cross-department — same authority
-        // shape as Close (TicketRoleSets.Reopen), with the ADR-0024 System
-        // Administrator override applied by the gate, never inline.
+        // Approved rule: the Agent reopens. The role set is consulted through
+        // the gate, never inline, so the ADR-0024 override stays in one place.
         if (!AuthorizationGate.Evaluate(callerRoles, () => callerRoles.Any(TicketRoleSets.Reopen.Contains)))
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
         }
 
-        if (ticket.TicketStatus is not (TicketStatus.Resolved or TicketStatus.Closed))
+        // ...and the resource-level half: an agent may only reopen a ticket
+        // they have access to under the existing visibility rules.
+        if (!await TicketVisibilityRule.CanViewDepartmentAsync(
+                userDepartmentAssignmentRepository, callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.Forbidden);
+        }
+
+        // Required input, enforced HERE rather than only in model validation:
+        // the controller is not the only possible caller, and a reopen with no
+        // recorded why is exactly what the approved rule set out to prevent.
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ReopenReasonRequired);
+        }
+
+        if (request.TargetDepartmentId <= 0)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TargetDepartmentRequired);
+        }
+
+        // See this method's remarks: a stale token is a concurrency conflict,
+        // and answering it as one has to happen before the state-based checks
+        // that a winning concurrent reopen would otherwise trip.
+        if (!ticket.RowVersion.SequenceEqual(request.RowVersion))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
+
+        if (ticket.TicketStatus is not TicketStatus.Closed)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
         }
 
+        if (ticket.ResolutionOutcome != (byte)ResolutionOutcome.Resolved)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ResolutionOutcomeNotReopenable);
+        }
+
         // Workflow/Automation phase 2 — a request type may switch Reopen off
         // entirely. This gate only ever narrows: where reopen stays allowed
-        // (or the ticket has no request type), the existing ReopenPolicy
-        // below remains the final enforcement point, exactly as before.
+        // (or the ticket has no request type), the rules below remain the
+        // final enforcement point, exactly as before.
         var capabilities = await ResolveCapabilitiesAsync(ticket, cancellationToken);
         if (capabilities is { CanReopen: false })
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.NotAllowedForRequestType);
         }
 
-        // A Resolved/Closed ticket always has a current resolution; a
-        // missing one would be data damage — treated as not eligible rather
-        // than crashing, since there is no outcome to archive.
+        // ISSUE-011's window, measured from the moment the ticket was CLOSED —
+        // read from the lifecycle history Close itself wrote, because a Closed
+        // ticket carries no closure timestamp column and the resolution
+        // timestamp is a different (earlier) moment. A Closed ticket with no
+        // such row is data damage: treated as not eligible rather than
+        // silently substituting some other timestamp.
+        var closedAt = await statusHistoryRepository.GetLatestTransitionIntoAsync(
+            ticketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Closed, cancellationToken);
+        if (closedAt is null)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
+        }
+
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (!reopenPolicy.IsWithinWindow(closedAt.OccurredAtUtc, now))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ReopenWindowExpired);
+        }
+
+        // A Closed ticket always has a current resolution; a missing one would
+        // be data damage — treated as not eligible rather than crashing, since
+        // there is no outcome to archive.
         var currentResolution = await ticketResolutionRepository.GetCurrentAsync(ticketId, cancellationToken);
         if (currentResolution is null)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
         }
 
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        if (!reopenPolicy.IsWithinWindow(currentResolution.ResolvedAtUtc, now))
+        // Routing validation, reusing Transfer's existing department rules
+        // rather than inventing a second set (TicketAssignmentAppService.TransferAsync).
+        var targetDepartment = await departmentRepository.GetByIdAsync(request.TargetDepartmentId, cancellationToken);
+        if (targetDepartment is null || !targetDepartment.IsActive)
         {
-            return TicketMutationResult.Failure(TicketMutationOutcome.ReopenWindowExpired);
+            return TicketMutationResult.Failure(TicketMutationOutcome.TargetDepartmentInactive);
+        }
+
+        // ...including the source department's own narrowing setting, but only
+        // where the reopen actually moves the ticket out of it. Reopening into
+        // the same department is not a transfer, so it is neither blocked by
+        // that setting nor rejected as AlreadyInTargetDepartment: naming the
+        // closing department is a legitimate reopen, and the owner is cleared
+        // and the automation re-run either way.
+        if (request.TargetDepartmentId != ticket.CurrentDepartmentId)
+        {
+            var sourceSettings = await departmentWorkflowSettingsRepository.GetByDepartmentIdAsync(
+                ticket.CurrentDepartmentId, cancellationToken);
+            if (sourceSettings is { AllowTransferToOtherDepartments: false })
+            {
+                return TicketMutationResult.Failure(TicketMutationOutcome.DisabledByDepartmentSettings);
+            }
         }
 
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
-        var oldStatus = ticket.TicketStatus;
+        var previousStatus = ticket.TicketStatus;
+        var previousDepartmentId = ticket.CurrentDepartmentId;
+        var previousOwnerEmployeeId = ticket.CurrentOwnerEmployeeId;
+        var previousSlaState = ticket.SlaState;
+        var reason = Truncate(request.Reason.Trim(), ReopenReasonMaxLength);
+
+        var correlationId = Guid.NewGuid();
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
         try
         {
-            ticket.Reopen();
+            ticket.Reopen(request.TargetDepartmentId);
         }
         catch (TicketNotEligibleForReopenException)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForReopen);
         }
+        catch (TicketResolutionOutcomeNotReopenableException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ResolutionOutcomeNotReopenable);
+        }
 
+        ticket.RestartSlaClockForReopen();
         currentResolution.Archive();
 
-        var correlationId = Guid.NewGuid();
+        // The new Resolution cycle, before the assignment automation so the
+        // deadline is available for the activity record below. First Response
+        // is carried across untouched — see SlaDueDateService.
+        var reopenCycle = await slaDueDateService.StartReopenResolutionCycleAsync(
+            ticket, now, callerEmployeeId, correlationId, cancellationToken);
+
+        // The ONE assignment engine, re-evaluated against the department that
+        // now owns the work — the same call Transfer makes, for the same
+        // reason. Every non-assignable case leaves the ticket in that
+        // department's queue, audited.
+        var assignment = await autoAssignmentService.ApplyAsync(
+            ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
+
+        // Lifecycle history: the status dimension, carrying the agent's reason
+        // as its note — the row Ticket Details now reads back through
+        // GET /api/tickets/{ticketId}/history.
         await statusHistoryRepository.AddAsync(
             new TicketStatusHistory(
-                ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.InProgress,
-                callerEmployeeId, actorIsSystem: false, note: request.Reason, correlationId, now),
+                ticketId, TicketStatusDimension.TicketStatus, (byte)previousStatus, (byte)TicketStatus.InProgress,
+                callerEmployeeId, actorIsSystem: false, note: reason, correlationId, now),
+            cancellationToken);
+
+        // ...and the SLA dimension, but only when the new cycle actually moved
+        // it (Met → Running). A breached clock stays breached, so no row.
+        if (ticket.SlaState != previousSlaState)
+        {
+            await statusHistoryRepository.AddAsync(
+                new TicketStatusHistory(
+                    ticketId, TicketStatusDimension.SlaState, (byte)previousSlaState, (byte)ticket.SlaState,
+                    callerEmployeeId, actorIsSystem: false,
+                    note: "New Resolution SLA cycle opened on reopen.", correlationId, now),
+                cancellationToken);
+        }
+
+        // The typed event, carrying the facts the reason alone cannot express —
+        // which department it moved between, where ownership landed, and the
+        // new deadline — so the Activity line reads in full without a new
+        // activity store. Formatting lives in one place (ReopenActivityFacts).
+        var facts = new ReopenActivityFacts(
+            previousDepartmentId,
+            ticket.CurrentDepartmentId,
+            previousOwnerEmployeeId,
+            ticket.CurrentOwnerEmployeeId,
+            reopenCycle?.ResolutionDueAtUtc,
+            ticket.ReopenCount);
+
+        await workflowEventRepository.AddAsync(
+            new TicketWorkflowEvent(
+                ticketId, WorkflowEventType.Reopened, now, callerEmployeeId,
+                ticketApprovalId: null, facts.Format(), correlationId),
             cancellationToken);
 
         await auditWriter.WriteAsync(
             callerEmployeeId, "Reopen", "Ticket", ticketId.ToString(),
-            beforeValue: $"{oldStatus};ResolutionOutcome={currentResolution.ResolutionOutcome}",
-            afterValue: $"{TicketStatus.InProgress};ReopenCount={ticket.ReopenCount}",
+            beforeValue:
+                $"{previousStatus};ResolutionOutcome={currentResolution.ResolutionOutcome}"
+                + $";DepartmentId={previousDepartmentId}"
+                + $";AssignedEmployeeId={previousOwnerEmployeeId?.ToString() ?? "DepartmentQueue"}",
+            afterValue:
+                $"{TicketStatus.InProgress};ReopenCount={ticket.ReopenCount}"
+                + $";DepartmentId={ticket.CurrentDepartmentId}"
+                + $";AssignedEmployeeId={ticket.CurrentOwnerEmployeeId?.ToString() ?? "DepartmentQueue"}"
+                + $";AutoAssignment={assignment.Outcome}"
+                + $";ResolutionSlaDueAtUtc={(reopenCycle is { } cycle ? cycle.ResolutionDueAtUtc.ToString("O") : "None")}"
+                + $";Reason={reason}",
             correlationId, cancellationToken);
 
         await EnqueueLifecycleEventAsync(
@@ -507,6 +671,9 @@ public sealed class TicketLifecycleAppService(
         await transaction.CommitAsync(cancellationToken);
         return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
     }
+
+    private static string Truncate(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength];
 
     /// <summary>
     /// The ticket's effective workflow capabilities, or null when the ticket

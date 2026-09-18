@@ -237,24 +237,40 @@ else
                         </form>
                     }
 
-                    @* Reopen (FR-RES-04): rendered only where the lifecycle
-                       allows it — the server-computed IsReopenEligible flag
-                       (Resolved/Closed, inside the reopen window) — and only
-                       for CS-layer roles; the Api still enforces both. *@
-                    @if (t.IsReopenEligible && TicketActions.CanReopen(Model.Viewer?.Roles))
+                    @* Reopen (FR-RES-04, approved rule): rendered only where
+                       the lifecycle allows it — the server-computed
+                       IsReopenEligible flag (Closed, closed as Resolved,
+                       inside the reopen window), which is why a Resolved
+                       ticket no longer offers it at all — and only for the
+                       Agent role; the Api still enforces both, plus the
+                       caller's access to this ticket, which the UI cannot see. *@
+                    @if (t.IsReopenEligible && Model.CanReopen)
                     {
                         <details class="disclosure" open="@(Model.OpenSection == "reopen" ? "open" : null)">
                             <summary class="btn @(isClosed ? "btn-gold btn-sm" : "btn-sm")">Reopen</summary>
                             <div class="disclosure__panel">
-                                <form method="post" asp-page-handler="Reopen" class="action-form">
-                                    <input type="hidden" asp-for="Reopen.RowVersionBase64" />
-                                    <div class="field-group">
-                                        <label class="field-label" asp-for="Reopen.Reason">Reason</label>
-                                        <textarea class="form-control" asp-for="Reopen.Reason" rows="2" required placeholder="Why is this ticket being reopened?"></textarea>
-                                        <span class="field-hint">Returns the ticket to In Progress. The current resolution is kept as history.</span>
-                                    </div>
-                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reopen ticket</button></div>
-                                </form>
+                                @if (Model.ReopenTargetsUnavailable)
+                                {
+                                    <p class="field-hint">The department directory could not be loaded, so this ticket cannot be reopened right now. Refresh and try again.</p>
+                                }
+                                else
+                                {
+                                    <form method="post" asp-page-handler="Reopen" class="action-form">
+                                        <input type="hidden" asp-for="Reopen.RowVersionBase64" />
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Reopen.TargetDepartmentId">Department</label>
+                                            <select class="form-control" asp-for="Reopen.TargetDepartmentId" required
+                                                    asp-items="@(new SelectList(Model.ReopenTargets, nameof(DepartmentDto.DepartmentId), nameof(DepartmentDto.Name)))"></select>
+                                            <span class="field-hint">Who takes this on. Keep the current department or hand it to another — either way the previous assignee is cleared and the ticket is re-assigned automatically, or waits in that department's queue.</span>
+                                        </div>
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Reopen.Reason">Reason</label>
+                                            <textarea class="form-control" asp-for="Reopen.Reason" rows="2" required placeholder="Why is this ticket being reopened?"></textarea>
+                                            <span class="field-hint">Returns the ticket to In Progress and starts a new Resolution SLA cycle; the first-response result and the current resolution are kept as history. The reason is shown in Activity.</span>
+                                        </div>
+                                        <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Reopen ticket</button></div>
+                                    </form>
+                                }
                             </div>
                         </details>
                     }
@@ -317,7 +333,7 @@ else
                                     <ol class="timeline">
                                         @foreach (var entry in Model.ActivityFeed.Take(3))
                                         {
-                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", _ => "icon-quiet" };
+                                            var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", _ => "icon-quiet" };
                                             <li class="timeline-item">
                                                 <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                                 <div class="timeline-row">
@@ -447,13 +463,17 @@ else
                                 <ol class="timeline">
                                     @foreach (var entry in Model.ActivityFeed)
                                     {
-                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", _ => "icon-quiet" };
+                                        var iconCss = entry.Kind switch { "escalation" => "icon-critical", "note" => "icon-info", "reopen" => "icon-warning", _ => "icon-quiet" };
                                         <li class="timeline-item">
                                             <span class="timeline-icon @iconCss"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="currentColor" /></svg></span>
                                             <div class="timeline-row">
                                                 <span class="timeline-text"><strong>@entry.Actor</strong> — @entry.Description</span>
                                                 <span class="timeline-time">@entry.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm")</span>
                                             </div>
+                                            @if (!string.IsNullOrEmpty(entry.Detail))
+                                            {
+                                                <div class="timeline-detail">@entry.Detail</div>
+                                            }
                                             @if (!string.IsNullOrEmpty(entry.Note))
                                             {
                                                 <div class="timeline-note @(entry.IsHuman ? "timeline-note--human" : "timeline-note--system")">@entry.Note</div>

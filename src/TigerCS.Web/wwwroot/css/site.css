@@ -662,6 +662,7 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 .timeline-icon.icon-critical { background: var(--color-critical-pale); border-color: var(--color-critical-line); color: var(--color-critical); }
 .timeline-icon.icon-info { background: var(--color-info-tint); border-color: var(--color-info-line); color: var(--color-info); }
 .timeline-icon.icon-quiet { background: var(--color-bg); border-color: var(--color-border); color: var(--color-text-secondary); }
+.timeline-icon.icon-warning { background: var(--color-warning-tint); border-color: var(--color-warning-line); color: var(--color-warning); }
 .timeline-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
 .timeline-text { font-size: 14px; }
 .timeline-text strong { font-weight: 600; }
@@ -671,6 +672,10 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 }
 .timeline-note--human { background: var(--color-note-bubble); border: 1px solid var(--color-border); }
 .timeline-note--system { color: var(--color-text-secondary); font-style: italic; }
+/* Already-resolved facts under a lifecycle entry (a reopen's department move,
+   where ownership landed, the new SLA deadline) — quieter than the entry, and
+   distinct from a note, which is something a person wrote. */
+.timeline-detail { margin-top: 4px; font-size: 13px; color: var(--color-text-secondary); }
 
 /* composer */
 

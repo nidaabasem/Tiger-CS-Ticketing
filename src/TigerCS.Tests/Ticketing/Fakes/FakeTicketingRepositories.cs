@@ -268,6 +268,15 @@ public sealed class FakeTicketRepository : ITicketRepository
     {
     }
 
+    /// <summary>
+    /// Moves the ticket's stored RowVersion, standing in for another request
+    /// having written to it. Needed since Reopen compares the caller's token
+    /// against the loaded ticket BEFORE its state checks, so a stale copy is
+    /// answered as the concurrency conflict it is rather than as ineligibility.
+    /// </summary>
+    public static void SetStoredRowVersion(Ticket ticket, byte[] rowVersion) =>
+        typeof(Ticket).GetProperty(nameof(Ticket.RowVersion))!.SetValue(ticket, rowVersion);
+
     /// <summary>How many times <see cref="SearchCustomerHistoryAsync"/> ran — the no-N+1 assertion for related-ticket/history reads (one scoped query per request, never one per row).</summary>
     public int SearchCustomerHistoryCallCount { get; private set; }
 
@@ -399,6 +408,35 @@ public sealed class FakeTicketStatusHistoryRepository : ITicketStatusHistoryRepo
         Added.Add(entry);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Mirrors the real repository's ordering — latest occurrence wins, ties
+    /// broken by insertion order — so a ticket closed, reopened and closed
+    /// again reports its latest closure here exactly as it would in SQL.
+    /// </summary>
+    public Task<TicketStatusHistory?> GetLatestTransitionIntoAsync(
+        long ticketId, TicketStatusDimension dimension, byte newValue, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Added
+            .Select((entry, index) => (entry, index))
+            .Where(x => x.entry.TicketId == ticketId && x.entry.Dimension == dimension && x.entry.NewValue == newValue)
+            .OrderByDescending(x => x.entry.OccurredAtUtc).ThenByDescending(x => x.index)
+            .Select(x => x.entry)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyDictionary<long, DateTime>> ListLatestTransitionMomentsAsync(
+        IReadOnlyCollection<long> ticketIds,
+        TicketStatusDimension dimension,
+        byte newValue,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<long, DateTime>>(Added
+            .Where(e => ticketIds.Contains(e.TicketId) && e.Dimension == dimension && e.NewValue == newValue)
+            .GroupBy(e => e.TicketId)
+            .ToDictionary(g => g.Key, g => g.Max(e => e.OccurredAtUtc)));
+
+    public Task<IReadOnlyList<TicketStatusHistory>> ListByTicketIdAsync(
+        long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketStatusHistory>>(
+            [.. Added.Where(e => e.TicketId == ticketId).OrderBy(e => e.OccurredAtUtc)]);
 }
 
 public sealed class FakeTicketAssignmentRepository : ITicketAssignmentRepository

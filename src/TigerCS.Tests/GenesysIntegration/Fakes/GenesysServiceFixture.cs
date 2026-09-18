@@ -153,7 +153,7 @@ public sealed class GenesysServiceFixture
 
         var ticketQuery = new TicketQueryAppService(
             Tickets, DepartmentAssignments, new FakeTicketResolutionRepository(),
-            ReopenPolicy.Default, TimeProvider.System);
+            new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, TimeProvider.System);
 
         InteractionQuery = new TicketInteractionQueryAppService(
             Tickets, Interactions, Conversations, Channels, Handoffs, ticketQuery);

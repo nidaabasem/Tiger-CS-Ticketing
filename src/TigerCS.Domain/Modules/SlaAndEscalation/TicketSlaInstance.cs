@@ -8,12 +8,15 @@ namespace TigerCS.Domain.Modules.SlaAndEscalation;
 ///
 /// <para>
 /// <b>Exactly one row per ticket has <see cref="PeriodEndAtUtc"/> null</b> —
-/// the current period (MVP-ERD.md §2.15). This increment only ever creates
-/// that first row (<see cref="SlaChangeReason.InitialCreation"/>); closing a
-/// period and opening a successor belongs to backlog S-14's priority
-/// upgrade. The filtered unique index in the EF configuration enforces the
-/// one-current-period invariant at the database, so it cannot be violated by
-/// a future code path either.
+/// the current period (MVP-ERD.md §2.15). Two code paths create rows: the
+/// initial period (<see cref="SlaChangeReason.InitialCreation"/>) and the
+/// approved Reopen rule's successor cycle
+/// (<see cref="SlaChangeReason.Reopen"/>), which ends the closed period
+/// first. Backlog S-14's priority upgrade will be the third. The filtered
+/// unique index in the EF configuration enforces the one-current-period
+/// invariant at the database, so it cannot be violated by a future code path
+/// either — which is exactly why <see cref="OpenReopenCycle"/> cannot be
+/// called without <see cref="EndPeriod"/> having run on the predecessor.
 /// </para>
 ///
 /// <para>
@@ -94,6 +97,76 @@ public class TicketSlaInstance
 
         return new TicketSlaInstance(
             ticketId, priorityId, clockStartAtUtc, firstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.InitialCreation);
+    }
+
+    /// <summary>
+    /// Opens the successor period the approved Reopen rule requires: a new
+    /// <b>Resolution</b> cycle starting at the reopen moment, while the First
+    /// Response clock is carried across untouched.
+    ///
+    /// <para>
+    /// <b>First Response never restarts.</b> Its due timestamp and its breach
+    /// flag are copied verbatim from the period being succeeded, so the
+    /// original first-response result survives every reopen: a target already
+    /// missed stays missed (the flag is carried, so the sweep never re-flags
+    /// it), and a target still pending keeps its original deadline rather than
+    /// being generously pushed out. That is why this factory — unlike
+    /// <see cref="OpenInitialPeriod"/> — does NOT require
+    /// <paramref name="carriedFirstResponseDueAtUtc"/> to fall on or after the
+    /// period start: for a reopened ticket that timestamp is deliberately
+    /// historical.
+    /// </para>
+    /// </summary>
+    /// <param name="ticketId">The ticket being reopened.</param>
+    /// <param name="priorityId">The priority the new cycle's policy is selected by.</param>
+    /// <param name="reopenedAtUtc">The reopen moment — this cycle's clock start.</param>
+    /// <param name="carriedFirstResponseDueAtUtc">The predecessor period's First Response deadline, copied unchanged.</param>
+    /// <param name="carriedFirstResponseBreached">The predecessor period's First Response breach flag, copied unchanged.</param>
+    /// <param name="resolutionDueAtUtc">The newly computed Resolution deadline for this cycle.</param>
+    public static TicketSlaInstance OpenReopenCycle(
+        long ticketId,
+        byte priorityId,
+        DateTime reopenedAtUtc,
+        DateTime carriedFirstResponseDueAtUtc,
+        bool carriedFirstResponseBreached,
+        DateTime resolutionDueAtUtc)
+    {
+        if (resolutionDueAtUtc < reopenedAtUtc)
+        {
+            throw new ArgumentException(
+                "ResolutionDueAtUtc cannot precede the reopen moment.", nameof(resolutionDueAtUtc));
+        }
+
+        return new TicketSlaInstance(
+            ticketId, priorityId, reopenedAtUtc, carriedFirstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.Reopen)
+        {
+            FirstResponseBreached = carriedFirstResponseBreached
+        };
+    }
+
+    /// <summary>
+    /// Ends this period at <paramref name="periodEndAtUtc"/>, making room for
+    /// a successor under the one-current-period invariant. One-way: an ended
+    /// period is history and is never reopened, never deleted, and never
+    /// re-flagged — its breach flags are frozen exactly as the sweep left
+    /// them, which is what keeps the original cycle honestly reportable
+    /// (ISSUE-023).
+    /// </summary>
+    public void EndPeriod(DateTime periodEndAtUtc)
+    {
+        if (PeriodEndAtUtc is not null)
+        {
+            throw new InvalidOperationException(
+                $"TicketSlaInstance {TicketSlaInstanceId} is already ended — an SLA period closes exactly once.");
+        }
+
+        if (periodEndAtUtc < PeriodStartAtUtc)
+        {
+            throw new ArgumentException(
+                "PeriodEndAtUtc cannot precede the period's own start.", nameof(periodEndAtUtc));
+        }
+
+        PeriodEndAtUtc = periodEndAtUtc;
     }
 
     public DateTime DueAtUtcFor(SlaDeadlineType deadlineType) => deadlineType switch

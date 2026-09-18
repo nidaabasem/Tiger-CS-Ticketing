@@ -32,7 +32,7 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
     {
         var assignments = new UserDepartmentAssignmentRepository(context);
         var queries = new TicketQueryAppService(
-            new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), ReopenPolicy.Default,
+            new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default,
             new DashboardSqliteFixture.FixedTimeProvider(Now));
         return new CustomerDirectoryAppService(new CustomerDirectoryRepository(context), queries);
     }

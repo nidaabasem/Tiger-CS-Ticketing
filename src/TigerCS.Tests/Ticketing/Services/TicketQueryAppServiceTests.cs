@@ -14,17 +14,19 @@ public class TicketQueryAppServiceTests
         TicketQueryAppService Service,
         FakeTicketRepository Tickets,
         FakeUserDepartmentAssignmentRepository DepartmentAssignments,
-        FakeTicketResolutionRepository Resolutions);
+        FakeTicketResolutionRepository Resolutions,
+        FakeTicketStatusHistoryRepository StatusHistory);
 
     private static Fixture CreateService(TimeProvider? timeProvider = null)
     {
         var tickets = new FakeTicketRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
         var resolutions = new FakeTicketResolutionRepository();
+        var statusHistory = new FakeTicketStatusHistoryRepository();
         return new Fixture(
             new TicketQueryAppService(
-                tickets, departmentAssignments, resolutions, ReopenPolicy.Default, timeProvider ?? TimeProvider.System),
-            tickets, departmentAssignments, resolutions);
+                tickets, departmentAssignments, resolutions, statusHistory, ReopenPolicy.Default, timeProvider ?? TimeProvider.System),
+            tickets, departmentAssignments, resolutions, statusHistory);
     }
 
     private static async Task<Ticket> SeedTicketAsync(FakeTicketRepository repo, int departmentId)
@@ -198,41 +200,85 @@ public class TicketQueryAppServiceTests
     // action enforces — lifecycle only, never a permission prediction.
     // ---------------------------------------------------------------
 
-    private async Task<Ticket> SeedResolvedTicketAsync(Fixture f, DateTime resolvedAtUtc, bool close = false)
+    private async Task<Ticket> SeedResolvedTicketAsync(
+        Fixture f,
+        DateTime resolvedAtUtc,
+        bool close = false,
+        DateTime? closedAtUtc = null,
+        ResolutionOutcome outcome = ResolutionOutcome.Resolved)
     {
         var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
         ticket.AssignTo(Guid.NewGuid());
         ticket.ChangeStatus(TicketStatus.InProgress);
-        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        long? duplicateOf = outcome == ResolutionOutcome.Duplicate ? ticket.TicketId + 1 : null;
+        ticket.Resolve(outcome, duplicateOf);
         await f.Resolutions.AddAsync(new TicketResolution(
-            ticket.TicketId, ResolutionOutcome.Resolved, "Fixed.", null, null, Guid.NewGuid(), resolvedAtUtc));
+            ticket.TicketId, outcome, "Fixed.", null, duplicateOf, Guid.NewGuid(), resolvedAtUtc));
         if (close)
         {
             ticket.Close();
+            // The lifecycle row the reopen window is measured from.
+            await f.StatusHistory.AddAsync(new TicketStatusHistory(
+                ticket.TicketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+                Guid.NewGuid(), actorIsSystem: false, note: null, Guid.NewGuid(), closedAtUtc ?? resolvedAtUtc));
         }
 
         return ticket;
     }
 
     [Fact]
-    public async Task GetDetailAsync_ResolvedWithinTheWindow_IsReopenEligible_AndCarriesResolvedAtUtc()
+    public async Task GetDetailAsync_ClosedWithinTheWindow_IsReopenEligible_AndCarriesBothTimestamps()
     {
         var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
         var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
-        var ticket = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-2), close: true);
+        var ticket = await SeedResolvedTicketAsync(
+            f, resolvedAtUtc: now.AddDays(-3), close: true, closedAtUtc: now.AddDays(-2));
 
         var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
 
         Assert.True(result.Response!.IsReopenEligible);
-        Assert.Equal(now.AddDays(-2), result.Response.ResolvedAtUtc);
+        Assert.Equal(now.AddDays(-3), result.Response.ResolvedAtUtc);
+        Assert.Equal(now.AddDays(-2), result.Response.ClosedAtUtc);
     }
 
     [Fact]
-    public async Task GetDetailAsync_ResolvedOutsideTheWindow_IsNotReopenEligible()
+    public async Task GetDetailAsync_ClosedOutsideTheWindow_IsNotReopenEligible()
     {
         var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
         var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
-        var ticket = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-8));
+        var ticket = await SeedResolvedTicketAsync(
+            f, resolvedAtUtc: now.AddDays(-10), close: true, closedAtUtc: now.AddDays(-8));
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.False(result.Response!.IsReopenEligible);
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_ResolvedButNotClosed_IsNotReopenEligible_UnderTheApprovedRule()
+    {
+        // The rule change the UI depends on: a Resolved ticket no longer
+        // offers Reopen, however recently it was resolved.
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var ticket = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddHours(-1));
+
+        var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.False(result.Response!.IsReopenEligible);
+        Assert.Null(result.Response.ClosedAtUtc);
+    }
+
+    [Theory]
+    [InlineData(ResolutionOutcome.Cancelled)]
+    [InlineData(ResolutionOutcome.Rejected)]
+    [InlineData(ResolutionOutcome.Duplicate)]
+    public async Task GetDetailAsync_ClosedOnATerminalOutcome_IsNotReopenEligible(ResolutionOutcome outcome)
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var ticket = await SeedResolvedTicketAsync(
+            f, resolvedAtUtc: now.AddDays(-1), close: true, outcome: outcome);
 
         var result = await f.Service.GetDetailAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
 
@@ -249,6 +295,32 @@ public class TicketQueryAppServiceTests
 
         Assert.False(result.Response!.IsReopenEligible);
         Assert.Null(result.Response.ResolvedAtUtc);
+        Assert.Null(result.Response.ClosedAtUtc);
+    }
+
+    [Fact]
+    public async Task GetLifecycleHistoryAsync_ServesTheAppendOnlyHistory_BehindTheSameVisibilityCheckAsTheDetail()
+    {
+        var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+        var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
+        var ticket = await SeedResolvedTicketAsync(f, resolvedAtUtc: now.AddDays(-2), close: true);
+        await f.StatusHistory.AddAsync(new TicketStatusHistory(
+            ticket.TicketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Closed, (byte)TicketStatus.InProgress,
+            Guid.NewGuid(), actorIsSystem: false, note: "Customer called back.", Guid.NewGuid(), now));
+
+        var visible = await f.Service.GetLifecycleHistoryAsync(Guid.NewGuid(), [Roles.CsManager], ticket.TicketId);
+
+        Assert.Equal(TicketQueryOutcome.Success, visible.Outcome);
+        var reopen = Assert.Single(visible.Response!.Entries, e => e.NewValue == nameof(TicketStatus.InProgress));
+        Assert.Equal(nameof(TicketStatus.Closed), reopen.OldValue);
+        Assert.Equal(nameof(TicketStatusDimension.TicketStatus), reopen.Dimension);
+        Assert.Equal("Customer called back.", reopen.Note);
+        Assert.False(reopen.ActorIsSystem);
+
+        // A department-scoped caller with no claim to this ticket sees nothing.
+        var hidden = await f.Service.GetLifecycleHistoryAsync(
+            Guid.NewGuid(), [Roles.DepartmentEmployee], ticket.TicketId);
+        Assert.Equal(TicketQueryOutcome.Forbidden, hidden.Outcome);
     }
 
     // ---- Channel Management: Ticket Details names the ORIGINATING channel,
@@ -261,7 +333,7 @@ public class TicketQueryAppServiceTests
         var interactions = new FakeTicketInteractionRepository();
         var channels = new FakeChannelRepository().SeedWellKnown();
         var service = new TicketQueryAppService(
-            tickets, new FakeUserDepartmentAssignmentRepository(), new FakeTicketResolutionRepository(), ReopenPolicy.Default, TimeProvider.System,
+            tickets, new FakeUserDepartmentAssignmentRepository(), new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, TimeProvider.System,
             interactionRepository: interactions, channelRepository: channels);
 
         var ticket = await SeedTicketAsync(tickets, 2);
@@ -285,7 +357,7 @@ public class TicketQueryAppServiceTests
     {
         var tickets = new FakeTicketRepository();
         var service = new TicketQueryAppService(
-            tickets, new FakeUserDepartmentAssignmentRepository(), new FakeTicketResolutionRepository(), ReopenPolicy.Default, TimeProvider.System,
+            tickets, new FakeUserDepartmentAssignmentRepository(), new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, TimeProvider.System,
             interactionRepository: new FakeTicketInteractionRepository(), channelRepository: new FakeChannelRepository().SeedWellKnown());
         var ticket = await SeedTicketAsync(tickets, 2);
 

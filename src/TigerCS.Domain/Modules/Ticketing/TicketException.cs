@@ -67,12 +67,27 @@ public sealed class TicketClosedException(long ticketId)
     public long TicketId { get; } = ticketId;
 }
 
-/// <summary>FR-RES-04 / MVP-API-Contracts.md §3.11: Reopen is only valid from Resolved or Closed — an actively-worked ticket has nothing to reopen.</summary>
+/// <summary>FR-RES-04 / MVP-API-Contracts.md §3.11: Reopen is only valid from Closed (approved business rule) — a Resolved or actively-worked ticket has nothing to reopen.</summary>
 public sealed class TicketNotEligibleForReopenException(long ticketId, TicketStatus actualStatus)
-    : TicketException($"Ticket {ticketId} cannot be reopened from TicketStatus {actualStatus}.")
+    : TicketException($"Ticket {ticketId} cannot be reopened from TicketStatus {actualStatus} — Reopen is only valid from Closed.")
 {
     public long TicketId { get; } = ticketId;
     public TicketStatus ActualStatus { get; } = actualStatus;
+}
+
+/// <summary>
+/// The approved Reopen rule covers work that was genuinely completed:
+/// Cancelled, Rejected and Duplicate are terminal dispositions, and a
+/// customer returning on one of those raises a new ticket instead.
+/// </summary>
+public sealed class TicketResolutionOutcomeNotReopenableException(long ticketId, byte? resolutionOutcome)
+    : TicketException(
+        $"Ticket {ticketId} was closed as "
+        + $"{(resolutionOutcome is { } o && Enum.IsDefined(typeof(ResolutionOutcome), o) ? ((ResolutionOutcome)o).ToString() : "an unknown outcome")}"
+        + " — only a ticket closed as Resolved may be reopened.")
+{
+    public long TicketId { get; } = ticketId;
+    public byte? ResolutionOutcome { get; } = resolutionOutcome;
 }
 
 /// <summary>
