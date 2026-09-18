@@ -101,7 +101,10 @@ public class TicketLifecycleNotificationHandlerTests
         var f = new NotificationServiceFixture();
         var ticket = await f.SeedVerifiedTicketAsync("ahmed@example.com", "TG-CS-20260822-0102");
         await f.ResolveAsync(ticket);
-        ticket.Reopen();
+        // Reopen is Closed-only under the approved rule, so the ticket has to
+        // be closed before there is anything to reopen.
+        ticket.Close();
+        ticket.Reopen(ticket.CurrentDepartmentId);
         var message = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketReopened, ticket.TicketId, reopenCount: ticket.ReopenCount);
 
         var result = await f.CreateReopenedHandler().HandleAsync(message);
@@ -158,7 +161,7 @@ public class TicketLifecycleNotificationHandlerTests
         var resolved = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketResolved, ticket.TicketId);
         ticket.Close();
         var closed = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketClosed, ticket.TicketId);
-        ticket.Reopen();
+        ticket.Reopen(ticket.CurrentDepartmentId);
         var reopened = f.EnqueueLifecycleEvent(OutboxEventTypes.TicketReopened, ticket.TicketId, ticket.ReopenCount);
 
         var results = new[]

@@ -129,7 +129,8 @@ public class CustomerLifecycleNotificationIntegrationTests : IClassFixture<Tiger
 
         var reopenResponse = await agent.PostAsJsonAsync(
             $"/api/tickets/{ticket.TicketId}/reopen",
-            new ReopenTicketRequestDto("Customer reports the fault is back.", Convert.FromBase64String(afterClose.RowVersion)));
+            new ReopenTicketRequestDto(
+                "Customer reports the fault is back.", ticket.CurrentDepartmentId, Convert.FromBase64String(afterClose.RowVersion)));
         Assert.Equal(HttpStatusCode.OK, reopenResponse.StatusCode);
 
         var result = await _factory.RunOutboxDispatchAsync();

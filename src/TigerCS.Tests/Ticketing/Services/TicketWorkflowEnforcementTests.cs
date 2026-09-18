@@ -43,11 +43,22 @@ public class TicketWorkflowEnforcementTests
         var workflowTemplates = new FakeWorkflowTemplateRepository();
 
         var sla = new SlaServiceFixture(tickets, resolutions, statusHistory, departmentAssignments, audit, unitOfWork);
+        var departments = new FakeDepartmentRepository();
+        var departmentSettings = new FakeDepartmentWorkflowSettingsRepository();
+
+        // The directory Reopen validates its target department against.
+        departments.AddDepartment("Customer Service", "CS");
+        departments.AddDepartment("Handover", "HO");
 
         var service = new TicketLifecycleAppService(
             tickets, resolutions, statusHistory, departmentAssignments, unitOfWork, audit, sla.BreachProcessor,
             timeProvider ?? TimeProvider.System, ReopenPolicy.Default,
-            pendingRecords, requestTypes, workflowTemplates, new Notifications.Fakes.FakeOutboxWriter());
+            pendingRecords, requestTypes, workflowTemplates, new Notifications.Fakes.FakeOutboxWriter(),
+            departments, departmentSettings, new FakeTicketWorkflowEventRepository(),
+            new TicketAutoAssignmentService(
+                new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, departmentAssignments,
+                new FakeTicketAssignmentRepository(), audit),
+            sla.DueDates);
 
         return new Fixture(
             service, tickets, resolutions, statusHistory, audit, unitOfWork, pendingRecords, requestTypes, workflowTemplates);
@@ -209,12 +220,21 @@ public class TicketWorkflowEnforcementTests
 
     // ---- Reopen: capability gate + existing ReopenPolicy stays final ----
 
-    private static async Task<Ticket> SeedResolvedClassifiedTicketAsync(Fixture f, bool allowReopen, DateTime resolvedAtUtc)
+    /// <summary>
+    /// A CLOSED classified ticket, with the lifecycle row the reopen window is
+    /// measured from written at <paramref name="closedAtUtc"/> — the approved
+    /// rule reopens from Closed only, and dates the window from closure.
+    /// </summary>
+    private static async Task<Ticket> SeedClosedClassifiedTicketAsync(Fixture f, bool allowReopen, DateTime closedAtUtc)
     {
         var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, true, true, allowReopen);
         ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
         await f.Resolutions.AddAsync(new TicketResolution(
-            ticket.TicketId, ResolutionOutcome.Resolved, "Issued.", null, null, owner, resolvedAtUtc));
+            ticket.TicketId, ResolutionOutcome.Resolved, "Issued.", null, null, owner, closedAtUtc));
+        ticket.Close();
+        await f.StatusHistory.AddAsync(new TicketStatusHistory(
+            ticket.TicketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+            owner, actorIsSystem: false, note: null, Guid.NewGuid(), closedAtUtc));
         return ticket;
     }
 
@@ -222,13 +242,14 @@ public class TicketWorkflowEnforcementTests
     public async Task RequestTypeDisablingReopen_RejectsReopen_EvenInsideTheWindow()
     {
         var f = CreateService();
-        var ticket = await SeedResolvedClassifiedTicketAsync(f, allowReopen: false, resolvedAtUtc: DateTime.UtcNow.AddDays(-1));
+        var ticket = await SeedClosedClassifiedTicketAsync(f, allowReopen: false, closedAtUtc: DateTime.UtcNow.AddDays(-1));
 
         var result = await f.Service.ReopenAsync(
-            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, new ReopenTicketRequestDto("Customer called back", []));
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId,
+            new ReopenTicketRequestDto("Customer called back", ticket.CurrentDepartmentId, []));
 
         Assert.Equal(TicketMutationOutcome.NotAllowedForRequestType, result.Outcome);
-        Assert.Equal(TicketStatus.Resolved, ticket.TicketStatus);
+        Assert.Equal(TicketStatus.Closed, ticket.TicketStatus);
     }
 
     [Fact]
@@ -238,15 +259,17 @@ public class TicketWorkflowEnforcementTests
 
         // Outside ISSUE-011's window: the capability allows reopen, but the
         // existing ReopenPolicy remains the final enforcement point.
-        var expired = await SeedResolvedClassifiedTicketAsync(f, allowReopen: true, resolvedAtUtc: DateTime.UtcNow.AddDays(-30));
+        var expired = await SeedClosedClassifiedTicketAsync(f, allowReopen: true, closedAtUtc: DateTime.UtcNow.AddDays(-30));
         var expiredResult = await f.Service.ReopenAsync(
-            Guid.NewGuid(), [Roles.CsAgent], expired.TicketId, new ReopenTicketRequestDto("Late request", []));
+            Guid.NewGuid(), [Roles.CsAgent], expired.TicketId,
+            new ReopenTicketRequestDto("Late request", expired.CurrentDepartmentId, []));
         Assert.Equal(TicketMutationOutcome.ReopenWindowExpired, expiredResult.Outcome);
 
         // Inside the window it succeeds exactly as before this phase.
-        var fresh = await SeedResolvedClassifiedTicketAsync(f, allowReopen: true, resolvedAtUtc: DateTime.UtcNow.AddDays(-1));
+        var fresh = await SeedClosedClassifiedTicketAsync(f, allowReopen: true, closedAtUtc: DateTime.UtcNow.AddDays(-1));
         var freshResult = await f.Service.ReopenAsync(
-            Guid.NewGuid(), [Roles.CsAgent], fresh.TicketId, new ReopenTicketRequestDto("Customer called back", []));
+            Guid.NewGuid(), [Roles.CsAgent], fresh.TicketId,
+            new ReopenTicketRequestDto("Customer called back", fresh.CurrentDepartmentId, []));
         Assert.Equal(TicketMutationOutcome.Success, freshResult.Outcome);
         Assert.Equal(TicketStatus.InProgress, fresh.TicketStatus);
     }

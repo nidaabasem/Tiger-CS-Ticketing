@@ -88,7 +88,7 @@ public sealed class DashboardSqliteFixture : IDisposable
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
         var tickets = new TicketRepository(context);
-        var queries = new TicketQueryAppService(tickets, assignments, new FakeTicketResolutionRepository(), ReopenPolicy.Default, time);
+        var queries = new TicketQueryAppService(tickets, assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time);
         return new DashboardAppService(tickets, queries, time, new DashboardQueryRepository(context), assignments);
     }
 
@@ -96,7 +96,7 @@ public sealed class DashboardSqliteFixture : IDisposable
     {
         var time = new FixedTimeProvider(nowUtc ?? Now);
         var assignments = new UserDepartmentAssignmentRepository(context);
-        return new TicketQueryAppService(new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), ReopenPolicy.Default, time);
+        return new TicketQueryAppService(new TicketRepository(context), assignments, new FakeTicketResolutionRepository(), new FakeTicketStatusHistoryRepository(), ReopenPolicy.Default, time);
     }
 
     private void SeedReferenceData(TigerCsDbContext context)

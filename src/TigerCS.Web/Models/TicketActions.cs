@@ -12,19 +12,23 @@ namespace TigerCS.Web.Models;
 public static class TicketActions
 {
     /// <summary>
-    /// Mirrors TicketRoleSets.Reopen (ISSUE-022: the CS layer reopens) plus
-    /// the System Administrator override — the roles for which a Reopen
-    /// control is worth showing at all. Lifecycle eligibility (Resolved/
-    /// Closed, within the reopen window) is the server-computed
-    /// IsReopenEligible flag, never re-derived here.
+    /// Reads the Api's own <see cref="TicketRoleSets.Reopen"/> — CS Agent
+    /// under the approved rule — rather than a local copy, plus the System
+    /// Administrator override (ADR-0024) the Api honors through its
+    /// AuthorizationGate. Lifecycle eligibility (Closed, closed as Resolved,
+    /// inside the reopen window) is the server-computed IsReopenEligible flag,
+    /// never re-derived here.
+    ///
+    /// <para>
+    /// Display only, and deliberately <i>narrower</i> than the server's rule:
+    /// the endpoint additionally requires the caller to have access to the
+    /// ticket, which this cannot see. A control shown here can still come back
+    /// 403, which is the correct direction for a UI check to be wrong in.
+    /// </para>
     /// </summary>
-    private static readonly string[] ReopenRoles =
-    [
-        Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager, Roles.SystemAdministrator
-    ];
-
     public static bool CanReopen(IReadOnlyCollection<string>? viewerRoles) =>
-        viewerRoles is not null && viewerRoles.Any(ReopenRoles.Contains);
+        viewerRoles is not null
+        && (viewerRoles.Any(TicketRoleSets.Reopen.Contains) || viewerRoles.Contains(Roles.SystemAdministrator));
 
     /// <summary>
     /// Whether a Transfer control — and the department picker inside it —

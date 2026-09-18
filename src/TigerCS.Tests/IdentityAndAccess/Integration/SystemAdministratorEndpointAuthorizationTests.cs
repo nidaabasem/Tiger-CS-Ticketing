@@ -970,13 +970,37 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
                 new ResolveTicketRequestDto("Resolved", "Fixed the AC unit.", null, null, RowVersionOf(inProgress!))))
             .Content.ReadFromJsonAsync<TicketDetailDto>();
 
+        // Approved rule: Reopen is Closed-only, so the administrator closes
+        // first — also through the override, since Close is CS-layer too.
+        var closed = await (await client.PostAsJsonAsync(
+                $"/api/tickets/{ticket.TicketId}/close", new CloseTicketRequestDto(RowVersionOf(resolved!))))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+
         var reopenResponse = await client.PostAsJsonAsync(
             $"/api/tickets/{ticket.TicketId}/reopen",
-            new ReopenTicketRequestDto("Customer called back — still not cooling.", RowVersionOf(resolved!)));
+            new ReopenTicketRequestDto(
+                "Customer called back — still not cooling.", ticket.CurrentDepartmentId, RowVersionOf(closed!)));
         Assert.Equal(HttpStatusCode.OK, reopenResponse.StatusCode);
         var reopened = await reopenResponse.Content.ReadFromJsonAsync<TicketDetailDto>();
         Assert.Equal("InProgress", reopened!.TicketStatus);
         Assert.Equal(1, reopened.ReopenCount);
+    }
+
+    [Fact]
+    public async Task GetTicketLifecycleHistory_Returns200()
+    {
+        // The lifecycle-history read is department-scoped like the detail read
+        // it sits beside, so the administrator reaches it purely through the
+        // ADR-0024 override — and it returns the rows the ticket's own
+        // lifecycle wrote, which is what Ticket Details renders Activity from.
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
+
+        var response = await client.GetAsync($"/api/tickets/{ticket.TicketId}/history");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var history = await response.Content.ReadFromJsonAsync<TicketLifecycleHistoryDto>();
+        Assert.NotNull(history);
     }
 
     [Fact]

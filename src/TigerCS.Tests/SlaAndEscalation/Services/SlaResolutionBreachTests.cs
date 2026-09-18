@@ -58,7 +58,15 @@ public class SlaResolutionBreachTests
             new Ticketing.Fakes.FakeTicketPendingRecordRepository(),
             new Ticketing.Fakes.FakeRequestTypeRepository(),
             new Ticketing.Fakes.FakeWorkflowTemplateRepository(),
-            new Notifications.Fakes.FakeOutboxWriter());
+            new Notifications.Fakes.FakeOutboxWriter(),
+            new IdentityAndAccess.Fakes.FakeDepartmentRepository(),
+            new Ticketing.Fakes.FakeDepartmentWorkflowSettingsRepository(),
+            new Ticketing.Fakes.FakeTicketWorkflowEventRepository(),
+            new TicketAutoAssignmentService(
+                new Ticketing.Fakes.FakeRequestTypeAssignmentRuleRepository(),
+                new Ticketing.Fakes.FakeDepartmentWorkflowSettingsRepository(),
+                sla.DepartmentAssignments, new Ticketing.Fakes.FakeTicketAssignmentRepository(), sla.Audit),
+            sla.DueDates);
 
         return new Harness(sla, service, ticket, ownerId);
     }

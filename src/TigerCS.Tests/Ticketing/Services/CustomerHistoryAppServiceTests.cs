@@ -21,7 +21,8 @@ public class CustomerHistoryAppServiceTests
         FakeTicketRepository Tickets,
         FakeIntakeRecordRepository IntakeRecords,
         FakeUserDepartmentAssignmentRepository DepartmentAssignments,
-        FakeTicketResolutionRepository Resolutions);
+        FakeTicketResolutionRepository Resolutions,
+        FakeTicketStatusHistoryRepository StatusHistory);
 
     private static Fixture CreateService(TimeProvider? timeProvider = null)
     {
@@ -29,13 +30,14 @@ public class CustomerHistoryAppServiceTests
         var intakeRecords = new FakeIntakeRecordRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
         var resolutions = new FakeTicketResolutionRepository();
+        var statusHistory = new FakeTicketStatusHistoryRepository();
         var clock = timeProvider ?? TimeProvider.System;
         var queryService = new TicketQueryAppService(
-            tickets, departmentAssignments, resolutions, ReopenPolicy.Default, clock);
+            tickets, departmentAssignments, resolutions, statusHistory, ReopenPolicy.Default, clock);
         return new Fixture(
             new CustomerHistoryAppService(
-                tickets, intakeRecords, resolutions, queryService, ReopenPolicy.Default, clock),
-            tickets, intakeRecords, departmentAssignments, resolutions);
+                tickets, intakeRecords, resolutions, statusHistory, queryService, ReopenPolicy.Default, clock),
+            tickets, intakeRecords, departmentAssignments, resolutions, statusHistory);
     }
 
     private static async Task<Ticket> SeedCrmBuyerTicketAsync(
@@ -369,30 +371,46 @@ public class CustomerHistoryAppServiceTests
     // ReopenPolicy that gates the Reopen action computes each row's flag.
     // ---------------------------------------------------------------
 
+    /// <summary>Drives a seeded ticket to Closed and records the lifecycle row the reopen window is measured from.</summary>
+    private static async Task CloseAsync(Fixture f, Ticket ticket, DateTime resolvedAtUtc, DateTime closedAtUtc, string note)
+    {
+        MoveToResolved(ticket);
+        await f.Resolutions.AddAsync(new TicketResolution(
+            ticket.TicketId, ResolutionOutcome.Resolved, note, null, null, Guid.NewGuid(), resolvedAtUtc));
+        ticket.Close();
+        await f.StatusHistory.AddAsync(new TicketStatusHistory(
+            ticket.TicketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+            Guid.NewGuid(), actorIsSystem: false, note: null, Guid.NewGuid(), closedAtUtc));
+    }
+
     [Fact]
-    public async Task History_StampsReopenEligibility_FromTheCurrentResolutionAndTheWindow()
+    public async Task History_StampsReopenEligibility_FromTheClosureMomentAndTheWindow()
     {
         var now = new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
         var f = CreateService(new Notifications.Fakes.FakeTimeProvider(now));
 
-        var recentlyResolved = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2508", now.AddDays(-10));
-        MoveToResolved(recentlyResolved);
-        await f.Resolutions.AddAsync(new TicketResolution(
-            recentlyResolved.TicketId, ResolutionOutcome.Resolved, "Fixed.", null, null, Guid.NewGuid(), now.AddDays(-2)));
+        var recentlyClosed = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2508", now.AddDays(-10));
+        await CloseAsync(f, recentlyClosed, now.AddDays(-3), now.AddDays(-2), "Fixed.");
 
-        var longResolved = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2608", now.AddDays(-40));
-        MoveToResolved(longResolved);
+        var longClosed = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2608", now.AddDays(-40));
+        await CloseAsync(f, longClosed, now.AddDays(-31), now.AddDays(-30), "Fixed long ago.");
+
+        // Resolved but never closed: not reopenable under the approved rule,
+        // however recent the resolution.
+        var resolvedOnly = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2709", now.AddDays(-5));
+        MoveToResolved(resolvedOnly);
         await f.Resolutions.AddAsync(new TicketResolution(
-            longResolved.TicketId, ResolutionOutcome.Resolved, "Fixed long ago.", null, null, Guid.NewGuid(), now.AddDays(-30)));
+            resolvedOnly.TicketId, ResolutionOutcome.Resolved, "Done.", null, null, Guid.NewGuid(), now.AddDays(-1)));
 
         var stillOpen = await SeedCrmBuyerTicketAsync(f.Tickets, 2, 493575, "2810", now.AddDays(-1));
 
         var result = await f.Service.GetByCrmCustomerIdAsync(Guid.NewGuid(), [Roles.CsManager], 493575, limit: 10);
 
-        Assert.True(result.Tickets.Single(t => t.TicketId == recentlyResolved.TicketId).IsReopenEligible);
-        Assert.False(result.Tickets.Single(t => t.TicketId == longResolved.TicketId).IsReopenEligible);
+        Assert.True(result.Tickets.Single(t => t.TicketId == recentlyClosed.TicketId).IsReopenEligible);
+        Assert.False(result.Tickets.Single(t => t.TicketId == longClosed.TicketId).IsReopenEligible);
+        Assert.False(result.Tickets.Single(t => t.TicketId == resolvedOnly.TicketId).IsReopenEligible);
         Assert.False(result.Tickets.Single(t => t.TicketId == stillOpen.TicketId).IsReopenEligible);
-        Assert.Equal(now.AddDays(-2), result.Tickets.Single(t => t.TicketId == recentlyResolved.TicketId).ResolvedAtUtc);
+        Assert.Equal(now.AddDays(-3), result.Tickets.Single(t => t.TicketId == recentlyClosed.TicketId).ResolvedAtUtc);
     }
 
     [Fact]

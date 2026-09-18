@@ -37,9 +37,10 @@ public class UnclassifiedTicketPriorityTests
         var tickets = new FakeTicketRepository();
         var departmentAssignments = new FakeUserDepartmentAssignmentRepository();
         var resolutions = new FakeTicketResolutionRepository();
+        var statusHistory = new FakeTicketStatusHistoryRepository();
         tickets.Resolutions = resolutions;
         var queries = new TicketQueryAppService(
-            tickets, departmentAssignments, resolutions, ReopenPolicy.Default, TimeProvider.System);
+            tickets, departmentAssignments, resolutions, statusHistory, ReopenPolicy.Default, TimeProvider.System);
         return new Fixture(
             queries, new DashboardAppService(tickets, queries, TimeProvider.System, new FakeDashboardQueryRepository(), departmentAssignments),
             tickets, departmentAssignments, resolutions);
