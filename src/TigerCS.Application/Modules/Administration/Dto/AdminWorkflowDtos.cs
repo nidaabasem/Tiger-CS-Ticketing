@@ -113,6 +113,7 @@ public static class ApprovalTypeLabels
     {
         ApprovalType.AccountingApproval => "Accounting Approval",
         ApprovalType.CustomerServiceApproval => "Customer Service Approval",
+        ApprovalType.ReopenApproval => "Reopen Approval",
         _ => type.ToString()
     };
 }

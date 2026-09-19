@@ -87,12 +87,32 @@ public static class TicketRoleSets
     public static readonly IReadOnlyCollection<string> Close = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
 
     /// <summary>
-    /// Reopen: <b>CS Agent only</b> — the approved business rule names the
-    /// Agent as the reopening actor, superseding ISSUE-022's earlier
-    /// Agent/Supervisor/CS Manager reading. CS Supervisor and CS Manager are
-    /// deliberately absent: they hold Close above, but holding Close no
-    /// longer implies holding Reopen, which is precisely why this was always
-    /// a distinct set rather than an alias of <see cref="Close"/>.
+    /// Reopen: <b>the CS layer — CS Agent, CS Supervisor, CS Manager</b>,
+    /// per the final approved rule. This restores Supervisor and CS Manager,
+    /// who were briefly excluded while the rule read "the Agent reopens";
+    /// management has confirmed the reopening authority is the CS layer as a
+    /// whole. It is still deliberately <i>not</i> an alias of
+    /// <see cref="Close"/> — the two sets happen to coincide today, and the
+    /// separation is what lets either move without dragging the other with
+    /// it (ISSUE-022's Resolve/Close split is the standing example).
+    ///
+    /// <para>
+    /// <b>System Administrator is absent here and authorized anyway</b>,
+    /// through ADR-0024's central override, exactly as this class's own
+    /// summary describes. It is not listed locally: doing so would be the
+    /// per-call-site duplication that ADR-0024 rules out, and would lose the
+    /// distinction between what the permission matrix grants and what the
+    /// override grants on top of it.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Every other role is refused</b> — Department Employee, Department
+    /// Head, General Manager, Chairman/CEO and Reporting User hold no direct
+    /// Reopen, neither the action nor the endpoint. The system has no Reopen
+    /// approval workflow for them to route through (the configured approval
+    /// types are Accounting and Customer Service approval only), so for those
+    /// roles a reopen is a request made to CS, not a capability.
+    /// </para>
     ///
     /// <para>
     /// <b>Role membership alone is not authorization for Reopen.</b> Unlike
@@ -100,9 +120,9 @@ public static class TicketRoleSets
     /// additionally requires the caller to have access to the ticket itself
     /// under the existing visibility rules (<see cref="CrossDepartmentView"/>
     /// or department membership, via <c>TicketQueryAppService</c>'s own
-    /// check) — the resource-level half of the decision, so an agent can only
+    /// check) — the resource-level half of the decision, so a CS user can only
     /// reopen a ticket they were entitled to see in the first place.
     /// </para>
     /// </summary>
-    public static readonly IReadOnlyCollection<string> Reopen = [Roles.CsAgent];
+    public static readonly IReadOnlyCollection<string> Reopen = [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager];
 }
