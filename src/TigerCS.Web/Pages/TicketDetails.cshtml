@@ -95,6 +95,13 @@ else
                 <div class="ticket-header__actions">
                     @if (!isClosed)
                     {
+                        @* Every control in this block is gated on the SAME rule its
+                           endpoint enforces (TicketActions, reading the Api's own
+                           TicketRoleSets/SlaRoleSets plus the ticket's owner and
+                           department). !isClosed is lifecycle, not permission, and
+                           stays as the outer condition. *@
+                        @if (Model.CanAssign)
+                        {
                         <details class="disclosure" open="@(Model.OpenSection == "assign" ? "open" : null)">
                             <summary class="btn btn-sm">Assign</summary>
                             <div class="disclosure__panel">
@@ -117,6 +124,7 @@ else
                                 </form>
                             </div>
                         </details>
+                        }
 
                         @if (Model.CanTransfer)
                         {
@@ -152,6 +160,8 @@ else
                             </details>
                         }
 
+                        @if (Model.CanChangeStatus)
+                        {
                         <details class="disclosure" open="@(Model.OpenSection == "status" ? "open" : null)">
                             <summary class="btn @(isResolved ? "btn-sm" : "btn-gold btn-sm")">Change Status</summary>
                             <div class="disclosure__panel">
@@ -175,7 +185,10 @@ else
                                 </form>
                             </div>
                         </details>
+                        }
 
+                        @if (Model.CanResolve)
+                        {
                         <details class="disclosure" open="@(Model.OpenSection == "resolve" ? "open" : null)">
                             <summary class="btn btn-sm">Resolve</summary>
                             <div class="disclosure__panel">
@@ -203,7 +216,10 @@ else
                                 </form>
                             </div>
                         </details>
+                        }
 
+                        @if (Model.CanEscalate)
+                        {
                         <details class="disclosure" open="@(Model.OpenSection == "escalate" ? "open" : null)">
                             <summary class="btn btn-sm">Escalate</summary>
                             <div class="disclosure__panel">
@@ -212,7 +228,11 @@ else
                                     <div class="field-group">
                                         <label class="field-label" asp-for="Escalate.Level">Escalate to level</label>
                                         <select class="field-select" asp-for="Escalate.Level">
-                                            @for (byte lvl = 1; lvl <= 4; lvl++)
+                                            @* Level 4 is a SEPARATE server rule (ManualLevel4 —
+                                               CS Manager/GM only, never widened by ownership or
+                                               department), so it is offered separately too. *@
+                                            @{ var topLevel = Model.CanEscalateToLevel4 ? 4 : 3; }
+                                            @for (byte lvl = 1; lvl <= topLevel; lvl++)
                                             {
                                                 <option value="@lvl">Level @lvl</option>
                                             }
@@ -227,9 +247,12 @@ else
                                 </form>
                             </div>
                         </details>
+                        }
                     }
 
-                    @if (isResolved)
+                    @* Resolved is the lifecycle half; CanClose is the permission
+                       half (the CS layer, per ISSUE-022's Resolve/Close split). *@
+                    @if (isResolved && Model.CanClose)
                     {
                         <form method="post" asp-page-handler="Close">
                             <input type="hidden" asp-for="Close.RowVersionBase64" />

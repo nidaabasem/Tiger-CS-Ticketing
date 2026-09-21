@@ -126,6 +126,34 @@ public sealed class TicketDetailsModel(
 
     /// <summary>Whether the viewer's roles allow Reopen at all — the Api still decides, including whether they may act on this ticket.</summary>
     public bool CanReopen { get; private set; }
+
+    /// <summary>
+    /// The viewer-and-ticket facts every remaining action affordance is
+    /// decided from — built once per render, in <see cref="LoadActionAffordances"/>,
+    /// from the viewer's own claims and the server-supplied department
+    /// memberships. Null when the ticket could not be loaded or nobody is
+    /// signed in, which makes every check below false.
+    /// </summary>
+    public TicketActionContext? ActionContext { get; private set; }
+
+    /// <summary>Whether an Assign control is worth rendering — mirrors TicketAssignmentAppService.AssignAsync's permission rule.</summary>
+    public bool CanAssign { get; private set; }
+
+    /// <summary>Whether a Change Status control is worth rendering — mirrors TicketLifecycleAppService's IsCurrentOwnerOrDepartmentAuthorityAsync.</summary>
+    public bool CanChangeStatus { get; private set; }
+
+    /// <summary>Whether a Resolve control is worth rendering — mirrors TicketLifecycleAppService.IsResolveAuthorizedAsync, role set AND the ownership/department half.</summary>
+    public bool CanResolve { get; private set; }
+
+    /// <summary>Whether a Close control is worth rendering — mirrors TicketLifecycleAppService.CloseAsync's role-only rule. The ticket being Resolved is a separate, lifecycle condition.</summary>
+    public bool CanClose { get; private set; }
+
+    /// <summary>Whether an Escalate control is worth rendering — true when either escalation tier is open to the viewer.</summary>
+    public bool CanEscalate { get; private set; }
+
+    /// <summary>Whether Level 4 may be OFFERED inside that control — CS Manager/GM only, per MVP-ERD.md §2.17.</summary>
+    public bool CanEscalateToLevel4 { get; private set; }
+
     public CurrentUser? Viewer { get; private set; }
     public TicketNameResolver NameResolver => nameResolver;
     public IReadOnlyList<ActivityEntry> ActivityFeed { get; private set; } = [];
@@ -458,6 +486,7 @@ public sealed class TicketDetailsModel(
             ? await nameResolver.ResolveOwnerNameAsync(Ticket.CurrentDepartmentId, ownerId, cancellationToken)
             : null;
 
+        LoadActionAffordances(Ticket);
         await LoadTransferTargetsAsync(Ticket, cancellationToken);
         await LoadReopenTargetsAsync(Ticket, cancellationToken);
 
@@ -484,7 +513,53 @@ public sealed class TicketDetailsModel(
                 ? Ticket.CurrentDepartmentId
                 : ReopenTargets.FirstOrDefault()?.DepartmentId ?? 0
         };
-        Escalate = new EscalateInput { RowVersionBase64 = Ticket.RowVersion, Level = NextEscalationLevel(Ticket.EscalationLevel) };
+        // Default to a level the picker actually offers: a viewer without
+        // ManualLevel4 authority is shown levels 1-3, so the default must not
+        // be the 4 this ticket's current level would otherwise suggest.
+        var nextLevel = NextEscalationLevel(Ticket.EscalationLevel);
+        Escalate = new EscalateInput
+        {
+            RowVersionBase64 = Ticket.RowVersion,
+            Level = CanEscalateToLevel4 ? nextLevel : Math.Min(nextLevel, (byte)3)
+        };
+    }
+
+    /// <summary>
+    /// Builds the viewer-and-ticket context the action affordances are decided
+    /// from, and evaluates each one against the Api's own canonical rule.
+    ///
+    /// <para>
+    /// The department memberships come from <c>nameResolver.OwnDepartments</c>
+    /// — the <c>Departments</c> collection of <c>GET /api/users/me</c>, already
+    /// fetched by the <c>PrimeDepartmentsAsync</c> call at the top of
+    /// <see cref="LoadAsync"/>, so mirroring the server's department-scoped
+    /// rules costs no additional round trip. That endpoint reads the same
+    /// UserDepartmentAssignments rows the Api's own ExistsAsync check queries.
+    /// </para>
+    ///
+    /// <para>
+    /// Everything here fails closed: no signed-in viewer, or a users/me call
+    /// that failed (leaving the memberships empty), hides the
+    /// department-scoped controls rather than offering them on an assumption.
+    /// </para>
+    /// </summary>
+    private void LoadActionAffordances(TicketDetailDto ticket)
+    {
+        ActionContext = Viewer is null
+            ? null
+            : new TicketActionContext(
+                Viewer.Roles,
+                Viewer.EmployeeId,
+                ticket.CurrentOwnerEmployeeId,
+                ticket.CurrentDepartmentId,
+                [.. nameResolver.OwnDepartments.Select(d => d.DepartmentId)]);
+
+        CanAssign = TicketActions.CanAssign(ActionContext);
+        CanChangeStatus = TicketActions.CanChangeStatus(ActionContext);
+        CanResolve = TicketActions.CanResolve(ActionContext);
+        CanClose = TicketActions.CanClose(Viewer?.Roles);
+        CanEscalate = TicketActions.CanEscalate(ActionContext);
+        CanEscalateToLevel4 = TicketActions.CanEscalateToLevel4(ActionContext);
     }
 
     /// <summary>
