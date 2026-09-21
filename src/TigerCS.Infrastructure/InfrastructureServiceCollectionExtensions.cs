@@ -209,6 +209,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IIdempotencyRecordStore, IdempotencyRecordStore>();
         services.AddScoped<SlaDueDateService>();
         services.AddScoped<SlaBreachProcessor>();
+
+        // The one writer of Ticket.FirstHumanResponseAtUtc, shared by the
+        // API-facing first-response endpoint and the Genesys transcript path
+        // (ISSUE-019 — one measurement, one mechanism).
+        services.AddScoped<FirstHumanResponseRecorder>();
         services.AddScoped<SlaBreachDetectionAppService>();
         services.AddScoped<SlaQueryAppService>();
         services.AddScoped<SlaFirstResponseAppService>();

@@ -25,7 +25,8 @@ public sealed class TicketQueryAppService(
     IWorkflowTemplateRepository? workflowTemplateRepository = null,
     IWorkflowRepository? workflowRepository = null,
     ITicketInteractionRepository? interactionRepository = null,
-    IChannelRepository? channelRepository = null)
+    IChannelRepository? channelRepository = null,
+    ITicketAgentHandoffRepository? agentHandoffRepository = null)
 {
     public async Task<TicketListResultDto> GetQueueAsync(
         Guid callerEmployeeId,
@@ -123,6 +124,23 @@ public sealed class TicketQueryAppService(
             IsReopenEligible = reopenPolicy.IsReopenEligible(
                 ticket.TicketStatus, ticket.ResolutionOutcome, closedAt, timeProvider.GetUtcNow().UtcDateTime)
         };
+
+        // Derived, never stored: the ticket's handoff state IS the state of
+        // its one outstanding TicketAgentHandoff, read at the moment of the
+        // request. AgentHandoffStatus.NotRequired is the enum's own name for
+        // "no row exists", which is why the answer is the same shape either
+        // way.
+        if (agentHandoffRepository is not null)
+        {
+            var openHandoff = (await agentHandoffRepository.ListByTicketIdAsync(ticketId, cancellationToken))
+                .FirstOrDefault(h => h.IsOpen);
+
+            detail = detail with
+            {
+                HandoffState = (openHandoff?.Status ?? AgentHandoffStatus.NotRequired).ToString(),
+                HandoffRequestedAtUtc = openHandoff?.RequestedAtUtc
+            };
+        }
 
         // Workflow identity (Administration / Workflow Designer phase): the
         // request type's name and the PINNED version's workflow name and

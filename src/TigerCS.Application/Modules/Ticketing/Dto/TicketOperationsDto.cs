@@ -120,6 +120,15 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="OriginatingChannelId">The channel the ticket ENTERED the system on (its originating interaction's channel) — never changed by later interactions on other channels; null for tickets predating the interaction model. Populated on detail reads.</param>
 /// <param name="OriginatingChannelName">The originating channel's display name, resolved from channel configuration — still shown for a channel that has since been deactivated. Populated on detail reads.</param>
 /// <param name="IsClassified">False while the ticket has no Category yet — an inquiry captured before anyone read the request. The UI shows "Unclassified" and offers the classify action rather than rendering a missing category.</param>
+/// <param name="HandoffState">
+/// Whether this ticket is waiting on a human agent, <b>derived</b> from the
+/// one open <c>TicketAgentHandoff</c> row: WaitingForAgent, Assigned or
+/// InProgress while work is outstanding, and "NotRequired" when none is.
+/// Deliberately not a column on the ticket — a ticket accumulates many
+/// interactions, and a persisted copy would be a second source of truth free
+/// to drift from the row that actually owns this state.
+/// </param>
+/// <param name="HandoffRequestedAtUtc">When the outstanding human work was raised — the start of the Human Wait metric. Null when nothing is outstanding.</param>
 /// <param name="IsReopenEligible">Whether FR-RES-04's lifecycle rule currently allows Reopen — Closed, closed as Resolved, and within the ISSUE-011 window measured from closure. Lifecycle only, never a permission statement: the Reopen endpoint separately enforces TicketRoleSets.Reopen AND the caller's access to the ticket. Populated on detail reads; false on write responses.</param>
 /// <param name="ClosedAtUtc">When the ticket reached Closed, in UTC, read from lifecycle history — the moment the reopen window is measured from. Null while the ticket is not closed. Populated on detail reads.</param>
 public sealed record TicketDetailDto(
@@ -156,6 +165,8 @@ public sealed record TicketDetailDto(
     string? ExternalUnitId = null,
     DateTime? ResolvedAtUtc = null,
     bool IsReopenEligible = false,
+    string HandoffState = "NotRequired",
+    DateTime? HandoffRequestedAtUtc = null,
     DateTime? ClosedAtUtc = null,
     int? RequestTypeId = null,
     string? RequestTypeName = null,

@@ -424,4 +424,12 @@ public static class GenesysAuditActions
 
     /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
     public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";
+
+    /// <summary>
+    /// TigerCS raised pending human work on its own initiative, because an
+    /// AI/virtual-agent conversation ended with no human ever taking it.
+    /// Audited under its own action so "the integration asked for a human"
+    /// and "we noticed nobody had" are distinguishable in the audit trail.
+    /// </summary>
+    public const string HandoffAutoRaisedOnConversationEnd = "GenesysHandoffAutoRaisedOnConversationEnd";
 }

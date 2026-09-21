@@ -62,6 +62,9 @@ public sealed class GenesysServiceFixture
     public FakeTasleehGateway Tasleeh { get; } = new();
     public FakeUserDepartmentAssignmentRepository DepartmentAssignments { get; } = new();
     public FakeTicketAssignmentRepository TicketAssignments { get; } = new();
+
+    /// <summary>The ticket's typed event log — where the handoff story is recorded for Ticket Activity.</summary>
+    public FakeTicketWorkflowEventRepository WorkflowEvents { get; } = new();
     public FakeTicketStatusHistoryRepository StatusHistory { get; } = new();
 
     /// <summary>The SLA services ticket creation runs through — exposed so a test can assert that an unclassified inquiry opened no period at all.</summary>
@@ -149,7 +152,8 @@ public sealed class GenesysServiceFixture
             sla.DueDates, TimeProvider.System);
 
         ConversationEnd = new GenesysConversationEndAppService(
-            Options, Conversations, Tickets, UnitOfWork, Audit, TimeProvider.System);
+            Options, Conversations, Tickets, Handoffs, WorkflowEvents, sla.FirstHumanResponse,
+            UnitOfWork, Audit, TimeProvider.System);
 
         var ticketQuery = new TicketQueryAppService(
             Tickets, DepartmentAssignments, new FakeTicketResolutionRepository(),
@@ -159,10 +163,11 @@ public sealed class GenesysServiceFixture
             Tickets, Interactions, Conversations, Channels, Handoffs, ticketQuery);
 
         AgentHandoff = new GenesysAgentHandoffAppService(
-            Options, Conversations, Handoffs, Tickets, UnitOfWork, Audit, TimeProvider.System);
+            Options, Conversations, Handoffs, WorkflowEvents, Tickets, UnitOfWork, Audit, TimeProvider.System);
 
         PendingWork = new AgentHandoffAppService(
-            Handoffs, ticketQuery, UnitOfWork, Audit, TimeProvider.System);
+            Handoffs, ticketQuery, Tickets, TicketAssignments, StatusHistory, WorkflowEvents,
+            DepartmentAssignments, UnitOfWork, Audit, TimeProvider.System);
 
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(

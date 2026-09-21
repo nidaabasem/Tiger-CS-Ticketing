@@ -44,7 +44,36 @@ public enum WorkflowEventType : byte
     /// has always recorded but nothing ever exposed. The column is a tinyint
     /// with no value constraint, so this member needs no schema change.
     /// </summary>
-    Reopened = 9
+    Reopened = 9,
+
+    /// <summary>
+    /// Pending human work was raised on a customer interaction — the customer
+    /// asked for a person, the virtual agent escalated, routing decided, or
+    /// TigerCS noticed an AI conversation ended with nobody waiting on it.
+    /// The note carries the trigger and the reason.
+    ///
+    /// <para>
+    /// The five handoff members below are recorded here for the same reason
+    /// <see cref="Reopened"/> is: this table is already the ticket's typed,
+    /// append-only event log and is already read by
+    /// <c>GET /api/tickets/{ticketId}/approvals</c>, so Ticket Details gains
+    /// the handoff story without a second activity store. The column is a
+    /// tinyint with no value constraint, so these need no schema change.
+    /// </para>
+    /// </summary>
+    HandoffRequested = 10,
+
+    /// <summary>Genesys named the agent taking the pending work. Not the same as a TigerCS agent claiming it — see <see cref="HandoffStarted"/>.</summary>
+    HandoffAssigned = 11,
+
+    /// <summary>A human agent accepted the pending work in TigerCS — the end of the Human Wait metric.</summary>
+    HandoffStarted = 12,
+
+    /// <summary>The human work finished. Says nothing about the ticket, which continues under its own lifecycle.</summary>
+    HandoffCompleted = 13,
+
+    /// <summary>The human work was stood down — the AI resumed, or a person is no longer needed. The note carries the required reason.</summary>
+    HandoffCancelled = 14
 }
 
 /// <summary>

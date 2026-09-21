@@ -727,6 +727,17 @@ public sealed class TicketDetailsModel(
         nameof(WorkflowEventType.ApprovalReceived) => "approved the request",
         nameof(WorkflowEventType.CustomerServiceApproved) => "approved the request (Customer Service)",
         nameof(WorkflowEventType.ApprovalRejected) => "rejected the request",
+
+        // The AI ↔ human handoff story, read beside the transcript that led
+        // to it. Phrased without an actor for the Genesys-side events, whose
+        // ActorEmployeeId is deliberately null — nobody in TigerCS performed
+        // them.
+        nameof(WorkflowEventType.HandoffRequested) => "asked for a human agent",
+        nameof(WorkflowEventType.HandoffAssigned) => "was assigned a human agent",
+        nameof(WorkflowEventType.HandoffStarted) => "accepted the customer interaction",
+        nameof(WorkflowEventType.HandoffCompleted) => "finished the customer interaction",
+        nameof(WorkflowEventType.HandoffCancelled) => "stood down the request for a human agent",
+
         _ => null
     };
 

@@ -27,11 +27,9 @@ namespace TigerCS.Application.Modules.SlaAndEscalation.Services;
 public sealed class SlaFirstResponseAppService(
     ITicketRepository ticketRepository,
     Abstractions.ITicketSlaInstanceRepository slaInstanceRepository,
-    ITicketStatusHistoryRepository statusHistoryRepository,
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
-    SlaBreachProcessor breachProcessor,
+    FirstHumanResponseRecorder firstHumanResponseRecorder,
     ITicketingUnitOfWork unitOfWork,
-    IAuditEntryWriter auditWriter,
     TimeProvider timeProvider)
 {
     public async Task<SlaOperationResult<TicketSlaSummaryResponseDto>> RecordAsync(
@@ -79,37 +77,17 @@ public sealed class SlaFirstResponseAppService(
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
-        try
-        {
-            ticket.RecordFirstHumanResponse(occurredAtUtc);
-        }
-        catch (TicketClosedException)
-        {
-            return SlaOperationResult<TicketSlaSummaryResponseDto>.Failure(SlaOperationOutcome.TicketClosed);
-        }
-        catch (FirstResponseAlreadyRecordedException)
+        // The history row, the audit entry and the breach finalization all
+        // live in FirstHumanResponseRecorder, which the Genesys transcript
+        // path shares — ISSUE-019's measurement is written in exactly one way.
+        // The already-recorded and Closed cases were rejected above with their
+        // own outcomes, so a false here is that same race answered again.
+        if (!await firstHumanResponseRecorder.TryRecordAsync(
+                ticket, occurredAtUtc, nowUtc, callerEmployeeId, actorIsSystem: false,
+                source, correlationId, cancellationToken))
         {
             return SlaOperationResult<TicketSlaSummaryResponseDto>.Failure(SlaOperationOutcome.FirstResponseAlreadyRecorded);
         }
-
-        await statusHistoryRepository.AddAsync(
-            new TicketStatusHistory(
-                ticketId, TicketStatusDimension.SlaState, (byte)ticket.SlaState, (byte)ticket.SlaState,
-                callerEmployeeId, actorIsSystem: false,
-                note: $"First human response recorded ({source}) at {occurredAtUtc:O}.", correlationId, nowUtc),
-            cancellationToken);
-
-        await auditWriter.WriteAsync(
-            callerEmployeeId, "RecordFirstResponse", nameof(Ticket), ticketId.ToString(),
-            beforeValue: "{\"firstHumanResponseAtUtc\":null}",
-            afterValue: $"{{\"firstHumanResponseAtUtc\":\"{occurredAtUtc:O}\",\"source\":\"{source}\"}}",
-            correlationId, cancellationToken);
-
-        // Finalizes the breach flag if the response landed late — and, if it
-        // did, raises the automatic Level 2 escalation exactly as a scheduled
-        // job would have.
-        await breachProcessor.ProcessDeadlineAsync(
-            ticket, SlaDeadlineType.FirstResponse, nowUtc, correlationId, cancellationToken);
 
         try
         {
@@ -155,5 +133,15 @@ public sealed class SlaFirstResponseAppService(
 public enum FirstResponseSource : byte
 {
     Manual = 1,
-    GenesysCallAnswer = 2
+    GenesysCallAnswer = 2,
+
+    /// <summary>
+    /// The first genuinely human message of a conversation was stored — an
+    /// <see cref="Domain.Modules.Ticketing.InteractionMessageSender.HumanAgent"/>
+    /// transcript line. Observed by the system rather than recorded by a
+    /// person, and deliberately never reached by a
+    /// <see cref="Domain.Modules.Ticketing.InteractionMessageSender.VirtualAgent"/>
+    /// line: an AI reply is not a first human response (ISSUE-019).
+    /// </summary>
+    HumanAgentMessage = 3
 }

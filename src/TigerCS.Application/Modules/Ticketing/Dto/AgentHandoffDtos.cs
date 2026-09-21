@@ -89,11 +89,38 @@ public enum AgentHandoffOutcome
     AlreadyResolved,
 
     /// <summary>Cancellation was attempted without a reason.</summary>
-    ReasonRequired
+    ReasonRequired,
+
+    /// <summary>
+    /// Another agent already holds this work. Deliberately distinct from
+    /// <see cref="Success"/>: the claim is exclusive, and answering a second
+    /// agent with success — carrying the first agent's assignee — is how two
+    /// people end up calling the same customer.
+    /// </summary>
+    AlreadyClaimed,
+
+    /// <summary>
+    /// The ticket moved between this request's read and its commit (its own
+    /// RowVersion, or the handoff's, no longer matched). Nothing was written;
+    /// the caller re-reads and retries.
+    /// </summary>
+    ConcurrencyConflict
 }
 
-public sealed record AgentHandoffResult(AgentHandoffOutcome Outcome, AgentHandoffDto? Handoff = null)
+/// <param name="Outcome">What happened.</param>
+/// <param name="Handoff">The work item, on success.</param>
+/// <param name="HolderEmployeeId">On <see cref="AgentHandoffOutcome.AlreadyClaimed"/>, the agent who holds it — so the refusal can name them rather than being a mystery.</param>
+/// <param name="ClaimedAtUtc">On <see cref="AgentHandoffOutcome.AlreadyClaimed"/>, when they took it.</param>
+public sealed record AgentHandoffResult(
+    AgentHandoffOutcome Outcome,
+    AgentHandoffDto? Handoff = null,
+    Guid? HolderEmployeeId = null,
+    DateTime? ClaimedAtUtc = null)
 {
     public static AgentHandoffResult Success(AgentHandoffDto handoff) => new(AgentHandoffOutcome.Success, handoff);
     public static AgentHandoffResult Failure(AgentHandoffOutcome outcome) => new(outcome);
+
+    /// <summary>Refused because another agent holds the work, naming the holder.</summary>
+    public static AgentHandoffResult AlreadyClaimed(Guid holderEmployeeId, DateTime claimedAtUtc) =>
+        new(AgentHandoffOutcome.AlreadyClaimed, Handoff: null, holderEmployeeId, claimedAtUtc);
 }

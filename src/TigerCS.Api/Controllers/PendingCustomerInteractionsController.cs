@@ -36,7 +36,23 @@ namespace TigerCS.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/pending-customer-interactions")]
-[Authorize(Policy = PolicyNames.DepartmentScoped)]
+// Authorization is resource-level, not attribute-level. DepartmentScoped's
+// requirement is resource-based (DepartmentScopedHandler is
+// AuthorizationHandler<DepartmentScopedRequirement, int>, so it only runs
+// when the authorization call supplies the department id as the resource).
+// Attribute authorization supplies the endpoint, never an int, so that
+// requirement was never satisfied here and every caller except the
+// ADR-0024 override role received 403 — including the CS Agent this work
+// list exists for.
+//
+// The gate that belongs here is the one AgentHandoffAppService already
+// applies per row: ResolveVisibleDepartmentIdsAsync scopes the list, and
+// CanViewDepartmentAsync checks the specific handoff's own department
+// before every mutation. That is evaluated against the handoff's current
+// department rather than a claim, which is what
+// Security-Architecture.md §3 asks for, and it carries the override
+// through AuthorizationGate exactly as every other ticket operation does.
+[Authorize(Policy = PolicyNames.AuthenticatedStaff)]
 [Tags(OpenApiTags.PendingCustomerInteractions)]
 public class PendingCustomerInteractionsController(AgentHandoffAppService agentHandoffAppService) : ControllerBase
 {
@@ -94,10 +110,10 @@ public class PendingCustomerInteractionsController(AgentHandoffAppService agentH
     /// <remarks>Idempotent: starting work already in progress changes nothing and does not move the recorded start time.</remarks>
     /// <param name="handoffId">The work item.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">The work is now in progress.</response>
+    /// <response code="200">The work is yours and in progress. Repeating the call is idempotent.</response>
     /// <response code="403">The caller may not act on work in this department.</response>
     /// <response code="404">No such work item.</response>
-    /// <response code="409">The work was already completed or cancelled.</response>
+    /// <response code="409">Another agent already holds this work (the response names them), or it was already completed or cancelled, or the ticket moved underneath the request.</response>
     [HttpPost("{handoffId:long}/start")]
     [ProducesResponseType<AgentHandoffDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
@@ -111,7 +127,7 @@ public class PendingCustomerInteractionsController(AgentHandoffAppService agentH
             return Unauthorized();
         }
 
-        return Respond(await agentHandoffAppService.StartAsync(employeeId.Value, GetRoles(), handoffId, cancellationToken));
+        return Respond(await agentHandoffAppService.AcceptAsync(employeeId.Value, GetRoles(), handoffId, cancellationToken));
     }
 
     /// <summary>Record that the human work on this interaction is finished.</summary>
@@ -197,6 +213,25 @@ public class PendingCustomerInteractionsController(AgentHandoffAppService agentH
             type: "https://tigercs.internal/problems/pending-interaction-already-resolved",
             title: "This work was already completed or cancelled",
             detail: "The work item accepts no further changes. Nothing was written.",
+            statusCode: StatusCodes.Status409Conflict),
+
+        // Exclusive claim: the loser is told WHO holds it. The holder's
+        // employee id is already visible to anyone who can see this work list
+        // (the list itself carries AssignedEmployeeId), so naming them here
+        // discloses nothing new and turns a mystery refusal into an
+        // actionable one.
+        AgentHandoffOutcome.AlreadyClaimed => Problem(
+            type: "https://tigercs.internal/problems/pending-interaction-already-claimed",
+            title: "Another agent already took this interaction",
+            detail:
+                $"Agent {result.HolderEmployeeId} claimed it at "
+                + $"{result.ClaimedAtUtc?.ToString("O") ?? "an earlier time"}. Nothing was written.",
+            statusCode: StatusCodes.Status409Conflict),
+
+        AgentHandoffOutcome.ConcurrencyConflict => Problem(
+            type: "https://tigercs.internal/problems/concurrency-conflict",
+            title: "The ticket changed while this was being saved",
+            detail: "Nothing was written. Reload the interaction and try again.",
             statusCode: StatusCodes.Status409Conflict),
 
         AgentHandoffOutcome.ReasonRequired => Problem(

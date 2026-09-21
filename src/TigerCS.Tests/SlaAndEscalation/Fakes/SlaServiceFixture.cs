@@ -55,7 +55,11 @@ public sealed class SlaServiceFixture
 
         DueDates = new SlaDueDateService(Policies, Calendar, SlaInstances, Scheduler, Audit);
         BreachProcessor = new SlaBreachProcessor(SlaInstances, Escalations, Resolutions, StatusHistory, Idempotency, Audit);
+        FirstHumanResponse = new FirstHumanResponseRecorder(StatusHistory, Audit, BreachProcessor);
     }
+
+    /// <summary>The one writer of Ticket.FirstHumanResponseAtUtc — shared by the first-response endpoint and the Genesys transcript path.</summary>
+    public FirstHumanResponseRecorder FirstHumanResponse { get; }
 
     public SlaBreachDetectionAppService CreateBreachDetection() =>
         new(Tickets, SlaInstances, BreachProcessor, UnitOfWork, Time);
@@ -64,5 +68,5 @@ public sealed class SlaServiceFixture
         new(Tickets, Escalations, StatusHistory, DepartmentAssignments, UnitOfWork, Audit, Time);
 
     public SlaFirstResponseAppService CreateFirstResponseService() =>
-        new(Tickets, SlaInstances, StatusHistory, DepartmentAssignments, BreachProcessor, UnitOfWork, Audit, Time);
+        new(Tickets, SlaInstances, DepartmentAssignments, FirstHumanResponse, UnitOfWork, Time);
 }

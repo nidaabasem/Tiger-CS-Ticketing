@@ -68,6 +68,49 @@ public enum AgentHandoffMode : byte
 }
 
 /// <summary>
+/// <b>Why</b> a human was asked for — the typed counterpart to
+/// <see cref="TicketAgentHandoff.RequestReason"/>'s free text.
+///
+/// <para>
+/// <b>Nullable, and normalized or refused — never guessed.</b> Same
+/// discipline as <see cref="AgentHandoffMode"/>: a caller that states a
+/// trigger has it recorded, a caller that does not leaves it null, and an
+/// unrecognized value is rejected rather than coerced. In particular it is
+/// never inferred from <c>TicketInteraction.EndReason</c>, which is
+/// deliberately free text with no confirmed vocabulary.
+/// </para>
+///
+/// <para>
+/// The reason a typed column exists at all is reporting: "the customer asked
+/// for a person" and "the bot dropped the conversation" are different
+/// business events with different remedies, and a 500-character free-text
+/// field cannot separate them.
+/// </para>
+/// </summary>
+public enum HandoffTrigger : byte
+{
+    /// <summary>The customer explicitly asked to speak to a human.</summary>
+    CustomerRequestedHuman = 1,
+
+    /// <summary>
+    /// The AI/virtual-agent conversation ended without a human ever taking
+    /// it. The one trigger TigerCS raises on its own initiative — see
+    /// <c>GenesysConversationEndAppService</c>: a terse Genesys end event
+    /// must not be able to leave a ticket with nobody waiting on it.
+    /// </summary>
+    AiConnectionLost = 2,
+
+    /// <summary>The virtual agent decided it could not help and escalated deliberately.</summary>
+    AiEscalated = 3,
+
+    /// <summary>Genesys routing decided a human was needed; no AI was involved.</summary>
+    RoutingDecision = 4,
+
+    /// <summary>One agent handed the interaction to another.</summary>
+    AgentTransfer = 5
+}
+
+/// <summary>
 /// One piece of <b>pending human work</b> raised from a customer interaction:
 /// something needs a human agent, on any channel.
 ///
@@ -138,6 +181,9 @@ public class TicketAgentHandoff
     /// <summary>How the human is expected to continue, when the caller said. Null means "not stated" — never a channel-derived guess.</summary>
     public AgentHandoffMode? Mode { get; private set; }
 
+    /// <summary>Why a human was needed, typed. Null means "not stated" — see <see cref="HandoffTrigger"/>.</summary>
+    public HandoffTrigger? Trigger { get; private set; }
+
     /// <summary>Why a human was needed, as reported (a virtual agent's escalation reason, a routing note). Free text: no vocabulary for this has been confirmed. Null when not supplied.</summary>
     public string? RequestReason { get; private set; }
 
@@ -166,6 +212,21 @@ public class TicketAgentHandoff
 
     public DateTime CreatedAtUtc { get; private set; }
 
+    /// <summary>
+    /// Optimistic-concurrency token, mirroring <see cref="Ticket.RowVersion"/>.
+    ///
+    /// <para>
+    /// <b>The backstop, not the rule.</b> Exclusive claiming is decided by
+    /// <see cref="ClaimBy"/>'s explicit holder check, which is a business
+    /// rule and answers deterministically on every provider. This token
+    /// closes the narrower window the rule cannot see: two requests that
+    /// both read an unclaimed row and then interleave their commits. The
+    /// loser's UPDATE matches no row and surfaces as a concurrency
+    /// conflict.
+    /// </para>
+    /// </summary>
+    public byte[] RowVersion { get; private set; } = [];
+
     /// <summary>Whether the work is still outstanding — the agent work list's filter, and the invariant the database enforces one of per interaction.</summary>
     public bool IsOpen => ResolvedAtUtc is null;
 
@@ -191,6 +252,7 @@ public class TicketAgentHandoff
         DateTime requestedAtUtc,
         DateTime createdAtUtc,
         AgentHandoffMode? mode = null,
+        HandoffTrigger? trigger = null,
         string? requestReason = null,
         string? externalWorkItemId = null,
         Guid? assignedEmployeeId = null,
@@ -212,6 +274,12 @@ public class TicketAgentHandoff
             throw new ArgumentOutOfRangeException(nameof(mode), $"Mode {suppliedMode} is not a defined handoff mode.");
         }
 
+        if (trigger is { } suppliedTrigger && !Enum.IsDefined(suppliedTrigger))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(trigger), $"Trigger {suppliedTrigger} is not a defined handoff trigger.");
+        }
+
         TicketId = ticketId;
         TicketInteractionId = ticketInteractionId;
         DepartmentId = departmentId;
@@ -219,6 +287,7 @@ public class TicketAgentHandoff
         RequestedAtUtc = requestedAtUtc;
         CreatedAtUtc = createdAtUtc;
         Mode = mode;
+        Trigger = trigger;
         RequestReason = Truncate(requestReason, RequestReasonMaxLength);
         ExternalWorkItemId = Truncate(externalWorkItemId, ExternalIdMaxLength);
         GenesysAgentId = Truncate(genesysAgentId, ExternalIdMaxLength);
@@ -274,6 +343,77 @@ public class TicketAgentHandoff
         {
             Status = AgentHandoffStatus.Assigned;
         }
+    }
+
+    /// <summary>
+    /// A human agent takes the work <b>exclusively</b>. This is the accept
+    /// operation behind the work list's Start action, and the one place the
+    /// "two agents must not both think they own it" rule lives.
+    ///
+    /// <para>
+    /// <b>Three outcomes, deliberately distinguished.</b> Unclaimed work is
+    /// claimed and becomes <see cref="AgentHandoffStatus.InProgress"/>. The
+    /// <i>same</i> employee calling again is idempotent — a double-clicked
+    /// button and a redelivered request behave identically, and
+    /// <see cref="StartedAtUtc"/> does not move. A <i>different</i> employee
+    /// is refused with <see cref="AgentHandoffAlreadyClaimedException"/>,
+    /// which carries the current holder so the caller can say who has it.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Why this is not <see cref="Start"/>.</b> <see cref="Start"/> returns
+    /// silently when the work is already in progress, which is right for a
+    /// Genesys-driven status report but wrong for a human pressing a button:
+    /// the second agent got a success answer carrying the first agent's
+    /// assignee, and both called the customer. Claiming needs the refusal,
+    /// so it is its own operation and <see cref="Start"/> is left exactly as
+    /// it was for its existing callers.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Work Genesys has already assigned to a named Genesys agent</b>
+    /// (<see cref="GenesysAgentId"/> set, no TigerCS employee) is still
+    /// claimable here: the mapping from a Genesys agent id to an employee may
+    /// not exist, and refusing would strand the work. Taking it records the
+    /// TigerCS employee alongside the verbatim Genesys id, losing neither.
+    /// </para>
+    /// </summary>
+    /// <param name="employeeId">The employee taking the work.</param>
+    /// <param name="claimedAtUtc">When they took it — the end of the Human Wait metric.</param>
+    /// <returns>True when this call performed the claim; false when the same employee already held it.</returns>
+    public bool ClaimBy(Guid employeeId, DateTime claimedAtUtc)
+    {
+        EnsureOpen();
+
+        if (employeeId == Guid.Empty)
+        {
+            throw new ArgumentException("A claim must name the employee taking the work.", nameof(employeeId));
+        }
+
+        if (AssignedEmployeeId is { } holder)
+        {
+            if (holder != employeeId)
+            {
+                throw new AgentHandoffAlreadyClaimedException(TicketAgentHandoffId, holder, AssignedAtUtc ?? claimedAtUtc);
+            }
+
+            // Same agent, already holding it. Idempotent — but a holder who
+            // had been Assigned without starting does now start.
+            if (Status == AgentHandoffStatus.InProgress)
+            {
+                return false;
+            }
+
+            StartedAtUtc ??= claimedAtUtc;
+            Status = AgentHandoffStatus.InProgress;
+            return false;
+        }
+
+        AssignedEmployeeId = employeeId;
+        AssignedAtUtc = claimedAtUtc;
+        StartedAtUtc = claimedAtUtc;
+        Status = AgentHandoffStatus.InProgress;
+        return true;
     }
 
     /// <summary>
@@ -366,4 +506,18 @@ public sealed class AgentHandoffAlreadyResolvedException(long ticketAgentHandoff
     public long TicketAgentHandoffId { get; } = ticketAgentHandoffId;
     public AgentHandoffStatus Status { get; } = status;
     public DateTime ResolvedAtUtc { get; } = resolvedAtUtc;
+}
+
+/// <summary>
+/// Another agent already holds this pending work. Carries the holder so the
+/// caller can name them: an agent told "someone else took it" can see who,
+/// which is the difference between a usable refusal and a mystery.
+/// </summary>
+public sealed class AgentHandoffAlreadyClaimedException(
+    long ticketAgentHandoffId, Guid holderEmployeeId, DateTime claimedAtUtc)
+    : TicketException($"Agent handoff {ticketAgentHandoffId} was already claimed by {holderEmployeeId} at {claimedAtUtc:O}.")
+{
+    public long TicketAgentHandoffId { get; } = ticketAgentHandoffId;
+    public Guid HolderEmployeeId { get; } = holderEmployeeId;
+    public DateTime ClaimedAtUtc { get; } = claimedAtUtc;
 }

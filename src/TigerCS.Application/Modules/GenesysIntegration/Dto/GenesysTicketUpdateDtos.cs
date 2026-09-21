@@ -55,17 +55,28 @@ public sealed record GenesysConversationEndUpdateDto(
 /// Human-agent state for the conversation, on any channel. A callback is one
 /// possible <paramref name="Mode"/>, never the concept.
 /// </summary>
-/// <param name="Required">True to record that the conversation needs a human agent. Idempotent — a conversation whose human work is still outstanding is answered with that same work item.</param>
+/// <param name="Required">
+/// True records that the conversation needs a human agent — idempotent, as a
+/// conversation whose human work is still outstanding is answered with that
+/// same work item. <b>Explicit false</b> stands outstanding work down (the AI
+/// resumed, or the human is no longer needed) and requires
+/// <paramref name="Reason"/>. <b>Null (omitted) does neither</b>, which is
+/// what lets an update carry only <paramref name="AssignedAgentId"/> without
+/// the omitted flag reading as a cancellation — the reason this is nullable
+/// rather than a plain bool.
+/// </param>
 /// <param name="AgentAvailable">True when Genesys is handing straight over to a named human, false when nobody is available and the work must wait.</param>
 /// <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". Omit unless Genesys actually states it — TigerCS never derives it from the channel.</param>
-/// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
+/// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note) — or, when standing work down, why the human is no longer needed. Required in that direction.</param>
+/// <param name="Trigger">Why a human is needed, typed: "CustomerRequestedHuman", "AiConnectionLost", "AiEscalated", "RoutingDecision" or "AgentTransfer". Omit unless Genesys states it — never derived from the channel or the end reason.</param>
 /// <param name="WorkItemId">Genesys' own routing-task id, if it has one. The stronger idempotency key; never invented in its absence.</param>
 /// <param name="AssignedAgentId">Set to record that this Genesys agent has taken the outstanding work. Applies to the existing work item, never a second one.</param>
 public sealed record GenesysHandoffUpdateDto(
-    bool Required = false,
+    bool? Required = null,
     bool AgentAvailable = false,
     string? Mode = null,
     string? Reason = null,
+    string? Trigger = null,
     string? WorkItemId = null,
     string? AssignedAgentId = null);
 
@@ -94,7 +105,13 @@ public enum GenesysTicketUpdateOutcome
     InvalidHandoffMode,
 
     /// <summary>An assignment was supplied but there is no outstanding human work to apply it to.</summary>
-    NoOpenHandoff
+    NoOpenHandoff,
+
+    /// <summary>The supplied handoff trigger is not one of TigerCS' normalized values.</summary>
+    InvalidHandoffTrigger,
+
+    /// <summary>A handoff stand-down (<c>Required = false</c>) named no reason.</summary>
+    HandoffReasonRequired
 }
 
 /// <summary>

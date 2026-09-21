@@ -133,20 +133,41 @@ public sealed record DashboardAppliedFiltersDto(
     string? TicketStatus,
     byte? PriorityId);
 
-/// <summary>The six KPI cards. All are current-state counts over active tickets in scope, except Pending Approval, which counts tickets (any status but the approval must be Pending) the caller may action.</summary>
+/// <summary>The KPI cards. All are current-state counts over active tickets in scope, except Pending Approval, which counts tickets (any status but the approval must be Pending) the caller may action, and the Awaiting Human Agent trio, which counts pending human work rather than tickets.</summary>
 /// <param name="OpenTickets">Active tickets: Open, InProgress, PendingCustomer, PendingThirdParty.</param>
 /// <param name="MyTickets">Active tickets whose CurrentOwnerEmployeeId is the caller.</param>
 /// <param name="InDepartmentQueue">Active tickets with no current owner — queued to their responsible department.</param>
 /// <param name="SlaBreached">Active tickets whose SlaState is Breached.</param>
 /// <param name="DueToday">Active tickets whose current, unbreached SLA resolution deadline falls today (UTC calendar day).</param>
 /// <param name="PendingApproval">Tickets carrying a Pending approval the caller is authorized to action.</param>
+/// <param name="AwaitingHumanAgent">
+/// Customer interactions waiting for a human to take them
+/// (<c>AgentHandoffStatus.WaitingForAgent</c>), in the departments the caller
+/// can see. Counts <b>work items, not tickets</b>: one ticket can carry
+/// several conversations over its life, and what this measures is people
+/// waiting to be spoken to.
+/// </param>
+/// <param name="OldestHumanWaitSeconds">
+/// How long the longest-waiting of those has waited, in seconds — the number
+/// that makes the queue's SLA risk legible. Zero when nothing is waiting.
+/// </param>
+/// <param name="HumanWaitRiskThresholdSeconds">
+/// The age at which a waiting interaction is rendered as at risk. Served with
+/// the data so the UI never hard-codes its own threshold, and configurable
+/// through <c>Dashboard:HumanWaitRiskThresholdSeconds</c>.
+/// <b>Not an SLA.</b> Human Wait is an operational KPI: it raises no breach
+/// row, no escalation and no <c>SlaDeadlineType</c>.
+/// </param>
 public sealed record DashboardKpisDto(
     int OpenTickets,
     int MyTickets,
     int InDepartmentQueue,
     int SlaBreached,
     int DueToday,
-    int PendingApproval);
+    int PendingApproval,
+    int AwaitingHumanAgent = 0,
+    int OldestHumanWaitSeconds = 0,
+    int HumanWaitRiskThresholdSeconds = 900);
 
 /// <summary>One bar row of a breakdown widget.</summary>
 /// <param name="Key">The dimension value the drill-down filters on (a channel/request type/department/priority id, a status name, or an age bucket name); null when the value is not recorded on the ticket, in which case the row is informational and not a drill-down.</param>
