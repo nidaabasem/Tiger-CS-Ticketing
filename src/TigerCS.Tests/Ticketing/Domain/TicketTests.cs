@@ -1,5 +1,6 @@
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Tests.Ticketing.Fakes;
 
 namespace TigerCS.Tests.Ticketing.Domain;
 
@@ -141,6 +142,20 @@ public class TicketTests
         Assert.Throws<TicketAlreadyVerifiedException>(() => ticket.ReconcileVerification(30, 40));
     }
 
+    /// <summary>
+    /// A ticket sitting in the retired PendingThirdParty status — the only way
+    /// one can still exist: a row that was already in it. Written onto the
+    /// entity as EF rehydrates it, never through a transition, because there
+    /// is no longer one.
+    /// </summary>
+    private static Ticket LegacyPendingThirdPartyTicket()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        return ticket.AsLegacyPendingThirdParty();
+    }
+
     private static Ticket NewOpenTicket() =>
         Ticket.CreateVerified(
             "TG-CS-20260820-0100", departmentId: 2, unitReferenceId: 10, contactReferenceId: 20,
@@ -198,31 +213,18 @@ public class TicketTests
         Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
     }
 
-    [Theory]
-    [InlineData(TicketStatus.PendingCustomer)]
-    [InlineData(TicketStatus.PendingThirdParty)]
-    public void ChangeStatus_InProgressToPendingAndBack_Succeeds(TicketStatus pendingStatus)
+    [Fact]
+    public void ChangeStatus_InProgressToPendingCustomerAndBack_Succeeds()
     {
         var ticket = NewOpenTicket();
         ticket.AssignTo(Guid.NewGuid());
         ticket.ChangeStatus(TicketStatus.InProgress);
 
-        ticket.ChangeStatus(pendingStatus);
-        Assert.Equal(pendingStatus, ticket.TicketStatus);
+        ticket.ChangeStatus(TicketStatus.PendingCustomer);
+        Assert.Equal(TicketStatus.PendingCustomer, ticket.TicketStatus);
 
         ticket.ChangeStatus(TicketStatus.InProgress);
         Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
-    }
-
-    [Fact]
-    public void ChangeStatus_DirectlyBetweenTwoPendingStates_Throws()
-    {
-        var ticket = NewOpenTicket();
-        ticket.AssignTo(Guid.NewGuid());
-        ticket.ChangeStatus(TicketStatus.InProgress);
-        ticket.ChangeStatus(TicketStatus.PendingCustomer);
-
-        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.PendingThirdParty));
     }
 
     [Fact]
@@ -237,6 +239,125 @@ public class TicketTests
     }
 
     [Fact]
+    public void ChangeStatus_BackToOpen_Throws_AStartedTicketNeverBecomesUnstarted()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.Open));
+
+        ticket.ChangeStatus(TicketStatus.PendingCustomer);
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.Open));
+    }
+
+    [Fact]
+    public void ChangeStatus_OpenDirectlyToPendingCustomer_Throws_WorkStartsBeforeItWaits()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.PendingCustomer));
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+    }
+
+    // ---- PendingThirdParty: legacy readable, never a target ----
+
+    [Theory]
+    [InlineData(TicketStatus.Open)]
+    [InlineData(TicketStatus.InProgress)]
+    [InlineData(TicketStatus.PendingCustomer)]
+    public void ChangeStatus_ToPendingThirdParty_Throws_FromEveryActiveStatus(TicketStatus from)
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        if (from is not TicketStatus.Open)
+        {
+            ticket.ChangeStatus(TicketStatus.InProgress);
+        }
+
+        if (from is TicketStatus.PendingCustomer)
+        {
+            ticket.ChangeStatus(TicketStatus.PendingCustomer);
+        }
+
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.PendingThirdParty));
+        Assert.Equal(from, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public void ChangeStatus_ToPendingThirdParty_Throws_EvenFromALegacyPendingThirdPartyTicket()
+    {
+        // The retired status is not even self-reachable: a legacy ticket's one
+        // move is forward, out of it.
+        var ticket = LegacyPendingThirdPartyTicket();
+
+        Assert.Throws<InvalidTicketStatusTransitionException>(() => ticket.ChangeStatus(TicketStatus.PendingThirdParty));
+        Assert.Equal(TicketStatus.PendingThirdParty, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public void ChangeStatus_LegacyPendingThirdPartyToInProgress_Succeeds_TheEscapePath()
+    {
+        var ticket = LegacyPendingThirdPartyTicket();
+
+        ticket.ChangeStatus(TicketStatus.InProgress);
+
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public void TransitionTable_OffersPendingThirdPartyAsATargetFromNoStatusAtAll()
+    {
+        // The guarantee stated structurally rather than case by case: no source
+        // status, active or legacy, lists the retired one among its targets.
+        foreach (var from in Enum.GetValues<TicketStatus>())
+        {
+            Assert.DoesNotContain(TicketStatus.PendingThirdParty, TicketStatusTransitions.AllowedTargetsFrom(from));
+            Assert.False(TicketStatusTransitions.IsChangeStatusAllowed(from, TicketStatus.PendingThirdParty));
+        }
+    }
+
+    [Fact]
+    public void TransitionTable_OffersExactlyTheApprovedTargets()
+    {
+        Assert.Equal([TicketStatus.InProgress], TicketStatusTransitions.AllowedTargetsFrom(TicketStatus.Open));
+        Assert.Equal([TicketStatus.PendingCustomer], TicketStatusTransitions.AllowedTargetsFrom(TicketStatus.InProgress));
+        Assert.Equal([TicketStatus.InProgress], TicketStatusTransitions.AllowedTargetsFrom(TicketStatus.PendingCustomer));
+        Assert.Equal([TicketStatus.InProgress], TicketStatusTransitions.AllowedTargetsFrom(TicketStatus.PendingThirdParty));
+
+        // Resolved and Closed leave the working sub-machine through Resolve,
+        // Close and Reopen — dedicated operations, never a generic status change.
+        Assert.Empty(TicketStatusTransitions.AllowedTargetsFrom(TicketStatus.Resolved));
+        Assert.Empty(TicketStatusTransitions.AllowedTargetsFrom(TicketStatus.Closed));
+    }
+
+    [Fact]
+    public void ActiveStatuses_ExcludeTheLegacyOneAndNothingElse()
+    {
+        Assert.Equal(
+            [TicketStatus.Open, TicketStatus.InProgress, TicketStatus.PendingCustomer, TicketStatus.Resolved, TicketStatus.Closed],
+            TicketStatusTransitions.ActiveStatuses);
+
+        Assert.True(TicketStatusTransitions.IsLegacyOnly(TicketStatus.PendingThirdParty));
+        Assert.All(
+            TicketStatusTransitions.ActiveStatuses,
+            s => Assert.False(TicketStatusTransitions.IsLegacyOnly(s)));
+    }
+
+    [Fact]
+    public void PendingThirdPartyKeepsItsStoredEnumValue_HistoricalRowsAreNeverReinterpreted()
+    {
+        // Renumbering would silently turn every stored 4 into another status.
+        Assert.Equal(4, (byte)TicketStatus.PendingThirdParty);
+        Assert.Equal(1, (byte)TicketStatus.Open);
+        Assert.Equal(2, (byte)TicketStatus.InProgress);
+        Assert.Equal(3, (byte)TicketStatus.PendingCustomer);
+        Assert.Equal(5, (byte)TicketStatus.Resolved);
+        Assert.Equal(6, (byte)TicketStatus.Closed);
+    }
+
+    [Fact]
     public void Resolve_FromOpen_Throws_MustBeWorkedFirst()
     {
         var ticket = NewOpenTicket();
@@ -246,7 +367,7 @@ public class TicketTests
     }
 
     [Fact]
-    public void Resolve_FromInProgress_SetsResolvedStatusAndOutcome()
+    public void Resolve_FromInProgress_SetsResolvedStatusAndOutcome_PendingCustomerIsNotMandatory()
     {
         var ticket = NewOpenTicket();
         ticket.AssignTo(Guid.NewGuid());
@@ -270,6 +391,35 @@ public class TicketTests
 
         Assert.Equal((byte)ResolutionOutcome.Duplicate, ticket.ResolutionOutcome);
         Assert.Equal(999, ticket.DuplicateOfTicketId);
+    }
+
+    [Fact]
+    public void Resolve_FromPendingCustomer_Succeeds()
+    {
+        var ticket = NewOpenTicket();
+        ticket.AssignTo(Guid.NewGuid());
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.ChangeStatus(TicketStatus.PendingCustomer);
+
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+
+        Assert.Equal(TicketStatus.Resolved, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public void Resolve_FromLegacyPendingThirdParty_Throws_ItReturnsToInProgressFirst()
+    {
+        var ticket = LegacyPendingThirdPartyTicket();
+
+        Assert.Throws<TicketNotEligibleForResolutionException>(
+            () => ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null));
+        Assert.Equal(TicketStatus.PendingThirdParty, ticket.TicketStatus);
+
+        // The escape path is the whole answer: back to InProgress, then resolve
+        // exactly like any other ticket.
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        Assert.Equal(TicketStatus.Resolved, ticket.TicketStatus);
     }
 
     [Fact]

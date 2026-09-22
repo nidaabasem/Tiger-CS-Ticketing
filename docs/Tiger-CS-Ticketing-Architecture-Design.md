@@ -445,7 +445,7 @@ Sketch level — resource, method, path, purpose, and primary authorized roles. 
 | PATCH | `/api/tickets/{id}/classify` | Set category/sub-category/priority | Geyness Agent |
 | PATCH | `/api/tickets/{id}/assign` | Set `CurrentOwnerEmployeeId` | Supervisor, Department Head |
 | POST | `/api/tickets/{id}/transfer` | Department transfer (mutates `CurrentDepartmentId` only — ADR-004) | Department Head approval required (ISSUE-010) |
-| POST | `/api/tickets/{id}/status` | Transition among Open/InProgress/PendingCustomer/PendingThirdParty, with note | Department Employee, Department Head |
+| POST | `/api/tickets/{id}/status` | Transition within the working sub-machine — Open→InProgress and InProgress↔PendingCustomer — with note. PendingThirdParty is a legacy readable status and is refused as a target; a ticket already in it returns to InProgress here | Department Employee, Department Head |
 | POST | `/api/tickets/{id}/priority-change` | Change priority; upgrade applies immediately (ADR-010); downgrade requires `approvingEmployeeId` | Department Employee/Head (upgrade); Department Head+ (downgrade approval) |
 | POST | `/api/tickets/{id}/resolve` | Set `ResolutionOutcome = Resolved` + mandatory note | Department Employee, Department Head |
 | POST | `/api/tickets/{id}/close` | `TicketStatus → Closed`; requires `ResolutionOutcome` set + notification-confirmed flag | Geyness Agent, Supervisor, CS Manager (ADR-009) |

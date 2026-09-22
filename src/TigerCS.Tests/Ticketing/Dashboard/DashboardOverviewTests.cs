@@ -626,6 +626,65 @@ public sealed class DashboardOverviewTests : IDisposable
         Assert.Equal(0, head.TotalCount);
     }
 
+    // ---------------------------------------------------------------
+    // The retired PendingThirdParty status
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task StatusFilterOptions_OfferTheActiveStatusesOnly_NeverTheRetiredOne()
+    {
+        var overview = await OverviewAsync(Guid.NewGuid(), CrossDepartment);
+
+        Assert.Equal(
+            ["Open", "InProgress", "PendingCustomer", "Resolved", "Closed"],
+            overview.FilterOptions.Statuses.Select(o => o.Id).ToArray());
+        Assert.DoesNotContain(overview.FilterOptions.Statuses, o => o.Id == nameof(TicketStatus.PendingThirdParty));
+    }
+
+    [Fact]
+    public async Task HistoricalPendingThirdPartyTickets_StayReadable_AndKeepReportingTheirRealStatus()
+    {
+        // Retiring the status must not rewrite history: a stored row reads
+        // back as itself, counts as the active work it still is, and appears
+        // in the breakdown under its own name.
+        using (var context = _db.CreateContext())
+        {
+            _db.AddTicket(context, _db.CustomerServiceId, status: TicketStatus.PendingThirdParty);
+            _db.AddTicket(context, _db.CustomerServiceId, status: TicketStatus.InProgress);
+        }
+
+        var overview = await OverviewAsync(Guid.NewGuid(), CrossDepartment);
+
+        Assert.Equal(1, CountOf(overview.StatusBreakdown, nameof(TicketStatus.PendingThirdParty)));
+
+        // Unfinished work is still unfinished: a legacy pending ticket stays
+        // in the active set, so it never vanishes from the queue someone would
+        // use to return it to InProgress.
+        Assert.Equal(2, overview.Kpis.OpenTickets);
+    }
+
+    [Fact]
+    public async Task HistoricalPendingThirdPartyTicket_IsStillReturnedByTheQueue()
+    {
+        using (var context = _db.CreateContext())
+        {
+            _db.AddTicket(context, _db.CustomerServiceId, status: TicketStatus.PendingThirdParty);
+        }
+
+        using var readContext = _db.CreateContext();
+        var queue = _db.CreateQueryService(readContext);
+
+        var byStatus = await queue.GetQueueAsync(
+            Guid.NewGuid(), CrossDepartment,
+            new TicketListRequestDto(null, null, null, nameof(TicketStatus.PendingThirdParty), null, null, null, null, null, 1, 20));
+
+        // Not offered as a filter OPTION any more, but a caller that names it
+        // — or a saved link that already did — still gets the historical
+        // ticket back rather than an error or an empty page.
+        Assert.Equal(1, byStatus.TotalCount);
+        Assert.Equal(nameof(TicketStatus.PendingThirdParty), byStatus.Items[0].TicketStatus);
+    }
+
     [Fact]
     public void ResolveScope_NarrowsOnly()
     {

@@ -36,6 +36,16 @@ public sealed record ApprovalRequirementDto(
     bool BlocksWorkUntilApproved,
     bool IsActive);
 
+/// <summary>
+/// One request type's SLA policy for one priority.
+///
+/// <para>
+/// <c>PausesOnPendingInternal</c> reports the stored value of the retired
+/// Pending Internal / Third Party pause setting. It is read-only in practice:
+/// reported so historical configuration stays visible, but nothing writes it
+/// any more.
+/// </para>
+/// </summary>
 public sealed record SlaPolicyDto(
     byte PriorityId,
     SlaTriggerType Trigger,
@@ -106,6 +116,18 @@ public sealed record SaveApprovalRequirementRequestDto(
     bool BlocksWorkUntilApproved = true,
     bool IsActive = true);
 
+/// <summary>
+/// Create or update one request type's SLA policy for one priority.
+///
+/// <para>
+/// <b><c>PausesOnPendingInternal</c> is deprecated — accepted for wire
+/// compatibility, never applied.</b> It configured the pause window for
+/// <c>TicketStatus.PendingThirdParty</c>, which the approved lifecycle
+/// cleanup retired. A new policy is created "not decided" and an existing one
+/// keeps whatever it already stores, so historical configuration is preserved
+/// and the column needs no migration.
+/// </para>
+/// </summary>
 public sealed record SaveSlaPolicyRequestDto(
     SlaTriggerType Trigger,
     SlaDurationUnit Unit,

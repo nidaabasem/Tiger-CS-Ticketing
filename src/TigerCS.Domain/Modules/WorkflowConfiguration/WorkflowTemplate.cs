@@ -50,7 +50,15 @@ public class WorkflowTemplate
     /// <summary>Whether flows on this version may use <c>TicketStatus.PendingCustomer</c> at all. A request type further restricts via <see cref="RequestType.AllowPendingCustomer"/> — see <see cref="WorkflowCapabilities.Resolve"/>.</summary>
     public bool AllowsPendingCustomer { get; private set; }
 
-    /// <summary>Whether flows on this version may use <c>TicketStatus.PendingThirdParty</c> (internal department / external party). Same further restriction as <see cref="AllowsPendingCustomer"/>.</summary>
+    /// <summary>
+    /// <b>Deprecated — retained for compatibility, consulted by nothing.</b>
+    /// It declared that flows on this version may use
+    /// <c>TicketStatus.PendingThirdParty</c>, which the approved lifecycle
+    /// cleanup retired to a legacy-readable status. The column stays (dropping
+    /// it would be a migration for cleanup's sake alone) and existing rows keep
+    /// their stored value, but no transition, picker or capability check reads
+    /// it any more.
+    /// </summary>
     public bool AllowsPendingInternal { get; private set; }
 
     /// <summary>Whether this flow carries an approval stage — approval records over the unchanged status machine (phase 3).</summary>

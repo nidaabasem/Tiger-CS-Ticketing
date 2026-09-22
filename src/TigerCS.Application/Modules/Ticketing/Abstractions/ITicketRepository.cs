@@ -22,7 +22,7 @@ public enum TicketSortBy
 /// <list type="bullet">
 /// <item><see cref="ChannelId"/> — the ticket's originating interaction channel.</item>
 /// <item><see cref="RequestTypeId"/> — the ticket's request type.</item>
-/// <item><see cref="ActiveOnly"/> — any active status (Open/InProgress/PendingCustomer/PendingThirdParty).</item>
+/// <item><see cref="ActiveOnly"/> — any active status (Open/InProgress/PendingCustomer, plus the legacy PendingThirdParty, which is still unfinished work).</item>
 /// <item><see cref="InDepartmentQueue"/> — active, with no current owner (it sits in its department's queue).</item>
 /// <item><see cref="SlaBreached"/> — active, SlaState Breached.</item>
 /// <item><see cref="DueToday"/> — active, current SLA period's unbreached resolution deadline falls on <see cref="NowUtc"/>'s UTC calendar day.</item>
@@ -122,7 +122,8 @@ public sealed record CustomerHistoryQueryResult(
 /// rule exactly: resolved server-side from the caller's roles/department
 /// membership, never client-supplied — every count and every attention row
 /// is scoped by it at the query itself. "Active" throughout means
-/// TicketStatus Open/InProgress/PendingCustomer/PendingThirdParty.
+/// TicketStatus Open/InProgress/PendingCustomer, plus the legacy
+/// PendingThirdParty — retired as a target, but still unfinished work.
 /// </summary>
 /// <param name="VisibleDepartmentIds">Null = no restriction (cross-department view role); otherwise the caller's own departments.</param>
 /// <param name="CallerEmployeeId">For the My Tickets count.</param>

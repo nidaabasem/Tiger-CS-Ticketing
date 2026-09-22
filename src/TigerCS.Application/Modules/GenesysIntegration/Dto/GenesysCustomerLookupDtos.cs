@@ -11,7 +11,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// </summary>
 /// <param name="TicketId">The ticket.</param>
 /// <param name="TicketNumber">Its human-facing number.</param>
-/// <param name="TicketStatus">Open, InProgress, PendingCustomer, PendingThirdParty, Resolved or Closed.</param>
+/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, Resolved, Closed — or the legacy, no-longer-reachable PendingThirdParty on a historical ticket.</param>
 /// <param name="IsOpen">Whether it is still being worked — the field that matters on a call pickup.</param>
 /// <param name="RequestSummary">The one-line summary.</param>
 /// <param name="CurrentDepartmentId">The department currently holding it.</param>

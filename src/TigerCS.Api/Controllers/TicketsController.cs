@@ -82,7 +82,9 @@ public class TicketsController(
     /// <param name="request">
     /// Filtering, sorting, and paging. All filters are optional and combine
     /// with AND. <c>ticketStatus</c> is one of Open, InProgress,
-    /// PendingCustomer, PendingThirdParty, Resolved, Closed;
+    /// PendingCustomer, Resolved, Closed — the retired PendingThirdParty is
+    /// no longer an offered filter, though a historical ticket still reports
+    /// it as its own status;
     /// <c>verificationStatus</c> one of Unverified, PendingCrmVerification,
     /// Verified; <c>priorityId</c> 1=Critical, 2=High, 3=Medium, 4=Low.
     /// </param>
@@ -357,12 +359,21 @@ public class TicketsController(
     /// <summary>Change a ticket's working status.</summary>
     /// <remarks>
     /// MVP-API-Contracts.md §3.7 — the "work" sub-machine only
-    /// (Open to InProgress, InProgress to and from PendingCustomer/
-    /// PendingThirdParty). Resolved and Closed are reached only via
-    /// <see cref="Resolve"/> and <see cref="Close"/>.
+    /// (Open to InProgress, and InProgress to and from PendingCustomer, which
+    /// is optional: a ticket may go straight from InProgress to Resolved).
+    /// Resolved and Closed are reached only via <see cref="Resolve"/> and
+    /// <see cref="Close"/>, and Closed returns to InProgress only via
+    /// <see cref="Reopen"/>.
+    ///
+    /// <para>
+    /// PendingThirdParty is a legacy-readable status and is refused as a
+    /// target here with the ordinary 422 invalid-transition response, however
+    /// the request is shaped. A ticket that was already in it moves back to
+    /// InProgress through this same endpoint.
+    /// </para>
     /// </remarks>
     /// <param name="ticketId">The ticket to update.</param>
-    /// <param name="request">The new status (Open, InProgress, PendingCustomer, or PendingThirdParty) and the ticket's current rowVersion.</param>
+    /// <param name="request">The new status (InProgress or PendingCustomer) and the ticket's current rowVersion.</param>
     /// <response code="200">The updated ticket.</response>
     /// <response code="400">The request body was malformed.</response>
     /// <response code="404">No such ticket, or it is not visible to the caller.</response>
@@ -964,7 +975,7 @@ public class TicketsController(
         TicketMutationOutcome.NotEligibleForResolution => Problem(
             type: "https://tigercs.internal/problems/not-eligible-for-resolution",
             title: "Ticket is not eligible for resolution",
-            detail: "Resolve is only valid from InProgress, PendingCustomer, or PendingThirdParty.",
+            detail: "Resolve is only valid from InProgress or PendingCustomer. Return a legacy Pending Third Party ticket to InProgress first.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.NotYetResolved => Problem(
@@ -1045,7 +1056,7 @@ public class TicketsController(
         TicketMutationOutcome.PendingReasonRequired => Problem(
             type: "https://tigercs.internal/problems/pending-reason-required",
             title: "Pending reason required",
-            detail: "Moving a ticket to PendingCustomer or PendingThirdParty requires a PendingReason.",
+            detail: "Moving a ticket to PendingCustomer requires a PendingReason.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.NotAllowedForRequestType => Problem(

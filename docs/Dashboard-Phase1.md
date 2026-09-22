@@ -38,7 +38,7 @@ priority) apply to both contexts.
 
 | KPI | Definition |
 | --- | --- |
-| Open Tickets | Active tickets: `Open`, `InProgress`, `PendingCustomer`, `PendingThirdParty`. |
+| Open Tickets | Active tickets: `Open`, `InProgress`, `PendingCustomer` — plus any historical ticket still in the legacy `PendingThirdParty`, which is non-terminal and therefore still work in hand. |
 | My Tickets | Active tickets whose `CurrentOwnerEmployeeId` is the signed-in user. |
 | In Department Queue | Active tickets with no `CurrentOwnerEmployeeId` (queued to their responsible department). |
 | SLA Breached | Active tickets whose `SlaState` is `Breached`. |

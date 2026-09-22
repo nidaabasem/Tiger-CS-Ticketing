@@ -39,7 +39,16 @@ public enum WorkflowStepKind : byte
     /// <summary>Waiting on the customer (payment, documents, response) — maps to <c>TicketStatus.PendingCustomer</c> with a structured pending record.</summary>
     PendingCustomer = 6,
 
-    /// <summary>Waiting on another internal department or an external party — maps to <c>TicketStatus.PendingThirdParty</c> with a structured pending record.</summary>
+    /// <summary>
+    /// <b>Legacy only — not offered to the Workflow Designer.</b> Waiting on
+    /// another internal department or an external party; it maps to
+    /// <c>TicketStatus.PendingThirdParty</c>, which the approved lifecycle
+    /// cleanup retired to a legacy-readable status. The value stays at 7 and
+    /// <see cref="WorkflowStepKinds.All"/> still describes it, so published
+    /// versions that already carry such a step keep validating and rendering;
+    /// <see cref="WorkflowStepKinds.Selectable"/> no longer offers it, so no
+    /// new version can add one.
+    /// </summary>
     PendingInternal = 7,
 
     /// <summary>The responsible team considers its work completed — maps to <c>TicketStatus.Resolved</c>.</summary>
@@ -93,6 +102,28 @@ public static class WorkflowStepKinds
         new(WorkflowStepKind.Resolved, "Resolve", "The responsible team marks its work completed.", false, false, false, false),
         new(WorkflowStepKind.Closed, "Close", "Customer Service closes the case. Always the final step.", false, false, IsStart: false, IsTerminal: true)
     ];
+
+    /// <summary>
+    /// The kinds the Workflow Designer offers when building a version — every
+    /// supported kind except the legacy-only ones.
+    ///
+    /// <para>
+    /// <see cref="All"/> deliberately stays complete: an existing version that
+    /// already carries a legacy step must still validate, publish and render
+    /// its own step list, so <see cref="Describe"/> and
+    /// <see cref="IsSupported"/> keep answering for it. Only what is offered
+    /// for a <i>new</i> step narrows.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyList<WorkflowStepKindInfo> Selectable =
+        [.. All.Where(i => !IsLegacyOnly(i.Kind))];
+
+    /// <summary>
+    /// True for a step kind kept only so historical workflow versions remain
+    /// readable. <see cref="WorkflowStepKind.PendingInternal"/> is one because
+    /// the <c>TicketStatus.PendingThirdParty</c> it maps onto is.
+    /// </summary>
+    public static bool IsLegacyOnly(WorkflowStepKind kind) => kind is WorkflowStepKind.PendingInternal;
 
     private static readonly Dictionary<WorkflowStepKind, WorkflowStepKindInfo> ByKind = All.ToDictionary(i => i.Kind);
 

@@ -126,30 +126,34 @@ public static class WorkflowReferenceData
         standard.AddStep(4, "Resolved", WorkflowStepKind.Resolved);
         standard.AddStep(5, "Closed", WorkflowStepKind.Closed);
 
+        // No Pending Internal / Third Party step or flag: that step kind maps
+        // onto TicketStatus.PendingThirdParty, which the approved lifecycle
+        // cleanup retired. Seeding a brand-new database with it would create
+        // configuration no ticket could ever use. This seed only ever runs on
+        // an empty database, so no existing workflow row is touched — a
+        // deployed version that already carries such a step keeps it.
         var withPending = BaselineVersion(
             WithPendingTemplateCode, "Request With Pending",
-            "Requests that may wait on the customer (payment, documents, response) or on an internal department / external party.",
-            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: false);
+            "Requests that may wait on the customer (payment, documents, response).",
+            allowsPendingCustomer: true, allowsPendingInternal: false, requiresApproval: false);
         withPending.AddStep(1, "Ticket Created", WorkflowStepKind.Created);
         withPending.AddStep(2, "Assigned", WorkflowStepKind.Assigned);
         withPending.AddStep(3, "In Progress", WorkflowStepKind.InProgress);
         withPending.AddStep(4, "Pending Customer", WorkflowStepKind.PendingCustomer, isOptional: true);
-        withPending.AddStep(5, "Pending Internal / Third Party", WorkflowStepKind.PendingInternal, isOptional: true);
-        withPending.AddStep(6, "Resolved", WorkflowStepKind.Resolved);
-        withPending.AddStep(7, "Closed", WorkflowStepKind.Closed);
+        withPending.AddStep(5, "Resolved", WorkflowStepKind.Resolved);
+        withPending.AddStep(6, "Closed", WorkflowStepKind.Closed);
 
         var withApproval = BaselineVersion(
             WithApprovalTemplateCode, "Request With Approval",
             "Requests carrying an approval stage (e.g. Accounting approval for Send Receipts, Customer Service approval for Handover) before work proceeds.",
-            allowsPendingCustomer: true, allowsPendingInternal: true, requiresApproval: true);
+            allowsPendingCustomer: true, allowsPendingInternal: false, requiresApproval: true);
         withApproval.AddStep(1, "Ticket Created", WorkflowStepKind.Created);
         withApproval.AddStep(2, "Assigned", WorkflowStepKind.Assigned);
         withApproval.AddStep(3, "Review", WorkflowStepKind.Review);
         withApproval.AddStep(4, "Waiting for Approval", WorkflowStepKind.WaitingForApproval);
         withApproval.AddStep(5, "In Progress", WorkflowStepKind.InProgress);
-        withApproval.AddStep(6, "Pending Internal / Third Party", WorkflowStepKind.PendingInternal, isOptional: true);
-        withApproval.AddStep(7, "Resolved", WorkflowStepKind.Resolved);
-        withApproval.AddStep(8, "Closed", WorkflowStepKind.Closed);
+        withApproval.AddStep(6, "Resolved", WorkflowStepKind.Resolved);
+        withApproval.AddStep(7, "Closed", WorkflowStepKind.Closed);
 
         return [standard, withPending, withApproval];
     }
@@ -201,7 +205,7 @@ public static class WorkflowReferenceData
                 [new(normal, SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 1, 2)]),
 
             new(CustomerServiceCode, "Complaint Handling", WithPendingTemplateCode, normal,
-                AllowAgentPriorityChange: false, AllowPendingCustomer: true, AllowPendingInternal: true, AllowReopen: true,
+                AllowAgentPriorityChange: false, AllowPendingCustomer: true, AllowPendingInternal: false, AllowReopen: true,
                 [new(normal, SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 1, 3)]),
 
             new(CustomerServiceCode, "Ticketing System", StandardTemplateCode, normal,
@@ -232,7 +236,7 @@ public static class WorkflowReferenceData
             // against the post-approval day unless configuration later says
             // so explicitly.
             new(CollectionsCode, "Send Receipts", WithApprovalTemplateCode, normal,
-                AllowAgentPriorityChange: false, AllowPendingCustomer: false, AllowPendingInternal: true, AllowReopen: true,
+                AllowAgentPriorityChange: false, AllowPendingCustomer: false, AllowPendingInternal: false, AllowReopen: true,
                 [new(normal, SlaTriggerType.ApprovalReceived, SlaDurationUnit.Days, 1, null)]),
 
             // ---- Registration ----
@@ -244,16 +248,15 @@ public static class WorkflowReferenceData
             // prerequisites; "if something is wrong: duration depends on the
             // issue" is deliberately NOT seeded as an SLA row.
             new(RegistrationCode, "Register Unit", WithPendingTemplateCode, normal,
-                AllowAgentPriorityChange: false, AllowPendingCustomer: true, AllowPendingInternal: true, AllowReopen: true,
+                AllowAgentPriorityChange: false, AllowPendingCustomer: true, AllowPendingInternal: false, AllowReopen: true,
                 [new(normal, SlaTriggerType.PrerequisitesCompleted, SlaDurationUnit.Days, 1, 3)]),
 
             // ---- Handover ----
             // The 1–4 day approval duration begins after Customer Service
-            // approval, never at creation; the optional maintenance
-            // dependency is Pending Internal, and no maintenance-completion
-            // SLA exists in the source so none is seeded.
+            // approval, never at creation; no maintenance-completion SLA
+            // exists in the source so none is seeded.
             new(HandoverCode, "Handover Request", WithApprovalTemplateCode, normal,
-                AllowAgentPriorityChange: false, AllowPendingCustomer: true, AllowPendingInternal: true, AllowReopen: true,
+                AllowAgentPriorityChange: false, AllowPendingCustomer: true, AllowPendingInternal: false, AllowReopen: true,
                 [new(normal, SlaTriggerType.CustomerServiceApproved, SlaDurationUnit.Days, 1, 4)])
         ];
     }

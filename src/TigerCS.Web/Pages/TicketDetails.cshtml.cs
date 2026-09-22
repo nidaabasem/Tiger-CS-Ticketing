@@ -139,8 +139,39 @@ public sealed class TicketDetailsModel(
     /// <summary>Whether an Assign control is worth rendering — mirrors TicketAssignmentAppService.AssignAsync's permission rule.</summary>
     public bool CanAssign { get; private set; }
 
-    /// <summary>Whether a Change Status control is worth rendering — mirrors TicketLifecycleAppService's IsCurrentOwnerOrDepartmentAuthorityAsync.</summary>
+    /// <summary>
+    /// Whether a Change Status control is worth rendering: the permission
+    /// half — TicketLifecycleAppService's IsCurrentOwnerOrDepartmentAuthorityAsync,
+    /// mirrored by <see cref="TicketActions.CanChangeStatus"/> — AND the
+    /// ticket having somewhere to go.
+    ///
+    /// <para>
+    /// The lifecycle half is here rather than in <see cref="TicketActions"/>
+    /// because it is not a permission: on a Resolved or Closed ticket the
+    /// working sub-machine has no target at all, so the control would open a
+    /// picker with nothing legal in it. It is read straight off the domain's
+    /// own transition table (<see cref="StatusTargets"/>), not re-derived —
+    /// a second copy of the rule is exactly what let the picker offer Open
+    /// and Pending Third Party while the domain refused both.
+    /// </para>
+    /// </summary>
     public bool CanChangeStatus { get; private set; }
+
+    /// <summary>
+    /// Exactly the statuses <c>POST /api/tickets/{id}/status</c> would accept
+    /// from this ticket's current status, from the domain's single transition
+    /// table. Empty on a Resolved or Closed ticket — and on a status the
+    /// client does not recognize — which hides the Change Status action
+    /// entirely.
+    ///
+    /// <para>
+    /// A ticket sitting in the legacy PendingThirdParty status therefore
+    /// offers In Progress and nothing else: its one sanctioned way out.
+    /// Nothing offers PendingThirdParty itself, because no arm of the table
+    /// produces it.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<TicketStatus> StatusTargets { get; private set; } = [];
 
     /// <summary>Whether a Resolve control is worth rendering — mirrors TicketLifecycleAppService.IsResolveAuthorizedAsync, role set AND the ownership/department half.</summary>
     public bool CanResolve { get; private set; }
@@ -501,7 +532,15 @@ public sealed class TicketDetailsModel(
         // employee/status pickers so an untouched form still submits something valid.
         Assign = new AssignInput { RowVersionBase64 = Ticket.RowVersion, AssignedEmployeeId = Ticket.CurrentOwnerEmployeeId ?? Guid.Empty };
         Transfer = new TransferInput { RowVersionBase64 = Ticket.RowVersion, TargetDepartmentId = TransferTargets.FirstOrDefault()?.DepartmentId ?? 0 };
-        Status = new StatusInput { RowVersionBase64 = Ticket.RowVersion, NewStatus = Ticket.TicketStatus };
+        // Default the picker to a target it actually offers. The ticket's own
+        // current status is never one of them (nothing transitions to itself),
+        // so defaulting to it would submit a guaranteed 422 from an untouched
+        // form.
+        Status = new StatusInput
+        {
+            RowVersionBase64 = Ticket.RowVersion,
+            NewStatus = StatusTargets.Count > 0 ? StatusTargets[0].ToString() : Ticket.TicketStatus
+        };
         Resolve = new ResolveInput { RowVersionBase64 = Ticket.RowVersion, ResolutionOutcome = "Resolved" };
         Close = new RowVersionInput { RowVersionBase64 = Ticket.RowVersion };
         Reopen = new ReopenInput
@@ -554,8 +593,10 @@ public sealed class TicketDetailsModel(
                 ticket.CurrentDepartmentId,
                 [.. nameResolver.OwnDepartments.Select(d => d.DepartmentId)]);
 
+        StatusTargets = TicketStatusTransitions.AllowedTargetsFrom(ticket.TicketStatus);
+
         CanAssign = TicketActions.CanAssign(ActionContext);
-        CanChangeStatus = TicketActions.CanChangeStatus(ActionContext);
+        CanChangeStatus = TicketActions.CanChangeStatus(ActionContext) && StatusTargets.Count > 0;
         CanResolve = TicketActions.CanResolve(ActionContext);
         CanClose = TicketActions.CanClose(Viewer?.Roles);
         CanEscalate = TicketActions.CanEscalate(ActionContext);
@@ -821,7 +862,7 @@ public sealed class TicketDetailsModel(
         public string NewStatus { get; set; } = "Open";
         public string? RowVersionBase64 { get; set; }
 
-        /// <summary>Required by the API when NewStatus is PendingCustomer/PendingThirdParty — a ticket is never pending without a recorded why.</summary>
+        /// <summary>Required by the API when NewStatus is PendingCustomer — a ticket is never pending without a recorded why.</summary>
         public string? PendingReason { get; set; }
     }
 

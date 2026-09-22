@@ -80,17 +80,31 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
 
+        // Api enforcement of the retired status, not merely a hidden control:
+        // a direct POST naming PendingThirdParty is refused here, before any
+        // transaction or write, with the ordinary invalid-transition result.
+        // Ticket.ChangeStatus would refuse it too — no arm of the transition
+        // table produces it — but rejecting it up front keeps the failure from
+        // being reported as "a pending reason is required", which would imply
+        // the transition is available once a reason is supplied.
+        if (TicketStatusTransitions.IsLegacyOnly(newStatus))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.InvalidStatusTransition);
+        }
+
         // Workflow/Automation phase 2 — structured pending. Entering a
         // Pending status always requires a reason (a ticket is never pending
         // without a recorded why), and, where the ticket carries a request
-        // type, the target Pending kind must be allowed by its workflow
-        // configuration. The configuration can only narrow the existing
-        // status machine — a ticket with no request type keeps the exact
-        // pre-phase-2 behavior.
+        // type, it must be allowed by its workflow configuration. The
+        // configuration can only narrow the existing status machine — a ticket
+        // with no request type keeps the exact pre-phase-2 behavior.
+        //
+        // PendingCustomer is the only pending kind a ticket can still enter,
+        // so CanGoPendingInternal is deliberately no longer consulted: the
+        // transition it gated does not exist any more.
         var targetPendingKind = newStatus switch
         {
             TicketStatus.PendingCustomer => PendingKind.Customer,
-            TicketStatus.PendingThirdParty => PendingKind.InternalOrThirdParty,
             _ => (PendingKind?)null
         };
 
@@ -102,10 +116,7 @@ public sealed class TicketLifecycleAppService(
             }
 
             var capabilities = await ResolveCapabilitiesAsync(ticket, cancellationToken);
-            var pendingAllowed = targetPendingKind == PendingKind.Customer
-                ? capabilities?.CanGoPendingCustomer
-                : capabilities?.CanGoPendingInternal;
-            if (pendingAllowed is false)
+            if (capabilities?.CanGoPendingCustomer is false)
             {
                 return TicketMutationResult.Failure(TicketMutationOutcome.NotAllowedForRequestType);
             }
@@ -151,6 +162,10 @@ public sealed class TicketLifecycleAppService(
         }
         else if (oldStatus is TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty)
         {
+            // PendingThirdParty stays in this test deliberately: it is the
+            // legacy escape back to InProgress, and a ticket that went pending
+            // before the status was retired must still have its open pending
+            // record closed rather than left dangling.
             var openPending = await pendingRecordRepository.GetOpenAsync(ticketId, cancellationToken);
             openPending?.Resume(callerEmployeeId, now);
         }
@@ -244,7 +259,11 @@ public sealed class TicketLifecycleAppService(
 
         // Resolving directly out of a Pending status ends that pending
         // period — the pause window must close so the record never dangles
-        // open on a Resolved ticket.
+        // open on a Resolved ticket. Only PendingCustomer can reach here now
+        // (a legacy PendingThirdParty ticket returns to InProgress first, which
+        // closes its record on that step), but the test stays as-is rather than
+        // narrowing: a record left open on a Resolved ticket is the failure
+        // this guards against, and it costs one repository read.
         if (oldStatus is TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty)
         {
             var openPending = await pendingRecordRepository.GetOpenAsync(ticketId, cancellationToken);

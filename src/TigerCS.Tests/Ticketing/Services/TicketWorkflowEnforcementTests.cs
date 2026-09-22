@@ -87,16 +87,14 @@ public class TicketWorkflowEnforcementTests
 
     // ---- Required pending reason ----
 
-    [Theory]
-    [InlineData("PendingCustomer")]
-    [InlineData("PendingThirdParty")]
-    public async Task PendingWithoutAReason_IsRejected_NoStateChange(string target)
+    [Fact]
+    public async Task PendingWithoutAReason_IsRejected_NoStateChange()
     {
         var f = CreateService();
         var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, true, true);
 
         var result = await f.Service.ChangeStatusAsync(
-            owner, [Roles.DepartmentEmployee], ticket.TicketId, new ChangeStatusRequestDto(target, []));
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new ChangeStatusRequestDto("PendingCustomer", []));
 
         Assert.Equal(TicketMutationOutcome.PendingReasonRequired, result.Outcome);
         Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
@@ -139,20 +137,92 @@ public class TicketWorkflowEnforcementTests
         Assert.NotNull(record.PausedDuration);
     }
 
-    [Fact]
-    public async Task PendingInternal_IsRecordedDistinctlyFromPendingCustomer()
+    // ---- The retired PendingThirdParty, enforced at the Api boundary ----
+
+    [Theory]
+    [InlineData("PendingThirdParty")]
+    [InlineData("pendingthirdparty")]
+    [InlineData("PENDINGTHIRDPARTY")]
+    public async Task PendingThirdParty_IsRefusedAsATarget_WhateverTheCasing(string target)
     {
+        // The status parses (the enum value is deliberately still there for
+        // historical rows), and the request type allows every pending kind it
+        // ever could. It is still refused — hiding the option in the UI is not
+        // the enforcement, the domain rule is.
+        var f = CreateService();
+        var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, allowPendingCustomer: true, allowPendingInternal: true);
+
+        var result = await f.Service.ChangeStatusAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ChangeStatusRequestDto(target, [], "Awaiting Accounting approval"));
+
+        Assert.Equal(TicketMutationOutcome.InvalidStatusTransition, result.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Empty(f.PendingRecords.All);
+        Assert.Empty(f.StatusHistory.Added);
+        Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
+    }
+
+    [Fact]
+    public async Task PendingThirdParty_WithNoReason_IsRefusedAsInvalid_NotAsAMissingReason()
+    {
+        // The failure must name the real problem: the transition does not
+        // exist. "A pending reason is required" would imply it becomes
+        // available once one is supplied.
         var f = CreateService();
         var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, true, true);
 
         var result = await f.Service.ChangeStatusAsync(
-            owner, [Roles.DepartmentEmployee], ticket.TicketId,
-            new ChangeStatusRequestDto("PendingThirdParty", [], "Awaiting Accounting approval"));
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new ChangeStatusRequestDto("PendingThirdParty", []));
+
+        Assert.Equal(TicketMutationOutcome.InvalidStatusTransition, result.Outcome);
+    }
+
+    [Fact]
+    public async Task LegacyPendingThirdPartyTicket_ReturnsToInProgress_AndItsOpenPendingRecordIsResumed()
+    {
+        // The historical shape, end to end: a ticket that went PendingThirdParty
+        // before the status was retired, with the open pending record that went
+        // with it. Its escape must work and must not leave the record dangling.
+        var f = CreateService();
+        var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, true, true);
+        ticket.AsLegacyPendingThirdParty();
+
+        var legacyRecord = new TicketPendingRecord(
+            ticket.TicketId, PendingKind.InternalOrThirdParty, "Awaiting Accounting approval",
+            TicketStatus.InProgress, owner, new DateTime(2026, 1, 5, 9, 0, 0, DateTimeKind.Utc), Guid.NewGuid());
+        await f.PendingRecords.AddAsync(legacyRecord);
+
+        var result = await f.Service.ChangeStatusAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId, new ChangeStatusRequestDto("InProgress", []));
 
         Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
-        var record = Assert.Single(f.PendingRecords.All);
-        Assert.Equal(PendingKind.InternalOrThirdParty, record.Kind);
-        Assert.Equal("Awaiting Accounting approval", record.Reason);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+
+        Assert.NotNull(legacyRecord.ResumedAtUtc);
+        Assert.Equal(owner, legacyRecord.ResumedByEmployeeId);
+        Assert.NotNull(legacyRecord.PausedDuration);
+
+        // History records the real transition out of the real historical
+        // status — nothing is rewritten.
+        var historyRow = Assert.Single(f.StatusHistory.Added);
+        Assert.Equal((byte)TicketStatus.PendingThirdParty, historyRow.OldValue);
+        Assert.Equal((byte)TicketStatus.InProgress, historyRow.NewValue);
+    }
+
+    [Fact]
+    public async Task LegacyPendingThirdPartyTicket_CannotBeSentBackIntoTheRetiredStatus()
+    {
+        var f = CreateService();
+        var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, true, true);
+        ticket.AsLegacyPendingThirdParty();
+
+        var result = await f.Service.ChangeStatusAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ChangeStatusRequestDto("PendingThirdParty", [], "Still waiting"));
+
+        Assert.Equal(TicketMutationOutcome.InvalidStatusTransition, result.Outcome);
+        Assert.Equal(TicketStatus.PendingThirdParty, ticket.TicketStatus);
     }
 
     [Fact]
@@ -191,11 +261,36 @@ public class TicketWorkflowEnforcementTests
         Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
         Assert.Empty(f.PendingRecords.All);
 
-        // The other pending kind stays available — the gates are per kind.
+        // With PendingThirdParty retired, PendingCustomer is the only pending
+        // kind there is: forbidding it leaves the ticket with no pending
+        // target at all, rather than falling back to the other one.
         var internalResult = await f.Service.ChangeStatusAsync(
             owner, [Roles.DepartmentEmployee], ticket.TicketId,
             new ChangeStatusRequestDto("PendingThirdParty", [], "Awaiting maintenance"));
-        Assert.Equal(TicketMutationOutcome.Success, internalResult.Outcome);
+        Assert.Equal(TicketMutationOutcome.InvalidStatusTransition, internalResult.Outcome);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+    }
+
+    [Fact]
+    public async Task CanGoPendingInternal_NoLongerGatesAnything()
+    {
+        // The deprecated capability is still computed and still stored, but a
+        // request type that switches it ON changes nothing: the transition it
+        // used to gate does not exist any more.
+        var f = CreateService();
+        var (ticket, owner) = await SeedClassifiedInProgressTicketAsync(f, allowPendingCustomer: true, allowPendingInternal: true);
+
+        var result = await f.Service.ChangeStatusAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ChangeStatusRequestDto("PendingThirdParty", [], "Awaiting Accounting approval"));
+
+        Assert.Equal(TicketMutationOutcome.InvalidStatusTransition, result.Outcome);
+
+        // ...and PendingCustomer is still gated by its own flag, unaffected.
+        var customerResult = await f.Service.ChangeStatusAsync(
+            owner, [Roles.DepartmentEmployee], ticket.TicketId,
+            new ChangeStatusRequestDto("PendingCustomer", [], "Missing documents"));
+        Assert.Equal(TicketMutationOutcome.Success, customerResult.Outcome);
     }
 
     [Fact]

@@ -124,7 +124,6 @@
                         <div class="checkbox-grid">
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowAgentPriorityChange" /> Agent may change priority</label>
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingCustomer" /> Pending Customer allowed</label>
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingInternal" /> Pending Internal / Third Party allowed</label>
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowReopen" /> Reopen allowed (the reopen policy still applies)</label>
                         </div>
                     </fieldset>
@@ -209,7 +208,11 @@
                         <div class="checkbox-grid">
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowAgentPriorityChange" /> Agent may change priority</label>
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingCustomer" /> Pending Customer allowed</label>
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingInternal" /> Pending Internal / Third Party allowed</label>
+                            @* Retired with TicketStatus.PendingThirdParty and no longer offered.
+                               The stored value is round-tripped so saving the other details never
+                               rewrites this request type's column — nothing is dropped, and no
+                               migration is involved. *@
+                            <input type="hidden" asp-for="Details.AllowPendingInternal" />
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowReopen" /> Reopen allowed (the reopen policy still applies)</label>
                         </div>
                     </fieldset>
@@ -437,7 +440,6 @@
                                     <th>First response</th>
                                     <th>Resolution</th>
                                     <th>Pauses on Pending Customer</th>
-                                    <th>Pauses on Pending Internal</th>
                                     <th>Status</th>
                                 </tr>
                             </thead>
@@ -449,8 +451,11 @@
                                         <td>@s.Trigger</td>
                                         <td>@(s.FirstResponseTargetValue is null ? "—" : $"{s.FirstResponseTargetValue}{(s.FirstResponseMaximumValue is { } frm ? $"–{frm}" : "")} {s.Unit}")</td>
                                         <td>@(s.IsImmediate ? "Immediately" : $"{s.ResolutionTargetValue}{(s.ResolutionMaximumValue is { } rm ? $"–{rm}" : "")} {s.Unit}")</td>
+                                        @* The retired pause setting has no column here: it configures a
+                                           pause window for TicketStatus.PendingThirdParty, which no ticket
+                                           can enter any more. Its stored value is preserved and still
+                                           reported by the Api — it is simply off the Administration surface. *@
                                         <td>@(s.PausesOnPendingCustomer switch { true => "Yes", false => "No", _ => "Not decided" })</td>
-                                        <td>@(s.PausesOnPendingInternal switch { true => "Yes", false => "No", _ => "Not decided" })</td>
                                         <td>@await Html.PartialAsync("_StatusBadge", s.IsActive)</td>
                                     </tr>
                                 }
@@ -498,10 +503,6 @@
                             <div class="form-group">
                                 <label class="form-label" asp-for="Sla.PausesOnPendingCustomer">Pauses on Pending Customer</label>
                                 <select class="form-control" asp-for="Sla.PausesOnPendingCustomer"><option value="">Not decided</option><option value="true">Yes</option><option value="false">No</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" asp-for="Sla.PausesOnPendingInternal">Pauses on Pending Internal</label>
-                                <select class="form-control" asp-for="Sla.PausesOnPendingInternal"><option value="">Not decided</option><option value="true">Yes</option><option value="false">No</option></select>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" asp-for="Sla.WarningThresholdPercent">Warning threshold %</label>

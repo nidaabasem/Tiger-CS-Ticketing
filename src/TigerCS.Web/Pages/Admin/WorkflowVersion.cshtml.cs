@@ -134,6 +134,7 @@ public sealed class WorkflowVersionModel(AdminApiClient adminApi) : AdminPageMod
         [Required] public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
         public bool AllowsPendingCustomer { get; set; }
+        /// <summary>Deprecated — the retired Pending Internal / Third Party capability. Not offered in the form; carried on a hidden field purely so a settings save round-trips the stored value instead of clearing it.</summary>
         public bool AllowsPendingInternal { get; set; }
         public bool RequiresApproval { get; set; }
     }
