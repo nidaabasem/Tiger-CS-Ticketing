@@ -238,9 +238,15 @@ public sealed class DashboardSqliteFixture : IDisposable
                 ticket.ChangeStatus(TicketStatus.InProgress);
                 break;
             case TicketStatus.PendingCustomer:
-            case TicketStatus.PendingThirdParty:
                 ticket.ChangeStatus(TicketStatus.InProgress);
                 ticket.ChangeStatus(status);
+                break;
+            case TicketStatus.PendingThirdParty:
+                // The retired status: reachable only as a stored historical
+                // row, which is exactly what this fixture needs to prove such
+                // rows still read back through the real EF mapping.
+                ticket.ChangeStatus(TicketStatus.InProgress);
+                ticket.AsLegacyPendingThirdParty();
                 break;
             case TicketStatus.Resolved:
                 ticket.ChangeStatus(TicketStatus.InProgress);

@@ -652,28 +652,32 @@ public class Ticket
     /// <summary>
     /// Solution-Analysis.md §5.6's TicketStatus transition table, restricted
     /// to the "work" sub-machine this method owns: Open→InProgress
-    /// (requires an already-assigned owner) and InProgress↔PendingCustomer/
-    /// PendingThirdParty (pivoting through InProgress, not directly between
-    /// the two Pending states). Resolved/Closed are reached only via
-    /// <see cref="Resolve"/>/<see cref="Close"/> — deliberately distinct
-    /// operations, not reachable through this method (per this increment's
-    /// scope: Resolve/Close stay separate actions).
+    /// (requires an already-assigned owner) and InProgress↔PendingCustomer.
+    /// Resolved/Closed are reached only via <see cref="Resolve"/>/
+    /// <see cref="Close"/>, and Closed returns to InProgress only via
+    /// <see cref="Reopen"/> — deliberately distinct operations, not reachable
+    /// through this method.
+    ///
+    /// <para>
+    /// <b>PendingCustomer is optional.</b> A ticket may go straight from
+    /// InProgress to Resolved; nothing requires it to pass through a Pending
+    /// state first.
+    /// </para>
+    ///
+    /// <para>
+    /// <b><see cref="TicketStatus.PendingThirdParty"/> is legacy-readable
+    /// only</b> (approved lifecycle cleanup). No arm of
+    /// <see cref="TicketStatusTransitions.IsChangeStatusAllowed"/> produces
+    /// it, so no ticket can enter it again through any caller — Api included
+    /// — while a ticket that was already in it keeps its single escape back
+    /// to InProgress.
+    /// </para>
     /// </summary>
     public void ChangeStatus(TicketStatus newStatus)
     {
         EnsureNotClosed();
 
-        var isAllowed = (TicketStatus, newStatus) switch
-        {
-            (TicketStatus.Open, TicketStatus.InProgress) => true,
-            (TicketStatus.InProgress, TicketStatus.PendingCustomer) => true,
-            (TicketStatus.InProgress, TicketStatus.PendingThirdParty) => true,
-            (TicketStatus.PendingCustomer, TicketStatus.InProgress) => true,
-            (TicketStatus.PendingThirdParty, TicketStatus.InProgress) => true,
-            _ => false
-        };
-
-        if (!isAllowed)
+        if (!TicketStatusTransitions.IsChangeStatusAllowed(TicketStatus, newStatus))
         {
             throw new InvalidTicketStatusTransitionException(TicketId, TicketStatus, newStatus);
         }
@@ -688,18 +692,28 @@ public class Ticket
 
     /// <summary>
     /// MVP-API-Contracts.md §3.9 / Solution-Analysis.md §5.6 — marks the
-    /// underlying work done. Valid only from InProgress/PendingCustomer/
-    /// PendingThirdParty (never directly from Open, never twice). Does not
-    /// itself create the <see cref="TicketResolution"/> row or write audit/
-    /// history — mirrors <see cref="CreateVerified"/>'s "bare state
+    /// underlying work done. Valid only from InProgress or PendingCustomer
+    /// (never directly from Open, never twice), and PendingCustomer is
+    /// optional on the way: InProgress→Resolved is the ordinary path. Does
+    /// not itself create the <see cref="TicketResolution"/> row or write
+    /// audit/history — mirrors <see cref="CreateVerified"/>'s "bare state
     /// transition" division of responsibility; the calling application
     /// service does both in the same transaction.
+    ///
+    /// <para>
+    /// A legacy <see cref="TicketStatus.PendingThirdParty"/> ticket is
+    /// deliberately <i>not</i> resolvable in place: its one sanctioned exit is
+    /// <see cref="ChangeStatus"/> back to InProgress, from where it resolves
+    /// like any other ticket. That keeps the active lifecycle to a single
+    /// shape rather than preserving a second, legacy-only route into
+    /// Resolved.
+    /// </para>
     /// </summary>
     public void Resolve(ResolutionOutcomeValue outcome, long? duplicateOfTicketId)
     {
         EnsureNotClosed();
 
-        if (TicketStatus is not (TicketStatus.InProgress or TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty))
+        if (TicketStatus is not (TicketStatus.InProgress or TicketStatus.PendingCustomer))
         {
             throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
         }

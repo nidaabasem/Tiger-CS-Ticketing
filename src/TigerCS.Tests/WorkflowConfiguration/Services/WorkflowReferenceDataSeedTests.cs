@@ -32,15 +32,35 @@ public class WorkflowReferenceDataSeedTests
 
         var withPending = templates.Single(t => t.Code == WorkflowReferenceData.WithPendingTemplateCode);
         Assert.True(withPending.AllowsPendingCustomer);
-        Assert.True(withPending.AllowsPendingInternal);
         Assert.False(withPending.RequiresApproval);
         Assert.Contains(withPending.Steps, s => s.Kind == WorkflowStepKind.PendingCustomer && s.IsOptional);
-        Assert.Contains(withPending.Steps, s => s.Kind == WorkflowStepKind.PendingInternal && s.IsOptional);
 
         var withApproval = templates.Single(t => t.Code == WorkflowReferenceData.WithApprovalTemplateCode);
         Assert.True(withApproval.RequiresApproval);
         Assert.Contains(withApproval.Steps, s => s.Kind == WorkflowStepKind.Review);
         Assert.Contains(withApproval.Steps, s => s.Kind == WorkflowStepKind.WaitingForApproval);
+
+        // The retired Pending Internal / Third Party step is seeded nowhere:
+        // it maps onto TicketStatus.PendingThirdParty, which no ticket can
+        // enter any more, so a fresh database must not be given configuration
+        // that can never be used. Publishing derives AllowsPendingInternal
+        // from the steps, so with none present it stays off everywhere too.
+        Assert.All(templates, t => Assert.DoesNotContain(t.Steps, s => s.Kind == WorkflowStepKind.PendingInternal));
+        Assert.All(templates, t => Assert.False(t.AllowsPendingInternal));
+    }
+
+    [Fact]
+    public async Task No_seeded_request_type_allows_the_retired_pending_internal_capability()
+    {
+        await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+
+        var requestTypes = await db.RequestTypes.ToListAsync();
+        Assert.NotEmpty(requestTypes);
+        Assert.All(requestTypes, r => Assert.False(r.AllowPendingInternal));
+
+        // Pending Customer is untouched — this narrows one retired capability,
+        // it does not turn pending off.
+        Assert.Contains(requestTypes, r => r.AllowPendingCustomer);
     }
 
     [Fact]

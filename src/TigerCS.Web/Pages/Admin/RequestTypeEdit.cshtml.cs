@@ -192,6 +192,7 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
         public byte DefaultPriorityId { get; set; }
         public bool AllowAgentPriorityChange { get; set; }
         public bool AllowPendingCustomer { get; set; }
+        /// <summary>Deprecated — the retired Pending Internal / Third Party capability. Not offered when creating a request type, and carried on a hidden field when editing one so a details save round-trips the stored value instead of clearing it.</summary>
         public bool AllowPendingInternal { get; set; }
         public bool AllowReopen { get; set; }
     }

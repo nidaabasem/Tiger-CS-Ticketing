@@ -9,7 +9,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// Every count is derived from real ticket/SLA/resolution data; nothing
 /// here is estimated or fabricated.
 /// </summary>
-/// <param name="OpenTickets">Active tickets (Open, InProgress, PendingCustomer, PendingThirdParty).</param>
+/// <param name="OpenTickets">Active tickets: Open, InProgress, PendingCustomer — plus any historical ticket still sitting in the legacy PendingThirdParty status, which is non-terminal and therefore still work in hand.</param>
 /// <param name="Unassigned">Active tickets with no current owner.</param>
 /// <param name="SlaAtRisk">Active tickets with a pending, unbreached SLA deadline due within the at-risk window.</param>
 /// <param name="SlaBreached">Active tickets whose SlaState is Breached.</param>
@@ -41,7 +41,7 @@ public sealed record DashboardSummaryDto(
 /// <param name="CustomerName">The ticket-time customer name snapshot, when one exists (CRM Buyer tickets).</param>
 /// <param name="UnitNumber">The unit number snapshot (CRM Buyer or manual), when one exists.</param>
 /// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while the ticket is Unclassified.</param>
-/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty.</param>
+/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer — or the legacy PendingThirdParty on a historical ticket.</param>
 /// <param name="SlaState">One of Running, Paused, Met, Breached, NotApplicable.</param>
 /// <param name="SlaDueAtUtc">The current SLA period's pending resolution deadline, when one exists.</param>
 /// <param name="CurrentOwnerEmployeeId">The current owner, or null when unassigned.</param>
@@ -78,7 +78,7 @@ public sealed record DashboardAttentionTicketDto(
 /// <param name="OwnerEmployeeId">Narrow to tickets currently owned by one agent.</param>
 /// <param name="ChannelId">Narrow to tickets whose originating interaction arrived on one channel.</param>
 /// <param name="RequestTypeId">Narrow to one request type.</param>
-/// <param name="TicketStatus">Narrow to one status: Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
+/// <param name="TicketStatus">Narrow to one status: Open, InProgress, PendingCustomer, Resolved, Closed. The retired PendingThirdParty is no longer an offered filter, though a historical ticket still reports it as its own status.</param>
 /// <param name="PriorityId">Narrow to one priority: 1=Critical, 2=High, 3=Medium, 4=Low.</param>
 public sealed record DashboardOverviewRequestDto(
     DateOnly? DateFrom = null,
@@ -134,7 +134,7 @@ public sealed record DashboardAppliedFiltersDto(
     byte? PriorityId);
 
 /// <summary>The KPI cards. All are current-state counts over active tickets in scope, except Pending Approval, which counts tickets (any status but the approval must be Pending) the caller may action, and the Awaiting Human Agent trio, which counts pending human work rather than tickets.</summary>
-/// <param name="OpenTickets">Active tickets: Open, InProgress, PendingCustomer, PendingThirdParty.</param>
+/// <param name="OpenTickets">Active tickets: Open, InProgress, PendingCustomer — plus any historical ticket still sitting in the legacy PendingThirdParty status, which is non-terminal and therefore still work in hand.</param>
 /// <param name="MyTickets">Active tickets whose CurrentOwnerEmployeeId is the caller.</param>
 /// <param name="InDepartmentQueue">Active tickets with no current owner — queued to their responsible department.</param>
 /// <param name="SlaBreached">Active tickets whose SlaState is Breached.</param>

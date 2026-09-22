@@ -258,9 +258,14 @@
                             <legend class="form-section__title">Available on tickets</legend>
                             <div class="checkbox-grid">
                                 <label class="checkbox-field"><input type="checkbox" asp-for="Settings.AllowsPendingCustomer" /> Pending Customer available</label>
-                                <label class="checkbox-field"><input type="checkbox" asp-for="Settings.AllowsPendingInternal" /> Pending Internal / Third Party available</label>
                                 <label class="checkbox-field"><input type="checkbox" asp-for="Settings.RequiresApproval" /> Carries an approval stage</label>
                             </div>
+                            @* Pending Internal / Third Party is retired (TicketStatus.PendingThirdParty
+                               is legacy-readable only), so it is no longer offered as a choice. Its stored
+                               value is round-tripped through this hidden field rather than dropped, so
+                               saving other settings never silently rewrites an existing version's row —
+                               the column stays as it is, and no migration is involved. *@
+                            <input type="hidden" asp-for="Settings.AllowsPendingInternal" />
                             <span class="field-hint">Publishing switches these on automatically wherever the steps require them.</span>
                         </fieldset>
                         <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Save Settings</button></div>
@@ -278,7 +283,6 @@
                             <div class="facts-row facts-row--stack"><dt>Description</dt><dd>@v.Description</dd></div>
                         }
                         <div class="facts-row"><dt>Pending Customer</dt><dd>@(v.AllowsPendingCustomer ? "Available" : "Not available")</dd></div>
-                        <div class="facts-row"><dt>Pending Internal</dt><dd>@(v.AllowsPendingInternal ? "Available" : "Not available")</dd></div>
                         <div class="facts-row"><dt>Approval stage</dt><dd>@(v.RequiresApproval ? "Yes" : "No")</dd></div>
                         <div class="facts-row"><dt>Created</dt><dd>@v.CreatedAtUtc.ToLocalTime().ToString("MMM d, yyyy") by @(v.CreatedByName ?? "System")</dd></div>
                         @if (v.PublishedAtUtc is { } pubAt)

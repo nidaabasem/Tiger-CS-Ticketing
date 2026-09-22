@@ -8,7 +8,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="DepartmentId">Narrow to one department. Cannot widen what the caller may already see.</param>
 /// <param name="CategoryId">Narrow to one category.</param>
 /// <param name="PriorityId">Narrow to one priority. 1=Critical, 2=High, 3=Medium, 4=Low.</param>
-/// <param name="TicketStatus">Narrow to one status: Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
+/// <param name="TicketStatus">Narrow to one status: Open, InProgress, PendingCustomer, Resolved, Closed. The retired PendingThirdParty is no longer an offered filter.</param>
 /// <param name="VerificationStatus">Narrow to one verification status: Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="OwnerEmployeeId">Narrow to tickets currently owned by one employee.</param>
 /// <param name="Search">Free-text search over the ticket number and request summary.</param>
@@ -18,7 +18,7 @@ namespace TigerCS.Application.Modules.Ticketing.Dto;
 /// <param name="PageSize">Page size.</param>
 /// <param name="ChannelId">Narrow to tickets whose originating interaction arrived on one channel (Dashboard drill-down).</param>
 /// <param name="RequestTypeId">Narrow to one request type (Dashboard drill-down).</param>
-/// <param name="ActiveOnly">True: only active tickets — Open, InProgress, PendingCustomer, PendingThirdParty (the Dashboard's Open Tickets).</param>
+/// <param name="ActiveOnly">True: only active tickets — Open, InProgress, PendingCustomer, and any historical ticket still in the legacy PendingThirdParty (the Dashboard's Open Tickets). A legacy pending ticket is non-terminal work and stays in the active set, so it never disappears from a queue before someone returns it to InProgress.</param>
 /// <param name="InDepartmentQueue">True: only active tickets with no current owner — sitting in their department's queue.</param>
 /// <param name="SlaBreached">True: only active tickets whose SLA state is Breached.</param>
 /// <param name="DueToday">True: only active tickets whose current, unbreached SLA resolution deadline falls today (UTC calendar day).</param>
@@ -56,7 +56,7 @@ public sealed record TicketListRequestDto(
 /// <param name="CurrentOwnerEmployeeId">The current owner, or null when unassigned.</param>
 /// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
 /// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified.</param>
-/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
+/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, Resolved, Closed — or the legacy, no-longer-reachable PendingThirdParty on a historical ticket.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="RequestSummary">The request, in the agent's words.</param>
 /// <param name="CreatedAtUtc">When the ticket was created, in UTC.</param>
@@ -89,7 +89,7 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="ContactReferenceId">The verified contact, or null while the ticket is provisional.</param>
 /// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified — no category is ever invented to fill it.</param>
 /// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified: no priority has been judged, so none is shown and none selects an SLA policy.</param>
-/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
+/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, Resolved, Closed — or the legacy, no-longer-reachable PendingThirdParty on a historical ticket.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
 /// <param name="SlaState">One of Running, Paused, Met, Breached, NotApplicable.</param>
@@ -286,9 +286,9 @@ public sealed record TicketMutationResult(TicketMutationOutcome Outcome, TicketD
 // ---- Status / resolve / close (MVP-API-Contracts.md §3.7/§3.9/§3.10) ----
 
 /// <summary>Move a ticket within the working sub-machine (MVP-API-Contracts.md §3.7).</summary>
-/// <param name="NewStatus">Required. One of Open, InProgress, PendingCustomer, PendingThirdParty. Resolved and Closed are reached through their own endpoints.</param>
+/// <param name="NewStatus">Required. InProgress or PendingCustomer — the only targets the working sub-machine has. Open is never a target (a ticket does not go back to unstarted), Resolved and Closed are reached through their own endpoints, and the retired PendingThirdParty is refused outright.</param>
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
-/// <param name="PendingReason">Required when NewStatus is PendingCustomer or PendingThirdParty — a ticket is never pending without a recorded why. Ignored for other targets.</param>
+/// <param name="PendingReason">Required when NewStatus is PendingCustomer — a ticket is never pending without a recorded why. Ignored for other targets.</param>
 public sealed record ChangeStatusRequestDto(string NewStatus, byte[] RowVersion, string? PendingReason = null);
 
 /// <summary>Resolve a ticket (MVP-API-Contracts.md §3.9).</summary>

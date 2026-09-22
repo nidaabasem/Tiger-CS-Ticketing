@@ -149,15 +149,20 @@ Summarized here; full responsibility/interface/data/event detail is in `Module-D
 stateDiagram-v2
     [*] --> Open: Agent creates ticket (Verified unit/contact)
     Open --> InProgress: Assigned to owner
-    InProgress --> PendingCustomer: Awaiting customer
-    InProgress --> PendingThirdParty: Awaiting third party
+    InProgress --> PendingCustomer: Awaiting customer (optional)
     PendingCustomer --> InProgress: Customer responds
-    PendingThirdParty --> InProgress: Third party responds
     InProgress --> Resolved: Department Resolves (ResolutionOutcome set)
+    PendingCustomer --> Resolved: Department Resolves (ResolutionOutcome set)
     Resolved --> Closed: CS confirms customer notified
     Closed --> InProgress: Reopen (within window)
-    Open --> Closed: Cancelled / Rejected / Duplicate outcome
+    PendingThirdParty --> InProgress: Legacy tickets only — the escape path
 ```
+
+`PendingCustomer` is **optional**: a ticket may go straight from `InProgress` to `Resolved`, and nothing requires it to pass through a pending state first.
+
+`PendingThirdParty` is a **legacy readable status** (approved lifecycle cleanup). It was an active status and historical tickets, status-history rows and pending records still carry it, so its enum value (`4`) is unchanged and every read path keeps working — but no transition targets it any more, it is offered in no picker or operational filter, and a direct API attempt to enter it is refused as an invalid transition. A ticket already in it returns to `InProgress` through the ordinary Change Status operation, which also closes its open pending record.
+
+`Resolve`, `Close` and `Reopen` are dedicated lifecycle operations, not generic status changes: `Resolved`, `Closed` and `Open` are never targets of `POST /api/tickets/{id}/status`.
 
 `EscalationLevel`, `SlaState`, and `VerificationStatus` are tracked independently of this diagram's `TicketStatus` transitions (ADR-0008) — a ticket can be `InProgress` while `EscalationLevel = 2`, for example.
 

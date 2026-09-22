@@ -18,7 +18,19 @@ internal static class TicketQueryFilters
     public static IQueryable<Ticket> InScope(this IQueryable<Ticket> tickets, IReadOnlyCollection<int>? departmentIds) =>
         departmentIds is null ? tickets : tickets.Where(t => departmentIds.Contains(t.CurrentDepartmentId));
 
-    /// <summary>"Active" throughout: the four non-terminal lifecycle statuses — Open, InProgress, PendingCustomer, PendingThirdParty. Resolved and Closed are the terminal ones.</summary>
+    /// <summary>
+    /// "Active" throughout: the non-terminal lifecycle statuses — Open,
+    /// InProgress, PendingCustomer, and the legacy PendingThirdParty.
+    /// Resolved and Closed are the terminal ones.
+    ///
+    /// <para>
+    /// <b>The legacy status stays in this set deliberately.</b> It is retired
+    /// as a target, not as a state: a ticket that was already PendingThirdParty
+    /// is unfinished work, and dropping it from "active" would hide it from
+    /// every queue and KPI — the one place someone would go to return it to
+    /// InProgress.
+    /// </para>
+    /// </summary>
     public static IQueryable<Ticket> Active(this IQueryable<Ticket> tickets) =>
         tickets.Where(t =>
             t.TicketStatus == TicketStatus.Open

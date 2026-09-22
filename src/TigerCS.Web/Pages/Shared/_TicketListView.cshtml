@@ -62,7 +62,10 @@
             <label class="field-label" for="ticketStatus">Status</label>
             <select class="field-select" id="ticketStatus" name="ticketStatus" data-autosubmit>
                 <option value="">All statuses</option>
-                @foreach (var s in new[] { "Open", "InProgress", "PendingCustomer", "PendingThirdParty", "Resolved", "Closed" })
+                @* The lifecycle's active statuses, from the domain — the retired
+                   PendingThirdParty is not an operational filter any more. A historical
+                   ticket still in it keeps showing its real status in its own row. *@
+                @foreach (var s in TicketStatusTransitions.ActiveStatuses.Select(v => v.ToString()))
                 {
                     <option value="@s" selected="@(Model.TicketStatus == s)">@TicketDisplay.TicketStatusLabel(s)</option>
                 }

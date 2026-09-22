@@ -14,10 +14,12 @@ public enum ApprovalStatus : byte
 /// <summary>
 /// One approval cycle of a ticket (Workflow/Automation phase 3) — the
 /// authoritative approval state, independent of <see cref="TicketStatus"/>.
-/// A ticket waiting on Accounting shows lifecycle
-/// <see cref="TicketStatus.PendingThirdParty"/> (with its structured pending
-/// reason) while THIS record is what actually says
-/// "AccountingApproval: Pending".
+/// A ticket waiting on Accounting keeps whatever lifecycle
+/// <see cref="TicketStatus"/> it is in — it no longer moves to a pending
+/// status for this, since PendingThirdParty was retired — while THIS record
+/// is what actually says "AccountingApproval: Pending". The approval state
+/// was always the authoritative one; retiring that status simply removed the
+/// redundant lifecycle echo of it.
 ///
 /// <para>
 /// <b>History is never overwritten.</b> A decision is write-once; a later

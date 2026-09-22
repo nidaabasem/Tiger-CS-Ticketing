@@ -169,17 +169,20 @@ else
                                     <input type="hidden" asp-for="Status.RowVersionBase64" />
                                     <div class="field-group">
                                         <label class="field-label" asp-for="Status.NewStatus">New status</label>
+                                        @* The legal next statuses for THIS ticket, from the domain's own
+                                           transition table via Model.StatusTargets — never a literal list.
+                                           The section is not rendered at all when that list is empty. *@
                                         <select class="field-select" asp-for="Status.NewStatus">
-                                            @foreach (var s in new[] { "Open", "InProgress", "PendingCustomer", "PendingThirdParty" })
+                                            @foreach (var s in Model.StatusTargets)
                                             {
-                                                <option value="@s">@TicketDisplay.TicketStatusLabel(s)</option>
+                                                <option value="@s">@TicketDisplay.TicketStatusLabel(s.ToString())</option>
                                             }
                                         </select>
                                     </div>
                                     <div class="field-group">
                                         <label class="field-label" asp-for="Status.PendingReason">Pending reason</label>
                                         <textarea class="form-control" asp-for="Status.PendingReason" rows="2"></textarea>
-                                        <span class="field-hint">Required when moving to Pending Customer or Pending Internal — e.g. "Missing documents", "Waiting for Accounting Approval".</span>
+                                        <span class="field-hint">Required when moving to Pending Customer — e.g. "Missing documents", "Awaiting the customer's payment".</span>
                                     </div>
                                     <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Update status</button></div>
                                 </form>

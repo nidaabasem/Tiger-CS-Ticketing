@@ -24,7 +24,11 @@ public sealed class AdminWorkflowAppService(
     TimeProvider timeProvider)
 {
     public static WorkflowDesignerCatalogDto Catalog() => new(
-        WorkflowStepKinds.All
+        // Selectable, not All: the designer offers only the kinds a new step
+        // may use. Legacy kinds (Pending Internal / Third Party, retired with
+        // TicketStatus.PendingThirdParty) stay describable for versions that
+        // already carry them, but are never offered again.
+        WorkflowStepKinds.Selectable
             .Select(k => new WorkflowStepKindDto(k.Kind, k.Label, k.Description, k.RequiresApprovalType, k.SupportsOutcomeBranches, k.IsStart, k.IsTerminal))
             .ToList(),
         // Only the types a workflow step may carry (ApprovalTypeRules) — not

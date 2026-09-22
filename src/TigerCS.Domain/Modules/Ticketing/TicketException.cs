@@ -22,7 +22,7 @@ public sealed class InvalidTicketStatusTransitionException(long ticketId, Ticket
 public sealed class TicketNotAssignedException(long ticketId)
     : TicketException($"Ticket {ticketId} has no current owner — assign it before starting work.");
 
-/// <summary>Solution-Analysis.md §5.6: Resolve is only valid from InProgress/PendingCustomer/PendingThirdParty, never directly from Open or a terminal status.</summary>
+/// <summary>Solution-Analysis.md §5.6: Resolve is only valid from InProgress or PendingCustomer, never directly from Open, a terminal status, or the legacy PendingThirdParty (which returns to InProgress first).</summary>
 public sealed class TicketNotEligibleForResolutionException(long ticketId, TicketStatus actualStatus)
     : TicketException($"Ticket {ticketId} cannot be resolved from TicketStatus {actualStatus}.")
 {

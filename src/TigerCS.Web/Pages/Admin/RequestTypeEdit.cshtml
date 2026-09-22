@@ -124,7 +124,6 @@
                         <div class="checkbox-grid">
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowAgentPriorityChange" /> Agent may change priority</label>
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingCustomer" /> Pending Customer allowed</label>
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingInternal" /> Pending Internal / Third Party allowed</label>
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowReopen" /> Reopen allowed (the reopen policy still applies)</label>
                         </div>
                     </fieldset>
@@ -209,7 +208,11 @@
                         <div class="checkbox-grid">
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowAgentPriorityChange" /> Agent may change priority</label>
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingCustomer" /> Pending Customer allowed</label>
-                            <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowPendingInternal" /> Pending Internal / Third Party allowed</label>
+                            @* Retired with TicketStatus.PendingThirdParty and no longer offered.
+                               The stored value is round-tripped so saving the other details never
+                               rewrites this request type's column — nothing is dropped, and no
+                               migration is involved. *@
+                            <input type="hidden" asp-for="Details.AllowPendingInternal" />
                             <label class="checkbox-field"><input type="checkbox" asp-for="Details.AllowReopen" /> Reopen allowed (the reopen policy still applies)</label>
                         </div>
                     </fieldset>

@@ -100,7 +100,7 @@ public sealed record CreateTicketRequestDto(
 /// <param name="ContactReferenceId">The matched contact, or null when no customer match was linked at creation.</param>
 /// <param name="CategoryId">The ticket's category, or null while the ticket is Unclassified.</param>
 /// <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while the ticket is Unclassified — no priority has been judged yet.</param>
-/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, PendingThirdParty, Resolved, Closed.</param>
+/// <param name="TicketStatus">One of Open, InProgress, PendingCustomer, Resolved, Closed — or the legacy, no-longer-reachable PendingThirdParty on a historical ticket.</param>
 /// <param name="VerificationStatus">One of Unverified, PendingCrmVerification, Verified.</param>
 /// <param name="EscalationLevel">One of None, Level1, Level2, Level3, Level4.</param>
 /// <param name="SlaState">One of Running, Paused, Met, Breached, NotApplicable.</param>

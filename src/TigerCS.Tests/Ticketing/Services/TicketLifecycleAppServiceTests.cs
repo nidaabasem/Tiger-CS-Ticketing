@@ -508,9 +508,14 @@ public class TicketLifecycleAppServiceTests
         SeedDepartments(f);
         var owner = Guid.NewGuid();
         var ticket = await SeedInProgressTicketAsync(f.Tickets, owner, ClosingDepartmentId);
-        if (status is TicketStatus.PendingCustomer or TicketStatus.PendingThirdParty)
+        if (status is TicketStatus.PendingCustomer)
         {
             ticket.ChangeStatus(status);
+        }
+        else if (status is TicketStatus.PendingThirdParty)
+        {
+            // Legacy-only: reachable as a stored row, never as a transition.
+            ticket.AsLegacyPendingThirdParty();
         }
 
         var result = await f.Service.ReopenAsync(Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId, ReopenRequest());

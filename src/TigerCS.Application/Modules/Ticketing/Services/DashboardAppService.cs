@@ -183,9 +183,13 @@ public sealed class DashboardAppService(
                 options.Agents.Select(o => new DashboardFilterOptionDto(o.Id.ToString(), o.Label, o.GroupId, o.IsActive)).ToList(),
                 options.Channels.Select(o => new DashboardFilterOptionDto(o.Id.ToString(), o.Label, o.GroupId, o.IsActive)).ToList(),
                 options.RequestTypes.Select(o => new DashboardFilterOptionDto(o.Id.ToString(), o.Label, o.GroupId, o.IsActive)).ToList(),
-                // The lifecycle's own statuses, exactly as the domain defines
-                // them — nothing invented, nothing omitted.
-                Enum.GetValues<TicketStatus>().Select(s => new DashboardFilterOptionDto(s.ToString(), s.ToString())).ToList(),
+                // The lifecycle's own ACTIVE statuses, exactly as the domain
+                // defines them — nothing invented, and nothing omitted but the
+                // legacy-readable ones, which are no longer an operational
+                // choice. A historical PendingThirdParty ticket still reports
+                // its real status in the breakdowns and in its own row; it is
+                // only the filter that stops offering it.
+                TicketStatusTransitions.ActiveStatuses.Select(s => new DashboardFilterOptionDto(s.ToString(), s.ToString())).ToList(),
                 options.Priorities.Select(o => new DashboardFilterOptionDto(o.Id.ToString(), o.Label, o.GroupId, o.IsActive)).ToList()));
     }
 

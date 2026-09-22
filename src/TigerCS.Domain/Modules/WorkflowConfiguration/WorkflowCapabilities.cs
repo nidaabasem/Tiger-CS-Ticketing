@@ -11,7 +11,17 @@ namespace TigerCS.Domain.Modules.WorkflowConfiguration;
 /// list can never disagree on it.
 /// </summary>
 /// <param name="CanGoPendingCustomer">Whether <c>InProgress → PendingCustomer</c> is available.</param>
-/// <param name="CanGoPendingInternal">Whether <c>InProgress → PendingThirdParty</c> is available.</param>
+/// <param name="CanGoPendingInternal">
+/// <b>Deprecated — no longer consulted by any business rule.</b> It gated
+/// <c>InProgress → PendingThirdParty</c>, a transition the approved lifecycle
+/// cleanup removed: <see cref="TigerCS.Domain.Modules.Ticketing.TicketStatus.PendingThirdParty"/>
+/// is legacy-readable only, so there is nothing left for this flag to allow
+/// or forbid. It is still computed, and its two backing columns
+/// (<c>WorkflowTemplates.AllowsPendingInternal</c>,
+/// <c>RequestTypes.AllowPendingInternal</c>) are still read and written, so
+/// existing configuration rows keep their stored value and need no migration
+/// — but nothing may start depending on it again.
+/// </param>
 /// <param name="RequiresApproval">Whether the flow carries an approval stage (phase 3 approval records).</param>
 /// <param name="CanReopen">Whether Reopen is available at all — when true, the existing <c>ReopenPolicy</c> still decides each actual reopen.</param>
 /// <param name="CanChangePriority">Whether the agent may change priority away from the request type's default.</param>
@@ -35,6 +45,9 @@ public readonly record struct WorkflowCapabilities(
 
         return new WorkflowCapabilities(
             CanGoPendingCustomer: template.AllowsPendingCustomer && requestType.AllowPendingCustomer,
+            // Deprecated: still combined the same way so the value a caller
+            // reads back matches what is stored, but no transition consults it
+            // any more — see the parameter's remark.
             CanGoPendingInternal: template.AllowsPendingInternal && requestType.AllowPendingInternal,
             RequiresApproval: template.RequiresApproval,
             CanReopen: requestType.AllowReopen,

@@ -248,6 +248,8 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
             visible = visible.Where(t => query.VisibleDepartmentIds.Contains(t.CurrentDepartmentId));
         }
 
+        // Same "active" set as TicketQueryFilters.Active, legacy
+        // PendingThirdParty included — see its remark for why.
         var active = visible.Where(t =>
             t.TicketStatus == TicketStatus.Open
             || t.TicketStatus == TicketStatus.InProgress

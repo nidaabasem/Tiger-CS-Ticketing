@@ -56,6 +56,12 @@ public class RequestType
     public bool AllowPendingCustomer { get; private set; }
 
     /// <summary>Request-type-level gate on Pending Internal / Third Party — same combination rule as <see cref="AllowPendingCustomer"/>.</summary>
+    /// <summary>
+    /// <b>Deprecated — retained for compatibility, consulted by nothing.</b>
+    /// The request type's half of the retired <c>PendingThirdParty</c> gate;
+    /// see <see cref="WorkflowTemplate.AllowsPendingInternal"/>. Still stored
+    /// and round-tripped so no migration and no data loss is involved.
+    /// </summary>
     public bool AllowPendingInternal { get; private set; }
 
     /// <summary>
