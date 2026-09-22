@@ -110,6 +110,37 @@ public sealed class PendingThirdPartyRetirementTests
         Assert.Equal(2, CountOccurrences(page, "<input type=\"checkbox\" asp-for=\"Details.AllowPendingCustomer\" />"));
     }
 
+    [Fact]
+    public void RequestTypeSla_NoLongerShowsOrEditsThePendingInternalPauseSetting()
+    {
+        var page = View("Admin", "RequestTypeEdit.cshtml");
+
+        // Not editable...
+        Assert.DoesNotContain("asp-for=\"Sla.PausesOnPendingInternal\"", page, StringComparison.Ordinal);
+        // ...and not displayed in the existing-policies table either.
+        Assert.DoesNotContain("Pauses on Pending Internal", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("s.PausesOnPendingInternal", page, StringComparison.Ordinal);
+
+        // Pending Customer's own pause setting is untouched — this hides one
+        // retired control, it does not rebuild the SLA form.
+        Assert.Contains("asp-for=\"Sla.PausesOnPendingCustomer\"", page, StringComparison.Ordinal);
+        Assert.Contains("Pauses on Pending Customer", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSlaForm_SendsNoPendingInternalPauseValue_SoASaveCannotClearAStoredOne()
+    {
+        // The form is a blank upsert — it is never pre-filled from the policy
+        // being saved — so posting anything for this field would wipe a
+        // historical value the moment anyone edited an unrelated SLA number.
+        // It sends null instead, and the Api preserves what is stored.
+        var model = File.ReadAllText(SourceFile(Path.Combine(
+            "TigerCS.Web", "Pages", "Admin", "RequestTypeEdit.cshtml.cs")));
+
+        Assert.Contains("PausesOnPendingInternal: null", model, StringComparison.Ordinal);
+        Assert.DoesNotContain("TriState(Sla.PausesOnPendingInternal)", model, StringComparison.Ordinal);
+    }
+
     // ---- The capability itself ----
 
     [Fact]

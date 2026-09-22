@@ -444,7 +444,11 @@ public sealed class AdminRequestTypeAppService(
                     requestTypeId, priorityId, request.Trigger, request.Unit,
                     request.FirstResponseTargetValue, request.FirstResponseMaximumValue,
                     request.ResolutionTargetValue, request.ResolutionMaximumValue,
-                    request.IsImmediate, request.ClockBasis, request.PausesOnPendingCustomer, request.PausesOnPendingInternal,
+                    request.IsImmediate, request.ClockBasis, request.PausesOnPendingCustomer,
+                    // Retired with TicketStatus.PendingThirdParty: a NEW policy
+                    // is created "not decided", never configured for a pause
+                    // window no ticket can open any more.
+                    pausesOnPendingInternal: null,
                     request.WarningThresholdPercent, request.IsActive);
                 await slaPolicyRepository.AddAsync(existing, cancellationToken);
             }
@@ -455,7 +459,17 @@ public sealed class AdminRequestTypeAppService(
                     request.Trigger, request.Unit,
                     request.FirstResponseTargetValue, request.FirstResponseMaximumValue,
                     request.ResolutionTargetValue, request.ResolutionMaximumValue,
-                    request.IsImmediate, request.ClockBasis, request.PausesOnPendingCustomer, request.PausesOnPendingInternal,
+                    request.IsImmediate, request.ClockBasis, request.PausesOnPendingCustomer,
+                    // ...and an EXISTING policy keeps whatever it already
+                    // stores, rather than taking it from the request. The
+                    // column and its historical values are preserved
+                    // (no migration), the field stays on the request DTO so the
+                    // wire contract is unchanged, and the retired setting is
+                    // simply frozen: the Administration UI no longer offers it,
+                    // and its blank save form would otherwise clear every
+                    // stored value the moment anyone touched an unrelated SLA
+                    // number.
+                    pausesOnPendingInternal: existing.PausesOnPendingInternal,
                     request.WarningThresholdPercent, request.IsActive);
             }
         }

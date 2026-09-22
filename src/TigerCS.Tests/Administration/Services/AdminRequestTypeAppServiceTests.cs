@@ -195,4 +195,63 @@ public class AdminRequestTypeAppServiceTests
             new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, null, null, 12, 10, false, null, null, null, null));
         Assert.Equal(AdminOutcome.ValidationFailed, invalidRange.Outcome);
     }
+
+    // ---- The retired PendingThirdParty pause setting ----
+
+    [Fact]
+    public async Task Saving_an_sla_policy_preserves_a_historical_PausesOnPendingInternal_value()
+    {
+        // The setting configures a pause window for TicketStatus.PendingThirdParty,
+        // which is retired. It is frozen rather than deleted: the column and its
+        // stored value stay, so a save that changes unrelated SLA numbers must
+        // leave it exactly as it was — including when the request says otherwise.
+        // This matters because the Administration form is a blank upsert, never
+        // pre-filled from the policy being saved.
+        var f = Create();
+        var collections = f.Departments.AddDepartment("Collections", "COL");
+        var workflow = f.PublishedWorkflow();
+        var requestType = (await f.Service.CreateAsync(Admin, Request(collections.DepartmentId, workflow.WorkflowId))).Value!;
+
+        // A historical row, written when the setting was still live.
+        await f.Slas.AddAsync(new RequestTypeSlaPolicy(
+            requestType.RequestTypeId, (byte)PriorityLevel.Medium, SlaTriggerType.TicketCreated, SlaDurationUnit.Days,
+            firstResponseTargetValue: null, firstResponseMaximumValue: null,
+            resolutionTargetValue: 5, resolutionMaximumValue: null,
+            isImmediate: false, clockBasis: null,
+            pausesOnPendingCustomer: true, pausesOnPendingInternal: true));
+
+        var edited = await f.Service.SaveSlaPolicyAsync(Admin, requestType.RequestTypeId, (byte)PriorityLevel.Medium,
+            new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, null, null, 7, null, false, null, true, null, null));
+
+        var policy = Assert.Single(edited.Value!.SlaPolicies);
+        Assert.Equal(7, policy.ResolutionTargetValue);
+        Assert.True(policy.PausesOnPendingCustomer);
+        Assert.True(policy.PausesOnPendingInternal);
+
+        // Even an explicit attempt to change it leaves the stored value alone.
+        var overwritten = await f.Service.SaveSlaPolicyAsync(Admin, requestType.RequestTypeId, (byte)PriorityLevel.Medium,
+            new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, null, null, 7, null, false, null, true, false, null));
+        Assert.True(Assert.Single(overwritten.Value!.SlaPolicies).PausesOnPendingInternal);
+    }
+
+    [Fact]
+    public async Task A_new_sla_policy_is_created_with_no_PausesOnPendingInternal_decision()
+    {
+        var f = Create();
+        var collections = f.Departments.AddDepartment("Collections", "COL");
+        var workflow = f.PublishedWorkflow();
+        var requestType = (await f.Service.CreateAsync(Admin, Request(collections.DepartmentId, workflow.WorkflowId))).Value!;
+
+        // The request still carries the field (the wire contract is unchanged)
+        // and it is deliberately not applied: a brand-new policy is never
+        // configured for a pause window no ticket can open any more.
+        var created = await f.Service.SaveSlaPolicyAsync(Admin, requestType.RequestTypeId, (byte)PriorityLevel.Medium,
+            new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, null, null, 3, null, false, null, true, true, null));
+
+        var policy = Assert.Single(created.Value!.SlaPolicies);
+        Assert.Null(policy.PausesOnPendingInternal);
+
+        // Pending Customer's own setting is untouched by any of this.
+        Assert.True(policy.PausesOnPendingCustomer);
+    }
 }

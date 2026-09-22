@@ -127,7 +127,13 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
                 new SaveSlaPolicyRequestDto(Sla.Trigger, Sla.Unit,
                     Sla.FirstResponseTargetValue, Sla.FirstResponseMaximumValue,
                     Sla.ResolutionTargetValue, Sla.ResolutionMaximumValue,
-                    Sla.IsImmediate, Sla.ClockBasis, TriState(Sla.PausesOnPendingCustomer), TriState(Sla.PausesOnPendingInternal),
+                    Sla.IsImmediate, Sla.ClockBasis, TriState(Sla.PausesOnPendingCustomer),
+                    // The retired Pending Internal / Third Party pause setting is not
+                    // offered by this form and is not sent: the Api preserves whatever an
+                    // existing policy already stores. Sending anything from here would
+                    // clear it, because this form is a blank upsert — it is never
+                    // pre-filled from the policy being saved.
+                    PausesOnPendingInternal: null,
                     Sla.WarningThresholdPercent, Sla.IsActive),
                 cancellationToken),
             "SLA values saved.", "The SLA values could not be saved.");
@@ -228,7 +234,6 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
         public bool IsImmediate { get; set; }
         public SlaClockBasis? ClockBasis { get; set; }
         public string? PausesOnPendingCustomer { get; set; }
-        public string? PausesOnPendingInternal { get; set; }
         public decimal? WarningThresholdPercent { get; set; }
         public bool IsActive { get; set; } = true;
     }
