@@ -104,12 +104,12 @@ public sealed class GenesysTicketUpdateAppService(
 
         if (request.Handoff is { } handoff)
         {
-            if (handoff.Required)
+            if (handoff.Required == true)
             {
                 var requested = await agentHandoffAppService.RequestAsync(
                     callerEmployeeId,
                     new GenesysHandoffRequestDto(
-                        conversationId, handoff.AgentAvailable, handoff.Mode, handoff.Reason,
+                        conversationId, handoff.AgentAvailable, handoff.Mode, handoff.Reason, handoff.Trigger,
                         request.AgentId, request.AgentName, handoff.WorkItemId),
                     cancellationToken);
 
@@ -120,6 +120,32 @@ public sealed class GenesysTicketUpdateAppService(
 
                 handoffStatus = requested.Status;
                 handoffId = requested.TicketAgentHandoffId;
+            }
+            else if (handoff.Required == false)
+            {
+                // An EXPLICIT false stands outstanding work down: the AI
+                // resumed, or the human is no longer needed. Omitted (null)
+                // never reaches here — an update that carries only
+                // AssignedAgentId must not cancel the very work it is
+                // reporting an assignment for. Nothing outstanding answers
+                // AlreadyResolved, which is the idempotent case and not a
+                // failure — so the update as a whole still succeeds and
+                // simply reports the work's state.
+                var cancelled = await agentHandoffAppService.CancelAsync(
+                    callerEmployeeId,
+                    new GenesysHandoffCancellationDto(conversationId, handoff.Reason),
+                    cancellationToken);
+
+                if (cancelled.Outcome is not (GenesysHandoffOutcome.HandoffCancelled or GenesysHandoffOutcome.AlreadyResolved))
+                {
+                    return Translate(cancelled);
+                }
+
+                if (cancelled.Outcome == GenesysHandoffOutcome.HandoffCancelled)
+                {
+                    handoffStatus = cancelled.Status;
+                    handoffId = cancelled.TicketAgentHandoffId;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(handoff.AssignedAgentId))
@@ -216,6 +242,8 @@ public sealed class GenesysTicketUpdateAppService(
     {
         GenesysHandoffOutcome.IntegrationDisabled => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.IntegrationDisabled),
         GenesysHandoffOutcome.InvalidMode => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.InvalidHandoffMode, result.Detail),
+        GenesysHandoffOutcome.InvalidTrigger => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.InvalidHandoffTrigger, result.Detail),
+        GenesysHandoffOutcome.ReasonRequired => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.HandoffReasonRequired, result.Detail),
         GenesysHandoffOutcome.NoOpenHandoff => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.NoOpenHandoff, result.Detail),
         GenesysHandoffOutcome.ConversationNotFound => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.ConversationNotFound, result.Detail),
         _ => GenesysTicketUpdateResult.Failure(GenesysTicketUpdateOutcome.NoOpenHandoff, result.Detail)

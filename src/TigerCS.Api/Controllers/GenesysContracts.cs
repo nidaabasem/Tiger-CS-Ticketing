@@ -148,17 +148,29 @@ public sealed record GenesysConversationEndPart(
     IReadOnlyList<GenesysTranscriptMessageRequest>? Transcript = null);
 
 /// <summary>Human-agent state for the conversation, on any channel. A callback is one possible <paramref name="Mode"/>, never the concept.</summary>
-/// <param name="Required">True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</param>
+/// <param name="Required">
+/// <c>true</c> records that the conversation needs a human agent — idempotent,
+/// as outstanding work is answered with that same work item.
+/// <c>false</c> <b>stands outstanding work down</b> (the AI reconnected and
+/// resumed, or the human is no longer needed), which requires
+/// <paramref name="Reason"/> and leaves the ticket untouched; nothing
+/// outstanding is not an error.
+/// <b>Omit it</b> to do neither — an update reporting only
+/// <paramref name="AssignedAgentId"/> must not read as a cancellation, which
+/// is why this is nullable rather than defaulting to false.
+/// </param>
+/// <param name="Trigger">Why a human is needed, typed: "CustomerRequestedHuman", "AiConnectionLost", "AiEscalated", "RoutingDecision" or "AgentTransfer". <b>Omit it</b> unless Genesys states it — TigerCS never derives it from the channel or the end reason.</param>
 /// <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</param>
 /// <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
 /// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
 /// <param name="WorkItemId">Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</param>
 /// <param name="AssignedAgentId">Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</param>
 public sealed record GenesysHandoffPart(
-    bool Required = false,
+    bool? Required = null,
     bool AgentAvailable = false,
     string? Mode = null,
     string? Reason = null,
+    string? Trigger = null,
     string? WorkItemId = null,
     string? AssignedAgentId = null);
 
@@ -293,6 +305,7 @@ internal static class GenesysContractMapper
                 request.Handoff.AgentAvailable,
                 request.Handoff.Mode,
                 request.Handoff.Reason,
+                request.Handoff.Trigger,
                 request.Handoff.WorkItemId,
                 request.Handoff.AssignedAgentId));
 

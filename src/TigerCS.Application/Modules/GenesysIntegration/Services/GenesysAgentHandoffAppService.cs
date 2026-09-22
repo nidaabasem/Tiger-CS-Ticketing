@@ -50,6 +50,7 @@ public sealed class GenesysAgentHandoffAppService(
     GenesysOptions options,
     IGenesysConversationRepository conversationRepository,
     ITicketAgentHandoffRepository handoffRepository,
+    ITicketWorkflowEventRepository workflowEventRepository,
     ITicketRepository ticketRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
@@ -84,6 +85,24 @@ public sealed class GenesysAgentHandoffAppService(
             }
 
             mode = parsed;
+        }
+
+        // Same rule as Mode: normalized into TigerCS' own vocabulary or
+        // refused, and absent stays absent. Never derived from the channel or
+        // from the conversation's end reason.
+        HandoffTrigger? trigger = null;
+        if (!string.IsNullOrWhiteSpace(request.Trigger))
+        {
+            if (!Enum.TryParse<HandoffTrigger>(request.Trigger, ignoreCase: true, out var parsedTrigger)
+                || !Enum.IsDefined(parsedTrigger))
+            {
+                return GenesysHandoffResult.Failure(
+                    GenesysHandoffOutcome.InvalidTrigger,
+                    $"'{request.Trigger}' is not a recognized handoff trigger. Use CustomerRequestedHuman, "
+                    + "AiConnectionLost, AiEscalated, RoutingDecision or AgentTransfer, or omit it.");
+            }
+
+            trigger = parsedTrigger;
         }
 
         var conversationId = request.ConversationId.Trim();
@@ -135,6 +154,7 @@ public sealed class GenesysAgentHandoffAppService(
             requestedAtUtc,
             now,
             mode,
+            trigger,
             request.Reason,
             workItemId,
             assignedEmployeeId: null,
@@ -146,13 +166,25 @@ public sealed class GenesysAgentHandoffAppService(
         await handoffRepository.AddAsync(handoff, cancellationToken);
         interaction.RecordAgentIfAbsent(request.AgentId, request.AgentName);
 
+        var requestCorrelationId = Guid.NewGuid();
+        await workflowEventRepository.AddAsync(
+            new TicketWorkflowEvent(
+                ticket.TicketId, WorkflowEventType.HandoffRequested, requestedAtUtc, actorEmployeeId: null,
+                ticketApprovalId: null,
+                note: $"{handoff.Trigger?.ToString() ?? "Handoff requested"}"
+                    + (handoff.RequestReason is { } why ? $" — {why}" : string.Empty),
+                requestCorrelationId),
+            cancellationToken);
+
         await auditWriter.WriteAsync(
             callerEmployeeId, "RequestAgentHandoff", nameof(TicketAgentHandoff), conversationId,
             beforeValue: null,
             afterValue:
                 $"TicketId={ticket.TicketId};ChannelId={interaction.ChannelId};Status={handoff.Status};"
-                + $"Mode={handoff.Mode?.ToString() ?? "(unstated)"};WorkItemId={workItemId ?? "(none)"}",
-            Guid.NewGuid(), cancellationToken);
+                + $"Mode={handoff.Mode?.ToString() ?? "(unstated)"};"
+                + $"Trigger={handoff.Trigger?.ToString() ?? "(unstated)"};"
+                + $"WorkItemId={workItemId ?? "(none)"}",
+            requestCorrelationId, cancellationToken);
 
         try
         {
@@ -230,18 +262,137 @@ public sealed class GenesysAgentHandoffAppService(
         handoff.AssignTo(employeeId: null, genesysAgentId: agentId, assignedAtUtc: now);
         interaction.RecordAgentIfAbsent(agentId, request.AgentName);
 
+        var assignCorrelationId = Guid.NewGuid();
+        if (beforeStatus != handoff.Status)
+        {
+            await workflowEventRepository.AddAsync(
+                new TicketWorkflowEvent(
+                    handoff.TicketId, WorkflowEventType.HandoffAssigned, now, actorEmployeeId: null,
+                    ticketApprovalId: null, note: $"Genesys agent {agentId} took the interaction.",
+                    assignCorrelationId),
+                cancellationToken);
+        }
+
         await auditWriter.WriteAsync(
             callerEmployeeId, "UpdateAgentHandoffAssignment", nameof(TicketAgentHandoff),
             handoff.TicketAgentHandoffId.ToString(),
             beforeValue: $"Status={beforeStatus}",
             afterValue: $"Status={handoff.Status};GenesysAgentId={agentId}",
-            Guid.NewGuid(), cancellationToken);
+            assignCorrelationId, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         return new GenesysHandoffResult(
             GenesysHandoffOutcome.AssignmentRecorded, handoff.TicketAgentHandoffId,
+            handoff.TicketId, ticket?.TicketNumber, handoff.Status.ToString());
+    }
+
+    /// <summary>
+    /// Genesys standing the pending human work down — the AI reconnected and
+    /// resumed, the customer left, or the business case went away. The inbound
+    /// counterpart to the agent-facing Cancel action.
+    ///
+    /// <para>
+    /// <b>The ticket is deliberately untouched.</b> Standing down the human
+    /// work says nothing about the case: no status change, no owner change, no
+    /// resolution, no closure. Exactly as completing the work says nothing —
+    /// the two lifecycles are read side by side and never conflated.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>A reason is required</b>, matching <see cref="TicketAgentHandoff.Cancel"/>'s
+    /// own rule: pending customer work is never dropped without a recorded
+    /// why. Genesys supplies it in the same <c>Reason</c> field it uses when
+    /// asking for a human.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Idempotent per the existing terminal-state convention.</b> Nothing
+    /// outstanding, or work already Completed/Cancelled, answers
+    /// <see cref="GenesysHandoffOutcome.AlreadyResolved"/> and writes nothing —
+    /// the same shape as a redelivered request answering
+    /// <see cref="GenesysHandoffOutcome.AlreadyRequested"/>. A redelivered
+    /// stand-down therefore never overwrites the first one's reason or moves
+    /// its timestamp.
+    /// </para>
+    /// </summary>
+    public async Task<GenesysHandoffResult> CancelAsync(
+        Guid callerEmployeeId, GenesysHandoffCancellationDto request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!options.Enabled)
+        {
+            return GenesysHandoffResult.Failure(GenesysHandoffOutcome.IntegrationDisabled);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ConversationId))
+        {
+            return GenesysHandoffResult.Failure(GenesysHandoffOutcome.ConversationIdRequired);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return GenesysHandoffResult.Failure(
+                GenesysHandoffOutcome.ReasonRequired,
+                "Standing down pending human work needs a reason — work is never dropped without a recorded why.");
+        }
+
+        var interaction = await conversationRepository.GetByConversationIdAsync(request.ConversationId.Trim(), cancellationToken);
+        if (interaction is null)
+        {
+            return GenesysHandoffResult.Failure(GenesysHandoffOutcome.ConversationNotFound);
+        }
+
+        var handoff = await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken);
+        if (handoff is null)
+        {
+            // Nothing outstanding. Not an error: a redelivered stand-down, or
+            // one arriving after an agent already finished the work.
+            return GenesysHandoffResult.Failure(
+                GenesysHandoffOutcome.AlreadyResolved,
+                "This conversation has no outstanding human work to stand down.");
+        }
+
+        var ticket = await ticketRepository.GetByIdAsync(handoff.TicketId, cancellationToken);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var beforeStatus = handoff.Status;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            handoff.Cancel(now, request.Reason);
+        }
+        catch (AgentHandoffAlreadyResolvedException)
+        {
+            // Lost a race with a concurrent completion/cancellation. The
+            // winner's terminal state stands.
+            return GenesysHandoffResult.Failure(GenesysHandoffOutcome.AlreadyResolved);
+        }
+
+        var cancelCorrelationId = Guid.NewGuid();
+        await workflowEventRepository.AddAsync(
+            new TicketWorkflowEvent(
+                handoff.TicketId, WorkflowEventType.HandoffCancelled, now, actorEmployeeId: null,
+                ticketApprovalId: null, handoff.ResolutionNote, cancelCorrelationId),
+            cancellationToken);
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId, "CancelAgentHandoffFromGenesys", nameof(TicketAgentHandoff),
+            handoff.TicketAgentHandoffId.ToString(),
+            beforeValue: $"Status={beforeStatus}",
+            afterValue:
+                $"Status={handoff.Status};Reason={handoff.ResolutionNote};"
+                + $"TicketId={handoff.TicketId};TicketStatus={ticket?.TicketStatus.ToString() ?? "(unknown)"}",
+            cancelCorrelationId, cancellationToken);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return new GenesysHandoffResult(
+            GenesysHandoffOutcome.HandoffCancelled, handoff.TicketAgentHandoffId,
             handoff.TicketId, ticket?.TicketNumber, handoff.Status.ToString());
     }
 

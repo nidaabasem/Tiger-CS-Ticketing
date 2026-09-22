@@ -32,6 +32,32 @@ public sealed class TicketAgentHandoffRepository(TigerCsDbContext dbContext) : I
     /// channel, since when, and whether the live session already ended)
     /// without a round trip per row.
     /// </summary>
+    /// <summary>
+    /// One pass over the unresolved, waiting rows — served by
+    /// <c>IX_TicketAgentHandoffs_OpenByDepartment</c>, whose filter
+    /// (<c>ResolvedAtUtc IS NULL</c>) and leading columns
+    /// (<c>DepartmentId, RequestedAtUtc</c>) are exactly this predicate and
+    /// this ordering.
+    /// </summary>
+    public async Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
+        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default)
+    {
+        var waiting = dbContext.TicketAgentHandoffs
+            .Where(h => h.ResolvedAtUtc == null && h.Status == AgentHandoffStatus.WaitingForAgent);
+
+        if (visibleDepartmentIds is not null)
+        {
+            waiting = waiting.Where(h => visibleDepartmentIds.Contains(h.DepartmentId));
+        }
+
+        var count = await waiting.CountAsync(cancellationToken);
+        var oldest = count == 0
+            ? (DateTime?)null
+            : await waiting.MinAsync(h => h.RequestedAtUtc, cancellationToken);
+
+        return new AwaitingHumanAgentSnapshot(count, oldest);
+    }
+
     public async Task<AgentHandoffQueryResult> SearchAsync(AgentHandoffQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);

@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
+using TigerCS.Application.Modules.Ticketing.Services;
 using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
 using TigerCS.Api.OpenApi;
@@ -71,6 +72,12 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             ClockSkew = TimeSpan.FromMinutes(1)
         };
     });
+
+// Dashboard display thresholds (the Awaiting Human Agent risk age). Display
+// only — no business rule is configurable from here.
+builder.Services.Configure<DashboardOptions>(
+    builder.Configuration.GetSection(DashboardOptions.SectionName));
+builder.Services.AddScoped(sp => sp.GetRequiredService<IOptions<DashboardOptions>>().Value);
 
 builder.Services.AddAuthorization(options => options.AddTigerCsAuthorizationPolicies());
 

@@ -391,15 +391,21 @@ public class AgentHandoffTests
         var handoffId = requested.TicketAgentHandoffId!.Value;
         var agent = Guid.NewGuid();
 
-        var started = await f.PendingWork.StartAsync(agent, AgentRoles, handoffId);
+        // Accepting makes the agent the ticket's owner, so they must belong to
+        // its current department — the approved rule.
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(
+                agent, Assert.Single(f.Handoffs.All).DepartmentId, isPrimary: true, DateTime.UtcNow, null));
+
+        var started = await f.PendingWork.AcceptAsync(agent, AgentRoles, handoffId);
         Assert.Equal(AgentHandoffOutcome.Success, started.Outcome);
         Assert.Equal("InProgress", started.Handoff!.Status);
-        // Starting also takes it — no separate claim step.
+        // Accepting also takes it — no separate claim step.
         Assert.Equal(agent, started.Handoff.AssignedEmployeeId);
 
         // Idempotent: a double-clicked button does not move the start time.
         var startedAt = Assert.Single(f.Handoffs.All).StartedAtUtc;
-        var again = await f.PendingWork.StartAsync(agent, AgentRoles, handoffId);
+        var again = await f.PendingWork.AcceptAsync(agent, AgentRoles, handoffId);
         Assert.Equal(AgentHandoffOutcome.Success, again.Outcome);
         Assert.Equal(startedAt, Assert.Single(f.Handoffs.All).StartedAtUtc);
 

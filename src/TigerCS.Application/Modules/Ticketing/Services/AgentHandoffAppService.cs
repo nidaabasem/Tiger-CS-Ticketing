@@ -1,4 +1,5 @@
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.Ticketing;
@@ -34,6 +35,11 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 public sealed class AgentHandoffAppService(
     ITicketAgentHandoffRepository handoffRepository,
     TicketQueryAppService ticketQueryAppService,
+    ITicketRepository ticketRepository,
+    ITicketAssignmentRepository ticketAssignmentRepository,
+    ITicketStatusHistoryRepository statusHistoryRepository,
+    ITicketWorkflowEventRepository workflowEventRepository,
+    IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider)
@@ -71,14 +77,221 @@ public sealed class AgentHandoffAppService(
     public Task<IReadOnlyList<TicketAgentHandoff>> ListByTicketAsync(long ticketId, CancellationToken cancellationToken = default) =>
         handoffRepository.ListByTicketIdAsync(ticketId, cancellationToken);
 
-    /// <summary>An agent begins handling the work — which also takes it, if nobody had.</summary>
-    public Task<AgentHandoffResult> StartAsync(
-        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, long ticketAgentHandoffId,
-        CancellationToken cancellationToken = default) =>
-        MutateAsync(
-            callerEmployeeId, callerRoles, ticketAgentHandoffId, "StartAgentHandoff",
-            (handoff, now) => handoff.Start(callerEmployeeId, now),
-            cancellationToken);
+    /// <summary>
+    /// A human agent <b>accepts</b> pending work: claims it exclusively, takes
+    /// ownership of the ticket behind it, and starts the work — all in one
+    /// transaction, or none of it.
+    ///
+    /// <para>
+    /// <b>Exclusive.</b> <see cref="TicketAgentHandoff.ClaimBy"/> refuses a
+    /// second agent with the holder's identity, so the loser is told who has
+    /// it instead of receiving a success carrying someone else's name. The
+    /// same agent repeating the call is idempotent. The handoff's
+    /// <c>RowVersion</c> closes the narrower window where two requests both
+    /// read an unclaimed row and interleave their commits.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Department membership is a PRECONDITION, not a conditional.</b> An
+    /// employee may accept only if they are an active member of the ticket's
+    /// <c>CurrentDepartmentId</c>. Checked before a single thing is written, so
+    /// a caller who cannot own the ticket changes nothing at all: the handoff
+    /// stays <see cref="AgentHandoffStatus.WaitingForAgent"/>, its
+    /// <c>AssignedEmployeeId</c> stays null, and the ticket stays Open and
+    /// unowned. They receive
+    /// <see cref="AgentHandoffOutcome.AgentNotInTicketDepartment"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Why a precondition rather than "assign where possible".</b> Accepting
+    /// is one indivisible business act — take the work, own the ticket, start
+    /// it. Claiming the work while declining to assign the ticket produces the
+    /// state this method exists to avoid: handoff InProgress, which tells the
+    /// queue somebody is on it, while the ticket sits Open and unowned, which
+    /// tells the ticket nobody is. The invariant being protected is
+    /// MVP-API-Contracts.md §3.5's — an assignee must belong to the ticket's
+    /// current department, which
+    /// <c>TicketAssignmentAppService.AssignAsync</c> already refuses as
+    /// <c>EmployeeNotInDepartment</c> — and it is not relaxed here.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The cross-department route is Department Transfer.</b> A human from
+    /// another department who needs this work transfers the ticket first
+    /// (<c>POST /api/tickets/{id}/transfer</c>); a member of the new current
+    /// department then accepts. The handoff's own department follows the ticket,
+    /// so the work stays on the same list it always was.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>ADR-0024's override does not reach the membership rule.</b> It still
+    /// carries authorization and visibility — a System Administrator sees and
+    /// may act on this work in any department — but membership of the
+    /// <i>assignee</i> is a domain invariant about the ticket's data, not a
+    /// permission, so the administrator is refused here exactly as anyone else
+    /// is. That is why the check below calls the repository directly rather
+    /// than through <c>AuthorizationGate</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>First Response is deliberately NOT recorded here</b> (confirmed
+    /// decision 10). Accepting is not replying: the customer has heard nothing
+    /// yet. <c>Ticket.FirstHumanResponseAtUtc</c> is satisfied by the first
+    /// actual human message — see
+    /// <c>GenesysConversationEndAppService</c>'s transcript path. Acceptance
+    /// time is the end of the separate Human Wait operational metric
+    /// (<c>RequestedAtUtc</c> → <c>AssignedAtUtc</c>), which is not an SLA.
+    /// </para>
+    /// </summary>
+    public async Task<AgentHandoffResult> AcceptAsync(
+        Guid callerEmployeeId,
+        IReadOnlyCollection<string> callerRoles,
+        long ticketAgentHandoffId,
+        CancellationToken cancellationToken = default)
+    {
+        var handoff = await handoffRepository.GetByIdAsync(ticketAgentHandoffId, cancellationToken);
+        if (handoff is null)
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.NotFound);
+        }
+
+        // Same authority as every other action on this work list: ordinary
+        // work in a department the caller can already see, carrying ADR-0024's
+        // override through AuthorizationGate.
+        if (!await ticketQueryAppService.CanViewDepartmentAsync(
+                callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken))
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.Forbidden);
+        }
+
+        var ticket = await ticketRepository.GetByIdAsync(handoff.TicketId, cancellationToken);
+        if (ticket is null)
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.NotFound);
+        }
+
+        // ---- Preconditions. Every one of these is evaluated BEFORE the
+        // transaction opens, so a refusal leaves the handoff and the ticket
+        // exactly as they were. ----
+
+        // Closed-ticket immutability: a Closed ticket can take neither an owner
+        // nor a status change, so accepting could never complete. The work is
+        // stood down instead, not claimed.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.TicketClosed);
+        }
+
+        // The approved rule, and the reason this method cannot produce a
+        // half-accepted state. Read straight from the repository — NOT through
+        // AuthorizationGate — because this is the assignee's membership of the
+        // ticket's department, a domain invariant, rather than a question about
+        // what the caller is permitted to do.
+        if (!await userDepartmentAssignmentRepository.ExistsAsync(
+                callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken))
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.AgentNotInTicketDepartment);
+        }
+
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var correlationId = Guid.NewGuid();
+        var beforeStatus = handoff.Status;
+        var beforeTicketStatus = ticket.TicketStatus;
+        var beforeOwner = ticket.CurrentOwnerEmployeeId;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        bool claimed;
+        try
+        {
+            claimed = handoff.ClaimBy(callerEmployeeId, now);
+        }
+        catch (AgentHandoffAlreadyResolvedException)
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.AlreadyResolved);
+        }
+        catch (AgentHandoffAlreadyClaimedException alreadyClaimed)
+        {
+            return AgentHandoffResult.AlreadyClaimed(alreadyClaimed.HolderEmployeeId, alreadyClaimed.ClaimedAtUtc);
+        }
+
+        // The accepting agent owns the ticket. Unconditional by the approved
+        // rule, and safe precisely because membership was established above:
+        // this cannot assign a non-member. Skipped only when they already own
+        // it, so a repeated accept does not append a duplicate assignment row.
+        var assignedTicket = false;
+        if (ticket.CurrentOwnerEmployeeId != callerEmployeeId)
+        {
+            var currentAssignment = await ticketAssignmentRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
+            currentAssignment?.MarkSuperseded();
+
+            ticket.AssignTo(callerEmployeeId);
+            await ticketAssignmentRepository.AddAsync(
+                new TicketAssignment(ticket.TicketId, callerEmployeeId, ticket.CurrentDepartmentId, now, callerEmployeeId),
+                cancellationToken);
+            assignedTicket = true;
+        }
+
+        // ...and the work starts. The ticket now has an owner, so the domain's
+        // owner guard on Open → InProgress is satisfied by construction — which
+        // is the whole reason assignment comes first.
+        var movedToInProgress = false;
+        if (ticket.TicketStatus == TicketStatus.Open)
+        {
+            ticket.ChangeStatus(TicketStatus.InProgress);
+            movedToInProgress = true;
+
+            await statusHistoryRepository.AddAsync(
+                new TicketStatusHistory(
+                    ticket.TicketId, TicketStatusDimension.TicketStatus,
+                    (byte)TicketStatus.Open, (byte)TicketStatus.InProgress,
+                    callerEmployeeId, actorIsSystem: false,
+                    note: "A human agent accepted the pending customer interaction.",
+                    correlationId, now),
+                cancellationToken);
+        }
+
+        // Ticket Activity: only when this call actually performed the claim,
+        // so a repeated accept by the holder does not append a second line.
+        if (claimed)
+        {
+            await workflowEventRepository.AddAsync(
+                new TicketWorkflowEvent(
+                    handoff.TicketId, WorkflowEventType.HandoffStarted, now, callerEmployeeId,
+                    ticketApprovalId: null,
+                    note: FormatWaitNote(handoff),
+                    correlationId),
+                cancellationToken);
+        }
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId, "AcceptAgentHandoff", nameof(TicketAgentHandoff),
+            handoff.TicketAgentHandoffId.ToString(),
+            beforeValue:
+                $"Status={beforeStatus};TicketStatus={beforeTicketStatus};"
+                + $"AssignedEmployeeId={beforeOwner?.ToString() ?? "DepartmentQueue"}",
+            afterValue:
+                $"Status={handoff.Status};TicketStatus={ticket.TicketStatus};"
+                + $"AssignedEmployeeId={ticket.CurrentOwnerEmployeeId?.ToString() ?? "DepartmentQueue"};"
+                + $"ClaimPerformed={claimed};TicketAssigned={assignedTicket};MovedToInProgress={movedToInProgress};"
+                + $"HumanWaitSeconds={(handoff.AssignedAtUtc is { } at ? (at - handoff.RequestedAtUtc).TotalSeconds : 0):F0}",
+            correlationId, cancellationToken);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (TicketConcurrentlyModifiedException)
+        {
+            // Either the ticket's RowVersion or the handoff's moved between
+            // this request's read and its commit. Nothing was written.
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.ConcurrencyConflict);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return AgentHandoffResult.Success(ToDto(handoff));
+    }
 
     /// <summary>
     /// The human work is done. <b>The ticket is untouched</b> — it stays open,
@@ -114,6 +327,30 @@ public sealed class AgentHandoffAppService(
             cancellationToken);
     }
 
+    /// <summary>How long the customer waited for a person — the Human Wait metric, in the Activity line that ends it.</summary>
+    private static string FormatWaitNote(TicketAgentHandoff handoff)
+    {
+        var waitedFor = (handoff.AssignedAtUtc ?? handoff.RequestedAtUtc) - handoff.RequestedAtUtc;
+        return $"Accepted after {FormatDuration(waitedFor)} waiting for a human agent.";
+    }
+
+    /// <summary>Human-readable duration for an Activity line — never a raw TimeSpan.</summary>
+    internal static string FormatDuration(TimeSpan duration)
+    {
+        if (duration < TimeSpan.Zero)
+        {
+            duration = TimeSpan.Zero;
+        }
+
+        return duration.TotalMinutes < 1
+            ? $"{duration.TotalSeconds:F0}s"
+            : duration.TotalHours < 1
+                ? $"{duration.TotalMinutes:F0}m"
+                : duration.TotalDays < 1
+                    ? $"{(int)duration.TotalHours}h {duration.Minutes}m"
+                    : $"{(int)duration.TotalDays}d {duration.Hours}h";
+    }
+
     private async Task<AgentHandoffResult> MutateAsync(
         Guid callerEmployeeId,
         IReadOnlyCollection<string> callerRoles,
@@ -138,6 +375,7 @@ public sealed class AgentHandoffAppService(
         }
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
+        var correlationId = Guid.NewGuid();
         var beforeStatus = handoff.Status;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
@@ -151,11 +389,31 @@ public sealed class AgentHandoffAppService(
             return AgentHandoffResult.Failure(AgentHandoffOutcome.AlreadyResolved);
         }
 
+        // Ticket Activity, for the transitions that have a typed event. Start
+        // is deliberately absent: the accept path (AcceptAsync) is what a
+        // human pressing the button goes through, and it emits HandoffStarted
+        // itself — emitting here too would double-count.
+        var activityEvent = handoff.Status switch
+        {
+            AgentHandoffStatus.Completed => WorkflowEventType.HandoffCompleted,
+            AgentHandoffStatus.Cancelled => WorkflowEventType.HandoffCancelled,
+            _ => (WorkflowEventType?)null
+        };
+
+        if (activityEvent is { } eventType && beforeStatus != handoff.Status)
+        {
+            await workflowEventRepository.AddAsync(
+                new TicketWorkflowEvent(
+                    handoff.TicketId, eventType, now, callerEmployeeId,
+                    ticketApprovalId: null, handoff.ResolutionNote, correlationId),
+                cancellationToken);
+        }
+
         await auditWriter.WriteAsync(
             callerEmployeeId, auditAction, nameof(TicketAgentHandoff), handoff.TicketAgentHandoffId.ToString(),
             beforeValue: $"Status={beforeStatus}",
             afterValue: $"Status={handoff.Status};AssignedEmployeeId={handoff.AssignedEmployeeId?.ToString() ?? "(none)"}",
-            Guid.NewGuid(), cancellationToken);
+            correlationId, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

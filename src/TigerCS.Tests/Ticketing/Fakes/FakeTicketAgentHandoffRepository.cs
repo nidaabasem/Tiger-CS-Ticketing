@@ -137,4 +137,18 @@ public sealed class FakeTicketAgentHandoffRepository : ITicketAgentHandoffReposi
         _handoffs.Add(handoff);
         return Task.CompletedTask;
     }
+
+    /// <summary>Mirrors the EF query: unresolved rows in WaitingForAgent, scoped to the visible departments, and the earliest RequestedAtUtc among them.</summary>
+    public Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
+        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default)
+    {
+        var waiting = All
+            .Where(h => h.ResolvedAtUtc is null && h.Status == AgentHandoffStatus.WaitingForAgent)
+            .Where(h => visibleDepartmentIds is null || visibleDepartmentIds.Contains(h.DepartmentId))
+            .ToList();
+
+        return Task.FromResult(new AwaitingHumanAgentSnapshot(
+            waiting.Count,
+            waiting.Count == 0 ? null : waiting.Min(h => h.RequestedAtUtc)));
+    }
 }

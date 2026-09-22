@@ -26,13 +26,25 @@ public sealed class DashboardAppService(
     TicketQueryAppService ticketQueryAppService,
     TimeProvider timeProvider,
     IDashboardQueryRepository dashboardQueryRepository,
-    IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository)
+    IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
+    ITicketAgentHandoffRepository? agentHandoffRepository = null,
+    DashboardOptions? dashboardOptions = null)
 {
     /// <summary>The default volume period when no date range is requested: the last 30 UTC calendar days, today included.</summary>
     public const int DefaultPeriodDays = 30;
 
     /// <summary>The Recent/Critical list stays a short, scannable queue — it links to the full ticket queue for everything else.</summary>
     public const int RecentLimit = 10;
+
+    /// <summary>
+    /// The default age at which a customer waiting for a human is rendered as
+    /// at risk: 15 minutes. A default, not a rule — <see cref="DashboardOptions"/>
+    /// overrides it per environment. It is deliberately NOT an SLA target:
+    /// Human Wait produces no breach row, no escalation and no
+    /// <c>SlaDeadlineType</c>, because SLA-Architecture.md defines exactly two
+    /// contractual deadlines and this is not one of them.
+    /// </summary>
+    public const int DefaultHumanWaitRiskThresholdSeconds = 900;
 
     /// <summary>How far ahead of a pending SLA deadline counts as "at risk" — a presentation threshold, not an SLA rule; the SLA clocks themselves are untouched by it.</summary>
     public static readonly TimeSpan AtRiskWindow = TimeSpan.FromHours(4);
@@ -123,6 +135,18 @@ public sealed class DashboardAppService(
 
         var snapshot = await dashboardQueryRepository.GetOverviewAsync(query, cancellationToken);
 
+        // Pending human work, scoped by exactly the same visible departments
+        // the rest of this response is scoped by. Measured against the same
+        // nowUtc as every other figure here, so the tile cannot disagree with
+        // the queue beside it.
+        var awaitingHumanAgent = agentHandoffRepository is null
+            ? new AwaitingHumanAgentSnapshot(0, null)
+            : await agentHandoffRepository.GetAwaitingHumanAgentSnapshotAsync(visibleDepartmentIds, cancellationToken);
+
+        var oldestHumanWaitSeconds = awaitingHumanAgent.OldestRequestedAtUtc is { } oldestWaitStart
+            ? (int)Math.Max(0, (nowUtc - oldestWaitStart).TotalSeconds)
+            : 0;
+
         // Agent and request-type pickers follow the department picker: with
         // a department selected they offer only that department's people
         // and request types; otherwise the whole visible scope's.
@@ -142,7 +166,10 @@ public sealed class DashboardAppService(
                 snapshot.InDepartmentQueue,
                 snapshot.SlaBreached,
                 snapshot.DueToday,
-                snapshot.PendingApproval),
+                snapshot.PendingApproval,
+                awaitingHumanAgent.Count,
+                oldestHumanWaitSeconds,
+                ResolveHumanWaitRiskThreshold(dashboardOptions)),
             snapshot.VolumeTotal,
             ToBreakdown(snapshot.VolumeByChannel, snapshot.VolumeTotal, k => k.ToString()),
             ToBreakdown(snapshot.VolumeByRequestType, snapshot.VolumeTotal, k => k.ToString()),
@@ -231,4 +258,10 @@ public sealed class DashboardAppService(
         row.Ticket.CurrentDepartmentId,
         row.Ticket.RequestSummary,
         row.Ticket.CreatedAtUtc);
+
+    /// <summary>A misconfigured (non-positive) threshold falls back to the default rather than painting every waiting row at risk.</summary>
+    private static int ResolveHumanWaitRiskThreshold(DashboardOptions? options) =>
+        options is { HumanWaitRiskThresholdSeconds: > 0 } configured
+            ? configured.HumanWaitRiskThresholdSeconds
+            : DefaultHumanWaitRiskThresholdSeconds;
 }

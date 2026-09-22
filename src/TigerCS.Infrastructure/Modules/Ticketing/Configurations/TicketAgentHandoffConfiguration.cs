@@ -37,6 +37,17 @@ public class TicketAgentHandoffConfiguration : IEntityTypeConfiguration<TicketAg
         // a channel-derived guess.
         builder.Property(h => h.Mode).HasConversion<byte?>();
 
+        // Nullable for the same reason as Mode, and additionally because
+        // existing rows predate it: null is "not stated", never a backfilled
+        // guess about why a historical handoff was raised.
+        builder.Property(h => h.Trigger).HasConversion<byte?>();
+
+        // Optimistic concurrency for the exclusive claim, configured exactly
+        // as Tickets.RowVersion is (TicketConfiguration). The claim's own
+        // holder check is the deterministic rule; this closes the
+        // interleaved-commit window behind it.
+        builder.Property(h => h.RowVersion).IsRowVersion();
+
         builder.Property(h => h.RequestReason).HasMaxLength(TicketAgentHandoff.RequestReasonMaxLength);
         builder.Property(h => h.ResolutionNote).HasMaxLength(TicketAgentHandoff.ResolutionNoteMaxLength);
 

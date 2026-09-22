@@ -20,6 +20,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// </param>
 /// <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover" — omit when Genesys has not stated how the channel continues.</param>
 /// <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note). Free text: no vocabulary has been confirmed.</param>
+/// <param name="Trigger">Why a human is needed, typed: "CustomerRequestedHuman", "AiConnectionLost", "AiEscalated", "RoutingDecision" or "AgentTransfer". Omit when Genesys does not state it — never derived from the end reason or the channel.</param>
 /// <param name="AgentId">Genesys' own agent identifier, when one is already handling it.</param>
 /// <param name="AgentName">The agent's display name, when supplied — recorded on the interaction.</param>
 /// <param name="WorkItemId">Genesys' own routing-task/work-item identifier, if it supplies one. Used as the stronger idempotency key when present; never invented.</param>
@@ -29,10 +30,16 @@ public sealed record GenesysHandoffRequestDto(
     bool AgentAvailable = false,
     string? Mode = null,
     string? Reason = null,
+    string? Trigger = null,
     string? AgentId = null,
     string? AgentName = null,
     string? WorkItemId = null,
     DateTime? RequestedAtUtc = null);
+
+/// <summary>Genesys standing the pending human work down — the human is no longer needed.</summary>
+/// <param name="ConversationId">The conversation whose outstanding work this stands down.</param>
+/// <param name="Reason">Why the human is no longer needed. Required — pending customer work is never dropped without a recorded why.</param>
+public sealed record GenesysHandoffCancellationDto(string ConversationId, string? Reason = null);
 
 /// <summary>Genesys reporting that an agent has (or has not) taken the pending work.</summary>
 /// <param name="ConversationId">The conversation whose pending work this concerns.</param>
@@ -68,8 +75,26 @@ public enum GenesysHandoffOutcome
     /// <summary>The supplied mode is not one of TigerCS' normalized values.</summary>
     InvalidMode,
 
+    /// <summary>The supplied trigger is not one of TigerCS' normalized values.</summary>
+    InvalidTrigger,
+
     /// <summary>An assignment named nobody.</summary>
-    AgentRequired
+    AgentRequired,
+
+    /// <summary>Outstanding human work was stood down — Genesys reported the human is no longer needed (the AI resumed, the customer left, the case went away).</summary>
+    HandoffCancelled,
+
+    /// <summary>
+    /// The work item was already Completed or Cancelled, so there was nothing
+    /// to stand down. The idempotent answer to a redelivered cancellation —
+    /// the same convention <c>AlreadyRequested</c> uses for a redelivered
+    /// request, and the reason a repeated stand-down is safe rather than an
+    /// error.
+    /// </summary>
+    AlreadyResolved,
+
+    /// <summary>A stand-down named no reason. Pending customer work is never dropped without a recorded why.</summary>
+    ReasonRequired
 }
 
 public sealed record GenesysHandoffResult(

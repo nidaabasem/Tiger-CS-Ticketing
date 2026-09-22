@@ -36,6 +36,17 @@ public sealed record AgentHandoffListRow(
 public sealed record AgentHandoffQueryResult(IReadOnlyList<AgentHandoffListRow> Items, int TotalCount);
 
 /// <summary>
+/// The Awaiting Human Agent dashboard tile, in one query.
+/// </summary>
+/// <param name="Count">Outstanding work in <see cref="AgentHandoffStatus.WaitingForAgent"/> — nobody has taken it yet.</param>
+/// <param name="OldestRequestedAtUtc">
+/// When the longest-waiting of those was raised, or null when none is waiting.
+/// The caller turns this into an age; the repository does not read the clock,
+/// so one instant governs the whole dashboard response.
+/// </param>
+public sealed record AwaitingHumanAgentSnapshot(int Count, DateTime? OldestRequestedAtUtc);
+
+/// <summary>
 /// Pending human work — the channel-neutral "someone needs an agent" record.
 /// Separate from <c>ITicketInteractionRepository</c> because the work has its
 /// own lifecycle that outlives the interaction it came from.
@@ -61,4 +72,14 @@ public interface ITicketAgentHandoffRepository
     Task<AgentHandoffQueryResult> SearchAsync(AgentHandoffQuery query, CancellationToken cancellationToken = default);
 
     Task AddAsync(TicketAgentHandoff handoff, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// How much work is waiting for a human, and how long the oldest has
+    /// waited — scoped to the departments the caller can see, exactly as the
+    /// work list and the ticket queue scope themselves.
+    /// </summary>
+    /// <param name="visibleDepartmentIds">Null means every department (a CS-layer/executive role).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<AwaitingHumanAgentSnapshot> GetAwaitingHumanAgentSnapshotAsync(
+        IReadOnlyCollection<int>? visibleDepartmentIds, CancellationToken cancellationToken = default);
 }
