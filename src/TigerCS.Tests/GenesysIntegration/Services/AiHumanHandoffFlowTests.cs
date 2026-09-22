@@ -493,23 +493,150 @@ public class AiHumanHandoffFlowTests
         var (f, _, handoffId, _) = await WaitingForHumanAsync();
         var outsider = Guid.NewGuid();
 
-        // A Department Employee with no membership of the ticket's department.
+        // A Department Employee has no cross-department visibility, so this is
+        // refused as authorization — before the membership rule is even
+        // reached. Forbidden and AgentNotInTicketDepartment are deliberately
+        // different answers: "you cannot see this work" is not "you cannot own
+        // this ticket".
         var result = await f.PendingWork.AcceptAsync(outsider, [Roles.DepartmentEmployee], handoffId);
 
         Assert.Equal(AgentHandoffOutcome.Forbidden, result.Outcome);
     }
 
     [Fact]
-    public async Task SystemAdministrator_AcceptsAcrossDepartmentsAndWithoutOwnership()
+    public async Task ANonMemberWhoCanSeeTheWork_IsRefused_AndNothingChanges()
     {
-        var (f, _, handoffId, _) = await WaitingForHumanAsync();
+        // The case the approved rule exists for: a CS Agent is cross-department
+        // for VISIBILITY, so they pass the authorization gate — and still
+        // cannot become the owner of a ticket in a department they do not
+        // belong to.
+        var (f, ticketId, handoffId, _) = await WaitingForHumanAsync();
+        var outsideAgent = Guid.NewGuid();
+
+        var result = await f.PendingWork.AcceptAsync(outsideAgent, CsAgent, handoffId);
+
+        Assert.Equal(AgentHandoffOutcome.AgentNotInTicketDepartment, result.Outcome);
+
+        // Not a partial accept — every one of these would be wrong.
+        var handoff = Assert.Single(f.Handoffs.All);
+        Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff.Status);
+        Assert.Null(handoff.AssignedEmployeeId);
+        Assert.Null(handoff.AssignedAtUtc);
+        Assert.Null(handoff.StartedAtUtc);
+        Assert.True(handoff.IsOpen);
+
+        var ticket = await f.Tickets.GetByIdAsync(ticketId);
+        Assert.Equal(TicketStatus.Open, ticket!.TicketStatus);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task AFailedAccept_LeavesTheWorkClaimableByAnEligibleAgent()
+    {
+        var (f, ticketId, handoffId, eligible) = await WaitingForHumanAsync();
+        var outsideAgent = Guid.NewGuid();
+
+        Assert.Equal(
+            AgentHandoffOutcome.AgentNotInTicketDepartment,
+            (await f.PendingWork.AcceptAsync(outsideAgent, CsAgent, handoffId)).Outcome);
+
+        // The refusal must not have poisoned the work item.
+        var result = await f.PendingWork.AcceptAsync(eligible, CsAgent, handoffId);
+
+        Assert.Equal(AgentHandoffOutcome.Success, result.Outcome);
+        Assert.Equal(eligible, Assert.Single(f.Handoffs.All).AssignedEmployeeId);
+        Assert.Equal(eligible, (await f.Tickets.GetByIdAsync(ticketId))!.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task SystemAdministrator_DoesNotBypassTheDepartmentMembershipInvariant()
+    {
+        // ADR-0024's override answers "may this caller act at all". Whether the
+        // ASSIGNEE belongs to the ticket's department is a domain invariant
+        // about the ticket's data, not a permission — so the administrator is
+        // refused here exactly as anyone else is.
+        var (f, ticketId, handoffId, _) = await WaitingForHumanAsync();
         var administrator = Guid.NewGuid();
 
-        // No department membership at all — ADR-0024's override carries it.
+        var result = await f.PendingWork.AcceptAsync(administrator, [Roles.SystemAdministrator], handoffId);
+
+        Assert.Equal(AgentHandoffOutcome.AgentNotInTicketDepartment, result.Outcome);
+
+        var handoff = Assert.Single(f.Handoffs.All);
+        Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff.Status);
+        Assert.Null(handoff.AssignedEmployeeId);
+        Assert.Null((await f.Tickets.GetByIdAsync(ticketId))!.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task SystemAdministrator_WhoIsAMemberOfTheDepartment_Accepts()
+    {
+        // The override is not what was blocking them — membership is. An
+        // administrator who belongs to the department accepts normally, which
+        // is the proof that the refusal above is the invariant and not a
+        // regression in the override.
+        var (f, ticketId, handoffId, _) = await WaitingForHumanAsync();
+        var administrator = Guid.NewGuid();
+        var departmentId = Assert.Single(f.Handoffs.All).DepartmentId;
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(administrator, departmentId, isPrimary: true, DateTime.UtcNow, null));
+
         var result = await f.PendingWork.AcceptAsync(administrator, [Roles.SystemAdministrator], handoffId);
 
         Assert.Equal(AgentHandoffOutcome.Success, result.Outcome);
-        Assert.Equal(administrator, Assert.Single(f.Handoffs.All).AssignedEmployeeId);
+        Assert.Equal(administrator, (await f.Tickets.GetByIdAsync(ticketId))!.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task TransferringTheTicket_ThenAcceptingAsAMemberOfTheNewDepartment_Succeeds()
+    {
+        // The approved cross-department route: transfer first, then an eligible
+        // member of the NEW current department accepts.
+        var (f, ticketId, handoffId, _) = await WaitingForHumanAsync();
+        var (newDepartment, _) = f.SeedGenesysDepartment("Collections", "COL");
+
+        var otherDepartmentAgent = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(
+            new UserDepartmentAssignment(
+                otherDepartmentAgent, newDepartment.DepartmentId, isPrimary: true, DateTime.UtcNow, null));
+
+        // Before the transfer they cannot accept.
+        Assert.Equal(
+            AgentHandoffOutcome.AgentNotInTicketDepartment,
+            (await f.PendingWork.AcceptAsync(otherDepartmentAgent, CsAgent, handoffId)).Outcome);
+
+        // The existing Department Transfer moves the ticket.
+        var ticket = await f.Tickets.GetByIdAsync(ticketId);
+        ticket!.TransferToDepartment(newDepartment.DepartmentId);
+
+        // ...and now the same agent is eligible.
+        var result = await f.PendingWork.AcceptAsync(otherDepartmentAgent, CsAgent, handoffId);
+
+        Assert.Equal(AgentHandoffOutcome.Success, result.Outcome);
+        Assert.Equal(AgentHandoffStatus.InProgress, Assert.Single(f.Handoffs.All).Status);
+
+        var afterAccept = await f.Tickets.GetByIdAsync(ticketId);
+        Assert.Equal(otherDepartmentAgent, afterAccept!.CurrentOwnerEmployeeId);
+        Assert.Equal(newDepartment.DepartmentId, afterAccept.CurrentDepartmentId);
+    }
+
+    [Fact]
+    public async Task AcceptingWorkOnAClosedTicket_IsRefused_WithoutClaimingIt()
+    {
+        var (f, ticketId, handoffId, agent) = await WaitingForHumanAsync();
+
+        // Drive the ticket to Closed through the domain, then let the still
+        // outstanding work item meet it.
+        var ticket = await f.Tickets.GetByIdAsync(ticketId);
+        ticket!.AssignTo(agent);
+        ticket.ChangeStatus(TicketStatus.InProgress);
+        ticket.Resolve(ResolutionOutcome.Resolved, duplicateOfTicketId: null);
+        ticket.Close();
+
+        var result = await f.PendingWork.AcceptAsync(agent, CsAgent, handoffId);
+
+        Assert.Equal(AgentHandoffOutcome.TicketClosed, result.Outcome);
+        Assert.Equal(AgentHandoffStatus.WaitingForAgent, Assert.Single(f.Handoffs.All).Status);
     }
 
     [Fact]

@@ -92,29 +92,46 @@ public sealed class AgentHandoffAppService(
     /// </para>
     ///
     /// <para>
-    /// <b>The ticket side is deliberately conditional</b>, because two existing
-    /// rules constrain it and neither may be bypassed through this door:
+    /// <b>Department membership is a PRECONDITION, not a conditional.</b> An
+    /// employee may accept only if they are an active member of the ticket's
+    /// <c>CurrentDepartmentId</c>. Checked before a single thing is written, so
+    /// a caller who cannot own the ticket changes nothing at all: the handoff
+    /// stays <see cref="AgentHandoffStatus.WaitingForAgent"/>, its
+    /// <c>AssignedEmployeeId</c> stays null, and the ticket stays Open and
+    /// unowned. They receive
+    /// <see cref="AgentHandoffOutcome.AgentNotInTicketDepartment"/>.
     /// </para>
-    /// <list type="bullet">
-    ///   <item><description>
-    ///     Ownership moves only when the ticket is <i>unowned</i> and the
-    ///     accepting agent is an active member of the ticket's current
-    ///     department. MVP-API-Contracts.md §3.5 — enforced by
-    ///     <c>TicketAssignmentAppService.AssignAsync</c> as
-    ///     <c>EmployeeNotInDepartment</c> — requires an assignee to belong to
-    ///     that department, and a CS-layer agent handling a conversation
-    ///     cross-department does not always. Stealing a case from its current
-    ///     owner is not accepting a conversation either, so an owned ticket
-    ///     keeps its owner.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <c>Open → InProgress</c> runs only when the ticket has an owner
-    ///     afterwards, because <see cref="Ticket.ChangeStatus"/> throws
-    ///     <c>TicketNotAssignedException</c> otherwise. That is the guard
-    ///     behind confirmed decision 8 — "the ticket remains Open if it has no
-    ///     owner" — and it is the domain's rule, not this method's.
-    ///   </description></item>
-    /// </list>
+    ///
+    /// <para>
+    /// <b>Why a precondition rather than "assign where possible".</b> Accepting
+    /// is one indivisible business act — take the work, own the ticket, start
+    /// it. Claiming the work while declining to assign the ticket produces the
+    /// state this method exists to avoid: handoff InProgress, which tells the
+    /// queue somebody is on it, while the ticket sits Open and unowned, which
+    /// tells the ticket nobody is. The invariant being protected is
+    /// MVP-API-Contracts.md §3.5's — an assignee must belong to the ticket's
+    /// current department, which
+    /// <c>TicketAssignmentAppService.AssignAsync</c> already refuses as
+    /// <c>EmployeeNotInDepartment</c> — and it is not relaxed here.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The cross-department route is Department Transfer.</b> A human from
+    /// another department who needs this work transfers the ticket first
+    /// (<c>POST /api/tickets/{id}/transfer</c>); a member of the new current
+    /// department then accepts. The handoff's own department follows the ticket,
+    /// so the work stays on the same list it always was.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>ADR-0024's override does not reach the membership rule.</b> It still
+    /// carries authorization and visibility — a System Administrator sees and
+    /// may act on this work in any department — but membership of the
+    /// <i>assignee</i> is a domain invariant about the ticket's data, not a
+    /// permission, so the administrator is refused here exactly as anyone else
+    /// is. That is why the check below calls the repository directly rather
+    /// than through <c>AuthorizationGate</c>.
+    /// </para>
     ///
     /// <para>
     /// <b>First Response is deliberately NOT recorded here</b> (confirmed
@@ -153,6 +170,29 @@ public sealed class AgentHandoffAppService(
             return AgentHandoffResult.Failure(AgentHandoffOutcome.NotFound);
         }
 
+        // ---- Preconditions. Every one of these is evaluated BEFORE the
+        // transaction opens, so a refusal leaves the handoff and the ticket
+        // exactly as they were. ----
+
+        // Closed-ticket immutability: a Closed ticket can take neither an owner
+        // nor a status change, so accepting could never complete. The work is
+        // stood down instead, not claimed.
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.TicketClosed);
+        }
+
+        // The approved rule, and the reason this method cannot produce a
+        // half-accepted state. Read straight from the repository — NOT through
+        // AuthorizationGate — because this is the assignee's membership of the
+        // ticket's department, a domain invariant, rather than a question about
+        // what the caller is permitted to do.
+        if (!await userDepartmentAssignmentRepository.ExistsAsync(
+                callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken))
+        {
+            return AgentHandoffResult.Failure(AgentHandoffOutcome.AgentNotInTicketDepartment);
+        }
+
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var correlationId = Guid.NewGuid();
         var beforeStatus = handoff.Status;
@@ -175,15 +215,12 @@ public sealed class AgentHandoffAppService(
             return AgentHandoffResult.AlreadyClaimed(alreadyClaimed.HolderEmployeeId, alreadyClaimed.ClaimedAtUtc);
         }
 
-        // Closed-ticket immutability: the work item is still claimable (it may
-        // have outlived the closure) but nothing on a Closed ticket moves.
-        var ticketIsMutable = ticket.TicketStatus != TicketStatus.Closed;
-
+        // The accepting agent owns the ticket. Unconditional by the approved
+        // rule, and safe precisely because membership was established above:
+        // this cannot assign a non-member. Skipped only when they already own
+        // it, so a repeated accept does not append a duplicate assignment row.
         var assignedTicket = false;
-        if (ticketIsMutable
-            && ticket.CurrentOwnerEmployeeId is null
-            && await userDepartmentAssignmentRepository.ExistsAsync(
-                callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken))
+        if (ticket.CurrentOwnerEmployeeId != callerEmployeeId)
         {
             var currentAssignment = await ticketAssignmentRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
             currentAssignment?.MarkSuperseded();
@@ -195,38 +232,23 @@ public sealed class AgentHandoffAppService(
             assignedTicket = true;
         }
 
+        // ...and the work starts. The ticket now has an owner, so the domain's
+        // owner guard on Open → InProgress is satisfied by construction — which
+        // is the whole reason assignment comes first.
         var movedToInProgress = false;
-        if (ticketIsMutable
-            && ticket.TicketStatus == TicketStatus.Open
-            && ticket.CurrentOwnerEmployeeId is not null)
+        if (ticket.TicketStatus == TicketStatus.Open)
         {
-            // The domain's own transition table and its owner guard decide
-            // this; a failure is reported, never worked around.
-            try
-            {
-                ticket.ChangeStatus(TicketStatus.InProgress);
-                movedToInProgress = true;
-            }
-            catch (TicketNotAssignedException)
-            {
-                movedToInProgress = false;
-            }
-            catch (InvalidTicketStatusTransitionException)
-            {
-                movedToInProgress = false;
-            }
+            ticket.ChangeStatus(TicketStatus.InProgress);
+            movedToInProgress = true;
 
-            if (movedToInProgress)
-            {
-                await statusHistoryRepository.AddAsync(
-                    new TicketStatusHistory(
-                        ticket.TicketId, TicketStatusDimension.TicketStatus,
-                        (byte)TicketStatus.Open, (byte)TicketStatus.InProgress,
-                        callerEmployeeId, actorIsSystem: false,
-                        note: "A human agent accepted the pending customer interaction.",
-                        correlationId, now),
-                    cancellationToken);
-            }
+            await statusHistoryRepository.AddAsync(
+                new TicketStatusHistory(
+                    ticket.TicketId, TicketStatusDimension.TicketStatus,
+                    (byte)TicketStatus.Open, (byte)TicketStatus.InProgress,
+                    callerEmployeeId, actorIsSystem: false,
+                    note: "A human agent accepted the pending customer interaction.",
+                    correlationId, now),
+                cancellationToken);
         }
 
         // Ticket Activity: only when this call actually performed the claim,
@@ -270,15 +292,6 @@ public sealed class AgentHandoffAppService(
 
         return AgentHandoffResult.Success(ToDto(handoff));
     }
-
-    /// <summary>An agent begins handling the work — which also takes it, if nobody had.</summary>
-    public Task<AgentHandoffResult> StartAsync(
-        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, long ticketAgentHandoffId,
-        CancellationToken cancellationToken = default) =>
-        MutateAsync(
-            callerEmployeeId, callerRoles, ticketAgentHandoffId, "StartAgentHandoff",
-            (handoff, now) => handoff.Start(callerEmployeeId, now),
-            cancellationToken);
 
     /// <summary>
     /// The human work is done. <b>The ticket is untouched</b> — it stays open,

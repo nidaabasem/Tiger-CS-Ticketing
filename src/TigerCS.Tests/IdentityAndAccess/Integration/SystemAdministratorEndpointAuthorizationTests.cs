@@ -719,6 +719,27 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal("Customer asked about an NOC for resale", interaction.Handoff!.RequestReason);
         Assert.Equal("WaitingForAgent", interaction.Handoff.Status);
 
+        // Accepting the work makes the accepting employee the TICKET's owner,
+        // and an owner must be an active member of the ticket's current
+        // department. That is a domain invariant about the ticket's data, not a
+        // permission, so ADR-0024's override deliberately does NOT reach it —
+        // the administrator is refused exactly as anyone else would be.
+        var refusedBeforeMembership = await client.PostAsJsonAsync(
+            $"/api/pending-customer-interactions/{handoff.TicketAgentHandoffId!.Value}/start", new { });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refusedBeforeMembership.StatusCode);
+
+        // ...and nothing was claimed by that refusal.
+        Assert.Equal(
+            "WaitingForAgent",
+            (await (await client.GetAsync("/api/pending-customer-interactions"))
+                .Content.ReadFromJsonAsync<AgentHandoffListResultDto>())!
+                .Items.Single(i => i.TicketAgentHandoffId == handoff.TicketAgentHandoffId!.Value).Status);
+
+        // With membership of the ticket's department the invariant is satisfied
+        // and the whole flow completes — which is what proves the override
+        // reaches these endpoints' AUTHORIZATION, the thing this test is about.
+        await _factory.AssignPrimaryDepartmentAsync(administrator, departmentId);
+
         // The agent takes it, then finishes it.
         var startedWork = await client.PostAsJsonAsync(
             $"/api/pending-customer-interactions/{handoff.TicketAgentHandoffId!.Value}/start", new { });
@@ -734,9 +755,13 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal("Completed", (await completed.Content.ReadFromJsonAsync<AgentHandoffDto>())!.Status);
 
         // The load-bearing separation: the human work is done, the TICKET is
-        // not. The NOC workflow continues.
+        // not. The NOC workflow continues. It is InProgress rather than Open
+        // because accepting the interaction took ownership of it and started
+        // it — and it is emphatically neither Resolved nor Closed, which is
+        // what this assertion is really about.
         var ticketAfter = await _factory.GetTicketAsync(ticket.TicketId);
-        Assert.Equal(TigerCS.Domain.Modules.Ticketing.TicketStatus.Open, ticketAfter!.TicketStatus);
+        Assert.Equal(TigerCS.Domain.Modules.Ticketing.TicketStatus.InProgress, ticketAfter!.TicketStatus);
+        Assert.Null(ticketAfter.ResolutionOutcome);
 
         // Completed work leaves the default list.
         var afterList = await (await client.GetAsync("/api/pending-customer-interactions"))

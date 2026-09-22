@@ -106,19 +106,47 @@ public class PendingCustomerInteractionsController(AgentHandoffAppService agentH
         return Ok(result);
     }
 
-    /// <summary>Start handling a waiting customer interaction — which also takes it, if nobody had.</summary>
-    /// <remarks>Idempotent: starting work already in progress changes nothing and does not move the recorded start time.</remarks>
+    /// <summary>Accept a waiting customer interaction — take the work, own the ticket, and start.</summary>
+    /// <remarks>
+    /// <b>One indivisible act.</b> The work item is claimed exclusively, the
+    /// ticket's owner becomes the accepting employee, and an Open ticket moves
+    /// to In Progress — all in one transaction, or none of it.
+    ///
+    /// <para>
+    /// <b>The accepting employee must be an active member of the ticket's
+    /// current department</b>, because accepting makes them its owner and an
+    /// owner must belong to that department. A non-member receives <c>422</c>
+    /// and <b>nothing changes</b>: the interaction is still waiting, unclaimed,
+    /// and the ticket is still Open and unowned. To handle work from another
+    /// department, transfer the ticket first and then have a member of its new
+    /// current department accept.
+    /// </para>
+    ///
+    /// <para>
+    /// Idempotent for the holder: accepting work you already hold changes
+    /// nothing and does not move the recorded start time. A different agent
+    /// receives <c>409</c> naming who holds it.
+    /// </para>
+    ///
+    /// <para>
+    /// Accepting is <b>not</b> replying, so it does not satisfy the First
+    /// Response SLA — the first actual message a human sends the customer
+    /// does.
+    /// </para>
+    /// </remarks>
     /// <param name="handoffId">The work item.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <response code="200">The work is yours and in progress. Repeating the call is idempotent.</response>
     /// <response code="403">The caller may not act on work in this department.</response>
     /// <response code="404">No such work item.</response>
-    /// <response code="409">Another agent already holds this work (the response names them), or it was already completed or cancelled, or the ticket moved underneath the request.</response>
+    /// <response code="409">Another agent already holds this work (the response names them), the work was already completed or cancelled, the ticket behind it is closed, or the ticket moved underneath the request.</response>
+    /// <response code="422">The caller is not an active member of the ticket's current department, so they cannot become its owner. Nothing was changed.</response>
     [HttpPost("{handoffId:long}/start")]
     [ProducesResponseType<AgentHandoffDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> Start(long handoffId, CancellationToken cancellationToken)
     {
         var employeeId = GetEmployeeId();
@@ -226,6 +254,29 @@ public class PendingCustomerInteractionsController(AgentHandoffAppService agentH
             detail:
                 $"Agent {result.HolderEmployeeId} claimed it at "
                 + $"{result.ClaimedAtUtc?.ToString("O") ?? "an earlier time"}. Nothing was written.",
+            statusCode: StatusCodes.Status409Conflict),
+
+        // Not 403: the caller may well be entitled to see and act on this
+        // department's work. What they cannot do is become the ticket's owner,
+        // which is the same 422 TicketsController answers for
+        // EmployeeNotInDepartment on the assignment endpoint — deliberately the
+        // same problem type, because it is the same invariant.
+        AgentHandoffOutcome.AgentNotInTicketDepartment => Problem(
+            type: "https://tigercs.internal/problems/employee-not-in-department",
+            title: "Employee not in department",
+            detail:
+                "Accepting a customer interaction makes you the ticket's owner, and an owner must be an "
+                + "active member of the ticket's current department. Nothing was changed — the interaction is "
+                + "still waiting and the ticket is untouched. Transfer the ticket to your department first, "
+                + "or ask a member of its current department to take it.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        AgentHandoffOutcome.TicketClosed => Problem(
+            type: "https://tigercs.internal/problems/ticket-closed",
+            title: "The ticket behind this work is closed",
+            detail:
+                "A closed ticket takes neither an owner nor a status change, so this interaction cannot be "
+                + "accepted. Stand it down instead. Nothing was changed.",
             statusCode: StatusCodes.Status409Conflict),
 
         AgentHandoffOutcome.ConcurrencyConflict => Problem(

@@ -104,7 +104,51 @@ public enum AgentHandoffOutcome
     /// RowVersion, or the handoff's, no longer matched). Nothing was written;
     /// the caller re-reads and retries.
     /// </summary>
-    ConcurrencyConflict
+    ConcurrencyConflict,
+
+    /// <summary>
+    /// The accepting employee is not an active member of the ticket's current
+    /// department, so accepting would have to assign the ticket to a
+    /// non-member — which MVP-API-Contracts.md §3.5 forbids and
+    /// <c>TicketAssignmentAppService.AssignAsync</c> already refuses as
+    /// <c>EmployeeNotInDepartment</c>.
+    ///
+    /// <para>
+    /// <b>Checked before anything is claimed.</b> Accepting is one operation:
+    /// claim the work, own the ticket, start it. A caller who cannot complete
+    /// all three must change nothing, or the system ends up in the state this
+    /// outcome exists to prevent — handoff InProgress while the ticket sits
+    /// Open and unowned, which reads as "someone is on it" to the queue and
+    /// "nobody owns this" to the ticket.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Not an authorization failure</b>, and deliberately distinct from
+    /// <see cref="Forbidden"/>: the caller may well be entitled to see and act
+    /// on this department's work (the CS layer is cross-department for
+    /// visibility). What they cannot do is become the ticket's owner. The
+    /// route to handling it is the existing Department Transfer, after which a
+    /// member of the new current department accepts.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>The ADR-0024 override does not reach this.</b> The override answers
+    /// "may this caller act at all"; department membership of the assignee is
+    /// a domain invariant about the ticket's data, not a permission. A System
+    /// Administrator may therefore see and administer work anywhere and still
+    /// not assign a ticket to themselves in a department they do not belong
+    /// to.
+    /// </para>
+    /// </summary>
+    AgentNotInTicketDepartment,
+
+    /// <summary>
+    /// The ticket behind this work is Closed, so it can take neither an owner
+    /// nor a status change (closed-ticket immutability). Refused rather than
+    /// claiming the work and leaving it attached to a ticket nothing can move
+    /// — stand the work down instead.
+    /// </summary>
+    TicketClosed
 }
 
 /// <param name="Outcome">What happened.</param>

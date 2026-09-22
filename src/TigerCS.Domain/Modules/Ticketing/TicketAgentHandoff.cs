@@ -419,6 +419,18 @@ public class TicketAgentHandoff
     /// <summary>
     /// The agent has begun handling the work. Idempotent: calling it again
     /// does not move <see cref="StartedAtUtc"/>.
+    ///
+    /// <para>
+    /// <b>This is NOT the accept path — use <see cref="ClaimBy"/>.</b> This
+    /// method takes the work without refusing a second agent and without
+    /// touching the ticket, which on its own produces the state the approved
+    /// rule forbids: the handoff InProgress while the ticket sits Open and
+    /// unowned. Accepting is one indivisible act (claim, own, start) and lives
+    /// in <c>AgentHandoffAppService.AcceptAsync</c>, which checks department
+    /// membership first. Nothing in the application layer calls this today; it
+    /// is kept for a future Genesys-driven "an agent has started" status report,
+    /// where no TigerCS ownership is implied.
+    /// </para>
     /// </summary>
     public void Start(Guid employeeId, DateTime startedAtUtc)
     {

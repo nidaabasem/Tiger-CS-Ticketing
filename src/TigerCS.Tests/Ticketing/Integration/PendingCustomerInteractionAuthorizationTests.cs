@@ -183,18 +183,124 @@ public class PendingCustomerInteractionAuthorizationTests(TigerCsApiFactory fact
     }
 
     [Fact]
-    public async Task SystemAdministrator_StillReachesTheWorkAcrossDepartments()
+    public async Task SystemAdministrator_StillSeesTheWorkAcrossDepartments()
     {
         var (genesys, _) = await ClientForAsync(Roles.CsAgent);
         var (_, handoffId, _) = await WaitingInteractionAsync(genesys);
 
-        // No department membership whatsoever — ADR-0024's override carries it.
-        var (administrator, administratorId) = await ClientForAsync(Roles.SystemAdministrator);
+        // No department membership whatsoever — visibility is what ADR-0024's
+        // override carries, and it still does.
+        var (administrator, _) = await ClientForAsync(Roles.SystemAdministrator);
+
+        var response = await administrator.GetAsync("/api/pending-customer-interactions");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var list = await response.Content.ReadFromJsonAsync<AgentHandoffListResultDto>();
+        Assert.Contains(list!.Items, i => i.TicketAgentHandoffId == handoffId);
+    }
+
+    [Fact]
+    public async Task SystemAdministrator_CannotAcceptWithoutDepartmentMembership()
+    {
+        var (genesys, _) = await ClientForAsync(Roles.CsAgent);
+        var (ticketId, handoffId, _) = await WaitingInteractionAsync(genesys);
+
+        var (administrator, _) = await ClientForAsync(Roles.SystemAdministrator);
+
+        var started = await administrator.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
+
+        // The override does not reach the assignee-membership invariant: an
+        // owner must belong to the ticket's current department, administrator
+        // or not.
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, started.StatusCode);
+
+        // And nothing moved.
+        var ticket = await (await administrator.GetAsync($"/api/tickets/{ticketId}"))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Open", ticket!.TicketStatus);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+        Assert.Equal("WaitingForAgent", ticket.HandoffState);
+    }
+
+    [Fact]
+    public async Task SystemAdministrator_WhoBelongsToTheDepartment_Accepts()
+    {
+        var (genesys, _) = await ClientForAsync(Roles.CsAgent);
+        var (_, handoffId, departmentId) = await WaitingInteractionAsync(genesys);
+
+        var (administrator, administratorId) = await ClientForAsync(Roles.SystemAdministrator, departmentId);
 
         var started = await administrator.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
 
         Assert.Equal(HttpStatusCode.OK, started.StatusCode);
         Assert.Equal(administratorId, (await started.Content.ReadFromJsonAsync<AgentHandoffDto>())!.AssignedEmployeeId);
+    }
+
+    [Fact]
+    public async Task ACsAgentOutsideTheTicketsDepartment_Gets422_AndChangesNothing()
+    {
+        // A CS Agent is cross-department for visibility, so this one passes
+        // authorization and is stopped by the membership invariant instead —
+        // the distinction the two outcomes exist to draw.
+        var (genesys, _) = await ClientForAsync(Roles.CsAgent);
+        var (ticketId, handoffId, _) = await WaitingInteractionAsync(genesys);
+
+        var otherDepartmentId = await _factory.CreateDepartmentAsync(
+            "Other CS " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var (outsideAgent, _) = await ClientForAsync(Roles.CsAgent, otherDepartmentId);
+
+        var started = await outsideAgent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, started.StatusCode);
+
+        // The work is still waiting and unclaimed...
+        var list = await (await outsideAgent.GetAsync("/api/pending-customer-interactions"))
+            .Content.ReadFromJsonAsync<AgentHandoffListResultDto>();
+        var row = Assert.Single(list!.Items, i => i.TicketAgentHandoffId == handoffId);
+        Assert.Equal("WaitingForAgent", row.Status);
+        Assert.Null(row.AssignedEmployeeId);
+
+        // ...and the ticket is untouched.
+        var ticket = await (await outsideAgent.GetAsync($"/api/tickets/{ticketId}"))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("Open", ticket!.TicketStatus);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+    }
+
+    [Fact]
+    public async Task TransferThenAccept_IsTheCrossDepartmentRoute()
+    {
+        var (genesys, _) = await ClientForAsync(Roles.CsAgent);
+        var (ticketId, handoffId, _) = await WaitingInteractionAsync(genesys);
+
+        var newDepartmentId = await _factory.CreateDepartmentAsync(
+            "Receiving " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var (receivingAgent, receivingAgentId) = await ClientForAsync(Roles.CsAgent, newDepartmentId);
+
+        // Refused while the ticket is elsewhere.
+        Assert.Equal(
+            HttpStatusCode.UnprocessableEntity,
+            (await receivingAgent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { })).StatusCode);
+
+        // A CS Manager performs the existing Department Transfer.
+        var (manager, _) = await ClientForAsync(Roles.CsManager);
+        var current = await (await manager.GetAsync($"/api/tickets/{ticketId}"))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        var transferred = await manager.PostAsJsonAsync(
+            $"/api/tickets/{ticketId}/transfer",
+            new TransferTicketRequestDto(newDepartmentId, "Handled by the receiving team.", Convert.FromBase64String(current!.RowVersion)));
+        Assert.Equal(HttpStatusCode.OK, transferred.StatusCode);
+
+        // ...and now the receiving agent is eligible.
+        var accepted = await receivingAgent.PostAsJsonAsync($"/api/pending-customer-interactions/{handoffId}/start", new { });
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.Equal(receivingAgentId, (await accepted.Content.ReadFromJsonAsync<AgentHandoffDto>())!.AssignedEmployeeId);
+
+        var ticket = await (await receivingAgent.GetAsync($"/api/tickets/{ticketId}"))
+            .Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal("InProgress", ticket!.TicketStatus);
+        Assert.Equal(receivingAgentId, ticket.CurrentOwnerEmployeeId);
     }
 
     // =====================================================================
