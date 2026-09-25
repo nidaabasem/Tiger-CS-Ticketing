@@ -16,45 +16,41 @@ it is off. Contract 4 is the agent-identity addition described under
 
 ---
 
-## Authentication — **UAT only, not the final design**
+## Authentication
 
-> **This is the UAT mechanism, not the confirmed final Genesys authentication
-> design.** A CS Agent service account + JWT is what UAT runs on so integration
-> testing can start now. The production scheme is still open — see item 1 under
-> *Still required from the Genesys team*. No new authentication scheme has been
-> built, and none should be assumed from this section.
+Genesys Cloud never calls TigerCS directly and never holds a TigerCS
+credential.
 
-**There is no Genesys-specific credential, and none is invented.** No Genesys
-API base URL, OAuth client or webhook signing secret exists in this system,
-because none has been confirmed by the Genesys team.
+```text
+Genesys Cloud ──OAuth 2.0 client_credentials──▶ TigerGroupWeb  https://tigergroup.ae/api/genesys/…
+                                                  │  (TicketingGenesysService, internal)
+                                                  ▼
+                                               TigerCS API     /api/genesys/…
+```
 
-For UAT, Genesys calls TigerCS as an ordinary authenticated **service
-account**, using the same JWT bearer authentication every other client of this
-API uses:
-
-1. An administrator creates a staff account for Genesys under Administration
-   (`POST /api/admin/users`) with the **CS Agent** role — the same role that
-   may create tickets, which is exactly what these endpoints do.
-2. Genesys signs in:
+1. Genesys obtains a token:
 
 ```http
-POST /api/auth/login
-Content-Type: application/json
+POST https://tigergroup.ae/api/genesys/oauth/token
+Content-Type: application/x-www-form-urlencoded
 
-{ "username": "genesys.integration", "password": "…" }
+grant_type=client_credentials&scope=ticketing.genesys&client_id=…&client_secret=…
 ```
 
 ```json
-{ "accessToken": "eyJhbGciOi…", "expiresAtUtc": "2026-09-10T12:00:00Z" }
+{ "access_token": "eyJ…", "token_type": "Bearer", "expires_in": 3600, "scope": "ticketing.genesys" }
 ```
 
-3. Every subsequent call carries `Authorization: Bearer {accessToken}`.
+2. Every call carries `Authorization: Bearer {access_token}`. The old
+   `X-API-Key` alone is refused with `401`.
+3. TigerGroupWeb forwards the call to the same route on TigerCS, signed in as
+   a TigerCS **CS Agent** service account whose credentials exist only in
+   TigerGroupWeb's configuration. Request and response bodies pass through
+   unchanged, so every contract below is exactly what Genesys sends and
+   receives.
 
-When the real mechanism is confirmed (HMAC signature, OAuth client
-credentials, mutual TLS, IP allow-list), it is added at this boundary without
-touching anything behind it. **Until then, treat the JWT service account as a
-UAT convenience with a known expiry date, not as the integration's security
-design.**
+The Genesys-side setup (integration, Custom Auth action, data actions,
+Architect flows) is in `docs/Genesys/Genesys-Cloud-Configuration.md`.
 
 ---
 
@@ -62,8 +58,9 @@ design.**
 
 `POST /api/genesys/tickets`
 
-One endpoint for **every** channel — `Phone`, `WebsiteChat`, `WhatsApp`,
-`SocialMedia`. There is no per-channel endpoint and no per-channel
+One endpoint for **every** channel — `Phone`, `LiveChat`, `WhatsApp`,
+`SocialMedia`. `WebsiteChat` and `WebMessaging` are accepted as the same Live
+Chat channel. There is no per-channel endpoint and no per-channel
 ticket-creation code.
 
 **Idempotent on `conversationId`.** The first accepted event creates the
@@ -73,16 +70,23 @@ under concurrent delivery, not only under sequential retries.
 
 **This endpoint means exactly one thing:** create or reuse the ticket for this
 conversation. **There is no `event` field.** It is not an event receiver for
-call progress — a ringing call never reaches TigerCS at all:
+call progress:
 
 ```
-Incoming call → Ringing  → TigerCS receives nothing
-Agent picks up           → GET  /api/genesys/customers/lookup?phoneNumber=…
-                         → POST /api/genesys/tickets
+Inbound call flow starts → GET  /api/genesys/customers/lookup?phoneNumber={Call.Ani}
+                         → POST /api/genesys/tickets   (conversationId = Call.ConversationId)
+                         → Transfer to ACD
+Everything after that    → PATCH /api/genesys/tickets/{ticketId}   (same ticket, always)
 ```
 
-Digital channels (website chat, chatbot, WhatsApp, social) post here directly
-when the conversation starts.
+Digital channels (Live Chat / Web Messaging, chatbot, WhatsApp, social) post
+here when the conversation starts.
+
+**`customerPhone` accepts `Call.Ani` as-is.** `tel:+971…`, `sip:+971…@host`,
+`+971…`, `971…` and `00971…` are all normalized to `+971…` before the
+number is searched or stored. A withheld caller id (`tel:anonymous`) is no
+number. **An optional field sent as `""` is treated as absent**, because a
+Genesys data action cannot leave a field out of its template.
 
 **Only `conversationId` and `channel` are required.** Everything else is
 optional context, because Genesys' per-channel guarantees are not confirmed —
@@ -96,8 +100,8 @@ number (withheld caller id, a social DM).
 ```json
 {
   "conversationId": "8f2c1e40-3d2a-4b1c-9e77-1a2b3c4d5e6f",
-  "channel": "WebsiteChat",
-  "customerPhone": "+971501234567",
+  "channel": "LiveChat",
+  "customerPhone": "tel:+971501234567",
   "customerName": "Ahmed Ali",
   "customerEmail": "ahmed@example.com",
   "departmentId": 3,
@@ -173,6 +177,11 @@ Reuses the same CRM Buyer Lookup and PACT/Tasleeh services the New Ticket
 wizard uses. **No second CRM integration exists**, and Genesys never reaches
 those systems directly. Read-only: nothing is created or persisted.
 
+**Any Genesys ANI format is accepted:** `tel:+971…`, `+971…` and `971…`
+are searched as `+971…` (CRM receives it that way, and PACT without the
+`+`). Recent tickets match the number however an agent typed it on earlier
+tickets (`+971 50 123 4567` is the same caller).
+
 ### Response — `200 OK`, customer found
 
 ```json
@@ -182,19 +191,12 @@ those systems directly. Read-only: nothing is created or persisted.
   "crmStatus": "Found",
   "crmBuyers": [
     {
-      "customer": {
-        "customerId": 4001,
-        "customerName": "Ahmed Al-Farsi",
-        "mobile": "+971501234567",
-        "email": "ahmed@example.com"
-      },
+      "customer": { "customerId": 4001, "fullNameEnglish": "Ahmed Al-Farsi", "fullNameArabic": null,
+                    "mobileNumber": "+971501234567", "email": "ahmed@example.com" },
       "units": [
-        {
-          "unitId": 9001,
-          "unitNumber": "1204",
-          "projectName": "Tiger Tower A",
-          "unitStatus": "Buyer"
-        }
+        { "leadId": 9100, "leadStatus": 8, "leadStatusName": "Sold", "unitId": 9001, "unitNumber": "1204",
+          "unitStatus": 3, "unitType": 2, "floorNumber": 12, "projectId": 79, "projectName": "Tiger Tower A",
+          "projectArabicName": null, "customerType": 1, "customerTypeName": "Buyer" }
       ]
     }
   ],
@@ -203,22 +205,33 @@ those systems directly. Read-only: nothing is created or persisted.
     { "source": "Tasleeh", "status": "NotFound", "customers": [] }
   ],
   "tickets": [
-    {
-      "ticketId": 10310,
-      "ticketNumber": "TG-CS-20260901-0044",
-      "ticketStatus": "InProgress",
-      "isOpen": true,
-      "requestSummary": "NOC for resale",
-      "currentDepartmentId": 3,
-      "createdAtUtc": "2026-09-01T08:12:00Z"
-    }
+    { "ticketId": 10310, "ticketNumber": "TG-CS-20260901-0044", "ticketStatus": "InProgress", "isOpen": true,
+      "requestSummary": "NOC for resale", "currentDepartmentId": 3, "createdAtUtc": "2026-09-01T08:12:00Z" }
   ],
-  "openTicketCount": 1
+  "openTicketCount": 1,
+  "screenPop": {
+    "customerName": "Ahmed Al-Farsi",
+    "customerEmail": "ahmed@example.com",
+    "verificationSource": "Crm",
+    "externalCustomerId": "4001",
+    "matchedCustomerCount": 1,
+    "units": ["Tiger Tower A - 1204"],
+    "unitsText": "Tiger Tower A - 1204",
+    "recentTicketNumbers": ["TG-CS-20260901-0044"],
+    "openTicketNumbers": ["TG-CS-20260901-0044"],
+    "recentTicketsText": "TG-CS-20260901-0044 (InProgress)"
+  }
 }
 ```
 
 `tickets` are the tickets that already arrived from this number, **open ones
-first** — so the agent knows the caller has a live case before they speak.
+first**, so the agent knows the caller has a live case before they speak.
+
+`screenPop` is the same answer flattened for a Genesys data action and agent
+script: plain strings (never null, empty when there is nothing) and string
+lists. It is a projection of the arrays above, never a second lookup. Its
+order is CRM, then PACT, then Tasleeh. When `matchedCustomerCount` is more
+than 1, the agent must confirm who is calling; nothing is auto-selected.
 
 ### Response — `200 OK`, nobody found
 
@@ -233,9 +246,15 @@ first** — so the agent knows the caller has a live case before they speak.
     { "source": "Tasleeh", "status": "NotFound", "customers": [] }
   ],
   "tickets": [],
-  "openTicketCount": 0
+  "openTicketCount": 0,
+  "screenPop": { "customerName": "", "customerEmail": "", "verificationSource": "", "externalCustomerId": "",
+                 "matchedCustomerCount": 0, "units": [], "unitsText": "", "recentTicketNumbers": [],
+                 "openTicketNumbers": [], "recentTicketsText": "" }
 }
 ```
+
+A withheld caller id (`tel:anonymous`) answers the same shape with
+`"phoneNumber": ""` and `"crmStatus": "NotSearched"`. No source is called.
 
 **`found: false` is a `200`, not a `404`** — and it never stops the Create
 Ticket call that follows. A source being down reports `"crmStatus": "Failed"`
@@ -269,6 +288,8 @@ to the wrong ticket.
 | `ended.endedAtUtc` / `ended.endReason` | The conversation finished, for any reason |
 | `ended.transcript[]` | The conversation, in order |
 | `handoff.*` | Human-agent state, on any channel |
+| `routing.queueId` / `routing.queueName` / `routing.agentId` / `routing.agentName` | Where the conversation is **now**: a queue change, an agent connecting, a transfer. Overwrites the interaction's current queue/agent; every change is audited (`GenesysRoutingChanged`) |
+| `startedAtUtc` | Interaction start, if the Create call did not carry it. Never moves once known |
 
 ### What Genesys **cannot** update
 
@@ -308,6 +329,28 @@ whole conversation in delivered order.
 **Supplying `messageId` is strongly preferred.** It is the deduplication key,
 and the only one that survives a retry whose timestamps were regenerated.
 Without it the fallback is sender + timestamp + body.
+
+### Request — queue changed / agent connected / transferred
+
+```json
+{
+  "conversationId": "8f2c1e40-3d2a-4b1c-9e77-1a2b3c4d5e6f",
+  "routing": { "queueId": "b7c0…", "queueName": "Customer Service", "agentId": "6f1d2c3b-…", "agentName": "Layla" }
+}
+```
+
+Send only what changed; an empty or missing value leaves that part as it
+was. The same ticket, always. The ticket's department, owner and status are
+not moved by routing. The **first** mapped agent stays recorded as the
+interaction's handler (`HandledByUserId`).
+
+**Agent connected to waiting human work.** When `routing.agentId` arrives
+while the conversation's human work is `WaitingForAgent` (after an AI
+handoff), that work is marked **Assigned** to this Genesys agent, exactly as
+`handoff.assignedAgentId` would. Work a TigerCS agent has already accepted
+is never reassigned by a routing event. Accepting in TigerCS still assigns
+the ticket owner and moves Open → InProgress. It still does **not** record a
+First Human Response, which only the first actual HumanAgent message does.
 
 ### Request — a human agent is needed
 
@@ -548,28 +591,20 @@ exactly what the bot and the customer said.
 
 ---
 
-## Still required from the Genesys team
+## Remaining Genesys-side work (configuration only)
 
-Nothing above is blocked, but each of these decides how the boundary adapter is
-finished. See `Genesys-Integration-Phase1.md` §10 for the full list — the ones
-that touch these three contracts directly:
+No further TigerCS development is required for the approved flows. What
+remains is configuration, described step by step in
+`docs/Genesys/Genesys-Cloud-Configuration.md`:
 
-1. **Authentication** — the real scheme for inbound calls. Today it is a
-   TigerCS service-account JWT.
-2. **Event vocabulary** — the actual values Genesys sends for ringing,
-   answered and conversation started/ended, per channel.
-3. **Queue ids** — the real Genesys queue identifiers, so an administrator can
-   map them to departments. **None are invented.**
-4. **Follow-up behaviour per channel** — what continuation Genesys performs on
-   each channel, so `handoff.mode` is stated rather than guessed.
-5. **Routing-task / work-item ids** — whether Genesys exposes a stable id for
-   queued human work.
-6. **Transcript delivery** — whether the full transcript is available at
-   conversation end or must be collected incrementally. Both are supported;
-   only the end-of-conversation path is wired.
-7. **Bot-authored lines** — how Genesys labels a virtual agent's messages, so
-   they map to `VirtualAgent` rather than `System`.
-8. **Agent identity** — confirmation that the `agentId` Genesys sends (and
-   `genesysUserId` on the agent-context call) is the agent's immutable Genesys
-   User ID, and the list of agent Genesys User IDs (+ emails) to map to the
-   UAT Ticketing accounts.
+1. **Credentials.** Issue the OAuth client secret and signing key on
+   TigerGroupWeb; configure the Web Services Data Actions integration
+   (User Defined (OAuth)).
+2. **Data actions.** Import and publish the six provided definitions.
+3. **Architect.** Voice inbound call flow, inbound message flow, agent
+   script, and the `acd.start` / `customer.end` triggers with their workflow.
+4. **Queue ids.** Map every Genesys queue id to a TigerCS department.
+5. **Agent identity.** Map each agent's Genesys User ID to their Ticketing user.
+6. **Transcripts (optional).** Send `ended.transcript[]` when chat
+   transcripts are wanted in Ticket Details. It is supported, but not
+   needed for ticket lifecycle.

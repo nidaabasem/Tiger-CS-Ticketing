@@ -17,13 +17,11 @@ namespace TigerCS.Application.Modules.GenesysIntegration;
 ///
 /// <para>
 /// <b>No Genesys credential or endpoint lives here.</b> Ticketing exposes
-/// inbound endpoints and Genesys calls them as an authenticated TigerCS
-/// service account, through the system's existing JWT authentication — the
-/// same mechanism every other API client uses. Nothing about Genesys' own
-/// API (base URL, OAuth client, webhook signature scheme) is configured or
-/// assumed, because none of it is confirmed yet; when the Genesys team
-/// supplies it, an outbound client and its options are added beside this,
-/// not retrofitted into it.
+/// inbound endpoints only. Genesys Cloud authenticates with OAuth 2.0 client
+/// credentials to TigerGroupWeb, which forwards to these endpoints as an
+/// authenticated TigerCS service account through the system's existing JWT
+/// authentication. TigerCS never calls Genesys' own API, so none of it (base
+/// URL, OAuth client) is configured here.
 /// </para>
 /// </summary>
 public sealed class GenesysOptions

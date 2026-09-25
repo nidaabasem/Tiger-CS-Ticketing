@@ -13,15 +13,16 @@ namespace TigerCS.Api.Controllers;
 /// reached an agent, and later that the conversation ended.
 ///
 /// <para>
-/// <b>Authentication is TigerCS', not an invented Genesys scheme.</b> Genesys
-/// calls these endpoints as an ordinary authenticated TigerCS service
-/// account — the same JWT bearer authentication every other client of this
-/// API uses (<c>POST /api/auth/login</c>), scoped to the same policy as
-/// manual ticket creation because that is precisely what these endpoints do.
-/// No webhook signature header, HMAC scheme or OAuth client is implemented,
-/// because none has been confirmed by the Genesys team; when the real
-/// mechanism is known it is added here, at the boundary, without touching
-/// anything behind it.
+/// <b>Genesys never calls TigerCS directly.</b> Genesys Cloud authenticates
+/// to TigerGroupWeb with OAuth 2.0 client credentials
+/// (<c>POST https://tigergroup.ae/api/genesys/oauth/token</c>, scope
+/// <c>ticketing.genesys</c>), and TigerGroupWeb's <c>TicketingGenesysService</c>
+/// forwards the same three routes here unchanged, authenticated as an
+/// ordinary TigerCS service account — the same JWT bearer authentication
+/// every other client of this API uses (<c>POST /api/auth/login</c>), scoped
+/// to the same policy as manual ticket creation because that is precisely
+/// what these endpoints do. The service account's credentials live only in
+/// TigerGroupWeb's configuration; Genesys never holds them.
 /// </para>
 ///
 /// <para>
@@ -61,10 +62,14 @@ public class GenesysController(
     /// <para>
     /// <b>This endpoint means exactly one thing:</b> create or reuse the
     /// ticket for this conversation. It is not an event receiver for call
-    /// progress, and there is no event field — a ringing call simply never
-    /// reaches TigerCS. The phone flow starts at pickup: look the caller up,
-    /// then post this. Digital channels (website chat, chatbot, WhatsApp,
-    /// social) post it when the conversation starts.
+    /// progress, and there is no event field. The voice flow posts it from
+    /// the Genesys inbound call flow, right after the caller lookup and
+    /// before the call is queued, with <c>Call.Ani</c> as the customer phone
+    /// (a "tel:" address is normalized here). Digital channels (Live Chat /
+    /// Web Messaging, WhatsApp, social) post it when the conversation starts.
+    /// Queue changes, agent connects, transfers, handoffs and the end all
+    /// arrive on <c>PATCH</c> against the same ticket — never a second
+    /// ticket.
     /// </para>
     ///
     /// <para>
@@ -272,11 +277,13 @@ public class GenesysController(
         };
     }
 
-    /// <summary>Look a caller up by phone number when an agent picks up — customer, units, and their existing tickets.</summary>
+    /// <summary>Look a caller up by phone number — customer, units, their existing tickets, and a flat screen pop.</summary>
     /// <remarks>
-    /// The call-pickup flow: a ringing call does nothing, and when the agent
-    /// answers Genesys calls this to find out who is on the line before
-    /// creating the ticket.
+    /// Called from the Genesys inbound call flow with <c>Call.Ani</c>, before
+    /// the ticket is created, so the agent's screen pop already names the
+    /// caller. Any Genesys ANI format is accepted ("tel:+971…", "+971…",
+    /// "971…"); it is searched as "+971…". A withheld caller id is a normal
+    /// "nobody found".
     ///
     /// <para>
     /// <b>Context, not a yes/no.</b> Where a customer is found this returns

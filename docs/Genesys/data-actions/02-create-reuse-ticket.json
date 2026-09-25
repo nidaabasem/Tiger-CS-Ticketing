@@ -1,0 +1,128 @@
+{
+  "name": "TigerCS - Create or Reuse Ticket",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets",
+      "requestType": "POST",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketId": "$.ticketId",
+        "ticketNumber": "$.ticketNumber"
+      },
+      "translationMapDefaults": {},
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketId\": \"${ticketId}\", \"ticketNumber\": ${ticketNumber}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Create or Reuse Ticket",
+        "type": "object",
+        "required": [
+          "conversationId",
+          "channel"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "description": "Call.ConversationId / Message.ConversationId - the idempotency key."
+          },
+          "channel": {
+            "type": "string",
+            "description": "Phone or LiveChat (WhatsApp, SocialMedia also accepted)."
+          },
+          "customerPhone": {
+            "type": "string",
+            "description": "Call.Ani as-is (tel:+971...), or the chat customer phone if collected."
+          },
+          "customerName": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "customerEmail": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "departmentCode": {
+            "type": "string",
+            "description": "Optional explicit TigerCS department code (IVR / chat menu choice). Wins over the queue mapping."
+          },
+          "queueId": {
+            "type": "string",
+            "description": "Genesys queue id the flow is transferring to - mapped to a department in TigerCS."
+          },
+          "queueName": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "agentId": {
+            "type": "string",
+            "description": "Optional Genesys User ID."
+          },
+          "agentName": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "calledNumber": {
+            "type": "string",
+            "description": "Optional - Call.CalledAddressOriginal."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Inbound / Outbound."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Optional short subject."
+          },
+          "towerName": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "unitNumber": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "startedAtUtc": {
+            "type": "string",
+            "description": "ISO-8601 UTC, e.g. ToString(Flow.StartDateTimeUtc). Optional."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Create or Reuse Ticket result",
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "TicketCreated or AlreadyIngested (a retry - same ticket)."
+          },
+          "ticketId": {
+            "type": "string",
+            "description": "TigerCS ticket id - store as participant data TigerCsTicketId."
+          },
+          "ticketNumber": {
+            "type": "string",
+            "description": "TigerCS ticket number - store as participant data TigerCsTicketNumber."
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

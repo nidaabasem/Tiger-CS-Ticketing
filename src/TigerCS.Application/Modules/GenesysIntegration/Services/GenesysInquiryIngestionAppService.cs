@@ -132,9 +132,17 @@ public sealed class GenesysInquiryIngestionAppService(
                     : $"Genesys queue '{inquiry.QueueId}' has no active department mapping.");
         }
 
+        // The caller's number as TigerCS writes it. Genesys reports a voice
+        // caller as a telephony address (Call.Ani = "tel:+971…"), which no
+        // lookup source understands and the customer directory's phone
+        // grouping cannot canonicalize — so it is reduced to "+971…" once,
+        // here, and that one value is what is searched and stored. A
+        // withheld caller id comes out as no number at all.
+        var customerPhone = CustomerPhoneNumber.FromTelephonyAddress(inquiry.CustomerPhone);
+
         // Customer lookup through the EXISTING flow — enrichment only, and
         // never able to stop the inquiry (see this type's remarks).
-        var lookup = await LookUpCustomerAsync(inquiry.CustomerPhone, cancellationToken);
+        var lookup = await LookUpCustomerAsync(customerPhone, cancellationToken);
 
         // Agent identity mapping — server-side, from the Genesys User ID
         // (the existing agentId field) alone. This event may legitimately
@@ -154,7 +162,7 @@ public sealed class GenesysInquiryIngestionAppService(
                 // id or a social DM legitimately carries none, and losing the
                 // inquiry over a missing number is exactly what must not
                 // happen (see the enforceChannelPhoneRequirement argument).
-                PhoneNumber: inquiry.CustomerPhone ?? string.Empty,
+                PhoneNumber: customerPhone ?? string.Empty,
                 DepartmentId: department.DepartmentId,
                 IsUnitRelated: false,
                 RawUnitNumberEntered: inquiry.UnitNumber,
@@ -421,6 +429,9 @@ public static class GenesysAuditActions
     public const string ConversationEntityType = "GenesysConversation";
     public const string InquiryIngested = "GenesysInquiryIngested";
     public const string ConversationEnded = "GenesysConversationEnded";
+
+    /// <summary>The conversation moved to another queue or agent (a transfer, an agent connecting) — before/after carry the full routing, so the audit trail holds every queue and agent it passed through.</summary>
+    public const string RoutingChanged = "GenesysRoutingChanged";
 
     /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
     public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";

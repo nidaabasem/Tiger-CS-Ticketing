@@ -64,6 +64,8 @@ public class TicketInteraction
     public const int CustomerEmailMaxLength = 256;
     public const int EndReasonMaxLength = 100;
     public const int GenesysAgentUserIdMaxLength = 64;
+    public const int GenesysIdMaxLength = 64;
+    public const int GenesysNameMaxLength = 200;
 
     public long TicketInteractionId { get; private set; }
     public long TicketId { get; private set; }
@@ -247,6 +249,61 @@ public class TicketInteraction
         {
             GenesysAgentName = genesysAgentName;
         }
+    }
+
+    /// <summary>
+    /// Records where the conversation is <b>now</b>: Genesys moved it to
+    /// another queue, or connected / transferred it to another agent.
+    /// Unlike <see cref="RecordAgentIfAbsent"/> this overwrites — it is an
+    /// explicit "the routing changed" fact, not a late fill-in — so the
+    /// queue and agent context always name the current routing, while the
+    /// first agent who handled the interaction stays recorded in
+    /// <see cref="HandledByUserId"/> / <see cref="GenesysAgentUserId"/>,
+    /// which this never touches. The history of every change lives on the
+    /// audit trail.
+    ///
+    /// <para>
+    /// Only supplied values move: a queue change that names no agent leaves
+    /// the agent as it was, and the reverse. Returns true when anything
+    /// actually changed, so a redelivered routing event writes nothing.
+    /// Touches nothing on the <see cref="Ticket"/> — which department owns
+    /// the case, and who owns it, move only through their own TigerCS
+    /// operations.
+    /// </para>
+    /// </summary>
+    public bool RecordRouting(string? genesysQueueId, string? genesysQueueName, string? genesysAgentId, string? genesysAgentName)
+    {
+        var changed = false;
+        Apply(Truncate(genesysQueueId, GenesysIdMaxLength), () => GenesysQueueId, v => GenesysQueueId = v);
+        Apply(Truncate(genesysQueueName, GenesysNameMaxLength), () => GenesysQueueName, v => GenesysQueueName = v);
+        Apply(Truncate(genesysAgentId, GenesysIdMaxLength), () => GenesysAgentId, v => GenesysAgentId = v);
+        Apply(Truncate(genesysAgentName, GenesysNameMaxLength), () => GenesysAgentName, v => GenesysAgentName = v);
+        return changed;
+
+        void Apply(string? value, Func<string?> current, Action<string> set)
+        {
+            if (value is not null && !string.Equals(current(), value, StringComparison.Ordinal))
+            {
+                set(value);
+                changed = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fills in when the interaction started on the Genesys side, when the
+    /// creating event did not carry it. Apply-if-absent: a start time, once
+    /// known, never moves. Returns true when this call recorded it.
+    /// </summary>
+    public bool RecordStartedAtIfAbsent(DateTime? startedAtUtc)
+    {
+        if (InteractionStartedAtUtc is not null || startedAtUtc is null)
+        {
+            return false;
+        }
+
+        InteractionStartedAtUtc = startedAtUtc;
+        return true;
     }
 
     /// <summary>

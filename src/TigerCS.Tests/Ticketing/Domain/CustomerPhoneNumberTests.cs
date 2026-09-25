@@ -94,7 +94,7 @@ public sealed class CustomerPhoneNumberTests
     public void EverySqlSideCopyOfTheRule_StripsExactlyTheCanonicalSeparators_AndIsIdentical()
     {
         var chains = new List<(string File, string Chain)>();
-        foreach (var file in new[] { "TicketRepository.cs", "CustomerDirectoryRepository.cs" })
+        foreach (var file in new[] { "TicketRepository.cs", "CustomerDirectoryRepository.cs", "IntakeRecordRepository.cs" })
         {
             var path = RepositorySource(file);
             Assert.True(File.Exists(path), $"{path} not found — did the repository move?");
@@ -194,4 +194,45 @@ public sealed class CustomerPhoneNumberTests
             CustomerIdentity.FromTicketFacts(null, "Pact", "PACT-1", "+971501234567"),
             CustomerIdentity.FromTicketFacts(null, "Tasleeh", "PACT-1", "971501234567"));
     }
+
+    /// <summary>
+    /// Every way Genesys reports a caller (<c>Call.Ani</c>) comes out as the
+    /// "+971…" form an agent types — the value CRM receives verbatim and
+    /// PACT's request path strips the '+' from.
+    /// </summary>
+    [Theory]
+    [InlineData("tel:+971501234567", "+971501234567")]
+    [InlineData("TEL:+971501234567", "+971501234567")]
+    [InlineData("+971501234567", "+971501234567")]
+    [InlineData("971501234567", "+971501234567")]
+    [InlineData(" +971 50 123 4567 ", "+971501234567")]
+    [InlineData("00971501234567", "+971501234567")]
+    [InlineData("tel:+971501234567;phone-context=+971", "+971501234567")]
+    [InlineData("sip:+971501234567@tigergroup.pure.cloud;user=phone", "+971501234567")]
+    [InlineData("sip:971501234567@10.30.10.5:5060", "+971501234567")]
+    public void FromTelephonyAddress_EveryGenesysFormat_IsTheSameInternationalNumber(string address, string expected)
+    {
+        Assert.Equal(expected, CustomerPhoneNumber.FromTelephonyAddress(address));
+        Assert.True(CustomerPhoneNumber.AreSameNumber(expected, CustomerPhoneNumber.FromTelephonyAddress(address)));
+    }
+
+    /// <summary>A national-format number keeps its digits — its country is not stated, so none is invented.</summary>
+    [Fact]
+    public void FromTelephonyAddress_NationalFormat_IsNotGivenACountry()
+    {
+        Assert.Equal("0501234567", CustomerPhoneNumber.FromTelephonyAddress("tel:0501234567"));
+        Assert.Equal("0501234567", CustomerPhoneNumber.FromTelephonyAddress("050 123 4567"));
+    }
+
+    /// <summary>A withheld caller id is no number at all — never an identity to look up.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("tel:anonymous")]
+    [InlineData("sip:anonymous@anonymous.invalid")]
+    [InlineData("tel:+")]
+    [InlineData("00")]
+    public void FromTelephonyAddress_NoNumber_IsNull(string? address) =>
+        Assert.Null(CustomerPhoneNumber.FromTelephonyAddress(address));
 }

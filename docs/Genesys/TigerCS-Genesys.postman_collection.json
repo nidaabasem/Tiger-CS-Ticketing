@@ -1,0 +1,1051 @@
+{
+  "info": {
+    "name": "TigerCS <-> Genesys Cloud - End to End",
+    "description": "Exactly the calls the Genesys Cloud data actions make, through TigerGroupWeb (OAuth 2.0 client credentials) to TigerCS. Set clientId / clientSecret in the environment (never commit them). Run top to bottom: the collection stores the token, ticket ids and conversation ids as it goes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://tigergroup.ae"
+    },
+    {
+      "key": "clientId",
+      "value": "genesys-uat"
+    },
+    {
+      "key": "clientSecret",
+      "value": ""
+    },
+    {
+      "key": "legacyApiKey",
+      "value": ""
+    },
+    {
+      "key": "knownPhone",
+      "value": "+971500000002"
+    },
+    {
+      "key": "unknownPhone",
+      "value": "+971509999999"
+    },
+    {
+      "key": "queueId",
+      "value": "REPLACE-with-a-mapped-Genesys-queue-id"
+    },
+    {
+      "key": "genesysAgentId",
+      "value": "REPLACE-with-a-mapped-Genesys-User-ID"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('voiceConversationId')) pm.collectionVariables.set('voiceConversationId', pm.variables.replaceIn('{{$guid}}'));",
+          "if (!pm.collectionVariables.get('chatConversationId')) pm.collectionVariables.set('chatConversationId', pm.variables.replaceIn('{{$guid}}'));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Authentication",
+      "item": [
+        {
+          "name": "0.1 Get access token (client_credentials)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test(\"Bearer token with ticketing.genesys scope\", () => { pm.expect(t.token_type).to.eql(\"Bearer\"); pm.expect(t.scope).to.include(\"ticketing.genesys\"); });",
+                  "pm.collectionVariables.set(\"accessToken\", t.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/oauth/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "oauth",
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "scope",
+                  "value": "ticketing.genesys"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{clientId}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{clientSecret}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "0.2 Legacy X-API-Key alone is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{legacyApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=%2B971500000002",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "%2B971500000002"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "0.3 No token is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=%2B971500000002",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "%2B971500000002"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Voice - customer lookup (Call.Ani)",
+      "item": [
+        {
+          "name": "1.1 Lookup - ANI format tel:+971...",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Searched as +971...\", () => pm.expect(r.phoneNumber).to.eql(pm.collectionVariables.get(\"knownPhone\")));",
+                  "pm.test(\"Screen pop present\", () => pm.expect(r.screenPop).to.be.an(\"object\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=tel%3A%2B971500000002",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "tel%3A%2B971500000002"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "1.2 Lookup - ANI format +971...",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Searched as +971...\", () => pm.expect(r.phoneNumber).to.eql(pm.collectionVariables.get(\"knownPhone\")));",
+                  "pm.test(\"Screen pop present\", () => pm.expect(r.screenPop).to.be.an(\"object\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=%2B971500000002",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "%2B971500000002"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "1.3 Lookup - ANI format 971...",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Searched as +971...\", () => pm.expect(r.phoneNumber).to.eql(pm.collectionVariables.get(\"knownPhone\")));",
+                  "pm.test(\"Screen pop present\", () => pm.expect(r.screenPop).to.be.an(\"object\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=971500000002",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "971500000002"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "1.4 Lookup - unknown number is 200 found:false",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"found:false\", () => pm.expect(r.found).to.eql(false));",
+                  "pm.test(\"empty screen pop\", () => pm.expect(r.screenPop.customerName).to.eql(\"\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=tel%3A{{unknownPhone}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "tel%3A{{unknownPhone}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "1.5 Lookup - withheld caller id is 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/customers/lookup?phoneNumber=tel%3Aanonymous",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "customers",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "phoneNumber",
+                  "value": "tel%3Aanonymous"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Voice - create / reuse ticket",
+      "item": [
+        {
+          "name": "2.1 Create ticket (Call.ConversationId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"TicketCreated\", () => pm.expect(r.outcome).to.eql(\"TicketCreated\"));",
+                  "pm.collectionVariables.set(\"voiceTicketId\", r.ticketId);",
+                  "pm.collectionVariables.set(\"voiceTicketNumber\", r.ticketNumber);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{voiceConversationId}}\",\n  \"channel\": \"Phone\",\n  \"customerPhone\": \"tel:{{unknownPhone}}\",\n  \"queueId\": \"{{queueId}}\",\n  \"queueName\": \"Customer Service\",\n  \"calledNumber\": \"tel:+97180084437\",\n  \"direction\": \"Inbound\",\n  \"startedAtUtc\": \"{{$isoTimestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2.2 Retry same conversation - same TicketId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"AlreadyIngested, same ticket\", () => { pm.expect(r.outcome).to.eql(\"AlreadyIngested\"); pm.expect(String(r.ticketId)).to.eql(String(pm.collectionVariables.get(\"voiceTicketId\"))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{voiceConversationId}}\",\n  \"channel\": \"Phone\",\n  \"customerPhone\": \"tel:{{unknownPhone}}\",\n  \"queueId\": \"{{queueId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. During the call - routing",
+      "item": [
+        {
+          "name": "3.1 Agent connected (agent script on load)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"same ticket\", () => pm.expect(String(pm.response.json().ticketId)).to.eql(String(pm.collectionVariables.get(\"voiceTicketId\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets/{{voiceTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets",
+                "{{voiceTicketId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{voiceConversationId}}\",\n  \"routing\": {\n    \"queueId\": \"{{queueId}}\",\n    \"queueName\": \"Customer Service\",\n    \"agentId\": \"{{genesysAgentId}}\",\n    \"agentName\": \"Agent\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "3.2 Transferred to another queue",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets/{{voiceTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets",
+                "{{voiceTicketId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{voiceConversationId}}\",\n  \"routing\": {\n    \"queueId\": \"transfer-queue-id\",\n    \"queueName\": \"Leasing\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "3.3 Conversation ended",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"ended, ticket still open\", () => { pm.expect(r.conversationEnded).to.eql(true); pm.expect(r.ticketStatus).to.not.eql(\"Closed\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets/{{voiceTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets",
+                "{{voiceTicketId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{voiceConversationId}}\",\n  \"ended\": {\n    \"endedAtUtc\": \"{{$isoTimestamp}}\",\n    \"endReason\": \"client\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Live Chat (Web Messaging)",
+      "item": [
+        {
+          "name": "4.1 Chat started - create ticket",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"chatTicketId\", pm.response.json().ticketId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{chatConversationId}}\",\n  \"channel\": \"LiveChat\",\n  \"customerName\": \"Web Visitor\",\n  \"customerEmail\": \"visitor@example.com\",\n  \"customerPhone\": \"\",\n  \"queueId\": \"{{queueId}}\",\n  \"queueName\": \"Web Chat\",\n  \"direction\": \"Inbound\",\n  \"startedAtUtc\": \"{{$isoTimestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.2 Retry - no duplicate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"same ticket\", () => pm.expect(String(pm.response.json().ticketId)).to.eql(String(pm.collectionVariables.get(\"chatTicketId\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{chatConversationId}}\",\n  \"channel\": \"LiveChat\",\n  \"queueId\": \"{{queueId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.3 AI - customer asks for a human",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"WaitingForAgent\", () => pm.expect(pm.response.json().handoffStatus).to.eql(\"WaitingForAgent\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets/{{chatTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets",
+                "{{chatTicketId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{chatConversationId}}\",\n  \"handoff\": {\n    \"required\": true,\n    \"agentAvailable\": false,\n    \"trigger\": \"CustomerRequestedHuman\",\n    \"reason\": \"Customer asked for an agent\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.4 Human agent connected - same ticket, work Assigned",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"Assigned on the same ticket\", () => { pm.expect(r.handoffStatus).to.eql(\"Assigned\"); pm.expect(String(r.ticketId)).to.eql(String(pm.collectionVariables.get(\"chatTicketId\"))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets/{{chatTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets",
+                "{{chatTicketId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{chatConversationId}}\",\n  \"routing\": {\n    \"queueId\": \"{{queueId}}\",\n    \"agentId\": \"{{genesysAgentId}}\",\n    \"agentName\": \"Agent\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.5 Chat ended",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/genesys/tickets/{{chatTicketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "genesys",
+                "tickets",
+                "{{chatTicketId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{chatConversationId}}\",\n  \"ended\": {\n    \"endedAtUtc\": \"{{$isoTimestamp}}\",\n    \"endReason\": \"client\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

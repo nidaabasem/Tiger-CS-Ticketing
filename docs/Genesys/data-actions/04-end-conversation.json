@@ -1,0 +1,90 @@
+{
+  "name": "TigerCS - End Conversation",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/${input.ticketId}",
+      "requestType": "PATCH",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"ended\": {\"endedAtUtc\": #if(\"$!{input.endedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.endedAtUtc})\"#end, \"endReason\": \"$!esc.jsonString($input.endReason)\"}}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketId": "$.ticketId",
+        "ticketNumber": "$.ticketNumber",
+        "ticketStatus": "$.ticketStatus",
+        "conversationEnded": "$.conversationEnded"
+      },
+      "translationMapDefaults": {},
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketId\": \"${ticketId}\", \"ticketNumber\": ${ticketNumber}, \"ticketStatus\": ${ticketStatus}, \"conversationEnded\": ${conversationEnded}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - End Conversation",
+        "type": "object",
+        "required": [
+          "ticketId",
+          "conversationId"
+        ],
+        "properties": {
+          "ticketId": {
+            "type": "string",
+            "description": "Participant data TigerCsTicketId."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "The conversation id."
+          },
+          "endedAtUtc": {
+            "type": "string",
+            "description": "ISO-8601 UTC. Empty = TigerCS clock."
+          },
+          "endReason": {
+            "type": "string",
+            "description": "e.g. disconnectType from the trigger."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - End Conversation result",
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "\"Applied\"."
+          },
+          "ticketId": {
+            "type": "string",
+            "description": "The same TigerCS ticket id."
+          },
+          "ticketNumber": {
+            "type": "string",
+            "description": "Its ticket number."
+          },
+          "ticketStatus": {
+            "type": "string",
+            "description": "The ticket status - never changed by this call."
+          },
+          "conversationEnded": {
+            "type": "boolean",
+            "description": "Whether the interaction is recorded as ended."
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

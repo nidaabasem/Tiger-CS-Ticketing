@@ -1,0 +1,142 @@
+{
+  "name": "TigerCS - Customer Lookup",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/customers/lookup?phoneNumber=$esc.url(${input.phoneNumber})",
+      "requestType": "GET",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "${input.rawRequest}"
+    },
+    "response": {
+      "translationMap": {
+        "found": "$.found",
+        "phoneNumber": "$.phoneNumber",
+        "crmStatus": "$.crmStatus",
+        "openTicketCount": "$.openTicketCount",
+        "customerName": "$.screenPop.customerName",
+        "customerEmail": "$.screenPop.customerEmail",
+        "verificationSource": "$.screenPop.verificationSource",
+        "externalCustomerId": "$.screenPop.externalCustomerId",
+        "matchedCustomerCount": "$.screenPop.matchedCustomerCount",
+        "units": "$.screenPop.units",
+        "unitsText": "$.screenPop.unitsText",
+        "recentTicketNumbers": "$.screenPop.recentTicketNumbers",
+        "openTicketNumbers": "$.screenPop.openTicketNumbers",
+        "recentTicketsText": "$.screenPop.recentTicketsText"
+      },
+      "translationMapDefaults": {
+        "found": "false",
+        "phoneNumber": "\"\"",
+        "crmStatus": "\"\"",
+        "openTicketCount": "0",
+        "customerName": "\"\"",
+        "customerEmail": "\"\"",
+        "verificationSource": "\"\"",
+        "externalCustomerId": "\"\"",
+        "matchedCustomerCount": "0",
+        "units": "[]",
+        "unitsText": "\"\"",
+        "recentTicketNumbers": "[]",
+        "openTicketNumbers": "[]",
+        "recentTicketsText": "\"\""
+      },
+      "successTemplate": "{\"found\": ${found}, \"phoneNumber\": ${phoneNumber}, \"crmStatus\": ${crmStatus}, \"customerName\": ${customerName}, \"customerEmail\": ${customerEmail}, \"verificationSource\": ${verificationSource}, \"externalCustomerId\": ${externalCustomerId}, \"matchedCustomerCount\": ${matchedCustomerCount}, \"units\": ${units}, \"unitsText\": ${unitsText}, \"recentTicketNumbers\": ${recentTicketNumbers}, \"openTicketNumbers\": ${openTicketNumbers}, \"recentTicketsText\": ${recentTicketsText}, \"openTicketCount\": ${openTicketCount}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Customer Lookup",
+        "type": "object",
+        "required": [
+          "phoneNumber"
+        ],
+        "properties": {
+          "phoneNumber": {
+            "type": "string",
+            "description": "Call.Ani as Genesys reports it, e.g. tel:+971501234567. Any tel:/+971/971 form is accepted."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Customer Lookup result",
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "description": "True when CRM, PACT or Tasleeh matched a customer. False is a normal answer."
+          },
+          "phoneNumber": {
+            "type": "string",
+            "description": "The number searched, normalized (+971...). Empty for a withheld caller id."
+          },
+          "crmStatus": {
+            "type": "string",
+            "description": "Found, NotFound, AmbiguousMatch, Failed or NotSearched."
+          },
+          "customerName": {
+            "type": "string",
+            "description": "Matched customer name, or empty."
+          },
+          "customerEmail": {
+            "type": "string",
+            "description": "Matched customer email, or empty."
+          },
+          "verificationSource": {
+            "type": "string",
+            "description": "Crm, Pact or Tasleeh - empty when nobody matched."
+          },
+          "externalCustomerId": {
+            "type": "string",
+            "description": "Customer id in that source, or empty."
+          },
+          "matchedCustomerCount": {
+            "type": "integer",
+            "description": "More than 1 means the agent must confirm who is calling."
+          },
+          "units": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "\"Project - Unit\" labels."
+          },
+          "unitsText": {
+            "type": "string",
+            "description": "Units joined with \"; \"."
+          },
+          "recentTicketNumbers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "openTicketNumbers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recentTicketsText": {
+            "type": "string",
+            "description": "\"TG-... (Status); ...\" for display."
+          },
+          "openTicketCount": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

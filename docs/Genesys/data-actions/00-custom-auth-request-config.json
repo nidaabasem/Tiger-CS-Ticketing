@@ -1,0 +1,19 @@
+{
+  "_comment": "Paste config.request into the auto-created \"Custom Auth\" action of the TigerGroupWeb integration (credential type User Defined (OAuth), fields clientId and clientSecret). Its contracts cannot be edited; leave config.response as Genesys created it (passthrough of the token response).",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/oauth/token",
+      "requestType": "POST",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "grant_type=client_credentials&scope=ticketing.genesys&client_id=$esc.url(${credentials.clientId})&client_secret=$esc.url(${credentials.clientSecret})"
+    },
+    "response": {
+      "translationMap": {},
+      "translationMapDefaults": {},
+      "successTemplate": "${rawResult}"
+    }
+  }
+}

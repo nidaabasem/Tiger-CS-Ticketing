@@ -22,12 +22,12 @@ namespace TigerCS.Api.Controllers;
 /// </para>
 /// </summary>
 /// <param name="ConversationId">Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</param>
-/// <param name="Channel">Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</param>
+/// <param name="Channel">Required. One of "Phone", "LiveChat", "WhatsApp", "SocialMedia" (case-insensitive). "WebsiteChat" and "WebMessaging" (Genesys' own name for its web chat) are accepted as the same Live Chat channel.</param>
 /// <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id.</param>
 /// <param name="ParticipantId">Genesys' customer-participant id, where available.</param>
 /// <param name="CommunicationId">Genesys' communication id, where available.</param>
 /// <param name="Direction">"Inbound"/"Outbound", where available.</param>
-/// <param name="CustomerPhone">The customer's mobile number — what the existing TigerCS customer lookup searches with.</param>
+/// <param name="CustomerPhone">The customer's number — what the existing TigerCS customer lookup searches with. A telephony address is accepted as Genesys reports it (<c>Call.Ani</c>: "tel:+971…"); it is normalized to "+971…" before it is searched or stored.</param>
 /// <param name="CustomerName">The customer's name, where the channel collected one (e.g. the website chat form).</param>
 /// <param name="CustomerEmail">The customer's email, where the channel collected one.</param>
 /// <param name="CalledNumber">The Tiger number the customer dialed. Recorded, never used for routing.</param>
@@ -131,12 +131,33 @@ public sealed record GenesysConversationEndResponse(
 /// <param name="AgentName">That agent's display name, same apply-if-absent rule. Display only — never an identity key.</param>
 /// <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
 /// <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
+/// <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
+/// <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
 public sealed record GenesysTicketUpdateRequest(
     string ConversationId,
     string? AgentId = null,
     string? AgentName = null,
     GenesysConversationEndPart? Ended = null,
-    GenesysHandoffPart? Handoff = null);
+    GenesysHandoffPart? Handoff = null,
+    DateTime? StartedAtUtc = null,
+    GenesysRoutingPart? Routing = null);
+
+/// <summary>
+/// Where the conversation is now: its current queue and connected agent. Send
+/// it when the conversation enters a queue, when an agent connects, and on
+/// every transfer. It never creates a ticket and never moves the ticket's
+/// department, owner or status; when an agent connects to human work that is
+/// still waiting for one, that work is recorded as taken by them.
+/// </summary>
+/// <param name="QueueId">The Genesys queue id the conversation is now in.</param>
+/// <param name="QueueName">That queue's name.</param>
+/// <param name="AgentId">The Genesys User ID of the agent now connected.</param>
+/// <param name="AgentName">That agent's display name. Display only.</param>
+public sealed record GenesysRoutingPart(
+    string? QueueId = null,
+    string? QueueName = null,
+    string? AgentId = null,
+    string? AgentName = null);
 
 /// <summary>The conversation has finished — for any reason: the agent ended it, the customer closed the browser, the connection dropped, Genesys timed it out.</summary>
 /// <param name="EndedAtUtc">When it ended. Defaults to now.</param>
@@ -256,45 +277,79 @@ internal static class GenesysContractMapper
         inquiry = null!;
         error = null;
 
-        if (!Enum.TryParse<GenesysChannel>(request.Channel, ignoreCase: true, out var channel) || !Enum.IsDefined(channel))
+        if (!TryParseChannel(request.Channel, out var channel))
         {
-            error = $"Unsupported channel '{request.Channel}'. Expected Phone, WebsiteChat, WhatsApp or SocialMedia.";
+            error = $"Unsupported channel '{request.Channel}'. Expected Phone, LiveChat (or WebsiteChat / WebMessaging), WhatsApp or SocialMedia.";
             return false;
         }
 
         inquiry = new GenesysInquiryDto(
             request.ConversationId,
             channel,
-            request.InteractionId,
-            request.ParticipantId,
-            request.CommunicationId,
-            request.Direction,
-            request.CustomerPhone,
-            request.CustomerName,
-            request.CustomerEmail,
-            request.CalledNumber,
-            request.QueueId,
-            request.QueueName,
-            request.AgentId,
-            request.AgentName,
+            Absent(request.InteractionId),
+            Absent(request.ParticipantId),
+            Absent(request.CommunicationId),
+            Absent(request.Direction),
+            Absent(request.CustomerPhone),
+            Absent(request.CustomerName),
+            Absent(request.CustomerEmail),
+            Absent(request.CalledNumber),
+            Absent(request.QueueId),
+            Absent(request.QueueName),
+            Absent(request.AgentId),
+            Absent(request.AgentName),
             request.StartedAtUtc,
             request.DepartmentId,
-            request.DepartmentCode,
-            request.TowerName,
-            request.UnitNumber,
-            request.Subject);
+            Absent(request.DepartmentCode),
+            Absent(request.TowerName),
+            Absent(request.UnitNumber),
+            Absent(request.Subject));
         return true;
+    }
+
+    /// <summary>
+    /// A blank optional value means "not supplied". A Genesys data action
+    /// cannot leave a field out of its request template, so an unset
+    /// Architect variable arrives as "" — which must never win over a value
+    /// TigerCS found itself (a CRM customer name) or be parsed as a
+    /// vocabulary word (a handoff mode).
+    /// </summary>
+    private static string? Absent(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// The channel names Genesys may use for the one Live Chat channel, beside
+    /// the normalized enum names themselves. "LiveChat" is the name the
+    /// business and the channel catalogue use (<c>LIVE_CHAT</c>);
+    /// "WebMessaging" is what Genesys Cloud calls its web chat. Both are the
+    /// same channel as <see cref="GenesysChannel.WebsiteChat"/> — an alias,
+    /// never a second channel.
+    /// </summary>
+    private static readonly Dictionary<string, GenesysChannel> ChannelAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["LiveChat"] = GenesysChannel.WebsiteChat,
+        ["WebMessaging"] = GenesysChannel.WebsiteChat
+    };
+
+    internal static bool TryParseChannel(string? value, out GenesysChannel channel)
+    {
+        var name = value?.Trim() ?? string.Empty;
+        if (ChannelAliases.TryGetValue(name, out channel))
+        {
+            return true;
+        }
+
+        return Enum.TryParse(name, ignoreCase: true, out channel) && Enum.IsDefined(channel);
     }
 
     internal static GenesysTicketUpdateDto Map(GenesysTicketUpdateRequest request) => new(
         request.ConversationId,
-        request.AgentId,
-        request.AgentName,
+        Absent(request.AgentId),
+        Absent(request.AgentName),
         request.Ended is null
             ? null
             : new GenesysConversationEndUpdateDto(
                 request.Ended.EndedAtUtc,
-                request.Ended.EndReason,
+                Absent(request.Ended.EndReason),
                 request.Ended.Transcript?
                     .Select(m => new GenesysTranscriptMessageDto(m.Sender, m.SentAtUtc, m.Body, m.SenderName, m.SenderId, m.ExternalMessageId))
                     .ToList()),
@@ -303,11 +358,17 @@ internal static class GenesysContractMapper
             : new GenesysHandoffUpdateDto(
                 request.Handoff.Required,
                 request.Handoff.AgentAvailable,
-                request.Handoff.Mode,
-                request.Handoff.Reason,
-                request.Handoff.Trigger,
-                request.Handoff.WorkItemId,
-                request.Handoff.AssignedAgentId));
+                Absent(request.Handoff.Mode),
+                Absent(request.Handoff.Reason),
+                Absent(request.Handoff.Trigger),
+                Absent(request.Handoff.WorkItemId),
+                Absent(request.Handoff.AssignedAgentId)),
+        request.StartedAtUtc,
+        request.Routing is null
+            ? null
+            : new GenesysRoutingUpdateDto(
+                Absent(request.Routing.QueueId), Absent(request.Routing.QueueName),
+                Absent(request.Routing.AgentId), Absent(request.Routing.AgentName)));
 
     internal static GenesysAgentContextDto Map(GenesysAgentContextRequest request) =>
         new(request.GenesysUserId, request.AgentEmail, request.ConversationId);

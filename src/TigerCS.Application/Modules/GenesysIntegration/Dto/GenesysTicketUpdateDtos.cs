@@ -31,12 +31,42 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
 /// <param name="Ended">Set when the conversation has finished, for any reason — agent ended it, customer closed the browser, connection dropped, Genesys timed it out.</param>
 /// <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it. Omit entirely when neither applies.</param>
+/// <param name="StartedAtUtc">When the interaction started on the Genesys side — recorded only if the creating call did not supply it; never moves once known.</param>
+/// <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
     string? AgentId = null,
     string? AgentName = null,
     GenesysConversationEndUpdateDto? Ended = null,
-    GenesysHandoffUpdateDto? Handoff = null);
+    GenesysHandoffUpdateDto? Handoff = null,
+    DateTime? StartedAtUtc = null,
+    GenesysRoutingUpdateDto? Routing = null);
+
+/// <summary>
+/// Where the conversation is now — the queue it sits in and the agent it is
+/// connected to. Sent on a queue change, when an agent connects, and on
+/// every transfer; always the same conversation, the same interaction and
+/// the same ticket.
+///
+/// <para>
+/// It records the conversation's current routing and nothing about the
+/// ticket: no department, owner or status moves because Genesys transferred
+/// a call. The first agent who handled the interaction stays recorded as its
+/// handler. When an agent connects to a conversation whose human work is
+/// still <c>WaitingForAgent</c>, that is the human taking it, and the work
+/// is marked assigned to them exactly as <c>handoff.assignedAgentId</c>
+/// would.
+/// </para>
+/// </summary>
+/// <param name="QueueId">The Genesys queue the conversation is now in.</param>
+/// <param name="QueueName">That queue's display name.</param>
+/// <param name="AgentId">The Genesys User ID of the agent now connected. Resolved to the mapped Ticketing user when the interaction has no handler yet.</param>
+/// <param name="AgentName">That agent's display name. Display only — never an identity key.</param>
+public sealed record GenesysRoutingUpdateDto(
+    string? QueueId = null,
+    string? QueueName = null,
+    string? AgentId = null,
+    string? AgentName = null);
 
 /// <summary>
 /// The conversation has finished. Recording this stores the transcript and
