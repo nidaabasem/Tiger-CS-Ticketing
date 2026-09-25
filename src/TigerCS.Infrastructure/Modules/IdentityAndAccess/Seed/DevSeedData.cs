@@ -42,6 +42,7 @@ public static class DevSeedData
         await SeedDepartmentCustomerLookupSourcesAsync(dbContext, logger, cancellationToken);
         await SeedSlaReferenceDataAsync(dbContext, logger, cancellationToken);
         await SeedWorkflowReferenceDataAsync(dbContext, logger, cancellationToken);
+        await SeedNewRequestTypesForReviewAsync(dbContext, logger, cancellationToken);
         await SeedDevAdministratorAsync(dbContext, userManager, configuration, logger, cancellationToken);
     }
 
@@ -106,6 +107,47 @@ public static class DevSeedData
         await WorkflowReferenceData.SeedAsync(dbContext, cancellationToken);
         logger.LogInformation(
             "Seeded workflow configuration reference data (templates, request types, request-type SLA rows, department workflow settings).");
+    }
+
+    /// <summary>
+    /// The 35 proposed new request types from the business-review workbook,
+    /// imported INACTIVE for review (<see cref="NewRequestTypesImporter"/>).
+    /// Development only, like every other seed here — an existing UAT database
+    /// gets the same rows from ImportNewRequestTypes_UAT.sql, and Production
+    /// gets nothing until the business has decided. Idempotent: rows already
+    /// imported are recognised by their Request Code and left untouched.
+    ///
+    /// <para>
+    /// Facilities Management and Leasing Customer Services are confirmed
+    /// business departments, so on a development database they are created
+    /// when genuinely missing (never when a similarly named department exists)
+    /// — their request types are not skipped merely because the sample seed
+    /// lacks them. The UAT script only creates them on explicit request.
+    /// </para>
+    /// </summary>
+    private static async Task SeedNewRequestTypesForReviewAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        var result = await NewRequestTypesImporter.ImportAsync(
+            dbContext, DateTime.UtcNow, createMissingOwningDepartments: true, cancellationToken);
+
+        foreach (var department in result.OwningDepartments.Where(d => d.Resolution is not OwningDepartmentResolution.Existing))
+        {
+            logger.LogInformation(
+                "New request types — owning department {Department} ({Code}): {Resolution}{NearMatches}.",
+                department.Name,
+                department.Code,
+                department.Resolution,
+                department.NearMatches.Count == 0 ? string.Empty : " (similar: " + string.Join(", ", department.NearMatches) + ")");
+        }
+
+        foreach (var row in result.Rows.Where(r => r.Outcome is not NewRequestTypeImportOutcome.AlreadyImported))
+        {
+            logger.LogInformation(
+                "New request type {RequestCode}: {Outcome}{Unresolved}.",
+                row.RequestCode,
+                row.Outcome,
+                row.UnresolvedDestinations.Count == 0 ? string.Empty : " (unresolved: " + string.Join(", ", row.UnresolvedDestinations) + ")");
+        }
     }
 
     /// <summary>
