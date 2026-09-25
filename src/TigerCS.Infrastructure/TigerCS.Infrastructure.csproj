@@ -33,4 +33,13 @@
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The business-review workbook's TSV export: the verbatim source rows of
+         NewRequestTypesBusinessReview (UAT import of the 35 proposed new
+         request types). Linked from docs/ so there is exactly one copy. -->
+    <EmbeddedResource Include="..\..\docs\business-review\TigerCS_New_Request_Types_Business_Review.tsv"
+                      LogicalName="TigerCS.NewRequestTypesBusinessReview.tsv"
+                      Link="Modules\WorkflowConfiguration\Seed\TigerCS_New_Request_Types_Business_Review.tsv" />
+  </ItemGroup>
+
 </Project>
