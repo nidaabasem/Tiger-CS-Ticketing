@@ -187,7 +187,7 @@ public class GenesysController(
     /// <param name="request">The conversation facts that changed.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <response code="200">Everything supplied was applied, or was already in that state.</response>
-    /// <response code="400">conversationId was blank, a transcript message had an unrecognized sender or empty body, or the handoff mode is not recognized.</response>
+    /// <response code="400">conversationId was blank; a transcript message had an unrecognized sender, an empty body, or a messageId longer than 64 characters; the handoff mode or trigger is not recognized; or <c>handoff.required: false</c> was sent without a reason.</response>
     /// <response code="404">No such ticket, or no interaction exists for this conversation.</response>
     /// <response code="409">The conversation belongs to a different ticket than the one in the route.</response>
     /// <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to.</response>
@@ -242,6 +242,18 @@ public class GenesysController(
             GenesysTicketUpdateOutcome.InvalidHandoffMode => Problem(
                 type: "https://tigercs.internal/problems/genesys-invalid-handoff-mode",
                 title: "Unrecognized follow-up mode",
+                detail: result.Detail,
+                statusCode: StatusCodes.Status400BadRequest),
+
+            GenesysTicketUpdateOutcome.InvalidHandoffTrigger => Problem(
+                type: "https://tigercs.internal/problems/genesys-invalid-handoff-trigger",
+                title: "Unrecognized handoff trigger",
+                detail: result.Detail,
+                statusCode: StatusCodes.Status400BadRequest),
+
+            GenesysTicketUpdateOutcome.HandoffReasonRequired => Problem(
+                type: "https://tigercs.internal/problems/genesys-handoff-reason-required",
+                title: "A reason is required to stand human work down",
                 detail: result.Detail,
                 statusCode: StatusCodes.Status400BadRequest),
 

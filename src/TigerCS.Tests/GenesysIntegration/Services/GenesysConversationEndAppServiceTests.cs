@@ -181,6 +181,61 @@ public class GenesysConversationEndAppServiceTests
         Assert.Equal(2, second.TranscriptMessageCount);
     }
 
+    [Fact]
+    public async Task End_RedeliveredWithAPaddedMessageId_MatchesTheStoredRow_AndStoresNothingTwice()
+    {
+        var (f, _) = await SeedChatAsync("conv-padded-id");
+        GenesysConversationEndDto EndRequest(string messageId) =>
+            new("conv-padded-id", ChatStart.AddMinutes(15), "AgentDisconnect",
+                Transcript: [new GenesysTranscriptMessageDto("Customer", ChatStart, "Hello", ExternalMessageId: messageId)]);
+
+        await f.ConversationEnd.EndAsync(ServiceAccount, EndRequest("  msg-1  "));
+        // The retry spells the same id differently; the row stored from the
+        // first delivery holds it trimmed, and the comparison must too.
+        var second = await f.ConversationEnd.EndAsync(ServiceAccount, EndRequest("msg-1 "));
+
+        var stored = await f.Conversations.ListMessagesAsync(f.InteractionFor("conv-padded-id")!.TicketInteractionId);
+        Assert.Equal("msg-1", Assert.Single(stored).ExternalMessageId);
+        Assert.Equal(1, second.TranscriptMessageCount);
+    }
+
+    [Fact]
+    public async Task End_MessageIdLongerThanTheStoredColumn_IsRefused_RatherThanTruncated()
+    {
+        // Truncating would let two distinct ids sharing a 64-char prefix
+        // collide on retry and silently drop a real message.
+        var (f, _) = await SeedChatAsync("conv-long-id");
+        var tooLong = new string('m', TicketInteractionMessage.ExternalMessageIdMaxLength + 1);
+
+        var result = await f.ConversationEnd.EndAsync(
+            ServiceAccount,
+            new GenesysConversationEndDto(
+                "conv-long-id", ChatStart.AddMinutes(15), "AgentDisconnect",
+                Transcript: [new GenesysTranscriptMessageDto("Customer", ChatStart, "Hello", ExternalMessageId: tooLong)]));
+
+        Assert.Equal(GenesysConversationEndOutcome.InvalidTranscript, result.Outcome);
+        Assert.Contains("messageId", result.Detail);
+        var interaction = f.InteractionFor("conv-long-id")!;
+        Assert.False(interaction.IsEnded);
+        Assert.Empty(await f.Conversations.ListMessagesAsync(interaction.TicketInteractionId));
+    }
+
+    [Fact]
+    public async Task End_MessageIdOfExactlyTheColumnLength_IsStoredOnce_AcrossRetries()
+    {
+        var (f, _) = await SeedChatAsync("conv-max-id");
+        var maxLength = new string('m', TicketInteractionMessage.ExternalMessageIdMaxLength);
+        GenesysConversationEndDto EndRequest() =>
+            new("conv-max-id", ChatStart.AddMinutes(15), "AgentDisconnect",
+                Transcript: [new GenesysTranscriptMessageDto("Customer", ChatStart, "Hello", ExternalMessageId: maxLength)]);
+
+        await f.ConversationEnd.EndAsync(ServiceAccount, EndRequest());
+        await f.ConversationEnd.EndAsync(ServiceAccount, EndRequest());
+
+        var stored = await f.Conversations.ListMessagesAsync(f.InteractionFor("conv-max-id")!.TicketInteractionId);
+        Assert.Equal(maxLength, Assert.Single(stored).ExternalMessageId);
+    }
+
     // ---- 8 (interrupted chat): whatever is available is still preserved ----
 
     [Fact]

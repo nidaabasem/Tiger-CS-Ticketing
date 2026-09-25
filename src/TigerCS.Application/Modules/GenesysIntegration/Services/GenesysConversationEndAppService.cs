@@ -446,8 +446,23 @@ public sealed class GenesysConversationEndAppService(
                 return false;
             }
 
+            // Normalized exactly as the stored row will hold it, so a retry
+            // compares like with like in IsAlreadyStored. An over-long id is
+            // refused rather than truncated: two distinct ids sharing a
+            // prefix would otherwise collide and a real message be dropped.
+            var externalMessageId = string.IsNullOrWhiteSpace(message.ExternalMessageId)
+                ? null
+                : message.ExternalMessageId.Trim();
+            if (externalMessageId is { Length: > TicketInteractionMessage.ExternalMessageIdMaxLength })
+            {
+                error =
+                    $"Transcript message {index + 1} has a messageId longer than "
+                    + $"{TicketInteractionMessage.ExternalMessageIdMaxLength} characters.";
+                return false;
+            }
+
             normalized.Add(new NormalizedMessage(
-                sender, message.SenderName, message.SenderId, message.SentAtUtc, message.Body, message.ExternalMessageId));
+                sender, message.SenderName, message.SenderId, message.SentAtUtc, message.Body, externalMessageId));
         }
 
         messages = normalized;

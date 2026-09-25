@@ -307,7 +307,10 @@ whole conversation in delivered order.
 
 **Supplying `messageId` is strongly preferred.** It is the deduplication key,
 and the only one that survives a retry whose timestamps were regenerated.
-Without it the fallback is sender + timestamp + body.
+Without it the fallback is sender + timestamp + body. Surrounding whitespace
+is trimmed; a `messageId` longer than **64 characters** fails the whole update
+with `400 genesys-invalid-transcript` rather than being truncated (truncation
+would let two distinct ids that share a prefix collide).
 
 ### Request — a human agent is needed
 
