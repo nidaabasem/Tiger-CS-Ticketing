@@ -135,13 +135,18 @@ public class NewRequestTypesImportTests
     // ---- import behaviour -------------------------------------------------
 
     [Fact]
-    public async Task On_the_reference_seed_imports_what_resolves_and_reports_the_rest()
+    public async Task Without_department_creation_rows_of_missing_owning_departments_are_blocked_and_reported()
     {
         await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+        var departmentCount = await db.Departments.CountAsync();
 
         var result = await NewRequestTypesImporter.ImportAsync(db, Now);
 
         Assert.Equal(35, result.Rows.Count);
+        Assert.Equal(departmentCount, await db.Departments.CountAsync());
+        Assert.Equal(
+            [("Facilities Management", OwningDepartmentResolution.Missing), ("Leasing Customer Services", OwningDepartmentResolution.Missing)],
+            result.OwningDepartments.Select(d => (d.Name, d.Resolution)));
         Assert.Equal(
             ["CS-GEN-001", "CS-GEN-002", "CS-GEN-003", "CS-CMP-001", "CS-CMP-002", "REG-CON-001", "REG-DLD-001",
              "COL-PAY-001", "COL-PAY-002", "COL-PAY-003", "COL-PAY-004", "HO-HND-001", "HO-HND-002", "HO-HND-003", "REC-OTH-001"],
@@ -151,42 +156,135 @@ public class NewRequestTypesImportTests
             Codes(result, Outcome.CreatedWithDraftWorkflow));
         // Same department + name as the seeded Customer Service NOC request types.
         Assert.Equal(["REG-NOC-001", "REG-NOC-002", "REG-NOC-003", "HO-NOC-001"], Codes(result, Outcome.SkippedExistingRequestType));
-        // Facilities Management is not in the reference seed; Leasing Customer Services exists nowhere.
         Assert.Equal(
             ["FM-MNT-001", "FM-UTL-001", "FM-COM-001", "FM-SVC-001", "LCS-TEN-001", "LCS-EJR-001", "LCS-BKG-001", "LCS-MOV-001", "LCS-CHK-001"],
             Codes(result, Outcome.SkippedOwningDepartmentMissing));
+        Assert.All(result.Rows.Where(r => r.Outcome == Outcome.SkippedOwningDepartmentMissing), r => Assert.True(r.BlockedByMissingOwningDepartment));
 
         Assert.Equal(["Facilities Management"], Row(result, "HO-HND-004").UnresolvedDestinations);
-        Assert.Equal(["Admin Sales"], Row(result, "BRK-COM-001").UnresolvedDestinations);
-        Assert.Equal(["Sales"], Row(result, "SAL-INQ-001").UnresolvedDestinations);
-        Assert.Equal(["Legal"], Row(result, "LEG-INQ-001").UnresolvedDestinations);
-        Assert.Equal(["HR"], Row(result, "REC-HR-001").UnresolvedDestinations);
-        Assert.Equal(["Marketing"], Row(result, "REC-MKT-001").UnresolvedDestinations);
+        Assert.Equal(["Responsible Finance"], Row(result, "FM-SVC-001").UnresolvedDestinations);
     }
 
     [Fact]
-    public async Task With_facilities_management_present_its_rows_import_and_the_handover_flow_publishes()
+    public async Task Confirmed_owning_departments_are_created_when_genuinely_missing_and_asked_to()
+    {
+        await using var db = await WorkflowConfigurationTestDb.CreateSeededContextAsync();
+
+        var result = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
+
+        Assert.Equal(
+            [("Facilities Management", "FM", OwningDepartmentResolution.Created), ("Leasing Customer Services", "LCS", OwningDepartmentResolution.Created)],
+            result.OwningDepartments.Select(d => (d.Name, d.Code, d.Resolution)));
+        Assert.Single(await db.Departments.Where(d => d.Name == "Facilities Management").ToListAsync());
+        Assert.Single(await db.Departments.Where(d => d.Name == "Leasing Customer Services").ToListAsync());
+
+        Assert.Equal(24, result.Count(Outcome.Created));
+        Assert.Equal(
+            ["FM-SVC-001", "BRK-COM-001", "BRK-CHK-001", "SAL-INQ-001", "LEG-INQ-001", "REC-HR-001", "REC-MKT-001"],
+            Codes(result, Outcome.CreatedWithDraftWorkflow));
+        Assert.Equal(4, result.Count(Outcome.SkippedExistingRequestType));
+        Assert.DoesNotContain(result.Rows, r => r.BlockedByMissingOwningDepartment);
+        // Created before any row is processed, so the Handover hand-off to FM resolves in the same run.
+        Assert.Equal(Outcome.Created, Row(result, "HO-HND-004").Outcome);
+
+        var lcs = await db.Departments.SingleAsync(d => d.Code == "LCS");
+        Assert.Equal(5, await db.RequestTypes.CountAsync(r => r.DepartmentId == lcs.DepartmentId && !r.IsActive));
+    }
+
+    [Fact]
+    public async Task Existing_owning_departments_are_used_and_never_duplicated()
+    {
+        await using var db = await CreateWithFacilitiesManagementAsync();
+        db.Departments.Add(new Department("Leasing Customer Services", "LEASECS"));
+        await db.SaveChangesAsync();
+        var departmentCount = await db.Departments.CountAsync();
+
+        var result = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
+
+        Assert.Equal(departmentCount, await db.Departments.CountAsync());
+        Assert.All(result.OwningDepartments, d => Assert.Equal(OwningDepartmentResolution.Existing, d.Resolution));
+        var leasing = await db.Departments.SingleAsync(d => d.Code == "LEASECS");
+        Assert.Equal(5, await db.RequestTypes.CountAsync(r => r.DepartmentId == leasing.DepartmentId));
+    }
+
+    [Fact]
+    public async Task A_similarly_named_department_blocks_creation_instead_of_duplicating_it()
+    {
+        await using var db = await CreateWithFacilitiesManagementAsync();
+        db.Departments.Add(new Department("Leasing", "LEAS"));
+        await db.SaveChangesAsync();
+        var departmentCount = await db.Departments.CountAsync();
+
+        var result = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
+
+        Assert.Equal(departmentCount, await db.Departments.CountAsync());
+        var leasing = result.OwningDepartments.Single(d => d.Name == "Leasing Customer Services");
+        Assert.Equal(OwningDepartmentResolution.NearMatch, leasing.Resolution);
+        Assert.Equal(["Leasing (LEAS)"], leasing.NearMatches);
+        Assert.Equal(
+            ["LCS-TEN-001", "LCS-EJR-001", "LCS-BKG-001", "LCS-MOV-001", "LCS-CHK-001"],
+            Codes(result, Outcome.SkippedOwningDepartmentNearMatch));
+    }
+
+    [Fact]
+    public async Task Pending_handoff_destinations_keep_their_flows_draft_even_if_a_same_named_department_exists()
+    {
+        await using var db = await CreateWithFacilitiesManagementAsync();
+        db.Departments.Add(new Department("Legal", "LGL"));
+        db.Departments.Add(new Department("Finance", "FIN"));
+        await db.SaveChangesAsync();
+
+        var result = await NewRequestTypesImporter.ImportAsync(db, Now);
+
+        Assert.Equal(Outcome.CreatedWithDraftWorkflow, Row(result, "LEG-INQ-001").Outcome);
+        Assert.Equal(["Legal"], Row(result, "LEG-INQ-001").UnresolvedDestinations);
+        Assert.Equal(Outcome.CreatedWithDraftWorkflow, Row(result, "FM-SVC-001").Outcome);
+
+        // Documented manual hand-offs are department work on the owning
+        // department, never a queue/assignment step that implies a transfer.
+        foreach (var row in NewRequestTypesBusinessReview.Rows())
+        {
+            foreach (var step in row.Steps.Where(s => s.Destination is { RepresentationPending: true }))
+            {
+                Assert.Equal(WorkflowStepKind.InProgress, step.Kind);
+                Assert.StartsWith("Manual handoff to ", step.Name, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Every_row_carries_its_uat_review_flags()
     {
         await using var db = await CreateWithFacilitiesManagementAsync();
 
         var result = await NewRequestTypesImporter.ImportAsync(db, Now);
 
-        Assert.Equal(20, result.Count(Outcome.Created));
-        Assert.Equal(6, result.Count(Outcome.CreatedWithDraftWorkflow));
-        Assert.Equal(4, result.Count(Outcome.SkippedExistingRequestType));
-        Assert.Equal(5, result.Count(Outcome.SkippedOwningDepartmentMissing));
-        Assert.All(result.Rows.Where(r => r.Outcome == Outcome.SkippedOwningDepartmentMissing), r => Assert.StartsWith("LCS-", r.RequestCode));
-        Assert.Equal(Outcome.Created, Row(result, "HO-HND-004").Outcome);
+        Assert.Equal(
+            ["CS-CMP-001", "REG-NOC-001", "REG-NOC-002", "REG-NOC-003", "COL-PAY-002", "HO-NOC-001", "LCS-TEN-001", "LCS-EJR-001", "BRK-COM-001", "LEG-INQ-001"],
+            result.Rows.Where(r => r.ApprovalDecisionRequired).Select(r => r.RequestCode));
+        Assert.Equal(
+            ["CS-GEN-002", "HO-HND-004", "FM-MNT-001", "FM-COM-001"],
+            result.Rows.Where(r => r.ResolutionSlaDecisionRequired).Select(r => r.RequestCode));
 
-        var fm = await db.Departments.SingleAsync(d => d.Code == "FM");
-        Assert.Equal(4, await db.RequestTypes.CountAsync(r => r.DepartmentId == fm.DepartmentId));
+        // Exact-name conflicts are not imported; the similar name is imported inactive and flagged.
+        Assert.Equal(
+            [("CS-CMP-001", "Complaint Handling"), ("REG-NOC-001", "NOC for Resale"), ("REG-NOC-002", "NOC for Golden Visa"),
+             ("REG-NOC-003", "NOC for Mortgage"), ("HO-NOC-001", "NOC for Handover")],
+            result.Rows.Where(r => r.ExistingNameConflict is not null).Select(r => (r.RequestCode, r.ExistingNameConflict!)));
+        Assert.True(Row(result, "CS-CMP-001").Imported);
+        Assert.False(Row(result, "REG-NOC-001").Imported);
+
+        Assert.Equal(26, result.Rows.Count(r => r.Imported));
+        Assert.Equal(
+            ["FM-SVC-001", "BRK-COM-001", "BRK-CHK-001", "SAL-INQ-001", "LEG-INQ-001", "REC-HR-001", "REC-MKT-001"],
+            result.Rows.Where(r => r.Imported && r.DraftBecauseOfUnresolvedDependency).Select(r => r.RequestCode));
     }
 
     [Fact]
     public async Task Created_request_types_are_inactive_and_carry_the_workbook_configuration()
     {
         await using var db = await CreateWithFacilitiesManagementAsync();
-        var result = await NewRequestTypesImporter.ImportAsync(db, Now);
+        var result = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
 
         foreach (var outcome in result.Rows.Where(r => r.Outcome is Outcome.Created or Outcome.CreatedWithDraftWorkflow))
         {
@@ -272,10 +370,10 @@ public class NewRequestTypesImportTests
     public async Task Running_twice_creates_nothing_the_second_time()
     {
         await using var db = await CreateWithFacilitiesManagementAsync();
-        var first = await NewRequestTypesImporter.ImportAsync(db, Now);
+        var first = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
         var counts = await Counts(db);
 
-        var second = await NewRequestTypesImporter.ImportAsync(db, Now.AddDays(1));
+        var second = await NewRequestTypesImporter.ImportAsync(db, Now.AddDays(1), createMissingOwningDepartments: true);
 
         Assert.Equal(counts, await Counts(db));
         foreach (var row in first.Rows)
@@ -351,24 +449,6 @@ public class NewRequestTypesImportTests
     }
 
     [Fact]
-    public async Task Departments_resolve_by_name_when_no_code_is_known_and_are_never_created()
-    {
-        await using var db = await CreateWithFacilitiesManagementAsync();
-        db.Departments.Add(new Department("Leasing Customer Services", "LEAS"));
-        db.Departments.Add(new Department("Legal", "LGL"));
-        await db.SaveChangesAsync();
-        var departmentCount = await db.Departments.CountAsync();
-
-        var result = await NewRequestTypesImporter.ImportAsync(db, Now);
-
-        Assert.Equal(departmentCount, await db.Departments.CountAsync());
-        Assert.All(result.Rows.Where(r => r.RequestCode.StartsWith("LCS-", StringComparison.Ordinal)),
-            r => Assert.Equal(Outcome.Created, r.Outcome));
-        Assert.Equal(Outcome.Created, Row(result, "LEG-INQ-001").Outcome);
-        Assert.Empty(Row(result, "LEG-INQ-001").UnresolvedDestinations);
-    }
-
-    [Fact]
     public async Task Is_transactional_and_idempotent_on_a_relational_database()
     {
         await using var connection = new Microsoft.Data.Sqlite.SqliteConnection("DataSource=:memory:");
@@ -388,15 +468,17 @@ public class NewRequestTypesImportTests
             await db.SaveChangesAsync();
             await WorkflowReferenceData.SeedAsync(db);
 
-            var first = await NewRequestTypesImporter.ImportAsync(db, Now);
-            Assert.Equal(20, first.Count(Outcome.Created));
+            var first = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
+            Assert.Equal(24, first.Count(Outcome.Created));
+            Assert.Equal(OwningDepartmentResolution.Created, first.OwningDepartments.Single(d => d.Code == "LCS").Resolution);
         }
 
         await using (var db = new TigerCsDbContext(options))
         {
             var counts = await Counts(db);
-            var second = await NewRequestTypesImporter.ImportAsync(db, Now);
-            Assert.Equal(26, second.Count(Outcome.AlreadyImported));
+            var second = await NewRequestTypesImporter.ImportAsync(db, Now, createMissingOwningDepartments: true);
+            Assert.Equal(31, second.Count(Outcome.AlreadyImported));
+            Assert.All(second.OwningDepartments, d => Assert.Equal(OwningDepartmentResolution.Existing, d.Resolution));
             Assert.Equal(counts, await Counts(db));
         }
     }

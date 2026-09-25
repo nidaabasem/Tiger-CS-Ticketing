@@ -116,10 +116,30 @@ public static class DevSeedData
     /// gets the same rows from ImportNewRequestTypes_UAT.sql, and Production
     /// gets nothing until the business has decided. Idempotent: rows already
     /// imported are recognised by their Request Code and left untouched.
+    ///
+    /// <para>
+    /// Facilities Management and Leasing Customer Services are confirmed
+    /// business departments, so on a development database they are created
+    /// when genuinely missing (never when a similarly named department exists)
+    /// — their request types are not skipped merely because the sample seed
+    /// lacks them. The UAT script only creates them on explicit request.
+    /// </para>
     /// </summary>
     private static async Task SeedNewRequestTypesForReviewAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
     {
-        var result = await NewRequestTypesImporter.ImportAsync(dbContext, DateTime.UtcNow, cancellationToken);
+        var result = await NewRequestTypesImporter.ImportAsync(
+            dbContext, DateTime.UtcNow, createMissingOwningDepartments: true, cancellationToken);
+
+        foreach (var department in result.OwningDepartments.Where(d => d.Resolution is not OwningDepartmentResolution.Existing))
+        {
+            logger.LogInformation(
+                "New request types — owning department {Department} ({Code}): {Resolution}{NearMatches}.",
+                department.Name,
+                department.Code,
+                department.Resolution,
+                department.NearMatches.Count == 0 ? string.Empty : " (similar: " + string.Join(", ", department.NearMatches) + ")");
+        }
+
         foreach (var row in result.Rows.Where(r => r.Outcome is not NewRequestTypeImportOutcome.AlreadyImported))
         {
             logger.LogInformation(

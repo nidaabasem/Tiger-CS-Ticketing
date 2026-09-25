@@ -38,29 +38,70 @@ public static class NewRequestTypesBusinessReview
 
     public const int ExpectedRowCount = 35;
 
-    /// <summary>A department referenced by the workbook, resolved against existing Department rows by <see cref="Code"/> first, then by exact <see cref="Name"/>. Never created.</summary>
+    /// <summary>
+    /// A department the workbook references, resolved against existing
+    /// Department rows by <see cref="Code"/> first, then by exact
+    /// <see cref="Name"/>.
+    /// </summary>
     /// <param name="Name">The department's name as the workbook (or the existing seed) spells it.</param>
-    /// <param name="Code">The stable code an existing seed gives it; null where no seed defines one, in which case only the exact name can resolve it.</param>
-    public sealed record DepartmentRef(string Name, string? Code);
+    /// <param name="Code">The stable code it is resolved by — the existing seed's code where one exists; for an owning department the importer may create, the code it is created with.</param>
+    /// <param name="NearMatchKeyword">
+    /// For an owning department that may be created: a fragment that, found
+    /// in any existing department's name, means a similar department may
+    /// already exist under another name/code. Creation is then refused and
+    /// the row reported, so a duplicate department is never created.
+    /// </param>
+    /// <param name="RepresentationPending">
+    /// True for a hand-off destination whose representation in TigerCS is an
+    /// open business decision (UAT decision: keep as a documented manual
+    /// hand-off, create no department yet). Such a destination never
+    /// resolves — even if a department of that name exists — so the flow
+    /// stays a Draft until the business decides.
+    /// </param>
+    public sealed record DepartmentRef(string Name, string? Code, string? NearMatchKeyword = null, bool RepresentationPending = false);
 
     // Owning departments. Codes are the ones the existing seeds already use.
     public static readonly DepartmentRef CustomerService = new("Customer Service", WorkflowReferenceData.CustomerServiceCode);
     public static readonly DepartmentRef Registration = new("Registration", WorkflowReferenceData.RegistrationCode);
     public static readonly DepartmentRef Collections = new("Collections", WorkflowReferenceData.CollectionsCode);
     public static readonly DepartmentRef Handover = new("Handover", WorkflowReferenceData.HandoverCode);
-    public static readonly DepartmentRef FacilitiesManagement = new("Facilities Management", "FM");
-    public static readonly DepartmentRef LeasingCustomerServices = new("Leasing Customer Services", null);
+    // Facilities Management and Leasing Customer Services are confirmed
+    // TigerCS business departments (UAT decision 1). "FM" is the code the
+    // development seed already uses; no seed defines Leasing Customer
+    // Services, so "LCS" (the workbook's own request-code prefix) is the code
+    // it is created with when it is genuinely missing. Both are resolved
+    // against existing data first and created only on explicit request.
+    public static readonly DepartmentRef FacilitiesManagement = new("Facilities Management", "FM", NearMatchKeyword: "Facilit");
+    public static readonly DepartmentRef LeasingCustomerServices = new("Leasing Customer Services", "LCS", NearMatchKeyword: "Leasing");
 
-    // Workflow destinations beyond the owning departments. Only Accounting
-    // has a seeded code; the others exist in no seed or script, so they can
-    // resolve only if an environment already holds a department of exactly
-    // that name — they are never created here.
+    /// <summary>The owning departments the importer may create when genuinely missing (and only when asked to).</summary>
+    public static IReadOnlyList<DepartmentRef> CreatableOwningDepartments { get; } = [FacilitiesManagement, LeasingCustomerServices];
+
+    // Workflow destinations beyond the owning departments. Accounting is a
+    // seeded department. The others are UAT decision 3/4: documented MANUAL
+    // hand-offs, no department created yet, representation pending — so the
+    // flows that depend on them stay Draft whatever the database holds.
     public static readonly DepartmentRef Accounting = new("Accounting", WorkflowReferenceData.AccountingCode);
-    public static readonly DepartmentRef Sales = new("Sales", null);
-    public static readonly DepartmentRef AdminSales = new("Admin Sales", null);
-    public static readonly DepartmentRef Legal = new("Legal", null);
-    public static readonly DepartmentRef HumanResources = new("HR", null);
-    public static readonly DepartmentRef Marketing = new("Marketing", null);
+    public static readonly DepartmentRef Sales = new("Sales", null, RepresentationPending: true);
+    public static readonly DepartmentRef AdminSales = new("Admin Sales", null, RepresentationPending: true);
+    public static readonly DepartmentRef Legal = new("Legal", null, RepresentationPending: true);
+    public static readonly DepartmentRef HumanResources = new("HR", null, RepresentationPending: true);
+    public static readonly DepartmentRef Marketing = new("Marketing", null, RepresentationPending: true);
+
+    /// <summary>FM-SVC-001's "Responsible Finance Queue": a hand-off dependency (UAT decision 4), not a change of owning department; which finance function it means is undecided.</summary>
+    public static readonly DepartmentRef ResponsibleFinance = new("Responsible Finance", null, RepresentationPending: true);
+
+    /// <summary>
+    /// Existing request types a proposed row may duplicate (UAT decision 8):
+    /// an exact same-name clash is detected by the importer itself; these are
+    /// the SIMILAR names the business asked to have flagged. Neither is ever
+    /// merged, replaced or modified.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> SimilarExistingRequestTypeNames { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CS-CMP-001"] = "Complaint Handling"
+        };
 
     /// <summary>
     /// How a Proposed Workflow step is classified before it is mapped onto a
@@ -138,6 +179,12 @@ public static class NewRequestTypesBusinessReview
         /// <summary>The workbook's Required Fields as a JSON array of its own labels (the provisional <c>RequestType.RequiredFieldsJson</c> representation).</summary>
         public string RequiredFieldsJson => JsonSerializer.Serialize(
             RequiredFields.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+
+        /// <summary>An existing request type in the owning department this row may duplicate (see <see cref="SimilarExistingRequestTypeNames"/>), or null.</summary>
+        public string? SimilarExistingRequestTypeName => SimilarExistingRequestTypeNames.GetValueOrDefault(RequestCode);
+
+        /// <summary>True where the workbook's Resolution SLA has no number ("Same business day", "Based on severity") — a pending SLA policy decision.</summary>
+        public bool ResolutionSlaDecisionRequired => ResolutionBusinessDays is null;
 
         /// <summary>Hand-off destinations the flow depends on, in step order.</summary>
         public IReadOnlyList<DepartmentRef> Destinations =>
@@ -265,9 +312,15 @@ public static class NewRequestTypesBusinessReview
     // ---- Structured workflow translations -------------------------------
     //
     // Mapping rules (docs/New-Request-Types-UAT-Import.md §4):
-    //   * "<X> Queue" / "CS Intake" / "Reception / CS"  → Assigned  (QueueOwnership)
+    //   * "<X> Queue"                                   → Assigned  (QueueOwnership)
     //   * "Agent", "CS Agent", "Agent/Technician"       → Assigned  (Assignment)
-    //   * a hand-off to another department              → Assigned  (TransferHandoff, with a Destination)
+    //   * a hand-off to an existing department           → Assigned  (TransferHandoff, with a Destination;
+    //     the move itself is the agent's existing Transfer action — the engine performs no transfer)
+    //   * a hand-off to Admin Sales / Sales / Legal / HR /
+    //     Marketing / Responsible Finance                → InProgress (TransferHandoff, MANUAL, documented only;
+    //     representation pending, so the flow stays Draft)
+    //   * "Reception / CS", "CS Intake"                  → Assigned  (QueueOwnership: Customer Service intake —
+    //     Reception is not a TigerCS department)
     //   * "Facilities Management if needed" (Handover)  → MaintenanceDependency (TransferHandoff, optional)
     //   * review / coordinate / follow-up / confirm ... → InProgress (Operational)
     //   * "Escalate if needed"                          → InProgress (Operational, optional) — the existing
@@ -283,6 +336,20 @@ public static class NewRequestTypesBusinessReview
 
     private static Step Handoff(string name, DepartmentRef destination) =>
         new(name, WorkflowStepKind.Assigned, StepRole.TransferHandoff, Destination: destination);
+
+    /// <summary>
+    /// A documented MANUAL hand-off to a destination with no TigerCS
+    /// department (UAT decision 3). Represented as owning-department work
+    /// (<see cref="WorkflowStepKind.InProgress"/>), never as a queue /
+    /// assignment step: the ticket stays with its owning department, and
+    /// nothing in the workflow engine moves it anywhere.
+    /// </summary>
+    private static Step ManualHandoff(DepartmentRef destination, bool optional = false) =>
+        new($"Manual handoff to {destination.Name} (documented; no system transfer)", WorkflowStepKind.InProgress,
+            StepRole.TransferHandoff, optional, destination);
+
+    /// <summary>Reception is not a TigerCS department (UAT decision 2): "Reception / CS" is Customer Service intake.</summary>
+    private static Step CustomerServiceIntake() => Queue("Customer Service intake (Reception / CS)");
 
     private static Step Work(string name, bool optional = false) =>
         new(name, WorkflowStepKind.InProgress, StepRole.Operational, optional);
@@ -350,8 +417,10 @@ public static class NewRequestTypesBusinessReview
             ["FM-UTL-001"] = Flow(Queue("FM Queue"), Agent(), Work("Review / coordinate"), Resolve()),
             ["FM-COM-001"] = Flow(Queue("FM Queue"), Agent("Agent / Technician"), Work("In Progress"), Resolve()),
             // FM/Responsible Finance Queue → Agent → Review → Resolve → Close
-            // ("Responsible Finance" is an open ownership question, not a hand-off — see the report)
-            ["FM-SVC-001"] = Flow(Queue("FM / Responsible Finance Queue"), Agent(), Work("Review"), Resolve()),
+            // Owning department stays Facilities Management; "Responsible
+            // Finance" is a hand-off dependency (UAT decision 4), optional
+            // because the workbook's "FM/..." makes it an alternative.
+            ["FM-SVC-001"] = Flow(Queue("FM Queue"), ManualHandoff(ResponsibleFinance, optional: true), Agent(), Work("Review"), Resolve()),
 
             // Leasing CS Queue → Agent → ... → Resolve → Close
             ["LCS-TEN-001"] = Flow(Queue("Leasing CS Queue"), Agent(), Work("Process / review"), Resolve()),
@@ -361,20 +430,20 @@ public static class NewRequestTypesBusinessReview
             ["LCS-CHK-001"] = Flow(Queue("Leasing CS Queue"), Agent(), Work("Review"), Resolve()),
 
             // CS Queue → CS Agent → Admin Sales → Review / Confirm collection → Resolve → Close
-            ["BRK-COM-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), Handoff("Transfer to Admin Sales", AdminSales), Work("Review"), Resolve()),
-            ["BRK-CHK-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), Handoff("Transfer to Admin Sales", AdminSales), Work("Confirm collection"), Resolve()),
+            ["BRK-COM-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), ManualHandoff(AdminSales), Work("Review"), Resolve()),
+            ["BRK-CHK-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), ManualHandoff(AdminSales), Work("Confirm collection"), Resolve()),
 
             // CS / Call Center → Sales Handoff → Follow-up → Resolve / Close
-            ["SAL-INQ-001"] = Flow(Queue("CS / Call Center Queue"), Handoff("Sales Handoff", Sales), Work("Follow-up"), Resolve()),
+            ["SAL-INQ-001"] = Flow(Queue("CS / Call Center Queue"), ManualHandoff(Sales), Work("Follow-up"), Resolve()),
             // CS Intake → Legal Handoff → Legal Review/Response → CS Resolve → Close
-            ["LEG-INQ-001"] = Flow(Queue("CS Intake"), Handoff("Legal Handoff", Legal), Work("Legal Review / Response"), Resolve("CS Resolve")),
+            ["LEG-INQ-001"] = Flow(Queue("Customer Service intake"), ManualHandoff(Legal), Work("Legal Review / Response"), Resolve("CS Resolve")),
             // Reception / CS → HR | Marketing Handoff → Acknowledge/Resolve → Close
-            ["REC-HR-001"] = Flow(Queue("Reception / CS"), Handoff("HR Handoff", HumanResources), Resolve("Acknowledge / Resolve")),
-            ["REC-MKT-001"] = Flow(Queue("Reception / CS"), Handoff("Marketing Handoff", Marketing), Resolve("Acknowledge / Resolve")),
+            ["REC-HR-001"] = Flow(CustomerServiceIntake(), ManualHandoff(HumanResources), Resolve("Acknowledge / Resolve")),
+            ["REC-MKT-001"] = Flow(CustomerServiceIntake(), ManualHandoff(Marketing), Resolve("Acknowledge / Resolve")),
             // Reception / CS → Route to Responsible Department → Resolve → Close
             // (the destination is chosen per ticket with the existing Transfer action, so there is no fixed dependency)
             ["REC-OTH-001"] = Flow(
-                Queue("Reception / CS"),
+                CustomerServiceIntake(),
                 new Step("Route to Responsible Department", WorkflowStepKind.Assigned, StepRole.TransferHandoff),
                 Resolve())
         };

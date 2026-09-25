@@ -1,8 +1,8 @@
 # New Request Types — UAT Import (Business Review)
 
-**Status: UAT preparation only.** Not approved for Production, not merged
-automatically. Every row's *Business Decision* is blank in the source, so
-nothing here is Production-approved configuration.
+**Status: UAT business-review configuration only.** Not Production-approved,
+not deployed, not merged. Every row's *Business Decision* in the source is
+blank, and **every imported request type is INACTIVE**.
 
 Source of truth: [`business-review/TigerCS_New_Request_Types_Business_Review.xlsx`](business-review/TigerCS_New_Request_Types_Business_Review.xlsx)
 (35 proposed NEW request types, sheet *New Request Types*, header row 5, data
@@ -11,312 +11,217 @@ rows 6–40). Its cell-for-cell TSV export
 is embedded in `TigerCS.Infrastructure` and is what the importer reads; a
 test re-reads the `.xlsx` and fails if the two ever differ.
 
-## 1. What was built
+## 1. UAT decisions applied
+
+| # | Decision | How it is implemented |
+|---|---|---|
+| 1 | Facilities Management and Leasing Customer Services are valid TigerCS departments | Resolved against existing data first — by code (`FM`, `LCS`; overridable in the UAT script), then exact name. **UAT script:** if genuinely missing it is **reported** and its rows blocked; it is created only on a re-run with `@CreateMissingOwningDepartments = 1`, and **never** while a similarly named department exists (reported as a near match — map it via the code variable instead). **Development seed:** created when genuinely missing, so their rows are not skipped because the sample seed lacks them. No duplicates in either path. |
+| 2 | Reception is not a department | "Reception / CS" and "CS Intake" are the step *Customer Service intake (Reception / CS)* on the Customer Service queue. |
+| 3 | Admin Sales, Sales, Legal, HR, Marketing: no departments yet; documented manual hand-offs; Draft allowed | Each is a step *Manual handoff to X (documented; no system transfer)* of kind **Department Work** on the owning department — deliberately **not** a queue/assignment step, so nothing implies the engine transfers the ticket. These destinations never resolve (even if a same-named department appears), so their workflows stay **Draft** until the business decides. |
+| 4 | FM-SVC-001 stays owned by Facilities Management; "Responsible Finance" is a dependency | Owner FM; *Manual handoff to Responsible Finance* (optional — the workbook's "FM/…" is an alternative) is a pending dependency, so the workflow is **Draft**. |
+| 5 | Keep all imported request types inactive | `IsActive = false` on every created row; nothing re-activates or modifies them on re-run. |
+| 6 | Do not guess the 10 Conditional approvals; do not touch ReopenApproval | No approval requirement created; all 10 flagged in §5; ReopenApproval untouched. |
+| 7 | Do not invent SLA conversions | "Same business day", "Based on severity" → no SLA row; First Response not stored for any row; all flagged in §6. |
+| 8 | Do not merge/replace similarly named request types | `REG-NOC-001/002/003`, `HO-NOC-001`: exact same name exists → **not imported** (the unique department+name index allows only one; creating a renamed copy would invent a name); existing rows untouched. `CS-CMP-001` *Complaint*: imported inactive **alongside** the existing *Complaint Handling*, flagged. |
+| 9 | Request Groups are not intake Categories | No Category created or linked; the group is kept in the workflow description. The model keeps them separate (`Category` = intake routing taxonomy; its link to `RequestType` is an open phase-2 decision). |
+
+## 2. Artifacts
 
 | Artifact | Purpose |
 |---|---|
-| `src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesBusinessReview.cs` | The catalog: reads the 35 rows verbatim, normalizes them (throwing on any unknown value), and holds the explicit structured-workflow translation per Request Code. |
-| `src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesImporter.cs` | The idempotent, additive, transactional importer. |
-| `DevSeedData.SeedNewRequestTypesForReviewAsync` | Fresh (Development) databases. `DevSeedData` only runs when `IsDevelopment()`, so **Production is never seeded**. |
-| `ImportNewRequestTypes_UAT.sql` (repo root) | Existing UAT databases. Same rules as the importer; its data block is rendered from the same catalog and a test fails on any drift. Supports a dry run (`@CommitChanges = 0`). |
-| `src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs` | 16 tests (fidelity, normalization, publish validation, column limits, outcomes, inactivity, no modification, idempotency, SQLite transaction, SQL drift). |
+| `src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesBusinessReview.cs` | Catalog: reads the 35 rows verbatim, normalizes them (throws on any unknown value), holds the structured-workflow translation per Request Code, the confirmed owning departments, the pending hand-off destinations and the similar-name list. |
+| `src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesImporter.cs` | Idempotent, additive, transactional importer; per-row UAT review flags and an owning-department report. |
+| `DevSeedData.SeedNewRequestTypesForReviewAsync` | Fresh (Development) databases; `DevSeedData` only runs when `IsDevelopment()` — **Production is never seeded**. |
+| `ImportNewRequestTypes_UAT.sql` (repo root) | Existing UAT databases: same rules; data block rendered from the catalog (a test fails on drift); `@CommitChanges` (dry run), `@CreateMissingOwningDepartments`, FM/LCS code overrides. |
+| `src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs` | 19 tests. |
 
-**No migration. No new table. No new status.** `dotnet ef migrations
-has-pending-model-changes` → *No changes have been made to the model since
-the last migration.*
+**No migration. No new table. No new status.**
 
-## 2. Data-model audit and column mapping
+## 3. Data-model audit and column mapping
 
 | Excel column | TigerCS representation | Support |
 |---|---|---|
-| Request Code | `Workflows.Code` (unique, 24 chars) of a per-request-type workflow; its version 1 `WorkflowTemplates.Code` too. `RequestTypes` has no code column, so the code is carried by the workflow the request type points at. This is also the idempotency key. | Supported (without schema change) |
-| Department | `RequestTypes.DepartmentId`, resolved by `Departments.Code` then exact `Name` (both unique). Never created. | Supported |
-| Request Group | No column on `RequestType`. `Category` is the separate intake taxonomy and its link to request types is an open phase-2 decision, so no categories were created. Stored in the workflow description. | **Gap** (documentation only) |
+| Request Code | `Workflows.Code` (unique) of the request type's own workflow, and its version 1 code. `RequestTypes` has no code column, so the code is carried by the workflow; it is also the idempotency key. | Supported without schema change |
+| Department | `RequestTypes.DepartmentId`, resolved by `Departments.Code`, then exact `Name` (both unique) | Supported |
+| Request Group | No column on `RequestType`; not a Category (decision 9). Kept in the workflow description. | Gap (documentation only) |
 | New Request Type | `RequestTypes.Name` (unique per department) | Supported |
-| Business Description | No column on `RequestType`; stored in the workflow description | **Gap** (documentation only) |
-| Proposed Workflow | Structured `WorkflowTemplateSteps` (see §4); verbatim text kept in the workflow description | Supported, with gaps in §4 |
-| Needs Approval? / Approval Role | `RequestTypeApprovalRequirements` (ApprovalType + TargetKind Role/Department/Employee) | **Not applied** — see §6 |
-| Default Priority | `RequestTypes.DefaultPriorityId`; Normal→Medium (the documented `NormalUrgencyPriority` mapping), High→High, Low→Low | Supported |
-| First Response SLA | `RequestTypeSlaPolicies.FirstResponseTargetValue` — but one `Unit` per row | **Not stored** — see §7 |
-| Resolution SLA | `RequestTypeSlaPolicies` (Days, `ClockBasis = BusinessHours`, `Trigger = TicketCreated`, at the default priority) | Supported where numeric |
-| Required Fields | `RequestTypes.RequiredFieldsJson` (provisional JSON array, nothing enforces it yet) | Stored as labels — see §8 |
-| Required Documents | Not modeled (attachments are a later increment); stored in the workflow description | **Gap** |
-| Allow Transfer? | Department-level only (`DepartmentWorkflowSettings.AllowTransferToOtherDepartments`); no per-request-type flag. All 35 = **Yes**, which matches the existing default (and "no settings row" = allowed), so nothing is changed. | **Gap** (no effect today) |
-| Allow Reopen? | `RequestTypes.AllowReopen` — all 35 = Yes → `true` | Supported |
-| Business Decision / Comments | All blank → every row imported **inactive** | — |
+| Business Description | No column on `RequestType`; kept in the workflow description | Gap (documentation only) |
+| Proposed Workflow | Structured `WorkflowTemplateSteps` (§4); verbatim text in the workflow description | Supported, with engine gaps (§4) |
+| Needs Approval? / Approval Role | `RequestTypeApprovalRequirements` | **Not applied** — §5 |
+| Default Priority | `DefaultPriorityId`: Normal→Medium (documented `NormalUrgencyPriority`), High→High, Low→Low | Supported |
+| First Response SLA | `RequestTypeSlaPolicies.FirstResponseTargetValue` — one unit per row | **Not stored** — §6 |
+| Resolution SLA | `RequestTypeSlaPolicies`: Days, `ClockBasis = BusinessHours`, `TicketCreated`, default priority | Supported where numeric |
+| Required Fields | `RequiredFieldsJson` (provisional; nothing enforces it) | Stored as labels — §7 |
+| Required Documents | Not modeled | Gap — §7 |
+| Allow Transfer? | Department-level only (`DepartmentWorkflowSettings`); all 35 = Yes = existing default; no per-type flag | Gap (no effect today) |
+| Allow Reopen? | `RequestTypes.AllowReopen` — all 35 = Yes | Supported |
+| Business Decision / Comments | All blank → imported **inactive** | — |
 
-Not in the workbook, set conservatively and listed for confirmation:
-`AllowAgentPriorityChange = false`, `AllowPendingCustomer = false`
-(no translated flow has a Pending Customer step), `AllowPendingInternal =
-false` (retired capability).
+Not in the workbook, set conservatively: `AllowAgentPriorityChange = false`,
+`AllowPendingCustomer = false`, `AllowPendingInternal = false`.
 
-### UAT activation approach
+**Activation (when the business approves a row):** Administration → Request
+Types. Administration refuses to activate a request type whose workflow has no
+Published version, so Draft rows cannot go live until their dependency is
+decided and the workflow published in the Workflow Designer.
 
-`RequestType.IsActive` exists and ticket creation/classification already
-refuse inactive request types. Every imported request type is therefore
-created **inactive**: visible in Administration → Request Types for review,
-invisible to intake. An approved row is switched on there (an audited
-configuration edit). Administration **refuses to activate a request type
-whose workflow has no Published version**, so the Draft-workflow rows (§5)
-cannot go live until their destination is decided and the workflow is
-published in the Workflow Designer. No Draft status was introduced.
+## 4. 35/35 UAT review status
 
-## 3. 35/35 reconciliation
+Scenario verified on SQL Server 2022 against a database seeded from `main`
+(Facilities Management present, Leasing Customer Services absent — what the
+UAT script is expected to meet):
 
-Outcomes are for a database shaped like the reference seed (CS, COL, REG, HO,
-CC, ACC, **FM**; no Leasing Customer Services). Verified identically through
-the C# importer (Development startup) and the SQL script, both on SQL Server
-2022. On a real UAT database the outcome depends on which departments exist
-there; the script prints its plan before applying and supports a dry run.
+* **Step 1 — default run:** Leasing Customer Services reported *genuinely
+  missing*; its 5 rows **blocked**; 19 imported Published + 7 imported Draft;
+  4 exact-name conflicts.
+* **Step 2 — after the business confirms, re-run with
+  `@CreateMissingOwningDepartments = 1`:** department created once; its 5
+  rows imported; everything else `AlreadyImported`.
+* **Step 3 — re-run:** nothing created.
 
-**Summary: 20 created (workflow Published) · 6 created with Draft workflow ·
-4 not imported (existing request type) · 5 not imported (owning department
-missing) = 35.** Without an FM department, the 4 FM rows are also skipped and
-`HO-HND-004` becomes Draft (15 / 7 / 4 / 9).
+**Final accounting (35):** **31 imported inactive** (24 with the
+workflow Published, 7 Draft because of an unresolved dependency) +
+**4 exact-name conflicts not imported** = 35. Before step 2, 5
+of the 31 are blocked on the missing owning department. Cross-cutting flags:
+**10** need an approval decision; **4** need a Resolution SLA
+decision; **all 35** need the First Response decision; **5** carry an
+existing-name conflict (4 exact + `CS-CMP-001` similar).
 
-| # | Request Code | Excel Department → TigerCS dept | Request Group | Request Type | Priority (Excel → TigerCS) | Resolution SLA stored | Outcome (reference UAT-like DB) |
-|---|---|---|---|---|---|---|---|
-| 1 | `CS-GEN-001` | Customer Service → `CS` | General Inquiries | General Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 2 | `CS-GEN-002` | Customer Service → `CS` | General Inquiries | Office Hours / Contact Information | Low → Low | — (decision) | Created (inactive, workflow Published) |
-| 3 | `CS-GEN-003` | Customer Service → `CS` | General Inquiries | Construction Update | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 4 | `CS-CMP-001` | Customer Service → `CS` | Complaints & Feedback | Complaint | High → High | 2 business day(s) | Created (inactive, workflow Published) |
-| 5 | `CS-CMP-002` | Customer Service → `CS` | Complaints & Feedback | Feedback / Suggestion | Low → Low | 1 business day(s) | Created (inactive, workflow Published) |
-| 6 | `REG-NOC-001` | Customer Service → `CS` | NOC | NOC for Resale | Normal → Medium | 2 business day(s) | **Not imported** — same name already exists in dept |
-| 7 | `REG-NOC-002` | Customer Service → `CS` | NOC | NOC for Golden Visa | Normal → Medium | 2 business day(s) | **Not imported** — same name already exists in dept |
-| 8 | `REG-NOC-003` | Customer Service → `CS` | NOC | NOC for Mortgage | Normal → Medium | 2 business day(s) | **Not imported** — same name already exists in dept |
-| 9 | `REG-CON-001` | Registration → `REG` | Contracts / DLD | SPA / Contract Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 10 | `REG-DLD-001` | Registration → `REG` | Contracts / DLD | Ownership Transfer / Title Deed Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 11 | `COL-PAY-001` | Collections → `COL` | Payments & Collection | Payment / Outstanding Balance Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 12 | `COL-PAY-002` | Collections → `COL` | Payments & Collection | Returned Cheque | High → High | 1 business day(s) | Created (inactive, workflow Published) |
-| 13 | `COL-PAY-003` | Collections → `COL` | Payments & Collection | Cheque Collection | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 14 | `COL-PAY-004` | Collections → `COL` | Payments & Collection | Payment Cheque Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 15 | `HO-NOC-001` | Customer Service → `CS` | Handover | NOC for Handover | Normal → Medium | 2 business day(s) | **Not imported** — same name already exists in dept |
-| 16 | `HO-HND-001` | Handover → `HO` | Handover | Coordinate Handover | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 17 | `HO-HND-002` | Handover → `HO` | Handover | Schedule Handover Appointment | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 18 | `HO-HND-003` | Handover → `HO` | Handover | Move-In / Move-Out | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 19 | `HO-HND-004` | Handover → `HO` | Handover | Handover Maintenance Follow-up | Normal → Medium | — (decision) | Created (inactive, workflow Published) |
-| 20 | `FM-MNT-001` | Facilities Management → `FM` | Maintenance | Repair / Maintenance Request | Normal → Medium | — (decision) | Created (inactive, workflow Published) |
-| 21 | `FM-UTL-001` | Facilities Management → `FM` | Maintenance | Utilities Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 22 | `FM-COM-001` | Facilities Management → `FM` | Maintenance | Common Area Maintenance | Normal → Medium | — (decision) | Created (inactive, workflow Published) |
-| 23 | `FM-SVC-001` | Facilities Management → `FM` | Service Charge | Service Charge Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
-| 24 | `LCS-TEN-001` | Leasing Customer Services → `Leasing Customer Services` | Leasing | Tenancy Contract | Normal → Medium | 2 business day(s) | **Not imported** — owning dept missing |
-| 25 | `LCS-EJR-001` | Leasing Customer Services → `Leasing Customer Services` | Leasing | Ejari | Normal → Medium | 2 business day(s) | **Not imported** — owning dept missing |
-| 26 | `LCS-BKG-001` | Leasing Customer Services → `Leasing Customer Services` | Leasing | Booking | Normal → Medium | 1 business day(s) | **Not imported** — owning dept missing |
-| 27 | `LCS-MOV-001` | Leasing Customer Services → `Leasing Customer Services` | Leasing | Move-In / Move-Out | Normal → Medium | 1 business day(s) | **Not imported** — owning dept missing |
-| 28 | `LCS-CHK-001` | Leasing Customer Services → `Leasing Customer Services` | Leasing | Rent / DEWA / AC Cheque Inquiry | Normal → Medium | 1 business day(s) | **Not imported** — owning dept missing |
-| 29 | `BRK-COM-001` | Customer Service → `CS` | Broker Inquiries | Broker Commission Inquiry | Normal → Medium | 2 business day(s) | Created (inactive, workflow **Draft**) — unresolved: Admin Sales |
-| 30 | `BRK-CHK-001` | Customer Service → `CS` | Broker Inquiries | Broker Cheque Collection | Normal → Medium | 1 business day(s) | Created (inactive, workflow **Draft**) — unresolved: Admin Sales |
-| 31 | `SAL-INQ-001` | Customer Service → `CS` | Sales | Property Sales Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow **Draft**) — unresolved: Sales |
-| 32 | `LEG-INQ-001` | Customer Service → `CS` | Legal | Legal Notice / Permit / Approval Inquiry | High → High | 2 business day(s) | Created (inactive, workflow **Draft**) — unresolved: Legal |
-| 33 | `REC-HR-001` | Customer Service → `CS` | Reception | HR Inquiry | Low → Low | 1 business day(s) | Created (inactive, workflow **Draft**) — unresolved: HR |
-| 34 | `REC-MKT-001` | Customer Service → `CS` | Reception | Marketing Inquiry | Low → Low | 1 business day(s) | Created (inactive, workflow **Draft**) — unresolved: Marketing |
-| 35 | `REC-OTH-001` | Customer Service → `CS` | Reception | Other Reception Inquiry | Normal → Medium | 1 business day(s) | Created (inactive, workflow Published) |
+| # | Request Code | Department | Request Type | Imported inactive | Draft — unresolved workflow dependency | Blocked — owning dept missing | Existing-name conflict | Approval decision required | SLA decision required |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | `CS-GEN-001` | Customer Service (`CS`) | General Inquiry | Yes | — | — | — | — | First Response only |
+| 2 | `CS-GEN-002` | Customer Service (`CS`) | Office Hours / Contact Information | Yes | — | — | — | — | Resolution ("Same business day") + First Response |
+| 3 | `CS-GEN-003` | Customer Service (`CS`) | Construction Update | Yes | — | — | — | — | First Response only |
+| 4 | `CS-CMP-001` | Customer Service (`CS`) | Complaint | Yes | — | — | **Similar** — "Complaint Handling" exists; imported alongside | Yes — CS Supervisor / Manager | First Response only |
+| 5 | `CS-CMP-002` | Customer Service (`CS`) | Feedback / Suggestion | Yes | — | — | — | — | First Response only |
+| 6 | `REG-NOC-001` | Customer Service (`CS`) | NOC for Resale | No | — | — | **Exact** — "NOC for Resale" exists; not imported | Yes — Registration Supervisor / Authorized Approver | First Response only |
+| 7 | `REG-NOC-002` | Customer Service (`CS`) | NOC for Golden Visa | No | — | — | **Exact** — "NOC for Golden Visa" exists; not imported | Yes — Registration Supervisor / Authorized Approver | First Response only |
+| 8 | `REG-NOC-003` | Customer Service (`CS`) | NOC for Mortgage | No | — | — | **Exact** — "NOC for Mortgage" exists; not imported | Yes — Registration Supervisor / Authorized Approver | First Response only |
+| 9 | `REG-CON-001` | Registration (`REG`) | SPA / Contract Inquiry | Yes | — | — | — | — | First Response only |
+| 10 | `REG-DLD-001` | Registration (`REG`) | Ownership Transfer / Title Deed Inquiry | Yes | — | — | — | — | First Response only |
+| 11 | `COL-PAY-001` | Collections (`COL`) | Payment / Outstanding Balance Inquiry | Yes | — | — | — | — | First Response only |
+| 12 | `COL-PAY-002` | Collections (`COL`) | Returned Cheque | Yes | — | — | — | Yes — Collections Supervisor / Manager | First Response only |
+| 13 | `COL-PAY-003` | Collections (`COL`) | Cheque Collection | Yes | — | — | — | — | First Response only |
+| 14 | `COL-PAY-004` | Collections (`COL`) | Payment Cheque Inquiry | Yes | — | — | — | — | First Response only |
+| 15 | `HO-NOC-001` | Customer Service (`CS`) | NOC for Handover | No | — | — | **Exact** — "NOC for Handover" exists; not imported | Yes — Handover Supervisor / Authorized Approver | First Response only |
+| 16 | `HO-HND-001` | Handover (`HO`) | Coordinate Handover | Yes | — | — | — | — | First Response only |
+| 17 | `HO-HND-002` | Handover (`HO`) | Schedule Handover Appointment | Yes | — | — | — | — | First Response only |
+| 18 | `HO-HND-003` | Handover (`HO`) | Move-In / Move-Out | Yes | — | — | — | — | First Response only |
+| 19 | `HO-HND-004` | Handover (`HO`) | Handover Maintenance Follow-up | Yes | — | — | — | — | Resolution ("Based on issue severity") + First Response |
+| 20 | `FM-MNT-001` | Facilities Management (`FM`) | Repair / Maintenance Request | Yes | — | — | — | — | Resolution ("Based on severity") + First Response |
+| 21 | `FM-UTL-001` | Facilities Management (`FM`) | Utilities Inquiry | Yes | — | — | — | — | First Response only |
+| 22 | `FM-COM-001` | Facilities Management (`FM`) | Common Area Maintenance | Yes | — | — | — | — | Resolution ("Based on severity") + First Response |
+| 23 | `FM-SVC-001` | Facilities Management (`FM`) | Service Charge Inquiry | Yes | Draft: Responsible Finance | — | — | — | First Response only |
+| 24 | `LCS-TEN-001` | Leasing Customer Services (`LCS`) | Tenancy Contract | Yes — once LCS exists (step 2) | — | Until Leasing Customer Services is confirmed & created | — | Yes — Leasing Supervisor / Authorized Approver | First Response only |
+| 25 | `LCS-EJR-001` | Leasing Customer Services (`LCS`) | Ejari | Yes — once LCS exists (step 2) | — | Until Leasing Customer Services is confirmed & created | — | Yes — Leasing Supervisor / Authorized Approver | First Response only |
+| 26 | `LCS-BKG-001` | Leasing Customer Services (`LCS`) | Booking | Yes — once LCS exists (step 2) | — | Until Leasing Customer Services is confirmed & created | — | — | First Response only |
+| 27 | `LCS-MOV-001` | Leasing Customer Services (`LCS`) | Move-In / Move-Out | Yes — once LCS exists (step 2) | — | Until Leasing Customer Services is confirmed & created | — | — | First Response only |
+| 28 | `LCS-CHK-001` | Leasing Customer Services (`LCS`) | Rent / DEWA / AC Cheque Inquiry | Yes — once LCS exists (step 2) | — | Until Leasing Customer Services is confirmed & created | — | — | First Response only |
+| 29 | `BRK-COM-001` | Customer Service (`CS`) | Broker Commission Inquiry | Yes | Draft: Admin Sales | — | — | Yes — Responsible Manager | First Response only |
+| 30 | `BRK-CHK-001` | Customer Service (`CS`) | Broker Cheque Collection | Yes | Draft: Admin Sales | — | — | — | First Response only |
+| 31 | `SAL-INQ-001` | Customer Service (`CS`) | Property Sales Inquiry | Yes | Draft: Sales | — | — | — | First Response only |
+| 32 | `LEG-INQ-001` | Customer Service (`CS`) | Legal Notice / Permit / Approval Inquiry | Yes | Draft: Legal | — | — | Yes — Legal / Authorized Approver | First Response only |
+| 33 | `REC-HR-001` | Customer Service (`CS`) | HR Inquiry | Yes | Draft: HR | — | — | — | First Response only |
+| 34 | `REC-MKT-001` | Customer Service (`CS`) | Marketing Inquiry | Yes | Draft: Marketing | — | — | — | First Response only |
+| 35 | `REC-OTH-001` | Customer Service (`CS`) | Other Reception Inquiry | Yes | — | — | — | — | First Response only |
 
-Re-running creates nothing: every created row is recognised by its Request
-Code as `AlreadyImported`, even if renamed or activated in the meantime.
+## 5. Approval Mapping Required (10 Conditional rows)
 
-## 4. Structured workflows
+Supported model: `ApprovalType` ∈ {AccountingApproval, CustomerServiceApproval,
+ReopenApproval}; `TargetKind` ∈ {Role, Department (optionally narrowed to a
+role), Employee}; fixed roles: CS Agent, CS Supervisor, Department Employee,
+Department Head, CS Manager, General Manager, Chairman/CEO, System
+Administrator, Reporting User. **Nothing applied.** ReopenApproval untouched.
 
-Each imported row gets its own workflow (code = Request Code) whose version 1
-holds the translated steps, validated with the Workflow Designer's own
-publish rules (`WorkflowTemplate.Publish`).
-
-**Translation rules** (no semantics invented beyond the mandatory Start step):
-
-| Excel step | Classification | Step kind |
-|---|---|---|
-| (implicit) | Start | `Created` — every TigerCS workflow must begin with it |
-| "CS Queue", "Collections Queue", "CS Intake", "Reception / CS", … | Queue / Department ownership | `Assigned` |
-| "Agent", "CS Agent", "Agent/Technician" | Assignment | `Assigned` |
-| hand-off to another department (Accounting, Admin Sales, Sales, Legal, HR, Marketing, back to CS, to Handover) | Transfer / Handoff | `Assigned`, with a destination department |
-| "Facilities Management if needed" (Handover) | Transfer / Handoff (conditional) | `MaintenanceDependency` (optional) — the existing Handover maintenance concept |
-| review / coordinate / follow-up / confirm / process / in progress | Operational/manual | `InProgress` |
-| "Escalate if needed" | Operational/manual (optional) | `InProgress` — the existing manual escalation, **not** an approval |
-| Resolve, "CS Resolve", "Acknowledge/Resolve" | Resolve | `Resolved` |
-| Close | Close | `Closed` |
-
-No `Approval` (`WaitingForApproval`) step was generated: every Approval step
-needs a supported approval type, and none fits (§6).
-
-**Engine gaps (kept as documentation, reported):**
-
-1. **A step cannot name a destination department.** Hand-offs are `Assigned`
-   steps named after the destination, and the actual move is the existing
-   manual Transfer action. The importer uses the destination only to decide
-   whether the workflow can be published.
-2. **No conditional steps.** "if needed" becomes `IsOptional = true`.
-3. **No "Escalate" step kind.** Escalation stays the existing
-   `TicketEscalation` feature; the step documents the point in the flow.
-4. `LEG-INQ-001` "CS Resolve" after the Legal hand-off implies a return to
-   CS that the workbook does not list; it was not invented as a step.
-5. Workbook typos were corrected in step names only ("Acounting",
-   "CS Agentt", "Cs Agent", "Admin sales"); the verbatim text is preserved in
-   the workflow description.
-
-| Request Code | Proposed Workflow (verbatim) | Structured steps (step kind · classification) |
-|---|---|---|
-| `CS-GEN-001` | CS Queue → Agent → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `CS-GEN-002` | CS Queue → Agent → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `CS-GEN-003` | CS Queue → Agent → Obtain update if needed → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Obtain update if needed (optional) `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `CS-CMP-001` | CS Queue → Agent → Escalate if needed → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Escalate if needed (optional) `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `CS-CMP-002` | CS Queue → Agent → Record/route → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Record / route `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REG-NOC-001` | CS Queue → CS Agent →Acounting→CS Agentt → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → CS Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Transfer / Handoff ⇒ Accounting → Return to CS Agent `Assigned`·Transfer / Handoff ⇒ Customer Service → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REG-NOC-002` | CS Queue → CS Agent →Acounting→CS Agentt → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → CS Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Transfer / Handoff ⇒ Accounting → Return to CS Agent `Assigned`·Transfer / Handoff ⇒ Customer Service → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REG-NOC-003` | CS Queue → CS Agent →Acounting→CS Agentt → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → CS Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Transfer / Handoff ⇒ Accounting → Return to CS Agent `Assigned`·Transfer / Handoff ⇒ Customer Service → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REG-CON-001` | Registration Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Registration Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REG-DLD-001` | Registration Queue → Agent → Review DLD/registration status → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Registration Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review DLD / registration status `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `COL-PAY-001` | Collections Queue → Agent → Review account → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Collections Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review account `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `COL-PAY-002` | Collections Queue → Agent → Follow-up → Escalate if needed → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Collections Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Follow-up `InProgress`·Operational/manual → Escalate if needed (optional) `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `COL-PAY-003` | Collections Queue → Agent → Confirm cheque/collection → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Collections Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Confirm cheque / collection `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `COL-PAY-004` | Collections Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Collections Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `HO-NOC-001` | CS Queue →Agent→Acounting→ CS Agent → Handover Agent → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Transfer / Handoff ⇒ Accounting → Return to CS Agent `Assigned`·Transfer / Handoff ⇒ Customer Service → Transfer to Handover Agent `Assigned`·Transfer / Handoff ⇒ Handover → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `HO-HND-001` | Handover Queue → Agent → Coordinate → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Handover Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Coordinate `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `HO-HND-002` | Handover Queue → Agent → Confirm available slot → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Handover Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Confirm available slot `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `HO-HND-003` | Handover Queue → Agent → Coordinate requirements → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Handover Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Coordinate requirements `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `HO-HND-004` | Handover Queue → Facilities Management if needed → Follow-up → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Handover Queue `Assigned`·Queue / Department ownership → Facilities Management if needed (optional) `MaintenanceDependency`·Transfer / Handoff ⇒ Facilities Management → Follow-up `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `FM-MNT-001` | FM Queue → Assign Agent/Technician → In Progress → Resolve → Close | Ticket Created `Created`·Start (mandatory) → FM Queue `Assigned`·Queue / Department ownership → Assign Agent / Technician `Assigned`·Assignment → In Progress `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `FM-UTL-001` | FM Queue → Agent → Review/coordinate → Resolve → Close | Ticket Created `Created`·Start (mandatory) → FM Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review / coordinate `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `FM-COM-001` | FM Queue → Agent/Technician → In Progress → Resolve → Close | Ticket Created `Created`·Start (mandatory) → FM Queue `Assigned`·Queue / Department ownership → Agent / Technician `Assigned`·Assignment → In Progress `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `FM-SVC-001` | FM/Responsible Finance Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → FM / Responsible Finance Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `LCS-TEN-001` | Leasing CS Queue → Agent → Process/Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Leasing CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Process / review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `LCS-EJR-001` | Leasing CS Queue → Agent → Process/Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Leasing CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Process / review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `LCS-BKG-001` | Leasing CS Queue → Agent → Confirm booking/details → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Leasing CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Confirm booking / details `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `LCS-MOV-001` | Leasing CS Queue → Agent → Coordinate → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Leasing CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Coordinate `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `LCS-CHK-001` | Leasing CS Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Leasing CS Queue `Assigned`·Queue / Department ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `BRK-COM-001` | CS Queue →Cs Agent  → Admin sales →Review → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → CS Agent `Assigned`·Assignment → Transfer to Admin Sales `Assigned`·Transfer / Handoff ⇒ Admin Sales → Review `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `BRK-CHK-001` | CS Queue →Cs Agent  → Admin sales → Confirm collection → Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Queue `Assigned`·Queue / Department ownership → CS Agent `Assigned`·Assignment → Transfer to Admin Sales `Assigned`·Transfer / Handoff ⇒ Admin Sales → Confirm collection `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `SAL-INQ-001` | CS / Call Center → Sales Handoff → Follow-up → Resolve / Close | Ticket Created `Created`·Start (mandatory) → CS / Call Center Queue `Assigned`·Queue / Department ownership → Sales Handoff `Assigned`·Transfer / Handoff ⇒ Sales → Follow-up `InProgress`·Operational/manual → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `LEG-INQ-001` | CS Intake → Legal Handoff → Legal Review/Response → CS Resolve → Close | Ticket Created `Created`·Start (mandatory) → CS Intake `Assigned`·Queue / Department ownership → Legal Handoff `Assigned`·Transfer / Handoff ⇒ Legal → Legal Review / Response `InProgress`·Operational/manual → CS Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REC-HR-001` | Reception / CS → HR Handoff → Acknowledge/Resolve → Close | Ticket Created `Created`·Start (mandatory) → Reception / CS `Assigned`·Queue / Department ownership → HR Handoff `Assigned`·Transfer / Handoff ⇒ HR → Acknowledge / Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REC-MKT-001` | Reception / CS → Marketing Handoff → Acknowledge/Resolve → Close | Ticket Created `Created`·Start (mandatory) → Reception / CS `Assigned`·Queue / Department ownership → Marketing Handoff `Assigned`·Transfer / Handoff ⇒ Marketing → Acknowledge / Resolve `Resolved`·Resolve → Close `Closed`·Close |
-| `REC-OTH-001` | Reception / CS → Route to Responsible Department → Resolve → Close | Ticket Created `Created`·Start (mandatory) → Reception / CS `Assigned`·Queue / Department ownership → Route to Responsible Department `Assigned`·Transfer / Handoff → Resolve `Resolved`·Resolve → Close `Closed`·Close |
-
-## 5. Unresolved workflow destinations and departments
-
-| Department | Referenced by | Exists? | Effect |
-|---|---|---|---|
-| Customer Service (`CS`), Registration (`REG`), Collections (`COL`), Handover (`HO`) | owning | Yes (reference seed) | — |
-| Accounting (`ACC`) | NOC hand-offs | Yes (reference seed) | — (the NOC rows are not imported for another reason, §3) |
-| Facilities Management (`FM`) | owning (4 rows); `HO-HND-004` destination | **Only in the development seed** (`DevSeedData`); not in `WorkflowReferenceData` | Confirm it exists in UAT. If missing: FM rows skipped, `HO-HND-004` Draft |
-| **Leasing Customer Services** | owning (5 `LCS-*` rows) | **No** — in no seed or script | 5 rows **not imported** |
-| **Admin Sales** | `BRK-COM-001`, `BRK-CHK-001` | **No** | Draft workflow |
-| **Sales** | `SAL-INQ-001` | **No** | Draft workflow |
-| **Legal** | `LEG-INQ-001` (also its approver) | **No** | Draft workflow |
-| **HR** | `REC-HR-001` | **No** | Draft workflow |
-| **Marketing** | `REC-MKT-001` | **No** | Draft workflow |
-| Finance ("Responsible Finance") | `FM-SVC-001` queue wording | `FIN` only in the development seed | Modeled as the FM queue; ownership needs confirming |
-| Reception | `REC-*` intake wording | Not a department | Modeled as the CS queue (owning department is CS) |
-
-None of these was created. Departments with no known code resolve by exact
-name only (Leasing Customer Services, Sales, Admin Sales, Legal, HR,
-Marketing); if UAT already holds one under a different name, tell us the
-name/code and the catalog can map it.
-
-## 6. Approval mapping (10 Conditional rows) — **Approval Mapping Required**
-
-The supported model: `ApprovalType` ∈ {AccountingApproval,
-CustomerServiceApproval, ReopenApproval}; `TargetKind` ∈ {Role, Department
-(optionally narrowed to a role), Employee}; roles are the fixed set
-(CS Agent, CS Supervisor, Department Employee, Department Head, CS Manager,
-General Manager, Chairman/CEO, System Administrator, Reporting User).
-**No approval requirement was created.** `ReopenApproval` was not touched.
-
-| Request Code | Request Type | Approval Role (Excel) | Exact match? | Proposed mapping (needs confirmation) | Blocker |
+| Request Code | Request Type | Approval Role (Excel) | Maps exactly? | Possible mapping — for confirmation only | Blocker |
 |---|---|---|---|---|---|
-| `CS-CMP-001` | Complaint | CS Supervisor / Manager | No ("/" = either) | `CustomerServiceApproval`, Role = **CS Supervisor** (the existing provisional CS approver) or CS Manager | Which role; "Conditional" has no model (a requirement applies to every ticket) |
-| `REG-NOC-001` | NOC for Resale | Registration Supervisor / Authorized Approver | No | Department = `REG`, narrowed to **Department Head** | No approval type fits (not Accounting/CS approval); row not imported (§3) |
+| `CS-CMP-001` | Complaint | CS Supervisor / Manager | No | `CustomerServiceApproval` → Role CS Supervisor *or* CS Manager | Which role; "Conditional" has no model (a requirement applies to every ticket) |
+| `REG-NOC-001` | NOC for Resale | Registration Supervisor / Authorized Approver | No | Department `REG` narrowed to Department Head | No approval type fits; also an exact-name conflict |
 | `REG-NOC-002` | NOC for Golden Visa | Registration Supervisor / Authorized Approver | No | as above | as above |
 | `REG-NOC-003` | NOC for Mortgage | Registration Supervisor / Authorized Approver | No | as above | as above |
-| `COL-PAY-002` | Returned Cheque | Collections Supervisor / Manager | No | Department = `COL`, narrowed to **Department Head** | No approval type fits |
-| `HO-NOC-001` | NOC for Handover | Handover Supervisor / Authorized Approver | No | Department = `HO`, narrowed to **Department Head** | No approval type fits; row not imported (§3) |
-| `LCS-TEN-001` | Tenancy Contract | Leasing Supervisor / Authorized Approver | No | Department = Leasing, narrowed to Department Head | Department missing; no approval type fits |
+| `COL-PAY-002` | Returned Cheque | Collections Supervisor / Manager | No | Department `COL` narrowed to Department Head | No approval type fits |
+| `HO-NOC-001` | NOC for Handover | Handover Supervisor / Authorized Approver | No | Department `HO` narrowed to Department Head | No approval type fits; also an exact-name conflict |
+| `LCS-TEN-001` | Tenancy Contract | Leasing Supervisor / Authorized Approver | No | Department Leasing Customer Services narrowed to Department Head | No approval type fits |
 | `LCS-EJR-001` | Ejari | Leasing Supervisor / Authorized Approver | No | as above | as above |
 | `BRK-COM-001` | Broker Commission Inquiry | Responsible Manager | No | none — which manager? | Unmappable without a named role/department |
-| `LEG-INQ-001` | Legal Notice / Permit / Approval Inquiry | Legal / Authorized Approver | No | Department = Legal | Department missing; no approval type fits |
+| `LEG-INQ-001` | Legal Notice / Permit / Approval Inquiry | Legal / Authorized Approver | No | none until Legal is represented (decision 3) | No department; no approval type fits |
 
-"Supervisor" has no per-department role in TigerCS; departments' head role is
-**Department Head** (`DepartmentWorkflowSettings.HeadRoleName`), which is why
-it is the proposal. "Authorized Approver" would be an `Employee` target
-naming a specific person. Implementing any of the department approvals needs
-a new, additive `ApprovalType` value (the model's stated extension path),
-which is a code change to agree first.
+"Supervisor" has no per-department role in TigerCS (a department's head role
+is Department Head); "Authorized Approver" would be an `Employee` target
+naming a person. Department approvals would also need a new additive
+`ApprovalType` — a code change to agree first.
 
-## 7. SLA mapping
+## 6. SLA mapping
 
-| Excel value | Rows | Normalized | Stored |
+| Excel value | Rows | Stored | Decision |
 |---|---|---|---|
-| Resolution "1 business day" | 22 | 1 day, business-hours clock | `Unit = Days`, `ResolutionTargetValue = 1`, `ClockBasis = BusinessHours` |
-| Resolution "2 business days" | 9 | 2 days, business-hours clock | `ResolutionTargetValue = 2` |
-| Resolution "Same business day" | 1 (`CS-GEN-002`) | **not numeric** | no SLA row — **policy decision** |
-| Resolution "Based on severity" / "Based on issue severity" | 3 (`FM-MNT-001`, `FM-COM-001`, `HO-HND-004`) | **not numeric** | no SLA row — **policy decision** |
-| First Response "2 business hours" / "4 business hours" | 6 / 29 | 2 h / 4 h | **not stored** — see below |
+| Resolution "1 business day" | 22 | `Days`, 1, `BusinessHours`, `TicketCreated`, default priority | — |
+| Resolution "2 business days" | 9 | `Days`, 2, as above | — |
+| Resolution "Same business day" | 1 (`CS-GEN-002`) | **no SLA row** | **SLA policy decision** — no numeric value is invented |
+| Resolution "Based on severity" / "Based on issue severity" | 3 (`HO-HND-004`, `FM-MNT-001`, `FM-COM-001`) | **no SLA row** | **SLA policy decision** — severity rules undefined |
+| First Response "2 business hours" / "4 business hours" | 6 / 29 | **not stored** | **Technical/business decision** (below) |
 
-Rows are keyed by (request type, **default priority**), trigger
-`TicketCreated`, pause flags and warning threshold left null (pending
-decisions, as in the existing seed). `RequestTypeSlaPolicies` is still
-configuration only; due dates keep using the per-priority `SlaPolicies`
-until phase 4.
+**First Response representation.** A `RequestTypeSlaPolicy` row has one
+`SlaDurationUnit` for both deadlines; the workbook mixes business hours with
+business days. Resolution is stored exactly. Storing First Response would
+require converting days to hours (1 business day = 10 h only under the
+current Sat–Thu 08:00–18:00 calendar) — not done. Options: (a) express
+resolution in business hours and store both; (b) per-deadline units (schema
+change); (c) leave First Response to the per-priority `SlaPolicies`.
+`RequestTypeSlaPolicies` is configuration only today; due dates still use the
+per-priority policy until phase 4.
 
-**First Response gap.** A `RequestTypeSlaPolicy` row has a single
-`SlaDurationUnit` for both first response and resolution; the workbook
-mixes business hours with business days. Resolution is stored exactly;
-storing first response would mean converting "1 business day" to 10 hours
-under the current Sat–Thu 08:00–18:00 calendar, which ties configuration to
-the calendar's day length. Options for the business: (a) accept resolution in
-business hours (1 day = 10 h, 2 days = 20 h) and store both; (b) add
-per-deadline units (schema change); (c) leave first response to the
-per-priority policy.
+| Request Code | First Response (Excel) | Resolution (Excel) | Stored in TigerCS | Decision |
+|---|---|---|---|---|
+| `CS-GEN-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `CS-GEN-002` | 4 business hours | Same business day | no SLA row | Resolution value + First Response |
+| `CS-GEN-003` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `CS-CMP-001` | 2 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · High | First Response |
+| `CS-CMP-002` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Low | First Response |
+| `REG-NOC-001` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `REG-NOC-002` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `REG-NOC-003` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `REG-CON-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `REG-DLD-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `COL-PAY-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `COL-PAY-002` | 2 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · High | First Response |
+| `COL-PAY-003` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `COL-PAY-004` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `HO-NOC-001` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `HO-HND-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `HO-HND-002` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `HO-HND-003` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `HO-HND-004` | 4 business hours | Based on issue severity | no SLA row | Resolution value + First Response |
+| `FM-MNT-001` | 2 business hours | Based on severity | no SLA row | Resolution value + First Response |
+| `FM-UTL-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `FM-COM-001` | 2 business hours | Based on severity | no SLA row | Resolution value + First Response |
+| `FM-SVC-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `LCS-TEN-001` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `LCS-EJR-001` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `LCS-BKG-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `LCS-MOV-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `LCS-CHK-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `BRK-COM-001` | 4 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `BRK-CHK-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `SAL-INQ-001` | 2 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
+| `LEG-INQ-001` | 2 business hours | 2 business days | Resolution 2 business day(s) · Days · BusinessHours · TicketCreated · High | First Response |
+| `REC-HR-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Low | First Response |
+| `REC-MKT-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Low | First Response |
+| `REC-OTH-001` | 4 business hours | 1 business day | Resolution 1 business day(s) · Days · BusinessHours · TicketCreated · Medium | First Response |
 
-| Request Code | First Response (Excel) | Resolution (Excel) | Stored |
-| `CS-GEN-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `CS-GEN-002` | 4 business hours | Same business day | no SLA row |
-| `CS-GEN-003` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `CS-CMP-001` | 2 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority High |
-| `CS-CMP-002` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Low |
-| `REG-NOC-001` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `REG-NOC-002` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `REG-NOC-003` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `REG-CON-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `REG-DLD-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `COL-PAY-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `COL-PAY-002` | 2 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority High |
-| `COL-PAY-003` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `COL-PAY-004` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `HO-NOC-001` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `HO-HND-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `HO-HND-002` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `HO-HND-003` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `HO-HND-004` | 4 business hours | Based on issue severity | no SLA row |
-| `FM-MNT-001` | 2 business hours | Based on severity | no SLA row |
-| `FM-UTL-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `FM-COM-001` | 2 business hours | Based on severity | no SLA row |
-| `FM-SVC-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `LCS-TEN-001` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `LCS-EJR-001` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `LCS-BKG-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `LCS-MOV-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `LCS-CHK-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `BRK-COM-001` | 4 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority Medium |
-| `BRK-CHK-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `SAL-INQ-001` | 2 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
-| `LEG-INQ-001` | 2 business hours | 2 business days | Days=2, BusinessHours, TicketCreated, priority High |
-| `REC-HR-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Low |
-| `REC-MKT-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Low |
-| `REC-OTH-001` | 4 business hours | 1 business day | Days=1, BusinessHours, TicketCreated, priority Medium |
+## 7. Required Fields / Documents
 
-## 8. Required Fields / Documents
+* **Required Fields — partially supported.** `RequiredFieldsJson` is a
+  *provisional* JSON array of intake field keys; nothing validates or enforces
+  it and no field-key catalog exists. The workbook's labels are stored
+  verbatim (including "if applicable"); they will need mapping to real field
+  keys when that feature is built.
+* **Required Documents — not supported.** No per-request-type document model
+  (attachments are a later increment). Preserved in the workflow description
+  and below; no documents engine added.
 
-* **Required Fields — partially supported.** `RequiredFieldsJson` exists as a
-  *provisional* JSON array of intake field keys; nothing validates or
-  enforces it yet and there is no field-key catalog. The workbook's labels
-  are stored verbatim as the array (e.g. `["Customer","Project/Unit if applicable","Description"]`),
-  including conditional wording ("if applicable"). When the required-fields
-  feature defines field keys, these labels need mapping to them.
-* **Required Documents — not supported.** No per-request-type document
-  model exists (attachments are a later increment). Kept in the workflow
-  description and below; no documents engine was added.
-
-| Request Code | Required Fields (Excel) → RequiredFieldsJson | Required Documents (Excel; not modeled) |
+| Request Code | Required Fields (Excel) → `RequiredFieldsJson` | Required Documents (Excel — not modeled) |
+|---|---|---|
 | `CS-GEN-001` | Customer, Project/Unit if applicable, Description → `["Customer","Project/Unit if applicable","Description"]` | None |
 | `CS-GEN-002` | Customer/Contact, Description → `["Customer/Contact","Description"]` | None |
 | `CS-GEN-003` | Customer, Project, Unit if applicable → `["Customer","Project","Unit if applicable"]` | None |
@@ -353,33 +258,115 @@ per-priority policy.
 | `REC-MKT-001` | Requester details, Description → `["Requester details","Description"]` | None |
 | `REC-OTH-001` | Requester details, Description → `["Requester details","Description"]` | None |
 
-## 9. Business decisions required
+## 8. Structured workflows
 
-1. **Business Decision for all 35 rows** (blank) — only approved rows get activated.
-2. **NOC rows `REG-NOC-001/002/003`, `HO-NOC-001`**: Customer Service already has
-   *NOC for Resale / Golden Visa / Mortgage / Handover* (seeded, active, with
-   their own SLA rows). Are these the same request types (then they are not
-   new, and any change to the existing ones is a separate, deliberate edit),
-   or distinct ones needing different names?
-3. **`CS-CMP-001` Complaint** vs existing **Complaint Handling** (CS) — duplicate?
-4. **Leasing Customer Services** — create the department (name/code)? Its 5 rows wait on it.
-5. **Destinations Sales, Admin Sales, Legal, HR, Marketing** — departments in
-   TigerCS, or hand-offs outside the system? Their 6 workflows stay Draft until decided.
-6. **Facilities Management** — confirm it exists in UAT (code `FM` / name).
-7. **`FM-SVC-001`** — owned by FM or by Finance ("FM/Responsible Finance Queue")?
-8. **Reception** — confirm it is CS intake, not a department.
-9. **Approvals (§6)** — roles, "Conditional" semantics, and whether a new approval type may be added.
-10. **SLA (§7)** — "Same business day", "Based on severity", and first-response storage.
-11. **Flags not in the workbook** — `AllowAgentPriorityChange` (relevant to the severity-based rows) and `AllowPendingCustomer` (rows that wait on customer documents) are set to `false`.
-12. **ReopenApproval** — `ConfigureReopenApprovalRequirements.sql` covers *active*
-    reopenable request types; re-run it after activation if the approved
-    rule should apply to these too. This import does not touch ReopenApproval.
-13. **Request Group** — should the groups become intake Categories?
+Every imported row has its own workflow (code = Request Code), version 1
+validated with the Workflow Designer's publish rules.
 
-## 10. Running it
+| Excel step | Classification | Step kind |
+|---|---|---|
+| (implicit) | Start | `Created` — mandatory first step |
+| "CS Queue", "Collections Queue", "FM Queue", "Leasing CS Queue", … | Queue / Department ownership | `Assigned` |
+| "Reception / CS", "CS Intake" | Queue / Department ownership (Customer Service intake) | `Assigned` |
+| "Agent", "CS Agent", "Agent/Technician" | Assignment | `Assigned` |
+| hand-off to an **existing** department (Accounting, back to CS, Handover) | Transfer / Handoff | `Assigned` — the move itself is the agent's existing Transfer action |
+| hand-off to **Admin Sales, Sales, Legal, HR, Marketing, Responsible Finance** | Transfer / Handoff — **manual, documented** | `InProgress` on the owning department; no system transfer; workflow Draft |
+| "Facilities Management if needed" (Handover) | Transfer / Handoff (conditional) | `MaintenanceDependency` (optional) |
+| review / coordinate / follow-up / confirm / process / in progress | Operational/manual | `InProgress` |
+| "Escalate if needed" | Operational/manual (optional) | `InProgress` — existing manual escalation, **not** an approval |
+| Resolve, "CS Resolve", "Acknowledge/Resolve" | Resolve | `Resolved` |
+| Close | Close | `Closed` |
 
-* **Fresh / Development database:** automatic on startup (Development only).
-* **Existing UAT database:** apply migrations, then
-  `sqlcmd -S <server> -d <database> -U <user> -P <password> -C -b -I -i ImportNewRequestTypes_UAT.sql`
-  (first with `@CommitChanges = 0` for a dry run). Re-running is safe.
-* **Production:** do not run.
+No Approval step was generated (no supported approval type fits — §5).
+
+**Engine gaps (documentation kept, not worked around):** a step cannot name a
+destination department and the engine performs no transfer; no conditional
+steps ("if needed" → optional); no escalation step kind; `LEG-INQ-001`'s
+"CS Resolve" implies a return from Legal that the workbook does not list (not
+invented). Workbook typos corrected in step names only ("Acounting", "CS
+Agentt", "Cs Agent", "Admin sales").
+
+| Request Code | Proposed Workflow (verbatim) | Structured steps — name `kind` · classification |
+|---|---|---|
+| `CS-GEN-001` | CS Queue → Agent → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `CS-GEN-002` | CS Queue → Agent → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `CS-GEN-003` | CS Queue → Agent → Obtain update if needed → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Obtain update if needed *(optional)* `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `CS-CMP-001` | CS Queue → Agent → Escalate if needed → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Escalate if needed *(optional)* `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `CS-CMP-002` | CS Queue → Agent → Record/route → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Record / route `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REG-NOC-001` | CS Queue → CS Agent →Acounting→CS Agentt → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → CS Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Handoff → Return to CS Agent `Assigned`·Handoff → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REG-NOC-002` | CS Queue → CS Agent →Acounting→CS Agentt → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → CS Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Handoff → Return to CS Agent `Assigned`·Handoff → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REG-NOC-003` | CS Queue → CS Agent →Acounting→CS Agentt → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → CS Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Handoff → Return to CS Agent `Assigned`·Handoff → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REG-CON-001` | Registration Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start → Registration Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REG-DLD-001` | Registration Queue → Agent → Review DLD/registration status → Resolve → Close | Ticket Created `Created`·Start → Registration Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Review DLD / registration status `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `COL-PAY-001` | Collections Queue → Agent → Review account → Resolve → Close | Ticket Created `Created`·Start → Collections Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Review account `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `COL-PAY-002` | Collections Queue → Agent → Follow-up → Escalate if needed → Resolve → Close | Ticket Created `Created`·Start → Collections Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Follow-up `InProgress`·Operational → Escalate if needed *(optional)* `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `COL-PAY-003` | Collections Queue → Agent → Confirm cheque/collection → Resolve → Close | Ticket Created `Created`·Start → Collections Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Confirm cheque / collection `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `COL-PAY-004` | Collections Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start → Collections Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `HO-NOC-001` | CS Queue →Agent→Acounting→ CS Agent → Handover Agent → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Transfer to Accounting `Assigned`·Handoff → Return to CS Agent `Assigned`·Handoff → Transfer to Handover Agent `Assigned`·Handoff → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `HO-HND-001` | Handover Queue → Agent → Coordinate → Resolve → Close | Ticket Created `Created`·Start → Handover Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Coordinate `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `HO-HND-002` | Handover Queue → Agent → Confirm available slot → Resolve → Close | Ticket Created `Created`·Start → Handover Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Confirm available slot `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `HO-HND-003` | Handover Queue → Agent → Coordinate requirements → Resolve → Close | Ticket Created `Created`·Start → Handover Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Coordinate requirements `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `HO-HND-004` | Handover Queue → Facilities Management if needed → Follow-up → Resolve → Close | Ticket Created `Created`·Start → Handover Queue `Assigned`·Queue/ownership → Facilities Management if needed *(optional)* `MaintenanceDependency`·Handoff → Follow-up `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `FM-MNT-001` | FM Queue → Assign Agent/Technician → In Progress → Resolve → Close | Ticket Created `Created`·Start → FM Queue `Assigned`·Queue/ownership → Assign Agent / Technician `Assigned`·Assignment → In Progress `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `FM-UTL-001` | FM Queue → Agent → Review/coordinate → Resolve → Close | Ticket Created `Created`·Start → FM Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Review / coordinate `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `FM-COM-001` | FM Queue → Agent/Technician → In Progress → Resolve → Close | Ticket Created `Created`·Start → FM Queue `Assigned`·Queue/ownership → Agent / Technician `Assigned`·Assignment → In Progress `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `FM-SVC-001` | FM/Responsible Finance Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start → FM Queue `Assigned`·Queue/ownership → Manual handoff to Responsible Finance (documented; no system transfer) *(optional)* `InProgress`·Handoff → Agent `Assigned`·Assignment → Review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `LCS-TEN-001` | Leasing CS Queue → Agent → Process/Review → Resolve → Close | Ticket Created `Created`·Start → Leasing CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Process / review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `LCS-EJR-001` | Leasing CS Queue → Agent → Process/Review → Resolve → Close | Ticket Created `Created`·Start → Leasing CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Process / review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `LCS-BKG-001` | Leasing CS Queue → Agent → Confirm booking/details → Resolve → Close | Ticket Created `Created`·Start → Leasing CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Confirm booking / details `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `LCS-MOV-001` | Leasing CS Queue → Agent → Coordinate → Resolve → Close | Ticket Created `Created`·Start → Leasing CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Coordinate `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `LCS-CHK-001` | Leasing CS Queue → Agent → Review → Resolve → Close | Ticket Created `Created`·Start → Leasing CS Queue `Assigned`·Queue/ownership → Agent `Assigned`·Assignment → Review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `BRK-COM-001` | CS Queue →Cs Agent  → Admin sales →Review → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → CS Agent `Assigned`·Assignment → Manual handoff to Admin Sales (documented; no system transfer) `InProgress`·Handoff → Review `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `BRK-CHK-001` | CS Queue →Cs Agent  → Admin sales → Confirm collection → Resolve → Close | Ticket Created `Created`·Start → CS Queue `Assigned`·Queue/ownership → CS Agent `Assigned`·Assignment → Manual handoff to Admin Sales (documented; no system transfer) `InProgress`·Handoff → Confirm collection `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `SAL-INQ-001` | CS / Call Center → Sales Handoff → Follow-up → Resolve / Close | Ticket Created `Created`·Start → CS / Call Center Queue `Assigned`·Queue/ownership → Manual handoff to Sales (documented; no system transfer) `InProgress`·Handoff → Follow-up `InProgress`·Operational → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `LEG-INQ-001` | CS Intake → Legal Handoff → Legal Review/Response → CS Resolve → Close | Ticket Created `Created`·Start → Customer Service intake `Assigned`·Queue/ownership → Manual handoff to Legal (documented; no system transfer) `InProgress`·Handoff → Legal Review / Response `InProgress`·Operational → CS Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REC-HR-001` | Reception / CS → HR Handoff → Acknowledge/Resolve → Close | Ticket Created `Created`·Start → Customer Service intake (Reception / CS) `Assigned`·Queue/ownership → Manual handoff to HR (documented; no system transfer) `InProgress`·Handoff → Acknowledge / Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REC-MKT-001` | Reception / CS → Marketing Handoff → Acknowledge/Resolve → Close | Ticket Created `Created`·Start → Customer Service intake (Reception / CS) `Assigned`·Queue/ownership → Manual handoff to Marketing (documented; no system transfer) `InProgress`·Handoff → Acknowledge / Resolve `Resolved`·Resolve → Close `Closed`·Close |
+| `REC-OTH-001` | Reception / CS → Route to Responsible Department → Resolve → Close | Ticket Created `Created`·Start → Customer Service intake (Reception / CS) `Assigned`·Queue/ownership → Route to Responsible Department `Assigned`·Handoff → Resolve `Resolved`·Resolve → Close `Closed`·Close |
+
+## 9. Departments and workflow dependencies
+
+| Department | Role in workbook | Resolution | Effect |
+|---|---|---|---|
+| Customer Service `CS`, Registration `REG`, Collections `COL`, Handover `HO`, Accounting `ACC` | owning / hand-off | Existing (reference seed) | — |
+| Facilities Management `FM` | owning (4) + `HO-HND-004` hand-off | Resolved by code/name; UAT script reports if missing and creates only on request | Confirm presence in UAT (script step 1 shows it) |
+| Leasing Customer Services `LCS` | owning (5) | Not in any seed — expected **genuinely missing** in UAT: reported, then created on request; code `LCS` unless UAT has it under another code | 5 rows blocked until created |
+| Admin Sales, Sales, Legal, HR, Marketing | manual hand-offs | **Representation pending — never created, never resolved** | 6 workflows Draft |
+| Responsible Finance | `FM-SVC-001` hand-off | **Representation pending** (Finance? Accounting?) | Workflow Draft |
+| Reception | intake wording | Not a department — Customer Service intake | — |
+
+## 10. Running it on UAT
+
+1. Apply migrations (none new). Optionally dry run: `@CommitChanges = 0`.
+2. `sqlcmd -S <server> -d <database> -U <user> -P <password> -C -b -I -i ImportNewRequestTypes_UAT.sql`
+3. Read section 2 of the output (*OWNING DEPARTMENTS*):
+   * **Missing** — genuinely missing; after confirmation, re-run with `@CreateMissingOwningDepartments = 1`.
+   * **NearMatch** — a similarly named department exists; nothing created. If it is the same department, set `@FacilitiesManagementCode` / `@LeasingCustomerServicesCode` to its code and re-run.
+4. Review the reconciliation. Re-running is always safe. **Do not run on Production.**
+
+## 11. Validation
+
+* Release build: 0 warnings, 0 errors. Full suite: **2,310 passed** (2,291 existing + 19 new), 0 failed.
+* `dotnet ef migrations has-pending-model-changes`: *No changes have been made to the model since the last migration.*
+* SQL Server 2022 (container), database seeded from `main`: step 1/2/3 above
+  exactly as described; pre-existing request types, approvals (ReopenApproval
+  included), departments, department settings, SLA rows and baseline
+  workflows byte-identical afterwards; no imported request type active.
+  Near-match database (extra "Leasing" department): Leasing rows blocked,
+  nothing created; with the code override set, rows import into the existing
+  department (dry run rolled back cleanly).
+* Development startup (C# path) on a fresh database: Leasing created, 24
+  Published + 7 Draft + 4 conflicts; restart creates nothing; configuration
+  **identical** to the SQL path for all 31 imported rows.
+
+## 12. Business decisions still required
+
+1. **Business Decision** for each of the 35 rows (all remain inactive).
+2. **Exact-name conflicts** `REG-NOC-001/002/003`, `HO-NOC-001` vs the existing CS NOC request types — same or different? (If different, they need distinct names.)
+3. **Similar-name conflict** `CS-CMP-001` *Complaint* vs *Complaint Handling*.
+4. **Leasing Customer Services** — confirm it is missing in UAT (the script reports it) before it is created; confirm the code (`LCS`).
+5. **Representation** of Admin Sales, Sales, Legal, HR, Marketing and *Responsible Finance* (7 Draft workflows).
+6. **Approval mappings** for the 10 Conditional rows (§5), "Conditional" semantics, and whether a new approval type may be added.
+7. **SLA**: "Same business day" (1), "Based on severity" (3), First Response representation (35).
+8. Flags not in the workbook: `AllowAgentPriorityChange`, `AllowPendingCustomer` (both off).
+9. ReopenApproval for these rows after activation (not touched here).
