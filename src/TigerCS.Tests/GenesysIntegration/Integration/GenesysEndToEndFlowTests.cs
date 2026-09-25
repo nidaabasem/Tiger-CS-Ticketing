@@ -552,4 +552,102 @@ public sealed class GenesysEndToEndFlowTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(queueId, interaction!.GenesysQueueId);
         Assert.Equal("genesys-user-x", interaction.GenesysAgentId);
     }
+    /// <summary>
+    /// The rule UAT signs off: a conversation ending — however it ends —
+    /// never resolves or closes the ticket. It records the end time and
+    /// reason on the same interaction, and the ticket stays exactly where the
+    /// TigerCS workflow had it, available for follow-up under the same
+    /// TicketId. An AI conversation that ends with nobody having taken it
+    /// leaves outstanding human work instead of an orphaned ticket.
+    /// </summary>
+    [Theory]
+    [InlineData("NormalCallCompletion", "Phone", "client", true, false)]
+    [InlineData("AbandonedInQueue", "Phone", "customer.end", false, false)]
+    [InlineData("CustomerEndsLiveChat", "LiveChat", "client", true, false)]
+    [InlineData("AgentDisconnects", "LiveChat", "peer", true, false)]
+    [InlineData("AiDisconnects", "LiveChat", "error", false, true)]
+    public async Task ConversationEnd_AnyReason_NeverResolvesOrClosesTheTicket_AndKeepsTheSameTicketId(
+        string scenario, string channel, string endReason, bool agentConnected, bool aiOnly)
+    {
+        var (client, _) = await CreateClientAsync();
+        var (_, queueId) = await SeedMappedQueueAsync();
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(client, new GenesysInquiryRequest(
+            conversationId, channel, CustomerPhone: "tel:+971504445555", QueueId: queueId));
+        var statusBefore = (await GetTicketAsync(created.TicketId)).TicketStatus;
+
+        if (agentConnected)
+        {
+            await PatchAsync(client, created.TicketId, new GenesysTicketUpdateRequest(
+                conversationId, Routing: new GenesysRoutingPart(queueId, AgentId: "genesys-user-" + scenario)));
+        }
+
+        var endedAt = new DateTime(2026, 9, 25, 11, 0, 0, DateTimeKind.Utc);
+        var transcript = aiOnly
+            ? new[]
+            {
+                new GenesysTranscriptMessageRequest("Customer", endedAt.AddMinutes(-2), "I need an NOC."),
+                new GenesysTranscriptMessageRequest("VirtualAgent", endedAt.AddMinutes(-1), "Let me check that for you.")
+            }
+            : null;
+
+        var ended = await PatchAsync(client, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, Ended: new GenesysConversationEndPart(endedAt, endReason, transcript)));
+        // A redelivered end (Genesys retries) changes nothing either.
+        await PatchAsync(client, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, Ended: new GenesysConversationEndPart(endedAt.AddMinutes(1), "retry")));
+
+        // Same ticket, same interaction — and the ticket untouched.
+        Assert.Equal(created.TicketId, ended.TicketId);
+        Assert.Equal((1, 1, 1), await CountStoredForConversationAsync(conversationId));
+        var ticket = await GetTicketAsync(created.TicketId);
+        Assert.Equal(statusBefore, ticket.TicketStatus);
+        Assert.NotEqual(TicketStatus.Resolved, ticket.TicketStatus);
+        Assert.NotEqual(TicketStatus.Closed, ticket.TicketStatus);
+        Assert.Equal(statusBefore.ToString(), ended.TicketStatus);
+
+        // Only the interaction records the end — once, with its first reason.
+        var interaction = await _factory.GetInteractionByConversationAsync(conversationId);
+        Assert.Equal(endedAt, interaction!.EndedAtUtc);
+        Assert.Equal(endReason, interaction.EndReason);
+
+        // An AI conversation nobody took is left as waiting human work.
+        var handoff = await GetOpenHandoffAsync(created.TicketId);
+        if (aiOnly)
+        {
+            Assert.Equal(AgentHandoffStatus.WaitingForAgent, handoff!.Status);
+            Assert.Equal(HandoffTrigger.AiConnectionLost, handoff.Trigger);
+        }
+        else
+        {
+            Assert.Null(handoff);
+        }
+    }
+
+    /// <summary>A ticket an agent is already working stays InProgress when the call ends — the end never rewinds or finishes it.</summary>
+    [Fact]
+    public async Task ConversationEnd_AfterHumanAccept_LeavesTheTicketInProgress()
+    {
+        var (service, _) = await CreateClientAsync();
+        var (departmentId, queueId) = await SeedMappedQueueAsync();
+        var (agent, agentEmployeeId) = await CreateClientAsync();
+        await _factory.AssignPrimaryDepartmentAsync(agentEmployeeId, departmentId);
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(service, new GenesysInquiryRequest(conversationId, "LiveChat", QueueId: queueId));
+        var requested = await PatchAsync(service, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "CustomerRequestedHuman")));
+        var accept = await agent.PostAsync($"/api/pending-customer-interactions/{requested.TicketAgentHandoffId}/start", null);
+        Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
+
+        var ended = await PatchAsync(service, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, Ended: new GenesysConversationEndPart(DateTime.UtcNow, "client")));
+
+        Assert.Equal("InProgress", ended.TicketStatus);
+        var ticket = await GetTicketAsync(created.TicketId);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Equal(agentEmployeeId, ticket.CurrentOwnerEmployeeId);
+        Assert.Null(ticket.FirstHumanResponseAtUtc);
+    }
 }
