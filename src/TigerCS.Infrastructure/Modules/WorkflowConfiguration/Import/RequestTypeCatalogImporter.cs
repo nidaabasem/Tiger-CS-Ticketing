@@ -69,7 +69,9 @@ public sealed record ExistingRequestTypeSnapshot(
     string WorkflowDescription,
     IReadOnlyList<string> Steps,
     IReadOnlyList<string> Slas,
-    IReadOnlyList<string> Approvals);
+    IReadOnlyList<string> Approvals,
+    string? ReopenRequestRoute = null,
+    bool ConfigurationEnforced = false);
 
 public sealed record RequestTypeImportResult(
     RequestTypeImportPlan Plan,
@@ -335,6 +337,15 @@ public static class RequestTypeCatalogImporter
         dbContext.RequestTypes.Add(requestType);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        // Every open question is kept with the request type: while any is
+        // unresolved, Administration refuses to activate it or to enforce its
+        // configuration.
+        foreach (var decision in created)
+        {
+            dbContext.RequestTypeCatalogDecisions.Add(
+                new RequestTypeCatalogDecision(requestType.RequestTypeId, decision.Area.ToString(), decision.Question, options.NowUtc));
+        }
+
         if (plan.Sla is { } sla)
         {
             dbContext.RequestTypeSlaPolicies.Add(new RequestTypeSlaPolicy(
@@ -351,8 +362,10 @@ public static class RequestTypeCatalogImporter
         }
 
         // The approved business rule (WorkflowReferenceData.ApprovalRequirements):
-        // whatever supports Reopen supports asking for one — the same
+        // whatever supports Reopen supports ASKING for one — the same
         // CS Manager, non-blocking requirement every other such type has.
+        // It is the request route for roles without direct Reopen, never a
+        // precondition: the CS layer still reopens directly, unchanged.
         if (plan.AllowReopen)
         {
             dbContext.RequestTypeApprovalRequirements.Add(RequestTypeApprovalRequirement.ForRole(
@@ -445,11 +458,23 @@ public static class RequestTypeCatalogImporter
             .ToList();
 
         var departmentNames = departments.Values.ToDictionary(d => d.DepartmentId, d => d.Name);
-        var approvals = (await dbContext.RequestTypeApprovalRequirements
-                .AsNoTracking()
-                .Where(a => a.RequestTypeId == requestTypeId)
-                .OrderBy(a => a.ApprovalType)
-                .ToListAsync(cancellationToken))
+        var requirements = await dbContext.RequestTypeApprovalRequirements
+            .AsNoTracking()
+            .Where(a => a.RequestTypeId == requestTypeId)
+            .OrderBy(a => a.ApprovalType)
+            .ToListAsync(cancellationToken);
+
+        // Reopen Approval is not an approval the work waits for: it is how a
+        // role WITHOUT direct Reopen asks the CS layer for one. It is reported
+        // with Reopen, never as a gating approval.
+        var reopenRequest = requirements.FirstOrDefault(a => a.ApprovalType == ApprovalType.ReopenApproval);
+        var reopenRequestRoute = reopenRequest is null
+            ? null
+            : $"requests from roles without direct Reopen are decided by {(reopenRequest.TargetRoleName is { } decider ? $"role {decider}" : "the configured approver")}"
+              + (reopenRequest.IsActive ? string.Empty : " (inactive)");
+
+        var approvals = requirements
+            .Where(a => a.ApprovalType != ApprovalType.ReopenApproval)
             .Select(a => $"{a.ApprovalType} by " + a.TargetKind switch
             {
                 ApprovalTargetKind.Department => $"department {departmentNames.GetValueOrDefault(a.TargetDepartmentId ?? 0, $"#{a.TargetDepartmentId}")}"
@@ -475,7 +500,12 @@ public static class RequestTypeCatalogImporter
             workflowDescription,
             steps,
             slas,
-            approvals);
+            approvals,
+            reopenRequestRoute,
+            schemaApplied && await dbContext.RequestTypes
+                .Where(r => r.RequestTypeId == requestTypeId)
+                .Select(r => r.ConfigurationEnforced)
+                .SingleAsync(cancellationToken));
     }
 
     internal static string Duration(int? target, int? maximum, SlaDurationUnit unit) => (target, maximum) switch

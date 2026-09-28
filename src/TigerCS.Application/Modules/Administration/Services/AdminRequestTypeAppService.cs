@@ -27,7 +27,11 @@ public sealed class AdminRequestTypeAppService(
     IEmployeeRepository employeeRepository,
     IUserDepartmentAssignmentRepository userDepartmentAssignmentRepository,
     IWorkflowConfigurationUnitOfWork unitOfWork,
-    IAuditEntryWriter auditWriter)
+    IAuditEntryWriter auditWriter,
+    // Always supplied by DI. Null only in unit fixtures that predate the
+    // request-type catalog, where no request type carries a decision.
+    IRequestTypeCatalogDecisionRepository? catalogDecisionRepository = null,
+    TimeProvider? timeProvider = null)
 {
     public async Task<IReadOnlyList<AdminRequestTypeSummaryDto>> ListAsync(
         int? departmentId, bool includeInactive, CancellationToken cancellationToken = default)
@@ -133,7 +137,107 @@ public sealed class AdminRequestTypeAppService(
                 published?.Steps.Where(s => s.ApprovalType is not null).Select(s => s.ApprovalType!.Value).Distinct().ToList() ?? []),
             await ToRuleDtoAsync(rule, cancellationToken),
             requirementDtos,
-            slaPolicies.Select(ToSlaDto).ToList());
+            slaPolicies.Select(ToSlaDto).ToList(),
+            requestType.Code,
+            requestType.ConfigurationEnforced,
+            (catalogDecisionRepository is null ? [] : await catalogDecisionRepository.ListByRequestTypeIdAsync(requestType.RequestTypeId, cancellationToken))
+                .Select(d => new CatalogDecisionDto(d.RequestTypeCatalogDecisionId, d.Area, d.Question, d.IsResolved, d.Resolution, d.ResolvedAtUtc, d.ResolvedByEmployeeId))
+                .ToList(),
+            await ReadinessIssuesAsync(requestType, cancellationToken));
+    }
+
+    /// <summary>
+    /// What still prevents runtime enforcement of this request type — the
+    /// single <see cref="ConfiguredRuntimeReadiness"/> rule set over its
+    /// current configuration and open catalog decisions.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ReadinessIssuesAsync(RequestType requestType, CancellationToken cancellationToken = default)
+    {
+        var published = await workflowTemplateRepository.GetPublishedAsync(requestType.WorkflowId, cancellationToken);
+        var slaPolicies = await slaPolicyRepository.ListByRequestTypeAsync(requestType.RequestTypeId, cancellationToken);
+        var approvals = await approvalRequirementRepository.ListByRequestTypeIdAsync(requestType.RequestTypeId, cancellationToken);
+        var unresolved = catalogDecisionRepository is null
+            ? 0
+            : await catalogDecisionRepository.CountUnresolvedAsync(requestType.RequestTypeId, cancellationToken);
+        var activeDepartments = (await departmentRepository.ListAsync(activeOnly: true, cancellationToken))
+            .Select(d => d.DepartmentId)
+            .ToHashSet();
+
+        return ConfiguredRuntimeReadiness.Evaluate(requestType, published, slaPolicies, approvals, unresolved, activeDepartments.Contains);
+    }
+
+    /// <summary>
+    /// Turns runtime enforcement on (refused with every open issue listed
+    /// while <see cref="ReadinessIssuesAsync"/> reports any) or off (always
+    /// allowed: tickets fall back to the unrestricted behaviour).
+    /// </summary>
+    public async Task<AdminResult<AdminRequestTypeDetailDto>> SetConfigurationEnforcementAsync(
+        Guid actorEmployeeId, int requestTypeId, SetConfigurationEnforcementRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var requestType = await requestTypeRepository.GetByIdAsync(requestTypeId, cancellationToken);
+        if (requestType is null)
+        {
+            return AdminResult<AdminRequestTypeDetailDto>.NotFound();
+        }
+
+        if (request.Enabled)
+        {
+            var issues = await ReadinessIssuesAsync(requestType, cancellationToken);
+            if (issues.Count > 0)
+            {
+                return AdminResult<AdminRequestTypeDetailDto>.Conflict([.. issues]);
+            }
+        }
+
+        var before = requestType.ConfigurationEnforced;
+        if (request.Enabled)
+        {
+            requestType.EnableConfigurationEnforcement();
+        }
+        else
+        {
+            requestType.DisableConfigurationEnforcement();
+        }
+
+        await auditWriter.WriteAsync(
+            actorEmployeeId, "AdminSetRequestTypeConfigurationEnforcement", "RequestType", requestTypeId.ToString(),
+            $"ConfigurationEnforced={before}", $"ConfigurationEnforced={requestType.ConfigurationEnforced};Reason={request.Reason}",
+            Guid.NewGuid(), cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return AdminResult<AdminRequestTypeDetailDto>.Success((await GetAsync(requestTypeId, cancellationToken))!);
+    }
+
+    /// <summary>Records the business's answer to one open catalog decision. No configuration changes with it.</summary>
+    public async Task<AdminResult<AdminRequestTypeDetailDto>> ResolveCatalogDecisionAsync(
+        Guid actorEmployeeId, int requestTypeId, int decisionId, ResolveCatalogDecisionRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var decision = catalogDecisionRepository is null
+            ? null
+            : await catalogDecisionRepository.GetAsync(requestTypeId, decisionId, cancellationToken);
+        if (decision is null)
+        {
+            return AdminResult<AdminRequestTypeDetailDto>.NotFound();
+        }
+
+        if (decision.IsResolved)
+        {
+            return AdminResult<AdminRequestTypeDetailDto>.Conflict("This decision is already resolved.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Resolution))
+        {
+            return AdminResult<AdminRequestTypeDetailDto>.Invalid("The business's answer is required.");
+        }
+
+        decision.Resolve(request.Resolution, actorEmployeeId, (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime);
+        await auditWriter.WriteAsync(
+            actorEmployeeId, "AdminResolveCatalogDecision", "RequestType", requestTypeId.ToString(),
+            $"DecisionId={decisionId};Area={decision.Area};Question={decision.Question}",
+            $"Resolution={decision.Resolution}", Guid.NewGuid(), cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return AdminResult<AdminRequestTypeDetailDto>.Success((await GetAsync(requestTypeId, cancellationToken))!);
     }
 
     public async Task<AdminResult<AdminRequestTypeDetailDto>> CreateAsync(
@@ -214,6 +318,25 @@ public sealed class AdminRequestTypeAppService(
         {
             return AdminResult<AdminRequestTypeDetailDto>.Conflict(
                 "This request type's workflow has no published version. Publish the workflow before activating the request type.");
+        }
+
+        // A request type the catalog import left with open business
+        // questions (department mappings, approval conditions, SLA values…)
+        // stays inactive until each is answered; an enforced one must also be
+        // fully ready to run. Types with neither are unaffected.
+        if (request.IsActive && !requestType.IsActive)
+        {
+            if (catalogDecisionRepository is not null
+                && (await catalogDecisionRepository.ListByRequestTypeIdAsync(requestTypeId, cancellationToken)).Where(d => !d.IsResolved).ToList() is { Count: > 0 } open)
+            {
+                return AdminResult<AdminRequestTypeDetailDto>.Conflict(
+                    [.. open.Select(d => $"Unresolved catalog decision ({d.Area}): {d.Question}")]);
+            }
+
+            if (requestType.ConfigurationEnforced && await ReadinessIssuesAsync(requestType, cancellationToken) is { Count: > 0 } issues)
+            {
+                return AdminResult<AdminRequestTypeDetailDto>.Conflict([.. issues]);
+            }
         }
 
         var before = requestType.IsActive;
@@ -381,6 +504,14 @@ public sealed class AdminRequestTypeAppService(
             return AdminResult<AdminRequestTypeDetailDto>.Invalid(errors);
         }
 
+        // An enforced workflow has no approval stage to sequence a gating
+        // approval; Reopen Approval (raised on a Closed ticket) is unaffected.
+        if (requestType.ConfigurationEnforced && request.IsActive && approvalType != ApprovalType.ReopenApproval)
+        {
+            return AdminResult<AdminRequestTypeDetailDto>.Conflict(
+                "This request type enforces its workflow, which has no approval stage. Turn enforcement off before adding an active approval requirement.");
+        }
+
         var existing = await approvalRequirementRepository.GetAsync(requestTypeId, approvalType, cancellationToken);
         string? before = null;
         try
@@ -482,6 +613,18 @@ public sealed class AdminRequestTypeAppService(
         catch (ArgumentException ex)
         {
             return AdminResult<AdminRequestTypeDetailDto>.Invalid(ex.Message);
+        }
+
+        // An enforced request type's SLA rows are applied at runtime, so each
+        // must stay applicable, and the whole configuration must stay ready.
+        if (requestType.ConfigurationEnforced)
+        {
+            var enforcedIssues = existing.IsActive ? ConfiguredRuntimeReadiness.SlaRowIssues(existing).ToList() : [];
+            enforcedIssues.AddRange(await ReadinessIssuesAsync(requestType, cancellationToken));
+            if (enforcedIssues.Count > 0)
+            {
+                return AdminResult<AdminRequestTypeDetailDto>.Conflict([.. enforcedIssues.Distinct()]);
+            }
         }
 
         await auditWriter.WriteAsync(

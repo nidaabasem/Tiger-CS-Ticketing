@@ -151,13 +151,19 @@ public class RequestTypeCatalogImporterTests
         Assert.True(resale.AllowAgentPriorityChange);
         Assert.Contains(resale.Slas, s => s.StartsWith("Medium:", StringComparison.Ordinal) && s.Contains("10–12 days"));
         Assert.Contains(resale.Slas, s => s.StartsWith("High:", StringComparison.Ordinal) && s.Contains("2–4 days"));
-        Assert.Equal(["ReopenApproval by role CS Manager, does not block work"], resale.Approvals);
+        // Reopen Approval is the request route for roles without direct
+        // Reopen — never an approval the work (or a reopen) waits for.
+        Assert.Empty(resale.Approvals);
+        Assert.Equal("requests from roles without direct Reopen are decided by role CS Manager", resale.ReopenRequestRoute);
         Assert.Contains("Pending Customer (optional)", resale.Steps);
 
         var markdown = report.ToMarkdown();
         Assert.Contains("## Existing request types — current vs workbook", markdown);
         Assert.Contains("### REG-NOC-001 — NOC for Resale (Customer Service)", markdown);
-        Assert.Contains("Conditional: Registration Supervisor / Authorized Approver", markdown);
+        Assert.Contains("| Approvals gating the work | none | Conditional: Registration Supervisor / Authorized Approver |", markdown);
+        Assert.Contains("| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); "
+            + "requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |", markdown);
+        Assert.DoesNotContain("plus Reopen Approval", markdown);
     }
 
     [Fact]
@@ -218,6 +224,26 @@ public class RequestTypeCatalogImporterTests
         Assert.DoesNotContain(report.Results, r => r.Decisions.Contains(RequestTypeCatalogImporter.AgentPriorityChangeDecision));
         await using var context = db.CreateContext();
         Assert.All(await context.RequestTypes.Where(r => r.Code != null).ToListAsync(), r => Assert.False(r.AllowAgentPriorityChange));
+    }
+
+    [Fact]
+    public async Task Every_open_decision_is_persisted_with_its_created_request_type_and_none_with_a_resolved_one()
+    {
+        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
+
+        var report = await db.ImportAsync(CatalogImportTestDb.ActivatingImport);
+
+        await using var context = db.CreateContext();
+        foreach (var result in report.Results.Where(r => r.Outcome is RequestTypeImportOutcome.CreatedActive or RequestTypeImportOutcome.CreatedInactiveDraft))
+        {
+            var stored = await context.RequestTypeCatalogDecisions.Where(d => d.RequestTypeId == result.RequestTypeId).ToListAsync();
+            Assert.Equal(result.Decisions.Select(d => (d.Area.ToString(), d.Question)), stored.Select(d => (d.Area, d.Question)));
+            Assert.All(stored, d => Assert.False(d.IsResolved));
+            Assert.Equal(result.Outcome == RequestTypeImportOutcome.CreatedActive, stored.Count == 0);
+        }
+
+        // The import never enables runtime enforcement — that is an explicit administrator step.
+        Assert.False(await context.RequestTypes.AnyAsync(r => r.ConfigurationEnforced));
     }
 
     [Fact]
@@ -401,13 +427,14 @@ public class RequestTypeCatalogImporterTests
     }
 
     [Fact]
-    public async Task The_report_states_that_workflow_definitions_are_not_executed()
+    public async Task The_report_states_that_workflow_definitions_run_only_once_enforcement_is_enabled()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
 
         var markdown = (await db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now))).ToMarkdown();
 
-        Assert.Contains("## Workflow definitions (stored, not executed)", markdown);
+        Assert.Contains("## Workflow definitions", markdown);
+        Assert.Contains("enforced at runtime only once an administrator turns on configuration enforcement", markdown);
         Assert.Contains("Transfer action (CS Manager only", markdown);
         Assert.Contains("Activation: **off**", markdown);
         Assert.Contains("left completely unchanged", markdown);
@@ -454,9 +481,33 @@ public class RequestTypeCatalogImporterTests
     }
 
     [Fact]
+    public void The_runtime_enforcement_migration_is_additive_only_and_reversible()
+    {
+        var up = new AddConfiguredRuntimeEnforcement().UpOperations;
+
+        Assert.Equal(
+            [("Tickets", "CurrentWorkflowStepId", true), ("RequestTypes", "ConfigurationEnforced", false)],
+            up.OfType<AddColumnOperation>().Select(c => (c.Table, c.Name, c.IsNullable)));
+        Assert.Equal(false, up.OfType<AddColumnOperation>().Single(c => c.Name == "ConfigurationEnforced").DefaultValue);
+        Assert.Equal("RequestTypeCatalogDecisions", Assert.Single(up.OfType<CreateTableOperation>()).Name);
+
+        Assert.Empty(up.OfType<DropTableOperation>());
+        Assert.Empty(up.OfType<DropColumnOperation>());
+        Assert.Empty(up.OfType<AlterColumnOperation>());
+        Assert.Empty(up.OfType<SqlOperation>());
+        Assert.Empty(up.OfType<InsertDataOperation>());
+        Assert.Empty(up.OfType<UpdateDataOperation>());
+        Assert.Empty(up.OfType<DeleteDataOperation>());
+
+        var down = new AddConfiguredRuntimeEnforcement().DownOperations;
+        Assert.Single(down.OfType<DropTableOperation>());
+        Assert.Equal(2, down.OfType<DropColumnOperation>().Count());
+    }
+
+    [Fact]
     public void The_import_command_names_the_real_migration()
     {
-        var migrationId = typeof(AddRequestTypeCatalogImport)
+        var migrationId = typeof(AddConfiguredRuntimeEnforcement)
             .GetCustomAttributes(typeof(MigrationAttribute), false)
             .Cast<MigrationAttribute>()
             .Single()

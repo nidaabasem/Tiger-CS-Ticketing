@@ -15,7 +15,8 @@ role or department.
 | Mapping rules (pure, no database) | `RequestTypeCatalogMapper` |
 | Idempotent import + report | `RequestTypeCatalogImporter`, `RequestTypeCatalogImportReport` |
 | Hand-run command | `RequestTypeCatalogCommand` (wired into `TigerCS.Api` behind `--import-request-types`) |
-| Schema migration | `20260928085727_AddRequestTypeCatalogImport` (idempotent SQL: `AddRequestTypeCatalogImport.sql`) |
+| Schema migrations | `20260928085727_AddRequestTypeCatalogImport` and `20260928102230_AddConfiguredRuntimeEnforcement` (idempotent SQL: `AddRequestTypeCatalogImport.sql`, `AddConfiguredRuntimeEnforcement.sql`) |
+| Runtime enforcement | `ConfiguredWorkflowRuntime` (steps), `SlaDueDateService.ComputeAsync` (SLA precedence), `ConfiguredRuntimeReadiness` / `WorkflowProgression` (rules) |
 | Tests | `src/TigerCS.Tests/WorkflowConfiguration/Import/*`, `.../Domain/RequestTypeCatalogDomainTests.cs` |
 
 ## Schema change (additive only, reversible)
@@ -33,25 +34,39 @@ role or department.
   is null when the target is unconfirmed. It is a stored definition only;
   see "Stored definitions vs executable routing" below.
 
-## Stored definitions vs executable routing
+## Runtime enforcement (opt-in per request type)
 
-| | Stored workflow definition (what the import writes) | Executable routing (what moves a ticket) |
-|---|---|---|
-| What | Workflow version, its steps, each handoff step's `DepartmentId` | The existing **Transfer** action (`POST /api/tickets/{id}/transfer`) |
-| Who | Administration / the import | **CS Manager only** (`TicketRoleSets.Transfer`, unchanged) |
-| Limits | None at runtime | The source department's `AllowTransferToOtherDepartments` |
-| Read at runtime? | **No.** No application service or controller reads workflow steps or their departments. `CatalogHandoffRuntimeTests.No_runtime_code_reads_a_steps_department` checks this by scanning the IL, with a positive control. | Yes |
+Configuration enforcement is off for every request type, including all existing ones and every imported draft, so their behaviour is unchanged. A System Administrator turns it on per type with `PUT /api/admin/request-types/{id}/configuration-enforcement`. It is refused (409, listing every issue) while any of these remain:
 
-At runtime a workflow version contributes only its capability flags (Pending
-Customer, approval) through `WorkflowCapabilities`. The same holds for
-imported **request-type SLA rows**: live due dates still come from the
-per-priority `SlaPolicies`. `CatalogHandoffRuntimeTests` demonstrates this
-end to end through the real Api:
-- The ticket stays in Customer Service even though its pinned version names Handover.
-- CS Agent, CS Supervisor, Department Head and Department Employee get 403.
-- A CS Manager hands the ticket to Handover and then returns it to Customer Service, with both moves audited as `Transfer`.
-- A transfer to a department the definition never names also succeeds.
-- The department transfer setting blocks the return even though the definition lists it.
+- An unresolved catalog decision. The import stores each open question with its request type. `POST …/catalog-decisions/{decisionId}/resolution` records the business's answer; it changes no configuration by itself.
+- No published workflow version, or a step the runtime cannot track (only Start, Department Queue, Work, optional Pending Customer, Resolve and Close are supported). A queue step without a department (an unconfirmed handoff) also blocks it, as does an entry step that isn't the request type's own department queue.
+- An active gating approval (Accounting or Customer Service approval). An enforced workflow has no approval stage. Reopen Approval is unaffected.
+- No SLA at the default priority with both targets. An SLA row that is a range, "Immediately", starts at a trigger other than TicketCreated, or has an undecided clock basis also blocks it.
+
+The same rules block activating an enforced type, publishing a new version of its workflow, and editing its SLA or approvals into a state that breaks them. Activating any type that still has open catalog decisions is refused too.
+
+### What enforcement does
+
+| | Behaviour |
+|---|---|
+| Step tracking | A new ticket starts at its department's queue step (`Tickets.CurrentWorkflowStepId`, shown as `currentWorkflowStepName` on `GET /api/tickets/{id}`). Every move is audited as `WorkflowStep` under the triggering action's correlation id. |
+| Assign | At a queue step, assigning an owner (manually or automatically) moves the ticket to the following work step. |
+| Transfer (handoff or return) | Still the existing Transfer action: CS Manager only, subject to the source department's transfer setting, and audited as `Transfer`. It must also target the department of the next queue step, otherwise 422 `workflow-step-not-allowed` naming the expected step. |
+| Resolve / Close | Outcome Resolved and Close must each be the next step (422 otherwise). Cancelled, Rejected and Duplicate end the request from any step. |
+| Reopen | The existing Reopen rule is unchanged (CS layer, window, outcome). The ticket resumes at the target department's last queue step before Resolve; a department with no queue step gets 422. |
+| SLA | The type's active SLA row for the ticket's priority replaces the per-priority policy, deadline by deadline. A deadline the row leaves empty falls back to the policy. Units come from the row (the first response may have its own unit) and are walked on the existing business calendar. With BusinessHours, **1 day = one working-day window (08:00–18:00 = 600 business minutes)**; with 24/7, 1 day = 24 hours. The clock still starts at creation, and Reopen still restarts Resolution only while carrying First Response. The audit records each deadline's source (`RequestTypeSla:<id>` or `PriorityPolicy`). |
+
+Authorization is always checked first, so a caller the existing rules refuse still gets 403. The workflow can only refuse an action; it never grants one. A ticket created before enforcement was switched on stays untracked.
+
+### Stored but not enforced
+
+- Required fields (`RequiredFieldsJson`) and required documents: no validation at intake.
+- Agent priority change: not checked anywhere (agents choose any priority), as before.
+- Request group and description: informational only.
+- On request-type SLA rows: pause flags, warning threshold and trigger. Only TicketCreated is applied, and enforced types can't have another trigger.
+- Everything above for request types **without** enforcement: steps, step departments and request-type SLA rows are stored only. That covers the four NOC types and every imported draft.
+- The Web UI has no enforcement toggle or decision list (API only). Ticket Details doesn't show the current step or pre-hide out-of-order actions; the API refuses them with a 422 explaining the expected next step.
+- Transfer is still configured per department, not per request type.
 
 ## Mapping rules
 
@@ -64,7 +79,7 @@ end to end through the real Api:
 | Required Fields / Documents | JSON array of the workbook's wording. "None" is stored as null. Neither is enforced yet. |
 | Needs Approval? / Approval Role | "No" creates nothing. "Conditional" becomes a decision, and no approval requirement is created. |
 | Allow Transfer? | Checked against the department's existing transfer setting. "No" becomes a decision. |
-| Allow Reopen? | `AllowReopen`, plus the approved Reopen Approval rule (CS Manager, non-blocking) |
+| Allow Reopen? | `AllowReopen` only: the type may be reopened. It does **not** mean a reopen needs approval. The CS layer (CS Agent, Supervisor, Manager) reopens directly under the existing rule. As on every reopen-permitting type, a Reopen Approval requirement (CS Manager) is added as the *request route* for roles without direct Reopen; it never gates an authorized reopen. |
 | Proposed Workflow | Stored steps (see above). Unconfirmed handoff targets keep the step with no department and become a decision. |
 | Business Decision / Comments | Any value becomes a decision to review. The column is never interpreted. |
 
@@ -98,7 +113,7 @@ that database.
 ```bash
 # 1. Dry run. This works BEFORE the migration: it reads existing columns only and writes nothing.
 dotnet TigerCS.Api.dll --import-request-types --report catalog-dry-run.md
-# 2. Schema: review AddRequestTypeCatalogImport.sql, then apply it the usual way.
+# 2. Schema: review AddRequestTypeCatalogImport.sql and AddConfiguredRuntimeEnforcement.sql, then apply them the usual way.
 # 3. First import: every created type stays inactive, and existing types are untouched.
 dotnet TigerCS.Api.dll --import-request-types --apply --keep-all-inactive --report catalog-applied.md
 ```
@@ -181,9 +196,9 @@ The AddRequestTypeCatalogImport migration is **not applied** to this database: t
 - **Assignment**: no rule is created, so tickets use the department queue — the existing fallback.
 - **SLA clock start**: TicketCreated, the existing default; pause-on-Pending stays "not decided" as on every other type.
 
-### Workflow definitions (stored, not executed)
+### Workflow definitions
 
-Steps — including each handoff's department — are stored configuration. No runtime code reads them: a ticket changes department only through the existing Transfer action (CS Manager only, subject to the source department's transfer setting), and nothing moves a ticket automatically.
+Steps — including each handoff's department — are enforced at runtime only once an administrator turns on configuration enforcement for the request type, which is refused while any decision below is open. Even then a ticket changes department only through the existing Transfer action (CS Manager only, subject to the source department's transfer setting); the workflow only decides whether that transfer is the expected next step.
 
 - **CS-GEN-001**: Ticket Created → Customer Service Queue → Customer Service Agent → Resolve → Close
 - **CS-GEN-002**: Ticket Created → Customer Service Queue → Customer Service Agent → Resolve → Close
@@ -228,13 +243,14 @@ Steps — including each handoff's department — are stored configuration. No r
 | Aspect | Current (this database) | Workbook |
 |---|---|---|
 | Status | Active | — |
+| Runtime | not enforced: steps are not tracked and due dates come from the per-priority SLA policy — the SLA rows below are stored only | — |
 | Default priority | Medium | Normal → Medium |
 | SLA | High: first response not set, resolution 2–4 days, clock starts TicketCreated, basis not decided; Medium: first response not set, resolution 10–12 days, clock starts TicketCreated, basis not decided | Medium: first response 4 business hours, resolution 2 business days |
-| Approvals | ReopenApproval by role CS Manager, does not block work | Conditional: Registration Supervisor / Authorized Approver; plus Reopen Approval (CS Manager) if Allow Reopen is Yes |
+| Approvals gating the work | none | Conditional: Registration Supervisor / Authorized Approver |
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | allowed | not stated |
-| Reopen | allowed | Yes |
+| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
 | Transfer | per department setting | Yes |
 
 #### REG-NOC-002 — NOC for Golden Visa (Customer Service)
@@ -242,13 +258,14 @@ Steps — including each handoff's department — are stored configuration. No r
 | Aspect | Current (this database) | Workbook |
 |---|---|---|
 | Status | Active | — |
+| Runtime | not enforced: steps are not tracked and due dates come from the per-priority SLA policy — the SLA rows below are stored only | — |
 | Default priority | Medium | Normal → Medium |
 | SLA | Medium: first response not set, resolution 1–2 days, clock starts TicketCreated, basis not decided | Medium: first response 4 business hours, resolution 2 business days |
-| Approvals | ReopenApproval by role CS Manager, does not block work | Conditional: Registration Supervisor / Authorized Approver; plus Reopen Approval (CS Manager) if Allow Reopen is Yes |
+| Approvals gating the work | none | Conditional: Registration Supervisor / Authorized Approver |
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | not allowed | not stated |
-| Reopen | allowed | Yes |
+| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
 | Transfer | per department setting | Yes |
 
 #### REG-NOC-003 — NOC for Mortgage (Customer Service)
@@ -256,13 +273,14 @@ Steps — including each handoff's department — are stored configuration. No r
 | Aspect | Current (this database) | Workbook |
 |---|---|---|
 | Status | Active | — |
+| Runtime | not enforced: steps are not tracked and due dates come from the per-priority SLA policy — the SLA rows below are stored only | — |
 | Default priority | Medium | Normal → Medium |
 | SLA | High: first response not set, resolution 2–4 days, clock starts TicketCreated, basis not decided; Medium: first response not set, resolution 10–12 days, clock starts TicketCreated, basis not decided | Medium: first response 4 business hours, resolution 2 business days |
-| Approvals | ReopenApproval by role CS Manager, does not block work | Conditional: Registration Supervisor / Authorized Approver; plus Reopen Approval (CS Manager) if Allow Reopen is Yes |
+| Approvals gating the work | none | Conditional: Registration Supervisor / Authorized Approver |
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | allowed | not stated |
-| Reopen | allowed | Yes |
+| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
 | Transfer | per department setting | Yes |
 
 #### HO-NOC-001 — NOC for Handover (Customer Service)
@@ -270,13 +288,14 @@ Steps — including each handoff's department — are stored configuration. No r
 | Aspect | Current (this database) | Workbook |
 |---|---|---|
 | Status | Active | — |
+| Runtime | not enforced: steps are not tracked and due dates come from the per-priority SLA policy — the SLA rows below are stored only | — |
 | Default priority | Medium | Normal → Medium |
 | SLA | Medium: first response not set, resolution 1–2 days, clock starts TicketCreated, basis not decided | Medium: first response 4 business hours, resolution 2 business days |
-| Approvals | ReopenApproval by role CS Manager, does not block work | Conditional: Handover Supervisor / Authorized Approver; plus Reopen Approval (CS Manager) if Allow Reopen is Yes |
+| Approvals gating the work | none | Conditional: Handover Supervisor / Authorized Approver |
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Handoff to Handover → Handover Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | not allowed | not stated |
-| Reopen | allowed | Yes |
+| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
 | Transfer | per department setting | Yes |
 
 ### Decisions needed from the business

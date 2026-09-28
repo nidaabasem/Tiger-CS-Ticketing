@@ -120,6 +120,8 @@ public sealed record TicketListResultDto(IReadOnlyList<TicketSummaryDto> Items, 
 /// <param name="OriginatingChannelId">The channel the ticket ENTERED the system on (its originating interaction's channel) — never changed by later interactions on other channels; null for tickets predating the interaction model. Populated on detail reads.</param>
 /// <param name="OriginatingChannelName">The originating channel's display name, resolved from channel configuration — still shown for a channel that has since been deactivated. Populated on detail reads.</param>
 /// <param name="IsClassified">False while the ticket has no Category yet — an inquiry captured before anyone read the request. The UI shows "Unclassified" and offers the classify action rather than rendering a missing category.</param>
+/// <param name="CurrentWorkflowStepId">The step of the pinned workflow version the ticket is at — only for request types that enforce their workflow; null otherwise.</param>
+/// <param name="CurrentWorkflowStepName">That step's name (populated on GET /api/tickets/{id}).</param>
 /// <param name="HandoffState">
 /// Whether this ticket is waiting on a human agent, <b>derived</b> from the
 /// one open <c>TicketAgentHandoff</c> row: WaitingForAgent, Assigned or
@@ -175,7 +177,9 @@ public sealed record TicketDetailDto(
     int? WorkflowVersionNumber = null,
     byte? OriginatingChannelId = null,
     string? OriginatingChannelName = null,
-    bool IsClassified = true);
+    bool IsClassified = true,
+    int? CurrentWorkflowStepId = null,
+    string? CurrentWorkflowStepName = null);
 
 public enum TicketQueryOutcome
 {
@@ -261,6 +265,15 @@ public enum TicketMutationOutcome
     /// <summary>Workflow/Automation phase 2: the ticket's request-type workflow configuration does not allow this action (e.g. Pending Customer on a request type whose template forbids it, or Reopen where the request type disables it).</summary>
     NotAllowedForRequestType,
 
+    /// <summary>
+    /// The ticket's request type enforces its workflow and the action is not
+    /// the step the workflow expects next (e.g. a transfer to a department
+    /// the next handoff does not name, or Resolve before the remaining work).
+    /// Only tickets of request types with configuration enforcement on can
+    /// receive this.
+    /// </summary>
+    WorkflowStepNotAllowed,
+
     /// <summary>Workflow/Automation phase 2: the department's workflow settings disable this operation (assignment, internal reassignment, or transfer out) for the ticket's current department.</summary>
     DisabledByDepartmentSettings,
 
@@ -277,10 +290,13 @@ public enum TicketMutationOutcome
     PriorityNotFound
 }
 
-public sealed record TicketMutationResult(TicketMutationOutcome Outcome, TicketDetailDto? Response = null)
+public sealed record TicketMutationResult(TicketMutationOutcome Outcome, TicketDetailDto? Response = null, string? Detail = null)
 {
     public static TicketMutationResult Success(TicketDetailDto response) => new(TicketMutationOutcome.Success, response);
     public static TicketMutationResult Failure(TicketMutationOutcome outcome) => new(outcome);
+
+    /// <summary>A failure with a caller-facing explanation (e.g. the workflow step expected next).</summary>
+    public static TicketMutationResult Failure(TicketMutationOutcome outcome, string detail) => new(outcome, Detail: detail);
 }
 
 // ---- Status / resolve / close (MVP-API-Contracts.md §3.7/§3.9/§3.10) ----

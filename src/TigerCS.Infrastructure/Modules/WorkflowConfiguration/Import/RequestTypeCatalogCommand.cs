@@ -29,8 +29,12 @@ public static class RequestTypeCatalogCommand
     public const string AgentPriorityChangeSwitch = "--agent-priority-change";
     public const string ReportSwitch = "--report";
 
-    /// <summary>The migration that adds the columns the import writes; applying refuses to run before it.</summary>
-    public const string RequiredMigration = "20260928085727_AddRequestTypeCatalogImport";
+    /// <summary>
+    /// The latest migration the import writes to (the catalog columns come
+    /// with AddRequestTypeCatalogImport, the decisions table with this one);
+    /// applying refuses to run before it.
+    /// </summary>
+    public const string RequiredMigration = "20260928102230_AddConfiguredRuntimeEnforcement";
 
     public static bool IsRequested(IReadOnlyList<string> args) => args.Contains(Switch, StringComparer.OrdinalIgnoreCase);
 

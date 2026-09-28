@@ -138,6 +138,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["PUT /api/admin/request-types/{requestTypeId:int}/assignment-rule"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
         ["PUT /api/admin/request-types/{requestTypeId:int}/approval-requirements/{approvalType}"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
         ["PUT /api/admin/request-types/{requestTypeId:int}/sla-policies/{priorityId}"] = nameof(Administration.Integration.AdministrationEndpointsTests.RequestTypes_CreateListGetEditConfigureAndDeactivate),
+        ["PUT /api/admin/request-types/{requestTypeId:int}/configuration-enforcement"] = nameof(WorkflowConfiguration.Runtime.ConfiguredRuntimeApiTests.Activation_and_enforcement_are_refused_while_a_catalog_decision_is_open_and_allowed_once_it_is_answered),
+        ["POST /api/admin/request-types/{requestTypeId:int}/catalog-decisions/{decisionId:int}/resolution"] = nameof(WorkflowConfiguration.Runtime.ConfiguredRuntimeApiTests.Activation_and_enforcement_are_refused_while_a_catalog_decision_is_open_and_allowed_once_it_is_answered),
         ["GET /api/admin/workflows/catalog"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
         ["GET /api/admin/workflows"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),
         ["GET /api/admin/workflows/{workflowId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Workflows_DesignPublishVersionAndPinTickets),

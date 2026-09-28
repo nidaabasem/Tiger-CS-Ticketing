@@ -227,6 +227,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IWorkflowConfigurationUnitOfWork, WorkflowConfigurationUnitOfWork>();
         services.AddScoped<IRequestTypeRepository, RequestTypeRepository>();
         services.AddScoped<IRequestTypeSlaPolicyRepository, RequestTypeSlaPolicyRepository>();
+        services.AddScoped<IRequestTypeCatalogDecisionRepository, RequestTypeCatalogDecisionRepository>();
         services.AddScoped<IDepartmentWorkflowSettingsRepository, DepartmentWorkflowSettingsRepository>();
         services.AddScoped<WorkflowConfigurationQueryService>();
 
@@ -239,6 +240,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
         services.AddScoped<ITicketAgentHandoffRepository, TicketAgentHandoffRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
+        services.AddScoped<ConfiguredWorkflowRuntime>();
 
         // Workflow/Automation (phase 3) — approvals, approval requirements,
         // and the typed workflow event store phase 4's SLA triggers read.

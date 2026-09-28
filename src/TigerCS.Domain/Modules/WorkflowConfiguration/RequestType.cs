@@ -110,6 +110,18 @@ public class RequestType
 
     public bool IsActive { get; private set; }
 
+    /// <summary>
+    /// Whether tickets of this type run under its configuration at runtime:
+    /// the pinned workflow version's steps are tracked and progression is
+    /// validated (<see cref="WorkflowProgression"/>), and this type's
+    /// <see cref="RequestTypeSlaPolicy"/> rows take precedence over the
+    /// per-priority SLA policy. Off for every existing request type — their
+    /// behaviour is unchanged until an administrator explicitly enables it,
+    /// which is refused while <see cref="ConfiguredRuntimeReadiness"/>
+    /// reports any issue.
+    /// </summary>
+    public bool ConfigurationEnforced { get; private set; }
+
     private RequestType() { }
 
     public RequestType(
@@ -210,6 +222,12 @@ public class RequestType
 
         Code = trimmed;
     }
+
+    /// <summary>Turns runtime enforcement on. The caller has already checked <see cref="ConfiguredRuntimeReadiness"/>.</summary>
+    public void EnableConfigurationEnforcement() => ConfigurationEnforced = true;
+
+    /// <summary>Turns runtime enforcement off: tickets of this type go back to the unrestricted pre-existing behaviour.</summary>
+    public void DisableConfigurationEnforcement() => ConfigurationEnforced = false;
 
     public void Deactivate() => IsActive = false;
 

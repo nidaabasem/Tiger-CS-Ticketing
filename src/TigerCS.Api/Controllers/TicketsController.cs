@@ -1059,6 +1059,12 @@ public class TicketsController(
             detail: "Moving a ticket to PendingCustomer requires a PendingReason.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
+        TicketMutationOutcome.WorkflowStepNotAllowed => Problem(
+            type: "https://tigercs.internal/problems/workflow-step-not-allowed",
+            title: "Not the next step of the ticket's workflow",
+            detail: result.Detail ?? "The ticket's request-type workflow expects a different step next.",
+            statusCode: StatusCodes.Status422UnprocessableEntity),
+
         TicketMutationOutcome.NotAllowedForRequestType => Problem(
             type: "https://tigercs.internal/problems/not-allowed-for-request-type",
             title: "Not allowed for this request type",

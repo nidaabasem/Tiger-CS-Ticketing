@@ -136,6 +136,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<RequestTypeApprovalRequirement> RequestTypeApprovalRequirements => Set<RequestTypeApprovalRequirement>();
 
+    public DbSet<RequestTypeCatalogDecision> RequestTypeCatalogDecisions => Set<RequestTypeCatalogDecision>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -191,6 +193,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
         builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());
+        builder.ApplyConfiguration(new RequestTypeCatalogDecisionConfiguration());
 
         // Supplemental — see this configuration's own remarks for why it is
         // not folded into VerificationSessionConfiguration (a

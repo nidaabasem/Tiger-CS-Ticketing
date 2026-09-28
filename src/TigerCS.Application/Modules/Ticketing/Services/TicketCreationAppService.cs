@@ -63,7 +63,10 @@ public sealed class TicketCreationAppService(
     IRequestTypeRepository requestTypeRepository,
     ITicketInteractionRepository interactionRepository,
     TicketAutoAssignmentService autoAssignmentService,
-    IWorkflowTemplateRepository workflowTemplateRepository)
+    IWorkflowTemplateRepository workflowTemplateRepository,
+    // Always supplied by DI. Null only in unit fixtures that predate
+    // configuration enforcement, where no ticket is tracked anyway.
+    ConfiguredWorkflowRuntime? workflowRuntime = null)
 {
     public async Task<TicketCreationResult> CreateAsync(
         Guid callerEmployeeId, CreateTicketRequestDto request, CancellationToken cancellationToken = default)
@@ -322,8 +325,21 @@ public sealed class TicketCreationAppService(
         // leaves the ticket in the department queue, audited as a system
         // action. Runs in this same transaction, before the SLA period and
         // creation audit commit with it.
+        // Configuration enforcement: an enforced request type's ticket starts
+        // at its department's queue step; the automatic assignment below may
+        // then move it on to the work step. A no-op for every other ticket.
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.InitializeAsync(ticket, callerEmployeeId, correlationId, cancellationToken);
+        }
+
         await autoAssignmentService.ApplyAsync(
             ticket, now, correlationId, AutoAssignmentTrigger.TicketCreated, cancellationToken);
+
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.OnOwnerAssignedAsync(ticket, actorEmployeeId: null, correlationId, cancellationToken);
+        }
 
         // Backlog S-08's corrected acceptance criterion: ticket creation
         // opens the ticket's initial TicketSlaInstances row with computed due

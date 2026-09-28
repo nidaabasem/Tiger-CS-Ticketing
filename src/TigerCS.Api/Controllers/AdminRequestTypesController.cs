@@ -81,4 +81,27 @@ public class AdminRequestTypesController(AdminRequestTypeAppService requestTypes
     public async Task<IActionResult> SaveSlaPolicy(
         int requestTypeId, byte priorityId, [FromBody] SaveSlaPolicyRequestDto request, CancellationToken cancellationToken) =>
         FromResult(await requestTypes.SaveSlaPolicyAsync(CallerEmployeeId, requestTypeId, priorityId, request, cancellationToken));
+
+    /// <summary>
+    /// Turns runtime enforcement of the request type's workflow steps and
+    /// SLA on or off. Enabling is refused (409, listing every issue) while
+    /// any catalog decision is open or the configuration is incomplete.
+    /// </summary>
+    [HttpPut("{requestTypeId:int}/configuration-enforcement")]
+    [ProducesResponseType<AdminRequestTypeDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SetConfigurationEnforcement(
+        int requestTypeId, [FromBody] SetConfigurationEnforcementRequestDto request, CancellationToken cancellationToken) =>
+        FromResult(await requestTypes.SetConfigurationEnforcementAsync(CallerEmployeeId, requestTypeId, request, cancellationToken));
+
+    /// <summary>Records the business's answer to one open catalog decision. It changes no configuration by itself.</summary>
+    [HttpPost("{requestTypeId:int}/catalog-decisions/{decisionId:int}/resolution")]
+    [ProducesResponseType<AdminRequestTypeDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> ResolveCatalogDecision(
+        int requestTypeId, int decisionId, [FromBody] ResolveCatalogDecisionRequestDto request, CancellationToken cancellationToken) =>
+        FromResult(await requestTypes.ResolveCatalogDecisionAsync(CallerEmployeeId, requestTypeId, decisionId, request, cancellationToken));
 }

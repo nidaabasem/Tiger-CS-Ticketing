@@ -116,6 +116,11 @@ internal sealed class CatalogImportTestDb : IDisposable
                     .Ignore(r => r.Description).Ignore(r => r.RequiredDocumentsJson);
                 builder.Entity<RequestTypeSlaPolicy>().Ignore(p => p.FirstResponseUnit);
                 builder.Entity<WorkflowTemplateStep>().Ignore(s => s.DepartmentId);
+
+                // ...and those AddConfiguredRuntimeEnforcement adds.
+                builder.Entity<RequestType>().Ignore(r => r.ConfigurationEnforced);
+                builder.Entity<Ticket>().Ignore(t => t.CurrentWorkflowStepId);
+                builder.Ignore<RequestTypeCatalogDecision>();
             }
         }
     }

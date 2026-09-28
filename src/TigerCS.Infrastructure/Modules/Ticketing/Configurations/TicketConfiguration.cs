@@ -5,6 +5,7 @@ using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
+using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Infrastructure.Modules.Ticketing.Configurations;
 
@@ -141,6 +142,15 @@ public class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.HasOne<TigerCS.Domain.Modules.WorkflowConfiguration.WorkflowTemplate>()
             .WithMany()
             .HasForeignKey(t => t.WorkflowTemplateId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // The tracked step of the pinned version (enforced request types
+        // only). Restrict: a step a ticket stands on belongs to a published,
+        // hence never-deleted, version.
+        builder.HasOne<WorkflowTemplateStep>()
+            .WithMany()
+            .HasForeignKey(t => t.CurrentWorkflowStepId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
     }

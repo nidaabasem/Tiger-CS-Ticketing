@@ -61,7 +61,10 @@ public sealed class TicketClassificationAppService(
     ITicketingUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
     SlaDueDateService slaDueDateService,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    // Always supplied by DI. Null only in unit fixtures that predate
+    // configuration enforcement, where no ticket is tracked anyway.
+    ConfiguredWorkflowRuntime? workflowRuntime = null)
 {
     public async Task<TicketMutationResult> ClassifyAsync(
         Guid callerEmployeeId,
@@ -161,6 +164,13 @@ public sealed class TicketClassificationAppService(
             {
                 ticket.ClassifyRequestType(requestType.RequestTypeId);
                 ticket.PinWorkflowVersion(workflowVersion.WorkflowTemplateId);
+
+                // Classified late into an enforced request type: the ticket
+                // enters its workflow now, exactly as it would have at creation.
+                if (workflowRuntime is not null)
+                {
+                    await workflowRuntime.InitializeAsync(ticket, callerEmployeeId, correlationId, cancellationToken);
+                }
             }
 
             // The SLA clock the ticket never had, started from this moment —

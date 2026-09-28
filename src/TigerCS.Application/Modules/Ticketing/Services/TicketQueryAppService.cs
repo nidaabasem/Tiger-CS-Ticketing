@@ -161,7 +161,11 @@ public sealed class TicketQueryAppService(
                 detail = detail with
                 {
                     WorkflowName = workflow?.Name ?? version.Name,
-                    WorkflowVersionNumber = version.VersionNumber
+                    WorkflowVersionNumber = version.VersionNumber,
+                    // Tracked only for request types that enforce their workflow.
+                    CurrentWorkflowStepName = ticket.CurrentWorkflowStepId is { } stepId
+                        ? version.Steps.FirstOrDefault(s => s.WorkflowTemplateStepId == stepId)?.Name
+                        : null
                 };
             }
         }
@@ -322,5 +326,6 @@ public sealed class TicketQueryAppService(
         ticket.ExternalUnitId,
         RequestTypeId: ticket.RequestTypeId,
         WorkflowTemplateId: ticket.WorkflowTemplateId,
+        CurrentWorkflowStepId: ticket.CurrentWorkflowStepId,
         IsClassified: ticket.IsClassified);
 }

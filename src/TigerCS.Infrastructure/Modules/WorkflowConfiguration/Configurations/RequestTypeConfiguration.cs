@@ -23,6 +23,7 @@ public class RequestTypeConfiguration : IEntityTypeConfiguration<RequestType>
         builder.Property(r => r.RequestGroup).HasMaxLength(100);
         builder.Property(r => r.Description).HasMaxLength(500);
         builder.Property(r => r.IsActive).IsRequired();
+        builder.Property(r => r.ConfigurationEnforced).IsRequired().HasDefaultValue(false);
 
         // The request-type catalog's stable code — what a re-import keys on.
         // Filtered: request types that predate the catalog carry none.

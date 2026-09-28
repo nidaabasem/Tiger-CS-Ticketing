@@ -89,7 +89,11 @@ public sealed record AdminRequestTypeDetailDto(
     WorkflowLinkDto Workflow,
     AssignmentRuleDto? AssignmentRule,
     IReadOnlyList<ApprovalRequirementDto> ApprovalRequirements,
-    IReadOnlyList<SlaPolicyDto> SlaPolicies);
+    IReadOnlyList<SlaPolicyDto> SlaPolicies,
+    string? Code = null,
+    bool ConfigurationEnforced = false,
+    IReadOnlyList<CatalogDecisionDto>? CatalogDecisions = null,
+    IReadOnlyList<string>? ReadinessIssues = null);
 
 public sealed record SaveRequestTypeRequestDto(
     int DepartmentId,
@@ -146,3 +150,13 @@ public sealed record SaveSlaPolicyRequestDto(
 
 /// <summary>What the New Ticket picker needs: the active request types of one department, by name.</summary>
 public sealed record RequestTypeOptionDto(int RequestTypeId, string Name, int DepartmentId, byte DefaultPriorityId, bool HasPublishedWorkflow);
+
+/// <summary>One open (or answered) business question recorded by the request-type catalog import.</summary>
+public sealed record CatalogDecisionDto(
+    int DecisionId, string Area, string Question, bool IsResolved, string? Resolution, DateTime? ResolvedAtUtc, Guid? ResolvedByEmployeeId);
+
+/// <summary>Records the business's answer to one catalog decision. It changes no configuration by itself.</summary>
+public sealed record ResolveCatalogDecisionRequestDto(string Resolution);
+
+/// <summary>Turns runtime enforcement of the request type's workflow and SLA on or off.</summary>
+public sealed record SetConfigurationEnforcementRequestDto(bool Enabled, string? Reason = null);

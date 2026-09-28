@@ -52,7 +52,8 @@ public sealed record WorkflowVersionStepDto(
     string? ApprovalTypeLabel,
     bool RequiresApprovalType,
     bool SupportsOutcomeBranches,
-    IReadOnlyList<StepTransitionDto> Transitions);
+    IReadOnlyList<StepTransitionDto> Transitions,
+    int? DepartmentId = null);
 
 public sealed record WorkflowValidationIssueDto(WorkflowValidationSeverity Severity, byte? StepSequence, string Message);
 
@@ -95,7 +96,8 @@ public sealed record UpdateWorkflowRequestDto(string Name, string? Description);
 public sealed record UpdateVersionSettingsRequestDto(
     string Name, string? Description, bool AllowsPendingCustomer, bool AllowsPendingInternal, bool RequiresApproval);
 
-public sealed record SaveStepRequestDto(string Name, WorkflowStepKind Kind, bool IsOptional, ApprovalType? ApprovalType);
+/// <summary>A step edit. <c>DepartmentId</c> applies to a Department Queue / Assignment step only: the department it routes to (a handoff or a return to Customer Service); null leaves it unnamed.</summary>
+public sealed record SaveStepRequestDto(string Name, WorkflowStepKind Kind, bool IsOptional, ApprovalType? ApprovalType, int? DepartmentId = null);
 
 public enum StepMoveDirection
 {

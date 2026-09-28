@@ -84,11 +84,12 @@ public sealed record RequestTypeCatalogImportReport(
         sb.AppendLine("- **SLA clock start**: TicketCreated, the existing default; pause-on-Pending stays \"not decided\" as on every other type.");
         sb.AppendLine();
 
-        sb.AppendLine("## Workflow definitions (stored, not executed)");
+        sb.AppendLine("## Workflow definitions");
         sb.AppendLine();
-        sb.AppendLine("Steps — including each handoff's department — are stored configuration. No runtime code reads them: "
-            + "a ticket changes department only through the existing Transfer action (CS Manager only, subject to the source "
-            + "department's transfer setting), and nothing moves a ticket automatically.");
+        sb.AppendLine("Steps — including each handoff's department — are enforced at runtime only once an administrator turns on "
+            + "configuration enforcement for the request type, which is refused while any decision below is open. Even then a "
+            + "ticket changes department only through the existing Transfer action (CS Manager only, subject to the source "
+            + "department's transfer setting); the workflow only decides whether that transfer is the expected next step.");
         sb.AppendLine();
         foreach (var result in Results)
         {
@@ -143,13 +144,16 @@ public sealed record RequestTypeCatalogImportReport(
         sb.AppendLine("| Aspect | Current (this database) | Workbook |");
         sb.AppendLine("|---|---|---|");
         sb.AppendLine($"| Status | {(current.IsActive ? "Active" : "Inactive")} | — |");
+        sb.AppendLine(current.ConfigurationEnforced
+            ? "| Runtime | configuration enforced: steps tracked, SLA rows applied | — |"
+            : "| Runtime | not enforced: steps are not tracked and due dates come from the per-priority SLA policy — the SLA rows below are stored only | — |");
         sb.AppendLine($"| Default priority | {current.DefaultPriority} | {Cell(source.DefaultPriority)} → {plan.DefaultPriority?.ToString() ?? "?"} |");
         sb.AppendLine($"| SLA | {Cell(Join(current.Slas))} | {Cell($"{plan.DefaultPriority}: first response {source.FirstResponseSla}, resolution {source.ResolutionSla}")} |");
-        sb.AppendLine($"| Approvals | {Cell(Join(current.Approvals))} | {Cell(WorkbookApproval(source))} |");
+        sb.AppendLine($"| Approvals gating the work | {Cell(Join(current.Approvals))} | {Cell(WorkbookApproval(source))} |");
         sb.AppendLine($"| Workflow | {Cell(current.WorkflowDescription + ": " + string.Join(" → ", current.Steps))} | {Cell(string.Join(" → ", plan.Steps.Select(DescribeStep)))} |");
         sb.AppendLine($"| Pending Customer | {(current.AllowPendingCustomer ? "allowed" : "not allowed")} | not stated |");
         sb.AppendLine($"| Agent priority change | {(current.AllowAgentPriorityChange ? "allowed" : "not allowed")} | not stated |");
-        sb.AppendLine($"| Reopen | {(current.AllowReopen ? "allowed" : "not allowed")} | {Cell(source.AllowReopen)} |");
+        sb.AppendLine($"| Reopen | {Cell(CurrentReopen(current))} | {Cell(WorkbookReopen(source))} |");
         sb.AppendLine($"| Transfer | per department setting | {Cell(source.AllowTransfer)} |");
         sb.AppendLine();
     }
@@ -157,7 +161,22 @@ public sealed record RequestTypeCatalogImportReport(
     private static string WorkbookApproval(RequestTypeCatalogRow source) =>
         string.Equals(source.NeedsApproval?.Trim(), "No", StringComparison.OrdinalIgnoreCase)
             ? "none"
-            : $"{source.NeedsApproval}: {source.ApprovalRole ?? "(no approver given)"}; plus Reopen Approval (CS Manager) if Allow Reopen is Yes";
+            : $"{source.NeedsApproval}: {source.ApprovalRole ?? "(no approver given)"}";
+
+    // "Allow Reopen = Yes" means the request type may be reopened. It does
+    // NOT mean a reopen needs approval: the CS layer reopens directly under
+    // the existing Reopen rule, and a Reopen Approval is only the request
+    // route for roles that cannot.
+    private static string CurrentReopen(ExistingRequestTypeSnapshot current) =>
+        !current.AllowReopen
+            ? "not allowed"
+            : "allowed — direct Reopen by the CS layer under the existing rule (no approval needed)"
+              + (current.ReopenRequestRoute is { } route ? $"; {route}" : string.Empty);
+
+    private static string WorkbookReopen(RequestTypeCatalogRow source) =>
+        string.Equals(source.AllowReopen?.Trim(), "Yes", StringComparison.OrdinalIgnoreCase)
+            ? "Yes — reopen allowed (no approval stated)"
+            : source.AllowReopen ?? "not stated";
 
     private static string Join(IReadOnlyList<string> items) => items.Count == 0 ? "none" : string.Join("; ", items);
 

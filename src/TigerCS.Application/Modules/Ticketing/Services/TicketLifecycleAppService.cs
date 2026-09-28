@@ -44,7 +44,10 @@ public sealed class TicketLifecycleAppService(
     ITicketWorkflowEventRepository workflowEventRepository,
     TicketAutoAssignmentService autoAssignmentService,
     SlaDueDateService slaDueDateService,
-    ReopenEligibilityService reopenEligibilityService)
+    ReopenEligibilityService reopenEligibilityService,
+    // Always supplied by DI. Null only in unit fixtures that predate
+    // configuration enforcement, where no ticket is tracked anyway.
+    ConfiguredWorkflowRuntime? workflowRuntime = null)
 {
     /// <summary>Matches the <c>TicketStatusHistory.Note</c> column, so a long reason is never lost to a database truncation error mid-transaction.</summary>
     public const int ReopenReasonMaxLength = 1000;
@@ -237,6 +240,17 @@ public sealed class TicketLifecycleAppService(
             }
         }
 
+        // Configuration enforcement, after every existing rule: outcome
+        // Resolved must be the step the workflow expects next; Cancelled /
+        // Rejected / Duplicate end the request from wherever it is.
+        var resolveCheck = workflowRuntime is null
+            ? WorkflowStepCheck.Untracked
+            : await workflowRuntime.CheckResolveAsync(ticket, outcome, cancellationToken);
+        if (!resolveCheck.Allowed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.WorkflowStepNotAllowed, resolveCheck.Reason!);
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -291,6 +305,11 @@ public sealed class TicketLifecycleAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "Resolve", "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(), afterValue: $"ResolutionOutcome={outcome}", correlationId, cancellationToken);
+
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.ApplyAsync(ticket, resolveCheck, $"Resolve:{outcome}", callerEmployeeId, correlationId, cancellationToken);
+        }
 
         await EnqueueLifecycleEventAsync(
             OutboxEventTypes.TicketResolved, OutboxEventTypes.TicketResolvedVersion,
@@ -370,6 +389,14 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.NotYetResolved);
         }
 
+        var closeCheck = workflowRuntime is null
+            ? WorkflowStepCheck.Untracked
+            : await workflowRuntime.CheckCloseAsync(ticket, cancellationToken);
+        if (!closeCheck.Allowed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.WorkflowStepNotAllowed, closeCheck.Reason!);
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -400,6 +427,11 @@ public sealed class TicketLifecycleAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "Close", "Ticket", ticketId.ToString(),
             beforeValue: oldStatus.ToString(), afterValue: TicketStatus.Closed.ToString(), correlationId, cancellationToken);
+
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.ApplyAsync(ticket, closeCheck, "Close", callerEmployeeId, correlationId, cancellationToken);
+        }
 
         await EnqueueLifecycleEventAsync(
             OutboxEventTypes.TicketClosed, OutboxEventTypes.TicketClosedVersion,
@@ -565,6 +597,17 @@ public sealed class TicketLifecycleAppService(
             }
         }
 
+        // Configuration enforcement, after every existing reopen rule (which
+        // are untouched): the reopen resumes at the target department's last
+        // queue step, so that department must have one in the workflow.
+        var reopenCheck = workflowRuntime is null
+            ? WorkflowStepCheck.Untracked
+            : await workflowRuntime.CheckReopenAsync(ticket, request.TargetDepartmentId, cancellationToken);
+        if (!reopenCheck.Allowed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.WorkflowStepNotAllowed, reopenCheck.Reason!);
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var previousStatus = ticket.TicketStatus;
@@ -603,8 +646,18 @@ public sealed class TicketLifecycleAppService(
         // now owns the work — the same call Transfer makes, for the same
         // reason. Every non-assignable case leaves the ticket in that
         // department's queue, audited.
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.ApplyAsync(ticket, reopenCheck, "Reopen", callerEmployeeId, correlationId, cancellationToken);
+        }
+
         var assignment = await autoAssignmentService.ApplyAsync(
             ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
+
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.OnOwnerAssignedAsync(ticket, actorEmployeeId: null, correlationId, cancellationToken);
+        }
 
         // Lifecycle history: the status dimension, carrying the agent's reason
         // as its note — the row Ticket Details now reads back through

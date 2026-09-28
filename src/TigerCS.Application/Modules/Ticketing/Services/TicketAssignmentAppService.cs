@@ -22,7 +22,10 @@ public sealed class TicketAssignmentAppService(
     IAuditEntryWriter auditWriter,
     TimeProvider timeProvider,
     IDepartmentWorkflowSettingsRepository departmentWorkflowSettingsRepository,
-    TicketAutoAssignmentService autoAssignmentService)
+    TicketAutoAssignmentService autoAssignmentService,
+    // Always supplied by DI. Null only in unit fixtures that predate
+    // configuration enforcement, where no ticket is tracked anyway.
+    ConfiguredWorkflowRuntime? workflowRuntime = null)
 {
     /// <summary>
     /// PR correction — the caller's role alone decides Assign authority now;
@@ -104,10 +107,17 @@ public sealed class TicketAssignmentAppService(
             new TicketAssignment(ticketId, request.AssignedEmployeeId, ticket.CurrentDepartmentId, now, callerEmployeeId),
             cancellationToken);
 
+        var assignCorrelationId = Guid.NewGuid();
         await auditWriter.WriteAsync(
             callerEmployeeId, "Assign", "Ticket", ticketId.ToString(),
             beforeValue: previousOwnerEmployeeId?.ToString(), afterValue: request.AssignedEmployeeId.ToString(),
-            Guid.NewGuid(), cancellationToken);
+            assignCorrelationId, cancellationToken);
+
+        // An enforced workflow at a queue step moves on to its work step.
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.OnOwnerAssignedAsync(ticket, callerEmployeeId, assignCorrelationId, cancellationToken);
+        }
 
         try
         {
@@ -170,6 +180,18 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.TargetDepartmentInactive);
         }
 
+        // Configuration enforcement: after every existing rule above has
+        // allowed the transfer, an enforced workflow must also expect a
+        // handoff (or return) to exactly this department next. It can only
+        // refuse; it never grants a transfer the rules above deny.
+        var workflowCheck = workflowRuntime is null
+            ? WorkflowStepCheck.Untracked
+            : await workflowRuntime.CheckTransferAsync(ticket, request.TargetDepartmentId, cancellationToken);
+        if (!workflowCheck.Allowed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.WorkflowStepNotAllowed, workflowCheck.Reason!);
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var previousDepartmentId = ticket.CurrentDepartmentId;
@@ -201,8 +223,18 @@ public sealed class TicketAssignmentAppService(
         // (no rule, rule targets someone outside department C, settings
         // disable assignment) leaves the ticket in the NEW department's
         // queue — audited, and never a randomly picked employee.
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.ApplyAsync(ticket, workflowCheck, "Transfer", callerEmployeeId, correlationId, cancellationToken);
+        }
+
         await autoAssignmentService.ApplyAsync(
             ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
+
+        if (workflowRuntime is not null)
+        {
+            await workflowRuntime.OnOwnerAssignedAsync(ticket, actorEmployeeId: null, correlationId, cancellationToken);
+        }
 
         try
         {

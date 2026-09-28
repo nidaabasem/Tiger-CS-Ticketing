@@ -123,6 +123,15 @@ public class Ticket
     public int? WorkflowTemplateId { get; private set; }
 
     /// <summary>
+    /// The step of the pinned workflow version this ticket is currently at —
+    /// tracked only when its request type has
+    /// <c>RequestType.ConfigurationEnforced</c> on; null for every other
+    /// ticket. A position within the workflow, never a status: the
+    /// <see cref="TicketStatus"/> machine is unchanged.
+    /// </summary>
+    public int? CurrentWorkflowStepId { get; private set; }
+
+    /// <summary>
     /// Business-rule change: the real CRM Buyer Lookup match the agent
     /// selected (<c>GET /api/crm/buyers</c> — phone search only, never a
     /// Unit/Project search). A different identifier space from
@@ -606,6 +615,23 @@ public class Ticket
     /// type's currently Published version. Requires the request type to be
     /// classified first: a version is only ever pinned through a request type.
     /// </summary>
+    /// <summary>
+    /// Records the workflow step the ticket is now at. The step's validity
+    /// (it belongs to the pinned version, and the move is a permitted
+    /// progression) is decided by the calling application service through
+    /// <c>WorkflowProgression</c>; this only stores the position.
+    /// </summary>
+    public void MoveToWorkflowStep(int workflowTemplateStepId)
+    {
+        if (WorkflowTemplateId is null)
+        {
+            throw new InvalidOperationException(
+                $"Ticket {TicketId} has no pinned workflow version; it has no workflow step to be at.");
+        }
+
+        CurrentWorkflowStepId = workflowTemplateStepId;
+    }
+
     public void PinWorkflowVersion(int workflowTemplateId)
     {
         if (RequestTypeId is null)

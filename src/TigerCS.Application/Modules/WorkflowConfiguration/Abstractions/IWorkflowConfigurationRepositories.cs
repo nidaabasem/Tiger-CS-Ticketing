@@ -112,3 +112,13 @@ public interface IWorkflowConfigurationUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }
+
+/// <summary>The request-type catalog import's open business questions per request type.</summary>
+public interface IRequestTypeCatalogDecisionRepository
+{
+    Task<IReadOnlyList<RequestTypeCatalogDecision>> ListByRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default);
+
+    Task<int> CountUnresolvedAsync(int requestTypeId, CancellationToken cancellationToken = default);
+
+    Task<RequestTypeCatalogDecision?> GetAsync(int requestTypeId, int decisionId, CancellationToken cancellationToken = default);
+}

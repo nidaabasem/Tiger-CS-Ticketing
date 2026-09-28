@@ -278,31 +278,43 @@ public sealed class AdminWorkflowAppService(
             return null;
         });
 
-    public Task<AdminResult<WorkflowVersionDetailDto>> AddStepAsync(
-        Guid actorEmployeeId, int workflowTemplateId, SaveStepRequestDto request, CancellationToken cancellationToken = default) =>
-        EditDraftAsync(actorEmployeeId, workflowTemplateId, "AdminAddWorkflowStep", cancellationToken, version =>
+    public async Task<AdminResult<WorkflowVersionDetailDto>> AddStepAsync(
+        Guid actorEmployeeId, int workflowTemplateId, SaveStepRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var departmentError = await ValidateStepDepartmentAsync(request, cancellationToken);
+        return await EditDraftAsync(actorEmployeeId, workflowTemplateId, "AdminAddWorkflowStep", cancellationToken, version =>
         {
-            if (ValidateStep(request) is { } error)
+            if ((ValidateStep(request) ?? departmentError) is { } error)
             {
                 return error;
             }
 
-            version.AppendStep(request.Name, request.Kind, request.IsOptional, request.ApprovalType);
+            version.AppendStep(request.Name, request.Kind, request.IsOptional, request.ApprovalType, request.DepartmentId);
             return null;
         });
+    }
 
-    public Task<AdminResult<WorkflowVersionDetailDto>> UpdateStepAsync(
-        Guid actorEmployeeId, int workflowTemplateId, int stepId, SaveStepRequestDto request, CancellationToken cancellationToken = default) =>
-        EditDraftAsync(actorEmployeeId, workflowTemplateId, "AdminUpdateWorkflowStep", cancellationToken, version =>
+    public async Task<AdminResult<WorkflowVersionDetailDto>> UpdateStepAsync(
+        Guid actorEmployeeId, int workflowTemplateId, int stepId, SaveStepRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var departmentError = await ValidateStepDepartmentAsync(request, cancellationToken);
+        return await EditDraftAsync(actorEmployeeId, workflowTemplateId, "AdminUpdateWorkflowStep", cancellationToken, version =>
         {
-            if (ValidateStep(request) is { } error)
+            if ((ValidateStep(request) ?? departmentError) is { } error)
             {
                 return error;
             }
 
             version.UpdateStep(stepId, request.Name, request.Kind, request.IsOptional, request.ApprovalType);
+            version.SetStepDepartment(stepId, request.DepartmentId);
             return null;
         });
+    }
+
+    private async Task<string?> ValidateStepDepartmentAsync(SaveStepRequestDto request, CancellationToken cancellationToken) =>
+        request.DepartmentId is { } departmentId && await departmentRepository.GetByIdAsync(departmentId, cancellationToken) is null
+            ? "The step's department does not exist."
+            : null;
 
     public Task<AdminResult<WorkflowVersionDetailDto>> RemoveStepAsync(
         Guid actorEmployeeId, int workflowTemplateId, int stepId, CancellationToken cancellationToken = default) =>
@@ -362,6 +374,27 @@ public sealed class AdminWorkflowAppService(
         if (errors.Count > 0)
         {
             return AdminResult<WorkflowVersionDetailDto>.Invalid(errors);
+        }
+
+        // New tickets of an enforced request type pin the version published
+        // here, so it must be one the runtime can track for each such type.
+        var enforcedUsers = (await requestTypeRepository.ListByWorkflowIdAsync(version.WorkflowId, cancellationToken))
+            .Where(r => r.ConfigurationEnforced)
+            .ToList();
+        if (enforcedUsers.Count > 0)
+        {
+            var activeDepartments = (await departmentRepository.ListAsync(activeOnly: true, cancellationToken))
+                .Select(d => d.DepartmentId)
+                .ToHashSet();
+            var enforcedIssues = enforcedUsers
+                .SelectMany(r => ConfiguredRuntimeReadiness.EvaluateVersion(version, r.DepartmentId, activeDepartments.Contains)
+                    .Select(issue => $"{r.Name}: {issue}"))
+                .Distinct()
+                .ToList();
+            if (enforcedIssues.Count > 0)
+            {
+                return AdminResult<WorkflowVersionDetailDto>.Conflict([.. enforcedIssues]);
+            }
         }
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -495,7 +528,8 @@ public sealed class AdminWorkflowAppService(
                 .Where(t => t.TargetStep is not null)
                 .OrderBy(t => t.Outcome)
                 .Select(t => new StepTransitionDto(t.Outcome, t.TargetStep!.WorkflowTemplateStepId, t.TargetStep.Sequence, t.TargetStep.Name))
-                .ToList());
+                .ToList(),
+            step.DepartmentId);
     }
 
     private static string DescribeSteps(WorkflowTemplate version) =>

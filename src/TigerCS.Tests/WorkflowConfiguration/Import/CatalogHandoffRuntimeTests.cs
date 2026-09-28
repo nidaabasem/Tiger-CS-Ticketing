@@ -15,7 +15,10 @@ using TigerCS.Tests.IdentityAndAccess.Integration;
 namespace TigerCS.Tests.WorkflowConfiguration.Import;
 
 /// <summary>
-/// What an imported handoff workflow does — and does not do — at runtime,
+/// What an imported handoff workflow does — and does not do — at runtime
+/// while its request type does NOT enforce its configuration (the state
+/// every imported type starts in; enforced behaviour is covered by
+/// <c>ConfiguredRuntimeApiTests</c>),
 /// end to end through the real Api (routing, authorization, application
 /// services). The workflow VERSION and its steps' departments are stored
 /// definitions: nothing reads them to move a ticket. The executable routing
@@ -243,71 +246,5 @@ public class CatalogHandoffRuntimeTests : IClassFixture<TigerCsApiFactory>
             db.DepartmentWorkflowSettings.Remove(await db.DepartmentWorkflowSettings.SingleAsync(s => s.DepartmentId == setup.Handover));
             await db.SaveChangesAsync();
         }
-    }
-
-    [Fact]
-    public void No_runtime_code_reads_a_steps_department()
-    {
-        // The only readers of WorkflowTemplateStep.DepartmentId are the
-        // import itself and persistence: application services and the Api
-        // never look at workflow steps to route a ticket.
-        var runtimeAssemblies = new[]
-        {
-            typeof(TigerCS.Application.Modules.Ticketing.Services.TicketAssignmentAppService).Assembly,
-            typeof(TigerCS.Api.Controllers.TicketsController).Assembly
-        };
-        var getter = typeof(WorkflowTemplateStep).GetProperty(nameof(WorkflowTemplateStep.DepartmentId))!.GetMethod!;
-
-        // Positive control: the scan does find the one known reader — copying
-        // a version into a new Draft carries each step's department across.
-        var copySteps = typeof(WorkflowTemplate).GetMethod(nameof(WorkflowTemplate.CopyStepsFrom))!;
-        Assert.True(CallsMethod(copySteps.GetMethodBody()!.GetILAsByteArray()!, copySteps.Module, getter));
-
-        foreach (var assembly in runtimeAssemblies)
-        {
-            foreach (var type in assembly.GetTypes())
-            {
-                foreach (var method in type.GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static
-                                                      | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
-                                                      | System.Reflection.BindingFlags.DeclaredOnly))
-                {
-                    var body = method.GetMethodBody()?.GetILAsByteArray();
-                    if (body is null)
-                    {
-                        continue;
-                    }
-
-                    Assert.False(CallsMethod(body, method.Module, getter), $"{type.FullName}.{method.Name} reads WorkflowTemplateStep.DepartmentId");
-                }
-            }
-        }
-    }
-
-    /// <summary>Scans IL for a call/callvirt whose metadata token resolves to <paramref name="target"/>.</summary>
-    private static bool CallsMethod(byte[] il, System.Reflection.Module module, System.Reflection.MethodInfo target)
-    {
-        for (var i = 0; i + 4 < il.Length; i++)
-        {
-            if (il[i] is not (0x28 or 0x6F)) // call, callvirt
-            {
-                continue;
-            }
-
-            var token = BitConverter.ToInt32(il, i + 1);
-            try
-            {
-                if (module.ResolveMethod(token) is System.Reflection.MethodInfo resolved
-                    && resolved.MetadataToken == target.MetadataToken && resolved.Module == target.Module)
-                {
-                    return true;
-                }
-            }
-            catch (ArgumentException)
-            {
-                // Not a method token at this offset — the byte was an operand.
-            }
-        }
-
-        return false;
     }
 }

@@ -209,3 +209,19 @@ public sealed class WorkflowConfigurationUnitOfWork(TigerCsDbContext dbContext) 
 {
     public Task SaveChangesAsync(CancellationToken cancellationToken = default) => dbContext.SaveChangesAsync(cancellationToken);
 }
+
+public sealed class RequestTypeCatalogDecisionRepository(TigerCsDbContext dbContext) : IRequestTypeCatalogDecisionRepository
+{
+    public async Task<IReadOnlyList<RequestTypeCatalogDecision>> ListByRequestTypeIdAsync(int requestTypeId, CancellationToken cancellationToken = default) =>
+        await dbContext.RequestTypeCatalogDecisions
+            .Where(d => d.RequestTypeId == requestTypeId)
+            .OrderBy(d => d.RequestTypeCatalogDecisionId)
+            .ToListAsync(cancellationToken);
+
+    public Task<int> CountUnresolvedAsync(int requestTypeId, CancellationToken cancellationToken = default) =>
+        dbContext.RequestTypeCatalogDecisions.CountAsync(d => d.RequestTypeId == requestTypeId && d.ResolvedAtUtc == null, cancellationToken);
+
+    public Task<RequestTypeCatalogDecision?> GetAsync(int requestTypeId, int decisionId, CancellationToken cancellationToken = default) =>
+        dbContext.RequestTypeCatalogDecisions.FirstOrDefaultAsync(
+            d => d.RequestTypeId == requestTypeId && d.RequestTypeCatalogDecisionId == decisionId, cancellationToken);
+}
