@@ -151,19 +151,22 @@ public class RequestTypeCatalogImporterTests
         Assert.True(resale.AllowAgentPriorityChange);
         Assert.Contains(resale.Slas, s => s.StartsWith("Medium:", StringComparison.Ordinal) && s.Contains("10–12 days"));
         Assert.Contains(resale.Slas, s => s.StartsWith("High:", StringComparison.Ordinal) && s.Contains("2–4 days"));
-        // Reopen Approval is the request route for roles without direct
-        // Reopen — never an approval the work (or a reopen) waits for.
+        // The reference seed's pre-existing ReopenApproval row is reported
+        // factually and left alone — never as a gating approval, and never
+        // described as part of the approved Reopen rule.
         Assert.Empty(resale.Approvals);
-        Assert.Equal("requests from roles without direct Reopen are decided by role CS Manager", resale.ReopenRequestRoute);
+        Assert.StartsWith("pre-existing ReopenApproval requirement row", resale.ReopenRequestRoute);
         Assert.Contains("Pending Customer (optional)", resale.Steps);
 
         var markdown = report.ToMarkdown();
         Assert.Contains("## Existing request types — current vs workbook", markdown);
         Assert.Contains("### REG-NOC-001 — NOC for Resale (Customer Service)", markdown);
         Assert.Contains("| Approvals gating the work | none | Conditional: Registration Supervisor / Authorized Approver |", markdown);
-        Assert.Contains("| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); "
-            + "requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |", markdown);
+        Assert.Contains("| Reopen | allowed — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override. "
+            + "Note: pre-existing ReopenApproval requirement row", markdown);
+        Assert.Contains("| Yes — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override |", markdown);
         Assert.DoesNotContain("plus Reopen Approval", markdown);
+        Assert.DoesNotContain("requests from roles without direct Reopen", markdown);
     }
 
     [Fact]
@@ -275,11 +278,9 @@ public class RequestTypeCatalogImporterTests
         Assert.Equal(SlaClockBasis.BusinessHours, sla.ClockBasis);
         Assert.Null(sla.PausesOnPendingCustomer);
 
-        // The conditional Collections approval is NOT turned into a
-        // requirement; only the approved Reopen Approval rule applies.
-        var approval = Assert.Single(await context.RequestTypeApprovalRequirements.Where(a => a.RequestTypeId == returned.RequestTypeId).ToListAsync());
-        Assert.Equal(ApprovalType.ReopenApproval, approval.ApprovalType);
-        Assert.Equal(Roles.CsManager, approval.TargetRoleName);
+        // Neither the conditional Collections approval nor any Reopen
+        // Approval is created: Reopen stays the approved direct rule.
+        Assert.Empty(await context.RequestTypeApprovalRequirements.Where(a => a.RequestTypeId == returned.RequestTypeId).ToListAsync());
     }
 
     [Fact]
@@ -309,7 +310,16 @@ public class RequestTypeCatalogImporterTests
         var unanswered = await db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now, ActivateResolved: true));
         Assert.Equal(0, unanswered.Count(RequestTypeImportOutcome.CreatedActive));
 
-        var report = await db.ImportAsync(CatalogImportTestDb.ActivatingImport);
+        // With the real workbook nothing can activate: every SLA is in
+        // business days, whose meaning is an open decision.
+        Assert.Equal(0, (await db.ImportAsync(CatalogImportTestDb.ActivatingImport with { Apply = false })).Count(RequestTypeImportOutcome.CreatedActive));
+
+        // A workbook variant giving the same rows' SLAs in business hours has
+        // no open question left once priority change is answered.
+        var hoursVariant = RequestTypeCatalog.Load()
+            .Select(r => r with { ResolutionSla = r.ResolutionSla.Replace("business days", "business hours").Replace("business day", "business hours") })
+            .ToList();
+        var report = await db.ImportAsync(hoursVariant, CatalogImportTestDb.ActivatingImport);
 
         Assert.Equal(ResolvedCodes, report.Results.Where(r => r.Outcome == RequestTypeImportOutcome.CreatedActive).Select(r => r.Plan.Code));
         await using var context = db.CreateContext();

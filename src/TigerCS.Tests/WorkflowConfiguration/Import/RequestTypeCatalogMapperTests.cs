@@ -92,12 +92,14 @@ public class RequestTypeCatalogMapperTests
     public void Non_durations_are_not_guessed(string value) => Assert.Null(RequestTypeCatalogMapper.ParseSla(value));
 
     [Fact]
-    public void A_fully_specified_row_maps_every_setting_and_needs_no_decision()
+    public void A_fully_specified_row_maps_every_setting_and_its_only_open_question_is_the_business_day()
     {
         var plan = Map("COL-PAY-001");
 
-        Assert.True(plan.IsResolved);
-        Assert.Empty(plan.Decisions);
+        // "1 business day" is stored as the workbook gives it, but what a
+        // business day means is an open business decision.
+        Assert.Equal([new CatalogDecision(CatalogDecisionArea.Sla, RequestTypeCatalogMapper.BusinessDayQuestion)], plan.Decisions);
+        Assert.False(plan.IsResolved);
         Assert.Equal(Col, plan.Department!.DepartmentId);
         Assert.Equal(PriorityLevel.Medium, plan.DefaultPriority);
         Assert.Equal(new PlannedSla(PriorityLevel.Medium, SlaDurationUnit.Days, 1, SlaDurationUnit.Hours, 4, SlaClockBasis.BusinessHours), plan.Sla);
@@ -159,7 +161,7 @@ public class RequestTypeCatalogMapperTests
     [Fact]
     public void Allow_Transfer_Yes_maps_onto_the_departments_existing_transfer_setting_and_a_conflict_is_a_decision()
     {
-        Assert.Empty(Map("REG-CON-001").Decisions);
+        Assert.DoesNotContain(Map("REG-CON-001").Decisions, d => d.Area == CatalogDecisionArea.Transfer);
 
         var blocked = Map("REG-CON-001", AllDepartments(d => d["Registration"] = new(Reg, "Registration", true, AllowsTransferOut: false)));
 
@@ -185,7 +187,7 @@ public class RequestTypeCatalogMapperTests
         var plan = RequestTypeCatalogMapper.Map(row, AllDepartments());
 
         Assert.False(plan.AllowReopen);
-        Assert.True(plan.IsResolved);
+        Assert.DoesNotContain(plan.Decisions, d => d.Area == CatalogDecisionArea.Reopen);
     }
 
     [Fact]
@@ -340,14 +342,11 @@ public class RequestTypeCatalogMapperTests
     }
 
     [Fact]
-    public void Exactly_the_fully_specified_rows_resolve()
+    public void No_row_resolves_while_the_business_day_is_undefined_and_these_15_have_nothing_else_open()
     {
-        var resolved = RequestTypeCatalog.Load()
-            .Select(r => RequestTypeCatalogMapper.Map(r, AllDepartments()))
-            .Where(p => p.IsResolved)
-            .Select(p => p.Code)
-            .ToList();
+        var plans = RequestTypeCatalog.Load().Select(r => RequestTypeCatalogMapper.Map(r, AllDepartments())).ToList();
 
+        Assert.DoesNotContain(plans, p => p.IsResolved);
         Assert.Equal(
             [
                 "CS-GEN-001", "CS-GEN-003", "CS-CMP-002",
@@ -357,6 +356,6 @@ public class RequestTypeCatalogMapperTests
                 "FM-UTL-001",
                 "LCS-BKG-001", "LCS-MOV-001", "LCS-CHK-001"
             ],
-            resolved);
+            plans.Where(p => p.Decisions.All(d => d.Question == RequestTypeCatalogMapper.BusinessDayQuestion)).Select(p => p.Code));
     }
 }

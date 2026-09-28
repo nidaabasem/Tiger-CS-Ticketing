@@ -54,11 +54,12 @@ The same rules block activating an enforced type, publishing a new version of it
 | Transfer (handoff or return) | Still the existing Transfer action: CS Manager only, subject to the source department's transfer setting, and audited as `Transfer`. It must also target the department of the next queue step, otherwise 422 `workflow-step-not-allowed` naming the expected step. |
 | Resolve / Close | Outcome Resolved and Close must each be the next step (422 otherwise). Cancelled, Rejected and Duplicate end the request from any step. |
 | Reopen | The existing Reopen rule is unchanged (CS layer, window, outcome). The ticket resumes at the target department's last queue step before Resolve; a department with no queue step gets 422. |
-| SLA | The type's active SLA row for the ticket's priority replaces the per-priority policy, deadline by deadline. A deadline the row leaves empty falls back to the policy. Units come from the row (the first response may have its own unit) and are walked on the existing business calendar. With BusinessHours, **1 day = one working-day window (08:00–18:00 = 600 business minutes)**; with 24/7, 1 day = 24 hours. The clock still starts at creation, and Reopen still restarts Resolution only while carrying First Response. The audit records each deadline's source (`RequestTypeSla:<id>` or `PriorityPolicy`). |
+| SLA | The type's active SLA row for the ticket's priority replaces the per-priority policy, deadline by deadline. A deadline the row leaves empty falls back to the policy. Units come from the row (the first response may have its own unit). Minutes and hours on BusinessHours are walked on the **configured** active business calendar (its own work week, window and holidays, with nothing assumed). With 24/7, 1 day = 24 hours. **Business days are not applied:** what "N business days" means is an open business decision, so such a row is inapplicable (the per-priority policy governs) and it blocks enforcement. The clock still starts at creation, and Reopen still restarts Resolution only while carrying First Response. The audit records each deadline's source (`RequestTypeSla:<id>` or `PriorityPolicy`). |
 
 Authorization is always checked first, so a caller the existing rules refuse still gets 403. The workflow can only refuse an action; it never grants one. A ticket created before enforcement was switched on stays untracked.
 
 ### Stored but not enforced
+- SLA values in **business days**: every workbook row. Their meaning is an open decision.
 
 - Required fields (`RequiredFieldsJson`) and required documents: no validation at intake.
 - Agent priority change: not checked anywhere (agents choose any priority), as before.
@@ -79,7 +80,7 @@ Authorization is always checked first, so a caller the existing rules refuse sti
 | Required Fields / Documents | JSON array of the workbook's wording. "None" is stored as null. Neither is enforced yet. |
 | Needs Approval? / Approval Role | "No" creates nothing. "Conditional" becomes a decision, and no approval requirement is created. |
 | Allow Transfer? | Checked against the department's existing transfer setting. "No" becomes a decision. |
-| Allow Reopen? | `AllowReopen` only: the type may be reopened. It does **not** mean a reopen needs approval. The CS layer (CS Agent, Supervisor, Manager) reopens directly under the existing rule. As on every reopen-permitting type, a Reopen Approval requirement (CS Manager) is added as the *request route* for roles without direct Reopen; it never gates an authorized reopen. |
+| Allow Reopen? | `AllowReopen` only. The approved rule is direct Reopen by CS Agent, CS Supervisor or CS Manager, and by the System Administrator through the central override. The import creates **no** approval requirement of any kind, including no Reopen Approval, so no reopen-request path is added for other roles. |
 | Proposed Workflow | Stored steps (see above). Unconfirmed handoff targets keep the step with no department and become a decision. |
 | Business Decision / Comments | Any value becomes a decision to review. The column is never interpreted. |
 
@@ -105,7 +106,7 @@ A missing column never switches existing behaviour off.
 
 ## Running it
 
-The import never runs at startup. It uses the environment's normal
+**For UAT, follow `docs/UAT-Runbook-Request-Type-Catalog.md` exactly.** The import never runs at startup. It uses the environment's normal
 configuration (`ConnectionStrings:TigerCsDatabase`), so check which database
 that points at first. The command must be run from a machine that can reach
 that database.
@@ -125,10 +126,11 @@ switches creates and changes nothing.
 
 ## Dry-run snapshot (pre-migration)
 
-This was generated before the migration, against the reference seed
-(Customer Service, Collections, Registration, Handover, Call Center,
+This was generated before the migration, against the development reference
+seed (Customer Service, Collections, Registration, Handover, Call Center,
 provisional Accounting and their request types) **plus** Facilities
-Management and Leasing Customer Services. Without those two departments,
+Management and Leasing Customer Services. No UAT calendar or department list
+is assumed from it. Without those two departments,
 their 9 rows are "Skipped" (22 created, 4 existing, 9 skipped). The
 existing-type comparison shows reference-seed values. **The dry run against
 UAT is the authoritative report.**
@@ -153,41 +155,41 @@ The AddRequestTypeCatalogImport migration is **not applied** to this database: t
 
 | Code | Request type | Department | Priority | SLA (first response / resolution) | Outcome | Workbook mapping | Open decisions |
 |---|---|---|---|---|---|---|---|
-| CS-GEN-001 | General Inquiry | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
+| CS-GEN-001 | General Inquiry | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
 | CS-GEN-002 | Office Hours / Contact Information | Customer Service | Low | — | Created — inactive draft | open | 2 |
-| CS-GEN-003 | Construction Update | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| CS-CMP-001 | Complaint | Customer Service | High | 2 bh / 2 bd | Created — inactive draft | open | 2 |
-| CS-CMP-002 | Feedback / Suggestion | Customer Service | Low | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| REG-NOC-001 | NOC for Resale | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 3 |
-| REG-NOC-002 | NOC for Golden Visa | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 3 |
-| REG-NOC-003 | NOC for Mortgage | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 3 |
-| REG-CON-001 | SPA / Contract Inquiry | Registration | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| REG-DLD-001 | Ownership Transfer / Title Deed Inquiry | Registration | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| COL-PAY-001 | Payment / Outstanding Balance Inquiry | Collections | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| COL-PAY-002 | Returned Cheque | Collections | High | 2 bh / 1 bd | Created — inactive draft | open | 2 |
-| COL-PAY-003 | Cheque Collection | Collections | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| COL-PAY-004 | Payment Cheque Inquiry | Collections | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| HO-NOC-001 | NOC for Handover | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 3 |
-| HO-HND-001 | Coordinate Handover | Handover | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| HO-HND-002 | Schedule Handover Appointment | Handover | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| HO-HND-003 | Move-In / Move-Out | Handover | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
+| CS-GEN-003 | Construction Update | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| CS-CMP-001 | Complaint | Customer Service | High | 2 bh / 2 bd | Created — inactive draft | open | 3 |
+| CS-CMP-002 | Feedback / Suggestion | Customer Service | Low | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| REG-NOC-001 | NOC for Resale | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 4 |
+| REG-NOC-002 | NOC for Golden Visa | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 4 |
+| REG-NOC-003 | NOC for Mortgage | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 4 |
+| REG-CON-001 | SPA / Contract Inquiry | Registration | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| REG-DLD-001 | Ownership Transfer / Title Deed Inquiry | Registration | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| COL-PAY-001 | Payment / Outstanding Balance Inquiry | Collections | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| COL-PAY-002 | Returned Cheque | Collections | High | 2 bh / 1 bd | Created — inactive draft | open | 3 |
+| COL-PAY-003 | Cheque Collection | Collections | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| COL-PAY-004 | Payment Cheque Inquiry | Collections | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| HO-NOC-001 | NOC for Handover | Customer Service | Medium | 4 bh / 2 bd | Existing — left unchanged | open | 4 |
+| HO-HND-001 | Coordinate Handover | Handover | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| HO-HND-002 | Schedule Handover Appointment | Handover | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| HO-HND-003 | Move-In / Move-Out | Handover | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
 | HO-HND-004 | Handover Maintenance Follow-up | Handover | Medium | — | Created — inactive draft | open | 2 |
 | FM-MNT-001 | Repair / Maintenance Request | Facilities Management | Medium | — | Created — inactive draft | open | 2 |
-| FM-UTL-001 | Utilities Inquiry | Facilities Management | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
+| FM-UTL-001 | Utilities Inquiry | Facilities Management | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
 | FM-COM-001 | Common Area Maintenance | Facilities Management | Medium | — | Created — inactive draft | open | 2 |
-| FM-SVC-001 | Service Charge Inquiry | Facilities Management | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
-| LCS-TEN-001 | Tenancy Contract | Leasing Customer Services | Medium | 4 bh / 2 bd | Created — inactive draft | open | 2 |
-| LCS-EJR-001 | Ejari | Leasing Customer Services | Medium | 4 bh / 2 bd | Created — inactive draft | open | 2 |
-| LCS-BKG-001 | Booking | Leasing Customer Services | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| LCS-MOV-001 | Move-In / Move-Out | Leasing Customer Services | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| LCS-CHK-001 | Rent / DEWA / AC Cheque Inquiry | Leasing Customer Services | Medium | 4 bh / 1 bd | Created — inactive draft | resolved | 1 |
-| BRK-COM-001 | Broker Commission Inquiry | Customer Service | Medium | 4 bh / 2 bd | Created — inactive draft | open | 3 |
-| BRK-CHK-001 | Broker Cheque Collection | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
-| SAL-INQ-001 | Property Sales Inquiry | Customer Service | Medium | 2 bh / 1 bd | Created — inactive draft | open | 2 |
-| LEG-INQ-001 | Legal Notice / Permit / Approval Inquiry | Customer Service | High | 2 bh / 2 bd | Created — inactive draft | open | 3 |
-| REC-HR-001 | HR Inquiry | Customer Service | Low | 4 bh / 1 bd | Created — inactive draft | open | 2 |
-| REC-MKT-001 | Marketing Inquiry | Customer Service | Low | 4 bh / 1 bd | Created — inactive draft | open | 2 |
-| REC-OTH-001 | Other Reception Inquiry | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| FM-SVC-001 | Service Charge Inquiry | Facilities Management | Medium | 4 bh / 1 bd | Created — inactive draft | open | 3 |
+| LCS-TEN-001 | Tenancy Contract | Leasing Customer Services | Medium | 4 bh / 2 bd | Created — inactive draft | open | 3 |
+| LCS-EJR-001 | Ejari | Leasing Customer Services | Medium | 4 bh / 2 bd | Created — inactive draft | open | 3 |
+| LCS-BKG-001 | Booking | Leasing Customer Services | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| LCS-MOV-001 | Move-In / Move-Out | Leasing Customer Services | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| LCS-CHK-001 | Rent / DEWA / AC Cheque Inquiry | Leasing Customer Services | Medium | 4 bh / 1 bd | Created — inactive draft | open | 2 |
+| BRK-COM-001 | Broker Commission Inquiry | Customer Service | Medium | 4 bh / 2 bd | Created — inactive draft | open | 4 |
+| BRK-CHK-001 | Broker Cheque Collection | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | open | 3 |
+| SAL-INQ-001 | Property Sales Inquiry | Customer Service | Medium | 2 bh / 1 bd | Created — inactive draft | open | 3 |
+| LEG-INQ-001 | Legal Notice / Permit / Approval Inquiry | Customer Service | High | 2 bh / 2 bd | Created — inactive draft | open | 4 |
+| REC-HR-001 | HR Inquiry | Customer Service | Low | 4 bh / 1 bd | Created — inactive draft | open | 3 |
+| REC-MKT-001 | Marketing Inquiry | Customer Service | Low | 4 bh / 1 bd | Created — inactive draft | open | 3 |
+| REC-OTH-001 | Other Reception Inquiry | Customer Service | Medium | 4 bh / 1 bd | Created — inactive draft | open | 3 |
 
 ### Settings the workbook does not give
 
@@ -250,7 +252,7 @@ Steps — including each handoff's department — are enforced at runtime only o
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | allowed | not stated |
-| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
+| Reopen | allowed — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override. Note: pre-existing ReopenApproval requirement row (role CS Manager, active) — left unchanged; not part of the approved direct-Reopen rule | Yes — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override |
 | Transfer | per department setting | Yes |
 
 #### REG-NOC-002 — NOC for Golden Visa (Customer Service)
@@ -265,7 +267,7 @@ Steps — including each handoff's department — are enforced at runtime only o
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | not allowed | not stated |
-| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
+| Reopen | allowed — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override. Note: pre-existing ReopenApproval requirement row (role CS Manager, active) — left unchanged; not part of the approved direct-Reopen rule | Yes — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override |
 | Transfer | per department setting | Yes |
 
 #### REG-NOC-003 — NOC for Mortgage (Customer Service)
@@ -280,7 +282,7 @@ Steps — including each handoff's department — are enforced at runtime only o
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | allowed | not stated |
-| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
+| Reopen | allowed — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override. Note: pre-existing ReopenApproval requirement row (role CS Manager, active) — left unchanged; not part of the approved direct-Reopen rule | Yes — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override |
 | Transfer | per department setting | Yes |
 
 #### HO-NOC-001 — NOC for Handover (Customer Service)
@@ -295,13 +297,14 @@ Steps — including each handoff's department — are enforced at runtime only o
 | Workflow | Request With Pending v1: Ticket Created → Assigned → In Progress → Pending Customer (optional) → Resolved → Closed | Ticket Created → Customer Service Queue → Customer Service Agent → Handoff to Accounting [target unconfirmed] → Return to Customer Service → Customer Service Agent → Handoff to Handover → Handover Agent → Resolve → Close |
 | Pending Customer | allowed | not stated |
 | Agent priority change | not allowed | not stated |
-| Reopen | allowed — direct Reopen by the CS layer under the existing rule (no approval needed); requests from roles without direct Reopen are decided by role CS Manager | Yes — reopen allowed (no approval stated) |
+| Reopen | allowed — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override. Note: pre-existing ReopenApproval requirement row (role CS Manager, active) — left unchanged; not part of the approved direct-Reopen rule | Yes — direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override |
 | Transfer | per department setting | Yes |
 
 ### Decisions needed from the business
 
 #### SLA
 
+- Confirm what 'N business day(s)' means on the configured business calendar — for example N full working-day windows of business time, or by the end of the Nth working day. Until confirmed, day-based SLAs are stored but not applied. — *CS-GEN-001, CS-GEN-003, CS-CMP-001, CS-CMP-002, REG-NOC-001, REG-NOC-002, REG-NOC-003, REG-CON-001, REG-DLD-001, COL-PAY-001, COL-PAY-002, COL-PAY-003, COL-PAY-004, HO-NOC-001, HO-HND-001, HO-HND-002, HO-HND-003, FM-UTL-001, FM-SVC-001, LCS-TEN-001, LCS-EJR-001, LCS-BKG-001, LCS-MOV-001, LCS-CHK-001, BRK-COM-001, BRK-CHK-001, SAL-INQ-001, LEG-INQ-001, REC-HR-001, REC-MKT-001, REC-OTH-001*
 - Resolution SLA 'Same business day' is not a duration (expected e.g. '2 business days'). Give a number of business hours or days. — *CS-GEN-002*
 - Resolution SLA 'Based on severity' is not a duration (expected e.g. '2 business days'). Give a number of business hours or days, per severity level if it varies (severity is not modeled today — only priority is). — *FM-MNT-001, FM-COM-001*
 - Resolution SLA 'Based on issue severity' is not a duration (expected e.g. '2 business days'). Give a number of business hours or days, per severity level if it varies (severity is not modeled today — only priority is). — *HO-HND-004*

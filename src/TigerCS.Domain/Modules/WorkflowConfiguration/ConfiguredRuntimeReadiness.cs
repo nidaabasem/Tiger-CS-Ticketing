@@ -147,22 +147,37 @@ public static class ConfiguredRuntimeReadiness
             issues.Add($"The {priority} SLA is a range; which bound is the deadline is not decided.");
         }
 
+        if (row.ClockBasis == SlaClockBasis.BusinessHours
+            && ((row.ResolutionTargetValue is not null && row.Unit == SlaDurationUnit.Days)
+                || (row.FirstResponseTargetValue is not null && row.EffectiveFirstResponseUnit == SlaDurationUnit.Days)))
+        {
+            issues.Add($"The {priority} SLA is in business days, and what a business day means is not confirmed "
+                + "(for example: a full working-day window of business time, or by the end of the Nth working day). "
+                + BusinessDayDecision);
+        }
+
         return issues;
     }
 
+    /// <summary>The open business decision every day-based business-hours SLA waits on.</summary>
+    public const string BusinessDayDecision =
+        "Day-based business-hours SLAs are stored but not applied until the business confirms the meaning of a business day.";
+
     /// <summary>
-    /// A configured duration in minutes of the clock it runs on. With the
-    /// BusinessHours basis a day is one working-day window of the business
-    /// calendar (<see cref="BusinessCalendarSnapshot.BusinessDayLength"/>);
-    /// with 24/7 it is 24 hours.
+    /// A configured duration in minutes of the clock it runs on: minutes and
+    /// hours are business minutes of whatever calendar is configured (the
+    /// calculator walks its own working days, window and holidays — nothing
+    /// here assumes a window length or a work week); with 24/7 a day is 24
+    /// hours. A day on the BusinessHours basis is deliberately NOT converted:
+    /// its meaning is an open business decision (see <see cref="SlaRowIssues"/>),
+    /// so such a row never reaches this method at runtime.
     /// </summary>
-    public static int ToMinutes(int value, SlaDurationUnit unit, SlaClockBasis basis, TimeSpan businessDayLength) => unit switch
+    public static int ToMinutes(int value, SlaDurationUnit unit, SlaClockBasis basis) => (unit, basis) switch
     {
-        SlaDurationUnit.Minutes => value,
-        SlaDurationUnit.Hours => checked(value * 60),
-        SlaDurationUnit.Days => basis == SlaClockBasis.BusinessHours
-            ? checked(value * (int)businessDayLength.TotalMinutes)
-            : checked(value * 1440),
+        (SlaDurationUnit.Minutes, _) => value,
+        (SlaDurationUnit.Hours, _) => checked(value * 60),
+        (SlaDurationUnit.Days, SlaClockBasis.TwentyFourSeven) => checked(value * 1440),
+        (SlaDurationUnit.Days, _) => throw new InvalidOperationException(BusinessDayDecision),
         _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, "Unknown SLA duration unit.")
     };
 }

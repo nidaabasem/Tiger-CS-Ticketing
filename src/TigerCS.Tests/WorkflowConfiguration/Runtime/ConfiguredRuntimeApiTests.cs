@@ -10,7 +10,7 @@ using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
-using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
+using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 using TigerCS.Infrastructure.Persistence;
 using TigerCS.Tests.IdentityAndAccess.Integration;
 
@@ -25,9 +25,12 @@ namespace TigerCS.Tests.WorkflowConfiguration.Runtime;
 ///   → Handoff to Handover [Handover] → Handover Work → Return to Intake [Intake]
 ///   → Intake Follow-up → Resolve → Close
 /// </code>
-/// with a Medium SLA of 2 business hours first response and 1 business day
-/// resolution. Nothing here invents a role, status or approval: every action
-/// is an existing endpoint under its existing authorization.
+/// with a Medium SLA of 2 business hours first response and 12 business hours
+/// resolution (hours, not days: what a business day means is still an open
+/// decision). Deadlines are checked against the calendar configured in the
+/// database, never an assumed window. Nothing here invents a role, status or
+/// approval: every action is an existing endpoint under its existing
+/// authorization.
 /// </summary>
 public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
 {
@@ -90,11 +93,9 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
         await db.SaveChangesAsync();
 
         db.RequestTypeSlaPolicies.Add(new RequestTypeSlaPolicy(
-            requestType.RequestTypeId, (byte)PriorityLevel.Medium, SlaTriggerType.TicketCreated, SlaDurationUnit.Days,
-            firstResponseTargetValue: 2, firstResponseMaximumValue: null, resolutionTargetValue: 1, resolutionMaximumValue: null,
-            clockBasis: SlaClockBasis.BusinessHours, firstResponseUnit: SlaDurationUnit.Hours));
-        db.RequestTypeApprovalRequirements.Add(RequestTypeApprovalRequirement.ForRole(
-            requestType.RequestTypeId, ApprovalType.ReopenApproval, Roles.CsManager, blocksWorkUntilApproved: false));
+            requestType.RequestTypeId, (byte)PriorityLevel.Medium, SlaTriggerType.TicketCreated, SlaDurationUnit.Hours,
+            firstResponseTargetValue: 2, firstResponseMaximumValue: null, resolutionTargetValue: 12, resolutionMaximumValue: null,
+            clockBasis: SlaClockBasis.BusinessHours));
 
         var decision = new RequestTypeCatalogDecision(requestType.RequestTypeId, "Handoff",
             "Confirm the handoff to Handover.", DateTime.UtcNow);
@@ -195,10 +196,18 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
             .Select(e => e.AfterValue!.Split(';').Single(p => p.StartsWith("Step=", StringComparison.Ordinal))["Step=".Length..])
             .ToList();
 
-    private static BusinessCalendarSnapshot SeededCalendar() => new(
-        TimeZoneInfo.FindSystemTimeZoneById(SlaReferenceData.DefaultTimeZoneId),
-        SlaReferenceData.DefaultBusinessDayStartLocal, SlaReferenceData.DefaultBusinessDayEndLocal,
-        SlaReferenceData.DefaultWorkingDays, []);
+    /// <summary>The business calendar actually configured in the database — the one the Api computes with.</summary>
+    private async Task<BusinessCalendarSnapshot> ConfiguredCalendarAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        return (await scope.ServiceProvider.GetRequiredService<IBusinessCalendarRepository>().GetActiveSnapshotAsync())!;
+    }
+
+    private async Task<SlaPolicy> PriorityPolicyAsync(PriorityLevel priority)
+    {
+        using var scope = _factory.Services.CreateScope();
+        return (await scope.ServiceProvider.GetRequiredService<ISlaPolicyRepository>().GetByPriorityIdAsync((byte)priority))!;
+    }
 
     // ------------------------------------------------------------ admin: guards
 
@@ -260,7 +269,7 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
             db.RequestTypeApprovalRequirements.Add(RequestTypeApprovalRequirement.ForDepartment(
                 synthetic.RequestTypeId, ApprovalType.AccountingApproval, accounting.DepartmentId));
             var sla = await db.RequestTypeSlaPolicies.SingleAsync(p => p.RequestTypeId == synthetic.RequestTypeId);
-            sla.Update(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 2, null, 1, 2, false, null, null, null, null, true);
+            sla.Update(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 2, null, 1, 2, false, SlaClockBasis.BusinessHours, null, null, null, true);
             await db.SaveChangesAsync();
         }
 
@@ -272,8 +281,8 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Contains("does not name its department", body);
         Assert.Contains("AccountingApproval", body);
-        Assert.Contains("clock basis", body);
         Assert.Contains("is a range", body);
+        Assert.Contains("what a business day means is not confirmed", body);
     }
 
     [Fact]
@@ -405,15 +414,16 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
         var sla = await _factory.GetCurrentSlaInstanceAsync(ticketId);
         Assert.NotNull(sla);
         var start = DateTime.SpecifyKind(sla!.PeriodStartAtUtc, DateTimeKind.Utc);
-        var calendar = SeededCalendar();
+        var calendar = await ConfiguredCalendarAsync();
 
-        // 2 business hours; 1 business day = one 600-minute working-day window.
+        // 2 and 12 business hours, walked on the configured calendar.
         Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, 120, SlaClockBasis.BusinessHours, calendar), sla.FirstResponseDueAtUtc);
-        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, 600, SlaClockBasis.BusinessHours, calendar), sla.ResolutionDueAtUtc);
+        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, 720, SlaClockBasis.BusinessHours, calendar), sla.ResolutionDueAtUtc);
 
-        // …and not Medium's per-priority policy (4 business hours / 3 business days).
-        Assert.NotEqual(SlaDueDateCalculator.ComputeDueAtUtc(start, 240, SlaClockBasis.BusinessHours, calendar), sla.FirstResponseDueAtUtc);
-        Assert.NotEqual(SlaDueDateCalculator.ComputeDueAtUtc(start, 1800, SlaClockBasis.BusinessHours, calendar), sla.ResolutionDueAtUtc);
+        // …and not Medium's per-priority policy, as configured.
+        var policy = await PriorityPolicyAsync(PriorityLevel.Medium);
+        Assert.NotEqual(SlaDueDateCalculator.ComputeDueAtUtc(start, policy.FirstResponseTargetMinutes, policy.ClockBasis, calendar), sla.FirstResponseDueAtUtc);
+        Assert.NotEqual(SlaDueDateCalculator.ComputeDueAtUtc(start, policy.ResolutionTargetMinutes, policy.ClockBasis, calendar), sla.ResolutionDueAtUtc);
 
         var computation = Assert.Single(await _factory.GetAuditEntriesAsync(ticketId.ToString()), e => e.Action == "ComputeSlaDueDates");
         Assert.Contains("\"firstResponseSource\":\"RequestTypeSla:", computation.AfterValue);
@@ -471,11 +481,11 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
         var cycle = await _factory.GetCurrentSlaInstanceAsync(ticketId);
         Assert.Equal(firstCycle!.FirstResponseDueAtUtc, cycle!.FirstResponseDueAtUtc);
         var reopenedAt = DateTime.SpecifyKind(cycle.PeriodStartAtUtc, DateTimeKind.Utc);
-        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(reopenedAt, 600, SlaClockBasis.BusinessHours, SeededCalendar()), cycle.ResolutionDueAtUtc);
+        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(reopenedAt, 720, SlaClockBasis.BusinessHours, await ConfiguredCalendarAsync()), cycle.ResolutionDueAtUtc);
     }
 
     [Fact]
-    public async Task A_cancellation_ends_the_request_from_any_step_but_a_non_owner_still_cannot_resolve()
+    public async Task A_cancellation_ends_the_request_from_any_step_and_the_CS_layer_still_cannot_resolve()
     {
         var synthetic = await CreateEnforcedAsync();
         var (agent, _) = await UserAsync(Roles.CsAgent, synthetic.Intake);
@@ -486,13 +496,102 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(HttpStatusCode.OK, (await AssignAsync(intakeHead, manager, ticketId, intakeWorkerId)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await StartWorkAsync(intakeWorker, manager, ticketId)).StatusCode);
 
-        // The CS Agent holds no Resolve authority — refused before the workflow is consulted.
+        // ISSUE-022: the CS layer closes, the department resolves — refused before the workflow is consulted.
         Assert.Equal(HttpStatusCode.Forbidden, (await ResolveAsync(agent, manager, ticketId, "Cancelled")).StatusCode);
 
         Assert.Equal(HttpStatusCode.OK, (await ResolveAsync(intakeWorker, manager, ticketId, "Cancelled")).StatusCode);
         Assert.Equal("Resolve", (await GetAsync(manager, ticketId)).CurrentWorkflowStepName);
         Assert.Equal(HttpStatusCode.OK, (await CloseAsync(agent, manager, ticketId)).StatusCode);
         Assert.Equal("Close", (await GetAsync(manager, ticketId)).CurrentWorkflowStepName);
+    }
+
+    /// <summary>
+    /// The approved Resolve matrix (ISSUE-022, option B) on an enforced
+    /// ticket at a step where resolving is expected: only the ticket's owning
+    /// Department Employee or a Department Head of its current department
+    /// (plus the System Administrator through the central override) may
+    /// resolve. The CS layer never resolves — even when it owns the ticket.
+    /// </summary>
+    [Fact]
+    public async Task Resolve_follows_the_approved_matrix_and_the_tickets_assignment_and_department()
+    {
+        var synthetic = await CreateEnforcedAsync();
+
+        // A single-department flow, so Resolve is the expected next step right after the work step.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+            var version = await db.WorkflowTemplates.SingleAsync(t => t.WorkflowTemplateId == synthetic.VersionId);
+            foreach (var name in new[] { "Handoff to Handover", "Handover Work", "Return to Intake", "Intake Follow-up" })
+            {
+                typeof(WorkflowTemplateStep).GetProperty(nameof(WorkflowTemplateStep.IsOptional))!.SetValue(version.Steps.Single(s => s.Name == name), true);
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var manager = await ClientAsync(Roles.CsManager);
+        var intakeHead = await ClientAsync(Roles.DepartmentHead, synthetic.Intake);
+        var otherHead = await ClientAsync(Roles.DepartmentHead, synthetic.Collections);
+        var (ownerCsAgent, ownerCsAgentId) = await UserAsync(Roles.CsAgent, synthetic.Intake);
+        var (owner, ownerId) = await UserAsync(Roles.DepartmentEmployee, synthetic.Intake);
+        var notOwner = await ClientAsync(Roles.DepartmentEmployee, synthetic.Intake);
+        var csSupervisor = await ClientAsync(Roles.CsSupervisor, synthetic.Intake);
+        var admin = await ClientAsync(Roles.SystemAdministrator);
+
+        async Task<long> WorkingTicketAsync(Guid assignee, HttpClient assigneeClient)
+        {
+            var ticketId = await CreateTicketAsync(ownerCsAgent, synthetic);
+            Assert.Equal(HttpStatusCode.OK, (await AssignAsync(intakeHead, manager, ticketId, assignee)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await StartWorkAsync(assigneeClient, manager, ticketId)).StatusCode);
+            Assert.Equal("Intake Agent", (await GetAsync(manager, ticketId)).CurrentWorkflowStepName);
+            return ticketId;
+        }
+
+        // Denied, whatever the workflow expects.
+        var csOwned = await WorkingTicketAsync(ownerCsAgentId, ownerCsAgent);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ResolveAsync(ownerCsAgent, manager, csOwned)).StatusCode); // CS Agent, even as owner
+        Assert.Equal(HttpStatusCode.Forbidden, (await ResolveAsync(csSupervisor, manager, csOwned)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ResolveAsync(manager, manager, csOwned)).StatusCode);
+        var owned = await WorkingTicketAsync(ownerId, owner);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ResolveAsync(notOwner, manager, owned)).StatusCode);  // not the owner
+        Assert.Equal(HttpStatusCode.Forbidden, (await ResolveAsync(otherHead, manager, owned)).StatusCode); // another department
+
+        // Allowed.
+        Assert.Equal(HttpStatusCode.OK, (await ResolveAsync(owner, manager, owned)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ResolveAsync(intakeHead, manager, await WorkingTicketAsync(ownerId, owner))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ResolveAsync(admin, manager, await WorkingTicketAsync(ownerId, owner))).StatusCode);
+
+        // …and the CS layer completes the ticket it could not resolve.
+        Assert.Equal(HttpStatusCode.OK, (await CloseAsync(ownerCsAgent, manager, owned)).StatusCode);
+        Assert.Equal("Close", (await GetAsync(manager, owned)).CurrentWorkflowStepName);
+    }
+
+    /// <summary>
+    /// The established SLA reset rules, on an enforced ticket: the clock
+    /// starts once, at creation (reason InitialCreation); priority cannot be
+    /// changed after classification, so no priority-change reset can occur —
+    /// no code path produces the reserved Upgrade/Downgrade reasons; Reopen is
+    /// the only reset (covered by the Reopen test).
+    /// </summary>
+    [Fact]
+    public async Task Priority_cannot_change_after_classification_so_no_SLA_reset_occurs()
+    {
+        var synthetic = await CreateEnforcedAsync();
+        var agent = await ClientAsync(Roles.CsAgent, synthetic.Intake);
+        var manager = await ClientAsync(Roles.CsManager);
+        var ticketId = await CreateTicketAsync(agent, synthetic);
+        var before = await _factory.GetCurrentSlaInstanceAsync(ticketId);
+
+        var reclassify = await manager.PostAsJsonAsync($"/api/tickets/{ticketId}/classification",
+            new ClassifyTicketRequestDto(synthetic.CategoryId, (byte)PriorityLevel.High, synthetic.RequestTypeId, await RowVersionAsync(manager, ticketId)));
+
+        Assert.False(reclassify.IsSuccessStatusCode);
+        var after = await _factory.GetCurrentSlaInstanceAsync(ticketId);
+        Assert.Equal(SlaChangeReason.InitialCreation, after!.ChangeReason);
+        Assert.Equal((before!.TicketSlaInstanceId, before.FirstResponseDueAtUtc, before.ResolutionDueAtUtc),
+            (after.TicketSlaInstanceId, after.FirstResponseDueAtUtc, after.ResolutionDueAtUtc));
+        Assert.Equal((byte)PriorityLevel.Medium, (await GetAsync(manager, ticketId)).PriorityId);
     }
 
     // ------------------------------------------------------------ unchanged behaviour
@@ -521,8 +620,10 @@ public class ConfiguredRuntimeApiTests : IClassFixture<TigerCsApiFactory>
 
         var sla = await _factory.GetCurrentSlaInstanceAsync(ticketId);
         var start = DateTime.SpecifyKind(sla!.PeriodStartAtUtc, DateTimeKind.Utc);
-        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, 240, SlaClockBasis.BusinessHours, SeededCalendar()), sla.FirstResponseDueAtUtc);
-        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, 1800, SlaClockBasis.BusinessHours, SeededCalendar()), sla.ResolutionDueAtUtc);
+        var policy = await PriorityPolicyAsync(PriorityLevel.Medium);
+        var calendar = await ConfiguredCalendarAsync();
+        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, policy.FirstResponseTargetMinutes, policy.ClockBasis, calendar), sla.FirstResponseDueAtUtc);
+        Assert.Equal(SlaDueDateCalculator.ComputeDueAtUtc(start, policy.ResolutionTargetMinutes, policy.ClockBasis, calendar), sla.ResolutionDueAtUtc);
 
         // Any department, resolve straight away — exactly as before.
         Assert.Equal(HttpStatusCode.OK, (await AssignAsync(intakeHead, manager, ticketId, intakeWorkerId)).StatusCode);

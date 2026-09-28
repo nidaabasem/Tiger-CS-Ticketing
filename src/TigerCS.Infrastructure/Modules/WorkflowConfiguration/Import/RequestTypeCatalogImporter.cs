@@ -361,19 +361,11 @@ public static class RequestTypeCatalogImporter
                 firstResponseUnit: sla.FirstResponseUnit));
         }
 
-        // The approved business rule (WorkflowReferenceData.ApprovalRequirements):
-        // whatever supports Reopen supports ASKING for one — the same
-        // CS Manager, non-blocking requirement every other such type has.
-        // It is the request route for roles without direct Reopen, never a
-        // precondition: the CS layer still reopens directly, unchanged.
-        if (plan.AllowReopen)
-        {
-            dbContext.RequestTypeApprovalRequirements.Add(RequestTypeApprovalRequirement.ForRole(
-                requestType.RequestTypeId,
-                ApprovalType.ReopenApproval,
-                WorkflowReferenceData.ReopenApprovalApproverRole,
-                blocksWorkUntilApproved: WorkflowReferenceData.ReopenApprovalBlocksWork));
-        }
+        // Reopen is AllowReopen and nothing more: the approved rule is direct
+        // Reopen by CS Agent, CS Supervisor and CS Manager (System
+        // Administrator through the central override). The import creates no
+        // approval requirement of any kind — in particular no Reopen Approval,
+        // which would open a reopen-request path for other roles on these types.
 
         return new(plan, outcome, created, requestType.RequestTypeId);
     }
@@ -464,14 +456,16 @@ public static class RequestTypeCatalogImporter
             .OrderBy(a => a.ApprovalType)
             .ToListAsync(cancellationToken);
 
-        // Reopen Approval is not an approval the work waits for: it is how a
-        // role WITHOUT direct Reopen asks the CS layer for one. It is reported
-        // with Reopen, never as a gating approval.
+        // A ReopenApproval row is never an approval the work waits for, and
+        // not part of the approved Reopen rule (direct Reopen by the CS layer,
+        // System Administrator through the central override). An existing
+        // type may still carry one from earlier configuration; it is reported
+        // factually with Reopen, never as a gating approval, and left as is.
         var reopenRequest = requirements.FirstOrDefault(a => a.ApprovalType == ApprovalType.ReopenApproval);
         var reopenRequestRoute = reopenRequest is null
             ? null
-            : $"requests from roles without direct Reopen are decided by {(reopenRequest.TargetRoleName is { } decider ? $"role {decider}" : "the configured approver")}"
-              + (reopenRequest.IsActive ? string.Empty : " (inactive)");
+            : $"pre-existing ReopenApproval requirement row ({(reopenRequest.TargetRoleName is { } decider ? $"role {decider}" : "configured approver")}"
+              + (reopenRequest.IsActive ? ", active" : ", inactive") + ") — left unchanged; not part of the approved direct-Reopen rule";
 
         var approvals = requirements
             .Where(a => a.ApprovalType != ApprovalType.ReopenApproval)

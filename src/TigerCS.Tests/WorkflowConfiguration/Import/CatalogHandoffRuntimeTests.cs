@@ -40,7 +40,8 @@ public class CatalogHandoffRuntimeTests : IClassFixture<TigerCsApiFactory>
     /// through the real importer from workbook row HO-NOC-001 with its
     /// unconfirmed Accounting leg and conditional approval taken out — the
     /// resulting flow is CS → Handover → back to CS, the one handoff shape
-    /// whose target department exists today.
+    /// whose target department exists today — and its SLA given in business
+    /// hours, since the meaning of a business day is still undecided.
     /// </summary>
     private async Task<Setup> SetUpAsync()
     {
@@ -73,6 +74,9 @@ public class CatalogHandoffRuntimeTests : IClassFixture<TigerCsApiFactory>
             RequestCode = "DEMO-" + suffix,
             Name = "Handoff demo " + suffix,
             ProposedWorkflow = "CS Queue → CS Agent → Handover Agent → CS Agent → Resolve → Close",
+            // In business hours: a business-day SLA is an open decision and
+            // would keep the row from activating.
+            ResolutionSla = "16 business hours",
             NeedsApproval = "No",
             ApprovalRole = null
         };

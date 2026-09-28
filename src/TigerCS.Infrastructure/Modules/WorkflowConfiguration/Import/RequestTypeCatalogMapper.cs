@@ -98,6 +98,11 @@ public static class RequestTypeCatalogMapper
 
     private const int MaxStepNameLength = 100;
 
+    /// <summary>One shared question for every row with a business-day SLA, so the report lists it once.</summary>
+    public const string BusinessDayQuestion =
+        "Confirm what 'N business day(s)' means on the configured business calendar — for example N full working-day windows "
+        + "of business time, or by the end of the Nth working day. Until confirmed, day-based SLAs are stored but not applied.";
+
     // Stored as the business wrote it — no \u escaping of "/" or "—".
     private static readonly JsonSerializerOptions ListJsonOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -214,6 +219,11 @@ public static class RequestTypeCatalogMapper
                 + (row.ResolutionSla.Contains("severity", StringComparison.OrdinalIgnoreCase)
                     ? ", per severity level if it varies (severity is not modeled today — only priority is)."
                     : ".")));
+        }
+
+        if (firstResponse is { Unit: SlaDurationUnit.Days } || resolution is { Unit: SlaDurationUnit.Days })
+        {
+            decisions.Add(new(CatalogDecisionArea.Sla, BusinessDayQuestion));
         }
 
         PlannedSla? sla = priority is { } p && resolution is { } res

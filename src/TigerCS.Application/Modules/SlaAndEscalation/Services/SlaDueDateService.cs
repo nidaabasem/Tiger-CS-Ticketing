@@ -236,11 +236,14 @@ public sealed class SlaDueDateService(
     /// </para>
     ///
     /// <para>
-    /// <b>Units on the business calendar.</b> With the BusinessHours basis
-    /// a configured day is one working-day window of the active business
-    /// calendar and an hour is 60 business minutes, walked by the same
-    /// <see cref="SlaDueDateCalculator"/> as every other SLA (working days,
-    /// holidays and the window all apply); with 24/7 a day is 24 hours.
+    /// <b>Units on the configured calendar.</b> Minutes and hours on the
+    /// BusinessHours basis are business minutes walked by the same
+    /// <see cref="SlaDueDateCalculator"/> over the ACTIVE business calendar
+    /// (its own work week, window and holidays — nothing is assumed); with
+    /// 24/7 a day is 24 hours. A row in business DAYS is not applied: what a
+    /// business day means is an open business decision, so such a row is
+    /// inapplicable (<see cref="ConfiguredRuntimeReadiness.SlaRowIssues"/>)
+    /// and the per-priority policy governs until it is confirmed.
     /// </para>
     /// </summary>
     public async Task<SlaDueDates> ComputeAsync(
@@ -270,7 +273,7 @@ public sealed class SlaDueDateService(
         {
             if (configured is not null && configuredValue is { } value && configuredBasis is { } basis)
             {
-                var minutes = ConfiguredRuntimeReadiness.ToMinutes(value, configuredUnit, basis, calendar?.BusinessDayLength ?? TimeSpan.Zero);
+                var minutes = ConfiguredRuntimeReadiness.ToMinutes(value, configuredUnit, basis);
                 return (SlaDueDateCalculator.ComputeDueAtUtc(clockStartAtUtc, minutes, basis, calendar), configuredSource);
             }
 

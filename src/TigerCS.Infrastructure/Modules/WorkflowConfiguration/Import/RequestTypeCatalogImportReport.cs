@@ -163,19 +163,22 @@ public sealed record RequestTypeCatalogImportReport(
             ? "none"
             : $"{source.NeedsApproval}: {source.ApprovalRole ?? "(no approver given)"}";
 
-    // "Allow Reopen = Yes" means the request type may be reopened. It does
-    // NOT mean a reopen needs approval: the CS layer reopens directly under
-    // the existing Reopen rule, and a Reopen Approval is only the request
-    // route for roles that cannot.
+    // "Allow Reopen = Yes" means the request type may be reopened — by the
+    // approved rule: directly by CS Agent, CS Supervisor or CS Manager, and by
+    // a System Administrator through the central override. No approval is
+    // involved and none is created.
+    private const string ApprovedReopenRule =
+        "direct Reopen by CS Agent, CS Supervisor or CS Manager; System Administrator through the central override";
+
     private static string CurrentReopen(ExistingRequestTypeSnapshot current) =>
         !current.AllowReopen
             ? "not allowed"
-            : "allowed — direct Reopen by the CS layer under the existing rule (no approval needed)"
-              + (current.ReopenRequestRoute is { } route ? $"; {route}" : string.Empty);
+            : $"allowed — {ApprovedReopenRule}"
+              + (current.ReopenRequestRoute is { } existing ? $". Note: {existing}" : string.Empty);
 
     private static string WorkbookReopen(RequestTypeCatalogRow source) =>
         string.Equals(source.AllowReopen?.Trim(), "Yes", StringComparison.OrdinalIgnoreCase)
-            ? "Yes — reopen allowed (no approval stated)"
+            ? $"Yes — {ApprovedReopenRule}"
             : source.AllowReopen ?? "not stated";
 
     private static string Join(IReadOnlyList<string> items) => items.Count == 0 ? "none" : string.Join("; ", items);

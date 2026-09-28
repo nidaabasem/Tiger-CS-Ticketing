@@ -93,10 +93,13 @@ internal sealed class CatalogImportTestDb : IDisposable
     public static RequestTypeCatalogImportOptions ActivatingImport =>
         new(Now, Apply: true, ActivateResolved: true, AllowAgentPriorityChange: true);
 
-    public async Task<RequestTypeCatalogImportReport> ImportAsync(RequestTypeCatalogImportOptions? options = null)
+    public Task<RequestTypeCatalogImportReport> ImportAsync(RequestTypeCatalogImportOptions? options = null) =>
+        ImportAsync(RequestTypeCatalog.Load(), options);
+
+    public async Task<RequestTypeCatalogImportReport> ImportAsync(IReadOnlyList<RequestTypeCatalogRow> rows, RequestTypeCatalogImportOptions? options = null)
     {
         await using var context = CreateContext();
-        return await RequestTypeCatalogImporter.ImportAsync(context, RequestTypeCatalog.Load(), options ?? FirstImport);
+        return await RequestTypeCatalogImporter.ImportAsync(context, rows, options ?? FirstImport);
     }
 
     public void Dispose() => _connection.Dispose();

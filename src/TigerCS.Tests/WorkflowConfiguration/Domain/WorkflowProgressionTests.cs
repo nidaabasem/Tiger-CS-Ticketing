@@ -100,21 +100,34 @@ public class WorkflowProgressionTests
     public void An_SLA_row_applies_at_runtime_only_as_a_single_ticket_created_duration_with_a_decided_basis()
     {
         RequestTypeSlaPolicy Row(SlaTriggerType trigger = SlaTriggerType.TicketCreated, int? max = null, SlaClockBasis? basis = SlaClockBasis.BusinessHours, bool immediate = false) =>
-            new(1, (byte)PriorityLevel.Medium, trigger, SlaDurationUnit.Days, 4, null, immediate ? null : 1, immediate ? null : max,
+            new(1, (byte)PriorityLevel.Medium, trigger, SlaDurationUnit.Hours, 4, null, immediate ? null : 12, immediate ? null : max,
                 isImmediate: immediate, clockBasis: basis, firstResponseUnit: SlaDurationUnit.Hours);
 
         Assert.Empty(ConfiguredRuntimeReadiness.SlaRowIssues(Row()));
         Assert.Single(ConfiguredRuntimeReadiness.SlaRowIssues(Row(trigger: SlaTriggerType.ApprovalReceived)));
-        Assert.Single(ConfiguredRuntimeReadiness.SlaRowIssues(Row(max: 2)));
+        Assert.Single(ConfiguredRuntimeReadiness.SlaRowIssues(Row(max: 14)));
         Assert.Single(ConfiguredRuntimeReadiness.SlaRowIssues(Row(basis: null)));
         Assert.Single(ConfiguredRuntimeReadiness.SlaRowIssues(Row(immediate: true)));
     }
 
     [Theory]
     [InlineData(4, SlaDurationUnit.Hours, SlaClockBasis.BusinessHours, 240)]
-    [InlineData(2, SlaDurationUnit.Days, SlaClockBasis.BusinessHours, 1200)] // two 600-minute working days
     [InlineData(2, SlaDurationUnit.Days, SlaClockBasis.TwentyFourSeven, 2880)]
     [InlineData(30, SlaDurationUnit.Minutes, SlaClockBasis.BusinessHours, 30)]
-    public void Configured_durations_convert_on_the_calendar_they_run_on(int value, SlaDurationUnit unit, SlaClockBasis basis, int minutes) =>
-        Assert.Equal(minutes, ConfiguredRuntimeReadiness.ToMinutes(value, unit, basis, TimeSpan.FromHours(10)));
+    public void Configured_durations_convert_without_assuming_any_calendar(int value, SlaDurationUnit unit, SlaClockBasis basis, int minutes) =>
+        Assert.Equal(minutes, ConfiguredRuntimeReadiness.ToMinutes(value, unit, basis));
+
+    [Fact]
+    public void A_business_day_is_never_converted_its_meaning_is_an_open_decision()
+    {
+        Assert.Throws<InvalidOperationException>(() => ConfiguredRuntimeReadiness.ToMinutes(1, SlaDurationUnit.Days, SlaClockBasis.BusinessHours));
+
+        var businessDays = new RequestTypeSlaPolicy(1, (byte)PriorityLevel.Medium, SlaTriggerType.TicketCreated, SlaDurationUnit.Days,
+            4, null, 1, null, clockBasis: SlaClockBasis.BusinessHours, firstResponseUnit: SlaDurationUnit.Hours);
+        Assert.Contains(ConfiguredRuntimeReadiness.SlaRowIssues(businessDays), i => i.Contains("business day"));
+
+        var calendarDays = new RequestTypeSlaPolicy(1, (byte)PriorityLevel.Medium, SlaTriggerType.TicketCreated, SlaDurationUnit.Days,
+            4, null, 1, null, clockBasis: SlaClockBasis.TwentyFourSeven, firstResponseUnit: SlaDurationUnit.Hours);
+        Assert.Empty(ConfiguredRuntimeReadiness.SlaRowIssues(calendarDays));
+    }
 }
