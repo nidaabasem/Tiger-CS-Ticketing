@@ -14,8 +14,9 @@ namespace TigerCS.Tests.WorkflowConfiguration.Import;
 
 /// <summary>
 /// The catalog import against a real relational database: what it creates,
-/// that nothing unresolved goes live, that it links rather than duplicates
-/// an existing request type, and that re-running it changes nothing.
+/// that nothing goes live and no existing request type is touched unless
+/// explicitly asked, that settings the workbook omits are inherited rather
+/// than switched off, and that re-running it changes nothing.
 /// </summary>
 public class RequestTypeCatalogImporterTests
 {
@@ -26,76 +27,201 @@ public class RequestTypeCatalogImporterTests
     ];
 
     /// <summary>The four NOC request types the reference seed already has under Customer Service.</summary>
-    private static readonly string[] LinkedCodes = ["REG-NOC-001", "REG-NOC-002", "REG-NOC-003", "HO-NOC-001"];
+    private static readonly string[] ExistingCodes = ["REG-NOC-001", "REG-NOC-002", "REG-NOC-003", "HO-NOC-001"];
+    private static readonly string[] ExistingNames = ["NOC for Resale", "NOC for Golden Visa", "NOC for Mortgage", "NOC for Handover"];
 
     private static async Task<(int RequestTypes, int Workflows, int Versions, int Steps, int Slas, int Approvals)> CountAsync(TigerCsDbContext db) =>
         (await db.RequestTypes.CountAsync(), await db.Workflows.CountAsync(), await db.WorkflowTemplates.CountAsync(),
          await db.Set<WorkflowTemplateStep>().CountAsync(), await db.RequestTypeSlaPolicies.CountAsync(),
          await db.RequestTypeApprovalRequirements.CountAsync());
 
+    /// <summary>Everything about the four existing NOC types, as comparable values.</summary>
+    private static async Task<string> FingerprintExistingAsync(TigerCsDbContext db)
+    {
+        var types = await db.RequestTypes.AsNoTracking().Where(r => ExistingNames.Contains(r.Name)).OrderBy(r => r.RequestTypeId).ToListAsync();
+        var ids = types.Select(t => t.RequestTypeId).ToList();
+        var slas = await db.RequestTypeSlaPolicies.AsNoTracking().Where(p => ids.Contains(p.RequestTypeId)).OrderBy(p => p.RequestTypeSlaPolicyId).ToListAsync();
+        var approvals = await db.RequestTypeApprovalRequirements.AsNoTracking().Where(a => ids.Contains(a.RequestTypeId)).OrderBy(a => a.RequestTypeApprovalRequirementId).ToListAsync();
+        return string.Join("\n",
+            types.Select(t => $"{t.RequestTypeId}|{t.Name}|{t.Code}|{t.DepartmentId}|{t.WorkflowId}|{t.DefaultPriorityId}|{t.AllowAgentPriorityChange}|{t.AllowPendingCustomer}|{t.AllowReopen}|{t.IsActive}|{t.Description}")
+                .Concat(slas.Select(p => $"{p.RequestTypeId}|{p.PriorityId}|{p.Trigger}|{p.Unit}|{p.FirstResponseUnit}|{p.FirstResponseTargetValue}|{p.ResolutionTargetValue}|{p.ResolutionMaximumValue}|{p.ClockBasis}"))
+                .Concat(approvals.Select(a => $"{a.RequestTypeId}|{a.ApprovalType}|{a.TargetKind}|{a.TargetRoleName}|{a.TargetDepartmentId}|{a.IsActive}")));
+    }
+
+    // ---- dry runs ---------------------------------------------------------
+
     [Fact]
     public async Task A_dry_run_reports_the_plan_and_writes_nothing()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
-        await using (var before = db.CreateContext())
+        await using var before = db.CreateContext();
+        var counts = await CountAsync(before);
+
+        var report = await db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now));
+
+        Assert.False(report.Applied);
+        Assert.Equal(0, report.Count(RequestTypeImportOutcome.CreatedActive));
+        Assert.Equal(31, report.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
+        Assert.Equal(4, report.Count(RequestTypeImportOutcome.ExistingUnchanged));
+        Assert.Contains("DRY RUN", report.ToMarkdown());
+
+        await using var after = db.CreateContext();
+        Assert.Equal(counts, await CountAsync(after));
+        Assert.False(await after.RequestTypes.AnyAsync(r => r.Code != null));
+    }
+
+    [Fact]
+    public async Task A_dry_run_works_before_the_migration_reading_only_existing_columns()
+    {
+        using var db = await CatalogImportTestDb.CreateBeforeMigrationAsync();
+        await using (var context = db.CreateContext())
         {
-            var counts = await CountAsync(before);
+            // The columns really are absent — any query touching one would fail.
+            var columns = await context.Database.SqlQueryRaw<string>("SELECT name AS Value FROM pragma_table_info('RequestTypes')").ToListAsync();
+            Assert.Contains("Name", columns);
+            Assert.DoesNotContain("Code", columns);
+            await Assert.ThrowsAnyAsync<Exception>(() => context.RequestTypes.AnyAsync(r => r.Code != null));
+        }
 
-            var report = await db.ImportAsync(apply: false);
+        var report = await db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now, SchemaApplied: false));
 
-            Assert.False(report.Applied);
-            Assert.Equal(15, report.Count(RequestTypeImportOutcome.CreatedActive));
-            Assert.Equal(16, report.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
-            Assert.Equal(4, report.Count(RequestTypeImportOutcome.LinkedToExisting));
-            Assert.Contains("DRY RUN", report.ToMarkdown());
+        Assert.Equal(31, report.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
+        Assert.Equal(4, report.Count(RequestTypeImportOutcome.ExistingUnchanged));
+        Assert.Contains("not applied", report.ToMarkdown());
+        Assert.All(report.Results.Where(r => r.Existing is not null), r => Assert.NotEmpty(r.Existing!.Slas));
+    }
 
-            await using var after = db.CreateContext();
-            Assert.Equal(counts, await CountAsync(after));
-            Assert.False(await after.RequestTypes.AnyAsync(r => r.Code != null));
+    [Fact]
+    public async Task Applying_before_the_migration_is_refused()
+    {
+        using var db = await CatalogImportTestDb.CreateBeforeMigrationAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now, Apply: true, SchemaApplied: false)));
+    }
+
+    // ---- the first import: all inactive, existing untouched ----------------
+
+    [Fact]
+    public async Task The_first_import_creates_31_inactive_drafts_and_leaves_the_4_existing_types_byte_for_byte_unchanged()
+    {
+        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
+        string fingerprintBefore;
+        await using (var context = db.CreateContext())
+        {
+            fingerprintBefore = await FingerprintExistingAsync(context);
+        }
+
+        var report = await db.ImportAsync();
+
+        Assert.True(report.Applied);
+        Assert.Equal(0, report.Count(RequestTypeImportOutcome.CreatedActive));
+        Assert.Equal(31, report.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
+        Assert.Equal(ExistingCodes, report.Results.Where(r => r.Outcome == RequestTypeImportOutcome.ExistingUnchanged).Select(r => r.Plan.Code));
+        Assert.Equal(0, report.Count(RequestTypeImportOutcome.Skipped));
+
+        await using var after = db.CreateContext();
+        Assert.Equal(fingerprintBefore, await FingerprintExistingAsync(after));
+        Assert.Equal(1, await after.RequestTypes.CountAsync(r => r.Name == "NOC for Resale"));
+
+        var created = await after.RequestTypes.Where(r => r.Code != null).ToListAsync();
+        Assert.Equal(31, created.Count);
+        Assert.All(created, r => Assert.False(r.IsActive));
+        foreach (var requestType in created)
+        {
+            var workflow = await after.Workflows.SingleAsync(w => w.WorkflowId == requestType.WorkflowId);
+            var version = Assert.Single(await after.WorkflowTemplates.Where(t => t.WorkflowId == workflow.WorkflowId).ToListAsync());
+            Assert.Equal(RequestTypeCatalogImporter.WorkflowCodeFor(requestType.Code!), workflow.Code);
+            Assert.False(workflow.IsActive);
+            Assert.Equal(WorkflowVersionStatus.Draft, version.Status);
         }
     }
 
     [Fact]
-    public async Task Import_creates_31_request_types_activates_only_the_resolved_ones_and_links_the_4_existing()
+    public async Task The_existing_types_are_reported_with_a_current_vs_workbook_comparison()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
 
         var report = await db.ImportAsync();
 
-        Assert.True(report.Applied);
-        Assert.Equal(ResolvedCodes, report.Results.Where(r => r.Outcome == RequestTypeImportOutcome.CreatedActive).Select(r => r.Plan.Code));
-        Assert.Equal(16, report.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
-        Assert.Equal(LinkedCodes, report.Results.Where(r => r.Outcome == RequestTypeImportOutcome.LinkedToExisting).Select(r => r.Plan.Code));
-        Assert.Equal(0, report.Count(RequestTypeImportOutcome.Skipped));
+        var resale = report.Results.Single(r => r.Plan.Code == "REG-NOC-001").Existing!;
+        Assert.True(resale.IsActive);
+        Assert.Equal(PriorityLevel.Medium, resale.DefaultPriority);
+        Assert.True(resale.AllowPendingCustomer);
+        Assert.True(resale.AllowAgentPriorityChange);
+        Assert.Contains(resale.Slas, s => s.StartsWith("Medium:", StringComparison.Ordinal) && s.Contains("10–12 days"));
+        Assert.Contains(resale.Slas, s => s.StartsWith("High:", StringComparison.Ordinal) && s.Contains("2–4 days"));
+        Assert.Equal(["ReopenApproval by role CS Manager, does not block work"], resale.Approvals);
+        Assert.Contains("Pending Customer (optional)", resale.Steps);
 
-        await using var context = db.CreateContext();
-        var imported = await context.RequestTypes.Where(r => r.Code != null).ToListAsync();
-        Assert.Equal(35, imported.Count);
-
-        foreach (var requestType in imported.Where(r => !LinkedCodes.Contains(r.Code)))
-        {
-            var workflow = await context.Workflows.SingleAsync(w => w.WorkflowId == requestType.WorkflowId);
-            var version = Assert.Single(await context.WorkflowTemplates.Where(t => t.WorkflowId == workflow.WorkflowId).ToListAsync());
-            Assert.Equal(RequestTypeCatalogImporter.WorkflowCodeFor(requestType.Code!), workflow.Code);
-
-            if (ResolvedCodes.Contains(requestType.Code))
-            {
-                Assert.True(requestType.IsActive);
-                Assert.True(workflow.IsActive);
-                Assert.Equal(WorkflowVersionStatus.Published, version.Status);
-            }
-            else
-            {
-                // Inactive draft: nothing a ticket could ever be created on.
-                Assert.False(requestType.IsActive);
-                Assert.False(workflow.IsActive);
-                Assert.Equal(WorkflowVersionStatus.Draft, version.Status);
-            }
-        }
+        var markdown = report.ToMarkdown();
+        Assert.Contains("## Existing request types — current vs workbook", markdown);
+        Assert.Contains("### REG-NOC-001 — NOC for Resale (Customer Service)", markdown);
+        Assert.Contains("Conditional: Registration Supervisor / Authorized Approver", markdown);
     }
 
     [Fact]
-    public async Task An_imported_request_type_carries_the_catalogs_settings_on_the_existing_model()
+    public async Task Linking_existing_types_is_opt_in_and_writes_only_the_code()
+    {
+        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
+        RequestType before;
+        await using (var context = db.CreateContext())
+        {
+            before = await context.RequestTypes.AsNoTracking().SingleAsync(r => r.Name == "NOC for Resale");
+        }
+
+        var report = await db.ImportAsync(CatalogImportTestDb.FirstImport with { LinkExisting = true });
+
+        Assert.Equal(4, report.Count(RequestTypeImportOutcome.LinkedToExisting));
+        await using var after = db.CreateContext();
+        var linked = await after.RequestTypes.SingleAsync(r => r.Code == "REG-NOC-001");
+        Assert.Equal(
+            (before.RequestTypeId, before.WorkflowId, before.DefaultPriorityId, before.IsActive, before.AllowPendingCustomer, before.AllowAgentPriorityChange),
+            (linked.RequestTypeId, linked.WorkflowId, linked.DefaultPriorityId, linked.IsActive, linked.AllowPendingCustomer, linked.AllowAgentPriorityChange));
+        Assert.Null(linked.Description);
+    }
+
+    // ---- settings the workbook does not give --------------------------------
+
+    [Fact]
+    public async Task Created_types_inherit_Pending_Customer_and_flag_agent_priority_change()
+    {
+        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
+
+        var report = await db.ImportAsync();
+
+        await using var context = db.CreateContext();
+        foreach (var requestType in await context.RequestTypes.Where(r => r.Code != null).ToListAsync())
+        {
+            var version = await context.WorkflowTemplates.SingleAsync(t => t.WorkflowId == requestType.WorkflowId);
+            // Pending Customer stays available — not switched off because the workbook is silent.
+            Assert.True(requestType.AllowPendingCustomer);
+            Assert.True(version.AllowsPendingCustomer);
+            Assert.True(WorkflowCapabilities.Resolve(version, requestType).CanGoPendingCustomer);
+            // Recorded as today's unrestricted behaviour, and flagged.
+            Assert.Equal(RequestTypeCatalogImporter.UndecidedAgentPriorityChangePlaceholder, requestType.AllowAgentPriorityChange);
+        }
+
+        Assert.All(
+            report.Results.Where(r => r.Outcome == RequestTypeImportOutcome.CreatedInactiveDraft),
+            r => Assert.Contains(RequestTypeCatalogImporter.AgentPriorityChangeDecision, r.Decisions));
+        Assert.Contains("Configuration with no default to inherit", report.ToMarkdown());
+    }
+
+    [Fact]
+    public async Task A_supplied_priority_change_answer_is_used_and_no_longer_flagged()
+    {
+        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
+
+        var report = await db.ImportAsync(CatalogImportTestDb.FirstImport with { AllowAgentPriorityChange = false });
+
+        Assert.DoesNotContain(report.Results, r => r.Decisions.Contains(RequestTypeCatalogImporter.AgentPriorityChangeDecision));
+        await using var context = db.CreateContext();
+        Assert.All(await context.RequestTypes.Where(r => r.Code != null).ToListAsync(), r => Assert.False(r.AllowAgentPriorityChange));
+    }
+
+    [Fact]
+    public async Task An_imported_request_type_carries_the_workbooks_settings_on_the_existing_model()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
         await db.ImportAsync();
@@ -112,9 +238,6 @@ public class RequestTypeCatalogImporterTests
         Assert.Equal("""["Customer","Project","Unit","Cheque details"]""", returned.RequiredFieldsJson);
         Assert.Equal("""["Cheque copy / bank return document"]""", returned.RequiredDocumentsJson);
         Assert.True(returned.AllowReopen);
-        Assert.False(returned.AllowAgentPriorityChange);
-        Assert.False(returned.AllowPendingCustomer);
-        Assert.False(returned.AllowPendingInternal);
 
         var sla = Assert.Single(await context.RequestTypeSlaPolicies.Where(p => p.RequestTypeId == returned.RequestTypeId).ToListAsync());
         Assert.Equal((byte)PriorityLevel.High, sla.PriorityId);
@@ -123,7 +246,6 @@ public class RequestTypeCatalogImporterTests
         Assert.Equal(SlaDurationUnit.Hours, sla.EffectiveFirstResponseUnit);
         Assert.Equal(1, sla.ResolutionTargetValue);
         Assert.Equal(SlaDurationUnit.Days, sla.Unit);
-        Assert.Null(sla.ResolutionMaximumValue);
         Assert.Equal(SlaClockBasis.BusinessHours, sla.ClockBasis);
         Assert.Null(sla.PausesOnPendingCustomer);
 
@@ -132,24 +254,6 @@ public class RequestTypeCatalogImporterTests
         var approval = Assert.Single(await context.RequestTypeApprovalRequirements.Where(a => a.RequestTypeId == returned.RequestTypeId).ToListAsync());
         Assert.Equal(ApprovalType.ReopenApproval, approval.ApprovalType);
         Assert.Equal(Roles.CsManager, approval.TargetRoleName);
-        Assert.False(approval.BlocksWorkUntilApproved);
-    }
-
-    [Fact]
-    public async Task Unresolved_approvals_create_no_accounting_or_customer_service_approval_requirement()
-    {
-        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
-        await db.ImportAsync();
-
-        await using var context = db.CreateContext();
-        var importedIds = await context.RequestTypes.Where(r => r.Code != null && !LinkedCodes.Contains(r.Code)).Select(r => r.RequestTypeId).ToListAsync();
-        var approvalTypes = await context.RequestTypeApprovalRequirements
-            .Where(a => importedIds.Contains(a.RequestTypeId))
-            .Select(a => a.ApprovalType)
-            .Distinct()
-            .ToListAsync();
-
-        Assert.Equal([ApprovalType.ReopenApproval], approvalTypes);
     }
 
     [Fact]
@@ -163,46 +267,35 @@ public class RequestTypeCatalogImporterTests
         var customerService = await context.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.CustomerServiceCode);
         var steps = (await context.WorkflowTemplates.SingleAsync(t => t.WorkflowId == legal.WorkflowId)).Steps;
 
-        Assert.Equal(
-            [WorkflowStepKind.Created, WorkflowStepKind.Assigned, WorkflowStepKind.Assigned, WorkflowStepKind.InProgress,
-             WorkflowStepKind.Assigned, WorkflowStepKind.Resolved, WorkflowStepKind.Closed],
-            steps.Select(s => s.Kind));
         Assert.Equal(customerService.DepartmentId, steps[1].DepartmentId);
         Assert.Null(steps.Single(s => s.Name == "Handoff to Legal").DepartmentId);
         Assert.Equal(customerService.DepartmentId, steps.Single(s => s.Name == "Return to Customer Service").DepartmentId);
     }
 
+    // ---- activation (a later, explicit decision) ------------------------------
+
     [Fact]
-    public async Task A_same_named_existing_request_type_is_linked_by_code_and_otherwise_left_untouched()
+    public async Task Activation_only_happens_when_asked_and_only_for_rows_with_no_open_decision()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
 
-        RequestType before;
-        List<RequestTypeSlaPolicy> slasBefore;
-        await using (var context = db.CreateContext())
+        // Asked, but the priority-change question is unanswered: still nothing goes live.
+        var unanswered = await db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now, ActivateResolved: true));
+        Assert.Equal(0, unanswered.Count(RequestTypeImportOutcome.CreatedActive));
+
+        var report = await db.ImportAsync(CatalogImportTestDb.ActivatingImport);
+
+        Assert.Equal(ResolvedCodes, report.Results.Where(r => r.Outcome == RequestTypeImportOutcome.CreatedActive).Select(r => r.Plan.Code));
+        await using var context = db.CreateContext();
+        foreach (var code in ResolvedCodes)
         {
-            before = await context.RequestTypes.AsNoTracking().SingleAsync(r => r.Name == "NOC for Resale");
-            slasBefore = await context.RequestTypeSlaPolicies.AsNoTracking().Where(p => p.RequestTypeId == before.RequestTypeId).ToListAsync();
+            var requestType = await context.RequestTypes.SingleAsync(r => r.Code == code);
+            Assert.True(requestType.IsActive);
+            Assert.Equal(WorkflowVersionStatus.Published, (await context.WorkflowTemplates.SingleAsync(t => t.WorkflowId == requestType.WorkflowId)).Status);
         }
-
-        var report = await db.ImportAsync();
-
-        await using var after = db.CreateContext();
-        var linked = await after.RequestTypes.SingleAsync(r => r.Code == "REG-NOC-001");
-        Assert.Equal(before.RequestTypeId, linked.RequestTypeId);
-        Assert.Equal(before.WorkflowId, linked.WorkflowId);
-        Assert.Equal(before.DefaultPriorityId, linked.DefaultPriorityId);
-        Assert.Equal(before.IsActive, linked.IsActive);
-        Assert.Null(linked.Description);
-        Assert.Equal(1, await after.RequestTypes.CountAsync(r => r.Name == "NOC for Resale"));
-        Assert.Equal(
-            slasBefore.Select(p => (p.PriorityId, p.ResolutionTargetValue, p.ResolutionMaximumValue)),
-            (await after.RequestTypeSlaPolicies.Where(p => p.RequestTypeId == linked.RequestTypeId).ToListAsync())
-                .Select(p => (p.PriorityId, p.ResolutionTargetValue, p.ResolutionMaximumValue)));
-
-        var result = report.Results.Single(r => r.Plan.Code == "REG-NOC-001");
-        Assert.Contains(result.Decisions, d => d.Area == CatalogDecisionArea.ExistingRequestType && d.Question.Contains("10–12 days"));
     }
+
+    // ---- reruns and administration edits ------------------------------------
 
     [Fact]
     public async Task Rerunning_the_import_creates_and_changes_nothing()
@@ -211,46 +304,56 @@ public class RequestTypeCatalogImporterTests
         await db.ImportAsync();
 
         (int, int, int, int, int, int) countsAfterFirst;
+        string existingAfterFirst;
         await using (var context = db.CreateContext())
         {
             countsAfterFirst = await CountAsync(context);
+            existingAfterFirst = await FingerprintExistingAsync(context);
         }
 
         var second = await db.ImportAsync();
 
-        Assert.Equal(35, second.Count(RequestTypeImportOutcome.AlreadyImported));
+        Assert.Equal(31, second.Count(RequestTypeImportOutcome.AlreadyImported));
+        Assert.Equal(4, second.Count(RequestTypeImportOutcome.ExistingUnchanged));
         await using var after = db.CreateContext();
         Assert.Equal(countsAfterFirst, await CountAsync(after));
-        Assert.Equal(15, await after.RequestTypes.CountAsync(r => r.Code != null && r.IsActive && !LinkedCodes.Contains(r.Code)));
+        Assert.Equal(existingAfterFirst, await FingerprintExistingAsync(after));
+        Assert.False(await after.RequestTypes.AnyAsync(r => r.Code != null && r.IsActive));
 
-        // Open decisions are still reported for the rows that remain inactive
-        // and for the linked pre-existing ones; none for rows that went live.
+        // Open decisions are still reported on a rerun.
         Assert.NotEmpty(second.Results.Single(r => r.Plan.Code == "SAL-INQ-001").Decisions);
         Assert.NotEmpty(second.Results.Single(r => r.Plan.Code == "REG-NOC-001").Decisions);
-        Assert.Empty(second.Results.Single(r => r.Plan.Code == "CS-GEN-001").Decisions);
     }
 
     [Fact]
-    public async Task A_rerun_never_overwrites_an_administration_change()
+    public async Task A_rerun_even_one_asking_for_activation_never_overwrites_an_administration_change()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
         await db.ImportAsync();
 
         await using (var context = db.CreateContext())
         {
+            // An administrator finishes CS-GEN-001 by hand: renames, re-prioritizes,
+            // turns Pending Customer off and edits its SLA.
             var general = await context.RequestTypes.SingleAsync(r => r.Code == "CS-GEN-001");
-            general.Deactivate();
-            general.Update("General Inquiry (renamed)", general.WorkflowId, (byte)PriorityLevel.Low, true, false, false, false, null);
+            general.Update("General Inquiry (renamed)", general.WorkflowId, (byte)PriorityLevel.Low, false, false, false, false, null);
+            var sla = await context.RequestTypeSlaPolicies.SingleAsync(p => p.RequestTypeId == general.RequestTypeId);
+            sla.Update(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 1, null, 3, null, false, SlaClockBasis.BusinessHours, null, null, null, true);
             await context.SaveChangesAsync();
         }
 
-        await db.ImportAsync();
+        var rerun = await db.ImportAsync(CatalogImportTestDb.ActivatingImport);
 
+        Assert.Equal(RequestTypeImportOutcome.AlreadyImported, rerun.Results.Single(r => r.Plan.Code == "CS-GEN-001").Outcome);
         await using var after = db.CreateContext();
         var reloaded = await after.RequestTypes.SingleAsync(r => r.Code == "CS-GEN-001");
-        Assert.False(reloaded.IsActive);
+        Assert.False(reloaded.IsActive); // not activated by the rerun
         Assert.Equal("General Inquiry (renamed)", reloaded.Name);
         Assert.Equal((byte)PriorityLevel.Low, reloaded.DefaultPriorityId);
+        Assert.False(reloaded.AllowPendingCustomer);
+        Assert.False(reloaded.AllowReopen);
+        var reloadedSla = await after.RequestTypeSlaPolicies.SingleAsync(p => p.RequestTypeId == reloaded.RequestTypeId);
+        Assert.Equal(3, reloadedSla.ResolutionTargetValue);
         Assert.Equal(0, await after.RequestTypes.CountAsync(r => r.Name == "General Inquiry"));
     }
 
@@ -266,7 +369,7 @@ public class RequestTypeCatalogImporterTests
         await using (var context = db.CreateContext())
         {
             Assert.False(await context.Departments.AnyAsync(d => d.Name == CatalogImportTestDb.LeasingCustomerServices));
-            Assert.Equal(30, await context.RequestTypes.CountAsync(r => r.Code != null));
+            Assert.Equal(26, await context.RequestTypes.CountAsync(r => r.Code != null));
 
             context.Departments.Add(new Department(CatalogImportTestDb.LeasingCustomerServices, "LCS"));
             await context.SaveChangesAsync();
@@ -274,25 +377,10 @@ public class RequestTypeCatalogImporterTests
 
         var second = await db.ImportAsync();
 
-        Assert.Equal(30, second.Count(RequestTypeImportOutcome.AlreadyImported));
-        Assert.Equal(3, second.Count(RequestTypeImportOutcome.CreatedActive));
-        Assert.Equal(2, second.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
+        Assert.Equal(26, second.Count(RequestTypeImportOutcome.AlreadyImported));
+        Assert.Equal(5, second.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
         await using var after = db.CreateContext();
-        Assert.Equal(35, await after.RequestTypes.CountAsync(r => r.Code != null));
-    }
-
-    [Fact]
-    public async Task Keep_all_inactive_creates_every_row_as_an_inactive_draft()
-    {
-        using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
-
-        var report = await db.ImportAsync(activateResolved: false);
-
-        Assert.Equal(0, report.Count(RequestTypeImportOutcome.CreatedActive));
-        Assert.Equal(31, report.Count(RequestTypeImportOutcome.CreatedInactiveDraft));
-        await using var context = db.CreateContext();
-        Assert.False(await context.RequestTypes.AnyAsync(r => r.Code != null && r.IsActive && !LinkedCodes.Contains(r.Code)));
-        Assert.False(await context.WorkflowTemplates.AnyAsync(t => t.Code.StartsWith(RequestTypeCatalogImporter.WorkflowCodePrefix) && t.Status != WorkflowVersionStatus.Draft));
+        Assert.Equal(31, await after.RequestTypes.CountAsync(r => r.Code != null));
     }
 
     [Fact]
@@ -313,17 +401,17 @@ public class RequestTypeCatalogImporterTests
     }
 
     [Fact]
-    public async Task The_report_lists_what_was_added_what_stays_inactive_and_the_open_decisions()
+    public async Task The_report_states_that_workflow_definitions_are_not_executed()
     {
         using var db = await CatalogImportTestDb.CreateWithAllCatalogDepartmentsAsync();
 
-        var markdown = (await db.ImportAsync(apply: false)).ToMarkdown();
+        var markdown = (await db.ImportAsync(new RequestTypeCatalogImportOptions(CatalogImportTestDb.Now))).ToMarkdown();
 
-        Assert.Contains("| CS-GEN-001 | General Inquiry | Customer Service | Medium | 4 bh / 1 bd | Created — active | 0 |", markdown);
-        Assert.Contains("| SAL-INQ-001 |", markdown);
-        Assert.Contains("## Decisions needed from the business", markdown);
+        Assert.Contains("## Workflow definitions (stored, not executed)", markdown);
+        Assert.Contains("Transfer action (CS Manager only", markdown);
+        Assert.Contains("Activation: **off**", markdown);
+        Assert.Contains("left completely unchanged", markdown);
         Assert.Contains("Confirm the handoff to Accounting", markdown);
-        Assert.Contains("REG-NOC-001, REG-NOC-002, REG-NOC-003, HO-NOC-001", markdown);
     }
 
     // ---- the schema change -------------------------------------------------
@@ -429,19 +517,41 @@ public class RequestTypeCatalogCommandTests
     }
 
     [Fact]
-    public async Task With_apply_the_command_imports_and_a_second_run_changes_nothing()
+    public async Task Apply_without_an_explicit_activation_choice_is_refused_and_writes_nothing()
     {
         using var services = Services(Guid.NewGuid().ToString());
         await SeedAsync(services);
+        var output = new StringWriter();
 
-        await RequestTypeCatalogCommand.RunAsync(services, [RequestTypeCatalogCommand.Switch, RequestTypeCatalogCommand.ApplySwitch], new StringWriter());
+        var exitCode = await RequestTypeCatalogCommand.RunAsync(services, [RequestTypeCatalogCommand.Switch, RequestTypeCatalogCommand.ApplySwitch], output);
+
+        Assert.Equal(3, exitCode);
+        Assert.Contains(RequestTypeCatalogCommand.KeepAllInactiveSwitch, output.ToString());
+        Assert.Equal(0, await CodedRequestTypesAsync(services));
+        Assert.Equal(3, await RequestTypeCatalogCommand.RunAsync(services,
+            [RequestTypeCatalogCommand.Switch, RequestTypeCatalogCommand.ApplySwitch,
+             RequestTypeCatalogCommand.KeepAllInactiveSwitch, RequestTypeCatalogCommand.ActivateResolvedSwitch], new StringWriter()));
+    }
+
+    [Fact]
+    public async Task The_first_UAT_command_imports_everything_inactive_and_a_second_run_changes_nothing()
+    {
+        using var services = Services(Guid.NewGuid().ToString());
+        await SeedAsync(services);
+        string[] firstImport = [RequestTypeCatalogCommand.Switch, RequestTypeCatalogCommand.ApplySwitch, RequestTypeCatalogCommand.KeepAllInactiveSwitch];
+
+        Assert.Equal(0, await RequestTypeCatalogCommand.RunAsync(services, firstImport, new StringWriter()));
         var afterFirst = await CodedRequestTypesAsync(services);
         var second = new StringWriter();
-        await RequestTypeCatalogCommand.RunAsync(services, [RequestTypeCatalogCommand.Switch, RequestTypeCatalogCommand.ApplySwitch], second);
+        await RequestTypeCatalogCommand.RunAsync(services, firstImport, second);
 
-        // The reference seed has no Facilities Management / Leasing departments, so their 9 rows are skipped.
-        Assert.Equal(26, afterFirst);
+        // The reference seed has no Facilities Management / Leasing departments
+        // (9 rows skipped) and already has the 4 NOC types (left unchanged).
+        Assert.Equal(22, afterFirst);
         Assert.Equal(afterFirst, await CodedRequestTypesAsync(services));
-        Assert.Contains("| Already imported (unchanged) | 26 |", second.ToString());
+        Assert.Contains("| Already imported (unchanged) | 22 |", second.ToString());
+        Assert.Contains("| Existing — left unchanged | 4 |", second.ToString());
+        using var scope = services.CreateScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<TigerCsDbContext>().RequestTypes.AnyAsync(r => r.Code != null && r.IsActive));
     }
 }

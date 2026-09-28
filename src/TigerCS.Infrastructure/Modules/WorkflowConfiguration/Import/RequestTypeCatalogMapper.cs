@@ -26,7 +26,10 @@ public enum CatalogDecisionArea
     Transfer,
     Reopen,
     ExistingRequestType,
-    BusinessDecision
+    BusinessDecision,
+
+    /// <summary>A required per-request-type setting the workbook does not give and that has no existing default to inherit.</summary>
+    Configuration
 }
 
 /// <summary>One question the business must answer before a row can be activated.</summary>

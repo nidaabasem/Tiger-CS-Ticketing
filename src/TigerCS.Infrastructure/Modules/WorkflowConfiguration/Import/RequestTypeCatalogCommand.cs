@@ -8,23 +8,28 @@ namespace TigerCS.Infrastructure.Modules.WorkflowConfiguration.Import;
 /// The one way the catalog import reaches a real database — run by hand,
 /// never at startup:
 /// <code>
-/// dotnet TigerCS.Api.dll --import-request-types                 # dry run: prints the report, writes nothing
-/// dotnet TigerCS.Api.dll --import-request-types --report out.md # dry run, report also saved to a file
-/// dotnet TigerCS.Api.dll --import-request-types --apply         # writes, in one transaction
-/// dotnet TigerCS.Api.dll --import-request-types --apply --keep-all-inactive
+/// dotnet TigerCS.Api.dll --import-request-types --report out.md               # dry run; works before the migration too
+/// dotnet TigerCS.Api.dll --import-request-types --apply --keep-all-inactive   # first import: everything created stays inactive
+/// dotnet TigerCS.Api.dll --import-request-types --apply --activate-resolved --agent-priority-change allow|deny
+/// dotnet TigerCS.Api.dll --import-request-types ... --link-existing           # also attach codes to same-named existing types
 /// </code>
-/// It uses the host's normal configuration (ConnectionStrings:TigerCsDatabase),
-/// so the target database is whatever that environment's settings name —
-/// check it before adding <c>--apply</c>.
+/// <c>--apply</c> must name its activation choice explicitly
+/// (<c>--keep-all-inactive</c> or <c>--activate-resolved</c>) so nothing
+/// goes live by omission. It uses the host's normal configuration
+/// (ConnectionStrings:TigerCsDatabase), so the target database is whatever
+/// that environment's settings name — check it before adding <c>--apply</c>.
 /// </summary>
 public static class RequestTypeCatalogCommand
 {
     public const string Switch = "--import-request-types";
     public const string ApplySwitch = "--apply";
     public const string KeepAllInactiveSwitch = "--keep-all-inactive";
+    public const string ActivateResolvedSwitch = "--activate-resolved";
+    public const string LinkExistingSwitch = "--link-existing";
+    public const string AgentPriorityChangeSwitch = "--agent-priority-change";
     public const string ReportSwitch = "--report";
 
-    /// <summary>The migration that adds the columns the import writes; the import refuses to run before it.</summary>
+    /// <summary>The migration that adds the columns the import writes; applying refuses to run before it.</summary>
     public const string RequiredMigration = "20260928085727_AddRequestTypeCatalogImport";
 
     public static bool IsRequested(IReadOnlyList<string> args) => args.Contains(Switch, StringComparer.OrdinalIgnoreCase);
@@ -35,21 +40,56 @@ public static class RequestTypeCatalogCommand
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(output);
 
-        var apply = args.Contains(ApplySwitch, StringComparer.OrdinalIgnoreCase);
-        var keepAllInactive = args.Contains(KeepAllInactiveSwitch, StringComparer.OrdinalIgnoreCase);
-        var reportIndex = args.ToList().FindIndex(a => string.Equals(a, ReportSwitch, StringComparison.OrdinalIgnoreCase));
-        var reportPath = reportIndex >= 0 && reportIndex + 1 < args.Count ? args[reportIndex + 1] : null;
+        bool Has(string flag) => args.Contains(flag, StringComparer.OrdinalIgnoreCase);
+        string? ValueOf(string flag)
+        {
+            var index = args.ToList().FindIndex(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
+            return index >= 0 && index + 1 < args.Count ? args[index + 1] : null;
+        }
+
+        var apply = Has(ApplySwitch);
+        var keepAllInactive = Has(KeepAllInactiveSwitch);
+        var activateResolved = Has(ActivateResolvedSwitch);
+        if (keepAllInactive && activateResolved)
+        {
+            await output.WriteLineAsync($"{KeepAllInactiveSwitch} and {ActivateResolvedSwitch} contradict each other; give one.");
+            return 3;
+        }
+
+        if (apply && !keepAllInactive && !activateResolved)
+        {
+            await output.WriteLineAsync($"{ApplySwitch} needs an explicit activation choice: add {KeepAllInactiveSwitch} (recommended for a first import) or {ActivateResolvedSwitch}.");
+            return 3;
+        }
+
+        bool? allowAgentPriorityChange = null;
+        if (ValueOf(AgentPriorityChangeSwitch) is { } answer)
+        {
+            allowAgentPriorityChange = answer.ToLowerInvariant() switch
+            {
+                "allow" => true,
+                "deny" => false,
+                _ => null
+            };
+            if (allowAgentPriorityChange is null)
+            {
+                await output.WriteLineAsync($"{AgentPriorityChangeSwitch} takes 'allow' or 'deny'.");
+                return 3;
+            }
+        }
 
         using var scope = services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
 
+        var schemaApplied = true;
         if (dbContext.Database.IsRelational())
         {
             var pending = await dbContext.Database.GetPendingMigrationsAsync(cancellationToken);
-            if (pending.Contains(RequiredMigration))
+            schemaApplied = !pending.Contains(RequiredMigration);
+            if (!schemaApplied && apply)
             {
                 await output.WriteLineAsync(
-                    $"Migration {RequiredMigration} has not been applied to this database; apply it before importing.");
+                    $"Migration {RequiredMigration} has not been applied to this database; apply it before {ApplySwitch}. A dry run works without it.");
                 return 2;
             }
         }
@@ -57,12 +97,18 @@ public static class RequestTypeCatalogCommand
         var report = await RequestTypeCatalogImporter.ImportAsync(
             dbContext,
             RequestTypeCatalog.Load(),
-            new RequestTypeCatalogImportOptions(DateTime.UtcNow, Apply: apply, ActivateResolved: !keepAllInactive),
+            new RequestTypeCatalogImportOptions(
+                DateTime.UtcNow,
+                Apply: apply,
+                ActivateResolved: activateResolved,
+                LinkExisting: Has(LinkExistingSwitch),
+                AllowAgentPriorityChange: allowAgentPriorityChange,
+                SchemaApplied: schemaApplied),
             cancellationToken);
 
         var markdown = report.ToMarkdown();
         await output.WriteLineAsync(markdown);
-        if (reportPath is not null)
+        if (ValueOf(ReportSwitch) is { } reportPath)
         {
             await File.WriteAllTextAsync(reportPath, markdown, cancellationToken);
         }
