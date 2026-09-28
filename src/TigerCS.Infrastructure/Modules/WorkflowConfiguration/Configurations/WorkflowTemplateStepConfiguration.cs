@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 
 namespace TigerCS.Infrastructure.Modules.WorkflowConfiguration.Configurations;
@@ -18,6 +19,15 @@ public class WorkflowTemplateStepConfiguration : IEntityTypeConfiguration<Workfl
         builder.Property(s => s.Kind).HasConversion<byte>().IsRequired();
         builder.Property(s => s.IsOptional).IsRequired();
         builder.Property(s => s.ApprovalType).HasConversion<byte?>();
+
+        // The department a Department Queue / Assignment step routes to (a
+        // handoff or a return to Customer Service). Restrict: a department is
+        // never deleted while configuration still names it.
+        builder.HasOne<Department>()
+            .WithMany()
+            .HasForeignKey(s => s.DepartmentId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // Not unique any more: the designer reorders a Draft by swapping two
         // steps' sequences in one save, which a unique index would reject

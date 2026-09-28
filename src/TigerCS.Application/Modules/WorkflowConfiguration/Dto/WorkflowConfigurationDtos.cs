@@ -25,7 +25,8 @@ public sealed record RequestTypeWorkflowDto(
 
 /// <summary>
 /// One resolved SLA configuration row. Duration values are verbatim source
-/// configuration in <see cref="Unit"/> — a range keeps both bounds, an
+/// configuration in <see cref="Unit"/> (First Response values in
+/// <see cref="FirstResponseUnit"/> when that is set) — a range keeps both bounds, an
 /// "Immediately" entry carries <see cref="IsImmediate"/>, and the pending
 /// business decisions (pause behavior, clock basis) surface as nulls rather
 /// than silently-defaulted values.
@@ -41,4 +42,5 @@ public sealed record RequestTypeSlaDto(
     int? ResolutionMaximumValue,
     bool IsImmediate,
     bool? PausesOnPendingCustomer,
-    bool? PausesOnPendingInternal);
+    bool? PausesOnPendingInternal,
+    SlaDurationUnit? FirstResponseUnit = null);

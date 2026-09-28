@@ -31,8 +31,26 @@ namespace TigerCS.Domain.Modules.WorkflowConfiguration;
 /// </summary>
 public class RequestType
 {
+    /// <summary>Maximum length of <see cref="Code"/> (e.g. "LCS-TEN-001").</summary>
+    public const int CodeMaxLength = 24;
+
     public int RequestTypeId { get; private set; }
     public int DepartmentId { get; private set; }
+
+    /// <summary>
+    /// The business's stable request code from the request-type catalog
+    /// workbook (e.g. "CS-GEN-001") — the identity a catalog import keys on,
+    /// so re-running it never creates a duplicate. Null for request types
+    /// created before the catalog existed (or by hand in Administration);
+    /// unique when present.
+    /// </summary>
+    public string? Code { get; private set; }
+
+    /// <summary>The catalog's grouping label (e.g. "General Inquiries") — display/reporting text only, never a routing key.</summary>
+    public string? RequestGroup { get; private set; }
+
+    /// <summary>The catalog's business description of when this request type applies.</summary>
+    public string? Description { get; private set; }
 
     /// <summary>Unique within the department (e.g. "Ticketing System" exists under both Customer Service and Collections).</summary>
     public string Name { get; private set; } = string.Empty;
@@ -80,6 +98,15 @@ public class RequestType
     /// a later increment).
     /// </summary>
     public string? RequiredFieldsJson { get; private set; }
+
+    /// <summary>
+    /// JSON array of the supporting documents the catalog lists for this
+    /// request type, as the business worded them (e.g.
+    /// <c>["Cheque copy / bank return document"]</c>). Informational
+    /// configuration only: attachments are a later increment, so nothing
+    /// enforces it yet. Null means none are listed.
+    /// </summary>
+    public string? RequiredDocumentsJson { get; private set; }
 
     public bool IsActive { get; private set; }
 
@@ -141,6 +168,48 @@ public class RequestType
     /// its department so those tickets' configuration stays truthful.
     /// </summary>
     public void ChangeDepartment(int departmentId) => DepartmentId = departmentId;
+
+    /// <summary>
+    /// Records the catalog identity and descriptive fields. Deliberately
+    /// separate from <see cref="Update"/>: an Administration edit never
+    /// touches the catalog identity, so a later re-import still recognizes
+    /// the row.
+    /// </summary>
+    public void SetCatalogDetails(string code, string? requestGroup, string? description, string? requiredDocumentsJson)
+    {
+        AssignCode(code);
+        RequestGroup = string.IsNullOrWhiteSpace(requestGroup) ? null : requestGroup.Trim();
+        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+        RequiredDocumentsJson = string.IsNullOrWhiteSpace(requiredDocumentsJson) ? null : requiredDocumentsJson;
+    }
+
+    /// <summary>
+    /// Links this request type to its catalog code without changing any of
+    /// its configuration — how an import adopts a request type that already
+    /// existed under the same department and name. A code, once set, never
+    /// changes: it is the identity re-imports key on.
+    /// </summary>
+    public void AssignCode(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            throw new ArgumentException("Code is required.", nameof(code));
+        }
+
+        var trimmed = code.Trim();
+        if (trimmed.Length > CodeMaxLength)
+        {
+            throw new ArgumentException($"Code must be at most {CodeMaxLength} characters.", nameof(code));
+        }
+
+        if (Code is not null && !string.Equals(Code, trimmed, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Request type {RequestTypeId} already has code '{Code}'; a catalog code never changes.");
+        }
+
+        Code = trimmed;
+    }
 
     public void Deactivate() => IsActive = false;
 

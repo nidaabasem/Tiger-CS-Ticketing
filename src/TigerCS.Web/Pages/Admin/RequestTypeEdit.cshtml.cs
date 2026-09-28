@@ -134,7 +134,8 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
                     // clear it, because this form is a blank upsert — it is never
                     // pre-filled from the policy being saved.
                     PausesOnPendingInternal: null,
-                    Sla.WarningThresholdPercent, Sla.IsActive),
+                    Sla.WarningThresholdPercent, Sla.IsActive,
+                    Sla.FirstResponseUnit),
                 cancellationToken),
             "SLA values saved.", "The SLA values could not be saved.");
 
@@ -227,6 +228,9 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
         public byte PriorityId { get; set; }
         public SlaTriggerType Trigger { get; set; } = SlaTriggerType.TicketCreated;
         public SlaDurationUnit Unit { get; set; } = SlaDurationUnit.Days;
+
+        /// <summary>Null = the First Response values are in <see cref="Unit"/> too.</summary>
+        public SlaDurationUnit? FirstResponseUnit { get; set; }
         public int? FirstResponseTargetValue { get; set; }
         public int? FirstResponseMaximumValue { get; set; }
         public int? ResolutionTargetValue { get; set; }

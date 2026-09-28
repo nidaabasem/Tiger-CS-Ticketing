@@ -194,6 +194,17 @@ public class AdminRequestTypeAppServiceTests
         var invalidRange = await f.Service.SaveSlaPolicyAsync(Admin, requestType.RequestTypeId, (byte)PriorityLevel.High,
             new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, null, null, 12, 10, false, null, null, null, null));
         Assert.Equal(AdminOutcome.ValidationFailed, invalidRange.Outcome);
+
+        // A separate First Response unit ("4 business hours" beside "1 business
+        // day") round-trips, and saving without one means "same as Unit" again.
+        var mixedUnits = await f.Service.SaveSlaPolicyAsync(Admin, requestType.RequestTypeId, (byte)PriorityLevel.Medium,
+            new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 4, null, 1, null, false, SlaClockBasis.BusinessHours, null, null, null,
+                FirstResponseUnit: SlaDurationUnit.Hours));
+        Assert.Equal(SlaDurationUnit.Hours, Assert.Single(mixedUnits.Value!.SlaPolicies).FirstResponseUnit);
+
+        var singleUnit = await f.Service.SaveSlaPolicyAsync(Admin, requestType.RequestTypeId, (byte)PriorityLevel.Medium,
+            new SaveSlaPolicyRequestDto(SlaTriggerType.TicketCreated, SlaDurationUnit.Days, 1, null, 2, null, false, null, null, null, null));
+        Assert.Null(Assert.Single(singleUnit.Value!.SlaPolicies).FirstResponseUnit);
     }
 
     // ---- The retired PendingThirdParty pause setting ----

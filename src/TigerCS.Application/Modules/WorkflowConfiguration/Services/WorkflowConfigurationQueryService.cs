@@ -89,7 +89,8 @@ public sealed class WorkflowConfigurationQueryService(
             policy.ResolutionMaximumValue,
             policy.IsImmediate,
             policy.PausesOnPendingCustomer,
-            policy.PausesOnPendingInternal);
+            policy.PausesOnPendingInternal,
+            policy.FirstResponseUnit);
     }
 
     private async Task<WorkflowTemplate> GetTemplateOrThrowAsync(RequestType requestType, CancellationToken cancellationToken)

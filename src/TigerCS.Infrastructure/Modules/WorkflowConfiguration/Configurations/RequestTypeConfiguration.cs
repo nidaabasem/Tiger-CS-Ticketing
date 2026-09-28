@@ -19,7 +19,17 @@ public class RequestTypeConfiguration : IEntityTypeConfiguration<RequestType>
         builder.Property(r => r.Name).HasMaxLength(100).IsRequired();
         builder.Property(r => r.DefaultPriorityId).IsRequired();
         builder.Property(r => r.RequiredFieldsJson).HasMaxLength(2000);
+        builder.Property(r => r.RequiredDocumentsJson).HasMaxLength(2000);
+        builder.Property(r => r.RequestGroup).HasMaxLength(100);
+        builder.Property(r => r.Description).HasMaxLength(500);
         builder.Property(r => r.IsActive).IsRequired();
+
+        // The request-type catalog's stable code — what a re-import keys on.
+        // Filtered: request types that predate the catalog carry none.
+        builder.Property(r => r.Code).HasMaxLength(RequestType.CodeMaxLength);
+        builder.HasIndex(r => r.Code)
+            .IsUnique()
+            .HasFilter("[Code] IS NOT NULL");
 
         // "Ticketing System" and "E-mail" legitimately exist under both
         // Customer Service and Collections — uniqueness is per department,

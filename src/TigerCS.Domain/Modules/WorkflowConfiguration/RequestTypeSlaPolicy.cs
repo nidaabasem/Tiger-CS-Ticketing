@@ -39,8 +39,21 @@ public class RequestTypeSlaPolicy
     /// <summary>When this SLA's clock starts — see <see cref="SlaTriggerType"/>. Send Receipts and Handover deliberately do not start at ticket creation.</summary>
     public SlaTriggerType Trigger { get; private set; }
 
-    /// <summary>The unit every duration value below is expressed in.</summary>
+    /// <summary>The unit every duration value below is expressed in — unless <see cref="FirstResponseUnit"/> says otherwise for the First Response values.</summary>
     public SlaDurationUnit Unit { get; private set; }
+
+    /// <summary>
+    /// The unit of the First Response values when it differs from
+    /// <see cref="Unit"/> — e.g. the request-type catalog's "4 business
+    /// hours" first response beside a "1 business day" resolution. Null
+    /// (every pre-existing row) means the First Response values are in
+    /// <see cref="Unit"/>, exactly as before. Read it through
+    /// <see cref="EffectiveFirstResponseUnit"/>.
+    /// </summary>
+    public SlaDurationUnit? FirstResponseUnit { get; private set; }
+
+    /// <summary>The unit the First Response values are actually expressed in.</summary>
+    public SlaDurationUnit EffectiveFirstResponseUnit => FirstResponseUnit ?? Unit;
 
     /// <summary>First Response target, in <see cref="Unit"/>. Null where the source document gives no first-response figure (a documented pending decision — most rows), never a guessed value.</summary>
     public int? FirstResponseTargetValue { get; private set; }
@@ -93,7 +106,8 @@ public class RequestTypeSlaPolicy
         bool? pausesOnPendingCustomer = null,
         bool? pausesOnPendingInternal = null,
         decimal? warningThresholdPercent = null,
-        bool isActive = true)
+        bool isActive = true,
+        SlaDurationUnit? firstResponseUnit = null)
     {
         if (!Enum.IsDefined(typeof(PriorityLevel), priorityId))
         {
@@ -104,6 +118,22 @@ public class RequestTypeSlaPolicy
         PriorityId = priorityId;
         Update(trigger, unit, firstResponseTargetValue, firstResponseMaximumValue, resolutionTargetValue, resolutionMaximumValue,
             isImmediate, clockBasis, pausesOnPendingCustomer, pausesOnPendingInternal, warningThresholdPercent, isActive);
+        SetFirstResponseUnit(firstResponseUnit);
+    }
+
+    /// <summary>
+    /// Sets (or, with null, clears back to <see cref="Unit"/>) the First
+    /// Response unit. Separate from <see cref="Update"/> so the existing
+    /// Administration edit keeps its signature and leaves this value as it is.
+    /// </summary>
+    public void SetFirstResponseUnit(SlaDurationUnit? firstResponseUnit)
+    {
+        if (firstResponseUnit is { } unit && !Enum.IsDefined(unit))
+        {
+            throw new ArgumentException($"FirstResponseUnit {unit} is not a defined SLA duration unit.", nameof(firstResponseUnit));
+        }
+
+        FirstResponseUnit = firstResponseUnit;
     }
 
     /// <summary>

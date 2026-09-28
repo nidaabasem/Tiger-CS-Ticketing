@@ -59,7 +59,8 @@ public sealed record SlaPolicyDto(
     bool? PausesOnPendingCustomer,
     bool? PausesOnPendingInternal,
     decimal? WarningThresholdPercent,
-    bool IsActive);
+    bool IsActive,
+    SlaDurationUnit? FirstResponseUnit = null);
 
 /// <summary>The request type's workflow link, resolved to the logical workflow and its current Published version.</summary>
 public sealed record WorkflowLinkDto(
@@ -140,7 +141,8 @@ public sealed record SaveSlaPolicyRequestDto(
     bool? PausesOnPendingCustomer,
     bool? PausesOnPendingInternal,
     decimal? WarningThresholdPercent,
-    bool IsActive = true);
+    bool IsActive = true,
+    SlaDurationUnit? FirstResponseUnit = null);
 
 /// <summary>What the New Ticket picker needs: the active request types of one department, by name.</summary>
 public sealed record RequestTypeOptionDto(int RequestTypeId, string Name, int DepartmentId, byte DefaultPriorityId, bool HasPublishedWorkflow);

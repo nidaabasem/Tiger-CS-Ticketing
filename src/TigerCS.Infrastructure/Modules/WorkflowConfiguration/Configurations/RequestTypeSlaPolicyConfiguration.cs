@@ -18,6 +18,7 @@ public class RequestTypeSlaPolicyConfiguration : IEntityTypeConfiguration<Reques
         builder.Property(p => p.PriorityId).IsRequired();
         builder.Property(p => p.Trigger).HasConversion<byte>().IsRequired();
         builder.Property(p => p.Unit).HasConversion<byte>().IsRequired();
+        builder.Property(p => p.FirstResponseUnit).HasConversion<byte?>();
         builder.Property(p => p.IsImmediate).IsRequired();
         builder.Property(p => p.ClockBasis).HasConversion<byte?>();
         builder.Property(p => p.WarningThresholdPercent).HasPrecision(5, 2);

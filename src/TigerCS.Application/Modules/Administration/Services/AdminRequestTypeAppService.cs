@@ -449,7 +449,8 @@ public sealed class AdminRequestTypeAppService(
                     // is created "not decided", never configured for a pause
                     // window no ticket can open any more.
                     pausesOnPendingInternal: null,
-                    request.WarningThresholdPercent, request.IsActive);
+                    request.WarningThresholdPercent, request.IsActive,
+                    firstResponseUnit: request.FirstResponseUnit);
                 await slaPolicyRepository.AddAsync(existing, cancellationToken);
             }
             else
@@ -471,6 +472,11 @@ public sealed class AdminRequestTypeAppService(
                     // number.
                     pausesOnPendingInternal: existing.PausesOnPendingInternal,
                     request.WarningThresholdPercent, request.IsActive);
+
+                // Unlike the retired pause setting, the First Response unit IS
+                // on the form, which re-enters every duration: the request's
+                // value (null = same as Unit) is the whole truth for the row.
+                existing.SetFirstResponseUnit(request.FirstResponseUnit);
             }
         }
         catch (ArgumentException ex)
@@ -596,7 +602,7 @@ public sealed class AdminRequestTypeAppService(
         policy.FirstResponseTargetValue, policy.FirstResponseMaximumValue,
         policy.ResolutionTargetValue, policy.ResolutionMaximumValue,
         policy.IsImmediate, policy.ClockBasis, policy.PausesOnPendingCustomer, policy.PausesOnPendingInternal,
-        policy.WarningThresholdPercent, policy.IsActive);
+        policy.WarningThresholdPercent, policy.IsActive, policy.FirstResponseUnit);
 
     private static string Describe(RequestType r) =>
         $"Name={r.Name};DepartmentId={r.DepartmentId};WorkflowId={r.WorkflowId};DefaultPriorityId={r.DefaultPriorityId};"
@@ -610,5 +616,5 @@ public sealed class AdminRequestTypeAppService(
         $"ApprovalType={r.ApprovalType};TargetKind={r.TargetKind};TargetDepartmentId={r.TargetDepartmentId};TargetRoleName={r.TargetRoleName};TargetEmployeeId={r.TargetEmployeeId};BlocksWork={r.BlocksWorkUntilApproved};IsActive={r.IsActive}";
 
     private static string DescribeSla(RequestTypeSlaPolicy p) =>
-        $"PriorityId={p.PriorityId};Trigger={p.Trigger};Unit={p.Unit};FR={p.FirstResponseTargetValue}-{p.FirstResponseMaximumValue};Res={p.ResolutionTargetValue}-{p.ResolutionMaximumValue};Immediate={p.IsImmediate};ClockBasis={p.ClockBasis};PauseCustomer={p.PausesOnPendingCustomer};PauseInternal={p.PausesOnPendingInternal};Warn={p.WarningThresholdPercent};IsActive={p.IsActive}";
+        $"PriorityId={p.PriorityId};Trigger={p.Trigger};Unit={p.Unit};FR={p.FirstResponseTargetValue}-{p.FirstResponseMaximumValue};FRUnit={p.EffectiveFirstResponseUnit};Res={p.ResolutionTargetValue}-{p.ResolutionMaximumValue};Immediate={p.IsImmediate};ClockBasis={p.ClockBasis};PauseCustomer={p.PausesOnPendingCustomer};PauseInternal={p.PausesOnPendingInternal};Warn={p.WarningThresholdPercent};IsActive={p.IsActive}";
 }

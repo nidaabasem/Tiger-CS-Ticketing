@@ -29,6 +29,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The request-type catalog (verbatim extract of the business workbook
+         docs/imports/TigerCS_New_Request_Types.xlsx) read by
+         RequestTypeCatalogImporter; embedded so the import can never run
+         against a different file than the one reviewed. -->
+    <EmbeddedResource Include="Modules\WorkflowConfiguration\Import\Data\TigerCS_New_Request_Types.json"
+                      LogicalName="TigerCS.RequestTypeCatalog.TigerCS_New_Request_Types.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TigerCS.Domain\TigerCS.Domain.csproj" />
     <ProjectReference Include="..\TigerCS.Application\TigerCS.Application.csproj" />
   </ItemGroup>

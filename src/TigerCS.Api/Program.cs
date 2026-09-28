@@ -10,6 +10,7 @@ using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Http;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
+using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Import;
 using TigerCS.Integrations.Modules.CrmIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 
@@ -82,6 +83,14 @@ builder.Services.AddScoped(sp => sp.GetRequiredService<IOptions<DashboardOptions
 builder.Services.AddAuthorization(options => options.AddTigerCsAuthorizationPolicies());
 
 var app = builder.Build();
+
+// Request-type catalog import — an explicit, hand-run command, never part of
+// startup: a dry run unless --apply is given (see RequestTypeCatalogCommand).
+if (RequestTypeCatalogCommand.IsRequested(args))
+{
+    Environment.ExitCode = await RequestTypeCatalogCommand.RunAsync(app.Services, args, Console.Out);
+    return;
+}
 
 // No production deployment is authorized at this pilot stage — enforced
 // through release governance and documentation (docs/DEV-SETUP.md,

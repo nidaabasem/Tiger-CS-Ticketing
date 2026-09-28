@@ -449,7 +449,7 @@
                                     <tr class="@(s.IsActive ? "" : "is-inactive")">
                                         <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(s.PriorityId)">@RequestTypeEditModel.PriorityLabel(s.PriorityId)</span></td>
                                         <td>@s.Trigger</td>
-                                        <td>@(s.FirstResponseTargetValue is null ? "—" : $"{s.FirstResponseTargetValue}{(s.FirstResponseMaximumValue is { } frm ? $"–{frm}" : "")} {s.Unit}")</td>
+                                        <td>@(s.FirstResponseTargetValue is null ? "—" : $"{s.FirstResponseTargetValue}{(s.FirstResponseMaximumValue is { } frm ? $"–{frm}" : "")} {s.FirstResponseUnit ?? s.Unit}")</td>
                                         <td>@(s.IsImmediate ? "Immediately" : $"{s.ResolutionTargetValue}{(s.ResolutionMaximumValue is { } rm ? $"–{rm}" : "")} {s.Unit}")</td>
                                         @* The retired pause setting has no column here: it configures a
                                            pause window for TicketStatus.PendingThirdParty, which no ticket
@@ -483,6 +483,12 @@
                             <div class="form-group">
                                 <label class="form-label" asp-for="Sla.Unit">Unit</label>
                                 <select class="form-control" asp-for="Sla.Unit" asp-items="Html.GetEnumSelectList<SlaDurationUnit>()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" asp-for="Sla.FirstResponseUnit">First response unit</label>
+                                <select class="form-control" asp-for="Sla.FirstResponseUnit" asp-items="Html.GetEnumSelectList<SlaDurationUnit>()">
+                                    <option value="">Same as Unit</option>
+                                </select>
                             </div>
                         </div>
                     </fieldset>

@@ -144,7 +144,8 @@ public class WorkflowTemplate
     /// seeds and tests). Sequences must strictly increase so the stored order
     /// is the flow order and can never be ambiguous.
     /// </summary>
-    public WorkflowTemplateStep AddStep(byte sequence, string name, WorkflowStepKind kind, bool isOptional = false, ApprovalType? approvalType = null)
+    public WorkflowTemplateStep AddStep(
+        byte sequence, string name, WorkflowStepKind kind, bool isOptional = false, ApprovalType? approvalType = null, int? departmentId = null)
     {
         EnsureDraft();
 
@@ -157,12 +158,14 @@ public class WorkflowTemplate
         }
 
         var step = new WorkflowTemplateStep(this, sequence, name, kind, isOptional, approvalType);
+        step.SetDepartment(departmentId);
         _steps.Add(step);
         return step;
     }
 
     /// <summary>Appends a step after the current last one (the designer's "Add Step").</summary>
-    public WorkflowTemplateStep AppendStep(string name, WorkflowStepKind kind, bool isOptional = false, ApprovalType? approvalType = null)
+    public WorkflowTemplateStep AppendStep(
+        string name, WorkflowStepKind kind, bool isOptional = false, ApprovalType? approvalType = null, int? departmentId = null)
     {
         EnsureDraft();
 
@@ -172,7 +175,7 @@ public class WorkflowTemplate
             throw new InvalidOperationException("A workflow version cannot have more than 255 steps.");
         }
 
-        return AddStep((byte)next, name, kind, isOptional, approvalType);
+        return AddStep((byte)next, name, kind, isOptional, approvalType, departmentId);
     }
 
     /// <summary>Draft-only: edits a step's name, kind, optionality and per-kind configuration. Changing the kind away from Approval drops its outcome branches.</summary>
@@ -182,6 +185,13 @@ public class WorkflowTemplate
         var step = GetStep(workflowTemplateStepId);
         step.Configure(name, kind, isOptional, approvalType);
         return step;
+    }
+
+    /// <summary>Draft-only: sets (or, with null, clears) the department a Department Queue / Assignment step routes to — see <see cref="WorkflowTemplateStep.DepartmentId"/>.</summary>
+    public void SetStepDepartment(int workflowTemplateStepId, int? departmentId)
+    {
+        EnsureDraft();
+        GetStep(workflowTemplateStepId).SetDepartment(departmentId);
     }
 
     /// <summary>Draft-only: removes a step, drops every branch pointing at it, and renumbers the remaining steps contiguously from 1.</summary>
@@ -240,7 +250,8 @@ public class WorkflowTemplate
         var copies = new Dictionary<WorkflowTemplateStep, WorkflowTemplateStep>();
         foreach (var sourceStep in sourceSteps)
         {
-            copies[sourceStep] = AddStep(sourceStep.Sequence, sourceStep.Name, sourceStep.Kind, sourceStep.IsOptional, sourceStep.ApprovalType);
+            copies[sourceStep] = AddStep(
+                sourceStep.Sequence, sourceStep.Name, sourceStep.Kind, sourceStep.IsOptional, sourceStep.ApprovalType, sourceStep.DepartmentId);
         }
 
         foreach (var sourceStep in sourceSteps)

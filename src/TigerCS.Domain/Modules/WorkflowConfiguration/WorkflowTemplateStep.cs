@@ -35,6 +35,19 @@ public class WorkflowTemplateStep
     /// </summary>
     public ApprovalType? ApprovalType { get; private set; }
 
+    /// <summary>
+    /// For <see cref="WorkflowStepKind.Assigned"/>: the department whose
+    /// queue the ticket is routed to at this step — how a department handoff
+    /// (e.g. Customer Service → Handover) or a return to Customer Service is
+    /// described. Null means "the request type's own department" or, for a
+    /// handoff whose target the business has not confirmed, "not yet
+    /// decided". Configuration only: the handoff itself is still performed
+    /// with the existing Transfer action, under its existing role and
+    /// department-settings rules — a step never moves a ticket on its own.
+    /// Always null on every other kind.
+    /// </summary>
+    public int? DepartmentId { get; private set; }
+
     private readonly List<WorkflowStepTransition> _transitions = [];
 
     /// <summary>The configured outcome branches (decision steps only); an outcome with no branch falls through to the next step in sequence (Approved) or stays explicitly open (Rejected, per the phase-3 decision).</summary>
@@ -100,6 +113,28 @@ public class WorkflowTemplateStep
         {
             _transitions.Clear();
         }
+
+        if (kind != WorkflowStepKind.Assigned)
+        {
+            DepartmentId = null;
+        }
+    }
+
+    internal void SetDepartment(int? departmentId)
+    {
+        if (departmentId is not null && Kind != WorkflowStepKind.Assigned)
+        {
+            throw new WorkflowStepConfigurationException(
+                $"Step '{Name}' is a {WorkflowStepKinds.Describe(Kind).Label} step and cannot name a department — "
+                + "only a Department Queue / Assignment step routes to one.");
+        }
+
+        if (departmentId is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(departmentId), "DepartmentId must be a real department id.");
+        }
+
+        DepartmentId = departmentId;
     }
 
     internal void SetSequence(byte sequence) => Sequence = sequence;
