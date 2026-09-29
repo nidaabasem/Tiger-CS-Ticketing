@@ -60,3 +60,24 @@ public interface IGenesysAgentMappingRepository
     /// </summary>
     Task<Dto.GenesysMappedAgent?> FindByGenesysUserIdAsync(string genesysUserId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// The Secure Screen Pop launches (<c>GenesysScreenPopLaunches</c>). Looked up
+/// by token <b>hash</b> only — the raw token never reaches persistence.
+/// Saves on its own because issue and redemption are each one self-contained
+/// write (the launch row plus its audit entry, through the same context).
+/// </summary>
+public interface IGenesysScreenPopLaunchStore
+{
+    Task AddAsync(GenesysScreenPopLaunch launch, CancellationToken cancellationToken = default);
+
+    Task<GenesysScreenPopLaunch?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Persists pending changes. Returns false — writing nothing — when a
+    /// concurrent redemption of the same launch committed first
+    /// (<c>RedeemedAtUtc</c> is a concurrency token), so a token can never be
+    /// redeemed twice even under a race.
+    /// </summary>
+    Task<bool> SaveChangesAsync(CancellationToken cancellationToken = default);
+}

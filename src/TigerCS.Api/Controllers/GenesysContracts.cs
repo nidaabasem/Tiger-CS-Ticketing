@@ -244,6 +244,37 @@ public sealed record GenesysAgentContextResponse(
     Guid? HandledByUserId);
 
 /// <summary>
+/// The transport shape of a Secure Screen Pop launch request. Only
+/// <paramref name="GenesysUserId"/> is required; the others choose the landing
+/// page, in priority order: the conversation's ticket → <paramref name="TicketId"/>
+/// → the customer lookup for <paramref name="CustomerPhone"/> → the Tickets list.
+/// A value that does not resolve (a conversation with no ticket yet, an
+/// unknown ticket id) falls through to the next choice rather than failing.
+/// </summary>
+/// <param name="GenesysUserId">Required. The agent's immutable Genesys User ID — the only value that identifies the agent. Must be mapped to an active TigerCS user.</param>
+/// <param name="ConversationId">The Genesys conversation being worked. When it produced a ticket, the agent lands on that ticket and is recorded as the interaction's handler.</param>
+/// <param name="TicketId">A TigerCS ticket id to open when the conversation names no ticket.</param>
+/// <param name="CustomerPhone">The caller's number, opening Customer Lookup when no ticket applies.</param>
+public sealed record GenesysScreenPopRequest(
+    string? GenesysUserId,
+    string? ConversationId = null,
+    long? TicketId = null,
+    string? CustomerPhone = null);
+
+/// <summary>An issued Screen Pop launch.</summary>
+/// <param name="LaunchUrl">Open this in any browser or WebView. It carries a one-time token (valid once, for one hour) and nothing else — no username, password or user data.</param>
+/// <param name="ExpiresAtUtc">When the launch stops being redeemable, in UTC.</param>
+/// <param name="ExpiresInSeconds">The same deadline as a duration: 3600.</param>
+/// <param name="TargetPath">The TigerCS Web page the agent will land on.</param>
+/// <param name="TicketId">The ticket that page shows, when it shows one.</param>
+public sealed record GenesysScreenPopResponse(
+    string LaunchUrl,
+    DateTime ExpiresAtUtc,
+    int ExpiresInSeconds,
+    string TargetPath,
+    long? TicketId);
+
+/// <summary>
 /// Translates the transport records above into the normalized application
 /// contracts. The one place Genesys' vocabulary is interpreted — an
 /// unrecognized channel or event is rejected here with a clear message,
@@ -311,6 +342,9 @@ internal static class GenesysContractMapper
 
     internal static GenesysAgentContextDto Map(GenesysAgentContextRequest request) =>
         new(request.GenesysUserId, request.AgentEmail, request.ConversationId);
+
+    internal static GenesysScreenPopRequestDto Map(GenesysScreenPopRequest request) =>
+        new(request.GenesysUserId, request.ConversationId, request.TicketId, request.CustomerPhone);
 
     internal static GenesysConversationEndDto Map(GenesysConversationEndRequest request) => new(
         request.ConversationId,

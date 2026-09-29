@@ -39,3 +39,40 @@ public class GenesysQueueMappingConfiguration : IEntityTypeConfiguration<Genesys
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
+
+/// <summary>
+/// Secure Screen Pop launches. The token hash is unique (it is the lookup
+/// key); <c>RedeemedAtUtc</c> is a concurrency token, so the UPDATE that
+/// consumes a launch carries <c>WHERE RedeemedAtUtc IS NULL</c> and a second,
+/// concurrent redemption affects no row. No FK to AspNetUsers: a launch is a
+/// short-lived credential record, and the user it names is re-validated on
+/// redemption rather than trusted from this row.
+/// </summary>
+public class GenesysScreenPopLaunchConfiguration : IEntityTypeConfiguration<GenesysScreenPopLaunch>
+{
+    public void Configure(EntityTypeBuilder<GenesysScreenPopLaunch> builder)
+    {
+        builder.ToTable("GenesysScreenPopLaunches");
+
+        builder.HasKey(l => l.GenesysScreenPopLaunchId);
+        builder.Property(l => l.GenesysScreenPopLaunchId).ValueGeneratedOnAdd();
+
+        builder.Property(l => l.TokenHash)
+            .HasMaxLength(GenesysScreenPopLaunch.TokenHashLength)
+            .IsFixedLength()
+            .IsUnicode(false)
+            .IsRequired();
+        builder.Property(l => l.GenesysUserId).HasMaxLength(GenesysScreenPopLaunch.GenesysUserIdMaxLength).IsRequired();
+        builder.Property(l => l.UserId).IsRequired();
+        builder.Property(l => l.TargetPath).HasMaxLength(GenesysScreenPopLaunch.TargetPathMaxLength).IsRequired();
+        builder.Property(l => l.ConversationId).HasMaxLength(GenesysScreenPopLaunch.ConversationIdMaxLength);
+        builder.Property(l => l.IssuedByEmployeeId).IsRequired();
+        builder.Property(l => l.IssuedAtUtc).IsRequired();
+        builder.Property(l => l.ExpiresAtUtc).IsRequired();
+        builder.Property(l => l.RedeemedAtUtc).IsConcurrencyToken();
+
+        builder.HasIndex(l => l.TokenHash)
+            .IsUnique()
+            .HasDatabaseName("UX_GenesysScreenPopLaunches_TokenHash");
+    }
+}

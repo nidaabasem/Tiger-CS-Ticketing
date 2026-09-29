@@ -127,9 +127,7 @@ public sealed class GenesysInquiryIngestionAppService(
         {
             return GenesysIngestionResult.Failure(
                 GenesysIngestionOutcome.DepartmentNotResolved,
-                inquiry.QueueId is null
-                    ? "The inquiry named no department and carried no queue id."
-                    : $"Genesys queue '{inquiry.QueueId}' has no active department mapping.");
+                DescribeUnresolvedDepartment(inquiry));
         }
 
         // Customer lookup through the EXISTING flow — enrichment only, and
@@ -326,6 +324,30 @@ public sealed class GenesysInquiryIngestionAppService(
     }
 
     /// <summary>
+    /// Why <see cref="ResolveDepartmentAsync"/> found nothing, naming the
+    /// input that actually decided it — an explicit department that does not
+    /// resolve is reported as exactly that, never as "no department named".
+    /// Mirrors the resolution order: an explicit selection is not second-
+    /// guessed with the queue mapping.
+    /// </summary>
+    private static string DescribeUnresolvedDepartment(GenesysInquiryDto inquiry)
+    {
+        if (inquiry.DepartmentId is { } departmentId)
+        {
+            return $"Department {departmentId} does not exist or is inactive.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(inquiry.DepartmentCode))
+        {
+            return $"No active department has the code '{inquiry.DepartmentCode.Trim()}'.";
+        }
+
+        return string.IsNullOrWhiteSpace(inquiry.QueueId)
+            ? "The inquiry named no department and carried no queue id."
+            : $"Genesys queue '{inquiry.QueueId.Trim()}' has no active department mapping.";
+    }
+
+    /// <summary>
     /// Runs the existing customer lookup for the inquiry's mobile number and
     /// reduces it to what ingestion actually needs: whether a customer was
     /// identified, and a display name to enrich the interaction with. Every
@@ -432,4 +454,16 @@ public static class GenesysAuditActions
     /// and "we noticed nobody had" are distinguishable in the audit trail.
     /// </summary>
     public const string HandoffAutoRaisedOnConversationEnd = "GenesysHandoffAutoRaisedOnConversationEnd";
+
+    /// <summary>Secure Screen Pop audit entries are keyed by the agent's Genesys User ID — never by the token.</summary>
+    public const string ScreenPopEntityType = "GenesysScreenPop";
+
+    /// <summary>A Screen Pop launch URL was issued for a mapped agent.</summary>
+    public const string ScreenPopIssued = "GenesysScreenPopIssued";
+
+    /// <summary>A Screen Pop launch was redeemed and the mapped user signed in.</summary>
+    public const string ScreenPopRedeemed = "GenesysScreenPopRedeemed";
+
+    /// <summary>A valid, unexpired launch was consumed but refused, because the agent's mapping or account no longer allowed sign-in.</summary>
+    public const string ScreenPopRefused = "GenesysScreenPopRefused";
 }

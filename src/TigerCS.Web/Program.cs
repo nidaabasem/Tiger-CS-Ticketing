@@ -15,6 +15,9 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.AllowAnonymousToPage("/Login");
     options.Conventions.AllowAnonymousToPage("/Index");
     options.Conventions.AllowAnonymousToPage("/AccessDenied");
+    // Genesys Secure Screen Pop: opened in a browser with no TigerCS cookie;
+    // the one-time token it carries is what signs the agent in.
+    options.Conventions.AllowAnonymousToPage("/ScreenPop");
 
     // Administration area: System Administrator only. This only decides what
     // the Web renders — every api/admin/* endpoint enforces the same policy

@@ -41,13 +41,15 @@ public class GenesysController(
     GenesysInquiryIngestionAppService ingestionAppService,
     GenesysTicketUpdateAppService ticketUpdateAppService,
     GenesysCustomerLookupAppService customerLookupAppService,
-    GenesysAgentContextAppService agentContextAppService) : ControllerBase
+    GenesysAgentContextAppService agentContextAppService,
+    GenesysScreenPopAppService screenPopAppService) : ControllerBase
 {
     /// <summary>Stable, machine-readable error codes for the agent identity mapping — carried as the <c>code</c> member of the standard ProblemDetails body.</summary>
     public static class ErrorCodes
     {
         public const string AgentNotMapped = "GENESYS_AGENT_NOT_MAPPED";
         public const string AgentInactive = "GENESYS_AGENT_INACTIVE";
+        public const string ScreenPopNotConfigured = "GENESYS_SCREEN_POP_NOT_CONFIGURED";
     }
 
     /// <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
@@ -137,7 +139,7 @@ public class GenesysController(
                 type: "https://tigercs.internal/problems/genesys-department-not-resolved",
                 title: "No department could be resolved for this inquiry",
                 detail: result.Detail
-                    ?? "The inquiry named no department and its queue has no active mapping. Configure the queue under Administration → Genesys routing.",
+                    ?? "No department could be resolved from departmentId, departmentCode or the queue mapping.",
                 statusCode: StatusCodes.Status422UnprocessableEntity),
 
             GenesysIngestionOutcome.ChannelNotConfigured => Problem(
@@ -445,6 +447,105 @@ public class GenesysController(
                 statusCode: StatusCodes.Status404NotFound),
 
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
+        };
+    }
+
+    /// <summary>Issue a Secure Screen Pop launch URL that opens TigerCS Web, signed in as the Genesys agent's mapped TigerCS user.</summary>
+    /// <remarks>
+    /// Genesys opens the returned <c>launchUrl</c> in any browser or WebView —
+    /// no TigerCS login cookie is needed beforehand. TigerCS Web redeems the
+    /// token, creates an ordinary authenticated session for the mapped user,
+    /// and redirects to <c>targetPath</c>.
+    ///
+    /// <para>
+    /// <b>The token:</b> 256 bits of cryptographic randomness, valid for one
+    /// hour and exactly one use. Only its SHA-256 hash is stored, and it
+    /// carries no username, password or user data.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Authentication only.</b> The session is the one a password login
+    /// would give the mapped user; the target page is authorized under the
+    /// normal department-visibility rules, and a ticket the user may not see
+    /// stays refused. The token grants no access of its own.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Landing priority:</b> the ticket <c>conversationId</c> produced
+    /// (whose interaction then records this agent as handler) → <c>ticketId</c>
+    /// → Customer Lookup for <c>customerPhone</c> → the Tickets list. A value
+    /// that resolves to nothing falls through to the next.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The agent's Genesys User ID and, optionally, what to open.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <response code="200">A launch URL, valid once for one hour.</response>
+    /// <response code="400">genesysUserId was missing or blank.</response>
+    /// <response code="403">The Genesys agent is not mapped (<c>GENESYS_AGENT_NOT_MAPPED</c>) or the mapped user is deactivated (<c>GENESYS_AGENT_INACTIVE</c>).</response>
+    /// <response code="503">The Genesys integration is switched off, or <c>Genesys:ScreenPopWebBaseUrl</c> is not configured (<c>GENESYS_SCREEN_POP_NOT_CONFIGURED</c>).</response>
+    [HttpPost("screen-pop")]
+    [ProducesResponseType<GenesysScreenPopResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> IssueScreenPop(
+        [FromBody] GenesysScreenPopRequest request, CancellationToken cancellationToken)
+    {
+        var employeeId = GetEmployeeId();
+        if (employeeId is null)
+        {
+            return Unauthorized();
+        }
+
+        if (string.IsNullOrWhiteSpace(request.GenesysUserId))
+        {
+            ModelState.AddModelError(nameof(request.GenesysUserId), "genesysUserId is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        var result = await screenPopAppService.IssueAsync(employeeId.Value, GenesysContractMapper.Map(request), cancellationToken);
+
+        return result.Outcome switch
+        {
+            GenesysScreenPopIssueOutcome.Issued => Ok(new GenesysScreenPopResponse(
+                result.LaunchUrl!,
+                result.ExpiresAtUtc!.Value,
+                (int)Domain.Modules.GenesysIntegration.GenesysScreenPopLaunch.Lifetime.TotalSeconds,
+                result.TargetPath!,
+                result.TicketId)),
+
+            GenesysScreenPopIssueOutcome.IntegrationDisabled => Problem(
+                type: "https://tigercs.internal/problems/genesys-integration-disabled",
+                title: "The Genesys integration is disabled",
+                detail: "Genesys:Enabled is false — no Genesys request is processed while the integration is switched off.",
+                statusCode: StatusCodes.Status503ServiceUnavailable),
+
+            GenesysScreenPopIssueOutcome.NotConfigured => CodedProblem(
+                ErrorCodes.ScreenPopNotConfigured,
+                type: "https://tigercs.internal/problems/genesys-screen-pop-not-configured",
+                title: "Screen Pop is not configured",
+                detail: result.Detail ?? "Genesys:ScreenPopWebBaseUrl is not configured.",
+                statusCode: StatusCodes.Status503ServiceUnavailable),
+
+            GenesysScreenPopIssueOutcome.AgentIdRequired => ValidationProblem(
+                new ValidationProblemDetails(new Dictionary<string, string[]>
+                {
+                    [nameof(request.GenesysUserId)] = [result.Detail ?? "genesysUserId is required."]
+                })),
+
+            GenesysScreenPopIssueOutcome.AgentInactive => CodedProblem(
+                ErrorCodes.AgentInactive,
+                type: "https://tigercs.internal/problems/genesys-agent-inactive",
+                title: "The Ticketing user mapped to this Genesys agent is deactivated",
+                detail: result.Detail ?? "The Ticketing user mapped to this Genesys agent is deactivated.",
+                statusCode: StatusCodes.Status403Forbidden),
+
+            _ => CodedProblem(
+                ErrorCodes.AgentNotMapped,
+                type: "https://tigercs.internal/problems/genesys-agent-not-mapped",
+                title: "Genesys agent is not mapped to a Ticketing user",
+                detail: "Genesys agent is not mapped to a Ticketing user.",
+                statusCode: StatusCodes.Status403Forbidden)
         };
     }
 

@@ -78,6 +78,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
         // Genesys agent identity mapping — the strict agent-action endpoint.
         ["POST /api/genesys/agent-context"] = nameof(GenesysIntegration.Integration.GenesysAgentMappingEndpointsTests.MappedAgent_ResolvesToTheTicketingUser_AndRecordsInteractionOwnership),
+        // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).
+        ["POST /api/genesys/screen-pop"] = nameof(GenesysIntegration.Integration.GenesysScreenPopEndpointsTests.Issue_ReturnsAOneHourLaunchUrl_AndStoresOnlyTheHash),
         ["GET /api/pending-customer-interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/start"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/complete"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
@@ -210,6 +212,12 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         // this factory runs as "Testing") and never exist in Production, per
         // MapTigerCsSwagger. Listed explicitly rather than filtered out by a
         // pattern, so a third anonymous route would still fail this test.
+        //
+        // /api/auth/screen-pop/redeem is anonymous for the same reason login
+        // is: it is where a credential is exchanged for a session. The
+        // credential is a one-time, one-hour Screen Pop token issued only to
+        // the authenticated Genesys service account, and the session it
+        // yields is the mapped user's ordinary one (GenesysScreenPopEndpointsTests).
         using var scope = _factory.Services.CreateScope();
         var endpoints = scope.ServiceProvider.GetRequiredService<EndpointDataSource>();
 
@@ -224,6 +232,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(
             [
                 "/api/auth/login",
+                "/api/auth/screen-pop/redeem",
                 "/health",
                 "/openapi/{documentName}.json",
                 "/swagger/{documentName}/swagger.json"
