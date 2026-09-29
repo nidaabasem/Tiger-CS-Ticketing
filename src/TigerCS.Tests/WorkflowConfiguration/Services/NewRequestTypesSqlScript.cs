@@ -34,12 +34,12 @@ internal static class NewRequestTypesSqlScript
         var sb = new StringBuilder();
         sb.Append(BeginMarker).Append('\n');
 
-        sb.Append("INSERT INTO @CreatableDepartments ([Name], [Code], [NearMatchKeyword]) VALUES\n");
+        sb.Append("INSERT INTO @CreatableDepartments ([Name], [Code]) VALUES\n");
         sb.AppendJoin(",\n", NewRequestTypesBusinessReview.CreatableOwningDepartments.Select(d =>
-            "(" + Literal(d.Name) + ", " + Literal(d.Code) + ", " + Literal(d.NearMatchKeyword) + ")"));
+            "(" + Literal(d.Name) + ", " + Literal(d.Code) + ")"));
         sb.Append(";\n\n");
 
-        sb.Append("INSERT INTO @Rows ([Ordinal], [RequestCode], [OwnerDepartmentName], [OwnerDepartmentCode], [Name], [WorkflowName], [WorkflowDescription], [DefaultPriorityId], [AllowReopen], [RequiredFieldsJson], [ResolutionDays], [ConditionalApproval], [SimilarExistingName]) VALUES\n");
+        sb.Append("INSERT INTO @Rows ([Ordinal], [RequestCode], [OwnerDepartmentName], [OwnerDepartmentCode], [Name], [WorkflowName], [WorkflowDescription], [DefaultPriorityId], [AllowReopen], [RequiredFieldsJson], [ResolutionDays], [SimilarExistingName]) VALUES\n");
         sb.AppendJoin(",\n", rows.Select((r, i) => string.Join(", ",
             "(" + (i + 1).ToString(CultureInfo.InvariantCulture),
             Literal(r.RequestCode),
@@ -52,7 +52,6 @@ internal static class NewRequestTypesSqlScript
             r.AllowReopenFlag ? "1" : "0",
             Literal(r.RequiredFieldsJson),
             r.ResolutionBusinessDays?.ToString(CultureInfo.InvariantCulture) ?? "NULL",
-            r.IsConditionalApproval ? "1" : "0",
             Literal(r.SimilarExistingRequestTypeName) + ")")));
         sb.Append(";\n\n");
 
@@ -63,15 +62,6 @@ internal static class NewRequestTypesSqlScript
             Literal(s.Name),
             ((byte)s.Kind).ToString(CultureInfo.InvariantCulture),
             (s.IsOptional ? "1" : "0") + ")"))));
-        sb.Append(";\n\n");
-
-        sb.Append("INSERT INTO @Destinations ([RequestCode], [Ordinal], [DepartmentName], [DepartmentCode], [RepresentationPending]) VALUES\n");
-        sb.AppendJoin(",\n", rows.SelectMany(r => r.Destinations.Select((d, i) => string.Join(", ",
-            "(" + Literal(r.RequestCode),
-            (i + 1).ToString(CultureInfo.InvariantCulture),
-            Literal(d.Name),
-            Literal(d.Code),
-            (d.RepresentationPending ? "1" : "0") + ")"))));
         sb.Append(";\n");
 
         sb.Append(EndMarker);
