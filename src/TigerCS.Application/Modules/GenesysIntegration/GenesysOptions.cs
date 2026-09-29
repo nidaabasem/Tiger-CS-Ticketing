@@ -32,4 +32,13 @@ public sealed class GenesysOptions
 
     /// <summary>Whether inbound Genesys inquiry/end processing is switched on. Default false — the integration stays dark until it is deliberately enabled.</summary>
     public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The TigerCS <b>Web</b> application's public base address (e.g.
+    /// <c>https://tigercs-uat.example/</c>) — what a Secure Screen Pop
+    /// <c>launchUrl</c> is built on, since the Api cannot know where the Web
+    /// is served. Unset means Screen Pop is not configured: the endpoint
+    /// refuses to issue a launch rather than guess an address.
+    /// </summary>
+    public string? ScreenPopWebBaseUrl { get; set; }
 }
