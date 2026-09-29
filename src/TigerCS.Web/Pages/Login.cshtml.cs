@@ -40,22 +40,11 @@ public sealed class LoginModel(AuthApiClient authApiClient) : PageModel
         {
             var response = result.Value;
 
-            var claims = new List<Claim>
-            {
-                new(ClaimTypes.NameIdentifier, response.EmployeeId.ToString()),
-                new(ClaimTypes.Name, response.DisplayName),
-                new(TigerCsClaimTypes.AccessToken, response.AccessToken),
-            };
-            claims.AddRange(response.Roles.Select(role => new Claim(ClaimTypes.Role, role)));
-            if (response.PrimaryDepartmentId is int departmentId)
-            {
-                claims.Add(new Claim(TigerCsClaimTypes.PrimaryDepartmentId, departmentId.ToString()));
-            }
-
-            var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
             await HttpContext.SignInAsync(
                 CookieAuthenticationDefaults.AuthenticationScheme,
-                new ClaimsPrincipal(identity),
+                WebSessionPrincipal.Create(
+                    response.EmployeeId, response.DisplayName, response.AccessToken,
+                    response.Roles, response.PrimaryDepartmentId),
                 new AuthenticationProperties
                 {
                     IsPersistent = Input.RememberMe,

@@ -138,3 +138,31 @@ public sealed class GenesysAgentMappingRepository(TigerCsDbContext dbContext) : 
                 IsActive: row.Employee is not null && row.Employee.DeactivatedAtUtc == null);
     }
 }
+
+/// <summary>
+/// Secure Screen Pop launches, looked up by token hash through the unique
+/// index <c>UX_GenesysScreenPopLaunches_TokenHash</c>. A lost race on
+/// <c>RedeemedAtUtc</c> (its concurrency token) is answered with false, not
+/// an exception: "someone redeemed it first" is an expected outcome.
+/// </summary>
+public sealed class GenesysScreenPopLaunchStore(TigerCsDbContext dbContext) : IGenesysScreenPopLaunchStore
+{
+    public async Task AddAsync(GenesysScreenPopLaunch launch, CancellationToken cancellationToken = default) =>
+        await dbContext.GenesysScreenPopLaunches.AddAsync(launch, cancellationToken);
+
+    public Task<GenesysScreenPopLaunch?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken = default) =>
+        dbContext.GenesysScreenPopLaunches.FirstOrDefaultAsync(l => l.TokenHash == tokenHash, cancellationToken);
+
+    public async Task<bool> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return false;
+        }
+    }
+}

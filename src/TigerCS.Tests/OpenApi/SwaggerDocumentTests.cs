@@ -62,6 +62,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /health",
 
         "POST /api/auth/login",
+        "POST /api/auth/screen-pop/redeem",
         "POST /api/auth/logout",
 
         "GET /api/users/me",
@@ -139,6 +140,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // resolves a Genesys User ID to the Ticketing user and records
         // interaction ownership.
         "POST /api/genesys/agent-context",
+        // Genesys Secure Screen Pop: issue a one-time, one-hour launch URL.
+        "POST /api/genesys/screen-pop",
         "GET /api/pending-customer-interactions",
         "POST /api/pending-customer-interactions/{handoffId}/start",
         "POST /api/pending-customer-interactions/{handoffId}/complete",
@@ -425,6 +428,25 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     [InlineData("ActivationRequestDto", "reason")]
     [InlineData("ResolveTicketRequestDto", "reasonCode")]
     [InlineData("ResolveTicketRequestDto", "duplicateOfTicketId")]
+    // Genesys Create Ticket: every context field is optional.
+    [InlineData("GenesysInquiryRequest", "customerPhone")]
+    [InlineData("GenesysInquiryRequest", "customerName")]
+    [InlineData("GenesysInquiryRequest", "customerEmail")]
+    [InlineData("GenesysInquiryRequest", "departmentId")]
+    [InlineData("GenesysInquiryRequest", "departmentCode")]
+    [InlineData("GenesysInquiryRequest", "queueId")]
+    [InlineData("GenesysInquiryRequest", "queueName")]
+    [InlineData("GenesysInquiryRequest", "agentId")]
+    [InlineData("GenesysInquiryRequest", "agentName")]
+    [InlineData("GenesysInquiryRequest", "direction")]
+    [InlineData("GenesysInquiryRequest", "startedAtUtc")]
+    [InlineData("GenesysInquiryRequest", "towerName")]
+    [InlineData("GenesysInquiryRequest", "unitNumber")]
+    [InlineData("GenesysInquiryRequest", "subject")]
+    // Genesys Screen Pop: everything but the agent is optional.
+    [InlineData("GenesysScreenPopRequest", "conversationId")]
+    [InlineData("GenesysScreenPopRequest", "ticketId")]
+    [InlineData("GenesysScreenPopRequest", "customerPhone")]
     public void NullableFields_AreNotMarkedRequired(string schemaName, string propertyName)
     {
         var schema = SchemaFor(schemaName);
@@ -443,6 +465,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
     [InlineData("AssignTicketRequestDto", "rowVersion")]
     [InlineData("ChangeStatusRequestDto", "newStatus")]
     [InlineData("TransferTicketRequestDto", "targetDepartmentId")]
+    [InlineData("GenesysInquiryRequest", "conversationId")]
+    [InlineData("GenesysInquiryRequest", "channel")]
     public void MandatoryFields_AreMarkedRequired(string schemaName, string propertyName)
     {
         var schema = SchemaFor(schemaName);

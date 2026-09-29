@@ -100,6 +100,49 @@ public sealed class FakeGenesysConversationRepository(FakeTicketInteractionRepos
 }
 
 /// <summary>
+/// Secure Screen Pop launches, mirroring the unique token-hash index.
+/// <see cref="LoseNextSaveRace"/> simulates a concurrent redemption committing
+/// first (the <c>RedeemedAtUtc</c> concurrency token), which the real store
+/// reports as <c>false</c>.
+/// </summary>
+public sealed class FakeGenesysScreenPopLaunchStore : IGenesysScreenPopLaunchStore
+{
+    private readonly List<GenesysScreenPopLaunch> _launches = [];
+    private long _nextId = 1;
+
+    public IReadOnlyList<GenesysScreenPopLaunch> All => _launches;
+
+    public bool LoseNextSaveRace { get; set; }
+
+    public Task AddAsync(GenesysScreenPopLaunch launch, CancellationToken cancellationToken = default)
+    {
+        if (_launches.Any(l => l.TokenHash == launch.TokenHash))
+        {
+            throw new InvalidOperationException("UX_GenesysScreenPopLaunches_TokenHash violated.");
+        }
+
+        typeof(GenesysScreenPopLaunch).GetProperty(nameof(GenesysScreenPopLaunch.GenesysScreenPopLaunchId))!
+            .SetValue(launch, _nextId++);
+        _launches.Add(launch);
+        return Task.CompletedTask;
+    }
+
+    public Task<GenesysScreenPopLaunch?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_launches.FirstOrDefault(l => l.TokenHash == tokenHash));
+
+    public Task<bool> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        if (LoseNextSaveRace)
+        {
+            LoseNextSaveRace = false;
+            return Task.FromResult(false);
+        }
+
+        return Task.FromResult(true);
+    }
+}
+
+/// <summary>
 /// The Genesys agent → Ticketing user mapping (<c>AspNetUsers.GenesysUserId</c>
 /// joined to the active-employee rule), as the resolver reads it. Mirrors
 /// the database's filtered unique index <c>UX_AspNetUsers_GenesysUserId</c>:
@@ -129,6 +172,17 @@ public sealed class FakeGenesysAgentMappingRepository : IGenesysAgentMappingRepo
         var mapped = new GenesysMappedAgent(userId, genesysUserId, genesysEmail, $"user-{userId:N}", displayName, isActive);
         _mappings.Add(mapped);
         return mapped;
+    }
+
+    /// <summary>Removes the mapping — an administrator clearing <c>AspNetUsers.GenesysUserId</c>.</summary>
+    public void Unmap(string genesysUserId) =>
+        _mappings.RemoveAll(m => string.Equals(m.GenesysUserId, genesysUserId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Deactivates the mapped user's employee record.</summary>
+    public void Deactivate(string genesysUserId)
+    {
+        var index = _mappings.FindIndex(m => string.Equals(m.GenesysUserId, genesysUserId, StringComparison.OrdinalIgnoreCase));
+        _mappings[index] = _mappings[index] with { IsActive = false };
     }
 
     public Task<GenesysMappedAgent?> FindByGenesysUserIdAsync(string genesysUserId, CancellationToken cancellationToken = default) =>

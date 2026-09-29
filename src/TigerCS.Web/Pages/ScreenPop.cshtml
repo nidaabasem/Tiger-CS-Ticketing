@@ -1,0 +1,38 @@
+@page "/ScreenPop"
+@model TigerCS.Web.Pages.ScreenPopModel
+@{
+    ViewData["Title"] = Model.Title;
+    Layout = "_LoginLayout";
+}
+
+@* Only rendered when a Screen Pop link could not sign the agent in — a
+   successful redemption redirects straight to the target page. Same shell
+   as Login/AccessDenied. *@
+<div class="login-shell">
+    <aside class="login-aside" aria-label="About Tiger Ticketing">
+        <div class="login-aside__brand">
+            <img src="~/img/tiger-logo.png" alt="" />
+            <strong>Tiger <span>Ticketing</span></strong>
+        </div>
+        <div class="login-aside__statement">
+            <h2>Opened from Genesys.</h2>
+            <p>Screen Pop links sign you in once and stay valid for one hour.</p>
+        </div>
+        <div class="login-aside__foot">Tiger Group · Customer Service &amp; Operations</div>
+    </aside>
+
+    <div class="login-stack">
+        <div class="login-card login-card--message">
+            <span class="login-card__mark">
+                <img src="~/img/tiger-logo.png" alt="" />
+                <strong>Tiger <span>Ticketing</span></strong>
+            </span>
+
+            <div class="login-brand">
+                <div class="login-brand__product">@Model.Title</div>
+                <div class="login-brand__subtitle" data-screen-pop-message>@Model.Message</div>
+            </div>
+            <a class="btn btn-gold btn-block" href="/Login">Sign in</a>
+        </div>
+    </div>
+</div>
