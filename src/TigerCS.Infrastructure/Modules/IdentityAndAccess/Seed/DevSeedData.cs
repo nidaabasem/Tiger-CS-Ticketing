@@ -42,6 +42,7 @@ public static class DevSeedData
         await SeedDepartmentCustomerLookupSourcesAsync(dbContext, logger, cancellationToken);
         await SeedSlaReferenceDataAsync(dbContext, logger, cancellationToken);
         await SeedWorkflowReferenceDataAsync(dbContext, logger, cancellationToken);
+        await SeedNewRequestTypesAsync(dbContext, logger, cancellationToken);
         await SeedDevAdministratorAsync(dbContext, userManager, configuration, logger, cancellationToken);
     }
 
@@ -106,6 +107,28 @@ public static class DevSeedData
         await WorkflowReferenceData.SeedAsync(dbContext, cancellationToken);
         logger.LogInformation(
             "Seeded workflow configuration reference data (templates, request types, request-type SLA rows, department workflow settings).");
+    }
+
+    /// <summary>
+    /// The 35 request types of the Customer Service UAT baseline workbook
+    /// (<see cref="NewRequestTypesImporter"/>), imported active. Development
+    /// only, like every other seed here — an existing UAT database gets the
+    /// same rows from ImportNewRequestTypes_UAT.sql. Idempotent: rows already
+    /// imported are recognised by their Request Code and left untouched.
+    /// </summary>
+    private static async Task SeedNewRequestTypesAsync(TigerCsDbContext dbContext, ILogger logger, CancellationToken cancellationToken)
+    {
+        var result = await NewRequestTypesImporter.ImportAsync(dbContext, DateTime.UtcNow, cancellationToken);
+
+        foreach (var department in result.CreatedDepartments)
+        {
+            logger.LogInformation("New request types — created owning department {Department}.", department);
+        }
+
+        foreach (var row in result.Rows.Where(r => r.Outcome is not NewRequestTypeImportOutcome.AlreadyImported))
+        {
+            logger.LogInformation("New request type {RequestCode}: {Outcome}.", row.RequestCode, row.Outcome);
+        }
     }
 
     /// <summary>
