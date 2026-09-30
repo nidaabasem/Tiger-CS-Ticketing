@@ -171,7 +171,7 @@ public sealed class GenesysServiceFixture
 
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(
-            Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution);
+            Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit);
 
         AgentContext = new GenesysAgentContextAppService(
             Options, AgentResolution, Conversations, Tickets, UnitOfWork, Audit);

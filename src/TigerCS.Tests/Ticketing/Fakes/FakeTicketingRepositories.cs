@@ -138,7 +138,7 @@ public sealed class FakeIntakeRecordRepository : IIntakeRecordRepository
     public Task<IReadOnlyList<long>> ListLinkedTicketIdsByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<long>>(
             _records.Values
-                .Where(r => r.PhoneNumber == phoneNumber && r.LinkedTicketId is not null)
+                .Where(r => r.LinkedTicketId is not null && CustomerPhoneNumber.AreSameNumber(r.PhoneNumber, phoneNumber))
                 .Select(r => r.LinkedTicketId!.Value)
                 .Distinct()
                 .ToList());

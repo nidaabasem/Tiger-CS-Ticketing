@@ -1,6 +1,8 @@
+using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 
@@ -52,7 +54,8 @@ public sealed class GenesysTicketUpdateAppService(
     ITicketingUnitOfWork unitOfWork,
     GenesysConversationEndAppService conversationEndAppService,
     GenesysAgentHandoffAppService agentHandoffAppService,
-    GenesysAgentResolutionAppService agentResolution)
+    GenesysAgentResolutionAppService agentResolution,
+    IAuditEntryWriter auditWriter)
 {
     public async Task<GenesysTicketUpdateResult> UpdateAsync(
         Guid callerEmployeeId, long ticketId, GenesysTicketUpdateDto request, CancellationToken cancellationToken = default)
@@ -165,6 +168,37 @@ public sealed class GenesysTicketUpdateAppService(
             }
         }
 
+        // Routing: the queue the conversation is in now and the agent it is
+        // connected to — a queue change, an agent connecting, a transfer.
+        // Same interaction, same ticket; the ticket itself is not touched.
+        if (request.Routing is not null || request.StartedAtUtc is not null)
+        {
+            await RecordRoutingAsync(callerEmployeeId, interaction, request, cancellationToken);
+        }
+
+        // An agent connecting to a conversation whose human work is still
+        // waiting IS the human taking it: recorded on that same work item,
+        // through the same assignment path as handoff.assignedAgentId. Only
+        // while it is WaitingForAgent — work a TigerCS agent is already
+        // handling is never reassigned by a Genesys routing event — and never
+        // when this same update states the handoff explicitly.
+        if (NullIfBlank(request.Routing?.AgentId) is { } connectedAgentId
+            && request.Handoff is not { Required: true } && NullIfBlank(request.Handoff?.AssignedAgentId) is null
+            && await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken)
+                is { Status: AgentHandoffStatus.WaitingForAgent })
+        {
+            var taken = await agentHandoffAppService.UpdateAssignmentAsync(
+                callerEmployeeId,
+                new GenesysHandoffAssignmentDto(conversationId, connectedAgentId, request.Routing!.AgentName),
+                cancellationToken);
+
+            if (taken.Outcome == GenesysHandoffOutcome.AssignmentRecorded)
+            {
+                handoffStatus = taken.Status;
+                handoffId = taken.TicketAgentHandoffId;
+            }
+        }
+
         // The conversation's own ending — transcript included. Write-once in
         // the domain, so a redelivered end answers AlreadyEnded without
         // moving the recorded time or re-storing the transcript.
@@ -202,10 +236,12 @@ public sealed class GenesysTicketUpdateAppService(
         // like the verbatim agent context above. An update may name no agent
         // at all, and an unmapped one changes nothing here: the verbatim
         // agentId is still kept, and ownership stays null. The strict path
-        // for an agent acting is the agent-context endpoint.
-        if (!string.IsNullOrWhiteSpace(request.AgentId)
+        // for an agent acting is the agent-context endpoint. The agent a
+        // routing change connected counts too: on a voice call that is how
+        // Genesys first names the agent at all.
+        if ((NullIfBlank(request.AgentId) ?? NullIfBlank(request.Routing?.AgentId)) is { } reportedAgentId
             && interaction.HandledByUserId is null
-            && await agentResolution.ResolveByGenesysUserIdAsync(request.AgentId, cancellationToken) is { IsResolved: true } agent
+            && await agentResolution.ResolveByGenesysUserIdAsync(reportedAgentId, cancellationToken) is { IsResolved: true } agent
             && interaction.RecordHandlingAgentIfAbsent(agent.Agent!.GenesysUserId, agent.Agent.UserId))
         {
             await using var ownershipTransaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
@@ -237,6 +273,48 @@ public sealed class GenesysTicketUpdateAppService(
             handoffStatus,
             handoffId);
     }
+
+    /// <summary>
+    /// Applies a routing change (and a late start time) to the interaction,
+    /// and audits it with the before and after values — the audit trail is
+    /// where the history of every queue and agent the conversation passed
+    /// through is kept, since the interaction itself names only the current
+    /// one. A redelivered, unchanged routing event writes nothing at all.
+    /// </summary>
+    private async Task RecordRoutingAsync(
+        Guid callerEmployeeId, TicketInteraction interaction, GenesysTicketUpdateDto request, CancellationToken cancellationToken)
+    {
+        var before = DescribeRouting(interaction);
+
+        var routingChanged = request.Routing is { } routing
+            && interaction.RecordRouting(routing.QueueId, routing.QueueName, routing.AgentId, routing.AgentName);
+        var startRecorded = interaction.RecordStartedAtIfAbsent(request.StartedAtUtc);
+
+        if (!routingChanged && !startRecorded)
+        {
+            return;
+        }
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            GenesysAuditActions.RoutingChanged,
+            GenesysAuditActions.ConversationEntityType,
+            interaction.GenesysConversationId!,
+            beforeValue: before,
+            afterValue: DescribeRouting(interaction),
+            correlationId: Guid.NewGuid(),
+            cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static string DescribeRouting(TicketInteraction interaction) =>
+        $"TicketId={interaction.TicketId};QueueId={interaction.GenesysQueueId ?? "(none)"};QueueName={interaction.GenesysQueueName ?? "(none)"};"
+        + $"AgentId={interaction.GenesysAgentId ?? "(none)"};AgentName={interaction.GenesysAgentName ?? "(none)"};"
+        + $"StartedAtUtc={interaction.InteractionStartedAtUtc?.ToString("O") ?? "(none)"}";
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static GenesysTicketUpdateResult Translate(GenesysHandoffResult result) => result.Outcome switch
     {

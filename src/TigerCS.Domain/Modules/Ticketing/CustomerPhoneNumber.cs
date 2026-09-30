@@ -125,6 +125,63 @@ public static class CustomerPhoneNumber
     }
 
     /// <summary>
+    /// A telephony address — what a contact-center platform reports as the
+    /// caller's number (Genesys' <c>Call.Ani</c>) — turned into the form an
+    /// agent would have typed: "+" followed by the number's digits.
+    ///
+    /// <para>
+    /// Telephony platforms do not report a number the way a person writes
+    /// it: "tel:+971501234567", "sip:+971501234567@host;user=phone",
+    /// "+971501234567" and "971501234567" are the same caller. Passing the
+    /// raw value on would break every source behind the lookup — CRM
+    /// receives the number verbatim, and <see cref="WithoutPlus"/> would
+    /// turn "tel:+971…" into "tel:971…" for PACT — so the address is reduced
+    /// to its digits with <see cref="Normalize"/> (after dropping any
+    /// "@host" and ";parameters" part, whose digits are not the number's)
+    /// and written back in the international "+" form the rest of TigerCS
+    /// already uses. A "00" international prefix becomes "+". A number in
+    /// national form ("0501234567") is returned as its digits unchanged:
+    /// its country is not stated, and none is guessed.
+    /// </para>
+    ///
+    /// <para>
+    /// Returns null when the address carries no number at all — a withheld
+    /// caller id ("tel:anonymous", "sip:anonymous@…") is a missing number,
+    /// never an identity.
+    /// </para>
+    /// </summary>
+    public static string? FromTelephonyAddress(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return null;
+        }
+
+        var value = address.Trim();
+
+        // "tel:+971…;phone-context=…" / "sip:+971…@host;user=phone": only the
+        // user part before '@' and ';' is the number.
+        var cut = value.IndexOfAny(['@', ';']);
+        if (cut >= 0)
+        {
+            value = value[..cut];
+        }
+
+        var digits = Normalize(value);
+        if (digits.Length == 0)
+        {
+            return null;
+        }
+
+        if (digits.StartsWith("00", StringComparison.Ordinal))
+        {
+            return digits.Length > 2 ? "+" + digits[2..] : null;
+        }
+
+        return digits.StartsWith('0') ? digits : "+" + digits;
+    }
+
+    /// <summary>
     /// PACT's request form — trimmed, with every '+' removed, and otherwise
     /// untouched. Deliberately <b>not</b> <see cref="Normalize"/>: PACT
     /// matches on the number as it stores it (without the '+' prefix), and

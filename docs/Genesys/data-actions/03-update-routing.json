@@ -1,0 +1,98 @@
+{
+  "name": "TigerCS - Update Routing",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/${input.ticketId}",
+      "requestType": "PATCH",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"routing\": {\"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\"}}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketId": "$.ticketId",
+        "ticketNumber": "$.ticketNumber",
+        "ticketStatus": "$.ticketStatus",
+        "conversationEnded": "$.conversationEnded"
+      },
+      "translationMapDefaults": {},
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketId\": \"${ticketId}\", \"ticketNumber\": ${ticketNumber}, \"ticketStatus\": ${ticketStatus}, \"conversationEnded\": ${conversationEnded}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Update Routing",
+        "type": "object",
+        "required": [
+          "ticketId",
+          "conversationId"
+        ],
+        "properties": {
+          "ticketId": {
+            "type": "string",
+            "description": "Participant data TigerCsTicketId."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "The conversation id."
+          },
+          "queueId": {
+            "type": "string",
+            "description": "Current queue id (empty = unchanged)."
+          },
+          "queueName": {
+            "type": "string",
+            "description": "Optional."
+          },
+          "agentId": {
+            "type": "string",
+            "description": "Connected agent Genesys User ID (empty = unchanged)."
+          },
+          "agentName": {
+            "type": "string",
+            "description": "Optional."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Update Routing result",
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "\"Applied\"."
+          },
+          "ticketId": {
+            "type": "string",
+            "description": "The same TigerCS ticket id."
+          },
+          "ticketNumber": {
+            "type": "string",
+            "description": "Its ticket number."
+          },
+          "ticketStatus": {
+            "type": "string",
+            "description": "The ticket status - never changed by this call."
+          },
+          "conversationEnded": {
+            "type": "boolean",
+            "description": "Whether the interaction is recorded as ended."
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}
