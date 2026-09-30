@@ -779,6 +779,10 @@ public sealed class TicketDetailsModel(
         nameof(WorkflowEventType.HandoffCompleted) => "finished the customer interaction",
         nameof(WorkflowEventType.HandoffCancelled) => "stood down the request for a human agent",
 
+        // Record-only: the customer's word, not a status change — Resolve
+        // and Close still happen through their own actions.
+        nameof(WorkflowEventType.CustomerConfirmedResolved) => "recorded that the customer confirmed the issue is resolved",
+
         _ => null
     };
 

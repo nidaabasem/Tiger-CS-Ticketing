@@ -33,6 +33,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it. Omit entirely when neither applies.</param>
 /// <param name="StartedAtUtc">When the interaction started on the Genesys side — recorded only if the creating call did not supply it; never moves once known.</param>
 /// <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
+/// <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
     string? AgentId = null,
@@ -40,7 +41,23 @@ public sealed record GenesysTicketUpdateDto(
     GenesysConversationEndUpdateDto? Ended = null,
     GenesysHandoffUpdateDto? Handoff = null,
     DateTime? StartedAtUtc = null,
-    GenesysRoutingUpdateDto? Routing = null);
+    GenesysRoutingUpdateDto? Routing = null,
+    GenesysCustomerConfirmationUpdateDto? CustomerConfirmation = null);
+
+/// <summary>
+/// The customer's own statement, made during the interaction, that the issue
+/// is resolved. It is <b>recorded</b> on the ticket — a typed workflow event
+/// and an audit entry — and nothing else: the ticket is not resolved or
+/// closed, because Resolve and Close keep their existing actors and
+/// authorization. The owner reads it and acts through TigerCS.
+/// </summary>
+/// <param name="ConfirmedResolved">Must be <c>true</c> — this part exists only to report an explicit confirmation.</param>
+/// <param name="ConfirmedAtUtc">When the customer said it. Defaults to now. Send it: a resend with the same value is recognized and stores nothing twice.</param>
+/// <param name="Note">What the customer said, or the flow's own note. Display only.</param>
+public sealed record GenesysCustomerConfirmationUpdateDto(
+    bool? ConfirmedResolved = null,
+    DateTime? ConfirmedAtUtc = null,
+    string? Note = null);
 
 /// <summary>
 /// Where the conversation is now — the queue it sits in and the agent it is
@@ -141,7 +158,10 @@ public enum GenesysTicketUpdateOutcome
     InvalidHandoffTrigger,
 
     /// <summary>A handoff stand-down (<c>Required = false</c>) named no reason.</summary>
-    HandoffReasonRequired
+    HandoffReasonRequired,
+
+    /// <summary>A customer confirmation was sent without <c>confirmedResolved: true</c>. Nothing was written.</summary>
+    InvalidCustomerConfirmation
 }
 
 /// <summary>

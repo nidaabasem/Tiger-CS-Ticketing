@@ -133,6 +133,7 @@ public sealed record GenesysConversationEndResponse(
 /// <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
 /// <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
 /// <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
+/// <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
 public sealed record GenesysTicketUpdateRequest(
     string ConversationId,
     string? AgentId = null,
@@ -140,7 +141,23 @@ public sealed record GenesysTicketUpdateRequest(
     GenesysConversationEndPart? Ended = null,
     GenesysHandoffPart? Handoff = null,
     DateTime? StartedAtUtc = null,
-    GenesysRoutingPart? Routing = null);
+    GenesysRoutingPart? Routing = null,
+    GenesysCustomerConfirmationPart? CustomerConfirmation = null);
+
+/// <summary>
+/// The customer explicitly confirmed, during the interaction, that the issue
+/// is resolved. TigerCS records it on the same ticket — Ticket Details and the
+/// audit trail show it — and does <b>not</b> resolve or close the ticket:
+/// those stay with the ticket owner and Customer Service, under their existing
+/// authorization.
+/// </summary>
+/// <param name="ConfirmedResolved">Must be <c>true</c>; anything else is refused with 400.</param>
+/// <param name="ConfirmedAtUtc">When the customer said it, UTC. Defaults to now. Send it: a resend with the same value stores nothing twice.</param>
+/// <param name="Note">What the customer said, or the flow's note. Display only.</param>
+public sealed record GenesysCustomerConfirmationPart(
+    bool? ConfirmedResolved = null,
+    DateTime? ConfirmedAtUtc = null,
+    string? Note = null);
 
 /// <summary>
 /// Where the conversation is now: its current queue and connected agent. Send
@@ -399,7 +416,13 @@ internal static class GenesysContractMapper
             ? null
             : new GenesysRoutingUpdateDto(
                 Absent(request.Routing.QueueId), Absent(request.Routing.QueueName),
-                Absent(request.Routing.AgentId), Absent(request.Routing.AgentName)));
+                Absent(request.Routing.AgentId), Absent(request.Routing.AgentName)),
+        request.CustomerConfirmation is null
+            ? null
+            : new GenesysCustomerConfirmationUpdateDto(
+                request.CustomerConfirmation.ConfirmedResolved,
+                request.CustomerConfirmation.ConfirmedAtUtc,
+                Absent(request.CustomerConfirmation.Note)));
 
     internal static GenesysAgentContextDto Map(GenesysAgentContextRequest request) =>
         new(request.GenesysUserId, request.AgentEmail, request.ConversationId);

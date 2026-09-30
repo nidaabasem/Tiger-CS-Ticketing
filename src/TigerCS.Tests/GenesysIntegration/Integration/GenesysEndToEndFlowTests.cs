@@ -688,4 +688,108 @@ public sealed class GenesysEndToEndFlowTests : IClassFixture<TigerCsApiFactory>
         Assert.Contains("genesys-handoff-reason-required", await response.Content.ReadAsStringAsync());
         Assert.Equal(AgentHandoffStatus.WaitingForAgent, (await GetOpenHandoffAsync(created.TicketId))!.Status);
     }
+
+    // ── Customer-confirmed resolution: recorded, never acted on ──────────
+
+    private async Task<(List<TicketWorkflowEvent> Events, int AuditEntries, int Resolutions)> GetConfirmationRecordsAsync(
+        long ticketId, string conversationId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var events = await db.TicketWorkflowEvents.AsNoTracking()
+            .Where(e => e.TicketId == ticketId && e.EventType == WorkflowEventType.CustomerConfirmedResolved)
+            .ToListAsync();
+        var audits = await db.AuditEntries.AsNoTracking()
+            .CountAsync(a => a.Action == GenesysAuditActions.CustomerConfirmedResolved && a.EntityId == conversationId);
+        var resolutions = await db.TicketResolutions.AsNoTracking().CountAsync(r => r.TicketId == ticketId);
+        return (events, audits, resolutions);
+    }
+
+    [Fact]
+    public async Task CustomerConfirmation_IsRecordedOnTheSameTicket_AndNeverResolvesOrClosesIt()
+    {
+        var (client, _) = await CreateClientAsync();
+        var (_, queueId) = await SeedMappedQueueAsync();
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(client, new GenesysInquiryRequest(conversationId, "Phone", QueueId: queueId));
+        var confirmedAt = new DateTime(2026, 9, 30, 9, 30, 0, DateTimeKind.Utc);
+        var confirmation = new GenesysCustomerConfirmationPart(true, confirmedAt, "Customer said the NOC arrived");
+
+        var first = await PatchAsync(client, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, CustomerConfirmation: confirmation));
+        // Genesys retries: the same confirmation is recognized, not stored twice.
+        var resent = await PatchAsync(client, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, CustomerConfirmation: confirmation));
+
+        Assert.Equal(created.TicketId, first.TicketId);
+        Assert.Equal("Open", first.TicketStatus);
+        Assert.Equal("Open", resent.TicketStatus);
+
+        var ticket = await GetTicketAsync(created.TicketId);
+        Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
+
+        var (events, audits, resolutions) = await GetConfirmationRecordsAsync(created.TicketId, conversationId);
+        var recorded = Assert.Single(events);
+        Assert.Equal(confirmedAt, recorded.OccurredAtUtc);
+        Assert.Null(recorded.ActorEmployeeId);
+        Assert.Contains("Customer said the NOC arrived", recorded.Note);
+        Assert.Contains(conversationId, recorded.Note);
+        Assert.Equal(1, audits);
+        Assert.Equal(0, resolutions);
+        Assert.Equal((1, 1, 1), await CountStoredForConversationAsync(conversationId));
+    }
+
+    [Fact]
+    public async Task CustomerConfirmation_OnATicketBeingWorked_LeavesItInProgressWithTheSameOwner()
+    {
+        var (service, _) = await CreateClientAsync();
+        var (departmentId, queueId) = await SeedMappedQueueAsync();
+        var (agent, agentEmployeeId) = await CreateClientAsync();
+        await _factory.AssignPrimaryDepartmentAsync(agentEmployeeId, departmentId);
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(service, new GenesysInquiryRequest(conversationId, "LiveChat", QueueId: queueId));
+        var requested = await PatchAsync(service, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "CustomerRequestedHuman")));
+        var accept = await agent.PostAsync($"/api/pending-customer-interactions/{requested.TicketAgentHandoffId}/start", null);
+        Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
+
+        var confirmed = await PatchAsync(service, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId,
+            Ended: new GenesysConversationEndPart(DateTime.UtcNow, "client"),
+            CustomerConfirmation: new GenesysCustomerConfirmationPart(true)));
+
+        Assert.Equal("InProgress", confirmed.TicketStatus);
+        var ticket = await GetTicketAsync(created.TicketId);
+        Assert.Equal(TicketStatus.InProgress, ticket.TicketStatus);
+        Assert.Equal(agentEmployeeId, ticket.CurrentOwnerEmployeeId);
+        var (events, _, resolutions) = await GetConfirmationRecordsAsync(created.TicketId, conversationId);
+        Assert.Single(events);
+        Assert.Equal(0, resolutions);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task CustomerConfirmation_ThatDoesNotConfirm_IsA400_AndNothingInTheUpdateIsWritten(bool? confirmedResolved)
+    {
+        var (client, _) = await CreateClientAsync();
+        var (_, queueId) = await SeedMappedQueueAsync();
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(client, new GenesysInquiryRequest(conversationId, "Phone", QueueId: queueId));
+
+        var response = await client.PatchAsJsonAsync($"/api/genesys/tickets/{created.TicketId}", new GenesysTicketUpdateRequest(
+            conversationId,
+            Routing: new GenesysRoutingPart(AgentId: "genesys-user-should-not-land"),
+            CustomerConfirmation: new GenesysCustomerConfirmationPart(confirmedResolved)));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("genesys-invalid-customer-confirmation", await response.Content.ReadAsStringAsync());
+        var (events, audits, _) = await GetConfirmationRecordsAsync(created.TicketId, conversationId);
+        Assert.Empty(events);
+        Assert.Equal(0, audits);
+        Assert.Null((await _factory.GetInteractionByConversationAsync(conversationId))!.GenesysAgentId);
+    }
 }

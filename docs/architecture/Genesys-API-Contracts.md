@@ -290,11 +290,14 @@ to the wrong ticket.
 | `handoff.*` | Human-agent state, on any channel |
 | `routing.queueId` / `routing.queueName` / `routing.agentId` / `routing.agentName` | Where the conversation is **now**: a queue change, an agent connecting, a transfer. Overwrites the interaction's current queue/agent; every change is audited (`GenesysRoutingChanged`) |
 | `startedAtUtc` | Interaction start, if the Create call did not carry it. Never moves once known |
+| `customerConfirmation.*` | The customer explicitly confirmed the issue is resolved. **Record-only** — see below |
 
 ### What Genesys **cannot** update
 
 There is no field for `categoryId`, `requestTypeId`, `priorityId`,
-`ticketStatus`, owner, department, resolution or closure. Those move only
+`ticketStatus`, owner, department, resolution or closure.
+`customerConfirmation` records the customer's word and never resolves or
+closes the ticket. Those move only
 through their own TigerCS operations, with their own authorization, workflow
 and SLA consequences. **A field absent from this contract is a field Genesys
 cannot reach.**
@@ -383,6 +386,34 @@ key when supplied; omit it if Genesys has none.
 }
 ```
 
+### Request — the customer confirmed the issue is resolved
+
+```json
+{
+  "conversationId": "8f2c1e40-3d2a-4b1c-9e77-1a2b3c4d5e6f",
+  "customerConfirmation": {
+    "confirmedResolved": true,
+    "confirmedAtUtc": "2026-09-30T09:30:00Z",
+    "note": "Customer said the NOC arrived"
+  }
+}
+```
+
+**Record-only.** Send it when the customer **explicitly** says, during the
+interaction, that the issue is resolved. TigerCS records it on the same
+ticket as a `CustomerConfirmedResolved` workflow event (shown in the Ticket
+Details activity feed) and a `GenesysCustomerConfirmedResolved` audit entry.
+It does **not** resolve or close the ticket. Resolve stays with the ticket
+owner / Department Head, and Close with Customer Service, under their existing
+authorization. The response's unchanged `ticketStatus` shows this.
+
+- `confirmedResolved` must be `true`. Anything else is a `400` and nothing in
+  the update is written.
+- `confirmedAtUtc` defaults to now. Send it: a resend with the same value is
+  recognized and stores nothing twice.
+- `note` is optional, display only.
+- No schema change: the event uses the existing `TicketWorkflowEvents` table.
+
 ### Response — `200 OK`
 
 ```json
@@ -427,7 +458,7 @@ business case did not.
 
 | Code | When |
 |---|---|
-| `400` | Blank `conversationId`, a transcript message with an unrecognized sender or empty body, an unrecognized `handoff.mode` or `handoff.trigger`, or `handoff.required: false` with no `handoff.reason` |
+| `400` | Blank `conversationId`, a transcript message with an unrecognized sender or empty body, an unrecognized `handoff.mode` or `handoff.trigger`, `handoff.required: false` with no `handoff.reason`, or `customerConfirmation` without `confirmedResolved: true` |
 | `404` | No such ticket, or no interaction exists for this conversation |
 | `409` | The conversation belongs to a different ticket than the one in the route |
 | `422` | `handoff.assignedAgentId` supplied but no outstanding human work exists |

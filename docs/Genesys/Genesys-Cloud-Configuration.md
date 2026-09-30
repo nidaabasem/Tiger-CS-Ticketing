@@ -9,7 +9,7 @@ switching the integration on).
 | File | What it is |
 |---|---|
 | `data-actions/00-custom-auth-request-config.json` | Request configuration for the auto-created **Custom Auth** action |
-| `data-actions/01-customer-lookup.json` … `06-cancel-human-request.json` | Data actions in Genesys' import format |
+| `data-actions/01-customer-lookup.json` … `07-customer-confirmed-resolved.json` | Data actions in Genesys' import format |
 | `TigerCS-Genesys.postman_collection.json` | End-to-end Postman run of every call below |
 | `../architecture/Genesys-API-Contracts.md` | The HTTP contracts in full |
 
@@ -39,9 +39,9 @@ Genesys Cloud ──OAuth2 client_credentials──▶ TigerGroupWeb  (https://t
 |---|---|---|---|
 | 1 | Customer lookup | `GET /api/genesys/customers/lookup?phoneNumber={ANI}` | `TigerCS - Customer Lookup` |
 | 2 | Create / reuse interaction ticket | `POST /api/genesys/tickets` | `TigerCS - Create or Reuse Ticket` |
-| 3 | Conversation update | `PATCH /api/genesys/tickets/{ticketId}` | `TigerCS - Update Routing`, `TigerCS - End Conversation`, `TigerCS - Request Human Agent`, `TigerCS - Cancel Human Request` |
+| 3 | Conversation update | `PATCH /api/genesys/tickets/{ticketId}` | `TigerCS - Update Routing`, `TigerCS - End Conversation`, `TigerCS - Request Human Agent`, `TigerCS - Cancel Human Request`, `TigerCS - Customer Confirmed Resolved` |
 
-Contract 3 is **one** endpoint. It has four data actions only because a
+Contract 3 is **one** endpoint. It has five data actions only because a
 Genesys data action has a fixed request template. Each variant sends just
 the part of the body it owns.
 
@@ -115,7 +115,7 @@ Authorization: ${authResponse.token_type} ${authResponse.access_token}
 
 ### 3.3 Import the data actions
 
-**Admin → Integrations → Actions → Import**, once for each of `01`–`06`.
+**Admin → Integrations → Actions → Import**, once for each of `01`–`07`.
 Pick the `TigerCS Ticketing` integration each time, then **Publish** each
 action.
 
@@ -361,6 +361,23 @@ If the AI reconnects and a human is no longer needed, call `TigerCS - Cancel
 Human Request` with a `reason`. If the conversation ends while the work is
 still waiting, TigerCS keeps it outstanding. It never orphans the ticket.
 
+### 9.1 The customer confirms the issue is resolved
+
+When the customer **explicitly** confirms during the interaction that the
+issue is resolved (an IVR/bot confirmation step, or an agent-script button),
+call `TigerCS - Customer Confirmed Resolved`:
+
+| Input | Value |
+|---|---|
+| `ticketId` | `TigerCsTicketId` |
+| `conversationId` | the conversation id |
+| `confirmedAtUtc` | `ToString(GetCurrentDateTimeUtc())`, so a retry is recognized |
+| `note` | optional: what the customer said |
+
+This is **record-only**. TigerCS shows the confirmation on the ticket and in
+the audit trail, and does **not** resolve or close the ticket; the owner and
+Customer Service do that in TigerCS. Genesys never sends a ticket status.
+
 ---
 
 ## 10. Variable reference
@@ -408,7 +425,7 @@ Input: `conversationId`\*, `channel`\* (`Phone` | `LiveChat`),
 `subject`, `towerName`, `unitNumber`, `startedAtUtc`.
 Output: `outcome` (`TicketCreated` | `AlreadyIngested`), `ticketId`, `ticketNumber`.
 
-**TigerCS - Update Routing / End Conversation / Request Human Agent / Cancel Human Request**
+**TigerCS - Update Routing / End Conversation / Request Human Agent / Cancel Human Request / Customer Confirmed Resolved**
 Input: `ticketId`\*, `conversationId`\*, plus the variant's own fields.
 Output: `outcome`, `ticketId`, `ticketNumber`, `ticketStatus`,
 `conversationEnded`. Request Human Agent also returns `handoffStatus`.
@@ -434,7 +451,7 @@ never be dropped because TigerCS is unavailable.
 
 - [ ] TigerGroupWeb: signing key + client secret set as environment variables; `Ticketing__Password` set
 - [ ] TigerCS: `Genesys:Enabled = true`; every Genesys queue mapped to a department; agents mapped
-- [ ] Genesys: integration active; Custom Auth configured; 6 actions imported and published
+- [ ] Genesys: integration active; Custom Auth configured; 7 actions imported and published
 - [ ] Voice inbound call flow: lookup → create → participant data → transfer (§5)
 - [ ] Inbound message flow: create → participant data → (bot handoff) → transfer (§6, §9)
 - [ ] Agent script with input variables and the load-time routing action (§7)

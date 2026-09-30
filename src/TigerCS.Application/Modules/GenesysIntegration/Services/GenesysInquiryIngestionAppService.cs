@@ -455,6 +455,9 @@ public static class GenesysAuditActions
     /// <summary>The conversation moved to another queue or agent (a transfer, an agent connecting) — before/after carry the full routing, so the audit trail holds every queue and agent it passed through.</summary>
     public const string RoutingChanged = "GenesysRoutingChanged";
 
+    /// <summary>The customer confirmed during the interaction that the issue is resolved. Record-only: the ticket status in before/after is the proof nothing moved.</summary>
+    public const string CustomerConfirmedResolved = "GenesysCustomerConfirmedResolved";
+
     /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
     public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";
 

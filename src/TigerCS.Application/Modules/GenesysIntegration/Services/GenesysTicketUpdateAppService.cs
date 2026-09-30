@@ -55,7 +55,9 @@ public sealed class GenesysTicketUpdateAppService(
     GenesysConversationEndAppService conversationEndAppService,
     GenesysAgentHandoffAppService agentHandoffAppService,
     GenesysAgentResolutionAppService agentResolution,
-    IAuditEntryWriter auditWriter)
+    IAuditEntryWriter auditWriter,
+    ITicketWorkflowEventRepository workflowEventRepository,
+    TimeProvider timeProvider)
 {
     public async Task<GenesysTicketUpdateResult> UpdateAsync(
         Guid callerEmployeeId, long ticketId, GenesysTicketUpdateDto request, CancellationToken cancellationToken = default)
@@ -96,6 +98,16 @@ public sealed class GenesysTicketUpdateAppService(
             return GenesysTicketUpdateResult.Failure(
                 GenesysTicketUpdateOutcome.ConversationTicketMismatch,
                 $"Conversation '{conversationId}' belongs to ticket {interaction.TicketId}, not {ticketId}.");
+        }
+
+        // Checked before anything is written, like the transcript: a
+        // confirmation that does not actually confirm must not leave the rest
+        // of the update half-applied.
+        if (request.CustomerConfirmation is { ConfirmedResolved: not true })
+        {
+            return GenesysTicketUpdateResult.Failure(
+                GenesysTicketUpdateOutcome.InvalidCustomerConfirmation,
+                "customerConfirmation records only an explicit confirmation — send confirmedResolved: true, or omit the part.");
         }
 
         // Human handoff first: a conversation that ends in the same update
@@ -249,6 +261,11 @@ public sealed class GenesysTicketUpdateAppService(
             await ownershipTransaction.CommitAsync(cancellationToken);
         }
 
+        if (request.CustomerConfirmation is { } confirmation)
+        {
+            await RecordCustomerConfirmationAsync(callerEmployeeId, ticket, conversationId, confirmation, cancellationToken);
+        }
+
         // The handoff state is reported on EVERY update, not only on one that
         // touched it. Genesys ending a conversation needs to see that the
         // pending human work is still outstanding — that is exactly the
@@ -308,6 +325,52 @@ public sealed class GenesysTicketUpdateAppService(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Records the customer's confirmation that the issue is resolved — a
+    /// typed workflow event on the ticket (so Ticket Details shows it) and an
+    /// audit entry — and <b>nothing else</b>. The ticket is only read: Resolve
+    /// and Close stay with their own actors and authorization. A resend with
+    /// the same <c>confirmedAtUtc</c> finds its event and writes nothing.
+    /// </summary>
+    private async Task RecordCustomerConfirmationAsync(
+        Guid callerEmployeeId, Ticket ticket, string conversationId,
+        GenesysCustomerConfirmationUpdateDto confirmation, CancellationToken cancellationToken)
+    {
+        var confirmedAtUtc = confirmation.ConfirmedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime;
+
+        var existing = await workflowEventRepository.ListByTicketIdAsync(ticket.TicketId, cancellationToken);
+        if (existing.Any(e => e.EventType == WorkflowEventType.CustomerConfirmedResolved && e.OccurredAtUtc == confirmedAtUtc))
+        {
+            return;
+        }
+
+        var note = NullIfBlank(confirmation.Note);
+        var eventNote = $"Genesys conversation {conversationId}" + (note is null ? string.Empty : $": {note}");
+        var correlationId = Guid.NewGuid();
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await workflowEventRepository.AddAsync(
+            new TicketWorkflowEvent(
+                ticket.TicketId, WorkflowEventType.CustomerConfirmedResolved, confirmedAtUtc, actorEmployeeId: null,
+                ticketApprovalId: null, eventNote.Length <= MaxWorkflowNoteLength ? eventNote : eventNote[..MaxWorkflowNoteLength],
+                correlationId),
+            cancellationToken);
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            GenesysAuditActions.CustomerConfirmedResolved,
+            GenesysAuditActions.ConversationEntityType,
+            conversationId,
+            beforeValue: $"TicketId={ticket.TicketId};TicketStatus={ticket.TicketStatus}",
+            afterValue: $"TicketId={ticket.TicketId};TicketStatus={ticket.TicketStatus};ConfirmedAtUtc={confirmedAtUtc:O};Note={note ?? "(none)"}",
+            correlationId,
+            cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>TicketWorkflowEvents.Note is nvarchar(500).</summary>
+    private const int MaxWorkflowNoteLength = 500;
 
     private static string DescribeRouting(TicketInteraction interaction) =>
         $"TicketId={interaction.TicketId};QueueId={interaction.GenesysQueueId ?? "(none)"};QueueName={interaction.GenesysQueueName ?? "(none)"};"
