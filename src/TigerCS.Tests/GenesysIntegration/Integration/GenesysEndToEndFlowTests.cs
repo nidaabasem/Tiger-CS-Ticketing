@@ -650,4 +650,42 @@ public sealed class GenesysEndToEndFlowTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal(agentEmployeeId, ticket.CurrentOwnerEmployeeId);
         Assert.Null(ticket.FirstHumanResponseAtUtc);
     }
+
+    // ── Handoff refusals are business answers, never a 500 ───────────────
+
+    [Fact]
+    public async Task UnrecognizedHandoffTrigger_IsA400_AndRaisesNoHumanWork()
+    {
+        var (client, _) = await CreateClientAsync();
+        var (_, queueId) = await SeedMappedQueueAsync();
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(client, new GenesysInquiryRequest(conversationId, "LiveChat", QueueId: queueId));
+
+        var response = await client.PatchAsJsonAsync($"/api/genesys/tickets/{created.TicketId}", new GenesysTicketUpdateRequest(
+            conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "BotFeltLikeIt")));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("genesys-invalid-handoff-trigger", await response.Content.ReadAsStringAsync());
+        Assert.Null(await GetOpenHandoffAsync(created.TicketId));
+    }
+
+    [Fact]
+    public async Task HandoffStandDown_WithNoReason_IsA400_AndLeavesTheWaitingWorkOutstanding()
+    {
+        var (client, _) = await CreateClientAsync();
+        var (_, queueId) = await SeedMappedQueueAsync();
+        CrmReturnsNothing();
+        var conversationId = NewConversationId();
+        var (_, created) = await CreateAsync(client, new GenesysInquiryRequest(conversationId, "LiveChat", QueueId: queueId));
+        await PatchAsync(client, created.TicketId, new GenesysTicketUpdateRequest(
+            conversationId, Handoff: new GenesysHandoffPart(Required: true, Trigger: "CustomerRequestedHuman")));
+
+        var response = await client.PatchAsJsonAsync($"/api/genesys/tickets/{created.TicketId}", new GenesysTicketUpdateRequest(
+            conversationId, Handoff: new GenesysHandoffPart(Required: false)));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("genesys-handoff-reason-required", await response.Content.ReadAsStringAsync());
+        Assert.Equal(AgentHandoffStatus.WaitingForAgent, (await GetOpenHandoffAsync(created.TicketId))!.Status);
+    }
 }

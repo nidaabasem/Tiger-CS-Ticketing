@@ -427,7 +427,7 @@ business case did not.
 
 | Code | When |
 |---|---|
-| `400` | Blank `conversationId`, a transcript message with an unrecognized sender or empty body, or an unrecognized `handoff.mode` |
+| `400` | Blank `conversationId`, a transcript message with an unrecognized sender or empty body, an unrecognized `handoff.mode` or `handoff.trigger`, or `handoff.required: false` with no `handoff.reason` |
 | `404` | No such ticket, or no interaction exists for this conversation |
 | `409` | The conversation belongs to a different ticket than the one in the route |
 | `422` | `handoff.assignedAgentId` supplied but no outstanding human work exists |
