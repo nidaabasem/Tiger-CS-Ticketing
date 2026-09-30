@@ -1,0 +1,87 @@
+{
+  "name": "TigerCS - Cancel Human Request",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/${input.ticketId}",
+      "requestType": "PATCH",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"handoff\": {\"required\": false, \"reason\": \"$esc.jsonString(${input.reason})\"}}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketId": "$.ticketId",
+        "ticketNumber": "$.ticketNumber",
+        "ticketStatus": "$.ticketStatus",
+        "conversationEnded": "$.conversationEnded"
+      },
+      "translationMapDefaults": {},
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketId\": \"${ticketId}\", \"ticketNumber\": ${ticketNumber}, \"ticketStatus\": ${ticketStatus}, \"conversationEnded\": ${conversationEnded}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Cancel Human Request",
+        "type": "object",
+        "required": [
+          "ticketId",
+          "conversationId",
+          "reason"
+        ],
+        "properties": {
+          "ticketId": {
+            "type": "string",
+            "description": "Participant data TigerCsTicketId."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "The conversation id."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Required - why the human is no longer needed (e.g. AI reconnected)."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Cancel Human Request result",
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "\"Applied\"."
+          },
+          "ticketId": {
+            "type": "string",
+            "description": "The same TigerCS ticket id."
+          },
+          "ticketNumber": {
+            "type": "string",
+            "description": "Its ticket number."
+          },
+          "ticketStatus": {
+            "type": "string",
+            "description": "The ticket status - never changed by this call."
+          },
+          "conversationEnded": {
+            "type": "boolean",
+            "description": "Whether the interaction is recorded as ended."
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

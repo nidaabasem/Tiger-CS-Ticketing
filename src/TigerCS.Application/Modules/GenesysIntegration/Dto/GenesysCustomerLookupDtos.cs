@@ -41,13 +41,14 @@ public sealed record GenesysCustomerTicketDto(
 /// whatever the other sources did return.
 /// </para>
 /// </summary>
-/// <param name="PhoneNumber">The number that was searched, echoed back.</param>
+/// <param name="PhoneNumber">The number that was searched — the caller's number after telephony normalization ("tel:+971…" is searched as "+971…"), or empty when the address carried no number at all (a withheld caller id).</param>
 /// <param name="Found">True when at least one source matched a customer. False is a clean, expected answer.</param>
-/// <param name="CrmStatus">The CRM Buyer Lookup outcome: Found, NotFound, AmbiguousMatch or Failed.</param>
+/// <param name="CrmStatus">The CRM Buyer Lookup outcome: Found, NotFound, AmbiguousMatch or Failed — or NotSearched when there was no number to search with.</param>
 /// <param name="CrmBuyers">The matched CRM Buyer (at most one) with every eligible unit, when CRM matched.</param>
 /// <param name="ExternalSources">The PACT and Tasleeh results, each Found/NotFound/Failed with its matched customers and units.</param>
 /// <param name="Tickets">The caller's existing tickets, newest first — open ones first within that. Empty when none are found or none are visible.</param>
 /// <param name="OpenTicketCount">How many of the caller's tickets are still being worked.</param>
+/// <param name="ScreenPop">The same answer flattened for a contact-center screen pop — see <see cref="GenesysScreenPopDto"/>.</param>
 public sealed record GenesysCustomerLookupResultDto(
     string PhoneNumber,
     bool Found,
@@ -55,4 +56,49 @@ public sealed record GenesysCustomerLookupResultDto(
     IReadOnlyList<CrmBuyerMatchDto> CrmBuyers,
     IReadOnlyList<CustomerLookupSourceResultDto> ExternalSources,
     IReadOnlyList<GenesysCustomerTicketDto> Tickets,
-    int OpenTicketCount);
+    int OpenTicketCount,
+    GenesysScreenPopDto ScreenPop);
+
+/// <summary>
+/// The lookup reduced to flat, display-ready values — what a Genesys Data
+/// Action maps straight onto Architect variables and participant data, which
+/// cannot reliably pick a value out of the nested per-source arrays.
+///
+/// <para>
+/// <b>A projection, never a second answer.</b> Every value is derived from
+/// the full result beside it, in a fixed order — CRM first (the verified
+/// Buyer record), then PACT, then Tasleeh — so the screen pop and the full
+/// result can never disagree. It never picks between two different
+/// customers: when the sources matched more than one,
+/// <see cref="GenesysScreenPopDto.CustomerName"/> is the first in that order
+/// and <see cref="GenesysScreenPopDto.MatchedCustomerCount"/> says there
+/// were others, leaving identification to the agent exactly as the New
+/// Ticket wizard does.
+/// </para>
+///
+/// <para>
+/// Every string is empty rather than null when there is nothing to show, so
+/// a data action's output contract can declare them all as plain strings.
+/// </para>
+/// </summary>
+/// <param name="CustomerName">The matched customer's display name, or empty.</param>
+/// <param name="CustomerEmail">That customer's email, or empty.</param>
+/// <param name="VerificationSource">Which source identified the customer: "Crm", "Pact" or "Tasleeh" — empty when none did.</param>
+/// <param name="ExternalCustomerId">The customer's id in that source, or empty.</param>
+/// <param name="MatchedCustomerCount">How many customer records the sources matched in total. More than one means the agent must confirm who is calling.</param>
+/// <param name="Units">Every unit found for the caller across all sources, as "Project - Unit" labels, de-duplicated.</param>
+/// <param name="UnitsText">The same labels joined with "; " — one string, for a display field that cannot show a list.</param>
+/// <param name="RecentTicketNumbers">The caller's recent ticket numbers, in <see cref="GenesysCustomerLookupResultDto.Tickets"/> order.</param>
+/// <param name="OpenTicketNumbers">The subset still being worked.</param>
+/// <param name="RecentTicketsText">The recent tickets as one display string ("TG-… (InProgress); TG-… (Closed)").</param>
+public sealed record GenesysScreenPopDto(
+    string CustomerName,
+    string CustomerEmail,
+    string VerificationSource,
+    string ExternalCustomerId,
+    int MatchedCustomerCount,
+    IReadOnlyList<string> Units,
+    string UnitsText,
+    IReadOnlyList<string> RecentTicketNumbers,
+    IReadOnlyList<string> OpenTicketNumbers,
+    string RecentTicketsText);

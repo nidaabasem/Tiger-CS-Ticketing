@@ -11,12 +11,13 @@ public interface IIntakeRecordRepository
 
     /// <summary>
     /// Every ticket id linked from an IntakeRecord recorded against this
-    /// exact phone number — the Customer History fallback key
+    /// phone number — the Customer History fallback key
     /// (<c>CustomerHistoryAppService</c>) for a customer with no
-    /// <c>Ticket.CrmBuyerCustomerId</c>. Exact, persisted-value match only —
-    /// no phone normalization is applied beyond whatever was already stored
-    /// at intake time (see <see cref="IntakeRecord"/>'s own remarks; this
-    /// codebase has no existing phone-normalization convention to reuse).
+    /// <c>Ticket.CrmBuyerCustomerId</c>, and the Genesys call-pickup lookup's
+    /// recent tickets. Matched on <see cref="CustomerPhoneNumber.Normalize"/>'s
+    /// canonical form, so the same number written differently ("+971 50…",
+    /// "971…") is the same caller; the stored values are never rewritten. A
+    /// number with no digits matches nothing.
     /// </summary>
     Task<IReadOnlyList<long>> ListLinkedTicketIdsByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken = default);
 
