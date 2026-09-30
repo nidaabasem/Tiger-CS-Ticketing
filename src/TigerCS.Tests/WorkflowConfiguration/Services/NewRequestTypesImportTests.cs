@@ -92,9 +92,28 @@ public class NewRequestTypesImportTests
             var errors = version.Validate().Where(i => i.Severity == WorkflowValidationSeverity.Error).ToList();
             Assert.True(errors.Count == 0, $"{row.RequestCode}: {string.Join(" | ", errors.Select(e => e.Message))}");
             Assert.All(row.Steps, s => Assert.False(WorkflowStepKinds.IsLegacyOnly(s.Kind)));
-            Assert.DoesNotContain(row.Steps, s => s.Kind == WorkflowStepKind.WaitingForApproval);
+
+            // The only approval steps are Accounting's part of a NOC, as the
+            // EXISTING Accounting Approval — no approval is invented.
+            var approvalSteps = row.Steps.Where(s => s.Kind == WorkflowStepKind.WaitingForApproval).ToList();
+            if (AccountingNocCodes.Contains(row.RequestCode))
+            {
+                var approval = Assert.Single(approvalSteps);
+                Assert.Equal(ApprovalType.AccountingApproval, approval.ApprovalType);
+            }
+            else
+            {
+                Assert.Empty(approvalSteps);
+            }
+
+            Assert.All(row.Steps.Where(s => s.Kind != WorkflowStepKind.WaitingForApproval), s => Assert.Null(s.ApprovalType));
         }
     }
+
+    private static readonly string[] AccountingNocCodes = ["REG-NOC-001", "REG-NOC-002", "REG-NOC-003", "HO-NOC-001"];
+
+    private static readonly string[] ManualSupportingCodes =
+        ["BRK-COM-001", "BRK-CHK-001", "SAL-INQ-001", "LEG-INQ-001", "REC-HR-001", "REC-MKT-001", "FM-SVC-001", "HO-HND-004"];
 
     [Fact]
     public void Every_value_fits_its_column()
@@ -192,15 +211,36 @@ public class NewRequestTypesImportTests
     }
 
     [Fact]
-    public async Task Manual_handoffs_stay_with_the_owning_department()
+    public async Task Supporting_teams_are_manual_steps_that_stay_with_the_owning_department()
     {
         foreach (var row in NewRequestTypesBusinessReview.Rows())
         {
-            foreach (var step in row.Steps.Where(s => s.Name.StartsWith("Manual handoff to ", StringComparison.Ordinal)))
+            var supporting = row.Steps.Where(s => s.Role == NewRequestTypesBusinessReview.StepRole.ManualSupporting).ToList();
+            if (ManualSupportingCodes.Contains(row.RequestCode))
             {
-                Assert.Equal(WorkflowStepKind.InProgress, step.Kind);
+                Assert.NotEmpty(supporting);
             }
+            else
+            {
+                Assert.Empty(supporting);
+            }
+
+            // Informational owning-department work: never a queue, assignment
+            // or approval step, so nothing can read it as a transfer.
+            Assert.All(supporting, s =>
+            {
+                Assert.Equal(WorkflowStepKind.InProgress, s.Kind);
+                Assert.Null(s.ApprovalType);
+                Assert.EndsWith(" (manual supporting step)", s.Name, StringComparison.Ordinal);
+            });
+
+            // No step invents a transfer the workbook does not state.
+            Assert.DoesNotContain(row.Steps, s => s.Name.StartsWith("Transfer", StringComparison.Ordinal));
         }
+
+        var handoverNoc = NewRequestTypesBusinessReview.Rows().Single(r => r.RequestCode == "HO-NOC-001");
+        var handoverAgent = Assert.Single(handoverNoc.Steps, s => s.Role == NewRequestTypesBusinessReview.StepRole.BusinessDecisionRequired);
+        Assert.Equal("Handover Agent", handoverAgent.Name);
 
         await using var db = await CreateWithFacilitiesManagementAsync();
         var result = await NewRequestTypesImporter.ImportAsync(db, Now);
@@ -281,9 +321,28 @@ public class NewRequestTypesImportTests
 
         var requestTypesAfter = await Snapshot(db);
         Assert.All(requestTypesBefore, before => Assert.Contains(before, requestTypesAfter));
-        Assert.Equal(approvalsBefore, await db.RequestTypeApprovalRequirements.AsNoTracking()
+
+        // Every existing approval requirement is untouched; the only additions
+        // are the existing Accounting Approval on the four reused NOC request
+        // types, targeted at the Accounting department.
+        var approvalsAfter = await db.RequestTypeApprovalRequirements.AsNoTracking()
             .Select(r => new { r.RequestTypeApprovalRequirementId, r.RequestTypeId, r.ApprovalType, r.TargetKind, r.TargetRoleName, r.TargetDepartmentId, r.BlocksWorkUntilApproved, r.IsActive })
-            .ToListAsync());
+            .ToListAsync();
+        Assert.All(approvalsBefore, before => Assert.Contains(before, approvalsAfter));
+        var added = approvalsAfter.Except(approvalsBefore).ToList();
+        var accounting = await db.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.AccountingCode);
+        var csDepartment = await db.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.CustomerServiceCode);
+        var nocIds = await db.RequestTypes
+            .Where(r => r.DepartmentId == csDepartment.DepartmentId && ExistingCsNocNames.Contains(r.Name))
+            .Select(r => r.RequestTypeId).ToListAsync();
+        Assert.Equal(nocIds.Order(), added.Select(a => a.RequestTypeId).Order());
+        Assert.All(added, a =>
+        {
+            Assert.Equal(ApprovalType.AccountingApproval, a.ApprovalType);
+            Assert.Equal(ApprovalTargetKind.Department, a.TargetKind);
+            Assert.Equal(accounting.DepartmentId, a.TargetDepartmentId);
+            Assert.True(a.IsActive);
+        });
         Assert.Equal(departmentsBefore, await db.Departments.AsNoTracking().Select(d => new { d.DepartmentId, d.Name, d.Code, d.IsActive }).ToListAsync());
         Assert.Equal(settingsBefore, await db.DepartmentWorkflowSettings.CountAsync());
 
@@ -296,6 +355,27 @@ public class NewRequestTypesImportTests
             var workflow = await db.Workflows.SingleAsync(w => w.WorkflowId == existing.WorkflowId);
             Assert.Equal(WorkflowReferenceData.WithPendingTemplateCode, workflow.Code);
         }
+    }
+
+    [Fact]
+    public async Task A_deactivated_Accounting_Approval_is_left_as_the_operator_set_it()
+    {
+        await using var db = await CreateWithFacilitiesManagementAsync();
+        var cs = await db.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.CustomerServiceCode);
+        var accounting = await db.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.AccountingCode);
+        var resale = await db.RequestTypes.SingleAsync(r => r.DepartmentId == cs.DepartmentId && r.Name == "NOC for Resale");
+        db.RequestTypeApprovalRequirements.Add(RequestTypeApprovalRequirement.ForDepartment(
+            resale.RequestTypeId, ApprovalType.AccountingApproval, accounting.DepartmentId, isActive: false));
+        await db.SaveChangesAsync();
+
+        var result = await NewRequestTypesImporter.ImportAsync(db, Now);
+
+        Assert.Empty(Row(result, "REG-NOC-001").ApprovalRequirementsAdded ?? []);
+        var requirement = await db.RequestTypeApprovalRequirements.SingleAsync(
+            r => r.RequestTypeId == resale.RequestTypeId && r.ApprovalType == ApprovalType.AccountingApproval);
+        Assert.False(requirement.IsActive);
+        Assert.Equal([ApprovalType.AccountingApproval], Row(result, "REG-NOC-002").ApprovalRequirementsAdded);
+        Assert.False(result.ApprovalDepartmentMissing);
     }
 
     [Fact]
@@ -432,7 +512,7 @@ public class NewRequestTypesImportTests
         var version = new WorkflowTemplate(0, 1, row.WorkflowCode, row.WorkflowName, row.WorkflowDescription, false, false, false, Now, null);
         foreach (var step in row.Steps)
         {
-            version.AppendStep(step.Name, step.Kind, step.IsOptional);
+            version.AppendStep(step.Name, step.Kind, step.IsOptional, step.ApprovalType);
         }
 
         return version;

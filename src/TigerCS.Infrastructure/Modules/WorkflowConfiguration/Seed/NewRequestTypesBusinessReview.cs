@@ -87,7 +87,19 @@ public static class NewRequestTypesBusinessReview
         Approval = 4,
         Operational = 5,
         Resolve = 6,
-        Close = 7
+        Close = 7,
+
+        /// <summary>
+        /// A supporting team's part of the work (Admin Sales, Sales, Legal,
+        /// HR, Marketing, Responsible Finance, Facilities Management),
+        /// informational only in UAT: the owning department's agent involves
+        /// the team outside the ticket. The ticket is never transferred, and
+        /// its department, owner and status do not move.
+        /// </summary>
+        ManualSupporting = 8,
+
+        /// <summary>The workbook's wording is kept, but whether it means a transfer, a supporting step or something else is not decided — nothing is inferred from it.</summary>
+        BusinessDecisionRequired = 9
     }
 
     /// <summary>One structured workflow step.</summary>
@@ -95,11 +107,13 @@ public static class NewRequestTypesBusinessReview
     /// <param name="Kind">The supported step kind it is represented by.</param>
     /// <param name="Role">Its classification (see <see cref="StepRole"/>).</param>
     /// <param name="IsOptional">True for the workbook's "if needed" steps.</param>
+    /// <param name="ApprovalType">For an approval step: the existing approval it waits for. Only real approvals carry one.</param>
     public sealed record Step(
         string Name,
         WorkflowStepKind Kind,
         StepRole Role,
-        bool IsOptional = false);
+        bool IsOptional = false,
+        ApprovalType? ApprovalType = null);
 
     /// <summary>One workbook row, verbatim, plus its structured workflow translation.</summary>
     public sealed record Row(
@@ -154,6 +168,10 @@ public static class NewRequestTypesBusinessReview
         public string WorkflowCode => RequestCode;
 
         public string WorkflowName => $"{RequestCode} {Name}";
+
+        /// <summary>The existing approvals this row's workflow waits for — each is configured on the request type as an approval requirement.</summary>
+        public IReadOnlyList<ApprovalType> Approvals =>
+            [.. Steps.Where(s => s.ApprovalType is not null).Select(s => s.ApprovalType!.Value).Distinct()];
 
         /// <summary>
         /// Carries what the request type itself has no column for — the
@@ -275,19 +293,24 @@ public static class NewRequestTypesBusinessReview
     // Mapping rules (docs/New-Request-Types-UAT-Import.md §4):
     //   * "<X> Queue"                                   → Assigned  (QueueOwnership)
     //   * "Agent", "CS Agent", "Agent/Technician"       → Assigned  (Assignment)
-    //   * a hand-off to another TigerCS department       → Assigned  (TransferHandoff; the move itself is the
-    //     agent's existing Transfer action — the engine performs no transfer)
-    //   * a hand-off to Admin Sales / Sales / Legal / HR /
-    //     Marketing / Responsible Finance                → InProgress (TransferHandoff, manual: the ticket stays
-    //     with its owning department)
+    //   * "Accounting" in the NOC flows (CS Agent → Accounting → CS Agent)
+    //                                                    → WaitingForApproval (Approval, the EXISTING
+    //     AccountingApproval, decided by the Accounting department) — the ticket stays with the CS agent
+    //   * Admin Sales / Sales / Legal / HR / Marketing / Responsible Finance work, and Handover's
+    //     "Facilities Management if needed"              → InProgress (ManualSupporting: informational, the
+    //     ticket is never transferred and its department, owner and status do not move)
+    //   * "Handover Agent" in HO-NOC-001                 → Assigned (BusinessDecisionRequired: the workbook's
+    //     wording, kept; transfer vs supporting step is not decided)
+    //   * "Route to Responsible Department" (REC-OTH-001) → Assigned (TransferHandoff; the existing per-ticket
+    //     Transfer action — the engine performs no transfer)
     //   * "Reception / CS", "CS Intake"                  → Assigned  (QueueOwnership: Customer Service intake —
     //     Reception is not a TigerCS department)
-    //   * "Facilities Management if needed" (Handover)  → MaintenanceDependency (TransferHandoff, optional)
     //   * review / coordinate / follow-up / confirm ... → InProgress (Operational)
     //   * "Escalate if needed"                          → InProgress (Operational, optional) — the existing
-    //     manual escalation, NOT an approval: no supported ApprovalType fits any workbook approval role.
+    //     manual escalation, NOT an approval.
     //   * Resolve / Close                               → Resolved / Closed
-    // No step is invented beyond the mandatory Start step.
+    // The workbook's "Conditional" approvals (Approval Role column) are NOT steps and are not configured:
+    // no existing approval type matches those approvers. No step is invented beyond the mandatory Start step.
 
     private static Step Start() => new("Ticket Created", WorkflowStepKind.Created, StepRole.Start);
 
@@ -295,16 +318,19 @@ public static class NewRequestTypesBusinessReview
 
     private static Step Agent(string name = "Agent") => new(name, WorkflowStepKind.Assigned, StepRole.Assignment);
 
-    private static Step Handoff(string name) => new(name, WorkflowStepKind.Assigned, StepRole.TransferHandoff);
-
     /// <summary>
-    /// A manual hand-off to a team with no TigerCS department. Represented
-    /// as owning-department work (<see cref="WorkflowStepKind.InProgress"/>),
-    /// never as a queue / assignment step: the ticket stays with its owning
-    /// department, and nothing in the workflow engine moves it anywhere.
+    /// A supporting team's part of the work — informational only in UAT.
+    /// Represented as owning-department work (<see cref="WorkflowStepKind.InProgress"/>),
+    /// never as a queue, assignment or approval step: the ticket stays with
+    /// its owning department and owner, and nothing moves it anywhere.
     /// </summary>
-    private static Step ManualHandoff(string destination, bool optional = false) =>
-        new($"Manual handoff to {destination}", WorkflowStepKind.InProgress, StepRole.TransferHandoff, optional);
+    private static Step ManualSupporting(string wording, bool optional = false) =>
+        new($"{wording} (manual supporting step)", WorkflowStepKind.InProgress, StepRole.ManualSupporting, optional);
+
+    /// <summary>Accounting's part of a NOC: the existing Accounting Approval, decided by the Accounting department.</summary>
+    private static Step AccountingApproval() =>
+        new("Accounting Approval", WorkflowStepKind.WaitingForApproval, StepRole.Approval,
+            ApprovalType: Domain.Modules.WorkflowConfiguration.ApprovalType.AccountingApproval);
 
     /// <summary>Reception is not a TigerCS department: "Reception / CS" is Customer Service intake.</summary>
     private static Step CustomerServiceIntake() => Queue("Customer Service intake (Reception / CS)");
@@ -322,7 +348,7 @@ public static class NewRequestTypesBusinessReview
     {
         IReadOnlyList<Step> accountingNoc = Flow(
             Queue("CS Queue"), Agent("CS Agent"),
-            Handoff("Transfer to Accounting"), Handoff("Return to CS Agent"),
+            AccountingApproval(), Agent("CS Agent"),
             Resolve());
 
         return new Dictionary<string, IReadOnlyList<Step>>(StringComparer.Ordinal)
@@ -353,10 +379,12 @@ public static class NewRequestTypesBusinessReview
             ["COL-PAY-004"] = Flow(Queue("Collections Queue"), Agent(), Work("Review"), Resolve()),
 
             // CS Queue → Agent → Accounting → CS Agent → Handover Agent → Resolve → Close
+            // "Handover Agent" is kept as the workbook says it: transfer to
+            // Handover vs a supporting step is a business decision.
             ["HO-NOC-001"] = Flow(
                 Queue("CS Queue"), Agent(),
-                Handoff("Transfer to Accounting"), Handoff("Return to CS Agent"),
-                Handoff("Transfer to Handover Agent"),
+                AccountingApproval(), Agent("CS Agent"),
+                new Step("Handover Agent", WorkflowStepKind.Assigned, StepRole.BusinessDecisionRequired),
                 Resolve()),
 
             // Handover Queue → Agent → ... → Resolve → Close
@@ -366,8 +394,7 @@ public static class NewRequestTypesBusinessReview
             // Handover Queue → Facilities Management if needed → Follow-up → Resolve → Close
             ["HO-HND-004"] = Flow(
                 Queue("Handover Queue"),
-                new Step("Facilities Management if needed", WorkflowStepKind.MaintenanceDependency, StepRole.TransferHandoff,
-                    IsOptional: true),
+                ManualSupporting("Facilities Management if needed", optional: true),
                 Work("Follow-up"), Resolve()),
 
             // FM Queue → Assign Agent/Technician → In Progress → Resolve → Close
@@ -376,9 +403,9 @@ public static class NewRequestTypesBusinessReview
             ["FM-COM-001"] = Flow(Queue("FM Queue"), Agent("Agent / Technician"), Work("In Progress"), Resolve()),
             // FM/Responsible Finance Queue → Agent → Review → Resolve → Close
             // Owning department stays Facilities Management; "Responsible
-            // Finance" is a manual hand-off, optional because the workbook's
-            // "FM/..." makes it an alternative.
-            ["FM-SVC-001"] = Flow(Queue("FM Queue"), ManualHandoff("Responsible Finance", optional: true), Agent(), Work("Review"), Resolve()),
+            // Finance" is a manual supporting step, optional because the
+            // workbook's "FM/..." makes it an alternative.
+            ["FM-SVC-001"] = Flow(Queue("FM Queue"), ManualSupporting("Responsible Finance if needed", optional: true), Agent(), Work("Review"), Resolve()),
 
             // Leasing CS Queue → Agent → ... → Resolve → Close
             ["LCS-TEN-001"] = Flow(Queue("Leasing CS Queue"), Agent(), Work("Process / review"), Resolve()),
@@ -388,16 +415,18 @@ public static class NewRequestTypesBusinessReview
             ["LCS-CHK-001"] = Flow(Queue("Leasing CS Queue"), Agent(), Work("Review"), Resolve()),
 
             // CS Queue → CS Agent → Admin Sales → Review / Confirm collection → Resolve → Close
-            ["BRK-COM-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), ManualHandoff("Admin Sales"), Work("Review"), Resolve()),
-            ["BRK-CHK-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), ManualHandoff("Admin Sales"), Work("Confirm collection"), Resolve()),
+            // (the "Responsible Manager" conditional approval is separate and not configured)
+            ["BRK-COM-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), ManualSupporting("Admin Sales Review"), Resolve()),
+            ["BRK-CHK-001"] = Flow(Queue("CS Queue"), Agent("CS Agent"), ManualSupporting("Admin Sales: Confirm collection"), Resolve()),
 
             // CS / Call Center → Sales Handoff → Follow-up → Resolve / Close
-            ["SAL-INQ-001"] = Flow(Queue("CS / Call Center Queue"), ManualHandoff("Sales"), Work("Follow-up"), Resolve()),
+            ["SAL-INQ-001"] = Flow(Queue("CS / Call Center Queue"), ManualSupporting("Sales Follow-up"), Resolve()),
             // CS Intake → Legal Handoff → Legal Review/Response → CS Resolve → Close
-            ["LEG-INQ-001"] = Flow(Queue("Customer Service intake"), ManualHandoff("Legal"), Work("Legal Review / Response"), Resolve("CS Resolve")),
+            // (the "Legal / Authorized Approver" conditional approval is separate and not configured)
+            ["LEG-INQ-001"] = Flow(Queue("Customer Service intake"), ManualSupporting("Legal Review / Response"), Resolve("CS Resolve")),
             // Reception / CS → HR | Marketing Handoff → Acknowledge/Resolve → Close
-            ["REC-HR-001"] = Flow(CustomerServiceIntake(), ManualHandoff("HR"), Resolve("Acknowledge / Resolve")),
-            ["REC-MKT-001"] = Flow(CustomerServiceIntake(), ManualHandoff("Marketing"), Resolve("Acknowledge / Resolve")),
+            ["REC-HR-001"] = Flow(CustomerServiceIntake(), ManualSupporting("HR Response"), Resolve("Acknowledge / Resolve")),
+            ["REC-MKT-001"] = Flow(CustomerServiceIntake(), ManualSupporting("Marketing Response"), Resolve("Acknowledge / Resolve")),
             // Reception / CS → Route to Responsible Department → Resolve → Close
             // (the destination is chosen per ticket with the existing Transfer action)
             ["REC-OTH-001"] = Flow(

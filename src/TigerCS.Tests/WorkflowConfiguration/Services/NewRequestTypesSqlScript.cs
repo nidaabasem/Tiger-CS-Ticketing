@@ -55,13 +55,14 @@ internal static class NewRequestTypesSqlScript
             Literal(r.SimilarExistingRequestTypeName) + ")")));
         sb.Append(";\n\n");
 
-        sb.Append("INSERT INTO @Steps ([RequestCode], [Sequence], [Name], [Kind], [IsOptional]) VALUES\n");
+        sb.Append("INSERT INTO @Steps ([RequestCode], [Sequence], [Name], [Kind], [IsOptional], [ApprovalType]) VALUES\n");
         sb.AppendJoin(",\n", rows.SelectMany(r => r.Steps.Select((s, i) => string.Join(", ",
             "(" + Literal(r.RequestCode),
             (i + 1).ToString(CultureInfo.InvariantCulture),
             Literal(s.Name),
             ((byte)s.Kind).ToString(CultureInfo.InvariantCulture),
-            (s.IsOptional ? "1" : "0") + ")"))));
+            s.IsOptional ? "1" : "0",
+            (s.ApprovalType is { } approvalType ? ((byte)approvalType).ToString(CultureInfo.InvariantCulture) : "NULL") + ")"))));
         sb.Append(";\n");
 
         sb.Append(EndMarker);

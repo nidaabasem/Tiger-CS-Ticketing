@@ -28,8 +28,29 @@
     * Facilities Management (FM) and Leasing Customer Services (LCS) when no
       department with that code or exact name exists.
 
-    It creates no approval requirement: "Conditional" gives no rule to
-    configure. Add one from Administration when the business defines it.
+    APPROVALS — real, existing approvals only
+    -----------------------------------------
+    * Accounting's part of a NOC (REG-NOC-001/002/003, HO-NOC-001) is the
+      EXISTING Accounting Approval, decided by the Accounting department (ACC)
+      — the same target as Send Receipts. It is added to the request type
+      (created or reused) only when that request type has no Accounting
+      Approval requirement at all. ACC is never created here: if it is
+      missing, the approval is skipped and reported.
+    * The workbook's "Conditional" approvals (Approval Role column) are NOT
+      configured: no rule is given, and no existing approval type matches
+      those approvers. They remain a business decision.
+    * Reopen Approval is not configured here: run
+      ConfigureReopenApprovalRequirements.sql afterwards (idempotent; it
+      covers every active request type that allows Reopen).
+
+    SUPPORTING TEAMS — manual, informational steps
+    ----------------------------------------------
+    Admin Sales, Sales, Legal, HR, Marketing, Responsible Finance and
+    Handover's "Facilities Management if needed" are workflow steps named
+    "... (manual supporting step)". The ticket is never transferred; its
+    department, owner and status do not move. Their departments are not
+    required by any request type and are not created; section 5 only reports
+    whether they exist.
 
     MATCHING / IDEMPOTENCY (first rule that applies wins)
     -----------------------------------------------------
@@ -70,6 +91,7 @@ IF OBJECT_ID(N'[Workflows]', N'U') IS NULL
     OR OBJECT_ID(N'[RequestTypes]', N'U') IS NULL
     OR OBJECT_ID(N'[RequestTypeSlaPolicies]', N'U') IS NULL
     OR OBJECT_ID(N'[Departments]', N'U') IS NULL
+    OR OBJECT_ID(N'[RequestTypeApprovalRequirements]', N'U') IS NULL
     OR COL_LENGTH(N'[WorkflowTemplates]', N'Status') IS NULL
 BEGIN
     THROW 50001, N'Schema not found: apply EF migrations (through the Workflow Designer versioning migration) before running this script.', 1;
@@ -82,8 +104,9 @@ END;
 
 -------------------------------------------------------------------------------
 -- 1. The workbook rows (rendered from NewRequestTypesBusinessReview).
---    Kind: 1 Start, 2 Queue/Assignment, 5 Department Work (incl. manual
---          hand-offs), 8 Resolve, 9 Close, 11 Maintenance Dependency.
+--    Kind: 1 Start, 2 Queue/Assignment, 4 Approval, 5 Department Work (incl.
+--          manual supporting steps), 8 Resolve, 9 Close.
+--    ApprovalType: 1 AccountingApproval (approval steps only), else NULL.
 --    DefaultPriorityId: 2 High, 3 Medium (workbook "Normal"), 4 Low.
 -------------------------------------------------------------------------------
 
@@ -111,6 +134,7 @@ DECLARE @Steps TABLE (
     [Name]        nvarchar(100) NOT NULL,
     [Kind]        tinyint       NOT NULL,
     [IsOptional]  bit           NOT NULL,
+    [ApprovalType] tinyint      NULL,
     PRIMARY KEY ([RequestCode], [Sequence]));
 
 -- <generated-data> (rendered from NewRequestTypesBusinessReview; do not edit by hand)
@@ -155,221 +179,217 @@ INSERT INTO @Rows ([Ordinal], [RequestCode], [OwnerDepartmentName], [OwnerDepart
 (34, N'REC-MKT-001', N'Customer Service', N'CS', N'Marketing Inquiry', N'REC-MKT-001 Marketing Inquiry', N'Customer Service UAT baseline. Request Group: Reception. Reception inquiry that should be routed to Marketing. Proposed workflow (source text): Reception / CS → Marketing Handoff → Acknowledge/Resolve → Close Required documents: None.', 4, 1, N'["Requester details","Description"]', 1, NULL),
 (35, N'REC-OTH-001', N'Customer Service', N'CS', N'Other Reception Inquiry', N'REC-OTH-001 Other Reception Inquiry', N'Customer Service UAT baseline. Request Group: Reception. Reception inquiry that does not match a predefined type. Proposed workflow (source text): Reception / CS → Route to Responsible Department → Resolve → Close Required documents: None.', 3, 1, N'["Requester details","Description"]', 1, NULL);
 
-INSERT INTO @Steps ([RequestCode], [Sequence], [Name], [Kind], [IsOptional]) VALUES
-(N'CS-GEN-001', 1, N'Ticket Created', 1, 0),
-(N'CS-GEN-001', 2, N'CS Queue', 2, 0),
-(N'CS-GEN-001', 3, N'Agent', 2, 0),
-(N'CS-GEN-001', 4, N'Resolve', 8, 0),
-(N'CS-GEN-001', 5, N'Close', 9, 0),
-(N'CS-GEN-002', 1, N'Ticket Created', 1, 0),
-(N'CS-GEN-002', 2, N'CS Queue', 2, 0),
-(N'CS-GEN-002', 3, N'Agent', 2, 0),
-(N'CS-GEN-002', 4, N'Resolve', 8, 0),
-(N'CS-GEN-002', 5, N'Close', 9, 0),
-(N'CS-GEN-003', 1, N'Ticket Created', 1, 0),
-(N'CS-GEN-003', 2, N'CS Queue', 2, 0),
-(N'CS-GEN-003', 3, N'Agent', 2, 0),
-(N'CS-GEN-003', 4, N'Obtain update if needed', 5, 1),
-(N'CS-GEN-003', 5, N'Resolve', 8, 0),
-(N'CS-GEN-003', 6, N'Close', 9, 0),
-(N'CS-CMP-001', 1, N'Ticket Created', 1, 0),
-(N'CS-CMP-001', 2, N'CS Queue', 2, 0),
-(N'CS-CMP-001', 3, N'Agent', 2, 0),
-(N'CS-CMP-001', 4, N'Escalate if needed', 5, 1),
-(N'CS-CMP-001', 5, N'Resolve', 8, 0),
-(N'CS-CMP-001', 6, N'Close', 9, 0),
-(N'CS-CMP-002', 1, N'Ticket Created', 1, 0),
-(N'CS-CMP-002', 2, N'CS Queue', 2, 0),
-(N'CS-CMP-002', 3, N'Agent', 2, 0),
-(N'CS-CMP-002', 4, N'Record / route', 5, 0),
-(N'CS-CMP-002', 5, N'Resolve', 8, 0),
-(N'CS-CMP-002', 6, N'Close', 9, 0),
-(N'REG-NOC-001', 1, N'Ticket Created', 1, 0),
-(N'REG-NOC-001', 2, N'CS Queue', 2, 0),
-(N'REG-NOC-001', 3, N'CS Agent', 2, 0),
-(N'REG-NOC-001', 4, N'Transfer to Accounting', 2, 0),
-(N'REG-NOC-001', 5, N'Return to CS Agent', 2, 0),
-(N'REG-NOC-001', 6, N'Resolve', 8, 0),
-(N'REG-NOC-001', 7, N'Close', 9, 0),
-(N'REG-NOC-002', 1, N'Ticket Created', 1, 0),
-(N'REG-NOC-002', 2, N'CS Queue', 2, 0),
-(N'REG-NOC-002', 3, N'CS Agent', 2, 0),
-(N'REG-NOC-002', 4, N'Transfer to Accounting', 2, 0),
-(N'REG-NOC-002', 5, N'Return to CS Agent', 2, 0),
-(N'REG-NOC-002', 6, N'Resolve', 8, 0),
-(N'REG-NOC-002', 7, N'Close', 9, 0),
-(N'REG-NOC-003', 1, N'Ticket Created', 1, 0),
-(N'REG-NOC-003', 2, N'CS Queue', 2, 0),
-(N'REG-NOC-003', 3, N'CS Agent', 2, 0),
-(N'REG-NOC-003', 4, N'Transfer to Accounting', 2, 0),
-(N'REG-NOC-003', 5, N'Return to CS Agent', 2, 0),
-(N'REG-NOC-003', 6, N'Resolve', 8, 0),
-(N'REG-NOC-003', 7, N'Close', 9, 0),
-(N'REG-CON-001', 1, N'Ticket Created', 1, 0),
-(N'REG-CON-001', 2, N'Registration Queue', 2, 0),
-(N'REG-CON-001', 3, N'Agent', 2, 0),
-(N'REG-CON-001', 4, N'Review', 5, 0),
-(N'REG-CON-001', 5, N'Resolve', 8, 0),
-(N'REG-CON-001', 6, N'Close', 9, 0),
-(N'REG-DLD-001', 1, N'Ticket Created', 1, 0),
-(N'REG-DLD-001', 2, N'Registration Queue', 2, 0),
-(N'REG-DLD-001', 3, N'Agent', 2, 0),
-(N'REG-DLD-001', 4, N'Review DLD / registration status', 5, 0),
-(N'REG-DLD-001', 5, N'Resolve', 8, 0),
-(N'REG-DLD-001', 6, N'Close', 9, 0),
-(N'COL-PAY-001', 1, N'Ticket Created', 1, 0),
-(N'COL-PAY-001', 2, N'Collections Queue', 2, 0),
-(N'COL-PAY-001', 3, N'Agent', 2, 0),
-(N'COL-PAY-001', 4, N'Review account', 5, 0),
-(N'COL-PAY-001', 5, N'Resolve', 8, 0),
-(N'COL-PAY-001', 6, N'Close', 9, 0),
-(N'COL-PAY-002', 1, N'Ticket Created', 1, 0),
-(N'COL-PAY-002', 2, N'Collections Queue', 2, 0),
-(N'COL-PAY-002', 3, N'Agent', 2, 0),
-(N'COL-PAY-002', 4, N'Follow-up', 5, 0),
-(N'COL-PAY-002', 5, N'Escalate if needed', 5, 1),
-(N'COL-PAY-002', 6, N'Resolve', 8, 0),
-(N'COL-PAY-002', 7, N'Close', 9, 0),
-(N'COL-PAY-003', 1, N'Ticket Created', 1, 0),
-(N'COL-PAY-003', 2, N'Collections Queue', 2, 0),
-(N'COL-PAY-003', 3, N'Agent', 2, 0),
-(N'COL-PAY-003', 4, N'Confirm cheque / collection', 5, 0),
-(N'COL-PAY-003', 5, N'Resolve', 8, 0),
-(N'COL-PAY-003', 6, N'Close', 9, 0),
-(N'COL-PAY-004', 1, N'Ticket Created', 1, 0),
-(N'COL-PAY-004', 2, N'Collections Queue', 2, 0),
-(N'COL-PAY-004', 3, N'Agent', 2, 0),
-(N'COL-PAY-004', 4, N'Review', 5, 0),
-(N'COL-PAY-004', 5, N'Resolve', 8, 0),
-(N'COL-PAY-004', 6, N'Close', 9, 0),
-(N'HO-NOC-001', 1, N'Ticket Created', 1, 0),
-(N'HO-NOC-001', 2, N'CS Queue', 2, 0),
-(N'HO-NOC-001', 3, N'Agent', 2, 0),
-(N'HO-NOC-001', 4, N'Transfer to Accounting', 2, 0),
-(N'HO-NOC-001', 5, N'Return to CS Agent', 2, 0),
-(N'HO-NOC-001', 6, N'Transfer to Handover Agent', 2, 0),
-(N'HO-NOC-001', 7, N'Resolve', 8, 0),
-(N'HO-NOC-001', 8, N'Close', 9, 0),
-(N'HO-HND-001', 1, N'Ticket Created', 1, 0),
-(N'HO-HND-001', 2, N'Handover Queue', 2, 0),
-(N'HO-HND-001', 3, N'Agent', 2, 0),
-(N'HO-HND-001', 4, N'Coordinate', 5, 0),
-(N'HO-HND-001', 5, N'Resolve', 8, 0),
-(N'HO-HND-001', 6, N'Close', 9, 0),
-(N'HO-HND-002', 1, N'Ticket Created', 1, 0),
-(N'HO-HND-002', 2, N'Handover Queue', 2, 0),
-(N'HO-HND-002', 3, N'Agent', 2, 0),
-(N'HO-HND-002', 4, N'Confirm available slot', 5, 0),
-(N'HO-HND-002', 5, N'Resolve', 8, 0),
-(N'HO-HND-002', 6, N'Close', 9, 0),
-(N'HO-HND-003', 1, N'Ticket Created', 1, 0),
-(N'HO-HND-003', 2, N'Handover Queue', 2, 0),
-(N'HO-HND-003', 3, N'Agent', 2, 0),
-(N'HO-HND-003', 4, N'Coordinate requirements', 5, 0),
-(N'HO-HND-003', 5, N'Resolve', 8, 0),
-(N'HO-HND-003', 6, N'Close', 9, 0),
-(N'HO-HND-004', 1, N'Ticket Created', 1, 0),
-(N'HO-HND-004', 2, N'Handover Queue', 2, 0),
-(N'HO-HND-004', 3, N'Facilities Management if needed', 11, 1),
-(N'HO-HND-004', 4, N'Follow-up', 5, 0),
-(N'HO-HND-004', 5, N'Resolve', 8, 0),
-(N'HO-HND-004', 6, N'Close', 9, 0),
-(N'FM-MNT-001', 1, N'Ticket Created', 1, 0),
-(N'FM-MNT-001', 2, N'FM Queue', 2, 0),
-(N'FM-MNT-001', 3, N'Assign Agent / Technician', 2, 0),
-(N'FM-MNT-001', 4, N'In Progress', 5, 0),
-(N'FM-MNT-001', 5, N'Resolve', 8, 0),
-(N'FM-MNT-001', 6, N'Close', 9, 0),
-(N'FM-UTL-001', 1, N'Ticket Created', 1, 0),
-(N'FM-UTL-001', 2, N'FM Queue', 2, 0),
-(N'FM-UTL-001', 3, N'Agent', 2, 0),
-(N'FM-UTL-001', 4, N'Review / coordinate', 5, 0),
-(N'FM-UTL-001', 5, N'Resolve', 8, 0),
-(N'FM-UTL-001', 6, N'Close', 9, 0),
-(N'FM-COM-001', 1, N'Ticket Created', 1, 0),
-(N'FM-COM-001', 2, N'FM Queue', 2, 0),
-(N'FM-COM-001', 3, N'Agent / Technician', 2, 0),
-(N'FM-COM-001', 4, N'In Progress', 5, 0),
-(N'FM-COM-001', 5, N'Resolve', 8, 0),
-(N'FM-COM-001', 6, N'Close', 9, 0),
-(N'FM-SVC-001', 1, N'Ticket Created', 1, 0),
-(N'FM-SVC-001', 2, N'FM Queue', 2, 0),
-(N'FM-SVC-001', 3, N'Manual handoff to Responsible Finance', 5, 1),
-(N'FM-SVC-001', 4, N'Agent', 2, 0),
-(N'FM-SVC-001', 5, N'Review', 5, 0),
-(N'FM-SVC-001', 6, N'Resolve', 8, 0),
-(N'FM-SVC-001', 7, N'Close', 9, 0),
-(N'LCS-TEN-001', 1, N'Ticket Created', 1, 0),
-(N'LCS-TEN-001', 2, N'Leasing CS Queue', 2, 0),
-(N'LCS-TEN-001', 3, N'Agent', 2, 0),
-(N'LCS-TEN-001', 4, N'Process / review', 5, 0),
-(N'LCS-TEN-001', 5, N'Resolve', 8, 0),
-(N'LCS-TEN-001', 6, N'Close', 9, 0),
-(N'LCS-EJR-001', 1, N'Ticket Created', 1, 0),
-(N'LCS-EJR-001', 2, N'Leasing CS Queue', 2, 0),
-(N'LCS-EJR-001', 3, N'Agent', 2, 0),
-(N'LCS-EJR-001', 4, N'Process / review', 5, 0),
-(N'LCS-EJR-001', 5, N'Resolve', 8, 0),
-(N'LCS-EJR-001', 6, N'Close', 9, 0),
-(N'LCS-BKG-001', 1, N'Ticket Created', 1, 0),
-(N'LCS-BKG-001', 2, N'Leasing CS Queue', 2, 0),
-(N'LCS-BKG-001', 3, N'Agent', 2, 0),
-(N'LCS-BKG-001', 4, N'Confirm booking / details', 5, 0),
-(N'LCS-BKG-001', 5, N'Resolve', 8, 0),
-(N'LCS-BKG-001', 6, N'Close', 9, 0),
-(N'LCS-MOV-001', 1, N'Ticket Created', 1, 0),
-(N'LCS-MOV-001', 2, N'Leasing CS Queue', 2, 0),
-(N'LCS-MOV-001', 3, N'Agent', 2, 0),
-(N'LCS-MOV-001', 4, N'Coordinate', 5, 0),
-(N'LCS-MOV-001', 5, N'Resolve', 8, 0),
-(N'LCS-MOV-001', 6, N'Close', 9, 0),
-(N'LCS-CHK-001', 1, N'Ticket Created', 1, 0),
-(N'LCS-CHK-001', 2, N'Leasing CS Queue', 2, 0),
-(N'LCS-CHK-001', 3, N'Agent', 2, 0),
-(N'LCS-CHK-001', 4, N'Review', 5, 0),
-(N'LCS-CHK-001', 5, N'Resolve', 8, 0),
-(N'LCS-CHK-001', 6, N'Close', 9, 0),
-(N'BRK-COM-001', 1, N'Ticket Created', 1, 0),
-(N'BRK-COM-001', 2, N'CS Queue', 2, 0),
-(N'BRK-COM-001', 3, N'CS Agent', 2, 0),
-(N'BRK-COM-001', 4, N'Manual handoff to Admin Sales', 5, 0),
-(N'BRK-COM-001', 5, N'Review', 5, 0),
-(N'BRK-COM-001', 6, N'Resolve', 8, 0),
-(N'BRK-COM-001', 7, N'Close', 9, 0),
-(N'BRK-CHK-001', 1, N'Ticket Created', 1, 0),
-(N'BRK-CHK-001', 2, N'CS Queue', 2, 0),
-(N'BRK-CHK-001', 3, N'CS Agent', 2, 0),
-(N'BRK-CHK-001', 4, N'Manual handoff to Admin Sales', 5, 0),
-(N'BRK-CHK-001', 5, N'Confirm collection', 5, 0),
-(N'BRK-CHK-001', 6, N'Resolve', 8, 0),
-(N'BRK-CHK-001', 7, N'Close', 9, 0),
-(N'SAL-INQ-001', 1, N'Ticket Created', 1, 0),
-(N'SAL-INQ-001', 2, N'CS / Call Center Queue', 2, 0),
-(N'SAL-INQ-001', 3, N'Manual handoff to Sales', 5, 0),
-(N'SAL-INQ-001', 4, N'Follow-up', 5, 0),
-(N'SAL-INQ-001', 5, N'Resolve', 8, 0),
-(N'SAL-INQ-001', 6, N'Close', 9, 0),
-(N'LEG-INQ-001', 1, N'Ticket Created', 1, 0),
-(N'LEG-INQ-001', 2, N'Customer Service intake', 2, 0),
-(N'LEG-INQ-001', 3, N'Manual handoff to Legal', 5, 0),
-(N'LEG-INQ-001', 4, N'Legal Review / Response', 5, 0),
-(N'LEG-INQ-001', 5, N'CS Resolve', 8, 0),
-(N'LEG-INQ-001', 6, N'Close', 9, 0),
-(N'REC-HR-001', 1, N'Ticket Created', 1, 0),
-(N'REC-HR-001', 2, N'Customer Service intake (Reception / CS)', 2, 0),
-(N'REC-HR-001', 3, N'Manual handoff to HR', 5, 0),
-(N'REC-HR-001', 4, N'Acknowledge / Resolve', 8, 0),
-(N'REC-HR-001', 5, N'Close', 9, 0),
-(N'REC-MKT-001', 1, N'Ticket Created', 1, 0),
-(N'REC-MKT-001', 2, N'Customer Service intake (Reception / CS)', 2, 0),
-(N'REC-MKT-001', 3, N'Manual handoff to Marketing', 5, 0),
-(N'REC-MKT-001', 4, N'Acknowledge / Resolve', 8, 0),
-(N'REC-MKT-001', 5, N'Close', 9, 0),
-(N'REC-OTH-001', 1, N'Ticket Created', 1, 0),
-(N'REC-OTH-001', 2, N'Customer Service intake (Reception / CS)', 2, 0),
-(N'REC-OTH-001', 3, N'Route to Responsible Department', 2, 0),
-(N'REC-OTH-001', 4, N'Resolve', 8, 0),
-(N'REC-OTH-001', 5, N'Close', 9, 0);
+INSERT INTO @Steps ([RequestCode], [Sequence], [Name], [Kind], [IsOptional], [ApprovalType]) VALUES
+(N'CS-GEN-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'CS-GEN-001', 2, N'CS Queue', 2, 0, NULL),
+(N'CS-GEN-001', 3, N'Agent', 2, 0, NULL),
+(N'CS-GEN-001', 4, N'Resolve', 8, 0, NULL),
+(N'CS-GEN-001', 5, N'Close', 9, 0, NULL),
+(N'CS-GEN-002', 1, N'Ticket Created', 1, 0, NULL),
+(N'CS-GEN-002', 2, N'CS Queue', 2, 0, NULL),
+(N'CS-GEN-002', 3, N'Agent', 2, 0, NULL),
+(N'CS-GEN-002', 4, N'Resolve', 8, 0, NULL),
+(N'CS-GEN-002', 5, N'Close', 9, 0, NULL),
+(N'CS-GEN-003', 1, N'Ticket Created', 1, 0, NULL),
+(N'CS-GEN-003', 2, N'CS Queue', 2, 0, NULL),
+(N'CS-GEN-003', 3, N'Agent', 2, 0, NULL),
+(N'CS-GEN-003', 4, N'Obtain update if needed', 5, 1, NULL),
+(N'CS-GEN-003', 5, N'Resolve', 8, 0, NULL),
+(N'CS-GEN-003', 6, N'Close', 9, 0, NULL),
+(N'CS-CMP-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'CS-CMP-001', 2, N'CS Queue', 2, 0, NULL),
+(N'CS-CMP-001', 3, N'Agent', 2, 0, NULL),
+(N'CS-CMP-001', 4, N'Escalate if needed', 5, 1, NULL),
+(N'CS-CMP-001', 5, N'Resolve', 8, 0, NULL),
+(N'CS-CMP-001', 6, N'Close', 9, 0, NULL),
+(N'CS-CMP-002', 1, N'Ticket Created', 1, 0, NULL),
+(N'CS-CMP-002', 2, N'CS Queue', 2, 0, NULL),
+(N'CS-CMP-002', 3, N'Agent', 2, 0, NULL),
+(N'CS-CMP-002', 4, N'Record / route', 5, 0, NULL),
+(N'CS-CMP-002', 5, N'Resolve', 8, 0, NULL),
+(N'CS-CMP-002', 6, N'Close', 9, 0, NULL),
+(N'REG-NOC-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'REG-NOC-001', 2, N'CS Queue', 2, 0, NULL),
+(N'REG-NOC-001', 3, N'CS Agent', 2, 0, NULL),
+(N'REG-NOC-001', 4, N'Accounting Approval', 4, 0, 1),
+(N'REG-NOC-001', 5, N'CS Agent', 2, 0, NULL),
+(N'REG-NOC-001', 6, N'Resolve', 8, 0, NULL),
+(N'REG-NOC-001', 7, N'Close', 9, 0, NULL),
+(N'REG-NOC-002', 1, N'Ticket Created', 1, 0, NULL),
+(N'REG-NOC-002', 2, N'CS Queue', 2, 0, NULL),
+(N'REG-NOC-002', 3, N'CS Agent', 2, 0, NULL),
+(N'REG-NOC-002', 4, N'Accounting Approval', 4, 0, 1),
+(N'REG-NOC-002', 5, N'CS Agent', 2, 0, NULL),
+(N'REG-NOC-002', 6, N'Resolve', 8, 0, NULL),
+(N'REG-NOC-002', 7, N'Close', 9, 0, NULL),
+(N'REG-NOC-003', 1, N'Ticket Created', 1, 0, NULL),
+(N'REG-NOC-003', 2, N'CS Queue', 2, 0, NULL),
+(N'REG-NOC-003', 3, N'CS Agent', 2, 0, NULL),
+(N'REG-NOC-003', 4, N'Accounting Approval', 4, 0, 1),
+(N'REG-NOC-003', 5, N'CS Agent', 2, 0, NULL),
+(N'REG-NOC-003', 6, N'Resolve', 8, 0, NULL),
+(N'REG-NOC-003', 7, N'Close', 9, 0, NULL),
+(N'REG-CON-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'REG-CON-001', 2, N'Registration Queue', 2, 0, NULL),
+(N'REG-CON-001', 3, N'Agent', 2, 0, NULL),
+(N'REG-CON-001', 4, N'Review', 5, 0, NULL),
+(N'REG-CON-001', 5, N'Resolve', 8, 0, NULL),
+(N'REG-CON-001', 6, N'Close', 9, 0, NULL),
+(N'REG-DLD-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'REG-DLD-001', 2, N'Registration Queue', 2, 0, NULL),
+(N'REG-DLD-001', 3, N'Agent', 2, 0, NULL),
+(N'REG-DLD-001', 4, N'Review DLD / registration status', 5, 0, NULL),
+(N'REG-DLD-001', 5, N'Resolve', 8, 0, NULL),
+(N'REG-DLD-001', 6, N'Close', 9, 0, NULL),
+(N'COL-PAY-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'COL-PAY-001', 2, N'Collections Queue', 2, 0, NULL),
+(N'COL-PAY-001', 3, N'Agent', 2, 0, NULL),
+(N'COL-PAY-001', 4, N'Review account', 5, 0, NULL),
+(N'COL-PAY-001', 5, N'Resolve', 8, 0, NULL),
+(N'COL-PAY-001', 6, N'Close', 9, 0, NULL),
+(N'COL-PAY-002', 1, N'Ticket Created', 1, 0, NULL),
+(N'COL-PAY-002', 2, N'Collections Queue', 2, 0, NULL),
+(N'COL-PAY-002', 3, N'Agent', 2, 0, NULL),
+(N'COL-PAY-002', 4, N'Follow-up', 5, 0, NULL),
+(N'COL-PAY-002', 5, N'Escalate if needed', 5, 1, NULL),
+(N'COL-PAY-002', 6, N'Resolve', 8, 0, NULL),
+(N'COL-PAY-002', 7, N'Close', 9, 0, NULL),
+(N'COL-PAY-003', 1, N'Ticket Created', 1, 0, NULL),
+(N'COL-PAY-003', 2, N'Collections Queue', 2, 0, NULL),
+(N'COL-PAY-003', 3, N'Agent', 2, 0, NULL),
+(N'COL-PAY-003', 4, N'Confirm cheque / collection', 5, 0, NULL),
+(N'COL-PAY-003', 5, N'Resolve', 8, 0, NULL),
+(N'COL-PAY-003', 6, N'Close', 9, 0, NULL),
+(N'COL-PAY-004', 1, N'Ticket Created', 1, 0, NULL),
+(N'COL-PAY-004', 2, N'Collections Queue', 2, 0, NULL),
+(N'COL-PAY-004', 3, N'Agent', 2, 0, NULL),
+(N'COL-PAY-004', 4, N'Review', 5, 0, NULL),
+(N'COL-PAY-004', 5, N'Resolve', 8, 0, NULL),
+(N'COL-PAY-004', 6, N'Close', 9, 0, NULL),
+(N'HO-NOC-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'HO-NOC-001', 2, N'CS Queue', 2, 0, NULL),
+(N'HO-NOC-001', 3, N'Agent', 2, 0, NULL),
+(N'HO-NOC-001', 4, N'Accounting Approval', 4, 0, 1),
+(N'HO-NOC-001', 5, N'CS Agent', 2, 0, NULL),
+(N'HO-NOC-001', 6, N'Handover Agent', 2, 0, NULL),
+(N'HO-NOC-001', 7, N'Resolve', 8, 0, NULL),
+(N'HO-NOC-001', 8, N'Close', 9, 0, NULL),
+(N'HO-HND-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'HO-HND-001', 2, N'Handover Queue', 2, 0, NULL),
+(N'HO-HND-001', 3, N'Agent', 2, 0, NULL),
+(N'HO-HND-001', 4, N'Coordinate', 5, 0, NULL),
+(N'HO-HND-001', 5, N'Resolve', 8, 0, NULL),
+(N'HO-HND-001', 6, N'Close', 9, 0, NULL),
+(N'HO-HND-002', 1, N'Ticket Created', 1, 0, NULL),
+(N'HO-HND-002', 2, N'Handover Queue', 2, 0, NULL),
+(N'HO-HND-002', 3, N'Agent', 2, 0, NULL),
+(N'HO-HND-002', 4, N'Confirm available slot', 5, 0, NULL),
+(N'HO-HND-002', 5, N'Resolve', 8, 0, NULL),
+(N'HO-HND-002', 6, N'Close', 9, 0, NULL),
+(N'HO-HND-003', 1, N'Ticket Created', 1, 0, NULL),
+(N'HO-HND-003', 2, N'Handover Queue', 2, 0, NULL),
+(N'HO-HND-003', 3, N'Agent', 2, 0, NULL),
+(N'HO-HND-003', 4, N'Coordinate requirements', 5, 0, NULL),
+(N'HO-HND-003', 5, N'Resolve', 8, 0, NULL),
+(N'HO-HND-003', 6, N'Close', 9, 0, NULL),
+(N'HO-HND-004', 1, N'Ticket Created', 1, 0, NULL),
+(N'HO-HND-004', 2, N'Handover Queue', 2, 0, NULL),
+(N'HO-HND-004', 3, N'Facilities Management if needed (manual supporting step)', 5, 1, NULL),
+(N'HO-HND-004', 4, N'Follow-up', 5, 0, NULL),
+(N'HO-HND-004', 5, N'Resolve', 8, 0, NULL),
+(N'HO-HND-004', 6, N'Close', 9, 0, NULL),
+(N'FM-MNT-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'FM-MNT-001', 2, N'FM Queue', 2, 0, NULL),
+(N'FM-MNT-001', 3, N'Assign Agent / Technician', 2, 0, NULL),
+(N'FM-MNT-001', 4, N'In Progress', 5, 0, NULL),
+(N'FM-MNT-001', 5, N'Resolve', 8, 0, NULL),
+(N'FM-MNT-001', 6, N'Close', 9, 0, NULL),
+(N'FM-UTL-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'FM-UTL-001', 2, N'FM Queue', 2, 0, NULL),
+(N'FM-UTL-001', 3, N'Agent', 2, 0, NULL),
+(N'FM-UTL-001', 4, N'Review / coordinate', 5, 0, NULL),
+(N'FM-UTL-001', 5, N'Resolve', 8, 0, NULL),
+(N'FM-UTL-001', 6, N'Close', 9, 0, NULL),
+(N'FM-COM-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'FM-COM-001', 2, N'FM Queue', 2, 0, NULL),
+(N'FM-COM-001', 3, N'Agent / Technician', 2, 0, NULL),
+(N'FM-COM-001', 4, N'In Progress', 5, 0, NULL),
+(N'FM-COM-001', 5, N'Resolve', 8, 0, NULL),
+(N'FM-COM-001', 6, N'Close', 9, 0, NULL),
+(N'FM-SVC-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'FM-SVC-001', 2, N'FM Queue', 2, 0, NULL),
+(N'FM-SVC-001', 3, N'Responsible Finance if needed (manual supporting step)', 5, 1, NULL),
+(N'FM-SVC-001', 4, N'Agent', 2, 0, NULL),
+(N'FM-SVC-001', 5, N'Review', 5, 0, NULL),
+(N'FM-SVC-001', 6, N'Resolve', 8, 0, NULL),
+(N'FM-SVC-001', 7, N'Close', 9, 0, NULL),
+(N'LCS-TEN-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'LCS-TEN-001', 2, N'Leasing CS Queue', 2, 0, NULL),
+(N'LCS-TEN-001', 3, N'Agent', 2, 0, NULL),
+(N'LCS-TEN-001', 4, N'Process / review', 5, 0, NULL),
+(N'LCS-TEN-001', 5, N'Resolve', 8, 0, NULL),
+(N'LCS-TEN-001', 6, N'Close', 9, 0, NULL),
+(N'LCS-EJR-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'LCS-EJR-001', 2, N'Leasing CS Queue', 2, 0, NULL),
+(N'LCS-EJR-001', 3, N'Agent', 2, 0, NULL),
+(N'LCS-EJR-001', 4, N'Process / review', 5, 0, NULL),
+(N'LCS-EJR-001', 5, N'Resolve', 8, 0, NULL),
+(N'LCS-EJR-001', 6, N'Close', 9, 0, NULL),
+(N'LCS-BKG-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'LCS-BKG-001', 2, N'Leasing CS Queue', 2, 0, NULL),
+(N'LCS-BKG-001', 3, N'Agent', 2, 0, NULL),
+(N'LCS-BKG-001', 4, N'Confirm booking / details', 5, 0, NULL),
+(N'LCS-BKG-001', 5, N'Resolve', 8, 0, NULL),
+(N'LCS-BKG-001', 6, N'Close', 9, 0, NULL),
+(N'LCS-MOV-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'LCS-MOV-001', 2, N'Leasing CS Queue', 2, 0, NULL),
+(N'LCS-MOV-001', 3, N'Agent', 2, 0, NULL),
+(N'LCS-MOV-001', 4, N'Coordinate', 5, 0, NULL),
+(N'LCS-MOV-001', 5, N'Resolve', 8, 0, NULL),
+(N'LCS-MOV-001', 6, N'Close', 9, 0, NULL),
+(N'LCS-CHK-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'LCS-CHK-001', 2, N'Leasing CS Queue', 2, 0, NULL),
+(N'LCS-CHK-001', 3, N'Agent', 2, 0, NULL),
+(N'LCS-CHK-001', 4, N'Review', 5, 0, NULL),
+(N'LCS-CHK-001', 5, N'Resolve', 8, 0, NULL),
+(N'LCS-CHK-001', 6, N'Close', 9, 0, NULL),
+(N'BRK-COM-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'BRK-COM-001', 2, N'CS Queue', 2, 0, NULL),
+(N'BRK-COM-001', 3, N'CS Agent', 2, 0, NULL),
+(N'BRK-COM-001', 4, N'Admin Sales Review (manual supporting step)', 5, 0, NULL),
+(N'BRK-COM-001', 5, N'Resolve', 8, 0, NULL),
+(N'BRK-COM-001', 6, N'Close', 9, 0, NULL),
+(N'BRK-CHK-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'BRK-CHK-001', 2, N'CS Queue', 2, 0, NULL),
+(N'BRK-CHK-001', 3, N'CS Agent', 2, 0, NULL),
+(N'BRK-CHK-001', 4, N'Admin Sales: Confirm collection (manual supporting step)', 5, 0, NULL),
+(N'BRK-CHK-001', 5, N'Resolve', 8, 0, NULL),
+(N'BRK-CHK-001', 6, N'Close', 9, 0, NULL),
+(N'SAL-INQ-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'SAL-INQ-001', 2, N'CS / Call Center Queue', 2, 0, NULL),
+(N'SAL-INQ-001', 3, N'Sales Follow-up (manual supporting step)', 5, 0, NULL),
+(N'SAL-INQ-001', 4, N'Resolve', 8, 0, NULL),
+(N'SAL-INQ-001', 5, N'Close', 9, 0, NULL),
+(N'LEG-INQ-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'LEG-INQ-001', 2, N'Customer Service intake', 2, 0, NULL),
+(N'LEG-INQ-001', 3, N'Legal Review / Response (manual supporting step)', 5, 0, NULL),
+(N'LEG-INQ-001', 4, N'CS Resolve', 8, 0, NULL),
+(N'LEG-INQ-001', 5, N'Close', 9, 0, NULL),
+(N'REC-HR-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'REC-HR-001', 2, N'Customer Service intake (Reception / CS)', 2, 0, NULL),
+(N'REC-HR-001', 3, N'HR Response (manual supporting step)', 5, 0, NULL),
+(N'REC-HR-001', 4, N'Acknowledge / Resolve', 8, 0, NULL),
+(N'REC-HR-001', 5, N'Close', 9, 0, NULL),
+(N'REC-MKT-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'REC-MKT-001', 2, N'Customer Service intake (Reception / CS)', 2, 0, NULL),
+(N'REC-MKT-001', 3, N'Marketing Response (manual supporting step)', 5, 0, NULL),
+(N'REC-MKT-001', 4, N'Acknowledge / Resolve', 8, 0, NULL),
+(N'REC-MKT-001', 5, N'Close', 9, 0, NULL),
+(N'REC-OTH-001', 1, N'Ticket Created', 1, 0, NULL),
+(N'REC-OTH-001', 2, N'Customer Service intake (Reception / CS)', 2, 0, NULL),
+(N'REC-OTH-001', 3, N'Route to Responsible Department', 2, 0, NULL),
+(N'REC-OTH-001', 4, N'Resolve', 8, 0, NULL),
+(N'REC-OTH-001', 5, N'Close', 9, 0, NULL);
 -- </generated-data>
 
 IF (SELECT COUNT(*) FROM @Rows) <> 35
@@ -483,19 +503,20 @@ BEGIN
     SET @WorkflowId = CAST(SCOPE_IDENTITY() AS int);
 
     -- Version 1 carries the workflow code (the Workflow Designer's
-    -- convention). Status 2 = Published. No approval / pending step exists in
-    -- any translation, so the capability flags stay 0 exactly as the
-    -- designer's publish would derive them.
+    -- convention). Status 2 = Published. No pending step exists in any
+    -- translation; RequiresApproval is 1 exactly when the flow has an
+    -- approval step — what the designer's publish would derive.
     INSERT INTO [WorkflowTemplates]
         ([Code], [Name], [Description], [AllowsPendingCustomer], [AllowsPendingInternal], [RequiresApproval], [IsActive],
          [WorkflowId], [VersionNumber], [Status], [CreatedAtUtc], [CreatedByEmployeeId], [PublishedAtUtc], [PublishedByEmployeeId])
     VALUES
-        (@Code, @WorkflowName, @WorkflowDescription, 0, 0, 0, 1,
+        (@Code, @WorkflowName, @WorkflowDescription, 0, 0,
+         CASE WHEN EXISTS (SELECT 1 FROM @Steps s WHERE s.[RequestCode] = @Code AND s.[Kind] = 4) THEN 1 ELSE 0 END, 1,
          @WorkflowId, 1, 2, @Now, NULL, @Now, NULL);
     SET @TemplateId = CAST(SCOPE_IDENTITY() AS int);
 
     INSERT INTO [WorkflowTemplateSteps] ([WorkflowTemplateId], [Sequence], [Name], [Kind], [IsOptional], [ApprovalType])
-    SELECT @TemplateId, s.[Sequence], s.[Name], s.[Kind], s.[IsOptional], NULL
+    SELECT @TemplateId, s.[Sequence], s.[Name], s.[Kind], s.[IsOptional], s.[ApprovalType]
     FROM @Steps s
     WHERE s.[RequestCode] = @Code
     ORDER BY s.[Sequence];
@@ -529,6 +550,55 @@ CLOSE import_cursor;
 DEALLOCATE import_cursor;
 
 -------------------------------------------------------------------------------
+-- 4b. Existing real approvals: Accounting Approval (1) on the rows whose
+--     workflow waits for it, targeted at the Accounting department
+--     (TargetKind 1 = Department), blocking work, active — the same shape as
+--     the seeded Send Receipts requirement. Only where the request type has no
+--     Accounting Approval requirement at all: the (RequestTypeId,
+--     ApprovalType) index is unique and unfiltered, and a deactivated row is
+--     an operator's decision, never reactivated.
+-------------------------------------------------------------------------------
+
+DECLARE @AccountingDepartmentId int = (SELECT [DepartmentId] FROM [Departments] WHERE [Code] = N'ACC');
+
+DECLARE @Approvals TABLE ([RequestCode] nvarchar(24) NOT NULL, [ApprovalType] tinyint NOT NULL, [Added] bit NOT NULL DEFAULT 0);
+INSERT INTO @Approvals ([RequestCode], [ApprovalType])
+SELECT DISTINCT s.[RequestCode], s.[ApprovalType]
+FROM @Steps s
+INNER JOIN @Plan p ON p.[RequestCode] = s.[RequestCode]
+WHERE s.[ApprovalType] IS NOT NULL
+  AND p.[Outcome] <> N'SkippedCodeInUse'
+  AND p.[RequestTypeId] IS NOT NULL;
+
+IF EXISTS (SELECT 1 FROM @Approvals WHERE [ApprovalType] <> 1)
+BEGIN
+    THROW 50005, N'Only Accounting Approval (1) is configured by this script.', 1;
+END;
+
+IF @AccountingDepartmentId IS NULL
+BEGIN
+    PRINT 'MISSING DEPARTMENT: Accounting (ACC) does not exist — Accounting Approval was NOT configured on the NOC request types.';
+END
+ELSE
+BEGIN
+    INSERT INTO [RequestTypeApprovalRequirements]
+        ([RequestTypeId], [ApprovalType], [TargetKind], [TargetDepartmentId], [TargetRoleName], [TargetEmployeeId],
+         [BlocksWorkUntilApproved], [IsActive])
+    SELECT p.[RequestTypeId], a.[ApprovalType], 1, @AccountingDepartmentId, NULL, NULL, 1, 1
+    FROM @Approvals a
+    INNER JOIN @Plan p ON p.[RequestCode] = a.[RequestCode]
+    WHERE NOT EXISTS (
+        SELECT 1 FROM [RequestTypeApprovalRequirements] q
+        WHERE q.[RequestTypeId] = p.[RequestTypeId] AND q.[ApprovalType] = a.[ApprovalType]);
+
+    UPDATE a SET [Added] = 1
+    FROM @Approvals a
+    INNER JOIN @Plan p ON p.[RequestCode] = a.[RequestCode]
+    INNER JOIN [RequestTypeApprovalRequirements] q
+        ON q.[RequestTypeId] = p.[RequestTypeId] AND q.[ApprovalType] = a.[ApprovalType];
+END;
+
+-------------------------------------------------------------------------------
 -- 5. Verification — 35/35 reconciliation, then hard checks.
 -------------------------------------------------------------------------------
 
@@ -554,6 +624,35 @@ ORDER BY r.[Ordinal];
 SELECT [Outcome], [Rows] = COUNT(*) FROM @Plan GROUP BY [Outcome] ORDER BY [Outcome];
 
 SELECT [ActiveRequestTypesInDatabase] = COUNT(*) FROM [RequestTypes] WHERE [IsActive] = 1;
+
+PRINT '=== ACCOUNTING APPROVAL (existing approval, NOC rows) ===';
+
+SELECT a.[RequestCode],
+       [AccountingApproval] = CASE
+           WHEN @AccountingDepartmentId IS NULL THEN N'NOT configured — Accounting (ACC) department missing'
+           WHEN q.[IsActive] = 1 THEN N'Configured (active)'
+           WHEN q.[IsActive] = 0 THEN N'Present but DEACTIVATED — left as is'
+           ELSE N'Not configured' END,
+       [Target] = CASE q.[TargetKind] WHEN 1 THEN N'Department ' + ISNULL(d.[Code], N'?') WHEN 2 THEN N'Role ' + q.[TargetRoleName]
+                                      WHEN 3 THEN N'Employee' ELSE N'' END
+FROM @Approvals a
+INNER JOIN @Plan p ON p.[RequestCode] = a.[RequestCode]
+LEFT JOIN [RequestTypeApprovalRequirements] q ON q.[RequestTypeId] = p.[RequestTypeId] AND q.[ApprovalType] = a.[ApprovalType]
+LEFT JOIN [Departments] d ON d.[DepartmentId] = q.[TargetDepartmentId]
+ORDER BY a.[RequestCode];
+
+PRINT '=== SUPPORTING TEAMS (manual steps; report only — nothing is created) ===';
+
+SELECT t.[Team],
+       [DepartmentExists] = CASE WHEN d.[DepartmentId] IS NULL THEN N'No — Missing Department' ELSE N'Yes' END,
+       [Active]           = CASE WHEN d.[IsActive] = 1 THEN N'Yes' WHEN d.[IsActive] = 0 THEN N'No' ELSE N'' END,
+       [ActiveMembers]    = (SELECT COUNT(*) FROM [UserDepartmentAssignments] uda
+                             INNER JOIN [Employees] e ON e.[EmployeeId] = uda.[EmployeeId]
+                             WHERE uda.[DepartmentId] = d.[DepartmentId] AND e.[DeactivatedAtUtc] IS NULL)
+FROM (VALUES (N'Admin Sales'), (N'Sales'), (N'Legal'), (N'HR')) t([Team])
+LEFT JOIN [Departments] d ON d.[Name] = t.[Team];
+
+PRINT 'Next: run ConfigureReopenApprovalRequirements.sql so the new request types that allow Reopen also offer Reopen Approval.';
 
 -- Exactly one request type per imported code.
 IF EXISTS (

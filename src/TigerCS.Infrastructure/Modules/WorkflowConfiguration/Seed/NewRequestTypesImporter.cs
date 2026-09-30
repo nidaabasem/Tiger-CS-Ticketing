@@ -28,18 +28,22 @@ public enum NewRequestTypeImportOutcome : byte
 /// <param name="RequestTypeId">The request type created, previously imported or reused, when there is one.</param>
 /// <param name="SlaConfigured">True when a <see cref="RequestTypeSlaPolicy"/> row exists for it from this import.</param>
 /// <param name="SimilarExistingRequestType">An existing request type in the owning department with a similar (not identical) name, or null.</param>
+/// <param name="ApprovalRequirementsAdded">The existing approvals this run configured on the request type (its workflow waits for them and none was configured yet).</param>
 public sealed record NewRequestTypeImportRowResult(
     string RequestCode,
     NewRequestTypeImportOutcome Outcome,
     int? RequestTypeId,
     bool SlaConfigured,
-    string? SimilarExistingRequestType);
+    string? SimilarExistingRequestType,
+    IReadOnlyList<ApprovalType>? ApprovalRequirementsAdded = null);
 
 /// <param name="Rows">One result per workbook row, in workbook order.</param>
 /// <param name="CreatedDepartments">The owning departments this run created because they were missing.</param>
+/// <param name="ApprovalDepartmentMissing">True when a row's workflow waits for Accounting Approval but no Accounting department exists — the approval is then NOT configured (the department is never created here).</param>
 public sealed record NewRequestTypeImportResult(
     IReadOnlyList<NewRequestTypeImportRowResult> Rows,
-    IReadOnlyList<string> CreatedDepartments)
+    IReadOnlyList<string> CreatedDepartments,
+    bool ApprovalDepartmentMissing = false)
 {
     public int Count(NewRequestTypeImportOutcome outcome) => Rows.Count(r => r.Outcome == outcome);
 }
@@ -54,7 +58,8 @@ public sealed record NewRequestTypeImportResult(
 ///   <item><description><b>No duplicates.</b> An existing request type of the same name in the owning department is reused as-is.</description></item>
 ///   <item><description><b>Idempotent.</b> A row is recognised as already imported by its Request Code (the code of the workflow its request type points at); a second run creates nothing.</description></item>
 ///   <item><description><b>Additive only.</b> Never updates or deletes an existing row.</description></item>
-///   <item><description><b>Basic.</b> No approval requirement is created ("Conditional" is not specific enough to configure) and no SLA row where the workbook gives no number ("Based on severity") — the standard behaviour applies until one is added from Administration.</description></item>
+///   <item><description><b>Basic.</b> The workbook's "Conditional" approvals are not configured (no rule, and no existing approval type matches those approvers), and no SLA row where the workbook gives no number ("Based on severity") — the standard behaviour applies until one is added from Administration.</description></item>
+///   <item><description><b>Real approvals only.</b> The one approval step in the translations — Accounting's part of a NOC — is the EXISTING Accounting Approval, decided by the Accounting department. It is added to the request type (created or reused) only when that request type has no Accounting Approval requirement at all, active or not; nothing existing is changed. Supporting teams' steps are manual and informational.</description></item>
 ///   <item><description><b>Departments.</b> Owning departments are resolved by code, then exact name; Facilities Management and Leasing Customer Services are created when missing.</description></item>
 ///   <item><description><b>Transactional</b> on a relational provider: all rows or none.</description></item>
 /// </list>
@@ -94,12 +99,35 @@ public static class NewRequestTypesImporter
             departments = await LoadDepartmentsAsync(dbContext, cancellationToken);
         }
 
+        var accountingDepartmentId = departments
+            .FirstOrDefault(d => string.Equals(d.Code, WorkflowReferenceData.AccountingCode, StringComparison.OrdinalIgnoreCase))
+            ?.DepartmentId;
+        var approvalDepartmentMissing = false;
+
         var results = new List<NewRequestTypeImportRowResult>();
         foreach (var row in Rows())
         {
             var departmentId = Find(departments, row.OwningDepartment)?.DepartmentId
                 ?? throw new InvalidOperationException($"{row.RequestCode}: owning department '{row.OwningDepartment.Name}' ({row.OwningDepartment.Code}) does not exist.");
-            results.Add(await ImportRowAsync(dbContext, row, departmentId, utcNow, cancellationToken));
+            var result = await ImportRowAsync(dbContext, row, departmentId, utcNow, cancellationToken);
+
+            if (result.RequestTypeId is { } requestTypeId && row.Approvals.Count > 0)
+            {
+                if (accountingDepartmentId is null)
+                {
+                    approvalDepartmentMissing = true;
+                }
+                else
+                {
+                    result = result with
+                    {
+                        ApprovalRequirementsAdded = await AddMissingApprovalsAsync(
+                            dbContext, row, requestTypeId, accountingDepartmentId.Value, cancellationToken)
+                    };
+                }
+            }
+
+            results.Add(result);
         }
 
         if (transaction is not null)
@@ -107,7 +135,44 @@ public static class NewRequestTypesImporter
             await transaction.CommitAsync(cancellationToken);
         }
 
-        return new NewRequestTypeImportResult(results, createdDepartments);
+        return new NewRequestTypeImportResult(results, createdDepartments, approvalDepartmentMissing);
+    }
+
+    /// <summary>
+    /// Configures the existing approvals a row's workflow waits for — today
+    /// only Accounting Approval, targeted at the Accounting department exactly
+    /// as the reference seed targets Send Receipts'. A requirement that
+    /// already exists for the pair, active or deactivated, is left alone (the
+    /// pair is unique, and reactivating one would overturn an operator).
+    /// </summary>
+    private static async Task<IReadOnlyList<ApprovalType>> AddMissingApprovalsAsync(
+        TigerCsDbContext dbContext, Row row, int requestTypeId, int accountingDepartmentId, CancellationToken cancellationToken)
+    {
+        var added = new List<ApprovalType>();
+        foreach (var approvalType in row.Approvals)
+        {
+            if (approvalType != ApprovalType.AccountingApproval)
+            {
+                throw new InvalidOperationException($"{row.RequestCode}: only Accounting Approval is configured by this import, not {approvalType}.");
+            }
+
+            if (await dbContext.RequestTypeApprovalRequirements.AnyAsync(
+                    r => r.RequestTypeId == requestTypeId && r.ApprovalType == approvalType, cancellationToken))
+            {
+                continue;
+            }
+
+            dbContext.RequestTypeApprovalRequirements.Add(
+                RequestTypeApprovalRequirement.ForDepartment(requestTypeId, approvalType, accountingDepartmentId));
+            added.Add(approvalType);
+        }
+
+        if (added.Count > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return added;
     }
 
     private sealed record DepartmentKey(int DepartmentId, string Code, string Name);
@@ -175,7 +240,7 @@ public static class NewRequestTypesImporter
         byte sequence = 1;
         foreach (var step in row.Steps)
         {
-            version.AddStep(sequence++, step.Name, step.Kind, step.IsOptional);
+            version.AddStep(sequence++, step.Name, step.Kind, step.IsOptional, step.ApprovalType);
         }
 
         // The validated publish path, never PublishAsSeededBaseline: a flow
