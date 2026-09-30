@@ -1,0 +1,85 @@
+{
+  "name": "TigerCS - Customer Confirmed Resolved",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/${input.ticketId}",
+      "requestType": "PATCH",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"customerConfirmation\": {\"confirmedResolved\": true, \"confirmedAtUtc\": #if(\"$!{input.confirmedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.confirmedAtUtc})\"#end, \"note\": \"$!esc.jsonString($input.note)\"}}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketId": "$.ticketId",
+        "ticketNumber": "$.ticketNumber",
+        "ticketStatus": "$.ticketStatus"
+      },
+      "translationMapDefaults": {},
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketId\": \"${ticketId}\", \"ticketNumber\": ${ticketNumber}, \"ticketStatus\": ${ticketStatus}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Customer Confirmed Resolved",
+        "type": "object",
+        "required": [
+          "ticketId",
+          "conversationId"
+        ],
+        "properties": {
+          "ticketId": {
+            "type": "string",
+            "description": "Participant data TigerCsTicketId."
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "The conversation id."
+          },
+          "confirmedAtUtc": {
+            "type": "string",
+            "description": "ISO-8601 UTC, when the customer confirmed. Empty = TigerCS clock. Send it so a retry is recognized."
+          },
+          "note": {
+            "type": "string",
+            "description": "What the customer said, or the flow's note. Optional."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Customer Confirmed Resolved result",
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "\"Applied\"."
+          },
+          "ticketId": {
+            "type": "string",
+            "description": "The same TigerCS ticket id."
+          },
+          "ticketNumber": {
+            "type": "string",
+            "description": "Its ticket number."
+          },
+          "ticketStatus": {
+            "type": "string",
+            "description": "The ticket status - never changed by this call. Resolve and Close stay TigerCS actions."
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

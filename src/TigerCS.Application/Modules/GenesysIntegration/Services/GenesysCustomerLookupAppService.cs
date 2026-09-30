@@ -1,5 +1,8 @@
+using System.Globalization;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
+using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.Ticketing;
 
@@ -58,9 +61,19 @@ public sealed class GenesysCustomerLookupAppService(
             return null;
         }
 
-        var trimmed = phoneNumber.Trim();
+        // Genesys reports the caller as a telephony address ("tel:+971…"),
+        // not as a person would type it. Searched in TigerCS' own "+971…"
+        // form, or not at all when the address carries no number — a
+        // withheld caller id is a normal "nobody found", never a 500, and
+        // CRM/PACT are not asked about a number that does not exist.
+        var searched = CustomerPhoneNumber.FromTelephonyAddress(phoneNumber);
+        if (searched is null)
+        {
+            return new GenesysCustomerLookupResultDto(
+                string.Empty, Found: false, CrmStatus: "NotSearched", [], [], [], 0, EmptyScreenPop);
+        }
 
-        var search = await customerSearchAppService.SearchByPhoneAsync(trimmed, cancellationToken);
+        var search = await customerSearchAppService.SearchByPhoneAsync(searched, cancellationToken);
 
         var found = search.CrmBuyers.Count > 0
             || search.ExternalSources.Any(s => s.Customers.Count > 0);
@@ -72,7 +85,7 @@ public sealed class GenesysCustomerLookupAppService(
         // when it sits in a department they cannot open themselves. The
         // summary is deliberately thin for that reason — no customer data
         // beyond what this caller's own number already produced.
-        var linkedTicketIds = await intakeRecordRepository.ListLinkedTicketIdsByPhoneNumberAsync(trimmed, cancellationToken);
+        var linkedTicketIds = await intakeRecordRepository.ListLinkedTicketIdsByPhoneNumberAsync(searched, cancellationToken);
 
         var tickets = linkedTicketIds.Count == 0
             ? []
@@ -86,14 +99,77 @@ public sealed class GenesysCustomerLookupAppService(
                     OrderActiveFirst: true),
                 cancellationToken)).Tickets;
 
+        var ticketDtos = tickets.Select(ToDto).ToList();
+
         return new GenesysCustomerLookupResultDto(
-            trimmed,
+            searched,
             found,
             search.CrmStatus,
             search.CrmBuyers,
             search.ExternalSources,
-            tickets.Select(ToDto).ToList(),
-            tickets.Count(IsOpen));
+            ticketDtos,
+            tickets.Count(IsOpen),
+            ToScreenPop(search.CrmBuyers, search.ExternalSources, ticketDtos));
+    }
+
+    private static readonly GenesysScreenPopDto EmptyScreenPop =
+        new(string.Empty, string.Empty, string.Empty, string.Empty, 0, [], string.Empty, [], [], string.Empty);
+
+    /// <summary>
+    /// The flat screen-pop projection of the full result: CRM first, then
+    /// PACT, then Tasleeh — the order the New Ticket wizard presents them in.
+    /// Nothing here is looked up again; it only reshapes what the sources
+    /// already answered.
+    /// </summary>
+    private static GenesysScreenPopDto ToScreenPop(
+        IReadOnlyList<CrmBuyerMatchDto> crmBuyers,
+        IReadOnlyList<CustomerLookupSourceResultDto> externalSources,
+        IReadOnlyList<GenesysCustomerTicketDto> tickets)
+    {
+        var customers = crmBuyers
+            .Select(b => new ScreenPopCustomer(
+                nameof(CustomerLookupSource.Crm),
+                b.Customer.CustomerId.ToString(CultureInfo.InvariantCulture),
+                b.Customer.FullNameEnglish ?? b.Customer.FullNameArabic,
+                b.Customer.Email,
+                b.Units.Select(u => UnitLabel(u.ProjectName, u.UnitNumber))))
+            .Concat(externalSources
+                .OrderBy(s => s.Source == nameof(CustomerLookupSource.Pact) ? 0 : 1)
+                .SelectMany(s => s.Customers.Select(c => new ScreenPopCustomer(
+                    s.Source,
+                    c.ExternalCustomerId,
+                    c.DisplayName,
+                    c.Email,
+                    c.Units.Select(u => UnitLabel(u.PropertyName ?? u.TowerName, u.UnitNumber))))))
+            .ToList();
+
+        var primary = customers.FirstOrDefault();
+
+        var units = customers
+            .SelectMany(c => c.Units)
+            .Where(label => label.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new GenesysScreenPopDto(
+            CustomerName: primary?.Name?.Trim() ?? string.Empty,
+            CustomerEmail: primary?.Email?.Trim() ?? string.Empty,
+            VerificationSource: primary?.Source ?? string.Empty,
+            ExternalCustomerId: primary?.ExternalId ?? string.Empty,
+            MatchedCustomerCount: customers.Count,
+            Units: units,
+            UnitsText: string.Join("; ", units),
+            RecentTicketNumbers: tickets.Select(t => t.TicketNumber).ToList(),
+            OpenTicketNumbers: tickets.Where(t => t.IsOpen).Select(t => t.TicketNumber).ToList(),
+            RecentTicketsText: string.Join("; ", tickets.Select(t => $"{t.TicketNumber} ({t.TicketStatus})")));
+    }
+
+    private static string UnitLabel(string? project, string? unitNumber)
+    {
+        var parts = new[] { project, unitNumber }
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p!.Trim());
+        return string.Join(" - ", parts);
     }
 
     /// <summary>A ticket nobody has finished with — what an agent picking up the phone actually needs to spot.</summary>
@@ -108,4 +184,7 @@ public sealed class GenesysCustomerLookupAppService(
         ticket.RequestSummary,
         ticket.CurrentDepartmentId,
         ticket.CreatedAtUtc);
+
+    private sealed record ScreenPopCustomer(
+        string Source, string ExternalId, string? Name, string? Email, IEnumerable<string> Units);
 }

@@ -73,7 +73,17 @@ public enum WorkflowEventType : byte
     HandoffCompleted = 13,
 
     /// <summary>The human work was stood down — the AI resumed, or a person is no longer needed. The note carries the required reason.</summary>
-    HandoffCancelled = 14
+    HandoffCancelled = 14,
+
+    /// <summary>
+    /// The customer explicitly told the contact centre, during a Genesys
+    /// interaction, that their issue is resolved. <b>Record-only:</b> it does
+    /// not resolve or close the ticket — those stay the owner's and CS's own
+    /// operations under their existing authorization — it gives them the
+    /// customer's word, with when it was said. Stored here for the same
+    /// reason as the handoff events, so it needs no schema change.
+    /// </summary>
+    CustomerConfirmedResolved = 15
 }
 
 /// <summary>
