@@ -159,6 +159,7 @@ public sealed class FixtureCollectionsFinancialSource(CollectionsClock clock) : 
                 "ACC-9001-1204-P", 9001, 9200, "Tiger Tower A", "1204 (parking)", "AED", asOfUtc,
                 ReportedOutstandingPrincipal: parking.Sum(i => i.RemainingAmount),
                 parking, [], [],
+                AppliedCreditAmount: 0m,
                 CustomerPhone: "+971500000900", CustomerEmail: "buyer@example.test", CustomerName: "Test Buyer"),
 
             new FinancialAccountSnapshot(
@@ -169,12 +170,14 @@ public sealed class FixtureCollectionsFinancialSource(CollectionsClock clock) : 
                     new FinancialPayment("PAY-0805-01", Due(-2), 25_000m, "BankTransfer", FinancialPaymentStatus.Posted, "RCT-10001", true, [new FinancialPaymentAllocation("INS-0805-01", 25_000m)]),
                     new FinancialPayment("PAY-0805-02", Due(-1), 25_000m, "BankTransfer", FinancialPaymentStatus.Posted, "RCT-10002", true, [new FinancialPaymentAllocation("INS-0805-02", 25_000m)]),
                 ],
+                AppliedCreditAmount: 0m,
                 CustomerPhone: "+971500000900", CustomerEmail: "buyer@example.test", CustomerName: "Test Buyer"),
 
             new FinancialAccountSnapshot(
                 "ACC-9002-0310", 9002, 9300, "Tiger Tower B", "0310", "AED", asOfUtc,
                 ReportedOutstandingPrincipal: 12_000m, // disagrees with the 16,000 schedule
                 mismatch, [], [],
+                AppliedCreditAmount: 0m,
                 CustomerPhone: "+971500000901", CustomerName: "Mismatch Buyer"),
         ];
     }

@@ -162,6 +162,15 @@ public sealed class EdsmPaymentSummaryParseTests
     }
 
     [Fact]
+    public void ANullPayloadWithAnEnvelopeMessage_IsInvalid_AndCarriesTheMessage()
+    {
+        var result = Parse("""{"data":null,"message":"Company not supported"}""");
+
+        Assert.Equal(EdsmPaymentSummaryOutcome.InvalidResponse, result.Outcome);
+        Assert.Contains("Company not supported", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LateFines_AreNeverAddedToAnotherField()
     {
         var s = Parse("""{"data":{"dueAmount":"100.00","lateFines":"25.00"}}""").Summary!;
@@ -190,12 +199,48 @@ public sealed class EdsmPaymentSummaryHttpGatewayTests
     {
         var handler = Answer(HttpStatusCode.OK, """{"data":{"totalAmount":"1.00"}}""");
 
-        var result = await Gateway(handler).GetPaymentSummaryAsync(12, 3001);
+        var result = await Gateway(handler).GetPaymentSummaryAsync(12, "3001");
 
         Assert.Equal(EdsmPaymentSummaryOutcome.Success, result.Outcome);
         Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
         Assert.Equal("https://pact.example.test/api/v1/reports/payment-summary?CompanyId=12&TenantId=3001", handler.LastRequest.RequestUri!.AbsoluteUri);
         Assert.Equal(ApiKey, Assert.Single(handler.LastRequest.Headers.GetValues("X-API-KEY")));
+    }
+
+    [Fact]
+    public async Task AgainstTheConfiguredRootBaseUrl_TheUrlMatchesPactServicesOwnComposition()
+    {
+        // PactService.PaymentSummaryAsync sends "/v1/reports/payment-summary?..." (leading slash) on the same
+        // HttpClient base; against the configured root BaseUrl both resolve to the same absolute URL.
+        const string configured = "http://10.30.10.117:6020/";
+        var handler = Answer(HttpStatusCode.OK, """{"data":{"totalAmount":"1.00"}}""");
+
+        await Gateway(handler, baseUrl: configured).GetPaymentSummaryAsync(1, "3001");
+
+        var pactService = new Uri(new Uri(configured), "/v1/reports/payment-summary?CompanyId=1&TenantId=3001");
+        Assert.Equal(pactService.AbsoluteUri, handler.LastRequest!.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task ABaseUrlWithAPathPrefix_KeepsThePrefix()
+    {
+        // The one place the two compositions differ: a leading slash would drop "/api". Ours keeps it,
+        // like PactCustomerHttpGateway; the deployed BaseUrl has no prefix, so they agree there.
+        var handler = Answer(HttpStatusCode.OK, """{"data":{"totalAmount":"1.00"}}""");
+
+        await Gateway(handler, baseUrl: "https://pact.example.test/api/").GetPaymentSummaryAsync(1, "3001");
+
+        Assert.StartsWith("https://pact.example.test/api/v1/reports/payment-summary", handler.LastRequest!.RequestUri!.AbsoluteUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheTenantId_IsAStringAsInPactService_AndIsEscaped()
+    {
+        var handler = Answer(HttpStatusCode.OK, """{"data":{"totalAmount":"1.00"}}""");
+
+        await Gateway(handler).GetPaymentSummaryAsync(1, "30&01");
+
+        Assert.EndsWith("CompanyId=1&TenantId=30%2601", handler.LastRequest!.RequestUri!.AbsoluteUri, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -207,7 +252,7 @@ public sealed class EdsmPaymentSummaryHttpGatewayTests
     [InlineData(HttpStatusCode.ServiceUnavailable, EdsmPaymentSummaryOutcome.Unavailable)]
     public async Task StatusCodes_MapToOutcomes_WithNoSummary(HttpStatusCode status, EdsmPaymentSummaryOutcome expected)
     {
-        var result = await Gateway(Answer(status)).GetPaymentSummaryAsync(1, 3001);
+        var result = await Gateway(Answer(status)).GetPaymentSummaryAsync(1, "3001");
 
         Assert.Equal(expected, result.Outcome);
         Assert.Null(result.Summary);
@@ -218,7 +263,7 @@ public sealed class EdsmPaymentSummaryHttpGatewayTests
     {
         var handler = Answer(HttpStatusCode.OK, "{}");
 
-        var result = await Gateway(handler, apiKey: " ").GetPaymentSummaryAsync(1, 3001);
+        var result = await Gateway(handler, apiKey: " ").GetPaymentSummaryAsync(1, "3001");
 
         Assert.Equal(EdsmPaymentSummaryOutcome.Unavailable, result.Outcome);
         Assert.Equal(0, handler.CallCount);
@@ -227,7 +272,7 @@ public sealed class EdsmPaymentSummaryHttpGatewayTests
     [Fact]
     public async Task NoBaseUrl_IsUnavailable()
     {
-        var result = await Gateway(Answer(HttpStatusCode.OK, "{}"), baseUrl: null).GetPaymentSummaryAsync(1, 3001);
+        var result = await Gateway(Answer(HttpStatusCode.OK, "{}"), baseUrl: null).GetPaymentSummaryAsync(1, "3001");
 
         Assert.Equal(EdsmPaymentSummaryOutcome.Unavailable, result.Outcome);
     }
@@ -238,14 +283,14 @@ public sealed class EdsmPaymentSummaryHttpGatewayTests
         var timeout = new StubHttpMessageHandler((_, _) => throw new TaskCanceledException("timeout"));
         var network = new StubHttpMessageHandler((_, _) => throw new HttpRequestException("refused"));
 
-        Assert.Equal(EdsmPaymentSummaryOutcome.Unavailable, (await Gateway(timeout).GetPaymentSummaryAsync(1, 3001)).Outcome);
-        Assert.Equal(EdsmPaymentSummaryOutcome.Unavailable, (await Gateway(network).GetPaymentSummaryAsync(1, 3001)).Outcome);
+        Assert.Equal(EdsmPaymentSummaryOutcome.Unavailable, (await Gateway(timeout).GetPaymentSummaryAsync(1, "3001")).Outcome);
+        Assert.Equal(EdsmPaymentSummaryOutcome.Unavailable, (await Gateway(network).GetPaymentSummaryAsync(1, "3001")).Outcome);
     }
 
     [Fact]
     public async Task AnHtmlErrorPageWith200_IsAnInvalidResponse()
     {
-        var result = await Gateway(Answer(HttpStatusCode.OK, "<html>Login</html>")).GetPaymentSummaryAsync(1, 3001);
+        var result = await Gateway(Answer(HttpStatusCode.OK, "<html>Login</html>")).GetPaymentSummaryAsync(1, "3001");
 
         Assert.Equal(EdsmPaymentSummaryOutcome.InvalidResponse, result.Outcome);
     }
@@ -310,8 +355,8 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
             new PactContractDto("41230", "88001", "0304", "Tiger Marina Residences", "Residential", 1),
             new PactContractDto("51200", "99002", "1101", "Tiger Heights", "Residential", 2)));
         _pact.Seed(Phone, Tenant("4444", new PactContractDto("70000", "77777", "0101", "Other", "Residential", 3)));
-        _edsm.Answers[(1, 3001)] = EdsmPaymentSummaryResult.Success(Sample, "data");
-        _edsm.Answers[(2, 3001)] = EdsmPaymentSummaryResult.Failure(EdsmPaymentSummaryOutcome.Unavailable, "timed out");
+        _edsm.Answers[(1, "3001")] = EdsmPaymentSummaryResult.Success(Sample, "data");
+        _edsm.Answers[(2, "3001")] = EdsmPaymentSummaryResult.Failure(EdsmPaymentSummaryOutcome.Unavailable, "timed out");
 
         var result = await Service().GetAsync(_agent, PactKey);
 
@@ -319,7 +364,7 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
         var dto = result.Value!;
         Assert.Equal("Mapped", dto.MappingStatus);
         Assert.Equal("3001", dto.PactTenantId);
-        Assert.Equal([(1, 3001L), (2, 3001L)], _edsm.Calls);                 // never tenant 4444's company 3
+        Assert.Equal([(1, "3001"), (2, "3001")], _edsm.Calls);                 // never tenant 4444's company 3
         Assert.Equal(Now, dto.RetrievedAtUtc);
         Assert.Null(dto.SourceAsOfUtc);
         Assert.Null(dto.Currency);
@@ -424,11 +469,11 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
 
     private sealed class FakeEdsm : IEdsmPaymentSummaryGateway
     {
-        public Dictionary<(int, long), EdsmPaymentSummaryResult> Answers { get; } = [];
-        public List<(int, long)> Calls { get; } = [];
+        public Dictionary<(int, string), EdsmPaymentSummaryResult> Answers { get; } = [];
+        public List<(int, string)> Calls { get; } = [];
         public string SourceName => "Test";
 
-        public Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, long tenantId, CancellationToken cancellationToken = default)
+        public Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, string tenantId, CancellationToken cancellationToken = default)
         {
             Calls.Add((companyId, tenantId));
             return Task.FromResult(Answers.TryGetValue((companyId, tenantId), out var answer)

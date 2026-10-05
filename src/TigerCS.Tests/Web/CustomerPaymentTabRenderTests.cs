@@ -254,6 +254,21 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task ChargesAndCreditsTheSourceDidNotReport_SaySo_WhilePrincipalIsShown()
+    {
+        _api.ChargesUnreported = true;
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001"));
+
+        Assert.Contains("data-payment-state=\"Loaded\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-balance-unavailable", html, StringComparison.Ordinal);
+        Assert.Contains("AED 45,000.00", html, StringComparison.Ordinal);                  // principal still shown
+        Assert.Contains("<dt>Payable penalties</dt><dd>Not provided by source</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Applied credit</dt><dd>Not provided by source</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Amount due now</dt><dd>Not provided by source</dd>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<dt>Payable fees</dt><dd>AED 0.00</dd>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task APactCustomer_IsDeferred_NotRefusedAsNonCrm()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001"));
@@ -323,6 +338,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         public string Mode { get; set; } = "loaded";
         public bool CanSend { get; set; }
         public bool Stale { get; set; }
+        public bool ChargesUnreported { get; set; }
         public HttpStatusCode QueueAnswer { get; set; } = HttpStatusCode.Accepted;
         public List<string> Requests { get; } = [];
         public string? LastPostBody { get; private set; }
@@ -353,7 +369,9 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         private CollectionsAccountDto Arrears => new(
             "ACC-45001", 45001, "Example Tower", "1205", "AED", Stale ? Now.AddHours(-5) : Now.AddMinutes(-2), Stale ? "Stale" : "Current",
-            45_000m, 30_000m, 0m, 15_000m, 500m, 0m, 0m, 30_500m, 10_000m, Today.AddMonths(-4),
+            45_000m, 30_000m, 0m, 15_000m,
+            ChargesUnreported ? null : 500m, ChargesUnreported ? null : 0m, ChargesUnreported ? null : 0m, ChargesUnreported ? null : 30_500m,
+            10_000m, Today.AddMonths(-4),
             new CollectionsNextPaymentDto("INST-OCT-2026", Today.AddDays(13), 10_000m), []);
 
         private static CollectionsAccountDto Settled => new(

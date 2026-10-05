@@ -26,7 +26,8 @@ public interface IEdsmPaymentSummaryGateway
     /// <summary>"Unavailable", "Pact" or "Fixture" — echoed to callers so fixture data is always labelled.</summary>
     string SourceName { get; }
 
-    Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, long tenantId, CancellationToken cancellationToken = default);
+    /// <summary>Mirrors the supplied <c>PactService.PaymentSummaryAsync(int companyId, string tenantId)</c>.</summary>
+    Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, string tenantId, CancellationToken cancellationToken = default);
 }
 
 public enum EdsmPaymentSummaryOutcome

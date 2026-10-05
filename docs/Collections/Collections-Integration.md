@@ -65,7 +65,7 @@ in §9.
 | Other repositories visible to this session, and Google Drive | No EDSM code, contract or response sample |
 | TigerGroupWeb (the proxy Genesys calls through) | Not available to this session |
 | PACT integration (`src/TigerCS.Integrations/Modules/PactIntegration/`) | The client to reuse: `PactApi:BaseUrl`, `X-API-KEY`, `GET v1/contracts/{mobile}` whose rows carry `tenantID` **and** `companyID`. Used for §2.1 |
-| EDSM payment-summary service/repository, `DueInstallmentsService` | **Not available.** Only the `PaymentsSummaryOutputModel` class and the route were supplied |
+| `EDSM_Collections_Source_Evidence.md` (supplied 5 Oct 2026) | `PactService` client methods, `PaymentSummaryAsync` excerpt, `PaymentsSummaryOutputModel`, full `DueInstallmentsService`. See §2.2 |
 
 **The payment summary is implemented (§2.1).** The per-account adapter
 (`ICollectionsFinancialSource`: instalments with due dates, posted payments,
@@ -156,14 +156,66 @@ TigerCS called EDSM, and the tab labels it as such.
 - The summary covers all of the tenant's contracts in that company. The tab
   lists those contracts and says this is unconfirmed.
 
-**Not done:**
-- Reminder eligibility. The summary has no due dates, so it cannot show
-  "overdue more than one month / three months".
-- Validation against EDSM UAT records.
+**Not done:** reminder eligibility from EDSM (§2.2), and validation against
+EDSM UAT records.
 
-`DueInstallmentsService` is named as evidence, but it was not supplied, so its
-route, status meanings and `Amount` semantics are unknown, and nothing here
-uses it.
+### 2.2 Comparison with the supplied evidence (`EDSM_Collections_Source_Evidence.md`)
+
+| Evidence | Effect on TigerCS |
+|---|---|
+| `PactService` reads `PactApi:BaseUrl` / `PactApi:ApiKey` and sends `X-API-KEY` | Matches the gateway, which reuses the same section and header. No change needed |
+| `PaymentSummaryAsync(int companyId, string tenantId)` | **Changed:** the port now takes the tenant as a `string`, URL-escaped; PACT tenant ids are still validated as positive integers before use |
+| Endpoint written `/v1/reports/payment-summary?…` (leading slash) | Against the configured root `BaseUrl` (`http://10.30.10.117:6020/`), TigerCS's relative `v1/…` resolves to the **same absolute URL** (tested). They differ only if `BaseUrl` ever has a path prefix, where TigerCS keeps the prefix (as `PactCustomerHttpGateway` does) |
+| Case-insensitive deserialization | **Confirmed** for the client; the gateway already matches names case-insensitively |
+| Deserialized into `APIsDTOs.EDSMPaymentsSummaryOutputModelResponse` (definition not found) | **Envelope still unconfirmed.** The `…Response` name and EDSM's `Response<T>` convention suggest a wrapper, but its property names are unknown. The gateway still accepts `data`-wrapped or bare, and now reports an envelope `message` when the payload is null |
+| `response.EnsureSuccessStatusCode()` | The consumer treats every non-2xx as failure; TigerCS does too (404 → NotFound, 401/403 → Unauthorized, other → Unavailable) |
+| `GetLateFinesAsync` (`v1/late-fines?CompanyId=&TenantId=`) | Not wired: no response model supplied. Late fines therefore stay "as reported in the summary", unconfirmed |
+| `PaymentTransactionsAsync` (`v1/reports/payment-transactions?Mobile=&CompanyId=&TenantId=&TransactionTypeId=`) | Not wired: `TransactionTypeId` values, response model and `NullableDateTimeConverter` not supplied. Payment history for PACT customers stays "not available" |
+| `GetUnitSummaryByCodeAsync` (`v1/contracts/{unitCode}/get-unit-summary`) | Not wired: no response model supplied |
+| `DueInstallmentsService.GetDueInstallmentsByCompanyIdAsync(DueInstallmentsInputModel)` | **Not wired** (see below) |
+
+**`DueInstallmentsService`: what it shows, and why reminders still do not use it.**
+- **What it does:**
+  - It discovers rows by company and date range (`CompanyId`, `FromDate`,
+    `ToDate`) for four companies: TigerGroupDubai, TigerGroupSharjah,
+    HirmasDubai and AlsabeelSharjah. The numeric `CompanyEnum` values are
+    unknown, and any other company returns `BadRequest "Company not supported"`.
+  - Each row carries `CompanyID, TenantID, UnitID, VoucherNumber,
+    ChequeNumber, ChequeDueDate, Amount, Status`.
+  - Rows with a blank `Status` are dropped. **No other filter is applied**, so
+    paid or cleared rows may be returned.
+  - Results are **cached** per company and date range for
+    `CacheDuration.DueInstallments` minutes. It cannot serve as the fresh
+    re-read TigerCS requires immediately before dispatch.
+- **What is missing before reminders can use it:**
+  - The HTTP route or controller is not supplied, so TigerCS has nothing to call.
+  - The meanings of the `Status` values, `Amount` (scheduled, remaining or
+    cheque amount) and `ChequeDueDate` are unknown, and so are the field types.
+  - It is unknown whether `UnitID` is a PACT or CRM unit, and whether every
+    instalment is cheque-based.
+- **Result:** none of this proves "unpaid principal overdue more than one or
+  three months", so the reminder candidates and scheduler do not use it, and
+  the summary's five fields are never used for eligibility either.
+
+**CRM-selected customers: no deterministic link exists.**
+- A ticket stores **either** CRM buyer IDs (`Ticket.CreateVerifiedFromCrmBuyer`)
+  **or** an external PACT tenant (`Ticket.CreateFromExternalLookup`), never both.
+- The Customer Profile's units carry `CrmBuyerUnitId` or `ExternalUnitId`
+  from the same identity's tickets only.
+- No stored, verified crosswalk from a CRM customer, contract or unit to a
+  PACT/EDSM tenant and company exists, so CRM customers remain `NotMapped`.
+- A phone match alone is not used.
+
+**Unreported charges and credits are unknown, not zero (done):**
+- `FinancialAccountSnapshot.Charges` is now nullable: `null` means not
+  reported, and an empty list means reported as none.
+- `AppliedCreditAmount` is now nullable and defaults to `null`.
+- When either is not reported, the per-account API returns `null` for
+  penalties, fees, credit and **amount due now**.
+- The Payment tab shows "Not provided by source" for those figures, while
+  principal is still shown.
+- A reminder whose configured amount includes penalties and fees is refused
+  (`PenaltiesAndFeesNotReported`) instead of stating a smaller amount.
 
 ### Exactly what is still needed from the EDSM owners
 
@@ -180,11 +232,13 @@ uses it.
    `companyID`, and whether the summary covers every contract the tenant has
    in that company.
 
-**For reminder discovery (`DueInstallmentsService`):**
-5. Its code or contract: route, parameters, response envelope, the meaning of
-   each status value, what `Amount` is (scheduled or remaining principal; with
-   or without fines), and the due-date field. Only that can prove the
-   one-month and three-month overdue rules.
+**For reminder discovery (`DueInstallmentsService`, code now supplied):**
+5. Its HTTP route or controller, the `DueInstallmentsInputModel` and
+   `DueInstallmentsOutputModel` types (field types, date format), the
+   `Response<T>` JSON shape, the numeric `CompanyEnum` values, the meaning of
+   each `Status` value, what `Amount` is, whether `UnitID` is a PACT or CRM
+   unit, and whether non-cheque instalments appear. Also the cache duration,
+   and a way to read uncached data immediately before dispatch.
 
 **For the per-account Payment tab (the original items below):**
 
@@ -241,13 +295,9 @@ and never derives it from a CRM id. The adapter must:
 | Customer phone / email for reminders | `CustomerPhone`, `CustomerEmail` | needed for SMS/email | `422 NoEligibleContact` |
 | Receipt / statement-of-account documents | — | only if a verified document API exists | no download offered |
 
-> **Adapter-time change, not yet made:** today the snapshot treats an empty
-> charge list as "no penalties/fees" and defaults `AppliedCreditAmount` to `0`.
-> That is correct for the fixture but not for a source that simply does not
-> report those figures. When the EDSM adapter is written, every figure EDSM does
-> not provide must be modelled as *not provided* (nullable, shown as such in the
-> API and the Payment tab), so it can never be read as zero. It cannot be done
-> before the response is seen because which fields are missing is unknown.
+> **Done:** a figure the source does not report (charges, credit) is `null` in
+> the snapshot, and therefore `null` (not zero) in the API, with "Not provided by
+> source" on the Payment tab. See §2.2.
 
 **TigerCS never re-allocates payments or keeps a second ledger.**
 `AccountBalanceCalculator` only buckets EDSM's own remaining amounts by due

@@ -150,6 +150,7 @@ public static class ReminderPolicy
     public const string SettledReason = "Settled";
     public const string InconsistentReason = "SourceInconsistent";
     public const string NothingOldEnoughReason = "NoUnpaidPrincipalOlderThanOneMonth";
+    public const string ChargesNotReportedReason = "PenaltiesAndFeesNotReported";
 
     /// <summary>The windows open on <paramref name="businessDate"/>.</summary>
     public static IReadOnlyList<ReminderWindow> OpenWindows(DateOnly businessDate, ReminderRuleSettings settings)
@@ -229,7 +230,13 @@ public static class ReminderPolicy
         var amount = qualifying.Sum(i => i.RemainingAmount);
         if (settings.IncludePenaltiesAndFees)
         {
-            amount += balance.PayablePenaltyAmount!.Value + balance.PayableFeeAmount!.Value;
+            if (balance.PayablePenaltyAmount is not { } penalties || balance.PayableFeeAmount is not { } fees)
+            {
+                // The configured amount includes charges the source did not report: no amount can be stated.
+                return ReminderEligibility.NotEligible(account.Currency, ChargesNotReportedReason);
+            }
+
+            amount += penalties + fees;
             basis += "PlusPayablePenaltiesAndFees";
         }
 

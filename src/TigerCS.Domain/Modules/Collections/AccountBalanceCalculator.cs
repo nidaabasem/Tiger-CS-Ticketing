@@ -74,11 +74,12 @@ public static class AccountBalanceCalculator
             }
         }
 
-        var payable = account.Charges
+        // Charges the source did not report stay unknown (null): never "no penalties".
+        var payable = account.Charges?
             .Where(c => c.IsPayable && c.Outstanding > 0m && (c.DueDate is null || c.DueDate <= businessDate))
             .ToList();
-        var penalties = payable.Where(c => c.Type == FinancialChargeType.Penalty).Sum(c => c.Outstanding);
-        var fees = payable.Where(c => c.Type == FinancialChargeType.Fee).Sum(c => c.Outstanding);
+        decimal? penalties = payable?.Where(c => c.Type == FinancialChargeType.Penalty).Sum(c => c.Outstanding);
+        decimal? fees = payable?.Where(c => c.Type == FinancialChargeType.Fee).Sum(c => c.Outstanding);
 
         var remainingPrincipal = overdue + dueToday + future;
         var consistency = account.ReportedOutstandingPrincipal is { } reported && reported != remainingPrincipal
@@ -87,8 +88,11 @@ public static class AccountBalanceCalculator
 
         // A source-applied credit reduces what is due now, once; it never
         // goes below zero and never touches the principal buckets, which are
-        // the source's own allocated figures.
-        var dueNow = Math.Max(0m, overdue + dueToday + penalties + fees - account.AppliedCreditAmount);
+        // the source's own allocated figures. If any component was not
+        // reported, amount due now is unknown — not a smaller number.
+        decimal? dueNow = penalties is { } p && fees is { } f && account.AppliedCreditAmount is { } credit
+            ? Math.Max(0m, overdue + dueToday + p + f - credit)
+            : null;
 
         return new AccountBalance(
             Currency: account.Currency,
@@ -141,7 +145,7 @@ public static class AccountBalanceCalculator
             }
         }
 
-        foreach (var charge in account.Charges)
+        foreach (var charge in account.Charges ?? [])
         {
             if (charge.Amount < 0m || charge.Outstanding < 0m || charge.Outstanding > charge.Amount)
             {

@@ -147,7 +147,7 @@
 
                 <section class="kpi-grid payment-kpis" aria-label="Balance summary">
                     <div class="kpi-card @(acct.AmountDueNow > 0 ? "kpi-card--attention" : "")">
-                        <strong>@CustomerPaymentPanel.Money(acct.AmountDueNow, currency)</strong>
+                        <strong>@CustomerPaymentPanel.Reported(acct.AmountDueNow, currency)</strong>
                         <span>Amount due now</span>
                     </div>
                     <div class="kpi-card">
@@ -155,7 +155,7 @@
                         <span>Overdue principal</span>
                     </div>
                     <div class="kpi-card">
-                        <strong>@CustomerPaymentPanel.Money(acct.PayablePenaltyAmount + acct.PayableFeeAmount, currency)</strong>
+                        <strong>@CustomerPaymentPanel.Reported(acct.PayablePenaltyAmount + acct.PayableFeeAmount, currency)</strong>
                         <span>Payable penalties and fees</span>
                     </div>
                     <div class="kpi-card">
@@ -178,10 +178,10 @@
                     <div class="facts-panel facts-panel--flat">
                         <div class="facts-section__title">Due now</div>
                         <dl>
-                            <div class="facts-row"><dt>Payable penalties</dt><dd>@CustomerPaymentPanel.Money(acct.PayablePenaltyAmount, currency)</dd></div>
-                            <div class="facts-row"><dt>Payable fees</dt><dd>@CustomerPaymentPanel.Money(acct.PayableFeeAmount, currency)</dd></div>
-                            <div class="facts-row"><dt>Applied credit</dt><dd>@CustomerPaymentPanel.Money(acct.AppliedCreditAmount, currency)</dd></div>
-                            <div class="facts-row"><dt>Amount due now</dt><dd>@CustomerPaymentPanel.Money(acct.AmountDueNow, currency)</dd></div>
+                            <div class="facts-row"><dt>Payable penalties</dt><dd>@CustomerPaymentPanel.Reported(acct.PayablePenaltyAmount, currency)</dd></div>
+                            <div class="facts-row"><dt>Payable fees</dt><dd>@CustomerPaymentPanel.Reported(acct.PayableFeeAmount, currency)</dd></div>
+                            <div class="facts-row"><dt>Applied credit</dt><dd>@CustomerPaymentPanel.Reported(acct.AppliedCreditAmount, currency)</dd></div>
+                            <div class="facts-row"><dt>Amount due now</dt><dd>@CustomerPaymentPanel.Reported(acct.AmountDueNow, currency)</dd></div>
                             <div class="facts-row"><dt>This month's remaining payment</dt><dd>@CustomerPaymentPanel.Money(acct.CurrentMonthRemainingAmount, currency)</dd></div>
                         </dl>
                         <p class="field-hint">This month's remaining payment overlaps the overdue, due-today and future amounts; it is not added to them.</p>

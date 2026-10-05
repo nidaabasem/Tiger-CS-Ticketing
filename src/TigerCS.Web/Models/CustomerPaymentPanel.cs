@@ -91,7 +91,8 @@ public sealed class CustomerPaymentPanel
 
     public bool IsStale => SelectedAccount?.DataStatus == "Stale" || Outstanding?.DataStatus == "Stale";
 
-    public bool HasFigures => SelectedAccount?.AmountDueNow is not null;
+    /// <summary>Principal figures arrived. Amount due now may still be null when the source did not report penalties, fees or credits.</summary>
+    public bool HasFigures => SelectedAccount?.RemainingPrincipalAmount is not null;
 
     public bool IsSettled => SelectedAccount is { AmountDueNow: 0m, RemainingPrincipalAmount: 0m };
 
@@ -107,6 +108,10 @@ public sealed class CustomerPaymentPanel
 
     public static string Money(decimal? amount, string currency) =>
         amount is { } value ? $"{currency} {value.ToString("N2", CultureInfo.InvariantCulture)}" : "Unavailable";
+
+    /// <summary>For a figure on an account whose principal did arrive: null means the source did not report it — said so, never "0.00".</summary>
+    public static string Reported(decimal? amount, string currency) =>
+        amount is null ? "Not provided by source" : Money(amount, currency);
 
     public static string Date(DateOnly date) => date.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
 

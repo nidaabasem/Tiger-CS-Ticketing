@@ -41,8 +41,9 @@ public sealed class EdsmPaymentSummaryHttpGateway(
 
     public string SourceName => "Pact";
 
-    public async Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, long tenantId, CancellationToken cancellationToken = default)
+    public async Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, string tenantId, CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         var apiKey = pactOptions.Value.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
@@ -51,7 +52,7 @@ public sealed class EdsmPaymentSummaryHttpGateway(
         }
 
         var path = string.Create(CultureInfo.InvariantCulture,
-            $"v1/reports/payment-summary?CompanyId={companyId}&TenantId={tenantId}");
+            $"v1/reports/payment-summary?CompanyId={companyId}&TenantId={Uri.EscapeDataString(tenantId)}");
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
         request.Headers.TryAddWithoutValidation(ApiKeyHeaderName, apiKey);
 
@@ -129,8 +130,11 @@ public sealed class EdsmPaymentSummaryHttpGateway(
             {
                 if (data.ValueKind != JsonValueKind.Object)
                 {
+                    // EDSM's Response<T> convention can carry a null payload with a message
+                    // (e.g. DueInstallmentsService's "Company not supported"); pass it on.
+                    var message = TryGetProperty(root, "message", out var m) && m.ValueKind == JsonValueKind.String ? $" EDSM message: {m.GetString()}" : "";
                     return EdsmPaymentSummaryResult.Failure(EdsmPaymentSummaryOutcome.InvalidResponse,
-                        $"EDSM's 'data' is a JSON {data.ValueKind}; only a single summary object is understood.");
+                        $"EDSM's 'data' is a JSON {data.ValueKind}; only a single summary object is understood.{message}");
                 }
 
                 payload = data;
@@ -190,7 +194,7 @@ public sealed class UnavailableEdsmPaymentSummaryGateway : IEdsmPaymentSummaryGa
 {
     public string SourceName => "Unavailable";
 
-    public Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, long tenantId, CancellationToken cancellationToken = default) =>
+    public Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, string tenantId, CancellationToken cancellationToken = default) =>
         Task.FromResult(EdsmPaymentSummaryResult.Failure(EdsmPaymentSummaryOutcome.Unavailable,
             "The EDSM payment summary is not enabled in this environment (CollectionsSource:PaymentSummaryProvider)."));
 }
@@ -203,15 +207,15 @@ public sealed class UnavailableEdsmPaymentSummaryGateway : IEdsmPaymentSummaryGa
 public sealed class FixtureEdsmPaymentSummaryGateway(IOptions<CollectionsSourceOptions> sourceOptions) : IEdsmPaymentSummaryGateway
 {
     /// <summary>(companyId, tenantId) → body. Tenant 3001 is MockPactGateway's fixture customer.</summary>
-    private static readonly IReadOnlyDictionary<(int, long), string> Bodies = new Dictionary<(int, long), string>
+    private static readonly IReadOnlyDictionary<(int, string), string> Bodies = new Dictionary<(int, string), string>
     {
-        [(1, 3001)] = """{"data":{"totalAmount":"1250000.00","paidAmount":"812500.00","dueAmount":"62500.00","outstandingAmount":"437500.00","lateFines":"1500.00"}}""",
-        [(2, 3001)] = """{"data":{"totalAmount":"90000.00","paidAmount":"","dueAmount":"1,500.00","outstandingAmount":null,"lateFines":"0.00"}}"""
+        [(1, "3001")] = """{"data":{"totalAmount":"1250000.00","paidAmount":"812500.00","dueAmount":"62500.00","outstandingAmount":"437500.00","lateFines":"1500.00"}}""",
+        [(2, "3001")] = """{"data":{"totalAmount":"90000.00","paidAmount":"","dueAmount":"1,500.00","outstandingAmount":null,"lateFines":"0.00"}}"""
     };
 
     public string SourceName => "Fixture";
 
-    public Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, long tenantId, CancellationToken cancellationToken = default) =>
+    public Task<EdsmPaymentSummaryResult> GetPaymentSummaryAsync(int companyId, string tenantId, CancellationToken cancellationToken = default) =>
         Task.FromResult(Bodies.TryGetValue((companyId, tenantId), out var body)
             ? EdsmPaymentSummaryHttpGateway.Parse(body, sourceOptions.Value.PaymentSummaryAmountFormat)
             : EdsmPaymentSummaryResult.Failure(EdsmPaymentSummaryOutcome.NotFound, "No fixture summary for this company and tenant."));

@@ -149,4 +149,20 @@ public class ReminderPolicyTests
     [InlineData(ReminderChannel.Email, ChannelStatus.Answered, false)]
     public void DeliveryStatuses_AreValidatedPerChannel(ReminderChannel channel, ChannelStatus status, bool valid) =>
         Assert.Equal(valid, ReminderPolicy.IsValidDeliveryStatus(channel, status));
+
+    [Fact]
+    public void UnreportedCharges_BlockOnlyAReminderWhoseAmountIncludesThem()
+    {
+        var account = new FinancialAccountSnapshot("ACC-1", 12345, null, null, null, "AED", DateTime.UtcNow, null,
+            [new FinancialInstalment("I1", new DateOnly(2026, 8, 10), 1_000m, 1_000m)], Charges: null, Payments: []);
+        var day = new DateOnly(2026, 10, 2);
+
+        var principalOnly = ReminderPolicy.Evaluate(account, ReminderType.OverdueMonthly, day, Draft);
+        var withCharges = ReminderPolicy.Evaluate(account, ReminderType.OverdueMonthly, day, new ReminderRuleSettings { IncludePenaltiesAndFees = true });
+
+        Assert.True(principalOnly.IsEligible);
+        Assert.Equal(1_000m, principalOnly.Amount);
+        Assert.False(withCharges.IsEligible);
+        Assert.Equal(ReminderPolicy.ChargesNotReportedReason, withCharges.Reason);
+    }
 }

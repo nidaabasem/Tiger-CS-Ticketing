@@ -25,9 +25,9 @@ namespace TigerCS.Domain.Modules.Collections;
 /// <param name="AsOfUtc">When the source computed these figures.</param>
 /// <param name="ReportedOutstandingPrincipal">The source's own total of unpaid principal, when it reports one. Used to cross-check the instalment schedule; never replaced by a TigerCS figure.</param>
 /// <param name="Instalments">The principal schedule.</param>
-/// <param name="Charges">Penalties and fees.</param>
+/// <param name="Charges">Penalties and fees. <c>null</c> = the source did not report charges (unknown — never "none"); an empty list = it reported none.</param>
 /// <param name="Payments">Payment history. Display only — see the type remarks.</param>
-/// <param name="AppliedCreditAmount">A credit the source has applied against the amount due now but not allocated to a specific instalment or charge. Subtracted once, from amount due now only.</param>
+/// <param name="AppliedCreditAmount">A credit the source has applied against the amount due now but not allocated to a specific instalment or charge. Subtracted once, from amount due now only. <c>null</c> = the source did not report one (unknown — never zero).</param>
 /// <param name="CustomerPhone">The approved reminder contact number the source holds, when it holds one.</param>
 /// <param name="CustomerEmail">The approved reminder contact email the source holds, when it holds one.</param>
 /// <param name="CustomerName">Display only.</param>
@@ -41,9 +41,9 @@ public sealed record FinancialAccountSnapshot(
     DateTime AsOfUtc,
     decimal? ReportedOutstandingPrincipal,
     IReadOnlyList<FinancialInstalment> Instalments,
-    IReadOnlyList<FinancialCharge> Charges,
+    IReadOnlyList<FinancialCharge>? Charges,
     IReadOnlyList<FinancialPayment> Payments,
-    decimal AppliedCreditAmount = 0m,
+    decimal? AppliedCreditAmount = null,
     string? CustomerPhone = null,
     string? CustomerEmail = null,
     string? CustomerName = null);

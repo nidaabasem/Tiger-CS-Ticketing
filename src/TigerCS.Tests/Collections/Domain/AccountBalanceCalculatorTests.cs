@@ -163,4 +163,31 @@ public class AccountBalanceCalculatorTests
         Assert.Null(b.RemainingPrincipalAmount);
         Assert.Null(b.NextPayment);
     }
+
+    [Fact]
+    public void ChargesAndCreditTheSourceDidNotReport_AreUnknown_NotZero()
+    {
+        var account = new FinancialAccountSnapshot("ACC-1", 12345, null, null, null, "AED", new DateTime(2026, 10, 2, 6, 0, 0, DateTimeKind.Utc), null,
+            [new FinancialInstalment("I1", new DateOnly(2026, 9, 1), 1_000m, 1_000m)], Charges: null, Payments: []);
+
+        var b = AccountBalanceCalculator.Calculate(account, BusinessDate);
+
+        Assert.True(b.HasFigures);
+        Assert.Equal(1_000m, b.OverduePrincipalAmount);
+        Assert.Null(b.PayablePenaltyAmount);
+        Assert.Null(b.PayableFeeAmount);
+        Assert.Null(b.AppliedCreditAmount);
+        Assert.Null(b.AmountDueNow);
+    }
+
+    [Fact]
+    public void AnEmptyChargeListAndAnExplicitZeroCredit_AreReportedZeros()
+    {
+        var b = AccountBalanceCalculator.Calculate(
+            Account([new FinancialInstalment("I1", new DateOnly(2026, 9, 1), 1_000m, 1_000m)], charges: [], credit: 0m), BusinessDate);
+
+        Assert.Equal(0m, b.PayablePenaltyAmount);
+        Assert.Equal(0m, b.AppliedCreditAmount);
+        Assert.Equal(1_000m, b.AmountDueNow);
+    }
 }

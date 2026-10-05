@@ -108,7 +108,7 @@ public sealed class CollectionsPaymentSummaryAppService(
         var companies = new List<CollectionsCompanyPaymentSummaryDto>();
         foreach (var group in distinct.Where(c => c.CompanyId is not null).GroupBy(c => c.CompanyId!.Value).OrderBy(g => g.Key))
         {
-            var result = await edsm.GetPaymentSummaryAsync(group.Key, tenantId, cancellationToken);
+            var result = await edsm.GetPaymentSummaryAsync(group.Key, tenantKey, cancellationToken);
             companies.Add(ToCompanyDto(group.Key, result, group.Select(ToRef).ToList()));
         }
 
