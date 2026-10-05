@@ -190,7 +190,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         _api.Mode = "loaded";
         _api.Requests.Clear();
-        Assert.Contains("Payment information is available only for customers identified in Tiger CRM.",
+        Assert.Contains("Payment information is available only for customers identified in Tiger CRM or PACT.",
             await Ok(await Client().GetAsync("/Customers/phone:%2B971501112222?tab=payment")), StringComparison.Ordinal);
         Assert.False(CollectionsCalled);
     }
@@ -253,6 +253,56 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("The amount or eligibility changed since this reminder was offered.", back, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task APactCustomer_IsDeferred_NotRefusedAsNonCrm()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001"));
+
+        Assert.Contains("data-payment-state=\"Deferred\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-payment-state=\"NotCrmCustomer\"", html, StringComparison.Ordinal);
+        Assert.False(CollectionsCalled);
+    }
+
+    [Fact]
+    public async Task APactCustomer_ShowsEdsmSummaryFieldsAsReported_NeverZeroForMissingValues()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
+        var requests = string.Join("\n", _api.Requests);
+
+        Assert.Contains("data-payment-state=\"EdsmSummary\"", html, StringComparison.Ordinal);
+        Assert.Contains("/api/collections/customers/by-key/ext%3APact%3A3001/payment-summary", requests, StringComparison.Ordinal);
+        Assert.Contains("1,250,000.00", html, StringComparison.Ordinal);
+        Assert.Contains("437,500.00", html, StringComparison.Ordinal);
+        Assert.Matches(new Regex("data-edsm-field=\"Paid amount\" data-edsm-amount-status=\"Missing\">\\s*<dt>Paid amount</dt>\\s*<dd>\\s*Not provided"), html);
+        Assert.Matches(new Regex("data-edsm-field=\"Late fines\" data-edsm-amount-status=\"Empty\">\\s*<dt>Late fines</dt>\\s*<dd>\\s*Blank in EDSM"), html);
+        Assert.Contains("Not readable", html, StringComparison.Ordinal);
+        Assert.Contains("1,500.00", html, StringComparison.Ordinal);           // the raw string, shown as received
+        Assert.DoesNotContain(">0.00", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("AED", html, StringComparison.Ordinal);           // EDSM states no currency
+        Assert.Contains("data-currency-unstated", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM gives no as-of time", html, StringComparison.Ordinal);
+        Assert.Contains("data-definitions-unconfirmed", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-company=\"2\" data-edsm-status=\"Unavailable\"", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM payment summary timed out.", html, StringComparison.Ordinal);
+        Assert.Contains("data-detail-unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=SendReminder", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("/outstanding", requests, StringComparison.Ordinal);
+        Assert.DoesNotContain("/reminders", requests, StringComparison.Ordinal);
+        Assert.DoesNotContain("/candidates", requests, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APactCustomer_WhenTheSummaryIsUnavailable_ShowsNoFigures()
+    {
+        _api.Mode = "unavailable";
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
+
+        Assert.Contains("data-payment-state=\"Unavailable\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-balance-unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-summary", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Reminder history", html, StringComparison.Ordinal);
+    }
+
     private sealed class TestAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
@@ -282,6 +332,21 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         private static readonly CustomerDirectoryProfileDto Profile = new(
             "crm:9001", "Crm", "Test Buyer", ["+971500000900"], [], "Crm", 9001, null, null, 0, 1, Now.AddDays(-30), Now.AddDays(-1), 6, [], [], []);
+
+        private static readonly CustomerDirectoryProfileDto PactCustomer = new(
+            "ext:Pact:3001", "External", "Fatima Noor", ["+971500000002"], [], "Pact", null, "Pact", "3001", 0, 1, Now.AddDays(-30), Now.AddDays(-1), 8, [], [], []);
+
+        private static readonly CollectionsPactContractRefDto Contract = new("88001", "41230", "0304", "Tiger Marina Residences");
+
+        private static CollectionsPaymentSummaryResponseDto Summary() => new(
+            "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, null, false, false, false,
+            [
+                new CollectionsCompanyPaymentSummaryDto(1, "Available", null, "data", [Contract],
+                    new("Provided", 1_250_000m, "1250000.00"), new("Missing", null, null), new("Unreadable", null, "1,500.00"),
+                    new("Provided", 437_500m, "437500.00"), new("Empty", null, "")),
+                new CollectionsCompanyPaymentSummaryDto(2, "Unavailable", "EDSM payment summary timed out.", null, [], null, null, null, null, null),
+            ],
+            []);
 
         private static readonly CustomerDirectoryProfileDto Caller = new(
             "phone:%2B971501112222", "Phone", null, ["+971501112222"], [], "Unverified", null, null, null, 0, 0, Now.AddDays(-3), Now.AddDays(-3), 7, [], [], []);
@@ -351,6 +416,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                     "disabled" => Problem(HttpStatusCode.ServiceUnavailable, "CollectionsDisabled"),
                     "unavailable" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),
                     "notfound" => Problem(HttpStatusCode.NotFound, "AccountNotFound"),
+                    _ when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, Summary()),
                     _ when path.EndsWith("/outstanding", StringComparison.Ordinal) =>
                         Json(HttpStatusCode.OK, new CollectionsOutstandingResponseDto(9001, Today, Now, Stale ? "Stale" : "Current", "Test source", [Arrears, Settled], null)),
                     _ when query["view"] == "history" => Json(HttpStatusCode.OK, new CollectionsPaymentHistoryResponseDto(9001, query["accountId"]!, "AED", Now, "Current", "history",
@@ -368,6 +434,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                 "/api/users/me" => new CurrentUserResponseDto(ViewerId, "Test Supervisor", [Roles.CsSupervisor], [new DepartmentMembershipDto(2, "Customer Service", true)], true),
                 "/api/departments" => new[] { new DepartmentDto(2, "Customer Service") },
                 "/api/customers/profile/crm:9001" => Profile,
+                "/api/customers/profile/ext:Pact:3001" => PactCustomer,
                 "/api/customers/profile/phone:+971501112222" => Caller,
                 _ => null,
             };

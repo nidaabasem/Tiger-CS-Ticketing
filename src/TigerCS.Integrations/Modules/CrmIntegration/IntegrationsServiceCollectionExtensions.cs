@@ -79,6 +79,7 @@ public static class IntegrationsServiceCollectionExtensions
 
         AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);
+        AddEdsmPaymentSummary(services);
         AddTasleehGateway(services, configuration);
         AddEmailSender(services, configuration);
 
@@ -177,6 +178,36 @@ public static class IntegrationsServiceCollectionExtensions
                     "fixture-backed; see its remarks — it must never be described as production-ready).")
             };
         });
+    }
+
+    /// <summary>
+    /// EDSM payment summary — PACT's <c>v1/reports/payment-summary</c> on the
+    /// same <c>PactApi</c> base URL and key as the PACT lookup (registered by
+    /// <see cref="AddPactGateway"/>). "Unavailable" unless
+    /// <c>CollectionsSource:PaymentSummaryProvider</c> says otherwise.
+    /// </summary>
+    private static void AddEdsmPaymentSummary(IServiceCollection services)
+    {
+        services.AddHttpClient<EdsmPaymentSummaryHttpGateway>((sp, client) =>
+        {
+            if (sp.GetRequiredService<IOptions<PactApiOptions>>().Value.ResolveBaseAddress() is { } baseAddress)
+            {
+                client.BaseAddress = baseAddress;
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddScoped<UnavailableEdsmPaymentSummaryGateway>();
+        services.AddScoped<FixtureEdsmPaymentSummaryGateway>();
+        services.AddScoped<IEdsmPaymentSummaryGateway>(sp =>
+            sp.GetRequiredService<IOptions<CollectionsSourceOptions>>().Value.PaymentSummaryProvider switch
+            {
+                var p when string.Equals(p, "Pact", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<EdsmPaymentSummaryHttpGateway>(),
+                var p when string.Equals(p, "Fixture", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<FixtureEdsmPaymentSummaryGateway>(),
+                var p when string.Equals(p, "Unavailable", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<UnavailableEdsmPaymentSummaryGateway>(),
+                var p => throw new NotSupportedException(
+                    $"CollectionsSource:PaymentSummaryProvider '{p}' is not supported. Use \"Unavailable\", \"Pact\" (or \"Fixture\" in Development/Testing).")
+            });
     }
 
     /// <summary>Business-rule change: Tasleeh phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>

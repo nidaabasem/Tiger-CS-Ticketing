@@ -21,6 +21,9 @@ public enum PaymentPanelState
 
     Loaded,
 
+    /// <summary>A PACT customer: EDSM's payment summary only — no instalments, transactions or reminders.</summary>
+    EdsmSummary,
+
     /// <summary>The viewer lacks the Collections financial-read permission.</summary>
     Forbidden,
 
@@ -43,6 +46,31 @@ public sealed class CustomerPaymentPanel
     public PaymentPanelState State { get; init; }
 
     public CollectionsOutstandingResponseDto? Outstanding { get; init; }
+
+    /// <summary>EDSM's payment summary, for <see cref="PaymentPanelState.EdsmSummary"/>.</summary>
+    public CollectionsPaymentSummaryResponseDto? PaymentSummary { get; init; }
+
+    /// <summary>The PACT customer key prefix (<c>ext:Pact:{tenantID}</c>) — the only identity EDSM's summary can be resolved for.</summary>
+    public const string PactKeyPrefix = "ext:Pact:";
+
+    public static bool IsPactCustomer(string customerKey) => customerKey.StartsWith(PactKeyPrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when the tab has a source to ask: a CRM customer (finance accounts) or a PACT customer (EDSM summary).</summary>
+    public static bool HasPaymentSource(string customerKey, long? crmCustomerId) => crmCustomerId is not null || IsPactCustomer(customerKey);
+
+    /// <summary>
+    /// An EDSM amount exactly as far as it is known: the parsed number (no
+    /// currency — EDSM states none), or why there is none. Never "0.00" for
+    /// a value that was not provided.
+    /// </summary>
+    public static string EdsmAmount(CollectionsEdsmAmountDto? amount) => amount switch
+    {
+        null => "Unavailable",
+        { Status: "Provided", Value: { } v } => v.ToString("N2", CultureInfo.InvariantCulture),
+        { Status: "Missing" } => "Not provided",
+        { Status: "Empty" } => "Blank in EDSM",
+        _ => "Not readable"
+    };
     public CollectionsAccountDto? SelectedAccount { get; init; }
 
     public CollectionsInstalmentsResponseDto? Instalments { get; init; }

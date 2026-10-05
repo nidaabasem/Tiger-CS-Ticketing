@@ -39,7 +39,7 @@ public sealed class MockPactGateway : IPactCustomerLookupGateway
                 CustomerType: "2",
                 Contracts:
                 [
-                    new PactContractDto("41230", "88001", "0304", "Tiger Marina Residences", "Residential")
+                    new PactContractDto("41230", "88001", "0304", "Tiger Marina Residences", "Residential", CompanyId: 1)
                 ])
         };
 

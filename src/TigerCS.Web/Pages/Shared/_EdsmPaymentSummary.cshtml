@@ -1,0 +1,88 @@
+@using TigerCS.Web.Models
+@model TigerCS.Application.Modules.Collections.Dto.CollectionsPaymentSummaryResponseDto?
+@{
+    var summary = Model;
+    var fields = new (string Label, Func<TigerCS.Application.Modules.Collections.Dto.CollectionsCompanyPaymentSummaryDto, TigerCS.Application.Modules.Collections.Dto.CollectionsEdsmAmountDto?> Get)[]
+    {
+        ("Total amount", c => c.TotalAmount),
+        ("Paid amount", c => c.PaidAmount),
+        ("Due amount", c => c.DueAmount),
+        ("Outstanding amount", c => c.OutstandingAmount),
+        ("Late fines", c => c.LateFines)
+    };
+}
+
+@if (summary is null)
+{
+    <div class="empty-state"><p>The EDSM payment summary could not be read.</p></div>
+    return;
+}
+
+<section class="edsm-summary" data-edsm-summary data-mapping-status="@summary.MappingStatus">
+    <div class="facts-panel facts-panel--flat">
+        <div class="facts-section__title">EDSM payment summary</div>
+        <dl>
+            <div class="facts-row"><dt>Source</dt><dd>@(summary.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : "EDSM, via PACT")</dd></div>
+            <div class="facts-row"><dt>PACT tenant</dt><dd class="text-mono">@(summary.PactTenantId ?? "—")</dd></div>
+            <div class="facts-row"><dt>Retrieved</dt><dd data-retrieved-at>@summary.RetrievedAtUtc.ToLocalTime().ToString("d MMM yyyy HH:mm") <small class="field-hint">(when TigerCS asked; EDSM gives no as-of time)</small></dd></div>
+            <div class="facts-row"><dt>Currency</dt><dd data-currency-unstated>Not stated by EDSM</dd></div>
+        </dl>
+    </div>
+
+    @if (summary.MappingStatus != "Mapped")
+    {
+        <div class="empty-state" data-edsm-not-mapped><p>@summary.MappingDetail</p></div>
+    }
+    else
+    {
+        <div class="alert alert-info" role="note" data-definitions-unconfirmed>
+            <span><strong>Figures exactly as EDSM reports them.</strong> Their definitions are not yet confirmed — for example, whether the due amount already includes late fines. Do not add them together, and do not quote any of them as an overdue balance.</span>
+        </div>
+
+        @foreach (var company in summary.Companies)
+        {
+            <div class="facts-panel facts-panel--flat edsm-company" data-edsm-company="@company.CompanyId" data-edsm-status="@company.Status">
+                <div class="facts-section__title">Company @company.CompanyId</div>
+                @if (company.Contracts.Count > 0)
+                {
+                    <p class="field-hint">PACT contracts for this tenant under company @company.CompanyId:
+                        @string.Join("; ", company.Contracts.Select(c => $"{c.ProjectName ?? "—"} · unit {c.UnitNumber ?? c.ExternalUnitId}" + (c.ContractNumber is null ? "" : $" · contract {c.ContractNumber}"))).
+                        Whether EDSM's figures cover exactly these contracts is not confirmed.</p>
+                }
+
+                @if (company.Status != "Available")
+                {
+                    <div class="alert alert-error" role="alert" data-edsm-company-unavailable>
+                        <span><strong>Summary unavailable for this company.</strong> @(company.StatusDetail ?? company.Status) No figures are shown.</span>
+                    </div>
+                }
+                else
+                {
+                    <dl>
+                        @foreach (var field in fields)
+                        {
+                            var amount = field.Get(company);
+                            <div class="facts-row" data-edsm-field="@field.Label" data-edsm-amount-status="@amount?.Status">
+                                <dt>@field.Label</dt>
+                                <dd>
+                                    @CustomerPaymentPanel.EdsmAmount(amount)
+                                    @if (amount is { Status: "Unreadable" })
+                                    {
+                                        <small class="field-hint">EDSM sent “@amount.Raw”</small>
+                                    }
+                                </dd>
+                            </div>
+                        }
+                    </dl>
+                }
+            </div>
+        }
+
+        @if (summary.ContractsWithoutCompany.Count > 0)
+        {
+            <p class="field-hint" data-contracts-without-company>@summary.ContractsWithoutCompany.Count PACT contract(s) came without a company, so no summary could be requested for them.</p>
+        }
+    }
+
+    <p class="field-hint" data-detail-unavailable>Instalments, due dates, payment transactions and receipts are not available from this source. Payment reminders cannot be sent from this summary: it does not show how long any amount has been overdue.</p>
+</section>

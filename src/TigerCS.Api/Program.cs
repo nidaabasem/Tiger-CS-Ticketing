@@ -142,12 +142,12 @@ using (var crmStartupScope = app.Services.CreateScope())
 using (var collectionsStartupScope = app.Services.CreateScope())
 {
     var sourceOptions = collectionsStartupScope.ServiceProvider.GetRequiredService<IOptions<CollectionsSourceOptions>>().Value;
-    if (CollectionsSourceSafety.IsUnsafe(sourceOptions.Provider, app.Environment.EnvironmentName))
+    if (CollectionsSourceSafety.IsUnsafe(sourceOptions, app.Environment.EnvironmentName))
     {
         throw new InvalidOperationException(
-            $"CollectionsSource:Provider is 'Fixture' in environment '{app.Environment.EnvironmentName}'. Fixture balances are "
+            $"CollectionsSource:Provider or PaymentSummaryProvider is 'Fixture' in environment '{app.Environment.EnvironmentName}'. Fixture balances are "
             + $"sample data and may only run in {string.Join("/", CollectionsSourceSafety.FixtureAllowedEnvironments)}. "
-            + "Set CollectionsSource:Provider to \"Unavailable\" until a real financial source is integrated.");
+            + "Set CollectionsSource:Provider / PaymentSummaryProvider to \"Unavailable\" (or PaymentSummaryProvider to \"Pact\").");
     }
 }
 

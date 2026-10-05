@@ -34,8 +34,35 @@ public sealed class GenesysCollectionsController(
 [Tags(OpenApiTags.Collections)]
 public sealed class CollectionsController(
     CollectionsAccountQueryAppService queries,
+    CollectionsPaymentSummaryAppService paymentSummaries,
     CollectionsReminderAppService reminders,
-    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, reminders, outcomes);
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, reminders, outcomes)
+{
+    /// <summary>
+    /// EDSM's payment summary for a TigerCS customer (PACT
+    /// <c>v1/reports/payment-summary</c>), one entry per PACT company. Web only:
+    /// keyed by the TigerCS customer key, so the server — not the browser —
+    /// decides which PACT tenant is asked about.
+    /// </summary>
+    /// <param name="customerKey">The Customer Profile key, e.g. <c>ext:Pact:3001</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <response code="200">Mapped (with per-company status) or NotMapped.</response>
+    /// <response code="400">InvalidRequest — malformed customer key.</response>
+    /// <response code="403">Forbidden — no financial-read permission.</response>
+    /// <response code="404">AccountNotFound — customer not found or not visible.</response>
+    /// <response code="503">FinanceUnavailable (PACT unreachable), or Collections disabled.</response>
+    [HttpGet("customers/by-key/{customerKey}/payment-summary")]
+    [ProducesResponseType<CollectionsPaymentSummaryResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> GetPaymentSummary(string customerKey, CancellationToken cancellationToken)
+    {
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await paymentSummaries.GetAsync(caller, customerKey, cancellationToken));
+    }
+}
 
 /// <summary>
 /// The six Collections routes (TigerCS_Collections_API_Specification.md).
@@ -270,7 +297,7 @@ public abstract class CollectionsControllerBase(
         return ToResponse(await queries.GetRemindersAsync(caller, id, accountId, cursor, pageSize, cancellationToken));
     }
 
-    private IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
+    protected IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
     {
         CollectionsOutcome.Success or CollectionsOutcome.Replayed => Ok(result.Value),
         CollectionsOutcome.Accepted => StatusCode(StatusCodes.Status202Accepted, result.Value),
@@ -318,7 +345,7 @@ public abstract class CollectionsControllerBase(
     private static bool TryCustomer(string value, out long id) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
 
-    private CollectionsCaller? Caller()
+    protected CollectionsCaller? Caller()
     {
         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (idValue is null || !Guid.TryParse(idValue, out var employeeId))

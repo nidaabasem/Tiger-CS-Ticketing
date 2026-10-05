@@ -16,6 +16,10 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     private const string Base = "api/collections";
     public const int PageSize = 50;
 
+    /// <summary>EDSM's payment summary, resolved server-side from the customer key (PACT customers only).</summary>
+    public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetPaymentSummaryAsync(string customerKey, CancellationToken cancellationToken) =>
+        GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customers/by-key/{Uri.EscapeDataString(customerKey)}/payment-summary", cancellationToken);
+
     public Task<ApiResult<CollectionsOutstandingResponseDto>> GetOutstandingAsync(long crmCustomerId, CancellationToken cancellationToken) =>
         GetAsync<CollectionsOutstandingResponseDto>($"{Base}/customers/{Id(crmCustomerId)}/outstanding?pageSize=100", cancellationToken);
 

@@ -301,6 +301,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<CollectionsAuthorizationService>();
         services.AddScoped<CollectionsClock>();
         services.AddScoped<CollectionsAccountQueryAppService>();
+        services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
+        services.AddScoped<CollectionsPaymentSummaryAppService>();
         services.AddScoped<CollectionsReminderAppService>();
         services.AddScoped<CollectionsReminderOutcomeAppService>();
         services.AddScoped<IOutboxEventHandler, CollectionsReminderDispatchHandler>();

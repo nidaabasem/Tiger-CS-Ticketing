@@ -20,7 +20,9 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
     {
         if (crmCustomerId is not { } customer)
         {
-            return new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer };
+            return CustomerPaymentPanel.IsPactCustomer(customerKey)
+                ? await LoadEdsmSummaryAsync(customerKey, notice, noticeIsError, cancellationToken)
+                : new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer };
         }
 
         var outstanding = await collections.GetOutstandingAsync(customer, cancellationToken);
@@ -92,6 +94,30 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             Reminders = (await remindersTask).Value,
             Candidates = candidates,
             CanSend = canSend,
+            Notice = notice,
+            NoticeIsError = noticeIsError
+        };
+    }
+
+    /// <summary>A PACT customer: EDSM's summary is all there is — never instalments, transactions or reminders.</summary>
+    private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(string customerKey, string? notice, bool noticeIsError, CancellationToken cancellationToken)
+    {
+        var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
+        var state = summary.Outcome switch
+        {
+            ApiOutcome.Success => PaymentPanelState.EdsmSummary,
+            ApiOutcome.Forbidden => PaymentPanelState.Forbidden,
+            ApiOutcome.ServiceUnavailable when summary.ProblemType?.EndsWith("/" + CustomerPaymentPanel.DisabledCode, StringComparison.Ordinal) == true
+                => PaymentPanelState.Disabled,
+            ApiOutcome.ServiceUnavailable => PaymentPanelState.Unavailable,
+            _ => PaymentPanelState.Error
+        };
+
+        return new CustomerPaymentPanel
+        {
+            CustomerKey = customerKey,
+            State = state,
+            PaymentSummary = state == PaymentPanelState.EdsmSummary ? summary.Value : null,
             Notice = notice,
             NoticeIsError = noticeIsError
         };

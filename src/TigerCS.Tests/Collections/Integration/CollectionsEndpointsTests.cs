@@ -318,6 +318,9 @@ public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : I
             await Problem(await admin.SendAsync(Post($"{prefix}/reminders/REM-999999/outcomes", new RecordReminderOutcomeRequestDto("e1", "Sms", DeliveryStatus: "Sent"))),
                 HttpStatusCode.NotFound, "ReminderNotFound");
         }
+
+        await Problem(await admin.GetAsync($"{W}/customers/by-key/{Uri.EscapeDataString("ext:Pact:999999")}/payment-summary"),
+            HttpStatusCode.NotFound, "AccountNotFound");
     }
 
     // ------------------------------------------------------------------

@@ -1908,6 +1908,9 @@ a.badge:hover { text-decoration: underline; }
 /* ---- Customer Profile · Payment tab ----------------------------------- */
 
 .payment-tab { display: flex; flex-direction: column; gap: var(--space-4); }
+.edsm-summary { display: flex; flex-direction: column; gap: var(--space-4); }
+.edsm-company .alert { margin-top: var(--space-3); }
+.edsm-company .field-hint { margin: 0 0 var(--space-2); }
 .payment-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-5); }
 .payment-toolbar__selector, .payment-toolbar__selector .field-group { min-width: 0; max-width: 100%; }
 .payment-toolbar__selector .field-select { max-width: 100%; }

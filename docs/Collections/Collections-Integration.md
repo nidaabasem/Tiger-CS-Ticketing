@@ -1,14 +1,19 @@
 # Collections integration and the Payment tab
 
-**Status: not complete. Blocked on EDSM.** The routes, reminder processing,
-customer-response tickets and the Payment tab are implemented and tested
-against a Development/Testing fixture. The authoritative financial source is
-**EDSM**, and its client, payment function and response contract are not in
-this repository or in any other source available to this work. In every real
-environment the financial routes answer `503 FinanceUnavailable`, and the
-Payment tab says payment information is unavailable. It never shows zero.
-Automatic reminder sending is off (`SchedulerOwner: "None"`,
-`BusinessRulesConfirmed: false`, every channel disabled).
+**Status: partly connected. Most of it is still blocked on EDSM.**
+EDSM's **payment summary** is now connected for **PACT-identified customers**,
+through PACT's existing `v1/reports/payment-summary` on the existing `PactApi`
+client (§2.1). It is off by default (`CollectionsSource:PaymentSummaryProvider:
+"Unavailable"`). The summary has five amounts and nothing else: no due dates,
+currency, as-of time, instalments or transactions. Everything that needs those
+still has no EDSM source:
+- the per-account routes (outstanding, instalments, payment history), which
+  answer `503 FinanceUnavailable` in every real environment;
+- reminder eligibility.
+
+The Payment tab never shows zero for a value it does not have. Automatic
+reminder sending is off (`SchedulerOwner: "None"`, `BusinessRulesConfirmed:
+false`, every channel disabled).
 
 Inputs: the Collections FAQ (Genesys, 29-09-2026) and
 `TigerCS_Collections_API_Specification.md` (a proposed contract). The routes,
@@ -59,15 +64,129 @@ in §9.
 | Tiger CRM integration (`CrmBuyerGateway`) | One endpoint, `GET /TicketingSystem/GetBuyerByPhone`: buyer + units. No balances, instalments or payments |
 | Other repositories visible to this session, and Google Drive | No EDSM code, contract or response sample |
 | TigerGroupWeb (the proxy Genesys calls through) | Not available to this session |
+| PACT integration (`src/TigerCS.Integrations/Modules/PactIntegration/`) | The client to reuse: `PactApi:BaseUrl`, `X-API-KEY`, `GET v1/contracts/{mobile}` whose rows carry `tenantID` **and** `companyID`. Used for §2.1 |
+| EDSM payment-summary service/repository, `DueInstallmentsService` | **Not available.** Only the `PaymentsSummaryOutputModel` class and the route were supplied |
 
-**So the EDSM payment function's name, signature, request parameters and
-response fields cannot be reported, and the adapter has not been written.**
-Writing it now would mean inventing EDSM's contract. TigerCS is built so the
-adapter is the only missing piece: implement `ICollectionsFinancialSource`
-over the EDSM client, register it as `CollectionsSource:Provider = "Edsm"`,
-and nothing else changes.
+**The payment summary is implemented (§2.1).** The per-account adapter
+(`ICollectionsFinancialSource`: instalments with due dates, posted payments,
+currency, as-of time) still is not. The summary model does not carry those
+fields, and no EDSM function that does has been supplied.
 
-### Exactly what is needed from the EDSM owners
+### 2.1 EDSM payment summary (implemented, off by default)
+
+**Contract used. Only what was supplied:**
+
+```csharp
+// EDSM.BusinessLogic.Models.Reports.PaymentSummary
+public class PaymentsSummaryOutputModel
+{
+    public string TotalAmount { get; set; } = string.Empty;
+    public string PaidAmount { get; set; } = string.Empty;
+    public string DueAmount { get; set; } = string.Empty;
+    public string OutstandingAmount { get; set; } = string.Empty;
+    public string LateFines { get; set; } = string.Empty;
+}
+```
+
+`GET v1/reports/payment-summary?CompanyId={companyId}&TenantId={tenantId}`,
+with the `PactApi:BaseUrl` base address and the `X-API-KEY` header from
+`PactApi:ApiKey`. These are the same settings and the same failure handling as
+the existing `PactCustomerHttpGateway`.
+
+| Piece | Where |
+|---|---|
+| Port + strict amount parser | `Application/Modules/Collections/Abstractions/IEdsmPaymentSummaryGateway.cs` |
+| HTTP gateway, plus `Unavailable` and `Fixture` providers | `Integrations/Modules/CollectionsIntegration/EdsmPaymentSummaryHttpGateway.cs` |
+| Customer → (CompanyId, TenantId) resolution | `Application/Modules/Collections/Services/CollectionsPaymentSummaryAppService.cs` |
+| Route | `GET api/collections/customers/by-key/{customerKey}/payment-summary` (TigerCS.Web only) |
+| Payment tab section | `Web/Pages/Shared/_EdsmPaymentSummary.cshtml` |
+
+**Field definitions: not established.** The service or repository that fills
+`PaymentsSummaryOutputModel` was not supplied, and no existing consumer exists
+in any accessible code. So TigerCS:
+- shows the five values under EDSM's own names, with a notice that their
+  definitions are unconfirmed;
+- does **not** treat `OutstandingAmount` as overdue principal;
+- does **not** add `LateFines` to `DueAmount` or to anything else;
+- does **not** compute any figure from them;
+- does **not** use them for reminders.
+
+**Envelope and JSON naming: not confirmed.** No real response has been seen.
+- PACT's `v1/contracts` wraps its payload in `{"data": …}`, so the gateway
+  accepts a `data` object and also a bare object. It records which one it saw
+  (`envelope`) so the first real response settles the question.
+- It rejects a `data` array (several summaries, meaning unknown), a null
+  `data`, non-JSON bodies, and an object with none of the five fields.
+- Property names match case-insensitively, because the model is PascalCase
+  while ASP.NET Core emits camelCase by default.
+
+**Amount strings.** EDSM's formatting is unverified, so the default
+(`PaymentSummaryAmountFormat: "PlainInvariant"`) accepts only `-?digits[.digits]`
+(e.g. `1250000.00`). It never rounds and keeps every digit received.
+
+| Received | Status | Value |
+|---|---|---|
+| `"1250000.00"` | `Provided` | 1250000.00 |
+| `"0.00"` | `Provided` | 0.00 (a real zero, because EDSM sent it) |
+| property absent, or `null` | `Missing` | null |
+| `""` / whitespace (the model's default) | `Empty` | null |
+| `"1,250.00"`, `"1.250,00"`, `"AED 100"`, `"1e3"`, a JSON number | `Unreadable` (raw kept) | null |
+
+`"GroupedInvariant"` additionally accepts strict 3-digit `,` groups. Switch to
+it only once EDSM confirms `,` is a thousands separator.
+
+**No currency, no as-of time.** The model has neither, so the response
+returns `currency: null` and `sourceAsOfUtc: null`. `retrievedAtUtc` is when
+TigerCS called EDSM, and the tab labels it as such.
+
+**Identifier mapping, from existing code only:**
+
+| Step | Evidence |
+|---|---|
+| A PACT customer in TigerCS is identity `ext:Pact:{tenantID}` (ticket `ExternalCustomerId`) | `PactCustomerHttpGateway` groups rows by `tenantID` → `PactCustomerMatchDto.PactCustomerId`; tickets persist it |
+| TigerCS never stored PACT's `companyID` | `PactContractRowHttpDto.CompanyID` was read but dropped; it is now mapped to `PactContractDto.CompanyId` |
+| Company resolution | live `v1/contracts/{mobile}` for the profile's phone numbers, keeping only rows whose `tenantID` equals the stored tenant; one summary per distinct `companyID` |
+| Contracts PACT sends without `companyID` | listed as `contractsWithoutCompany`; no summary is requested, and nothing is guessed |
+| Tiger CRM customers (`crm:{customerId}`) | **`NotMapped`.** No code or data links a CRM `customerId` to a PACT tenant, and matching by phone alone would be a guess |
+
+**Assumptions still to confirm with EDSM (listed, not relied on silently):**
+- EDSM's `TenantId` is PACT's `tenantID`, and its `CompanyId` is PACT's
+  `companyID`. Both come from the same PACT API and use the same names, but
+  this is unconfirmed.
+- The summary covers all of the tenant's contracts in that company. The tab
+  lists those contracts and says this is unconfirmed.
+
+**Not done:**
+- Reminder eligibility. The summary has no due dates, so it cannot show
+  "overdue more than one month / three months".
+- Validation against EDSM UAT records.
+
+`DueInstallmentsService` is named as evidence, but it was not supplied, so its
+route, status meanings and `Amount` semantics are unknown, and nothing here
+uses it.
+
+### Exactly what is still needed from the EDSM owners
+
+**For the payment summary (to remove the "unconfirmed" labels):**
+1. The service/repository (or SQL) that fills `PaymentsSummaryOutputModel`, with the
+   exact definition of each field: what Total, Paid, Due and Outstanding include,
+   as of which date, and whether `DueAmount` / `OutstandingAmount` already
+   include `LateFines`.
+2. One real `200` body from UAT, including its envelope, plus a `404` or
+   empty case and an error case.
+3. How the amount strings are formatted (culture, grouping, decimals, negatives,
+   and what `""` means), and the currency (always AED?).
+4. Confirmation that `TenantId` = PACT `tenantID` and `CompanyId` = PACT
+   `companyID`, and whether the summary covers every contract the tenant has
+   in that company.
+
+**For reminder discovery (`DueInstallmentsService`):**
+5. Its code or contract: route, parameters, response envelope, the meaning of
+   each status value, what `Amount` is (scheduled or remaining principal; with
+   or without fines), and the due-date field. Only that can prove the
+   one-month and three-month overdue rules.
+
+**For the per-account Payment tab (the original items below):**
 
 1. **The client code** (or package) TigerCS should reuse, and the **payment
    function**: its name, signature, request parameters, authentication, base
@@ -178,6 +297,12 @@ explicit Collections permission below. `Collections:Enabled = false` answers
 | `POST reminders` (header `Idempotency-Key`) | reminder-send (VoiceBot: integration only) | 202 queued / 200 replay | 400, 403, 409, 422, 503 |
 | `POST reminders/{reminderId}/outcomes` (header `Idempotency-Key` optional; `eventId` is the key) | report-outcomes (integration only) | 200 / 202 ticket pending | 400, 403, 404, 409, 503 |
 | `GET customers/{crmCustomerId}/reminders?accountId=&cursor=&pageSize=` | financial-read | 200 | 400, 403, 503 |
+
+Plus one Web-only route (`api/collections` only, not forwarded to Genesys):
+
+| Route | Permission | Success | Errors |
+|---|---|---|---|
+| `GET customers/by-key/{customerKey}/payment-summary` | financial-read (and the directory's own customer visibility) | 200 `Mapped` / `NotMapped` | 400, 403, 404, 503 |
 
 Errors are RFC 7807 problem bodies with `code` and `message` extensions
 (`CandidateChanged` also carries `replacementCandidate`):
@@ -296,8 +421,31 @@ The tab handles these states: loading, select account, loaded, settled, stale,
 forbidden, disabled, not a CRM customer, no accounts, and **unavailable**
 (no figures and a retry link, never zero).
 
-Screenshots (real TigerCS.Web against responses captured from the real API
-with the fixture source):
+**PACT customers** (`ext:Pact:{tenantID}`) get the **EDSM payment summary**
+instead of the account view. It shows:
+- one block per PACT company, with that company's contracts listed;
+- the five amounts under EDSM's names, with no currency;
+- `Not provided` / `Blank in EDSM` / `Not readable` (with EDSM's raw string)
+  in place of any value that is not unambiguous;
+- the retrieval time, labelled as such;
+- a notice that the definitions are unconfirmed and must not be added up or
+  quoted as an overdue balance;
+- a note that instalments, due dates, transactions and reminders are not
+  available from this source.
+
+There is no Send Reminder and no reminder history in this view. If a
+company's summary fails, only that block shows unavailable. If PACT itself is
+unreachable, the whole tab shows the unavailable state.
+
+| EDSM summary view | |
+|---|---|
+| Two companies, all amount states | ![](screenshots/12-edsm-summary.png) |
+| One company's summary unavailable | ![](screenshots/13-edsm-summary-company-unavailable.png) |
+| PACT unreachable | ![](screenshots/14-edsm-summary-unavailable.png) |
+| Phone width | ![](screenshots/15-edsm-summary-mobile.png) |
+
+Screenshots of the account view (real TigerCS.Web against responses captured
+from the real API with the fixture source):
 
 | | |
 |---|---|
@@ -336,10 +484,17 @@ with the fixture source):
   //              CurrentMonthDay, MonthEndOffsetDays, IncludePenaltiesAndFees, SendFrequency},
   //       Authorization:{FinancialReadRoles, ReminderSendRoles, CollectionsDepartmentRoles}
 },
-"CollectionsSource": { "Provider": "Unavailable" }   // "Fixture" refused outside Development/Testing
+"CollectionsSource": {
+  "Provider": "Unavailable",                 // per-account source; "Fixture" refused outside Development/Testing
+  "PaymentSummaryProvider": "Unavailable",   // "Pact" = EDSM summary via PACT; "Fixture" refused outside Development/Testing
+  "PaymentSummaryAmountFormat": "PlainInvariant"   // "GroupedInvariant" only once EDSM confirms ',' grouping
+}
+// The summary reuses the existing "PactApi": { "BaseUrl", "ApiKey" } (key via PactApi__ApiKey, never committed).
 ```
 
-EDSM settings (base URL, credentials, timeouts) will be added with the
+To turn on the EDSM payment summary, set `Collections:Enabled` and
+`CollectionsSource:PaymentSummaryProvider: "Pact"` (PactApi already
+configured). Settings for the per-account EDSM adapter will be added with that
 adapter. Credentials belong in the environment's secret store, never in
 `appsettings` or the browser.
 
@@ -408,6 +563,134 @@ Captured from the running API with the Development fixture source (clock fixed
 at 2026-10-02 06:00 UTC). **The amounts are fixture data, not EDSM figures.**
 `traceId` is removed.
 
+
+### EDSM payment summary: a PACT customer with contracts in two companies
+
+Fixture provider. The company 2 body was `{"data":{"totalAmount":"90000.00","paidAmount":"","dueAmount":"1,500.00","outstandingAmount":null,"lateFines":"0.00"}}`,
+which shows each "not a number" case kept as such.
+
+```http
+GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
+
+--> 200
+{
+  "customerKey": "ext:Pact:3001",
+  "mappingStatus": "Mapped",
+  "mappingDetail": null,
+  "pactTenantId": "3001",
+  "source": "Fixture",
+  "retrievedAtUtc": "2026-10-05T08:00:00Z",
+  "sourceAsOfUtc": null,
+  "currency": null,
+  "fieldDefinitionsConfirmed": false,
+  "instalmentDetailAvailable": false,
+  "transactionDetailAvailable": false,
+  "companies": [
+    {
+      "companyId": 1,
+      "status": "Available",
+      "statusDetail": null,
+      "envelope": "data",
+      "contracts": [
+        {
+          "contractNumber": "88001",
+          "externalUnitId": "41230",
+          "unitNumber": "0304",
+          "projectName": "Tiger Marina Residences"
+        }
+      ],
+      "totalAmount": {
+        "status": "Provided",
+        "value": 1250000.00,
+        "raw": "1250000.00"
+      },
+      "paidAmount": {
+        "status": "Provided",
+        "value": 812500.00,
+        "raw": "812500.00"
+      },
+      "dueAmount": {
+        "status": "Provided",
+        "value": 62500.00,
+        "raw": "62500.00"
+      },
+      "outstandingAmount": {
+        "status": "Provided",
+        "value": 437500.00,
+        "raw": "437500.00"
+      },
+      "lateFines": {
+        "status": "Provided",
+        "value": 1500.00,
+        "raw": "1500.00"
+      }
+    },
+    {
+      "companyId": 2,
+      "status": "Available",
+      "statusDetail": null,
+      "envelope": "data",
+      "contracts": [
+        {
+          "contractNumber": "99002",
+          "externalUnitId": "51200",
+          "unitNumber": "1101",
+          "projectName": "Tiger Heights"
+        }
+      ],
+      "totalAmount": {
+        "status": "Provided",
+        "value": 90000.00,
+        "raw": "90000.00"
+      },
+      "paidAmount": {
+        "status": "Empty",
+        "value": null,
+        "raw": ""
+      },
+      "dueAmount": {
+        "status": "Unreadable",
+        "value": null,
+        "raw": "1,500.00"
+      },
+      "outstandingAmount": {
+        "status": "Missing",
+        "value": null,
+        "raw": null
+      },
+      "lateFines": {
+        "status": "Provided",
+        "value": 0.00,
+        "raw": "0.00"
+      }
+    }
+  ],
+  "contractsWithoutCompany": []
+}
+```
+
+### EDSM payment summary: a CRM customer (not mapped)
+
+```http
+GET /api/collections/customers/by-key/crm%3A9001/payment-summary
+
+--> 200
+{
+  "customerKey": "crm:9001",
+  "mappingStatus": "NotMapped",
+  "mappingDetail": "This customer is identified by Tiger CRM (customerId 9001). EDSM's payment summary is keyed by PACT CompanyId and TenantId, and no verified mapping from a CRM customer to a PACT tenant exists.",
+  "pactTenantId": null,
+  "source": "Fixture",
+  "retrievedAtUtc": "2026-10-05T08:00:00Z",
+  "sourceAsOfUtc": null,
+  "currency": null,
+  "fieldDefinitionsConfirmed": false,
+  "instalmentDetailAvailable": false,
+  "transactionDetailAvailable": false,
+  "companies": [],
+  "contractsWithoutCompany": []
+}
+```
 
 ### Outstanding, one account (partial payment, penalties, fees, credit)
 

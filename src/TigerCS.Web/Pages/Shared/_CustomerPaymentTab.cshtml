@@ -5,7 +5,8 @@
     var account = panel.SelectedAccount;
     var currency = account?.Currency ?? "";
     var baseHref = $"/Customers/{Uri.EscapeDataString(panel.CustomerKey)}?tab=payment";
-    var showReminders = panel.State is PaymentPanelState.Loaded or PaymentPanelState.Unavailable or PaymentPanelState.NoAccounts;
+    var showReminders = panel.CrmCustomerId is not null
+        && panel.State is PaymentPanelState.Loaded or PaymentPanelState.Unavailable or PaymentPanelState.NoAccounts;
     var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
 }
 
@@ -28,7 +29,11 @@
             break;
 
         case PaymentPanelState.NotCrmCustomer:
-            <div class="empty-state"><p>Payment information is available only for customers identified in Tiger CRM.</p></div>
+            <div class="empty-state"><p>Payment information is available only for customers identified in Tiger CRM or PACT.</p></div>
+            break;
+
+        case PaymentPanelState.EdsmSummary:
+            <partial name="_EdsmPaymentSummary" model="panel.PaymentSummary" />
             break;
 
         case PaymentPanelState.NoAccounts:

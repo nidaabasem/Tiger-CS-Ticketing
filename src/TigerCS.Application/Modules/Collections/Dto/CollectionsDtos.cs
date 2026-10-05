@@ -263,3 +263,59 @@ public sealed record CollectionsReminderResponseDto(
     string TicketResult,
     long? TicketId,
     string? TicketNumber);
+
+/// <summary>
+/// <c>GET api/collections/customers/by-key/{customerKey}/payment-summary</c>:
+/// EDSM's payment summary for the PACT tenant behind a TigerCS customer, one
+/// entry per PACT company the tenant has contracts with.
+/// <para>
+/// <c>mappingStatus</c>: <c>Mapped</c>; <c>NotMapped</c> (not a PACT-identified
+/// customer, or PACT returned no contracts for the tenant). <c>retrievedAtUtc</c>
+/// is when TigerCS called EDSM; EDSM provides no as-of time, so
+/// <c>sourceAsOfUtc</c> and <c>currency</c> are always null. The field
+/// definitions are unconfirmed and there is no instalment or transaction
+/// detail — the flags say so explicitly.
+/// </para>
+/// </summary>
+public sealed record CollectionsPaymentSummaryResponseDto(
+    string CustomerKey,
+    string MappingStatus,
+    string? MappingDetail,
+    string? PactTenantId,
+    string Source,
+    DateTime RetrievedAtUtc,
+    DateTime? SourceAsOfUtc,
+    string? Currency,
+    bool FieldDefinitionsConfirmed,
+    bool InstalmentDetailAvailable,
+    bool TransactionDetailAvailable,
+    IReadOnlyList<CollectionsCompanyPaymentSummaryDto> Companies,
+    IReadOnlyList<CollectionsPactContractRefDto> ContractsWithoutCompany);
+
+/// <summary>
+/// One (CompanyId, TenantId) summary. <c>status</c>: Available, NotFound,
+/// Unauthorized, InvalidResponse, Unavailable — amounts are null unless Available.
+/// <c>contracts</c> are the tenant's PACT contracts under this company; whether
+/// EDSM's figures cover exactly these is unconfirmed.
+/// </summary>
+public sealed record CollectionsCompanyPaymentSummaryDto(
+    int CompanyId,
+    string Status,
+    string? StatusDetail,
+    string? Envelope,
+    IReadOnlyList<CollectionsPactContractRefDto> Contracts,
+    CollectionsEdsmAmountDto? TotalAmount,
+    CollectionsEdsmAmountDto? PaidAmount,
+    CollectionsEdsmAmountDto? DueAmount,
+    CollectionsEdsmAmountDto? OutstandingAmount,
+    CollectionsEdsmAmountDto? LateFines);
+
+/// <summary>
+/// One EDSM amount as received. <c>status</c>: Provided, Missing, Empty,
+/// Unreadable. <c>value</c> is null unless Provided — never a substituted zero;
+/// <c>raw</c> is EDSM's exact string.
+/// </summary>
+public sealed record CollectionsEdsmAmountDto(string Status, decimal? Value, string? Raw);
+
+/// <summary>A PACT contract the summary was resolved through (display only).</summary>
+public sealed record CollectionsPactContractRefDto(string? ContractNumber, string ExternalUnitId, string? UnitNumber, string? ProjectName);

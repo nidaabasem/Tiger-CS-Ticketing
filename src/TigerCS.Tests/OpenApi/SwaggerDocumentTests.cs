@@ -156,6 +156,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/collections/reminders",
         "POST /api/collections/reminders/{reminderId}/outcomes",
         "GET /api/collections/customers/{crmCustomerId}/reminders",
+        "GET /api/collections/customers/by-key/{customerKey}/payment-summary",
         "GET /api/pending-customer-interactions",
         "POST /api/pending-customer-interactions/{handoffId}/start",
         "POST /api/pending-customer-interactions/{handoffId}/complete",

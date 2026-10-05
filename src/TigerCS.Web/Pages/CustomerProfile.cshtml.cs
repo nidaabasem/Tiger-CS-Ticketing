@@ -133,7 +133,7 @@ public sealed class CustomerProfileModel(
         PaymentTabActive = string.Equals(tab, PaymentTab, StringComparison.OrdinalIgnoreCase);
         PaymentPanel = PaymentTabActive
             ? await paymentPanelLoader.LoadAsync(customerKey, CrmCustomerIdOf(Profile), account, PaymentNotice, PaymentNoticeIsError, cancellationToken)
-            : new CustomerPaymentPanel { CustomerKey = customerKey, CrmCustomerId = CrmCustomerIdOf(Profile), State = CrmCustomerIdOf(Profile) is null ? PaymentPanelState.NotCrmCustomer : PaymentPanelState.Deferred };
+            : new CustomerPaymentPanel { CustomerKey = customerKey, CrmCustomerId = CrmCustomerIdOf(Profile), State = CustomerPaymentPanel.HasPaymentSource(customerKey, CrmCustomerIdOf(Profile)) ? PaymentPanelState.Deferred : PaymentPanelState.NotCrmCustomer };
 
         return Page();
     }

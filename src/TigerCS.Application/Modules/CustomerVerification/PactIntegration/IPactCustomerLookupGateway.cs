@@ -114,9 +114,11 @@ public sealed record PactCustomerMatchDto(
 /// <param name="UnitNumber">The unit number, when on file.</param>
 /// <param name="ProjectName">The project/property the unit belongs to, when on file.</param>
 /// <param name="UnitType">The unit type, when on file.</param>
+/// <param name="CompanyId">PACT's <c>companyID</c> for the contract, when on file — with the tenant id, the key of EDSM's payment summary.</param>
 public sealed record PactContractDto(
     string ExternalUnitId,
     string? ContractNumber,
     string? UnitNumber,
     string? ProjectName,
-    string? UnitType);
+    string? UnitType,
+    int? CompanyId = null);
