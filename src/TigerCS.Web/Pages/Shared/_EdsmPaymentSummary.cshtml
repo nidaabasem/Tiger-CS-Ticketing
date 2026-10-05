@@ -1,9 +1,16 @@
 @using TigerCS.Web.Models
-@model TigerCS.Application.Modules.Collections.Dto.CollectionsPaymentSummaryResponseDto?
+@model CustomerPaymentPanel
 @{
-    var summary = Model;
+    var panel = Model;
+    var summary = panel.PaymentSummary;
+    var company = panel.SelectedCompany;
+    var currency = summary?.Currency ?? "AED";
     string Date(DateOnly? d) => d is { } v ? CustomerPaymentPanel.Date(v) : "—";
-    string Amount(decimal? a) => a is { } v ? v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture) : "—";
+    string Amount(decimal? a) => a is { } v ? $"{currency} {v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}" : "—";
+    TigerCS.Application.Modules.Collections.Dto.CollectionsEdsmFieldDto? Field(string key) => company?.Fields.FirstOrDefault(f => f.Key == key);
+    var rented = company?.BusinessModel == "Rented";
+    var listTitle = new Dictionary<string, string> { ["Paid"] = "Payments", ["Due"] = "Due items", ["Outstanding"] = rented ? "Post-dated cheques" : "Not yet due" };
+    var sourceLabel = summary?.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : summary?.Source == "Pact" ? "EDSM" : summary?.Source;
 }
 
 @if (summary is null)
@@ -13,142 +20,201 @@
 }
 
 <section class="edsm-summary" data-edsm-summary data-mapping-status="@summary.MappingStatus">
-    <div class="facts-panel facts-panel--flat">
-        <div class="facts-section__title">EDSM payment summary</div>
-        <dl>
-            <div class="facts-row"><dt>Source</dt><dd>@(summary.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : "EDSM, via PACT")</dd></div>
-            <div class="facts-row"><dt>PACT tenant</dt><dd class="text-mono">@(summary.PactTenantId ?? "—")</dd></div>
-            <div class="facts-row"><dt>Retrieved</dt><dd data-retrieved-at>@summary.RetrievedAtUtc.ToLocalTime().ToString("d MMM yyyy HH:mm") <small class="field-hint">(when TigerCS asked — EDSM returns no as-of time)</small></dd></div>
-            @if (summary.MappingVerifiedAtUtc is { } verified)
-            {
-                <div class="facts-row"><dt>Accounts confirmed</dt><dd data-mapping-verified="@summary.MappingSource">@verified.ToLocalTime().ToString("d MMM yyyy HH:mm") <small class="field-hint">(PACT contracts@(summary.MappingSource == "Cached" ? ", reused" : ""))</small></dd></div>
-            }
-            <div class="facts-row"><dt>Currency</dt><dd data-currency-configured>@summary.Currency <small class="field-hint">(configured in TigerCS — EDSM returns no currency)</small></dd></div>
-        </dl>
-    </div>
-
-    @if (summary.MappingStatus != "Mapped")
+    @if (summary.MappingStatus != "Mapped" || company is null)
     {
-        <div class="empty-state" data-edsm-not-mapped><p>@summary.MappingDetail</p></div>
+        <div class="alert alert-info" role="status" data-edsm-not-mapped>
+            <span><strong>No payment figures for this customer.</strong> @summary.MappingDetail No balance is shown, so do not quote one.</span>
+        </div>
     }
     else
     {
-        <div class="alert alert-info" role="note" data-source-delay>
-            <span><strong>May lag recent payments.</strong> EDSM caches its figures (@summary.SourceCacheMinutes minutes per layer), so a payment posted in PACT can take up to about @summary.MaxSourceDelayMinutes minutes to appear here. Refreshing this page does not bypass that cache. Figures are EDSM's own, shown as reported. Do not add them together or quote them as an overdue balance.</span>
+        <div class="payment-toolbar">
+            @if (summary.Companies.Count > 1)
+            {
+                <form class="payment-toolbar__selector" method="get" action="/Customers/@Uri.EscapeDataString(panel.CustomerKey)" data-payment-selector>
+                    <input type="hidden" name="tab" value="payment" />
+                    <div class="field-group">
+                        <label class="field-label" for="paymentAccount">Account (company · tenant)</label>
+                        <select class="field-select" id="paymentAccount" name="account">
+                            @foreach (var option in summary.Companies)
+                            {
+                                <option value="@option.CompanyId" selected="@(option.CompanyId == company.CompanyId)">@CustomerPaymentPanel.EdsmCompanyLabel(option, summary.PactTenantId)</option>
+                            }
+                        </select>
+                    </div>
+                    <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+                </form>
+            }
+            else
+            {
+                <div class="payment-toolbar__single">
+                    <span class="field-label">Account (company · tenant)</span>
+                    <strong>@CustomerPaymentPanel.EdsmCompanyLabel(company, summary.PactTenantId)</strong>
+                </div>
+            }
+            <div class="payment-toolbar__meta">
+                <span data-currency-configured>Currency <strong>@currency</strong></span>
+                <span>Source <strong>@sourceLabel</strong></span>
+                <span data-retrieved-at>Retrieved <strong>@summary.RetrievedAtUtc.ToLocalTime().ToString("d MMM yyyy HH:mm")</strong></span>
+            </div>
         </div>
 
-        @foreach (var company in summary.Companies)
-        {
-            <div class="facts-panel facts-panel--flat edsm-company" data-edsm-company="@company.CompanyId" data-edsm-model="@company.BusinessModel" data-edsm-status="@company.Status">
-                <div class="facts-section__title">@(company.CompanyName ?? $"Company {company.CompanyId}") · @(company.BusinessModel switch { "Owned" => "owned (sale)", "Rented" => "rented (lease)", _ => "unknown model" })</div>
-                @if (company.Contracts.Count > 0)
+        <p class="edsm-delay" role="note" data-source-delay>New payments can take up to about @summary.MaxSourceDelayMinutes minutes to appear here.</p>
+
+        <div class="edsm-company" data-edsm-company="@company.CompanyId" data-edsm-model="@company.BusinessModel" data-edsm-status="@company.Status">
+            @if (company.Contracts.Count > 0)
+            {
+                <p class="edsm-contracts" data-edsm-contracts>
+                    Covers @(company.Contracts.Count == 1 ? "contract" : "contracts")
+                    @string.Join(", ", company.Contracts.Select(c => $"{c.UnitNumber ?? c.ExternalUnitId} · {c.ProjectName ?? "—"}" + (c.UnitType == "Parking" ? " (Parking)" : "") + (c.ContractNumber is null ? "" : $" ({c.ContractNumber})"))).
+                    One figure set for this company and tenant, not a balance per unit.
+                </p>
+            }
+
+            @if (company.Status != "Available")
+            {
+                <div class="alert alert-error" role="alert" data-edsm-company-unavailable>
+                    <span><strong>@CustomerPaymentPanel.EdsmStatusText(company.Status).</strong> @company.StatusDetail No figures are shown for this account.</span>
+                </div>
+            }
+            else
+            {
+                var due = Field("dueAmount");
+                <section class="kpi-grid payment-kpis edsm-kpis" aria-label="Payment summary">
+                    @foreach (var (key, label, attention) in new[]
+                    {
+                        ("paidAmount", "Paid", false),
+                        ("dueAmount", "Due", due is { Status: "Provided", Value: > 0m }),
+                        ("outstandingAmount", rented ? "Post-dated cheques" : "Not yet due", false),
+                        ("lateFines", "Late fines", false),
+                        ("totalAmount", "Total", false),
+                    })
+                    {
+                        var field = Field(key);
+                        var read = field is { Status: "Provided" };
+                        <div class="kpi-card @(attention ? "kpi-card--attention" : "") @(read ? "" : "kpi-card--unavailable")" data-edsm-field="@key" data-edsm-amount-status="@field?.Status">
+                            <strong>@CustomerPaymentPanel.EdsmFieldAmount(field, currency)</strong>
+                            <span>@label</span>
+                        </div>
+                    }
+                </section>
+
+                @foreach (var note in company.Notes)
                 {
-                    <p class="field-hint">Confirmed through this tenant's PACT contracts:
-                        @string.Join("; ", company.Contracts.Select(c => $"{c.ProjectName ?? "—"} · unit {c.UnitNumber ?? c.ExternalUnitId}" + (c.UnitType is null ? "" : $" ({c.UnitType})") + (c.ContractNumber is null ? "" : $" · contract {c.ContractNumber}"))).
-                        EDSM reports one figure set per company and tenant, not per unit.</p>
+                    <div class="alert alert-warning" role="note" data-edsm-note><span>@note</span></div>
                 }
 
-                @if (company.Status != "Available")
-                {
-                    <div class="alert alert-error" role="alert" data-edsm-company-unavailable>
-                        <span><strong>@CustomerPaymentPanel.EdsmStatusText(company.Status).</strong> @company.StatusDetail No figures are shown.</span>
+                <div class="facts-panel facts-panel--flat edsm-reminder">
+                    <div class="facts-section__title">Payment reminder</div>
+                    <div class="edsm-reminder__row">
+                        <span class="field-hint" data-reminder-unavailable>Not available: reminder eligibility from EDSM and sending are disabled.</span>
+                        <button type="button" class="btn btn-sm" disabled aria-disabled="true">Send Reminder</button>
                     </div>
-                }
-                else
+                </div>
+
+                @foreach (var list in company.Transactions)
                 {
-                    <dl>
-                        @foreach (var field in company.Fields)
-                        {
-                            <div class="facts-row" data-edsm-field="@field.Key" data-edsm-amount-status="@field.Status">
-                                <dt>@field.Label <small class="field-hint edsm-definition">@field.Definition</small></dt>
-                                <dd>
-                                    @CustomerPaymentPanel.EdsmField(field)
-                                    @if (field.Status is "Unreadable" or "FormatNotConfigured" && !string.IsNullOrEmpty(field.Raw))
+                    <h3 class="payment-section-title" data-edsm-transactions="@list.TransactionType">@(listTitle.GetValueOrDefault(list.TransactionType, list.TransactionType))</h3>
+                    @if (list.Status != "Available")
+                    {
+                        <p class="field-hint">@CustomerPaymentPanel.EdsmStatusText(list.Status).</p>
+                    }
+                    else if (list.Items.Count == 0)
+                    {
+                        <div class="empty-state empty-state--compact"><p>None reported by EDSM.</p></div>
+                    }
+                    else
+                    {
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Date</th><th class="col-num">Amount</th><th>Type</th><th>Cheque</th></tr></thead>
+                                <tbody>
+                                    @foreach (var row in list.Items)
                                     {
-                                        <small class="field-hint" data-edsm-raw>EDSM sent “@field.Raw”</small>
+                                        <tr>
+                                            <td>@(row.Date is { } d ? CustomerPaymentPanel.Date(d) : row.DateRaw ?? "—")</td>
+                                            <td class="col-num">@(row.FormattedStatus == "Provided" ? $"{currency} {row.FormattedRaw!.Replace(" AED", "", StringComparison.Ordinal)}" : Amount(row.Amount))</td>
+                                            <td>@(row.PaymentType ?? "—")</td>
+                                            <td class="text-mono">@(row.ChequeNumber ?? "—")</td>
+                                        </tr>
                                     }
-                                </dd>
-                            </div>
-                        }
-                    </dl>
-
-                    @foreach (var note in company.Notes)
-                    {
-                        <div class="alert alert-warning" role="note" data-edsm-note><span>@note</span></div>
+                                </tbody>
+                            </table>
+                        </div>
                     }
-
-                    @foreach (var list in company.Transactions)
+                    @if (list.Caveat is not null)
                     {
-                        <h4 class="payment-section-title" data-edsm-transactions="@list.TransactionType">@(list.TransactionType switch { "Paid" => "Payments", "Due" => "Due items", _ => company.BusinessModel == "Rented" ? "Post-dated cheques" : "Not yet due" }) <small class="field-hint">(EDSM payment-transactions)</small></h4>
-                        @if (list.Caveat is not null)
-                        {
-                            <p class="field-hint" data-edsm-caveat>@list.Caveat</p>
-                        }
-                        @if (list.Status != "Available")
-                        {
-                            <p class="field-hint">@CustomerPaymentPanel.EdsmStatusText(list.Status). @list.StatusDetail</p>
-                        }
-                        else if (list.Items.Count == 0)
-                        {
-                            <p class="field-hint">None reported by EDSM.</p>
-                        }
-                        else
-                        {
-                            <div class="table-scroll">
-                                <table class="data-table">
-                                    <thead><tr><th>Date</th><th class="col-num">Amount</th><th>Type</th><th>Cheque</th></tr></thead>
-                                    <tbody>
-                                        @foreach (var row in list.Items)
-                                        {
-                                            <tr>
-                                                <td>@(row.Date is { } d ? CustomerPaymentPanel.Date(d) : row.DateRaw ?? "—")</td>
-                                                <td class="col-num">@(row.FormattedStatus == "Provided" ? row.FormattedRaw!.Replace(" AED", "", StringComparison.Ordinal) : Amount(row.Amount))</td>
-                                                <td>@(row.PaymentType ?? "—")</td>
-                                                <td class="text-mono">@(row.ChequeNumber ?? "—")</td>
-                                            </tr>
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        }
-                    }
-
-                    @if (company.DueInstallments is { } due)
-                    {
-                        <h4 class="payment-section-title" data-edsm-due-installments="@due.Status">Cheques and instalments, @Date(due.FromDate) – @Date(due.ToDate) <small class="field-hint">(EDSM due-installments)</small></h4>
-                        @if (due.Status != "Available")
-                        {
-                            <p class="field-hint">@CustomerPaymentPanel.EdsmStatusText(due.Status). @due.StatusDetail</p>
-                        }
-                        else if (due.Items.Count == 0)
-                        {
-                            <p class="field-hint">None for this tenant in this period.</p>
-                        }
-                        else
-                        {
-                            <p class="field-hint">Status is EDSM's raw value. Whether a row is still unpaid is not confirmed.</p>
-                            <div class="table-scroll">
-                                <table class="data-table">
-                                    <thead><tr><th>Due date</th><th class="col-num">Amount</th><th>Voucher</th><th>Cheque</th><th>EDSM status</th></tr></thead>
-                                    <tbody>
-                                        @foreach (var row in due.Items)
-                                        {
-                                            <tr><td>@Date(row.ChequeDueDate)</td><td class="col-num">@Amount(row.Amount)</td><td class="text-mono">@(row.VoucherNumber ?? "—")</td><td class="text-mono">@(row.ChequeNumber ?? "—")</td><td>@(row.SourceStatus ?? "—")</td></tr>
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        }
+                        <p class="field-hint" data-edsm-caveat>@list.Caveat</p>
                     }
                 }
-            </div>
-        }
+
+                @if (company.DueInstallments is { Status: "Available" } dueInstallments)
+                {
+                    <h3 class="payment-section-title" data-edsm-due-installments="Available">Cheques and instalments, @Date(dueInstallments.FromDate) – @Date(dueInstallments.ToDate)</h3>
+                    @if (dueInstallments.Items.Count == 0)
+                    {
+                        <div class="empty-state empty-state--compact"><p>None for this account in this period.</p></div>
+                    }
+                    else
+                    {
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Due date</th><th class="col-num">Amount</th><th>Voucher</th><th>Cheque</th><th>EDSM status</th></tr></thead>
+                                <tbody>
+                                    @foreach (var row in dueInstallments.Items)
+                                    {
+                                        <tr><td>@Date(row.ChequeDueDate)</td><td class="col-num">@Amount(row.Amount)</td><td class="text-mono">@(row.VoucherNumber ?? "—")</td><td class="text-mono">@(row.ChequeNumber ?? "—")</td><td>@(row.SourceStatus ?? "—")</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="field-hint">EDSM's own status, shown as sent; whether a row is still unpaid is not confirmed.</p>
+                    }
+                }
+            }
+
+            <details class="edsm-details" data-edsm-details>
+                <summary>Definitions and source details</summary>
+                <div class="edsm-details__body">
+                    @if (company.Fields.Count > 0)
+                    {
+                        <dl class="edsm-definitions">
+                            @foreach (var field in company.Fields)
+                            {
+                                <div class="facts-row" data-edsm-definition="@field.Key">
+                                    <dt>@field.Label</dt>
+                                    <dd>
+                                        <span class="edsm-definition">@field.Definition</span>
+                                        @if (field.Status is "Unreadable" or "FormatNotConfigured" && !string.IsNullOrEmpty(field.Raw))
+                                        {
+                                            <span class="field-hint" data-edsm-raw>EDSM sent “@field.Raw”</span>
+                                        }
+                                    </dd>
+                                </div>
+                            }
+                        </dl>
+                    }
+                    <ul class="edsm-diagnostics">
+                        <li>Currency: @currency is configured in TigerCS. EDSM returns no currency.</li>
+                        <li>EDSM returns no as-of time. "Retrieved" is when TigerCS asked. EDSM caches each read for about @summary.SourceCacheMinutes minutes.</li>
+                        <li>PACT tenant @summary.PactTenantId, company @company.CompanyId (@(company.BusinessModel?.ToLowerInvariant() ?? "unknown")).@if (summary.MappingVerifiedAtUtc is { } verified)
+                        {
+                            <span data-mapping-verified="@summary.MappingSource"> Accounts confirmed through PACT contracts @verified.ToLocalTime().ToString("d MMM yyyy HH:mm")@(summary.MappingSource == "Cached" ? " (reused)" : "").</span>
+                        }</li>
+                        <li>Number format: @(summary.NumberCulture ?? "not configured (CollectionsSource:EdsmNumberCulture), so amounts are not read").</li>
+                        @if (company.DueInstallments is { Status: not "Available" } di)
+                        {
+                            <li>Cheques and instalments (EDSM due-installments): @CustomerPaymentPanel.EdsmStatusText(di.Status).</li>
+                        }
+                        <li>No instalment schedule with remaining balances, receipts or statement of account is available from EDSM.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
 
         @if (summary.ContractsWithoutCompany.Count > 0)
         {
             <p class="field-hint" data-contracts-without-company>@summary.ContractsWithoutCompany.Count PACT contract(s) came without a company, so EDSM was not asked about them.</p>
         }
     }
-
-    <p class="field-hint" data-detail-unavailable>EDSM provides no instalment schedule with remaining balances, receipts or statement of account. Payment reminders cannot be sent from these figures: nothing here proves how long an amount has been unpaid.</p>
 </section>

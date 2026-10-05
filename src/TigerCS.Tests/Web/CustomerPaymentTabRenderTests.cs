@@ -310,42 +310,74 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task APactCustomer_ShowsEdsmFiguresPerCompanyAndModel_NeverZeroForMissingValues()
+    public async Task APactCustomer_ShowsTheSelectedCompanysCardsAndTables_NeverZeroForMissingValues()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
         var requests = string.Join("\n", _api.Requests);
 
         Assert.Contains("data-payment-state=\"EdsmSummary\"", html, StringComparison.Ordinal);
         Assert.Contains("/api/collections/customers/by-key/ext%3APact%3A3001/payment-summary", requests, StringComparison.Ordinal);
+
+        // Compact selector: one option per verified company + tenant pair; the first is shown.
+        Assert.Contains("id=\"paymentAccount\"", html, StringComparison.Ordinal);
+        Assert.Contains(">Tiger Group Dubai &#xB7; owned &#xB7; tenant 3001</option>", html, StringComparison.Ordinal);
+        Assert.Contains(">Hirmas Dubai &#xB7; rented &#xB7; tenant 3001</option>", html, StringComparison.Ordinal);
         Assert.Contains("data-edsm-company=\"4\" data-edsm-model=\"Owned\"", html, StringComparison.Ordinal);
-        Assert.Contains("Tiger Group Dubai · owned (sale)", html, StringComparison.Ordinal);
-        Assert.Contains("Hirmas Dubai · rented (lease)", html, StringComparison.Ordinal);
-        Assert.Contains("1,250,000.00", html, StringComparison.Ordinal);                 // EDSM's own formatted string
-        Assert.Contains("Definition of Total.", html, StringComparison.Ordinal);
-        Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<dt>Paid.*?</dt>\\s*<dd>\\s*Not provided", RegexOptions.Singleline), html);
-        Assert.Contains("None above zero", html, StringComparison.Ordinal);               // owned blank fine
-        Assert.Contains("Not computed for rented companies", html, StringComparison.Ordinal);
-        Assert.Contains("-500.00", html, StringComparison.Ordinal);                      // rented due may be negative
-        Assert.Contains("EDSM sent “1.500,00”", html, StringComparison.Ordinal);
-        Assert.Contains("Not read (EDSM number format not configured)", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM sent “812.500,00”", html, StringComparison.Ordinal);   // raw shown so the format can be verified
-        Assert.DoesNotContain(">0.00", html, StringComparison.Ordinal);
-        Assert.Contains("AED <small class=\"field-hint\">(configured in TigerCS — EDSM returns no currency)</small>", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM returns no as-of time", html, StringComparison.Ordinal);
-        Assert.Contains("up to about 20 minutes", html, StringComparison.Ordinal);
-        Assert.Contains("data-mapping-verified=\"Cached\"", html, StringComparison.Ordinal);
-        Assert.Contains("(PACT contracts, reused)", html, StringComparison.Ordinal);
-        Assert.Contains("data-edsm-transactions=\"Paid\"", html, StringComparison.Ordinal);
-        Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-company=\"25\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-account=\"4\"", html, StringComparison.Ordinal);
+        Assert.Contains("One figure set for this company and tenant, not a balance per unit.", html, StringComparison.Ordinal);
+
+        // Amount cards: EDSM's own strings with the configured currency; unavailable values say why.
+        Assert.Contains("<strong>AED 1,250,000.00</strong>", html, StringComparison.Ordinal);
+        Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<strong>Not provided</strong>"), html);
+        Assert.Matches(new Regex("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\">\\s*<strong>None above zero</strong>"), html);
+        Assert.Contains("<span>Not yet due</span>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
+
+        // Brief delay notice stays visible; definitions and diagnostics are in the expandable section.
+        Assert.Contains("data-source-delay>New payments can take up to about 20 minutes to appear here.", html, StringComparison.Ordinal);
+        Assert.Contains("<summary>Definitions and source details</summary>", html, StringComparison.Ordinal);
+        var details = html[html.IndexOf("data-edsm-details", StringComparison.Ordinal)..];
+        Assert.Contains("Definition of Total.", details, StringComparison.Ordinal);
+        Assert.Contains("EDSM sent “1.500,00”", details, StringComparison.Ordinal);
+        Assert.Contains("EDSM sent “812.500,00”", details, StringComparison.Ordinal);
+        Assert.Contains("EDSM returns no as-of time", details, StringComparison.Ordinal);
+        Assert.Contains("data-mapping-verified=\"Cached\"", details, StringComparison.Ordinal);
+
+        // Transactions and EDSM due-installments as tables; Send Reminder present but unavailable.
+        Assert.Contains("data-edsm-transactions=\"Paid\">Payments</h3>", html, StringComparison.Ordinal);
+        Assert.Contains("AED 500,000.00", html, StringComparison.Ordinal);
         Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
-        Assert.Contains("Whether a row is still unpaid is not confirmed.", html, StringComparison.Ordinal);
-        Assert.Contains("data-edsm-company=\"7\" data-edsm-model=\"Rented\" data-edsm-status=\"Unauthorized\"", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
-        Assert.Contains("data-detail-unavailable", html, StringComparison.Ordinal);
+        Assert.Contains("whether a row is still unpaid is not confirmed", html, StringComparison.Ordinal);
+        Assert.Contains("<button type=\"button\" class=\"btn btn-sm\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("handler=SendReminder", html, StringComparison.Ordinal);
+
         Assert.DoesNotContain("/outstanding", requests, StringComparison.Ordinal);
         Assert.DoesNotContain("/reminders", requests, StringComparison.Ordinal);
         Assert.DoesNotContain("/candidates", requests, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APactCustomer_SelectingTheRentedCompany_ShowsItsOwnLabelsAndCaveats()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?handler=PaymentPanel&account=25"));
+
+        Assert.Contains("data-edsm-company=\"25\" data-edsm-model=\"Rented\"", html, StringComparison.Ordinal);
+        Assert.Contains("<option value=\"25\" selected=\"selected\">", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>AED -500.00</strong>", html, StringComparison.Ordinal);        // rented due may be negative
+        Assert.Contains("<strong>Not computed for rented companies</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("<span>Post-dated cheques</span>", html, StringComparison.Ordinal);
+        Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APactCompanyRefusedByEdsm_ShowsItsErrorAndNoFigures()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?handler=PaymentPanel&account=7"));
+
+        Assert.Contains("data-edsm-company=\"7\" data-edsm-model=\"Rented\" data-edsm-status=\"Unauthorized\"", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
     }
 
     [Fact]

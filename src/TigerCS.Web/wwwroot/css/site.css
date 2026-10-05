@@ -1909,10 +1909,27 @@ a.badge:hover { text-decoration: underline; }
 
 .payment-tab { display: flex; flex-direction: column; gap: var(--space-4); }
 .edsm-summary { display: flex; flex-direction: column; gap: var(--space-4); }
-.edsm-company .alert { margin-top: var(--space-3); }
-.edsm-company .field-hint { margin: 0 0 var(--space-2); }
-.edsm-company .facts-row dt .edsm-definition { display: block; margin: 2px 0 0; font-weight: 400; max-width: 46ch; }
-.edsm-company .payment-section-title { margin-top: var(--space-4); }
+.edsm-company { display: flex; flex-direction: column; gap: var(--space-4); }
+.edsm-delay { margin: calc(-1 * var(--space-2)) 0 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.edsm-contracts { margin: 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.edsm-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.edsm-kpis .kpi-card strong { font-size: 24px; overflow-wrap: anywhere; }
+.edsm-kpis .kpi-card--unavailable strong { font-size: var(--text-sm); font-weight: 600; letter-spacing: 0; color: var(--color-text-secondary); line-height: 1.35; }
+.edsm-reminder__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.edsm-details { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.edsm-details > summary { cursor: pointer; padding: var(--space-3) var(--space-4); font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
+.edsm-details > summary:hover { color: var(--color-text); }
+.edsm-details__body { padding: 0 var(--space-4) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+.edsm-definitions .facts-row dd { text-align: left; font-weight: 400; display: flex; flex-direction: column; gap: 2px; max-width: 70ch; }
+.edsm-definitions .facts-row { justify-content: flex-start; gap: var(--space-4); }
+.edsm-definitions .facts-row dt { flex: 0 0 11rem; }
+.edsm-diagnostics { margin: 0; padding-left: var(--space-4); font-size: var(--text-sm); color: var(--color-text-secondary); display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 1100px) { .edsm-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .edsm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .edsm-kpis .kpi-card strong { font-size: 17px; }
+  .edsm-definitions .facts-row { flex-direction: column; gap: 2px; }
+}
 .payment-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-5); }
 .payment-toolbar__selector, .payment-toolbar__selector .field-group { min-width: 0; max-width: 100%; }
 .payment-toolbar__selector .field-select { max-width: 100%; }

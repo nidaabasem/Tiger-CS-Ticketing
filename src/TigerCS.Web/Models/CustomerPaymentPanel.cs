@@ -56,6 +56,19 @@ public sealed class CustomerPaymentPanel
     /// <summary>EDSM's payment summary, for <see cref="PaymentPanelState.EdsmSummary"/>.</summary>
     public CollectionsPaymentSummaryResponseDto? PaymentSummary { get; init; }
 
+    /// <summary>The EDSM company (paired with the PACT tenant) shown, chosen with the account selector.</summary>
+    public int? SelectedCompanyId { get; init; }
+
+    public CollectionsCompanyPaymentSummaryDto? SelectedCompany =>
+        PaymentSummary?.Companies.FirstOrDefault(c => c.CompanyId == SelectedCompanyId) ?? PaymentSummary?.Companies.FirstOrDefault();
+
+    /// <summary>An EDSM field as an amount card value: "AED 812,500.00" when read, otherwise why not.</summary>
+    public static string EdsmFieldAmount(CollectionsEdsmFieldDto? field, string currency) =>
+        field is { Status: "Provided", Raw: { } raw } ? $"{currency} {raw.Trim()}" : field is null ? "Not provided" : EdsmField(field);
+
+    public static string EdsmCompanyLabel(CollectionsCompanyPaymentSummaryDto c, string? tenantId) =>
+        $"{c.CompanyName ?? $"Company {c.CompanyId}"} · {(c.BusinessModel switch { "Owned" => "owned", "Rented" => "rented", _ => "unknown" })} · tenant {tenantId ?? "—"}";
+
     /// <summary>The PACT customer key prefix (<c>ext:Pact:{tenantID}</c>) — the only identity EDSM's summary can be resolved for.</summary>
     public const string PactKeyPrefix = "ext:Pact:";
 
