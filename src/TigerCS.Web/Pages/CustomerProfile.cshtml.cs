@@ -156,39 +156,37 @@ public sealed class CustomerProfileModel(
     }
 
     /// <summary>
-    /// Send Reminder. The Api revalidates the balance, enforces the reminder
-    /// permission and refuses a duplicate for the cycle; this only relays the
-    /// answer and returns to the Payment tab.
+    /// Send Reminder. Queues the selected candidate on the chosen channels;
+    /// the Api re-reads the balance, enforces the reminder permission, refuses
+    /// a changed or expired candidate (409) and a duplicate in the cycle. The
+    /// form's own Idempotency-Key makes a double submit queue once.
     /// </summary>
-    public async Task<IActionResult> OnPostSendReminderAsync(string customerKey, string? accountId, string? channel, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnPostSendReminderAsync(
+        string customerKey, string? accountId, string? candidateId, string[]? channels, string? language, string? idempotencyKey,
+        CancellationToken cancellationToken)
     {
         var profile = await customersApiClient.GetProfileAsync(customerKey, cancellationToken);
-        if (!profile.IsSuccess || profile.Value is null || CrmCustomerIdOf(profile.Value) is not { } crmCustomerId)
+        if (!profile.IsSuccess || profile.Value is null || CrmCustomerIdOf(profile.Value) is null)
         {
             return NotFound();
         }
 
-        var result = await collectionsApiClient.SendReminderAsync(
-            new CreateCollectionsReminderRequestDto(crmCustomerId, accountId, channel, "Manual"), cancellationToken);
+        var result = await collectionsApiClient.QueueReminderAsync(
+            new QueueCollectionsReminderRequestDto(candidateId, channels ?? [], language),
+            string.IsNullOrWhiteSpace(idempotencyKey) ? Guid.NewGuid().ToString("N") : idempotencyKey,
+            cancellationToken);
 
-        (PaymentNotice, PaymentNoticeIsError) = result switch
-        {
-            { IsSuccess: true, Value.Outcome: "AlreadyExists" } =>
-                ($"A {CustomerPaymentPanel.Label(result.Value.Reminder.Channel)} reminder was already sent for this account today — nothing was sent again.", false),
-            { IsSuccess: true } =>
-                ($"{CustomerPaymentPanel.Label(result.Value!.Reminder.Channel)} reminder queued for {CustomerPaymentPanel.Money(result.Value.Reminder.Amount, result.Value.Reminder.Currency)}.", false),
-            { Outcome: ApiOutcome.Forbidden } => ("You don't have permission to send payment reminders.", true),
-            _ => ($"The reminder was not sent: {result.Detail ?? "the ticketing service could not be reached."}", true)
-        };
+        (PaymentNotice, PaymentNoticeIsError) = result.IsSuccess
+            ? ($"Reminder {result.Value!.ReminderId} queued for {CustomerPaymentPanel.Money(result.Value.ReminderAmount, result.Value.Currency)} on "
+               + $"{string.Join(", ", result.Value.Channels.Select(c => CustomerPaymentPanel.Label(c.Channel)))}. Queued does not mean delivered.", false)
+            : (CustomerPaymentPanel.ApiOutcomeMessage(result.Outcome, result.Detail), true);
 
         return RedirectToPage(null, null, new { customerKey, tab = PaymentTab, account = accountId }, "payment");
     }
 
     /// <summary>The Tiger CRM customer id, only for a customer identified in CRM.</summary>
-    public static string? CrmCustomerIdOf(CustomerDirectoryProfileDto profile) =>
-        profile.IdentityKind == "Crm" && profile.CrmBuyerCustomerId is { } id
-            ? id.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            : null;
+    public static long? CrmCustomerIdOf(CustomerDirectoryProfileDto profile) =>
+        profile.IdentityKind == "Crm" && profile.CrmBuyerCustomerId is { } id ? id : null;
 
     public static string SourceLabel(string verificationSource) => CustomersModel.SourceLabel(verificationSource);
 

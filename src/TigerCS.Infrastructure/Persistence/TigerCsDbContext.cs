@@ -136,6 +136,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<CollectionsReminder> CollectionsReminders => Set<CollectionsReminder>();
 
+    public DbSet<CollectionsReminderChannel> CollectionsReminderChannels => Set<CollectionsReminderChannel>();
+
     public DbSet<CollectionsReminderEvent> CollectionsReminderEvents => Set<CollectionsReminderEvent>();
 
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
@@ -199,6 +201,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new GenesysScreenPopLaunchConfiguration());
 
         builder.ApplyConfiguration(new CollectionsReminderConfiguration());
+        builder.ApplyConfiguration(new CollectionsReminderChannelConfiguration());
         builder.ApplyConfiguration(new CollectionsReminderEventConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());

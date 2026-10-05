@@ -136,8 +136,8 @@ public static class BackgroundJobServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the Collections reminder schedule only while automatic
-    /// scheduling is active, and removes it otherwise — so switching the
+    /// Registers the Collections reminder schedule only while TigerCS is the
+    /// designated scheduler and the rules are confirmed, and removes it otherwise — so switching the
     /// setting off stops an already-registered schedule at the next start.
     /// </summary>
     public static void UseTigerCsRecurringCollectionsReminders(
@@ -153,7 +153,7 @@ public static class BackgroundJobServiceCollectionExtensions
         }
 
         var manager = services.GetRequiredService<IRecurringJobManager>();
-        if (!collectionsOptions.IsAutomaticSchedulingActive)
+        if (!collectionsOptions.IsTigerCsSchedulerActive)
         {
             manager.RemoveIfExists(CollectionsReminderScheduleJob.RecurringJobId);
             return;

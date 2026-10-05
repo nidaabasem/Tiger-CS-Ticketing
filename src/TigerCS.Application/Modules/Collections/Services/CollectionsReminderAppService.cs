@@ -9,22 +9,23 @@ using TigerCS.Domain.Modules.Collections;
 namespace TigerCS.Application.Modules.Collections.Services;
 
 /// <summary>
-/// Creating reminders — by an authorized user, by the Genesys outbound
-/// campaign, or by the designated scheduler — and listing who is due one.
+/// Reminder candidates and the queue.
 ///
 /// <para>
-/// <b>Every reminder is decided against fresh source figures.</b> The account
-/// is re-read from the financial source on every create, its eligibility and
-/// amount evaluated with <see cref="ReminderPolicy"/>, and a settled account
-/// is refused rather than reminded. SMS and email are then re-checked once
-/// more immediately before dispatch (<see cref="CollectionsReminderDispatchHandler"/>).
+/// <b>Candidate first.</b> A reminder can only be queued from a candidate —
+/// an eligible account, its qualifying instalments and amount, computed from
+/// a fresh, non-stale source read. Queueing re-reads the account and accepts
+/// the candidate only if it is unexpired and a fresh evaluation reproduces it
+/// exactly; otherwise <c>409 CandidateChanged</c> with a replacement. No
+/// client ever supplies a balance or a destination.
 /// </para>
 ///
 /// <para>
-/// <b>Duplicate prevention</b> is the unique de-duplication key
-/// (account | type | cycle | channel): read-before-write here, and a unique
-/// index in the database behind it, so concurrent requests produce one
-/// reminder and the loser is answered with it.
+/// <b>No duplicates.</b> Each channel's account | type | cycle | channel key is
+/// unique in the database; an Idempotency-Key replays the original job (or
+/// conflicts when reused with a different body) and never bypasses cycle
+/// de-duplication. Only a failed channel may be retried, within its attempt
+/// budget.
 /// </para>
 /// </summary>
 public sealed class CollectionsReminderAppService(
@@ -38,296 +39,357 @@ public sealed class CollectionsReminderAppService(
     IAuditEntryWriter auditWriter,
     ILogger<CollectionsReminderAppService> logger)
 {
-    public const string DispatchEventType = "CollectionsReminderQueued";
+    public const string DispatchEventType = "CollectionsReminderChannelQueued";
     public const string AuditEntityType = "CollectionsReminder";
+    private static readonly string[] Languages = ["en", "ar"];
 
-    public async Task<CollectionsResult<CreateCollectionsReminderResponseDto>> CreateAsync(
-        CollectionsCaller caller, CreateCollectionsReminderRequestDto request, CancellationToken cancellationToken = default)
+    // ------------------------------------------------------------------
+    // Candidates
+    // ------------------------------------------------------------------
+
+    public async Task<CollectionsResult<CollectionsReminderCandidatesResponseDto>> ListCandidatesAsync(
+        CollectionsCaller caller, string? reminderType, DateOnly? businessDate, long? crmCustomerId, string? accountId,
+        string? cursor, int? pageSize, CancellationToken cancellationToken = default)
+    {
+        if (await SendGateAsync<CollectionsReminderCandidatesResponseDto>(caller, cancellationToken) is { } refused)
+        {
+            return refused;
+        }
+
+        if (!CollectionsEnums.TryParse<ReminderType>(reminderType, out var type))
+        {
+            return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.InvalidRequest,
+                $"reminderType is required: {CollectionsEnums.Names<ReminderType>()}.");
+        }
+
+        var today = clock.BusinessDate;
+        if (businessDate is { } requested && requested != today)
+        {
+            return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.InvalidRequest,
+                $"Candidates are issued only for the current business date ({today:yyyy-MM-dd}, {clock.TimeZoneId}).");
+        }
+
+        if (!CollectionsCursor.TryRead(cursor, pageSize, out var offset, out var size, out var pagingError))
+        {
+            return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.InvalidRequest, pagingError);
+        }
+
+        var rules = clock.Rules;
+        var cycleKey = ReminderPolicy.CycleKey(type, today, rules);
+        var windowOpen = ReminderPolicy.OpenWindows(today, rules).Any(w => w.Type == type);
+
+        var candidates = new List<CollectionsReminderCandidateDto>();
+        if (windowOpen)
+        {
+            IReadOnlyList<FinancialAccountSnapshot> accounts;
+            try
+            {
+                accounts = await ScopeAsync(crmCustomerId, accountId, cancellationToken);
+            }
+            catch (CollectionsFinancialSourceUnavailableException ex)
+            {
+                return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
+            }
+
+            var offers = new List<(FinancialAccountSnapshot Account, ReminderEligibility Eligibility)>();
+            foreach (var account in accounts)
+            {
+                // A stale read never authorizes a send.
+                if (clock.IsStale(account.AsOfUtc))
+                {
+                    continue;
+                }
+
+                var eligibility = ReminderPolicy.Evaluate(account, type, today, rules);
+                if (eligibility.IsEligible)
+                {
+                    offers.Add((account, eligibility));
+                }
+            }
+
+            var existing = await ExistingChannelsAsync(offers.Select(o => o.Account), type, cycleKey, cancellationToken);
+            foreach (var (account, eligibility) in offers)
+            {
+                var candidate = ToCandidateDto(account, type, cycleKey, eligibility, existing);
+                if (candidate.AvailableChannels.Count > 0)
+                {
+                    candidates.Add(candidate);
+                }
+            }
+        }
+
+        var ordered = candidates.OrderBy(c => c.CrmCustomerId).ThenBy(c => c.AccountId, StringComparer.Ordinal).ToList();
+        return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Ok(new CollectionsReminderCandidatesResponseDto(
+            type.ToString(), cycleKey, today, clock.TimeZoneId, windowOpen,
+            ordered.Skip(offset).Take(size).ToList(),
+            CollectionsCursor.Next(offset, size, offset + size < ordered.Count)));
+    }
+
+    // ------------------------------------------------------------------
+    // Queue
+    // ------------------------------------------------------------------
+
+    public async Task<CollectionsResult<CollectionsReminderJobDto>> QueueAsync(
+        CollectionsCaller caller, QueueCollectionsReminderRequestDto request, string? idempotencyKey, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!options.Enabled)
+        if (await SendGateAsync<CollectionsReminderJobDto>(caller, cancellationToken) is { } refused)
         {
-            return Fail(CollectionsOutcome.Disabled);
+            return refused;
         }
 
         var permissions = await authorization.ResolveAsync(caller, cancellationToken);
-        if (!permissions.CanSendReminders)
+
+        var key = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim();
+        if (key is { Length: > CollectionsReminder.IdempotencyKeyMaxLength })
         {
-            return Fail(CollectionsOutcome.Forbidden, "Sending a reminder requires the Collections reminder permission.");
+            return Fail(CollectionsOutcome.InvalidRequest, $"Idempotency-Key is at most {CollectionsReminder.IdempotencyKeyMaxLength} characters.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.CrmCustomerId) || string.IsNullOrWhiteSpace(request.AccountId))
+        var channels = new List<ReminderChannel>();
+        foreach (var name in request.Channels ?? [])
         {
-            return Fail(CollectionsOutcome.ValidationFailed, "crmCustomerId and accountId are required.");
+            if (!CollectionsEnums.TryParse<ReminderChannel>(name, out var channel))
+            {
+                return Fail(CollectionsOutcome.InvalidRequest, $"channels must be from {CollectionsEnums.Names<ReminderChannel>()}.");
+            }
+
+            if (!channels.Contains(channel))
+            {
+                channels.Add(channel);
+            }
         }
 
-        if (!CollectionsEnums.TryParse<ReminderChannel>(request.Channel, out var channel))
+        var language = string.IsNullOrWhiteSpace(request.Language) ? "en" : request.Language.Trim().ToLowerInvariant();
+        var requestHash = CollectionsHashing.Hash(new
         {
-            return Fail(CollectionsOutcome.ValidationFailed, $"channel must be one of {CollectionsEnums.Names<ReminderChannel>()}.");
+            candidateId = request.CandidateId?.Trim(),
+            channels = channels.Select(c => c.ToString()).Order(StringComparer.Ordinal).ToArray(),
+            language
+        });
+
+        if (key is not null && await reminderRepository.GetByIdempotencyKeyAsync(key, cancellationToken) is { } original)
+        {
+            return original.RequestHash == requestHash
+                ? CollectionsResult<CollectionsReminderJobDto>.Ok(CollectionsMapper.ToJobDto(original), CollectionsOutcome.Replayed)
+                : Fail(CollectionsOutcome.IdempotencyConflict, "This Idempotency-Key was already used with a different request.");
         }
 
-        var type = ReminderType.Manual;
-        if (!string.IsNullOrWhiteSpace(request.ReminderType) && !CollectionsEnums.TryParse(request.ReminderType, out type))
+        if (!CollectionsCandidate.TryDecode(request.CandidateId, out var candidate))
         {
-            // Legal notices and referrals are deliberately not reminder types.
-            return Fail(CollectionsOutcome.ValidationFailed, $"reminderType must be one of {CollectionsEnums.Names<ReminderType>()}.");
+            return Fail(CollectionsOutcome.InvalidRequest, "candidateId is required and must come from the candidates list.");
         }
 
-        if (!options.Channels.IsEnabled(channel))
+        if (channels.Count == 0)
         {
-            return Fail(CollectionsOutcome.ChannelNotEnabled, $"The {channel} reminder channel is not enabled.");
+            return Fail(CollectionsOutcome.InvalidRequest, "channels must name at least one channel.");
         }
 
-        // The voice bot is Genesys' to dial. A reminder recorded for it by
-        // anyone else would sit Queued with nobody to place the call.
-        if (channel == ReminderChannel.VoiceBot && !permissions.IsIntegration)
+        if (!Languages.Contains(language))
         {
-            return Fail(CollectionsOutcome.ValidationFailed, "VoiceBot reminders are recorded by the Genesys outbound campaign itself, immediately before it dials.");
+            return Fail(CollectionsOutcome.InvalidRequest, "language must be \"en\" or \"ar\".");
         }
 
-        var today = clock.Today;
-        var rules = clock.Rules;
-        if (type != ReminderType.Manual && ReminderPolicy.OpenWindows(today, rules).All(w => w.Type != type))
+        var disabled = channels.Where(c => !options.Channels.IsEnabled(c)).ToList();
+        if (disabled.Count > 0)
         {
-            return Fail(CollectionsOutcome.NotEligible, $"The {type} window is not open on {today:yyyy-MM-dd}.");
+            return Fail(CollectionsOutcome.ChannelNotEnabled, $"Reminder channel(s) not enabled: {string.Join(", ", disabled)}.");
         }
 
+        // The voice bot is Genesys' to dial; a VoiceBot channel queued by
+        // anyone else would wait for a call nobody places.
+        if (channels.Contains(ReminderChannel.VoiceBot) && !permissions.IsIntegration)
+        {
+            return Fail(CollectionsOutcome.Forbidden, "VoiceBot reminders are queued by the Genesys integration account, which places the call.");
+        }
+
+        // Fresh read, then the candidate must reproduce exactly.
         FinancialAccountSnapshot? account;
         try
         {
-            var accounts = await source.GetCustomerAccountsAsync(request.CrmCustomerId.Trim(), cancellationToken);
-            if (accounts is null)
-            {
-                return Fail(CollectionsOutcome.CustomerNotFound, $"The financial source has no customer '{request.CrmCustomerId.Trim()}'.");
-            }
-
-            account = accounts.FirstOrDefault(a =>
-                string.Equals(a.AccountId, request.AccountId.Trim(), StringComparison.Ordinal)
-                && string.Equals(a.CrmCustomerId, request.CrmCustomerId.Trim(), StringComparison.Ordinal));
+            account = (await source.GetCustomerAccountsAsync(candidate!.CrmCustomerId, cancellationToken))?
+                .FirstOrDefault(a => a.AccountId == candidate.AccountId && a.CrmCustomerId == candidate.CrmCustomerId);
         }
         catch (CollectionsFinancialSourceUnavailableException ex)
         {
-            return Fail(CollectionsOutcome.SourceUnavailable, ex.Message);
+            return Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
         }
 
         if (account is null)
         {
-            return Fail(CollectionsOutcome.AccountNotFound, $"Account '{request.AccountId.Trim()}' does not belong to customer '{request.CrmCustomerId.Trim()}'.");
+            return Fail(CollectionsOutcome.CandidateChanged, "The candidate's account is no longer reported by the financial source.");
         }
 
-        var trigger = permissions.IsIntegration ? ReminderTrigger.Integration : ReminderTrigger.Manual;
-        var result = await CreateForAccountAsync(account, type, channel, today, rules, trigger, caller.EmployeeId, cancellationToken);
-        return result.Outcome is CollectionsOutcome.Created or CollectionsOutcome.AlreadyExists
-            ? CollectionsResult<CreateCollectionsReminderResponseDto>.Ok(
-                new CreateCollectionsReminderResponseDto(result.Outcome.ToString(), CollectionsMapper.ToDto(result.Value!)), result.Outcome)
-            : Fail(result.Outcome, result.Detail);
-    }
-
-    public async Task<CollectionsResult<CollectionsReminderCandidatesResponseDto>> ListCandidatesAsync(
-        CollectionsCaller caller, string? reminderType, string? channel, int page, int pageSize, CancellationToken cancellationToken = default)
-    {
-        if (!options.Enabled)
+        if (clock.IsStale(account.AsOfUtc))
         {
-            return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.Disabled);
+            return Fail(CollectionsOutcome.FinanceUnavailable, "The financial source's figures for this account are stale; a stale read never authorizes a send.");
         }
 
-        var permissions = await authorization.ResolveAsync(caller, cancellationToken);
-        if (!permissions.CanSendReminders)
-        {
-            return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.Forbidden, "Listing reminder candidates requires the Collections reminder permission.");
-        }
-
-        if (!CollectionsAccountQueryAppService.ValidPaging(page, pageSize, out var pagingError))
-        {
-            return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.ValidationFailed, pagingError);
-        }
-
-        ReminderType? typeFilter = null;
-        if (!string.IsNullOrWhiteSpace(reminderType))
-        {
-            if (!CollectionsEnums.TryParse<ReminderType>(reminderType, out var parsedType) || parsedType == ReminderType.Manual)
-            {
-                return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.ValidationFailed,
-                    "reminderType must be OverdueMoreThanOneMonth, CurrentMonthDue or MonthEndFollowUp.");
-            }
-
-            typeFilter = parsedType;
-        }
-
-        var channels = Enum.GetValues<ReminderChannel>().Where(options.Channels.IsEnabled).ToList();
-        if (!string.IsNullOrWhiteSpace(channel))
-        {
-            if (!CollectionsEnums.TryParse<ReminderChannel>(channel, out var parsedChannel))
-            {
-                return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.ValidationFailed,
-                    $"channel must be one of {CollectionsEnums.Names<ReminderChannel>()}.");
-            }
-
-            channels = channels.Where(c => c == parsedChannel).ToList();
-        }
-
-        var today = clock.Today;
+        var today = clock.BusinessDate;
         var rules = clock.Rules;
-        var windows = ReminderPolicy.OpenWindows(today, rules).Where(w => typeFilter is null || w.Type == typeFilter).ToList();
-
-        var candidates = new List<CollectionsReminderCandidateDto>();
-        var truncated = false;
-        if (windows.Count > 0 && channels.Count > 0)
+        var cycleKey = ReminderPolicy.CycleKey(candidate.Type, today, rules);
+        if (ReminderPolicy.OpenWindows(today, rules).All(w => w.Type != candidate.Type))
         {
-            ScanResult scan;
-            try
-            {
-                scan = await ScanEligibleAsync(windows, today, rules, cancellationToken);
-            }
-            catch (CollectionsFinancialSourceUnavailableException ex)
-            {
-                return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Fail(CollectionsOutcome.SourceUnavailable, ex.Message);
-            }
-
-            truncated = scan.Truncated;
-            var keys = scan.Eligible
-                .SelectMany(e => channels.Select(c => CollectionsReminder.BuildDeduplicationKey(e.Account.AccountId, e.Window.Type, e.Window.CycleKey, c)))
-                .ToList();
-            var existing = await reminderRepository.GetExistingDeduplicationKeysAsync(keys, cancellationToken);
-
-            foreach (var (account, window, eligibility) in scan.Eligible)
-            {
-                var pending = channels
-                    .Where(c => !existing.Contains(CollectionsReminder.BuildDeduplicationKey(account.AccountId, window.Type, window.CycleKey, c)))
-                    .Select(c => c.ToString())
-                    .ToList();
-
-                if (pending.Count > 0)
-                {
-                    candidates.Add(new CollectionsReminderCandidateDto(
-                        account.CrmCustomerId, account.AccountId, account.CrmUnitId, account.UnitNumber, account.ProjectName,
-                        account.CustomerName, account.CustomerPhone, window.Type.ToString(), window.CycleKey,
-                        eligibility.Amount!.Value, eligibility.Currency, account.AsOfUtc, pending));
-                }
-            }
+            return Fail(CollectionsOutcome.CandidateChanged, $"The {candidate.Type} window is no longer open.");
         }
 
-        var ordered = candidates
-            .OrderBy(c => c.ReminderType, StringComparer.Ordinal)
-            .ThenBy(c => c.CrmCustomerId, StringComparer.Ordinal)
-            .ThenBy(c => c.AccountId, StringComparer.Ordinal)
-            .ToList();
+        var eligibility = ReminderPolicy.Evaluate(account, candidate.Type, today, rules);
+        if (!eligibility.IsEligible)
+        {
+            return Fail(CollectionsOutcome.CandidateChanged, eligibility.Reason == ReminderPolicy.SettledReason
+                ? "The account has been settled; it is suppressed and no reminder is queued."
+                : $"The account is no longer eligible ({eligibility.Reason}).");
+        }
 
-        return CollectionsResult<CollectionsReminderCandidatesResponseDto>.Ok(new CollectionsReminderCandidatesResponseDto(
-            today,
-            windows.Select(w => w.Type.ToString()).ToList(),
-            source.SourceName,
-            ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-            ordered.Count,
-            page,
-            pageSize,
-            truncated));
+        var existing = await ExistingChannelsAsync([account], candidate.Type, cycleKey, cancellationToken);
+        var replacement = ToCandidateDto(account, candidate.Type, cycleKey, eligibility, existing);
+        var fresh = new CollectionsCandidate(account.CrmCustomerId, account.AccountId, candidate.Type, cycleKey, eligibility.Amount,
+            eligibility.Currency, eligibility.InstalmentIds, candidate.ExpiresAtUtc);
+
+        if (clock.UtcNow > candidate.ExpiresAtUtc)
+        {
+            return Fail(CollectionsOutcome.CandidateChanged, "The candidate has expired.", replacement);
+        }
+
+        if (!candidate.Matches(fresh))
+        {
+            return Fail(CollectionsOutcome.CandidateChanged, "The balance or eligibility changed since the candidate was issued.", replacement);
+        }
+
+        var noContact = channels.Where(c => !HasContact(account, c)).ToList();
+        if (noContact.Count > 0)
+        {
+            return Fail(CollectionsOutcome.NoEligibleContact, $"The financial source holds no approved destination for: {string.Join(", ", noContact)}.");
+        }
+
+        return await QueueForAccountAsync(account, candidate.Type, cycleKey, eligibility, channels, language,
+            permissions.IsIntegration ? ReminderTrigger.Integration : ReminderTrigger.User, caller.EmployeeId,
+            key, requestHash, existing, replacement, cancellationToken);
     }
+
+    // ------------------------------------------------------------------
+    // The designated TigerCS scheduler
+    // ------------------------------------------------------------------
 
     /// <summary>
-    /// The designated scheduler's run: for each window open today, every
-    /// eligible account gets one reminder per scheduled channel TigerCS
-    /// dispatches itself. Refuses to do anything unless automatic scheduling
-    /// is active — which requires Collections' confirmation of the open rule
-    /// decisions as well as the switch.
+    /// The TigerCS scheduler's run: every eligible, non-stale account in each
+    /// window open today gets one job on the scheduled channels TigerCS
+    /// dispatches itself. Does nothing unless TigerCS is the designated
+    /// scheduler and Collections has confirmed the rules.
     /// </summary>
     public async Task<ScheduledRunResult> RunScheduledAsync(CancellationToken cancellationToken = default)
     {
-        if (!options.IsAutomaticSchedulingActive)
+        if (!options.IsTigerCsSchedulerActive)
         {
-            return new ScheduledRunResult(Ran: false, 0, 0, 0, Truncated: false,
-                "Automatic scheduling is off: it needs Collections:Enabled, Collections:AutomaticSchedulingEnabled and Collections:BusinessRulesConfirmed.");
+            return new ScheduledRunResult(false, 0, 0, false,
+                "The TigerCS scheduler is off: it needs Collections:Enabled, Collections:BusinessRulesConfirmed and Collections:SchedulerOwner = \"TigerCS\".");
         }
 
-        var today = clock.Today;
+        var today = clock.BusinessDate;
         var rules = clock.Rules;
         var windows = ReminderPolicy.OpenWindows(today, rules);
-        var channels = options.Channels.ScheduledChannels
-            .Distinct()
-            .Where(c => c != ReminderChannel.VoiceBot && options.Channels.IsEnabled(c))
-            .ToList();
-
-        if (windows.Count == 0 || channels.Count == 0)
+        var scheduled = options.Channels.ScheduledChannels.Distinct()
+            .Where(c => c != ReminderChannel.VoiceBot && options.Channels.IsEnabled(c)).ToList();
+        if (windows.Count == 0 || scheduled.Count == 0)
         {
-            return new ScheduledRunResult(true, 0, 0, 0, false, windows.Count == 0 ? "No reminder window is open today." : "No scheduled channel is enabled.");
+            return new ScheduledRunResult(true, 0, 0, false, windows.Count == 0 ? "No reminder window is open today." : "No scheduled channel is enabled.");
         }
 
-        var scan = await ScanEligibleAsync(windows, today, rules, cancellationToken);
-        int created = 0, existing = 0, refused = 0;
-        foreach (var (account, window, _) in scan.Eligible)
+        var (accounts, truncated) = await ScanAsync(cancellationToken);
+        int queued = 0, skipped = 0;
+        foreach (var window in windows)
         {
-            foreach (var channel in channels)
+            var offers = accounts
+                .Where(a => !clock.IsStale(a.AsOfUtc))
+                .Select(a => (Account: a, Eligibility: ReminderPolicy.Evaluate(a, window.Type, today, rules)))
+                .Where(o => o.Eligibility.IsEligible)
+                .ToList();
+            var existing = await ExistingChannelsAsync(offers.Select(o => o.Account), window.Type, window.CycleKey, cancellationToken);
+
+            foreach (var (account, eligibility) in offers)
             {
-                var result = await CreateForAccountAsync(account, window.Type, channel, today, rules, ReminderTrigger.Scheduled, null, cancellationToken);
-                switch (result.Outcome)
+                var available = AvailableChannels(account, window.Type, window.CycleKey, existing)
+                    .Where(scheduled.Contains)
+                    .Where(c => !existing.ContainsKey(CollectionsReminder.BuildDeduplicationKey(account.AccountId, window.Type, window.CycleKey, c)))
+                    .ToList();
+                if (available.Count == 0)
                 {
-                    case CollectionsOutcome.Created: created++; break;
-                    case CollectionsOutcome.AlreadyExists: existing++; break;
-                    default: refused++; break;
+                    skipped++;
+                    continue;
+                }
+
+                var result = await QueueForAccountAsync(account, window.Type, window.CycleKey, eligibility, available, "en",
+                    ReminderTrigger.Scheduled, null, null, null, existing, null, cancellationToken);
+                if (result.Outcome == CollectionsOutcome.Accepted)
+                {
+                    queued++;
+                }
+                else
+                {
+                    skipped++;
                 }
             }
         }
 
-        return new ScheduledRunResult(true, created, existing, refused, scan.Truncated, null);
+        return new ScheduledRunResult(true, queued, skipped, truncated, null);
     }
 
-    private async Task<CollectionsResult<CollectionsReminder>> CreateForAccountAsync(
-        FinancialAccountSnapshot account, ReminderType type, ReminderChannel channel, DateOnly today, ReminderRuleSettings rules,
-        ReminderTrigger trigger, Guid? requestedBy, CancellationToken cancellationToken)
+    // ------------------------------------------------------------------
+
+    private async Task<CollectionsResult<CollectionsReminderJobDto>> QueueForAccountAsync(
+        FinancialAccountSnapshot account, ReminderType type, string cycleKey, ReminderEligibility eligibility,
+        IReadOnlyList<ReminderChannel> channels, string language, ReminderTrigger trigger, Guid? actor,
+        string? idempotencyKey, string? requestHash, IReadOnlyDictionary<string, CollectionsReminderChannel> existing,
+        CollectionsReminderCandidateDto? replacement, CancellationToken cancellationToken)
     {
-        var cycleKey = ReminderPolicy.CycleKey(type, today, rules);
-        var key = CollectionsReminder.BuildDeduplicationKey(account.AccountId, type, cycleKey, channel);
-
-        // Duplicate first: an existing reminder is answered as such even if
-        // the account has since been settled — what was sent stays the answer.
-        if (await reminderRepository.GetByDeduplicationKeyAsync(key, cancellationToken) is { } existing)
-        {
-            return CollectionsResult<CollectionsReminder>.Ok(existing, CollectionsOutcome.AlreadyExists);
-        }
-
-        var eligibility = ReminderPolicy.Evaluate(account, type, today, rules);
-        if (!eligibility.IsEligible)
-        {
-            return CollectionsResult<CollectionsReminder>.Fail(CollectionsOutcome.NotEligible,
-                eligibility.Reason == ReminderPolicy.SettledReason
-                    ? $"Account '{account.AccountId}' has nothing outstanding for a {type} reminder — no reminder is sent for a settled account."
-                    : $"Account '{account.AccountId}' is not eligible for a {type} reminder ({eligibility.Reason}).");
-        }
-
-        if (channel == ReminderChannel.Sms && string.IsNullOrWhiteSpace(account.CustomerPhone)
-            || channel == ReminderChannel.Email && string.IsNullOrWhiteSpace(account.CustomerEmail))
-        {
-            return CollectionsResult<CollectionsReminder>.Fail(CollectionsOutcome.NotEligible,
-                $"The financial source holds no {(channel == ReminderChannel.Sms ? "phone number" : "email address")} for account '{account.AccountId}'.");
-        }
-
         var now = clock.UtcNow;
-        var reminder = new CollectionsReminder(
-            account.CrmCustomerId, account.AccountId, account.CrmUnitId, type, channel, cycleKey,
-            eligibility.Currency, eligibility.Amount!.Value, rules.IncludeFinesInReminderAmount, account.AsOfUtc,
-            trigger, requestedBy, now);
+        var used = channels
+            .Select(c => existing.GetValueOrDefault(CollectionsReminder.BuildDeduplicationKey(account.AccountId, type, cycleKey, c)))
+            .ToList();
 
-        await reminderRepository.AddAsync(reminder, cancellationToken);
+        CollectionsReminder job;
+        IEnumerable<CollectionsReminderChannel> toDispatch;
+        if (used.All(u => u is null))
+        {
+            job = new CollectionsReminder(account.CrmCustomerId, account.AccountId, account.UnitId, type, cycleKey, eligibility,
+                account.AsOfUtc, language, trigger, actor, idempotencyKey, requestHash, channels.ToList(), now);
+            await reminderRepository.AddAsync(job, cancellationToken);
+            toDispatch = job.Channels;
+        }
+        else if (used.All(u => u is not null && u.CanRetry && u.Attempts < options.MaxDeliveryAttempts)
+                 && used.Select(u => u!.CollectionsReminderId).Distinct().Count() == 1
+                 && await reminderRepository.GetByIdAsync(used[0]!.CollectionsReminderId, cancellationToken) is { } retryJob)
+        {
+            // Retries affect failed channels only, on the job that first sent them.
+            job = retryJob;
+            var retried = job.Channels.Where(c => channels.Contains(c.Channel)).ToList();
+            retried.ForEach(c => c.Requeue(now, actor));
+            toDispatch = retried;
+        }
+        else
+        {
+            return Fail(CollectionsOutcome.CandidateChanged,
+                "One or more requested channels were already used for this account in this cycle.", replacement);
+        }
 
         var correlationId = Guid.NewGuid();
-        if (channel != ReminderChannel.VoiceBot)
+        foreach (var channel in toDispatch)
         {
-            // Written in the same transaction as the reminder, so a queued
-            // SMS/email can never be lost between "recorded" and "sent".
-            await outboxWriter.WriteAsync(
-                DispatchEventType,
-                JsonSerializer.Serialize(new DispatchPayload(key)),
-                correlationId,
-                idempotencyKey: $"collections-reminder-dispatch:{key}",
-                now,
-                cancellationToken);
-        }
+            if (channel.Channel != ReminderChannel.VoiceBot)
+            {
+                // Same transaction as the job: a queued SMS/email cannot be lost
+                // between "queued" and "sent".
+                await outboxWriter.WriteAsync(DispatchEventType,
+                    JsonSerializer.Serialize(new DispatchPayload(channel.DeduplicationKey, channel.Attempts)),
+                    correlationId, $"collections-dispatch:{channel.DeduplicationKey}:{channel.Attempts}", now, cancellationToken);
+            }
 
-        await auditWriter.WriteAsync(
-            requestedBy, "CollectionsReminderQueued", AuditEntityType, CollectionsMapper.AuditEntityId(key), null,
-            $"Type={type};Channel={channel};Amount={eligibility.Amount} {eligibility.Currency};Trigger={trigger};SourceAsOfUtc={account.AsOfUtc:O}",
-            correlationId, cancellationToken);
+            await auditWriter.WriteAsync(actor, "CollectionsReminderQueued", AuditEntityType,
+                CollectionsHashing.AuditEntityId(channel.DeduplicationKey), null,
+                $"Amount={job.Amount} {job.Currency};Basis={job.AmountBasis};Attempt={channel.Attempts};Trigger={trigger};SourceAsOfUtc={account.AsOfUtc:O}",
+                correlationId, cancellationToken);
+        }
 
         try
         {
@@ -335,70 +397,111 @@ public sealed class CollectionsReminderAppService(
         }
         catch (DuplicateWriteException)
         {
-            // A concurrent request won the unique de-duplication key.
             unitOfWork.DiscardPendingChanges();
-            var winner = await reminderRepository.GetByDeduplicationKeyAsync(key, cancellationToken);
-            if (winner is null)
+            if (idempotencyKey is not null && await reminderRepository.GetByIdempotencyKeyAsync(idempotencyKey, cancellationToken) is { } winner)
             {
-                throw;
+                return winner.RequestHash == requestHash
+                    ? CollectionsResult<CollectionsReminderJobDto>.Ok(CollectionsMapper.ToJobDto(winner), CollectionsOutcome.Replayed)
+                    : Fail(CollectionsOutcome.IdempotencyConflict, "This Idempotency-Key was already used with a different request.");
             }
 
-            logger.LogInformation("Concurrent reminder for {DeduplicationKey} resolved to the existing reminder {ReminderId}.", key, winner.CollectionsReminderId);
-            return CollectionsResult<CollectionsReminder>.Ok(winner, CollectionsOutcome.AlreadyExists);
+            logger.LogInformation("Concurrent reminder for {AccountId} {Type} {CycleKey} lost the de-duplication race.", account.AccountId, type, cycleKey);
+            return Fail(CollectionsOutcome.CandidateChanged, "A concurrent request already queued this reminder for the cycle.", replacement);
         }
 
-        return CollectionsResult<CollectionsReminder>.Ok(reminder, CollectionsOutcome.Created);
+        return CollectionsResult<CollectionsReminderJobDto>.Ok(CollectionsMapper.ToJobDto(job), CollectionsOutcome.Accepted);
     }
 
-    private sealed record ScanResult(List<(FinancialAccountSnapshot Account, ReminderWindow Window, ReminderEligibility Eligibility)> Eligible, bool Truncated);
+    private CollectionsReminderCandidateDto ToCandidateDto(
+        FinancialAccountSnapshot account, ReminderType type, string cycleKey, ReminderEligibility eligibility,
+        IReadOnlyDictionary<string, CollectionsReminderChannel> existing)
+    {
+        var expires = clock.UtcNow.AddMinutes(Math.Max(1, options.CandidateValidityMinutes));
+        var token = new CollectionsCandidate(account.CrmCustomerId, account.AccountId, type, cycleKey, eligibility.Amount,
+            eligibility.Currency, eligibility.InstalmentIds, expires);
+        return new CollectionsReminderCandidateDto(
+            token.Encode(), account.CrmCustomerId, account.AccountId, account.UnitId, account.TowerName, account.UnitNumber,
+            eligibility.Currency, CollectionsMoney.Two(eligibility.Amount), eligibility.AmountBasis, eligibility.InstalmentIds, eligibility.OldestUnpaidDueDate,
+            AvailableChannels(account, type, cycleKey, existing).Select(c => c.ToString()).ToList(),
+            account.AsOfUtc, expires);
+    }
 
-    private async Task<ScanResult> ScanEligibleAsync(
-        IReadOnlyList<ReminderWindow> windows, DateOnly today, ReminderRuleSettings rules, CancellationToken cancellationToken)
+    private List<ReminderChannel> AvailableChannels(
+        FinancialAccountSnapshot account, ReminderType type, string cycleKey, IReadOnlyDictionary<string, CollectionsReminderChannel> existing) =>
+        Enum.GetValues<ReminderChannel>()
+            .Where(options.Channels.IsEnabled)
+            .Where(c => HasContact(account, c))
+            .Where(c => existing.GetValueOrDefault(CollectionsReminder.BuildDeduplicationKey(account.AccountId, type, cycleKey, c)) is not { } used
+                || (used.CanRetry && used.Attempts < options.MaxDeliveryAttempts))
+            .ToList();
+
+    private static bool HasContact(FinancialAccountSnapshot account, ReminderChannel channel) => channel switch
+    {
+        ReminderChannel.Email => !string.IsNullOrWhiteSpace(account.CustomerEmail),
+        _ => !string.IsNullOrWhiteSpace(account.CustomerPhone)
+    };
+
+    private async Task<IReadOnlyDictionary<string, CollectionsReminderChannel>> ExistingChannelsAsync(
+        IEnumerable<FinancialAccountSnapshot> accounts, ReminderType type, string cycleKey, CancellationToken cancellationToken)
+    {
+        var keys = accounts
+            .SelectMany(a => Enum.GetValues<ReminderChannel>().Select(c => CollectionsReminder.BuildDeduplicationKey(a.AccountId, type, cycleKey, c)))
+            .ToList();
+        return keys.Count == 0
+            ? new Dictionary<string, CollectionsReminderChannel>()
+            : (await reminderRepository.GetChannelsByDeduplicationKeysAsync(keys, cancellationToken)).ToDictionary(c => c.DeduplicationKey);
+    }
+
+    private async Task<IReadOnlyList<FinancialAccountSnapshot>> ScopeAsync(long? crmCustomerId, string? accountId, CancellationToken cancellationToken)
+    {
+        if (crmCustomerId is { } customer)
+        {
+            var accounts = await source.GetCustomerAccountsAsync(customer, cancellationToken) ?? [];
+            return accounts.Where(a => a.CrmCustomerId == customer
+                && (string.IsNullOrWhiteSpace(accountId) || a.AccountId == accountId.Trim())).ToList();
+        }
+
+        return (await ScanAsync(cancellationToken)).Accounts;
+    }
+
+    private async Task<(IReadOnlyList<FinancialAccountSnapshot> Accounts, bool Truncated)> ScanAsync(CancellationToken cancellationToken)
     {
         const int sourcePageSize = 200;
-        var eligible = new List<(FinancialAccountSnapshot, ReminderWindow, ReminderEligibility)>();
-        var read = 0;
-        var page = 1;
-        var truncated = false;
-
-        while (true)
+        var all = new List<FinancialAccountSnapshot>();
+        for (var page = 1; ; page++)
         {
             var batch = await source.ListAccountsWithOutstandingPrincipalAsync(page, sourcePageSize, cancellationToken);
-            foreach (var account in batch.Accounts)
-            {
-                foreach (var window in windows)
-                {
-                    var eligibility = ReminderPolicy.Evaluate(account, window.Type, today, rules);
-                    if (eligibility.IsEligible)
-                    {
-                        eligible.Add((account, window, eligibility));
-                    }
-                }
-            }
-
-            read += batch.Accounts.Count;
+            all.AddRange(batch.Accounts);
             if (!batch.HasMore || batch.Accounts.Count == 0)
             {
-                break;
+                return (all, false);
             }
 
-            if (read >= options.MaxAccountsPerScan)
+            if (all.Count >= options.MaxAccountsPerScan)
             {
-                truncated = true;
-                logger.LogWarning("Collections reminder scan stopped at {MaxAccountsPerScan} accounts; more remain in the source.", options.MaxAccountsPerScan);
-                break;
+                logger.LogWarning("Collections candidate scan stopped at {Max} accounts; more remain in the source.", options.MaxAccountsPerScan);
+                return (all, true);
             }
-
-            page++;
         }
-
-        return new ScanResult(eligible, truncated);
     }
 
-    private static CollectionsResult<CreateCollectionsReminderResponseDto> Fail(CollectionsOutcome outcome, string? detail = null) =>
-        CollectionsResult<CreateCollectionsReminderResponseDto>.Fail(outcome, detail);
+    private async Task<CollectionsResult<T>?> SendGateAsync<T>(CollectionsCaller caller, CancellationToken cancellationToken)
+    {
+        if (!options.Enabled)
+        {
+            return CollectionsResult<T>.Fail(CollectionsOutcome.Disabled);
+        }
 
-    internal sealed record DispatchPayload(string DeduplicationKey);
+        return (await authorization.ResolveAsync(caller, cancellationToken)).CanSendReminders
+            ? null
+            : CollectionsResult<T>.Fail(CollectionsOutcome.Forbidden, "Reminder candidates and queueing require the Collections reminder permission.");
+    }
+
+    private static CollectionsResult<CollectionsReminderJobDto> Fail(
+        CollectionsOutcome outcome, string? detail = null, CollectionsReminderCandidateDto? replacement = null) =>
+        CollectionsResult<CollectionsReminderJobDto>.Fail(outcome, detail, replacement);
+
+    internal sealed record DispatchPayload(string DeduplicationKey, int Attempt);
 }
 
-public sealed record ScheduledRunResult(bool Ran, int Created, int AlreadyExisted, int Refused, bool Truncated, string? Detail);
+public sealed record ScheduledRunResult(bool Ran, int Queued, int Skipped, bool Truncated, string? Detail);

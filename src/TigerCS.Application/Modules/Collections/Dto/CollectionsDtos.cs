@@ -1,293 +1,265 @@
 namespace TigerCS.Application.Modules.Collections.Dto;
 
+// Contracts follow TigerCS_Collections_API_Specification.md (5 Oct 2026).
+// Fields beyond the specification are marked "extension" and are additive.
+
 // ---------------------------------------------------------------------------
-// GET /api/genesys/collections/customers/{crmCustomerId}/outstanding
+// §3 GET …/customers/{crmCustomerId}/outstanding
 // ---------------------------------------------------------------------------
 
 /// <summary>
-/// A customer's accounts, balances and instalment schedules, as the authoritative source reports them.
-/// <para><c>CrmCustomerId</c>: The Tiger CRM customer.</para>
-/// <para><c>Source</c>: Which system the figures came from.</para>
-/// <para><c>AsOfUtc</c>: The oldest source timestamp among the returned accounts.</para>
-/// <para><c>IsStale</c>: True when any returned account's figures are older than the configured freshness window.</para>
-/// <para><c>BusinessDate</c>: "Today" in the business time zone — the date overdue/due-today/future are judged against.</para>
-/// <para><c>Accounts</c>: One entry per account (unit / payment plan). Currencies are never mixed or summed across accounts.</para>
-/// <para><c>Viewer</c>: What the caller may do.</para>
-/// <para><c>Documents</c>: Whether receipt and statement downloads exist.</para>
+/// The customer's accounts and their amounts. <c>dataStatus</c>: "Current";
+/// "Stale" when any account's figures are older than the freshness window.
+/// Extensions: <c>source</c>.
 /// </summary>
 public sealed record CollectionsOutstandingResponseDto(
-    string CrmCustomerId,
-    string Source,
-    DateTime AsOfUtc,
-    bool IsStale,
+    long CrmCustomerId,
     DateOnly BusinessDate,
+    DateTime AsOfUtc,
+    string DataStatus,
+    string Source,
     IReadOnlyList<CollectionsAccountDto> Accounts,
-    CollectionsViewerDto Viewer,
-    CollectionsDocumentsDto Documents);
+    string? NextCursor);
 
 /// <summary>
-/// <para><c>Consistency</c>: "Consistent", "Mismatch" (the schedule disagrees with the source's own total — figures shown, reminders refused) or "InvalidSourceData" (no figures shown).</para>
-/// <para><c>Balance</c>: Null when the source data is invalid. Never zero-filled.</para>
+/// One finance account. Amounts are null — never zero — when the source's
+/// data is invalid (<c>dataStatus: "Invalid"</c>). <c>currentMonthRemainingAmount</c>
+/// overlaps the overdue/due-today/future amounts and is never added to them.
+/// Extensions: <c>asOfUtc</c>, <c>dataStatus</c> ("Current", "Stale",
+/// "Inconsistent" — the schedule disagrees with the source total, reminders
+/// refused — or "Invalid"), <c>appliedCreditAmount</c>, <c>problems</c>.
 /// </summary>
 public sealed record CollectionsAccountDto(
     string AccountId,
-    string? CrmUnitId,
+    long? UnitId,
+    string? TowerName,
     string? UnitNumber,
-    string? ProjectName,
     string Currency,
     DateTime AsOfUtc,
-    bool IsStale,
-    string Consistency,
-    IReadOnlyList<string> Problems,
-    CollectionsBalanceDto? Balance,
-    CollectionsReminderEligibilityDto ReminderEligibility,
-    IReadOnlyList<CollectionsInstalmentDto> Instalments,
-    IReadOnlyList<CollectionsChargeDto> Charges);
+    string DataStatus,
+    decimal? RemainingPrincipalAmount,
+    decimal? OverduePrincipalAmount,
+    decimal? DueTodayPrincipalAmount,
+    decimal? FuturePrincipalAmount,
+    decimal? PayablePenaltyAmount,
+    decimal? PayableFeeAmount,
+    decimal? AppliedCreditAmount,
+    decimal? AmountDueNow,
+    decimal? CurrentMonthRemainingAmount,
+    DateOnly? OldestUnpaidDueDate,
+    CollectionsNextPaymentDto? NextPayment,
+    IReadOnlyList<string> Problems);
+
+public sealed record CollectionsNextPaymentDto(string InstalmentId, DateOnly DueDate, decimal RemainingAmount);
+
+// ---------------------------------------------------------------------------
+// §4 GET …/customers/{crmCustomerId}/payments?view=instalments|history
+// ---------------------------------------------------------------------------
+
+/// <summary>view=instalments.</summary>
+public sealed record CollectionsInstalmentsResponseDto(
+    long CrmCustomerId,
+    string AccountId,
+    string Currency,
+    DateTime AsOfUtc,
+    string DataStatus,
+    string View,
+    IReadOnlyList<CollectionsInstalmentDto> Items,
+    string? NextCursor);
 
 /// <summary>
-/// All amounts are in the account's currency and are sums of what the source reports as outstanding.
-/// <para><c>RemainingUnpaidPrincipal</c>: All principal not yet paid.</para>
-/// <para><c>OverduePrincipal</c>: Unpaid principal on instalments due before today.</para>
-/// <para><c>PrincipalDueToday</c>: Unpaid principal on instalments due today.</para>
-/// <para><c>FuturePrincipal</c>: Unpaid principal on instalments due after today.</para>
-/// <para><c>PayableFinesAndFees</c>: Fines and fees payable now (not on hold, already due).</para>
-/// <para><c>AmountDueNow</c>: Overdue + due today + payable fines and fees.</para>
-/// <para><c>CurrentMonthRemaining</c>: Unpaid principal on instalments due in the current calendar month.</para>
-/// <para><c>NextPayment</c>: The next instalment with principal outstanding, due today or later.</para>
-/// </summary>
-public sealed record CollectionsBalanceDto(
-    decimal RemainingUnpaidPrincipal,
-    decimal OverduePrincipal,
-    decimal PrincipalDueToday,
-    decimal FuturePrincipal,
-    decimal PayableFinesAndFees,
-    decimal AmountDueNow,
-    decimal CurrentMonthRemaining,
-    CollectionsNextPaymentDto? NextPayment);
-
-public sealed record CollectionsNextPaymentDto(string InstalmentId, DateOnly DueDate, decimal Amount);
-
-/// <summary>
-/// <para><c>PrincipalPaid</c>: Scheduled minus outstanding — the source's own allocation, shown, never recomputed.</para>
-/// <para><c>Status</c>: "Paid", "PartiallyPaid", "Overdue", "DueToday" or "Upcoming".</para>
+/// Status: Upcoming, DueToday, Overdue, PartiallyPaid or Paid.
+/// <c>isOverdue</c> is returned on every row so a PartiallyPaid row still says whether it is overdue.
 /// </summary>
 public sealed record CollectionsInstalmentDto(
     string InstalmentId,
-    int Sequence,
     DateOnly DueDate,
-    decimal PrincipalAmount,
-    decimal PrincipalPaid,
-    decimal PrincipalOutstanding,
-    string Status);
+    decimal ScheduledAmount,
+    decimal AllocatedPaidAmount,
+    decimal RemainingAmount,
+    string Status,
+    bool IsOverdue);
 
-public sealed record CollectionsChargeDto(
-    string ChargeId,
-    string Kind,
-    string? Description,
-    decimal Amount,
-    decimal Outstanding,
-    DateOnly? DueDate,
-    bool IsPayable);
-
-/// <summary>
-/// <para><c>Eligible</c>: Whether a manual reminder could be sent today.</para>
-/// <para><c>Amount</c>: The amount it would state.</para>
-/// <para><c>Reason</c>: Why not, when not: "Settled", "SourceInconsistent".</para>
-/// <para><c>OpenWindows</c>: Scheduled reminder types whose window is open today and for which this account qualifies.</para>
-/// </summary>
-public sealed record CollectionsReminderEligibilityDto(
-    bool Eligible,
-    decimal? Amount,
-    string? Reason,
-    IReadOnlyList<string> OpenWindows);
-
-/// <summary>
-/// <para><c>CanSendReminder</c>: The caller holds the reminder permission.</para>
-/// <para><c>EnabledChannels</c>: Channels switched on in configuration.</para>
-/// </summary>
-public sealed record CollectionsViewerDto(bool CanSendReminder, IReadOnlyList<string> EnabledChannels);
-
-public sealed record CollectionsDocumentsDto(bool ReceiptDownloadAvailable, bool StatementDownloadAvailable, string? Reason);
-
-// ---------------------------------------------------------------------------
-// GET /api/genesys/collections/customers/{crmCustomerId}/payments
-// ---------------------------------------------------------------------------
-
-public sealed record CollectionsPaymentsResponseDto(
-    string CrmCustomerId,
-    string Source,
+/// <summary>view=history — posted payments only. Unverified proof is never listed as a payment.</summary>
+public sealed record CollectionsPaymentHistoryResponseDto(
+    long CrmCustomerId,
+    string AccountId,
+    string Currency,
     DateTime AsOfUtc,
-    bool IsStale,
+    string DataStatus,
+    string View,
     IReadOnlyList<CollectionsPaymentDto> Items,
-    int TotalCount,
-    int Page,
-    int PageSize);
+    string? NextCursor);
 
 /// <summary>
-/// <para><c>Status</c>: "Posted", "PendingVerification", "Reversed" or "Rejected".</para>
-/// <para><c>CountsTowardBalance</c>: True only for Posted. An unverified proof never reduces a balance.</para>
+/// <c>receiptAvailable</c> is the source's statement that a receipt exists;
+/// no download is offered until a verified document API is connected.
 /// </summary>
 public sealed record CollectionsPaymentDto(
     string PaymentId,
-    string AccountId,
-    string? CrmUnitId,
-    string? UnitNumber,
-    DateOnly ReceivedOn,
-    DateOnly? PostedOn,
+    DateOnly PaymentDate,
     decimal Amount,
-    string Currency,
     string? Method,
-    string? Reference,
     string Status,
-    bool CountsTowardBalance,
-    bool ReceiptAvailable);
+    string? ReceiptNumber,
+    bool ReceiptAvailable,
+    IReadOnlyList<CollectionsPaymentAllocationDto> Allocations);
+
+/// <summary>Extension: <c>accountId</c>, set when a receipt covering several units allocates to another account.</summary>
+public sealed record CollectionsPaymentAllocationDto(string InstalmentId, decimal Amount, string? AccountId);
 
 // ---------------------------------------------------------------------------
-// GET /api/genesys/collections/reminders/candidates
+// §5 GET …/reminders/candidates
 // ---------------------------------------------------------------------------
 
+/// <summary>Extensions: <c>windowOpen</c> (whether the reminder type's window is open on businessDate).</summary>
 public sealed record CollectionsReminderCandidatesResponseDto(
+    string ReminderType,
+    string CycleKey,
     DateOnly BusinessDate,
-    IReadOnlyList<string> OpenWindows,
-    string Source,
+    string TimeZone,
+    bool WindowOpen,
     IReadOnlyList<CollectionsReminderCandidateDto> Items,
-    int TotalCount,
-    int Page,
-    int PageSize,
-    bool Truncated);
+    string? NextCursor);
 
 /// <summary>
-/// <para><c>PendingChannels</c>: Enabled channels that have not yet had this reminder in this cycle.</para>
+/// One account due a reminder. <c>candidateId</c> is opaque and expires at
+/// <c>expiresAtUtc</c>. Contact details are never exposed;
+/// <c>availableChannels</c> lists the enabled channels with an approved
+/// contact that have not been used (or may be retried) this cycle.
 /// </summary>
 public sealed record CollectionsReminderCandidateDto(
-    string CrmCustomerId,
+    string CandidateId,
+    long CrmCustomerId,
     string AccountId,
-    string? CrmUnitId,
+    long? UnitId,
+    string? TowerName,
     string? UnitNumber,
-    string? ProjectName,
-    string? CustomerName,
-    string? CustomerPhone,
-    string ReminderType,
-    string CycleKey,
-    decimal Amount,
     string Currency,
-    DateTime SourceAsOfUtc,
-    IReadOnlyList<string> PendingChannels);
+    decimal ReminderAmount,
+    string AmountBasis,
+    IReadOnlyList<string> InstalmentIds,
+    DateOnly? OldestUnpaidDueDate,
+    IReadOnlyList<string> AvailableChannels,
+    DateTime AsOfUtc,
+    DateTime ExpiresAtUtc);
 
 // ---------------------------------------------------------------------------
-// POST /api/genesys/collections/reminders
+// §6 POST …/reminders  (Idempotency-Key header)
 // ---------------------------------------------------------------------------
 
-/// <summary>
-/// <para><c>CrmCustomerId</c>: Required.</para>
-/// <para><c>AccountId</c>: Required. Must belong to the customer.</para>
-/// <para><c>Channel</c>: Required. "VoiceBot", "Sms" or "Email".</para>
-/// <para><c>ReminderType</c>: "OverdueMoreThanOneMonth", "CurrentMonthDue", "MonthEndFollowUp" (only while that window is open) or "Manual" (the default).</para>
-/// </summary>
-public sealed record CreateCollectionsReminderRequestDto(
-    string? CrmCustomerId,
-    string? AccountId,
-    string? Channel,
-    string? ReminderType = null);
+/// <param name="CandidateId">Required. From the candidates list; never a client-supplied balance.</param>
+/// <param name="Channels">Required. One or more of VoiceBot, Sms, Email — each from the candidate's availableChannels.</param>
+/// <param name="Language">"en" (default) or "ar".</param>
+public sealed record QueueCollectionsReminderRequestDto(
+    string? CandidateId,
+    IReadOnlyList<string>? Channels,
+    string? Language = null);
 
-/// <summary>
-/// <para><c>Outcome</c>: "Created", or "AlreadyExists" when this account/type/cycle/channel already has a reminder — the existing one is returned and nothing is sent.</para>
-/// </summary>
-public sealed record CreateCollectionsReminderResponseDto(string Outcome, CollectionsReminderDto Reminder);
-
-public sealed record CollectionsReminderDto(
-    long ReminderId,
-    string CrmCustomerId,
+/// <summary>The queued reminder job. Extensions: <c>amountBasis</c>, <c>instalmentIds</c>, <c>channels[].attempts</c>.</summary>
+public sealed record CollectionsReminderJobDto(
+    string ReminderId,
+    long CrmCustomerId,
     string AccountId,
-    string? CrmUnitId,
     string ReminderType,
-    string Channel,
     string CycleKey,
-    string Status,
-    string? StatusReason,
-    decimal Amount,
     string Currency,
-    bool AmountIncludesFines,
-    DateTime SourceAsOfUtc,
-    decimal? DispatchAmount,
-    string Trigger,
-    DateTime CreatedAtUtc,
-    DateTime? SentAtUtc,
-    DateTime? DeliveredAtUtc,
-    DateTime? FailedAtUtc,
-    DateTime? SuppressedAtUtc,
-    IReadOnlyList<CollectionsReminderEventDto> Events);
+    decimal ReminderAmount,
+    string AmountBasis,
+    IReadOnlyList<string> InstalmentIds,
+    DateTime QueuedAtUtc,
+    string Status,
+    IReadOnlyList<CollectionsChannelStatusDto> Channels);
 
-public sealed record CollectionsReminderEventDto(
-    long ReminderEventId,
-    string EventId,
-    string EventType,
-    DateTime OccurredAtUtc,
-    DateTime RecordedAtUtc,
-    string? Detail,
-    string? ResponseKind,
-    string? ConversationId,
-    DateOnly? PromisedPaymentDate,
-    decimal? PromisedAmount,
-    bool VerificationFollowUpRequired,
-    bool HumanFollowUpRequired,
-    string? TicketStatus,
-    long? TicketId,
-    string? TicketNumber);
+public sealed record CollectionsChannelStatusDto(
+    string Channel,
+    string Status,
+    DateTime? LastEventAtUtc,
+    int Attempts,
+    string? StatusReason);
 
 // ---------------------------------------------------------------------------
-// POST /api/genesys/collections/reminders/{reminderId}/outcomes
+// §7 POST …/reminders/{reminderId}/outcomes  (Idempotency-Key header)
 // ---------------------------------------------------------------------------
 
-/// <summary>
-/// <para><c>EventId</c>: Required. The caller's own id for this event — the idempotency key. A resend with the same id records nothing twice.</para>
-/// <para><c>Outcome</c>: Required. "Sent", "Delivered", "Failed" or "CustomerResponded".</para>
-/// <para><c>OccurredAtUtc</c>: When it happened. Defaults to now.</para>
-/// <para><c>ProviderReference</c>: The channel's own message/call id.</para>
-/// <para><c>FailureReason</c>: Why delivery failed. Used with "Failed".</para>
-/// <para><c>Response</c>: Required with "CustomerResponded".</para>
-/// </summary>
+/// <param name="EventId">Required. The caller's event id — the idempotency key for this event.</param>
+/// <param name="Channel">Required. A channel of this reminder.</param>
+/// <param name="ProviderMessageId">The channel's own message/call id.</param>
+/// <param name="ConversationId">Required for a customer voice response.</param>
+/// <param name="OccurredAtUtc">When it happened. Defaults to now.</param>
+/// <param name="DeliveryStatus">VoiceBot: Answered, NoAnswer, Failed. Sms/Email: Sent, Delivered, Failed.</param>
+/// <param name="CustomerResponded">True only when the customer actually responded — an answered call alone is not a response.</param>
+/// <param name="CustomerIntent">PromiseToPay, AlreadyPaid, RequestedHuman, AiDisconnected, Disputed or Other. Required when customerResponded.</param>
+/// <param name="RequiresHumanFollowUp">The caller requests human follow-up.</param>
+/// <param name="CustomerPhone">Extension: the number reached, so the ticket's customer lookup can run.</param>
 public sealed record RecordReminderOutcomeRequestDto(
     string? EventId,
-    string? Outcome,
-    DateTime? OccurredAtUtc = null,
-    string? ProviderReference = null,
-    string? FailureReason = null,
-    CollectionsCustomerResponseDto? Response = null);
-
-/// <summary>
-/// <para><c>Kind</c>: Required. "PromiseToPay", "AlreadyPaid", "RequestedHuman", "AiDisconnected", "Disputed" or "Other".</para>
-/// <para><c>ConversationId</c>: The Genesys conversation the response was given in. When present a ticket is created or reused for it; when absent the response is recorded only.</para>
-/// <para><c>CustomerPhone</c>: The number reached, as Genesys reports it.</para>
-/// <para><c>Note</c>: What the customer said, or the flow's note.</para>
-/// <para><c>PromisedPaymentDate</c>: For PromiseToPay.</para>
-/// <para><c>PromisedAmount</c>: For PromiseToPay. Recorded only — never posted.</para>
-/// </summary>
-public sealed record CollectionsCustomerResponseDto(
-    string? Kind,
+    string? Channel,
+    string? ProviderMessageId = null,
     string? ConversationId = null,
-    string? CustomerPhone = null,
-    string? Note = null,
-    DateOnly? PromisedPaymentDate = null,
-    decimal? PromisedAmount = null);
+    DateTime? OccurredAtUtc = null,
+    string? DeliveryStatus = null,
+    bool CustomerResponded = false,
+    string? CustomerIntent = null,
+    bool RequiresHumanFollowUp = false,
+    string? CustomerPhone = null);
 
 /// <summary>
-/// <para><c>Outcome</c>: "Recorded", or "AlreadyRecorded" for a resent event id.</para>
-/// <para><c>ReminderStatus</c>: The reminder's delivery status after this event.</para>
-/// <para><c>Event</c>: The stored event, including its ticket link.</para>
+/// <c>ticketResult</c>: Created, Reused, NotRequired or Pending (retried durably;
+/// the HTTP status is then 202). Extensions: <c>channelStatus</c>,
+/// <c>ticketNumber</c>, <c>replayed</c>.
 /// </summary>
 public sealed record RecordReminderOutcomeResponseDto(
-    string Outcome,
-    long ReminderId,
-    string ReminderStatus,
-    CollectionsReminderEventDto Event);
+    string ReminderId,
+    string EventId,
+    string Result,
+    string? DeliveryStatus,
+    string ChannelStatus,
+    long? TicketId,
+    string? TicketNumber,
+    string TicketResult,
+    bool FollowUpRequired,
+    bool Replayed);
 
 // ---------------------------------------------------------------------------
-// GET /api/genesys/collections/customers/{crmCustomerId}/reminders
+// §8 GET …/customers/{crmCustomerId}/reminders
 // ---------------------------------------------------------------------------
 
-public sealed record CollectionsReminderListResultDto(
-    IReadOnlyList<CollectionsReminderDto> Items,
-    int TotalCount,
-    int Page,
-    int PageSize);
+public sealed record CollectionsReminderHistoryResponseDto(
+    long CrmCustomerId,
+    string? AccountId,
+    IReadOnlyList<CollectionsReminderHistoryItemDto> Items,
+    string? NextCursor);
+
+/// <summary>
+/// The amount quoted when queued — never the current balance.
+/// <c>customerIntent</c>/<c>ticketId</c> are the latest response's.
+/// Extensions: <c>accountId</c>, <c>cycleKey</c>, <c>amountBasis</c>,
+/// <c>trigger</c>, <c>ticketNumber</c>, <c>responses</c>.
+/// </summary>
+public sealed record CollectionsReminderHistoryItemDto(
+    string ReminderId,
+    string AccountId,
+    string ReminderType,
+    string CycleKey,
+    string Currency,
+    decimal ReminderAmount,
+    string AmountBasis,
+    DateTime QueuedAtUtc,
+    string Trigger,
+    IReadOnlyList<CollectionsChannelStatusDto> Channels,
+    string? CustomerIntent,
+    long? TicketId,
+    string? TicketNumber,
+    IReadOnlyList<CollectionsReminderResponseDto> Responses);
+
+public sealed record CollectionsReminderResponseDto(
+    string EventId,
+    string Channel,
+    string CustomerIntent,
+    DateTime OccurredAtUtc,
+    bool FollowUpRequired,
+    bool VerificationFollowUpRequired,
+    string TicketResult,
+    long? TicketId,
+    string? TicketNumber);

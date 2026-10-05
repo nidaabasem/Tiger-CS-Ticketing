@@ -1,33 +1,50 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
-using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Persistence;
 using TigerCS.Integrations.Modules.CollectionsIntegration;
 using TigerCS.Tests.IdentityAndAccess.Integration;
+using TigerCS.Tests.Notifications.Fakes;
 
 namespace TigerCS.Tests.Collections.Integration;
 
-/// <summary>The real host with Collections switched on over the Development/Testing fixture source.</summary>
+/// <summary>
+/// The real host with Collections on, the Development/Testing fixture source,
+/// and Collections' own clock fixed at 2 October 2026, 10:00 Dubai (the
+/// OverdueMonthly window). Authentication, tickets and SLA keep real time.
+/// </summary>
 public sealed class CollectionsApiFixture : IAsyncLifetime
 {
-    public TigerCsApiFactory Factory { get; } = new()
+    public static readonly DateTime CollectionsNowUtc = new(2026, 10, 2, 6, 0, 0, DateTimeKind.Utc);
+
+    public FakeTimeProvider CollectionsTime { get; } = new(CollectionsNowUtc);
+
+    public TigerCsApiFactory Factory { get; }
+
+    public CollectionsApiFixture()
     {
-        ExtraConfiguration = new()
+        Factory = new TigerCsApiFactory
         {
-            ["Collections:Enabled"] = "true",
-            ["CollectionsSource:Provider"] = "Fixture",
-            ["Collections:Channels:VoiceBotEnabled"] = "true",
-            ["Collections:Channels:EmailEnabled"] = "true",
-        }
-    };
+            ExtraConfiguration = new()
+            {
+                ["Collections:Enabled"] = "true",
+                ["CollectionsSource:Provider"] = "Fixture",
+                ["Collections:Channels:VoiceBotEnabled"] = "true",
+                ["Collections:Channels:EmailEnabled"] = "true",
+            },
+            ExtraServices = services => services.AddScoped(sp =>
+                new CollectionsClock(sp.GetRequiredService<CollectionsOptions>(), CollectionsTime)),
+        };
+    }
 
     public string CollectionsDepartmentCode { get; } = "C" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
 
@@ -51,18 +68,20 @@ public sealed class CollectionsApiFixture : IAsyncLifetime
 }
 
 /// <summary>
-/// Every Collections route end to end: figures straight from the source,
-/// customer/account/unit scoping, explicit financial authorization, duplicate
-/// prevention, idempotent callbacks, and customer responses turned into
-/// tickets through the existing Genesys conversation-id ingestion — with the
-/// durable retry when that fails.
+/// Every Collections route end to end, on both prefixes: figures straight from
+/// the source in the specification's shape, account/unit scoping, explicit
+/// financial authorization, the candidate → queue flow with revalidation,
+/// idempotency and per-channel duplicate prevention, and customer responses
+/// turned into tickets through the existing conversation-id ingestion — with
+/// the durable retry when that fails.
 /// </summary>
 public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : IClassFixture<CollectionsApiFixture>
 {
-    private const string Base = "/api/genesys/collections";
+    private const string G = "/api/genesys/collections";
+    private const string W = "/api/collections";
     private TigerCsApiFactory Factory => fixture.Factory;
 
-    private async Task<(HttpClient Client, Guid EmployeeId)> ClientAsync(string role, bool integration = false, bool collectionsMember = false)
+    private async Task<HttpClient> ClientAsync(string role, bool integration = false, bool collectionsMember = false)
     {
         var (username, password, employeeId) = await Factory.SeedEmployeeAsync(role);
         if (integration)
@@ -78,7 +97,7 @@ public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : I
         var client = Factory.CreateClient();
         var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password))).Content.ReadFromJsonAsync<LoginResponseDto>();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
-        return (client, employeeId);
+        return client;
     }
 
     private static async Task<T> Read<T>(HttpResponseMessage response, HttpStatusCode expected)
@@ -88,109 +107,166 @@ public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : I
         return (await response.Content.ReadFromJsonAsync<T>())!;
     }
 
-    private async Task<CollectionsReminderDto> CreateVoiceReminderAsync(HttpClient integration, string accountId = "ACC-9001-1204")
+    private static async Task<JsonElement> Problem(HttpResponseMessage response, HttpStatusCode expected, string code)
     {
-        // Each test needs its own reminder; a manual voice reminder is daily, so
-        // remove any earlier one for this key to keep tests independent.
-        using (var scope = Factory.Services.CreateScope())
+        var body = await Read<JsonElement>(response, expected);
+        Assert.Equal(code, body.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrEmpty(body.GetProperty("message").GetString()));
+        Assert.True(body.TryGetProperty("traceId", out _));
+        return body;
+    }
+
+    private static HttpRequestMessage Post(string url, object body, string? idempotencyKey = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
+        if (idempotencyKey is not null)
         {
-            var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-            var existing = await db.CollectionsReminders.Include(r => r.Events).Where(r => r.AccountId == accountId && r.Channel == ReminderChannel.VoiceBot).ToListAsync();
-            db.CollectionsReminderEvents.RemoveRange(existing.SelectMany(r => r.Events));
-            db.CollectionsReminders.RemoveRange(existing);
-            await db.SaveChangesAsync();
+            request.Headers.Add("Idempotency-Key", idempotencyKey);
         }
 
-        var created = await Read<CreateCollectionsReminderResponseDto>(
-            await integration.PostAsJsonAsync($"{Base}/reminders", new CreateCollectionsReminderRequestDto("9001", accountId, "VoiceBot")),
-            HttpStatusCode.Created);
-        return created.Reminder;
+        return request;
+    }
+
+    private async Task ResetRemindersAsync()
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        db.CollectionsReminderEvents.RemoveRange(db.CollectionsReminderEvents);
+        db.CollectionsReminderChannels.RemoveRange(db.CollectionsReminderChannels);
+        db.CollectionsReminders.RemoveRange(db.CollectionsReminders);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<CollectionsReminderCandidateDto> CandidateAsync(HttpClient client, string prefix = G) =>
+        (await Read<CollectionsReminderCandidatesResponseDto>(
+            await client.GetAsync($"{prefix}/reminders/candidates?reminderType=OverdueMonthly&crmCustomerId=9001&accountId=ACC-9001-1204"),
+            HttpStatusCode.OK)).Items.Single();
+
+    private async Task<(HttpClient Integration, CollectionsReminderJobDto Job)> VoiceReminderAsync()
+    {
+        await ResetRemindersAsync();
+        var integration = await ClientAsync(Roles.CsAgent, integration: true);
+        var candidate = await CandidateAsync(integration);
+        var job = await Read<CollectionsReminderJobDto>(await integration.SendAsync(Post($"{G}/reminders",
+            new QueueCollectionsReminderRequestDto(candidate.CandidateId, ["VoiceBot"]), Guid.NewGuid().ToString())), HttpStatusCode.Accepted);
+        return (integration, job);
     }
 
     // ------------------------------------------------------------------
-    // Outstanding / payments
+    // §3 Outstanding
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Outstanding_ReturnsTheSourceFigures_PerAccount_InItsCurrency()
+    public async Task Outstanding_ReturnsTheSpecificationShape_FromTheSourceFigures()
     {
-        var (client, _) = await ClientAsync(Roles.CsAgent);
+        var client = await ClientAsync(Roles.CsAgent);
 
-        var body = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{Base}/customers/9001/outstanding"), HttpStatusCode.OK);
+        var response = await client.GetAsync($"{G}/customers/9001/outstanding?accountId=ACC-9001-1204");
+        var raw = await response.Content.ReadAsStringAsync();
+        Assert.Contains("\"remainingPrincipalAmount\":44000.00", raw, StringComparison.Ordinal);   // two decimal places on the wire
+        Assert.Contains("\"crmCustomerId\":9001", raw, StringComparison.Ordinal);                  // a number, as in the specification
+        var body = await Read<CollectionsOutstandingResponseDto>(response, HttpStatusCode.OK);
 
-        Assert.Equal("9001", body.CrmCustomerId);
-        Assert.StartsWith("Fixture", body.Source, StringComparison.Ordinal);
-        Assert.False(body.Viewer.CanSendReminder);
-        Assert.False(body.Documents.ReceiptDownloadAvailable);
-        Assert.False(body.Documents.StatementDownloadAvailable);
-
-        var arrears = body.Accounts.Single(a => a.AccountId == "ACC-9001-1204");
-        Assert.Equal("AED", arrears.Currency);
-        Assert.Equal("Consistent", arrears.Consistency);
-        Assert.Equal(44_000m, arrears.Balance!.RemainingUnpaidPrincipal);
-        Assert.Equal(arrears.Balance.OverduePrincipal + arrears.Balance.PrincipalDueToday + arrears.Balance.FuturePrincipal, arrears.Balance.RemainingUnpaidPrincipal);
-        Assert.Equal(500m, arrears.Balance.PayableFinesAndFees); // the held fee is not payable
-        Assert.Equal(arrears.Balance.OverduePrincipal + arrears.Balance.PrincipalDueToday + 500m, arrears.Balance.AmountDueNow);
-        Assert.Equal(10_000m, arrears.Balance.CurrentMonthRemaining);
-        Assert.NotNull(arrears.Balance.NextPayment);
-        Assert.Contains(arrears.Instalments, i => i.Status == "Paid" && i.PrincipalPaid == 10_000m);
-        Assert.Contains(arrears.Instalments, i => i.PrincipalPaid == 6_000m && i.PrincipalOutstanding == 4_000m);
-
-        var settled = body.Accounts.Single(a => a.AccountId == "ACC-9001-0805");
-        Assert.Equal(0m, settled.Balance!.AmountDueNow);
-        Assert.False(settled.ReminderEligibility.Eligible);
-        Assert.Equal("Settled", settled.ReminderEligibility.Reason);
+        Assert.Equal(9001, body.CrmCustomerId);
+        Assert.Equal(new DateOnly(2026, 10, 2), body.BusinessDate);
+        Assert.Equal("Current", body.DataStatus);
+        Assert.Null(body.NextCursor);
+        var a = Assert.Single(body.Accounts);
+        Assert.Equal((9200L, "Tiger Tower A", "1204", "AED"), (a.UnitId!.Value, a.TowerName, a.UnitNumber, a.Currency));
+        Assert.Equal(44_000m, a.RemainingPrincipalAmount);
+        Assert.Equal(14_000m, a.OverduePrincipalAmount);       // Aug 4,000 (partial) + Sep 10,000
+        Assert.Equal(0m, a.DueTodayPrincipalAmount);
+        Assert.Equal(30_000m, a.FuturePrincipalAmount);
+        Assert.Equal(500m, a.PayablePenaltyAmount);
+        Assert.Equal(300m, a.PayableFeeAmount);                // the 250 fee on hold is excluded
+        Assert.Equal(200m, a.AppliedCreditAmount);
+        Assert.Equal(14_600m, a.AmountDueNow);                 // 14,000 + 500 + 300 − 200
+        Assert.Equal(10_000m, a.CurrentMonthRemainingAmount);
+        Assert.Equal(new DateOnly(2026, 8, 10), a.OldestUnpaidDueDate);
+        Assert.Equal(new CollectionsNextPaymentDto("INS-1204-04", new DateOnly(2026, 10, 10), 10_000m), a.NextPayment);
     }
 
     [Fact]
-    public async Task Outstanding_ScopesToTheAccountOrUnit_AndRefusesOneThatIsNotTheCustomers()
+    public async Task Outstanding_KeepsSeveralContractsOnOneUnitSeparate_AndPagesAccounts()
     {
-        var (client, _) = await ClientAsync(Roles.CsAgent);
+        var client = await ClientAsync(Roles.CsAgent);
 
-        var byAccount = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{Base}/customers/9001/outstanding?accountId=ACC-9001-0805"), HttpStatusCode.OK);
-        Assert.Equal(["ACC-9001-0805"], byAccount.Accounts.Select(a => a.AccountId));
+        var unit = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{W}/customers/9001/outstanding?unitId=9200"), HttpStatusCode.OK);
+        Assert.Equal(["ACC-9001-1204", "ACC-9001-1204-P"], unit.Accounts.Select(a => a.AccountId));
+        Assert.Equal(1_500m, unit.Accounts[1].OverduePrincipalAmount);
 
-        var byUnit = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{Base}/customers/9001/outstanding?crmUnitId=9200"), HttpStatusCode.OK);
-        Assert.Equal(["ACC-9001-1204"], byUnit.Accounts.Select(a => a.AccountId));
-
-        // Another customer's account, or an unknown customer: 404, never an empty "nothing owed".
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"{Base}/customers/9001/outstanding?accountId=ACC-9002-0310")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"{Base}/customers/424242/outstanding")).StatusCode);
+        var first = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{W}/customers/9001/outstanding?pageSize=2"), HttpStatusCode.OK);
+        Assert.Equal(2, first.Accounts.Count);
+        Assert.NotNull(first.NextCursor);
+        var second = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{W}/customers/9001/outstanding?pageSize=2&cursor={first.NextCursor}"), HttpStatusCode.OK);
+        Assert.Single(second.Accounts);
+        Assert.Null(second.NextCursor);
+        Assert.Empty(first.Accounts.Select(a => a.AccountId).Intersect(second.Accounts.Select(a => a.AccountId)));
     }
 
     [Fact]
-    public async Task Outstanding_FlagsASourceMismatch_AndRefusesRemindersOnIt()
+    public async Task Outstanding_RefusesWhatIsNotTheCustomers_WithoutRevealingIt()
     {
-        var (client, _) = await ClientAsync(Roles.CsSupervisor);
+        var client = await ClientAsync(Roles.CsAgent);
 
-        var body = await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{Base}/customers/9002/outstanding"), HttpStatusCode.OK);
-        var account = Assert.Single(body.Accounts);
-        Assert.Equal("Mismatch", account.Consistency);
-        Assert.Equal(12_000m, account.Balance!.RemainingUnpaidPrincipal);
-        Assert.False(account.ReminderEligibility.Eligible);
-
-        var refused = await client.PostAsJsonAsync($"{Base}/reminders", new CreateCollectionsReminderRequestDto("9002", "ACC-9002-0310", "Email"));
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        await Problem(await client.GetAsync($"{G}/customers/9001/outstanding?accountId=ACC-9002-0310"), HttpStatusCode.NotFound, "AccountNotFound");
+        await Problem(await client.GetAsync($"{G}/customers/424242/outstanding"), HttpStatusCode.NotFound, "AccountNotFound");
+        await Problem(await client.GetAsync($"{G}/customers/abc/outstanding"), HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await client.GetAsync($"{G}/customers/9001/outstanding?cursor=bogus"), HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await client.GetAsync($"{G}/customers/9001/outstanding?pageSize=101"), HttpStatusCode.BadRequest, "InvalidRequest");
     }
 
     [Fact]
-    public async Task Payments_PostedOnlyByDefault_UnpostedNeverCountTowardTheBalance_AndArePaged()
+    public async Task Outstanding_FlagsAnInconsistentSource()
     {
-        var (client, _) = await ClientAsync(Roles.CsAgent);
+        var client = await ClientAsync(Roles.CsAgent);
+        var account = Assert.Single((await Read<CollectionsOutstandingResponseDto>(await client.GetAsync($"{G}/customers/9002/outstanding"), HttpStatusCode.OK)).Accounts);
 
-        var posted = await Read<CollectionsPaymentsResponseDto>(await client.GetAsync($"{Base}/customers/9001/payments?accountId=ACC-9001-1204"), HttpStatusCode.OK);
-        Assert.Equal(2, posted.TotalCount);
-        Assert.All(posted.Items, p => Assert.True(p.CountsTowardBalance));
+        Assert.Equal("Inconsistent", account.DataStatus);
+        Assert.Equal(12_000m, account.RemainingPrincipalAmount);
+        Assert.NotEmpty(account.Problems);
+    }
 
-        var all = await Read<CollectionsPaymentsResponseDto>(await client.GetAsync($"{Base}/customers/9001/payments?accountId=ACC-9001-1204&includeUnposted=true&pageSize=2"), HttpStatusCode.OK);
-        Assert.Equal(3, all.TotalCount);
-        Assert.Equal(2, all.Items.Count);
-        var page2 = await Read<CollectionsPaymentsResponseDto>(await client.GetAsync($"{Base}/customers/9001/payments?accountId=ACC-9001-1204&includeUnposted=true&pageSize=2&page=2"), HttpStatusCode.OK);
-        var unverified = Assert.Single(all.Items.Concat(page2.Items), p => p.Status == "PendingVerification");
-        Assert.False(unverified.CountsTowardBalance);
-        Assert.False(unverified.ReceiptAvailable);
+    // ------------------------------------------------------------------
+    // §4 Payments
+    // ------------------------------------------------------------------
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"{Base}/customers/9001/payments?pageSize=101")).StatusCode);
+    [Fact]
+    public async Task Instalments_ShowScheduledPaidRemaining_AndAPartiallyPaidRowSaysWhetherItIsOverdue()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        await Problem(await client.GetAsync($"{G}/customers/9001/payments?view=instalments"), HttpStatusCode.BadRequest, "InvalidRequest"); // several accounts
+        var body = await Read<CollectionsInstalmentsResponseDto>(
+            await client.GetAsync($"{G}/customers/9001/payments?accountId=ACC-9001-1204&view=instalments&pageSize=50"), HttpStatusCode.OK);
+
+        Assert.Equal(("ACC-9001-1204", "AED", "instalments"), (body.AccountId, body.Currency, body.View));
+        Assert.Equal(["Paid", "PartiallyPaid", "Overdue", "Upcoming", "Upcoming", "Upcoming"], body.Items.Select(i => i.Status));
+        var partial = body.Items[1];
+        Assert.Equal((10_000m, 6_000m, 4_000m, true), (partial.ScheduledAmount, partial.AllocatedPaidAmount, partial.RemainingAmount, partial.IsOverdue));
+    }
+
+    [Fact]
+    public async Task History_ListsPostedPaymentsOnly_WithReceiptsAndCrossAccountAllocations()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        var body = await Read<CollectionsPaymentHistoryResponseDto>(
+            await client.GetAsync($"{W}/customers/9001/payments?accountId=ACC-9001-1204&view=history"), HttpStatusCode.OK);
+
+        Assert.Equal("history", body.View);
+        Assert.Equal(["PAY-1204-02", "PAY-1204-01"], body.Items.Select(p => p.PaymentId));   // the unverified proof is not listed
+        Assert.All(body.Items, p => Assert.Equal("Posted", p.Status));
+        var shared = body.Items[0];
+        Assert.Equal("RCT-20002", shared.ReceiptNumber);
+        Assert.Contains(shared.Allocations, a => a.AccountId == "ACC-9001-1204-P" && a.Amount == 1_500m);
+
+        var filtered = await Read<CollectionsPaymentHistoryResponseDto>(
+            await client.GetAsync($"{W}/customers/9001/payments?accountId=ACC-9001-1204&view=history&fromDate=2026-08-01&toDate=2026-10-02"), HttpStatusCode.OK);
+        Assert.Equal(["PAY-1204-02"], filtered.Items.Select(p => p.PaymentId));
+
+        await Problem(await client.GetAsync($"{W}/customers/9001/payments?accountId=ACC-9001-1204&view=statement"), HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await client.GetAsync($"{W}/customers/9001/payments?accountId=ACC-9001-1204&view=history&fromDate=2026-10-02&toDate=2026-01-01"), HttpStatusCode.BadRequest, "InvalidRequest");
     }
 
     // ------------------------------------------------------------------
@@ -198,242 +274,214 @@ public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : I
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task FinancialRead_IsExplicit_DepartmentEmployeesOutsideCollectionsAndReportingUsersAreRefused()
+    public async Task FinancialRead_IsExplicit()
     {
-        var (reporting, _) = await ClientAsync(Roles.ReportingUser);
-        Assert.Equal(HttpStatusCode.Forbidden, (await reporting.GetAsync($"{Base}/customers/9001/outstanding")).StatusCode);
+        var reporting = await ClientAsync(Roles.ReportingUser);
+        await Problem(await reporting.GetAsync($"{W}/customers/9001/outstanding"), HttpStatusCode.Forbidden, "Forbidden");
 
-        var (otherDepartment, _) = await ClientAsync(Roles.DepartmentEmployee);
-        Assert.Equal(HttpStatusCode.Forbidden, (await otherDepartment.GetAsync($"{Base}/customers/9001/outstanding")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await otherDepartment.GetAsync($"{Base}/customers/9001/reminders")).StatusCode);
+        var otherDepartment = await ClientAsync(Roles.DepartmentEmployee);
+        await Problem(await otherDepartment.GetAsync($"{W}/customers/9001/outstanding"), HttpStatusCode.Forbidden, "Forbidden");
+        await Problem(await otherDepartment.GetAsync($"{W}/customers/9001/reminders"), HttpStatusCode.Forbidden, "Forbidden");
 
-        var (collections, _) = await ClientAsync(Roles.DepartmentEmployee, collectionsMember: true);
-        var body = await Read<CollectionsOutstandingResponseDto>(await collections.GetAsync($"{Base}/customers/9001/outstanding"), HttpStatusCode.OK);
-        Assert.True(body.Viewer.CanSendReminder);
+        var collections = await ClientAsync(Roles.DepartmentEmployee, collectionsMember: true);
+        Assert.Equal(HttpStatusCode.OK, (await collections.GetAsync($"{W}/customers/9001/outstanding")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await collections.GetAsync($"{W}/reminders/candidates?reminderType=OverdueMonthly")).StatusCode);
     }
 
     [Fact]
-    public async Task SendingAndReportingOutcomes_NeedTheirOwnGrants()
+    public async Task ViewingPaymentsAndSendingRemindersAreSeparateGrants()
     {
-        var (agent, _) = await ClientAsync(Roles.CsAgent);
-        Assert.Equal(HttpStatusCode.Forbidden,
-            (await agent.PostAsJsonAsync($"{Base}/reminders", new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"))).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await agent.GetAsync($"{Base}/reminders/candidates")).StatusCode);
+        var agent = await ClientAsync(Roles.CsAgent);
+        Assert.Equal(HttpStatusCode.OK, (await agent.GetAsync($"{W}/customers/9001/outstanding")).StatusCode);
+        await Problem(await agent.GetAsync($"{W}/reminders/candidates?reminderType=OverdueMonthly"), HttpStatusCode.Forbidden, "Forbidden");
+        await Problem(await agent.SendAsync(Post($"{W}/reminders", new QueueCollectionsReminderRequestDto("CAND-x", ["Email"]))), HttpStatusCode.Forbidden, "Forbidden");
 
-        // A supervisor may send, but only an integration account reports delivery.
-        var (supervisor, _) = await ClientAsync(Roles.CsSupervisor);
-        Assert.Equal(HttpStatusCode.Forbidden,
-            (await supervisor.PostAsJsonAsync($"{Base}/reminders/1/outcomes", new RecordReminderOutcomeRequestDto("e1", "Delivered"))).StatusCode);
+        var supervisor = await ClientAsync(Roles.CsSupervisor);
+        await Problem(await supervisor.SendAsync(Post($"{W}/reminders/REM-1/outcomes", new RecordReminderOutcomeRequestDto("e1", "Sms", DeliveryStatus: "Sent"))),
+            HttpStatusCode.Forbidden, "Forbidden");
     }
 
     [Fact]
     public async Task SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride()
     {
-        var (admin, _) = await ClientAsync(Roles.SystemAdministrator);
+        await ResetRemindersAsync();
+        var admin = await ClientAsync(Roles.SystemAdministrator);
 
-        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{Base}/customers/9001/outstanding")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{Base}/customers/9001/payments")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{Base}/reminders/candidates")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{Base}/customers/9001/reminders")).StatusCode);
-        // Authorized, then refused on substance — not 403.
-        Assert.Equal(HttpStatusCode.UnprocessableEntity,
-            (await admin.PostAsJsonAsync($"{Base}/reminders", new CreateCollectionsReminderRequestDto("9001", "ACC-9001-0805", "Email"))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound,
-            (await admin.PostAsJsonAsync($"{Base}/reminders/999999/outcomes", new RecordReminderOutcomeRequestDto("e1", "Delivered"))).StatusCode);
-    }
-
-    // ------------------------------------------------------------------
-    // Reminders
-    // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task ManualEmailReminder_IsRevalidated_PersistedWithItsAmount_DeduplicatedAndDispatchedOnce()
-    {
-        var (collections, employeeId) = await ClientAsync(Roles.DepartmentHead, collectionsMember: true);
-        using (var scope = Factory.Services.CreateScope())
+        foreach (var prefix in new[] { G, W })
         {
-            var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-            db.CollectionsReminders.RemoveRange(db.CollectionsReminders.Where(r => r.Channel == ReminderChannel.Email && r.AccountId == "ACC-9001-1204"));
-            await db.SaveChangesAsync();
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{prefix}/customers/9001/outstanding")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{prefix}/customers/9001/payments?accountId=ACC-9001-1204")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{prefix}/reminders/candidates?reminderType=OverdueMonthly")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"{prefix}/customers/9001/reminders")).StatusCode);
+            // Authorized, then refused on substance — never 403.
+            await Problem(await admin.SendAsync(Post($"{prefix}/reminders", new QueueCollectionsReminderRequestDto("CAND-x", ["Email"]))), HttpStatusCode.BadRequest, "InvalidRequest");
+            await Problem(await admin.SendAsync(Post($"{prefix}/reminders/REM-999999/outcomes", new RecordReminderOutcomeRequestDto("e1", "Sms", DeliveryStatus: "Sent"))),
+                HttpStatusCode.NotFound, "ReminderNotFound");
         }
+    }
 
+    // ------------------------------------------------------------------
+    // §5–6 Candidates and queue
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task CandidateThenQueue_Revalidates_Replays_Conflicts_DeduplicatesAndDispatchesOnce()
+    {
+        await ResetRemindersAsync();
         Factory.EmailSender.Clear();
+        var supervisor = await ClientAsync(Roles.CsSupervisor);
 
-        var request = new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email");
-        var first = await Read<CreateCollectionsReminderResponseDto>(await collections.PostAsJsonAsync($"{Base}/reminders", request), HttpStatusCode.Created);
-        Assert.Equal("Created", first.Outcome);
-        Assert.Equal("Queued", first.Reminder.Status);
-        Assert.Equal("Manual", first.Reminder.ReminderType);
-        Assert.Equal("Manual", first.Reminder.Trigger);
-        Assert.Equal("AED", first.Reminder.Currency);
-        Assert.True(first.Reminder.Amount > 0m);
+        var list = await Read<CollectionsReminderCandidatesResponseDto>(
+            await supervisor.GetAsync($"{W}/reminders/candidates?reminderType=OverdueMonthly&businessDate=2026-10-02"), HttpStatusCode.OK);
+        Assert.Equal(("OverdueMonthly", "2026-10:OverdueMonthly", "Asia/Dubai"), (list.ReminderType, list.CycleKey, list.TimeZone));
+        var candidate = Assert.Single(list.Items);
+        Assert.Equal((4_000m, "UnpaidPrincipalOlderThanOneCalendarMonth"), (candidate.ReminderAmount, candidate.AmountBasis));
 
-        // Same account / type / cycle / channel: the existing reminder, nothing new.
-        var second = await Read<CreateCollectionsReminderResponseDto>(await collections.PostAsJsonAsync($"{Base}/reminders", request), HttpStatusCode.OK);
-        Assert.Equal("AlreadyExists", second.Outcome);
-        Assert.Equal(first.Reminder.ReminderId, second.Reminder.ReminderId);
+        var request = new QueueCollectionsReminderRequestDto(candidate.CandidateId, ["Email"], "en");
+        var job = await Read<CollectionsReminderJobDto>(await supervisor.SendAsync(Post($"{W}/reminders", request, "web-key-1")), HttpStatusCode.Accepted);
+        Assert.Equal(("Queued", 4_000m), (job.Status, job.ReminderAmount));
 
-        // The outbox sends it once, after re-reading the account.
+        var replay = await Read<CollectionsReminderJobDto>(await supervisor.SendAsync(Post($"{W}/reminders", request, "web-key-1")), HttpStatusCode.OK);
+        Assert.Equal(job.ReminderId, replay.ReminderId);
+
+        await Problem(await supervisor.SendAsync(Post($"{W}/reminders", request with { Language = "ar" }, "web-key-1")), HttpStatusCode.Conflict, "IdempotencyConflict");
+
+        var changed = await Problem(await supervisor.SendAsync(Post($"{W}/reminders", request, "web-key-2")), HttpStatusCode.Conflict, "CandidateChanged");
+        Assert.DoesNotContain("Email", changed.GetProperty("replacementCandidate").GetProperty("availableChannels").EnumerateArray().Select(c => c.GetString()));
+
         await Factory.RunOutboxDispatchAsync();
         await Factory.RunOutboxDispatchAsync();
-        var sent = Assert.Single(Factory.EmailSender.Recorded, e => e.ToAddress == "buyer@example.test");
-        Assert.Contains("AED", sent.Body, StringComparison.Ordinal);
+        var email = Assert.Single(Factory.EmailSender.Recorded);
+        Assert.Contains("AED 4,000.00", email.Body, StringComparison.Ordinal);
 
-        var history = await Read<CollectionsReminderListResultDto>(await collections.GetAsync($"{Base}/customers/9001/reminders?accountId=ACC-9001-1204"), HttpStatusCode.OK);
-        var stored = history.Items.Single(r => r.ReminderId == first.Reminder.ReminderId);
-        Assert.Equal("Sent", stored.Status);
-        Assert.Equal(first.Reminder.Amount, stored.DispatchAmount);
-        Assert.Equal(["Queued", "Sent"], stored.Events.Select(e => e.EventType));
-        Assert.Contains(await Factory.GetAuditEntriesAsync($"ACC-9001-1204|Manual|{stored.CycleKey}|Email"),
-            a => a.Action == "CollectionsReminderQueued" && a.ActorEmployeeId == employeeId);
+        var history = await Read<CollectionsReminderHistoryResponseDto>(await supervisor.GetAsync($"{W}/customers/9001/reminders?accountId=ACC-9001-1204"), HttpStatusCode.OK);
+        var item = Assert.Single(history.Items);
+        Assert.Equal((job.ReminderId, 4_000m, "User"), (item.ReminderId, item.ReminderAmount, item.Trigger));
+        Assert.Equal("Sent", Assert.Single(item.Channels).Status);
     }
 
     [Fact]
-    public async Task SettledAccount_IsNeverReminded()
+    public async Task Queue_RefusesWhatTheCallerMayNotOrCannotSend()
     {
-        var (supervisor, _) = await ClientAsync(Roles.CsSupervisor);
-        var refused = await supervisor.PostAsJsonAsync($"{Base}/reminders", new CreateCollectionsReminderRequestDto("9001", "ACC-9001-0805", "Email"));
+        await ResetRemindersAsync();
+        var supervisor = await ClientAsync(Roles.CsSupervisor);
+        var candidate = await CandidateAsync(supervisor, W);
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
-        Assert.Contains("settled", await refused.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Theory]
-    [InlineData("Fax", null, HttpStatusCode.BadRequest)]
-    [InlineData("1", null, HttpStatusCode.BadRequest)]
-    [InlineData("Email", "LegalNotice", HttpStatusCode.BadRequest)]
-    [InlineData("Sms", null, HttpStatusCode.UnprocessableEntity)]       // channel not enabled
-    [InlineData("VoiceBot", null, HttpStatusCode.BadRequest)]           // Genesys dials, not a supervisor
-    public async Task CreateReminder_RefusesWhatIsNotAnOrdinaryReminderOnAnEnabledChannel(string channel, string? type, HttpStatusCode expected)
-    {
-        var (supervisor, _) = await ClientAsync(Roles.CsSupervisor);
-        var response = await supervisor.PostAsJsonAsync($"{Base}/reminders", new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", channel, type));
-        Assert.Equal(expected, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Candidates_ListOnlyWindowsOpenToday()
-    {
-        var (integration, _) = await ClientAsync(Roles.CsAgent, integration: true);
-        var body = await Read<CollectionsReminderCandidatesResponseDto>(await integration.GetAsync($"{Base}/reminders/candidates?channel=VoiceBot"), HttpStatusCode.OK);
-
-        var expected = ReminderPolicy.OpenWindows(body.BusinessDate, new ReminderRuleSettings()).Select(w => w.Type.ToString());
-        Assert.Equal(expected, body.OpenWindows);
-        Assert.All(body.Items, c => Assert.Contains(c.ReminderType, body.OpenWindows));
-        Assert.DoesNotContain(body.Items, c => c.AccountId is "ACC-9001-0805" or "ACC-9002-0310");
-        Assert.Equal(HttpStatusCode.BadRequest, (await integration.GetAsync($"{Base}/reminders/candidates?reminderType=Manual")).StatusCode);
+        await Problem(await supervisor.SendAsync(Post($"{W}/reminders", new QueueCollectionsReminderRequestDto(candidate.CandidateId, ["Sms"]))),
+            HttpStatusCode.UnprocessableEntity, "ChannelNotEnabled");
+        await Problem(await supervisor.SendAsync(Post($"{W}/reminders", new QueueCollectionsReminderRequestDto(candidate.CandidateId, ["VoiceBot"]))),
+            HttpStatusCode.Forbidden, "Forbidden");
+        await Problem(await supervisor.SendAsync(Post($"{W}/reminders", new QueueCollectionsReminderRequestDto(candidate.CandidateId, ["Fax"]))),
+            HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await supervisor.SendAsync(Post($"{W}/reminders", new QueueCollectionsReminderRequestDto(candidate.CandidateId, ["Email"], "fr"))),
+            HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await supervisor.GetAsync($"{W}/reminders/candidates"), HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await supervisor.GetAsync($"{W}/reminders/candidates?reminderType=LegalNotice"), HttpStatusCode.BadRequest, "InvalidRequest");
     }
 
     // ------------------------------------------------------------------
-    // Outcomes and customer responses
+    // §7 Outcomes
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task DeliveryOutcomes_AreIdempotentPerEventId_AndStayDistinctFromResponses()
+    public async Task DeliveryEvents_AreValidatedPerChannel_Ordered_AndIdempotent()
     {
-        var (integration, _) = await ClientAsync(Roles.CsAgent, integration: true);
-        var reminder = await CreateVoiceReminderAsync(integration);
-        Assert.Equal("Integration", reminder.Trigger);
+        var (integration, job) = await VoiceReminderAsync();
+        var url = $"{G}/reminders/{job.ReminderId}/outcomes";
 
-        var sent = await Read<RecordReminderOutcomeResponseDto>(
-            await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes", new RecordReminderOutcomeRequestDto("call-1-dialed", "Sent", ProviderReference: "conv-x")), HttpStatusCode.OK);
-        Assert.Equal("Sent", sent.ReminderStatus);
+        var answered = new RecordReminderOutcomeRequestDto("EVT-1", "VoiceBot", "GEN-1", null, CollectionsApiFixture.CollectionsNowUtc.AddMinutes(5), "Answered");
+        var first = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post(url, answered, "genesys-event-1")), HttpStatusCode.OK);
+        Assert.Equal(("Recorded", "Answered", "Answered", "NotRequired", false), (first.Result, first.DeliveryStatus, first.ChannelStatus, first.TicketResult, first.Replayed));
+        Assert.Null(first.TicketId);
 
-        var delivered = new RecordReminderOutcomeRequestDto("call-1-answered", "Delivered");
-        Assert.Equal("Recorded", (await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes", delivered), HttpStatusCode.OK)).Outcome);
-        var repeat = await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes", delivered), HttpStatusCode.OK);
-        Assert.Equal("AlreadyRecorded", repeat.Outcome);
-        Assert.Equal("Delivered", repeat.ReminderStatus);
+        var replay = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post(url, answered, "genesys-event-1")), HttpStatusCode.OK);
+        Assert.True(replay.Replayed);
 
-        // A response without a conversation is recorded and owes no ticket; the status stays Delivered.
-        var sms = await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes",
-            new RecordReminderOutcomeRequestDto("resp-sms", "CustomerResponded", Response: new CollectionsCustomerResponseDto("PromiseToPay", PromisedPaymentDate: new DateOnly(2026, 12, 1), PromisedAmount: 5_000m))), HttpStatusCode.OK);
-        Assert.Equal("Delivered", sms.ReminderStatus);
-        Assert.Equal("NotApplicable", sms.Event.TicketStatus);
+        await Problem(await integration.SendAsync(Post(url, answered with { DeliveryStatus = "NoAnswer" })), HttpStatusCode.Conflict, "IdempotencyConflict");
+        await Problem(await integration.SendAsync(Post(url, answered with { EventId = "EVT-9" }, "genesys-event-1")), HttpStatusCode.Conflict, "IdempotencyConflict");
 
-        using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-        Assert.Equal(1, await db.CollectionsReminderEvents.CountAsync(e => e.CollectionsReminderId == reminder.ReminderId && e.ExternalEventId == "call-1-answered"));
+        // A delayed NoAnswer recorded later never overwrites Answered.
+        var late = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post(url,
+            answered with { EventId = "EVT-0", DeliveryStatus = "NoAnswer", OccurredAtUtc = CollectionsApiFixture.CollectionsNowUtc.AddMinutes(1) })), HttpStatusCode.OK);
+        Assert.Equal("Answered", late.ChannelStatus);
+
+        await Problem(await integration.SendAsync(Post(url, answered with { EventId = "EVT-2", DeliveryStatus = "Delivered" })), HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await integration.SendAsync(Post(url, answered with { EventId = "EVT-3", Channel = "Sms" })), HttpStatusCode.BadRequest, "InvalidRequest");
+        await Problem(await integration.SendAsync(Post(url, new RecordReminderOutcomeRequestDto("EVT-4", "VoiceBot", CustomerResponded: true, CustomerIntent: "AlreadyPaid"))),
+            HttpStatusCode.BadRequest, "InvalidRequest"); // a voice response needs its conversationId
     }
 
     [Fact]
-    public async Task AlreadyPaid_CreatesACollectionsTicketByConversation_RaisesVerification_AndPostsNothing()
+    public async Task AlreadyPaid_CreatesTheCollectionsTicketByConversation_RequestsVerification_AndPostsNothing()
     {
-        var (integration, _) = await ClientAsync(Roles.CsAgent, integration: true);
-        var reminder = await CreateVoiceReminderAsync(integration);
+        var (integration, job) = await VoiceReminderAsync();
+        var url = $"{G}/reminders/{job.ReminderId}/outcomes";
         var conversationId = Guid.NewGuid().ToString();
+        var before = await Read<CollectionsOutstandingResponseDto>(await integration.GetAsync($"{G}/customers/9001/outstanding?accountId=ACC-9001-1204"), HttpStatusCode.OK);
 
-        var before = await Read<CollectionsOutstandingResponseDto>(await integration.GetAsync($"{Base}/customers/9001/outstanding?accountId=ACC-9001-1204"), HttpStatusCode.OK);
+        var request = new RecordReminderOutcomeRequestDto("EVT-90001", "VoiceBot", "GEN-90001", conversationId, null, "Answered",
+            CustomerResponded: true, CustomerIntent: "AlreadyPaid", RequiresHumanFollowUp: true, CustomerPhone: "tel:+971500000900");
+        var recorded = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post(url, request, "genesys-event-evt90001")), HttpStatusCode.OK);
 
-        var request = new RecordReminderOutcomeRequestDto("resp-paid", "CustomerResponded",
-            Response: new CollectionsCustomerResponseDto("AlreadyPaid", conversationId, "tel:+971500000900", "Paid by transfer yesterday"));
-        var recorded = await Read<RecordReminderOutcomeResponseDto>(
-            await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes", request), HttpStatusCode.OK);
-
-        Assert.Equal("Linked", recorded.Event.TicketStatus);
-        Assert.True(recorded.Event.VerificationFollowUpRequired);
-        var ticketId = recorded.Event.TicketId!.Value;
-
-        var ticket = (await Factory.GetTicketAsync(ticketId))!;
+        Assert.Equal(("Created", true), (recorded.TicketResult, recorded.FollowUpRequired));
+        var ticket = (await Factory.GetTicketAsync(recorded.TicketId!.Value))!;
         Assert.Equal(fixture.CollectionsDepartmentId, ticket.CurrentDepartmentId);
-        Assert.Null(ticket.CategoryId);           // Unclassified, as every Genesys ticket
+        Assert.Null(ticket.CategoryId);                 // Unclassified, as every Genesys ticket
         Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
 
         using (var scope = Factory.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-            var handoff = await db.TicketAgentHandoffs.SingleAsync(h => h.TicketId == ticketId);
+            var handoff = await scope.ServiceProvider.GetRequiredService<TigerCsDbContext>().TicketAgentHandoffs.SingleAsync(h => h.TicketId == ticket.TicketId);
             Assert.True(handoff.IsOpen);
-            Assert.Contains("verify", handoff.RequestReason, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Verify it in the financial source", handoff.RequestReason, StringComparison.Ordinal);
         }
 
-        // The repeated callback records nothing twice and keeps the same ticket.
-        var repeat = await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes", request), HttpStatusCode.OK);
-        Assert.Equal("AlreadyRecorded", repeat.Outcome);
-        Assert.Equal(ticketId, repeat.Event.TicketId);
+        // Replay: the original result and the same ticket.
+        var replay = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post(url, request, "genesys-event-evt90001")), HttpStatusCode.OK);
+        Assert.Equal((recorded.TicketId, "Created", true), (replay.TicketId, replay.TicketResult, replay.Replayed));
 
         // A second response in the same conversation reuses the ticket.
-        var human = await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes",
-            new RecordReminderOutcomeRequestDto("resp-human", "CustomerResponded", Response: new CollectionsCustomerResponseDto("RequestedHuman", conversationId))), HttpStatusCode.OK);
-        Assert.Equal(ticketId, human.Event.TicketId);
-        Assert.Equal(1, await CountTicketsForConversationAsync(conversationId));
+        var human = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post(url,
+            new RecordReminderOutcomeRequestDto("EVT-90002", "VoiceBot", null, conversationId, null, null, true, "RequestedHuman"))), HttpStatusCode.OK);
+        Assert.Equal((recorded.TicketId, "Reused"), (human.TicketId, human.TicketResult));
+        Assert.Equal(1, await TicketsForConversationAsync(conversationId));
 
-        // Nothing was posted: the balance is exactly what the source said before.
-        var after = await Read<CollectionsOutstandingResponseDto>(await integration.GetAsync($"{Base}/customers/9001/outstanding?accountId=ACC-9001-1204"), HttpStatusCode.OK);
-        Assert.Equal(before.Accounts[0].Balance, after.Accounts[0].Balance);
-        Assert.Equal(TicketStatus.Open, (await Factory.GetTicketAsync(ticketId))!.TicketStatus);
+        var after = await Read<CollectionsOutstandingResponseDto>(await integration.GetAsync($"{G}/customers/9001/outstanding?accountId=ACC-9001-1204"), HttpStatusCode.OK);
+        Assert.Equal(before.Accounts[0].AmountDueNow, after.Accounts[0].AmountDueNow);
+        Assert.Equal(TicketStatus.Open, (await Factory.GetTicketAsync(recorded.TicketId.Value))!.TicketStatus);
+
+        var history = await Read<CollectionsReminderHistoryResponseDto>(await integration.GetAsync($"{G}/customers/9001/reminders"), HttpStatusCode.OK);
+        var item = Assert.Single(history.Items);
+        Assert.Equal(("RequestedHuman", recorded.TicketId), (item.CustomerIntent, item.TicketId));
+        Assert.Equal("Answered", Assert.Single(item.Channels).Status);
     }
 
     [Fact]
     public async Task AiDisconnection_KeepsHumanFollowUpOutstanding()
     {
-        var (integration, _) = await ClientAsync(Roles.CsAgent, integration: true);
-        var reminder = await CreateVoiceReminderAsync(integration);
+        var (integration, job) = await VoiceReminderAsync();
 
-        var recorded = await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes",
-            new RecordReminderOutcomeRequestDto("resp-drop", "CustomerResponded", Response: new CollectionsCustomerResponseDto("AiDisconnected", Guid.NewGuid().ToString()))), HttpStatusCode.OK);
+        var recorded = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post($"{G}/reminders/{job.ReminderId}/outcomes",
+            new RecordReminderOutcomeRequestDto("EVT-DROP", "VoiceBot", null, Guid.NewGuid().ToString(), null, "Failed", true, "AiDisconnected"))), HttpStatusCode.OK);
 
         using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-        var handoff = await db.TicketAgentHandoffs.SingleAsync(h => h.TicketId == recorded.Event.TicketId);
+        var handoff = await scope.ServiceProvider.GetRequiredService<TigerCsDbContext>().TicketAgentHandoffs.SingleAsync(h => h.TicketId == recorded.TicketId);
         Assert.True(handoff.IsOpen);
         Assert.Equal(HandoffTrigger.AiConnectionLost, handoff.Trigger);
     }
 
     [Fact]
-    public async Task TicketCreationFailure_IsAccepted_AndRetriedDurablyThroughTheOutbox()
+    public async Task ATemporaryTicketFailure_Answers202Pending_AndIsRetriedDurably()
     {
-        var (integration, _) = await ClientAsync(Roles.CsAgent, integration: true);
-        var reminder = await CreateVoiceReminderAsync(integration);
+        var (integration, job) = await VoiceReminderAsync();
         var conversationId = Guid.NewGuid().ToString();
 
         fixture.Options.ResponseTickets.DepartmentCode = "NO-SUCH-DEPT";
         try
         {
-            var accepted = await Read<RecordReminderOutcomeResponseDto>(await integration.PostAsJsonAsync($"{Base}/reminders/{reminder.ReminderId}/outcomes",
-                new RecordReminderOutcomeRequestDto("resp-retry", "CustomerResponded", Response: new CollectionsCustomerResponseDto("PromiseToPay", conversationId))), HttpStatusCode.Accepted);
-            Assert.Equal("Pending", accepted.Event.TicketStatus);
-            Assert.Null(accepted.Event.TicketId);
+            var pending = await Read<RecordReminderOutcomeResponseDto>(await integration.SendAsync(Post($"{G}/reminders/{job.ReminderId}/outcomes",
+                new RecordReminderOutcomeRequestDto("EVT-RETRY", "VoiceBot", null, conversationId, null, "Answered", true, "PromiseToPay"))), HttpStatusCode.Accepted);
+            Assert.Equal(("Pending", (long?)null), (pending.TicketResult, pending.TicketId));
         }
         finally
         {
@@ -442,32 +490,18 @@ public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : I
 
         await Factory.RunOutboxDispatchAsync();
 
-        var history = await Read<CollectionsReminderListResultDto>(await integration.GetAsync($"{Base}/customers/9001/reminders?accountId=ACC-9001-1204"), HttpStatusCode.OK);
-        var response = history.Items.Single(r => r.ReminderId == reminder.ReminderId).Events.Single(e => e.EventId == "resp-retry");
-        Assert.Equal("Linked", response.TicketStatus);
+        var response = (await Read<CollectionsReminderHistoryResponseDto>(await integration.GetAsync($"{G}/customers/9001/reminders"), HttpStatusCode.OK))
+            .Items.Single().Responses.Single(r => r.EventId == "EVT-RETRY");
+        Assert.Equal("Created", response.TicketResult);
         Assert.NotNull(response.TicketId);
-        Assert.Equal(1, await CountTicketsForConversationAsync(conversationId));
+        Assert.Equal(1, await TicketsForConversationAsync(conversationId));
     }
 
-    [Fact]
-    public async Task Outcomes_ValidateTheirInput()
-    {
-        var (integration, _) = await ClientAsync(Roles.CsAgent, integration: true);
-        var reminder = await CreateVoiceReminderAsync(integration);
-        var url = $"{Base}/reminders/{reminder.ReminderId}/outcomes";
-
-        Assert.Equal(HttpStatusCode.BadRequest, (await integration.PostAsJsonAsync(url, new RecordReminderOutcomeRequestDto(null, "Delivered"))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await integration.PostAsJsonAsync(url, new RecordReminderOutcomeRequestDto("tigercs:sent", "Sent"))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await integration.PostAsJsonAsync(url, new RecordReminderOutcomeRequestDto("e", "Queued"))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await integration.PostAsJsonAsync(url, new RecordReminderOutcomeRequestDto("e", "CustomerResponded"))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await integration.PostAsJsonAsync($"{Base}/reminders/987654/outcomes", new RecordReminderOutcomeRequestDto("e", "Sent"))).StatusCode);
-    }
-
-    private async Task<int> CountTicketsForConversationAsync(string conversationId)
+    private async Task<int> TicketsForConversationAsync(string conversationId)
     {
         using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
-        return await db.TicketInteractions.Where(i => i.GenesysConversationId == conversationId).Select(i => i.TicketId).Distinct().CountAsync();
+        return await scope.ServiceProvider.GetRequiredService<TigerCsDbContext>().TicketInteractions
+            .Where(i => i.GenesysConversationId == conversationId).Select(i => i.TicketId).Distinct().CountAsync();
     }
 }
 
@@ -484,40 +518,40 @@ public sealed class CollectionsUnavailableEndpointsTests
     }
 
     [Fact]
-    public async Task Disabled_Answers503OnEveryRoute()
+    public async Task Disabled_Answers503CollectionsDisabled_OnEveryRoute()
     {
         using var factory = new TigerCsApiFactory();
         var client = await ClientAsync(factory);
 
         foreach (var response in new[]
         {
-            await client.GetAsync("/api/genesys/collections/customers/9001/outstanding"),
-            await client.GetAsync("/api/genesys/collections/customers/9001/payments"),
-            await client.GetAsync("/api/genesys/collections/customers/9001/reminders"),
-            await client.GetAsync("/api/genesys/collections/reminders/candidates"),
-            await client.PostAsJsonAsync("/api/genesys/collections/reminders", new CreateCollectionsReminderRequestDto("9001", "A", "Email")),
-            await client.PostAsJsonAsync("/api/genesys/collections/reminders/1/outcomes", new RecordReminderOutcomeRequestDto("e", "Sent")),
+            await client.GetAsync("/api/collections/customers/9001/outstanding"),
+            await client.GetAsync("/api/collections/customers/9001/payments"),
+            await client.GetAsync("/api/collections/customers/9001/reminders"),
+            await client.GetAsync("/api/genesys/collections/reminders/candidates?reminderType=OverdueMonthly"),
+            await client.PostAsJsonAsync("/api/genesys/collections/reminders", new QueueCollectionsReminderRequestDto("CAND-x", ["Email"])),
+            await client.PostAsJsonAsync("/api/genesys/collections/reminders/REM-1/outcomes", new RecordReminderOutcomeRequestDto("e", "Sms", DeliveryStatus: "Sent")),
         })
         {
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-            Assert.Contains("collections-disabled", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            Assert.Equal("CollectionsDisabled", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
         }
     }
 
     [Fact]
-    public async Task NoFinancialSource_Answers503_ButReminderHistoryStaysReadable()
+    public async Task NoFinancialSource_IsFinanceUnavailable_ButReminderHistoryStaysReadable()
     {
         using var factory = new TigerCsApiFactory { ExtraConfiguration = new() { ["Collections:Enabled"] = "true" } };
         var client = await ClientAsync(factory);
 
-        var outstanding = await client.GetAsync("/api/genesys/collections/customers/9001/outstanding");
+        var outstanding = await client.GetAsync("/api/collections/customers/9001/outstanding");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, outstanding.StatusCode);
-        var body = await outstanding.Content.ReadAsStringAsync();
-        Assert.Contains("collections-source-unavailable", body, StringComparison.Ordinal);
-        Assert.Contains(UnavailableCollectionsFinancialSource.Message[..40], body, StringComparison.Ordinal);
+        var body = await outstanding.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("FinanceUnavailable", body.GetProperty("code").GetString());
+        Assert.Equal(UnavailableCollectionsFinancialSource.Message, body.GetProperty("message").GetString());
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/api/genesys/collections/customers/9001/payments")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/genesys/collections/customers/9001/reminders")).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/api/collections/customers/9001/payments")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/collections/customers/9001/reminders")).StatusCode);
     }
 
     [Theory]

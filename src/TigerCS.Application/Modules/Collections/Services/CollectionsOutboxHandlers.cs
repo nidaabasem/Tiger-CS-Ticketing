@@ -8,17 +8,16 @@ using TigerCS.Domain.Modules.Collections;
 namespace TigerCS.Application.Modules.Collections.Services;
 
 /// <summary>
-/// Sends a queued SMS/email reminder — after re-reading the account from the
-/// financial source one last time. A settled (or now-inconsistent) account
-/// is suppressed instead of reminded, and the amount actually sent is
-/// recorded beside the amount originally queued.
+/// Sends one queued SMS/email channel — after re-reading the account from the
+/// financial source immediately before delivery. A settled, ineligible,
+/// stale-read or inconsistent account is suppressed instead of reminded, and
+/// the amount re-read is stored next to the amount quoted.
 ///
 /// <para>
 /// Runs on the existing outbox dispatcher, so retries, attempt limits and
 /// dead-lettering are the platform's, and two workers never send the same
-/// message twice (the outbox claim). Provider acceptance is recorded as
-/// <see cref="ReminderStatus.Sent"/>; <see cref="ReminderStatus.Delivered"/>
-/// comes only from the provider's own delivery report.
+/// message twice (the outbox claim). Provider acceptance is <c>Sent</c>;
+/// <c>Delivered</c> comes only from the provider's own report.
 /// </para>
 /// </summary>
 public sealed class CollectionsReminderDispatchHandler(
@@ -37,41 +36,48 @@ public sealed class CollectionsReminderDispatchHandler(
             return OutboxHandlingResult.Permanent("Malformed Collections dispatch payload.");
         }
 
-        var reminder = await reminderRepository.GetByDeduplicationKeyAsync(payload.DeduplicationKey, cancellationToken);
-        if (reminder is null)
+        var row = (await reminderRepository.GetChannelsByDeduplicationKeysAsync([payload.DeduplicationKey], cancellationToken)).SingleOrDefault();
+        var reminder = row is null ? null : await reminderRepository.GetByIdAsync(row.CollectionsReminderId, cancellationToken);
+        var channel = reminder?.ChannelFor(row!.Channel);
+        if (reminder is null || channel is null)
         {
             return OutboxHandlingResult.Permanent("The queued reminder no longer exists.");
         }
 
-        if (reminder.Status != ReminderStatus.Queued)
+        // A message for an earlier attempt, or a channel already past Queued, is done.
+        if (channel.Status != ChannelStatus.Queued || channel.Attempts != payload.Attempt)
         {
             return OutboxHandlingResult.Succeeded();
         }
 
-        // Revalidate immediately before dispatch.
         FinancialAccountSnapshot? account;
         try
         {
-            var accounts = await source.GetCustomerAccountsAsync(reminder.CrmCustomerId, cancellationToken);
-            account = accounts?.FirstOrDefault(a => a.AccountId == reminder.AccountId);
+            account = (await source.GetCustomerAccountsAsync(reminder.CrmCustomerId, cancellationToken))?
+                .FirstOrDefault(a => a.AccountId == reminder.AccountId);
         }
         catch (CollectionsFinancialSourceUnavailableException ex)
         {
-            // Never send on stale figures: wait for the source.
+            // Never send on figures that could not be re-read: wait for the source.
             return OutboxHandlingResult.Transient($"Financial source unavailable: {ex.Message}");
         }
 
         var now = clock.UtcNow;
         if (account is null)
         {
-            reminder.Suppress("The financial source no longer reports this account.", now);
+            channel.Suppress("The financial source no longer reports this account.", now);
             return OutboxHandlingResult.Succeeded();
         }
 
-        var eligibility = ReminderPolicy.Evaluate(account, reminder.Type, clock.Today, clock.Rules);
+        if (clock.IsStale(account.AsOfUtc))
+        {
+            return OutboxHandlingResult.Transient("The financial source's figures are stale; a stale read never authorizes a send.");
+        }
+
+        var eligibility = ReminderPolicy.Evaluate(account, reminder.Type, clock.BusinessDate, clock.Rules);
         if (!eligibility.IsEligible)
         {
-            reminder.Suppress(eligibility.Reason == ReminderPolicy.SettledReason
+            channel.Suppress(eligibility.Reason == ReminderPolicy.SettledReason
                 ? "Settled before dispatch."
                 : $"Not eligible at dispatch ({eligibility.Reason}).", now);
             return OutboxHandlingResult.Succeeded();
@@ -79,36 +85,34 @@ public sealed class CollectionsReminderDispatchHandler(
 
         if (eligibility.Currency != reminder.Currency)
         {
-            reminder.Suppress($"The account currency changed from {reminder.Currency} to {eligibility.Currency}.", now);
+            channel.Suppress($"The account currency changed from {reminder.Currency} to {eligibility.Currency}.", now);
             return OutboxHandlingResult.Succeeded();
         }
 
-        reminder.RecordDispatchRevalidation(eligibility.Amount!.Value, account.AsOfUtc);
+        channel.RecordDispatchRevalidation(eligibility.Amount, account.AsOfUtc);
 
-        var provider = providers.FirstOrDefault(p => p.Channel == reminder.Channel);
+        var provider = providers.FirstOrDefault(p => p.Channel == channel.Channel);
         if (provider is null)
         {
-            const string error = "No approved delivery provider is configured for this channel.";
-            reminder.ApplyDelivery(ReminderEventType.Failed, now, error, null);
-            reminder.AddEvent(CollectionsReminderEvent.Dispatched(reminder, ReminderEventType.Failed, now, error));
+            channel.RecordDispatch(ChannelStatus.Failed, now, null, "No approved delivery provider is configured for this channel.");
             return OutboxHandlingResult.Succeeded();
         }
 
+        // The amount stated is the one re-read now — never more than the
+        // quoted amount's basis, and never a settled one.
         var result = await provider.SendAsync(new ReminderDeliveryRequest(
-            reminder.CollectionsReminderId, reminder.Type, account.CustomerName, account.CustomerPhone, account.CustomerEmail,
-            eligibility.Amount.Value, eligibility.Currency, account.UnitNumber, account.ProjectName, message.CorrelationId),
+            reminder.PublicId, reminder.Type, reminder.Language, account.CustomerName, account.CustomerPhone, account.CustomerEmail,
+            eligibility.Amount, eligibility.Currency, account.UnitNumber, account.TowerName, message.CorrelationId),
             cancellationToken);
 
         switch (result.Outcome)
         {
             case ReminderDeliveryOutcome.Accepted:
-                reminder.ApplyDelivery(ReminderEventType.Sent, clock.UtcNow, null, result.ProviderReference);
-                reminder.AddEvent(CollectionsReminderEvent.Dispatched(reminder, ReminderEventType.Sent, clock.UtcNow, result.ProviderReference));
+                channel.RecordDispatch(ChannelStatus.Sent, clock.UtcNow, result.ProviderMessageId, null);
                 return OutboxHandlingResult.Succeeded();
 
             case ReminderDeliveryOutcome.PermanentFailure:
-                reminder.ApplyDelivery(ReminderEventType.Failed, clock.UtcNow, result.Error, null);
-                reminder.AddEvent(CollectionsReminderEvent.Dispatched(reminder, ReminderEventType.Failed, clock.UtcNow, result.Error));
+                channel.RecordDispatch(ChannelStatus.Failed, clock.UtcNow, null, result.Error ?? "Permanent delivery failure.");
                 return OutboxHandlingResult.Succeeded();
 
             default:
@@ -142,10 +146,10 @@ public sealed class CollectionsResponseTicketHandler(CollectionsReminderOutcomeA
 
 /// <summary>
 /// Email reminders through the existing EmailNotifications sender — the one
-/// approved outbound email path (SMTP in a real environment, the in-memory
-/// Recording sender in tests). Registered only when the email channel is
-/// enabled. There is no SMS counterpart: TigerCS has no approved SMS
-/// provider, so an SMS reminder fails closed at dispatch.
+/// approved outbound email path. English only: no Arabic template has been
+/// approved, so an "ar" reminder is refused permanently rather than sent in
+/// the wrong language. There is no SMS counterpart: TigerCS has no approved
+/// SMS provider, so an SMS reminder fails closed at dispatch.
 /// </summary>
 public sealed class EmailReminderDeliveryProvider(IEmailSender emailSender) : IReminderDeliveryProvider
 {
@@ -158,8 +162,13 @@ public sealed class EmailReminderDeliveryProvider(IEmailSender emailSender) : IR
             return new ReminderDeliveryResult(ReminderDeliveryOutcome.PermanentFailure, Error: "No email address.");
         }
 
+        if (request.Language != "en")
+        {
+            return new ReminderDeliveryResult(ReminderDeliveryOutcome.PermanentFailure, Error: $"No approved '{request.Language}' email template.");
+        }
+
         var amount = request.Amount.ToString("N2", CultureInfo.InvariantCulture);
-        var unit = request.UnitNumber is null ? "" : $" for unit {request.UnitNumber}{(request.ProjectName is null ? "" : $", {request.ProjectName}")}";
+        var unit = request.UnitNumber is null ? "" : $" for unit {request.UnitNumber}{(request.TowerName is null ? "" : $", {request.TowerName}")}";
         var greeting = string.IsNullOrWhiteSpace(request.CustomerName) ? "Dear customer," : $"Dear {request.CustomerName},";
         var body =
             $"{greeting}\n\nThis is a reminder that {request.Currency} {amount} is due on your payment plan{unit}.\n\n"

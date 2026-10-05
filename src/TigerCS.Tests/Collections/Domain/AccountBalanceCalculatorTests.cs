@@ -3,158 +3,164 @@ using TigerCS.Domain.Modules.Collections;
 namespace TigerCS.Tests.Collections.Domain;
 
 /// <summary>
-/// The balance figures are sums of what the source reports as outstanding,
-/// bucketed by due date — never a re-allocation of payments, never reduced by
-/// an unverified payment, never zero-filled when the source data is bad.
+/// The figures are sums of what the source reports as remaining, bucketed by
+/// due date — never a re-allocation of payments, never reduced by an
+/// unverified payment, never zero-filled when the source data is bad.
 /// </summary>
 public class AccountBalanceCalculatorTests
 {
-    private static readonly DateOnly Today = new(2026, 10, 15);
+    private static readonly DateOnly BusinessDate = new(2026, 10, 2);
 
     private static FinancialAccountSnapshot Account(
         IReadOnlyList<FinancialInstalment> instalments,
         IReadOnlyList<FinancialCharge>? charges = null,
         IReadOnlyList<FinancialPayment>? payments = null,
         decimal? reported = null,
+        decimal credit = 0m,
         string currency = "AED") =>
-        new("ACC-1", "9001", "9200", "1204", "Tiger Tower A", currency, new DateTime(2026, 10, 15, 6, 0, 0, DateTimeKind.Utc),
-            reported, instalments, charges ?? [], payments ?? []);
+        new("ACC-45001", 12345, 45001, "Example Tower", "1205", currency, new DateTime(2026, 10, 2, 6, 0, 0, DateTimeKind.Utc),
+            reported, instalments, charges ?? [], payments ?? [], credit);
 
-    private static FinancialInstalment Ins(string id, int seq, DateOnly due, decimal amount, decimal outstanding) =>
-        new(id, seq, due, amount, outstanding);
+    /// <summary>The specification's §3 example account.</summary>
+    private static FinancialAccountSnapshot SpecExample() => Account(
+    [
+        new("INST-JUN-2026", new DateOnly(2026, 6, 1), 5_000m, 5_000m),
+        new("INST-JUL-2026", new DateOnly(2026, 7, 1), 5_000m, 5_000m),
+        new("INST-AUG-2026", new DateOnly(2026, 8, 1), 10_000m, 10_000m),
+        new("INST-SEP-2026", new DateOnly(2026, 9, 1), 10_000m, 10_000m),
+        new("INST-OCT-2026", new DateOnly(2026, 10, 15), 10_000m, 10_000m),
+        new("INST-NOV-2026", new DateOnly(2026, 11, 15), 5_000m, 5_000m),
+    ], charges: [new FinancialCharge("PEN-1", FinancialChargeType.Penalty, 500m, 500m, null, true)]);
 
     [Fact]
-    public void BucketsOutstandingPrincipal_ByDueDateRelativeToToday()
+    public void ReproducesTheSpecificationsOutstandingExample()
     {
-        var balance = AccountBalanceCalculator.Calculate(Account(
-        [
-            Ins("A", 1, new DateOnly(2026, 8, 10), 10_000m, 0m),          // paid
-            Ins("B", 2, new DateOnly(2026, 9, 10), 10_000m, 10_000m),     // overdue
-            Ins("C", 3, new DateOnly(2026, 10, 10), 10_000m, 10_000m),    // overdue, this month
-            Ins("D", 4, Today, 5_000m, 5_000m),                           // due today, this month
-            Ins("E", 5, new DateOnly(2026, 10, 31), 2_000m, 2_000m),      // future, this month
-            Ins("F", 6, new DateOnly(2026, 11, 10), 10_000m, 10_000m),    // future
-        ]), Today);
+        var b = AccountBalanceCalculator.Calculate(SpecExample(), BusinessDate);
 
-        Assert.Equal(BalanceConsistency.Consistent, balance.Consistency);
-        Assert.Equal(37_000m, balance.RemainingUnpaidPrincipal);
-        Assert.Equal(20_000m, balance.OverduePrincipal);
-        Assert.Equal(5_000m, balance.PrincipalDueToday);
-        Assert.Equal(12_000m, balance.FuturePrincipal);
-        Assert.Equal(17_000m, balance.CurrentMonthRemaining);
-        Assert.Equal(27_000m, balance.PrincipalDueThroughMonthEnd);
-        Assert.Equal(25_000m, balance.AmountDueNow);
-        Assert.Equal(new NextPayment("D", Today, 5_000m), balance.NextPayment);
+        Assert.Equal(45_000m, b.RemainingPrincipalAmount);
+        Assert.Equal(30_000m, b.OverduePrincipalAmount);
+        Assert.Equal(0m, b.DueTodayPrincipalAmount);
+        Assert.Equal(15_000m, b.FuturePrincipalAmount);
+        Assert.Equal(500m, b.PayablePenaltyAmount);
+        Assert.Equal(0m, b.PayableFeeAmount);
+        Assert.Equal(30_500m, b.AmountDueNow);
+        Assert.Equal(10_000m, b.CurrentMonthRemainingAmount);
+        Assert.Equal(new DateOnly(2026, 6, 1), b.OldestUnpaidDueDate);
+        Assert.Equal(new NextPayment("INST-OCT-2026", new DateOnly(2026, 10, 15), 10_000m), b.NextPayment);
     }
 
     [Fact]
-    public void PartialPayment_CountsOnlyTheRemainderTheSourceReports()
+    public void CurrentMonthRemaining_OverlapsTheBuckets_AndIsNeverAddedToThem()
     {
-        var balance = AccountBalanceCalculator.Calculate(Account(
+        var b = AccountBalanceCalculator.Calculate(Account(
         [
-            Ins("A", 1, new DateOnly(2026, 9, 10), 10_000m, 4_000m),
-            Ins("B", 2, new DateOnly(2026, 11, 10), 10_000m, 7_500.25m),
-        ]), Today);
+            new("A", new DateOnly(2026, 10, 1), 1_000m, 1_000m),   // overdue, this month
+            new("B", BusinessDate, 2_000m, 2_000m),                // due today, this month
+            new("C", new DateOnly(2026, 10, 31), 3_000m, 3_000m),  // future, this month
+        ]), BusinessDate);
 
-        Assert.Equal(4_000m, balance.OverduePrincipal);
-        Assert.Equal(7_500.25m, balance.FuturePrincipal);
-        Assert.Equal(11_500.25m, balance.RemainingUnpaidPrincipal);
-        Assert.Equal(new NextPayment("B", new DateOnly(2026, 11, 10), 7_500.25m), balance.NextPayment);
+        Assert.Equal(6_000m, b.CurrentMonthRemainingAmount);
+        Assert.Equal(6_000m, b.OverduePrincipalAmount + b.DueTodayPrincipalAmount + b.FuturePrincipalAmount);
+        Assert.Equal(6_000m, b.RemainingPrincipalAmount);
     }
 
     [Fact]
-    public void UnverifiedRejectedAndReversedPayments_NeverReduceTheBalance()
+    public void PartialAllocation_CountsOnlyTheRemainderTheSourceReports()
     {
-        IReadOnlyList<FinancialInstalment> schedule = [Ins("A", 1, new DateOnly(2026, 9, 10), 10_000m, 10_000m)];
-        var without = AccountBalanceCalculator.Calculate(Account(schedule), Today);
+        var b = AccountBalanceCalculator.Calculate(Account(
+        [
+            new("A", new DateOnly(2026, 9, 10), 10_000m, 4_000m),
+            new("B", new DateOnly(2026, 11, 10), 10_000m, 7_500.25m),
+        ]), BusinessDate);
+
+        Assert.Equal(4_000m, b.OverduePrincipalAmount);
+        Assert.Equal(7_500.25m, b.FuturePrincipalAmount);
+        Assert.Equal(new NextPayment("B", new DateOnly(2026, 11, 10), 7_500.25m), b.NextPayment);
+    }
+
+    [Fact]
+    public void Payments_OfAnyStatus_NeverReduceTheBalanceASecondTime()
+    {
+        IReadOnlyList<FinancialInstalment> schedule = [new("A", new DateOnly(2026, 9, 10), 10_000m, 10_000m)];
+        var without = AccountBalanceCalculator.Calculate(Account(schedule), BusinessDate);
         var with = AccountBalanceCalculator.Calculate(Account(schedule, payments:
         [
-            new FinancialPayment("P1", Today, null, 10_000m, "BankTransfer", "upload", FinancialPaymentStatus.PendingVerification),
-            new FinancialPayment("P2", Today, null, 10_000m, "Cheque", "CHQ", FinancialPaymentStatus.Reversed),
-            new FinancialPayment("P3", Today, null, 10_000m, "Cheque", "CHQ", FinancialPaymentStatus.Rejected),
-            // Even a Posted payment is not subtracted here: the source has
-            // already applied it to the instalment it reports.
-            new FinancialPayment("P4", Today, Today, 10_000m, "Cheque", "CHQ", FinancialPaymentStatus.Posted),
-        ]), Today);
+            new FinancialPayment("P1", BusinessDate, 10_000m, "BankTransfer", FinancialPaymentStatus.PendingVerification, null, false, []),
+            new FinancialPayment("P2", BusinessDate, 10_000m, "Cheque", FinancialPaymentStatus.Reversed, null, false, []),
+            // Even a posted payment is not subtracted: the source already allocated it.
+            new FinancialPayment("P3", BusinessDate, 10_000m, "Cheque", FinancialPaymentStatus.Posted, "RCT", true, [new("A", 10_000m)]),
+        ]), BusinessDate);
 
         Assert.Equal(without, with);
-        Assert.Equal(10_000m, with.AmountDueNow);
     }
 
     [Fact]
-    public void FinesAndFees_OnlyPayableAndAlreadyDueOnesAreDueNow()
+    public void PenaltiesAndFees_AreSeparate_OnlyPayableAndDueOnesCount_AndACreditIsSubtractedOnce()
     {
-        var balance = AccountBalanceCalculator.Calculate(Account(
-            [Ins("A", 1, new DateOnly(2026, 11, 10), 10_000m, 10_000m)],
+        var b = AccountBalanceCalculator.Calculate(Account(
+            [new("A", new DateOnly(2026, 9, 10), 1_000m, 1_000m)],
             charges:
             [
-                new FinancialCharge("F1", "Fine", null, 500m, 500m, new DateOnly(2026, 10, 1), IsPayable: true),
-                new FinancialCharge("F2", "Fee", null, 250m, 100m, null, IsPayable: true),       // partially paid fee
-                new FinancialCharge("F3", "Fee", null, 300m, 300m, null, IsPayable: false),      // on hold
-                new FinancialCharge("F4", "Fine", null, 700m, 700m, new DateOnly(2026, 11, 1), IsPayable: true), // not due yet
-                new FinancialCharge("F5", "Fine", null, 900m, 0m, null, IsPayable: true),        // paid
-            ]), Today);
+                new FinancialCharge("P1", FinancialChargeType.Penalty, 500m, 500m, new DateOnly(2026, 9, 1), true),
+                new FinancialCharge("F1", FinancialChargeType.Fee, 250m, 100m, null, true),          // partially paid
+                new FinancialCharge("F2", FinancialChargeType.Fee, 300m, 300m, null, false),         // on hold
+                new FinancialCharge("P2", FinancialChargeType.Penalty, 700m, 700m, new DateOnly(2026, 11, 1), true), // not due
+            ],
+            credit: 200m), BusinessDate);
 
-        Assert.Equal(600m, balance.PayableFinesAndFees);
-        Assert.Equal(600m, balance.AmountDueNow);
-        Assert.Equal(0m, balance.OverduePrincipal);
+        Assert.Equal(500m, b.PayablePenaltyAmount);
+        Assert.Equal(100m, b.PayableFeeAmount);
+        Assert.Equal(200m, b.AppliedCreditAmount);
+        Assert.Equal(1_400m, b.AmountDueNow);           // 1,000 + 500 + 100 − 200
+        Assert.Equal(1_000m, b.OverduePrincipalAmount); // the credit never touches principal buckets
+    }
+
+    [Fact]
+    public void ACreditLargerThanWhatIsDue_NeverMakesAmountDueNowNegative()
+    {
+        var b = AccountBalanceCalculator.Calculate(Account([new("A", new DateOnly(2026, 9, 10), 1_000m, 1_000m)], credit: 5_000m), BusinessDate);
+        Assert.Equal(0m, b.AmountDueNow);
     }
 
     [Fact]
     public void DecimalArithmetic_IsExact()
     {
-        var balance = AccountBalanceCalculator.Calculate(Account(
+        var b = AccountBalanceCalculator.Calculate(Account(
         [
-            Ins("A", 1, new DateOnly(2026, 9, 1), 3_333.33m, 3_333.33m),
-            Ins("B", 2, new DateOnly(2026, 9, 2), 3_333.33m, 3_333.33m),
-            Ins("C", 3, new DateOnly(2026, 9, 3), 3_333.34m, 3_333.34m),
-            Ins("D", 4, new DateOnly(2026, 9, 4), 0.1m, 0.1m),
-            Ins("E", 5, new DateOnly(2026, 9, 5), 0.2m, 0.2m),
-        ], reported: 10_000.30m), Today);
+            new("A", new DateOnly(2026, 9, 1), 3_333.33m, 3_333.33m),
+            new("B", new DateOnly(2026, 9, 2), 3_333.33m, 3_333.33m),
+            new("C", new DateOnly(2026, 9, 3), 3_333.34m, 3_333.34m),
+            new("D", new DateOnly(2026, 9, 4), 0.1m, 0.1m),
+            new("E", new DateOnly(2026, 9, 5), 0.2m, 0.2m),
+        ], reported: 10_000.30m), BusinessDate);
 
-        Assert.Equal(10_000.30m, balance.OverduePrincipal);
-        Assert.Equal(BalanceConsistency.Consistent, balance.Consistency);
+        Assert.Equal(10_000.30m, b.OverduePrincipalAmount);
+        Assert.Equal(BalanceConsistency.Consistent, b.Consistency);
     }
 
     [Fact]
-    public void SourceTotalThatDisagreesWithTheSchedule_IsFlaggedAndTheSourceTotalIsShown()
+    public void ASourceTotalThatDisagreesWithTheSchedule_IsFlagged_AndTheSourceTotalIsShown()
     {
-        var balance = AccountBalanceCalculator.Calculate(Account(
-            [Ins("A", 1, new DateOnly(2026, 9, 10), 8_000m, 8_000m), Ins("B", 2, new DateOnly(2026, 11, 10), 8_000m, 8_000m)],
-            reported: 12_000m), Today);
+        var b = AccountBalanceCalculator.Calculate(Account([new("A", new DateOnly(2026, 9, 10), 8_000m, 8_000m)], reported: 12_000m), BusinessDate);
 
-        Assert.Equal(BalanceConsistency.Mismatch, balance.Consistency);
-        Assert.Equal(12_000m, balance.RemainingUnpaidPrincipal);
-        Assert.Single(balance.Problems);
+        Assert.Equal(BalanceConsistency.Mismatch, b.Consistency);
+        Assert.Equal(12_000m, b.RemainingPrincipalAmount);
+        Assert.Single(b.Problems);
     }
 
     [Theory]
-    [InlineData(10_000, 12_000, "AED")]   // more outstanding than scheduled
+    [InlineData(10_000, 12_000, "AED")]   // more remaining than scheduled
     [InlineData(10_000, -1, "AED")]       // negative
     [InlineData(10_000, 5_000, "aed")]    // not an ISO code
     [InlineData(10_000, 5_000, "")]
-    public void InvalidSourceData_YieldsNoFigures_NeverZero(int amount, int outstanding, string currency)
+    public void InvalidSourceData_YieldsNoFigures_NeverZero(int scheduled, int remaining, string currency)
     {
-        var balance = AccountBalanceCalculator.Calculate(
-            Account([Ins("A", 1, new DateOnly(2026, 9, 10), amount, outstanding)], currency: currency), Today);
+        var b = AccountBalanceCalculator.Calculate(Account([new("A", new DateOnly(2026, 9, 10), scheduled, remaining)], currency: currency), BusinessDate);
 
-        Assert.Equal(BalanceConsistency.InvalidSourceData, balance.Consistency);
-        Assert.Null(balance.AmountDueNow);
-        Assert.Null(balance.RemainingUnpaidPrincipal);
-        Assert.Null(balance.OverduePrincipal);
-        Assert.Null(balance.NextPayment);
-        Assert.NotEmpty(balance.Problems);
-    }
-
-    [Fact]
-    public void FullySettledAccount_HasZeroDueAndNoNextPayment()
-    {
-        var balance = AccountBalanceCalculator.Calculate(Account(
-            [Ins("A", 1, new DateOnly(2026, 9, 10), 10_000m, 0m), Ins("B", 2, new DateOnly(2026, 11, 10), 10_000m, 0m)],
-            reported: 0m), Today);
-
-        Assert.Equal(0m, balance.RemainingUnpaidPrincipal);
-        Assert.Equal(0m, balance.AmountDueNow);
-        Assert.Null(balance.NextPayment);
+        Assert.Equal(BalanceConsistency.InvalidSourceData, b.Consistency);
+        Assert.False(b.HasFigures);
+        Assert.Null(b.AmountDueNow);
+        Assert.Null(b.RemainingPrincipalAmount);
+        Assert.Null(b.NextPayment);
     }
 }

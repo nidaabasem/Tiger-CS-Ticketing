@@ -7,6 +7,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -24,9 +25,10 @@ namespace TigerCS.Tests.Web;
 
 /// <summary>
 /// The Customer Profile's Payment tab through the real Razor pipeline against
-/// a fake TigerCS.Api: every state (loading, loaded, empty, forbidden, stale,
-/// switched off, source unavailable — never a zero), the lazily fetched
-/// panel, and Send Reminder relayed through the Api.
+/// a fake TigerCS.Api: every state the specification names (loading; no
+/// linked account; account selection required; current account with zero
+/// balance; unavailable with Retry; stale with timestamp; forbidden), the
+/// lazily fetched panel, and Send Reminder from a candidate.
 /// </summary>
 public sealed class CustomerPaymentTabRenderTests : IDisposable
 {
@@ -65,10 +67,10 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         return html;
     }
 
-    private bool CollectionsCalled => _api.Requests.Any(r => r.Contains("/api/genesys/collections", StringComparison.Ordinal));
+    private bool CollectionsCalled => _api.Requests.Any(r => r.Contains("/api/collections", StringComparison.Ordinal));
 
     [Fact]
-    public async Task ProfileOffersThePaymentTab_DeferredWithALoadingState_AndCallsNoFinancialRouteUpfront()
+    public async Task ThePaymentTab_IsDeferredWithALoadingState_AndTheProfileCallsNoFinancialRoute()
     {
         var html = await Ok(await Client().GetAsync("/Customers/crm:9001"));
 
@@ -76,53 +78,82 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("data-payment-src=\"/Customers/crm%3A9001?handler=PaymentPanel\"", html, StringComparison.Ordinal);
         Assert.Contains("data-payment-state=\"Deferred\"", html, StringComparison.Ordinal);
         Assert.Contains("Loading payment details…", html, StringComparison.Ordinal);
-        Assert.Contains("href=\"/Customers/crm%3A9001?tab=payment#payment\"", html, StringComparison.Ordinal);
         Assert.False(CollectionsCalled);
+        Assert.DoesNotContain("/api/genesys", string.Join("\n", _api.Requests), StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task LoadedTab_ShowsTheSourceFiguresInCurrency_SchedulePaymentsRemindersAndTickets()
+    public async Task SeveralAccounts_RequireASelection_BeforeAnyDetail()
     {
-        _api.CanSend = true;
         var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+
+        Assert.Contains("data-payment-state=\"SelectAccount\"", html, StringComparison.Ordinal);
+        Assert.Contains("This customer has 2 finance accounts.", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-account-link=\"ACC-45001\"", html, StringComparison.Ordinal);
+        Assert.Contains("AED 30,500.00 <small>due now</small>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Instalments", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("view=instalments", string.Join("\n", _api.Requests), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASelectedAccount_ShowsTheSourceFigures_InstalmentsHistoryAndReminders()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001"));
 
         Assert.Matches(new Regex("id=\"tab-payment\"[^>]*checked"), html);
         Assert.Contains("data-payment-state=\"Loaded\"", html, StringComparison.Ordinal);
-        Assert.Contains("AED 14,500.00", html, StringComparison.Ordinal);        // amount due now
-        Assert.Contains("AED 44,000.00", html, StringComparison.Ordinal);        // remaining principal
-        Assert.Contains("Amount due now", html, StringComparison.Ordinal);
-        Assert.Contains("This month's remaining payment", html, StringComparison.Ordinal);
+        Assert.Contains("AED 30,500.00", html, StringComparison.Ordinal);       // amount due now
+        Assert.Contains("AED 45,000.00", html, StringComparison.Ordinal);       // remaining principal
+        Assert.Contains("Payable penalties", html, StringComparison.Ordinal);
+        Assert.Contains("overlaps the overdue, due-today and future amounts", html, StringComparison.Ordinal);
         Assert.Contains("Last updated", html, StringComparison.Ordinal);
         Assert.Contains("Currency <strong>AED</strong>", html, StringComparison.Ordinal);
 
-        // Account selector, instalments, payments (the unverified one flagged), reminders with their ticket.
-        Assert.Contains("name=\"account\"", html, StringComparison.Ordinal);
         Assert.Contains(">Partially paid<", html, StringComparison.Ordinal);
-        Assert.Contains(">Pending verification<", html, StringComparison.Ordinal);
-        Assert.Contains("Not counted in the balance", html, StringComparison.Ordinal);
+        Assert.Contains("<span class=\"badge badge-pay-critical\">Overdue</span>", html, StringComparison.Ordinal); // partially paid AND overdue
+        Assert.Contains("RCT-70001", html, StringComparison.Ordinal);
+        Assert.Contains("INST-MAY-2026", html, StringComparison.Ordinal);
         Assert.Contains("href=\"/Tickets/77\">TG-COL-00077</a>", html, StringComparison.Ordinal);
-        Assert.Contains("Says already paid &#xB7; verification needed", html, StringComparison.Ordinal);
-
-        // No receipt/SOA download without a verified document API.
         Assert.Contains("data-documents-unavailable", html, StringComparison.Ordinal);
         Assert.DoesNotContain("Download", html, StringComparison.Ordinal);
 
-        Assert.Contains(">Send Reminder</button>", html, StringComparison.Ordinal);
-        Assert.Contains("<option value=\"Email\">Email</option>", html, StringComparison.Ordinal);
-        Assert.DoesNotContain("<option value=\"VoiceBot\"", html, StringComparison.Ordinal);
+        var requests = string.Join("\n", _api.Requests);
+        Assert.Contains("/api/collections/customers/9001/payments?accountId=ACC-45001&view=instalments", requests, StringComparison.Ordinal);
+        Assert.Contains("/api/collections/customers/9001/payments?accountId=ACC-45001&view=history", requests, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task SendReminder_IsHiddenFromViewersWithoutThePermission_AndForSettledAccounts()
+    public async Task SendReminder_ShowsTheCandidatesAmountAccountAndChannels_ForAPermittedViewer()
+    {
+        _api.CanSend = true;
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001"));
+
+        Assert.Contains(">Send Reminder</button>", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>AED 30,000.00</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("unpaid principal older than one calendar month", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"channels\" value=\"Email\" checked", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"channels\" value=\"Sms\" checked", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("value=\"VoiceBot\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"idempotencyKey\"", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SendReminder_IsHidden_WithoutTheGrant_OnStaleData_AndWhenNothingIsDue()
     {
         _api.CanSend = false;
-        Assert.DoesNotContain("Send Reminder", await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment")), StringComparison.Ordinal);
+        Assert.DoesNotContain("Send Reminder", await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001")), StringComparison.Ordinal);
 
         _api.CanSend = true;
-        var settled = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-9001-0805"));
-        Assert.DoesNotContain("Send Reminder", settled, StringComparison.Ordinal);
-        Assert.Contains("Not needed &#x2014; settled", settled, StringComparison.Ordinal);
-        Assert.Contains("/payments?accountId=ACC-9001-0805", string.Join("\n", _api.Requests), StringComparison.Ordinal);
+        _api.Stale = true;
+        var stale = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001"));
+        Assert.DoesNotContain(">Send Reminder</button>", stale, StringComparison.Ordinal);
+        Assert.Contains("data-balance-stale", stale, StringComparison.Ordinal);
+        Assert.Contains("Reminders cannot be sent on stale figures.", stale, StringComparison.Ordinal);
+
+        _api.Stale = false;
+        var settled = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45002"));
+        Assert.Contains("data-balance-settled", settled, StringComparison.Ordinal);
+        Assert.Contains("data-no-candidate", settled, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -136,89 +167,90 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task SourceUnavailable_SaysUnavailable_NeverZero_AndStillShowsReminderHistory()
+    public async Task Unavailable_SaysSoWithRetry_NeverZero_AndKeepsReminderHistory()
     {
         _api.Mode = "unavailable";
         var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
 
         Assert.Contains("Balance unavailable.", html, StringComparison.Ordinal);
-        Assert.Contains("data-balance-unavailable", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-retry>Retry</a>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("AED 0.00", html, StringComparison.Ordinal);
         Assert.DoesNotContain("Amount due now", html, StringComparison.Ordinal);
-        Assert.Contains("Reminder history", html, StringComparison.Ordinal);
         Assert.Contains("TG-COL-00077", html, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Disabled_SaysSo()
+    public async Task Disabled_NoLinkedAccount_AndAPhoneOnlyCaller_EachSaySo()
     {
         _api.Mode = "disabled";
-        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+        Assert.Contains("Collections is not enabled in this environment", await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment")), StringComparison.Ordinal);
 
-        Assert.Contains("Collections is not enabled in this environment", html, StringComparison.Ordinal);
-        Assert.DoesNotContain("Balance unavailable", html, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task StaleFigures_AreFlagged()
-    {
-        _api.Stale = true;
-        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
-
-        Assert.Contains("data-balance-stale", html, StringComparison.Ordinal);
-        Assert.Contains("These figures may be out of date", html, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task NoAccountsAtTheSource_IsAnEmptyState()
-    {
         _api.Mode = "notfound";
-        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+        Assert.Contains("No finance account is linked to this customer.", await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment")), StringComparison.Ordinal);
 
-        Assert.Contains("The financial source has no payment accounts for this customer.", html, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task APhoneOnlyCaller_HasNoCrmAccountToLookUp()
-    {
-        var html = await Ok(await Client().GetAsync("/Customers/phone:%2B971501112222?tab=payment"));
-
-        Assert.Contains("Payment information is available only for customers identified in Tiger CRM.", html, StringComparison.Ordinal);
+        _api.Mode = "loaded";
+        _api.Requests.Clear();
+        Assert.Contains("Payment information is available only for customers identified in Tiger CRM.",
+            await Ok(await Client().GetAsync("/Customers/phone:%2B971501112222?tab=payment")), StringComparison.Ordinal);
         Assert.False(CollectionsCalled);
     }
 
     [Fact]
-    public async Task PaymentPanelHandler_ReturnsTheTabAlone()
+    public async Task ThePanelHandler_ReturnsTheTabAlone_ForTheRequestedAccount()
     {
-        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?handler=PaymentPanel"));
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?handler=PaymentPanel&account=ACC-45001"));
 
-        Assert.StartsWith("<div class=\"payment-tab\" data-payment-state=\"Loaded\"", html.TrimStart(), StringComparison.Ordinal);
+        Assert.StartsWith("<div class=\"payment-tab\" data-payment-state=\"Loaded\" data-payment-account=\"ACC-45001\"", html.TrimStart(), StringComparison.Ordinal);
         Assert.DoesNotContain("<html", html, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task SendReminder_UsesTheProfilesCrmId_RelaysTheApiAnswer_AndReturnsToThePaymentTab()
+    public async Task SendReminder_QueuesTheCandidate_WithTheFormsIdempotencyKey_AndReturnsToTheTab()
     {
         _api.CanSend = true;
         var client = Client();
-        var page = await Ok(await client.GetAsync("/Customers/crm:9001?tab=payment"));
-        var token = Regex.Match(page, "name=\"__RequestVerificationToken\" type=\"hidden\" value=\"([^\"]+)\"").Groups[1].Value;
+        var page = await Ok(await client.GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001"));
+        string Field(string name) => Regex.Match(page, $"name=\"{name}\"[^>]*value=\"([^\"]+)\"").Groups[1].Value;
 
-        var post = await client.PostAsync("/Customers/crm:9001?handler=SendReminder", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = token,
-            ["accountId"] = "ACC-9001-1204",
-            ["channel"] = "Email",
-        }));
+        var post = await client.PostAsync("/Customers/crm:9001?handler=SendReminder", new FormUrlEncodedContent(
+        [
+            new("__RequestVerificationToken", Regex.Match(page, "name=\"__RequestVerificationToken\" type=\"hidden\" value=\"([^\"]+)\"").Groups[1].Value),
+            new("candidateId", Field("candidateId")),
+            new("accountId", "ACC-45001"),
+            new("idempotencyKey", Field("idempotencyKey")),
+            new("channels", "Email"),
+            new("channels", "Sms"),
+            new("language", "en"),
+        ]));
 
         Assert.Equal(HttpStatusCode.Redirect, post.StatusCode);
-        Assert.Equal("/Customers/crm%3A9001?tab=payment&account=ACC-9001-1204#payment", post.Headers.Location!.OriginalString);
+        Assert.Equal("/Customers/crm%3A9001?tab=payment&account=ACC-45001#payment", post.Headers.Location!.OriginalString);
 
-        var sent = JsonSerializer.Deserialize<CreateCollectionsReminderRequestDto>(_api.LastPostBody!, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-        Assert.Equal(new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email", "Manual"), sent);
+        var sent = JsonSerializer.Deserialize<QueueCollectionsReminderRequestDto>(_api.LastPostBody!, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Equal("CAND-1", sent.CandidateId);
+        Assert.Equal(["Email", "Sms"], sent.Channels);
+        Assert.Equal(Field("idempotencyKey"), _api.LastIdempotencyKey);
 
         var back = await Ok(await client.GetAsync(post.Headers.Location));
-        Assert.Contains("Email reminder queued for AED 14,000.00.", back, StringComparison.Ordinal);
+        Assert.Contains("Reminder REM-90001 queued for AED 30,000.00 on Email, SMS. Queued does not mean delivered.", back, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AChangedCandidate_IsReportedToTheAgent()
+    {
+        _api.CanSend = true;
+        _api.QueueAnswer = HttpStatusCode.Conflict;
+        var client = Client();
+        var page = await Ok(await client.GetAsync("/Customers/crm:9001?tab=payment&account=ACC-45001"));
+
+        var post = await client.PostAsync("/Customers/crm:9001?handler=SendReminder", new FormUrlEncodedContent(
+        [
+            new("__RequestVerificationToken", Regex.Match(page, "name=\"__RequestVerificationToken\" type=\"hidden\" value=\"([^\"]+)\"").Groups[1].Value),
+            new("candidateId", "CAND-1"), new("accountId", "ACC-45001"), new("channels", "Email"),
+        ]));
+        var back = await Ok(await client.GetAsync(post.Headers.Location));
+
+        Assert.Contains("The amount or eligibility changed since this reminder was offered.", back, StringComparison.Ordinal);
     }
 
     private sealed class TestAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
@@ -241,8 +273,12 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         public string Mode { get; set; } = "loaded";
         public bool CanSend { get; set; }
         public bool Stale { get; set; }
+        public HttpStatusCode QueueAnswer { get; set; } = HttpStatusCode.Accepted;
         public List<string> Requests { get; } = [];
         public string? LastPostBody { get; private set; }
+        public string? LastIdempotencyKey { get; private set; }
+
+        private static readonly DateOnly Today = DateOnly.FromDateTime(Now);
 
         private static readonly CustomerDirectoryProfileDto Profile = new(
             "crm:9001", "Crm", "Test Buyer", ["+971500000900"], [], "Crm", 9001, null, null, 0, 1, Now.AddDays(-30), Now.AddDays(-1), 6, [], [], []);
@@ -250,71 +286,80 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         private static readonly CustomerDirectoryProfileDto Caller = new(
             "phone:%2B971501112222", "Phone", null, ["+971501112222"], [], "Unverified", null, null, null, 0, 0, Now.AddDays(-3), Now.AddDays(-3), 7, [], [], []);
 
-        private static readonly DateOnly Today = DateOnly.FromDateTime(Now);
+        private CollectionsAccountDto Arrears => new(
+            "ACC-45001", 45001, "Example Tower", "1205", "AED", Stale ? Now.AddHours(-5) : Now.AddMinutes(-2), Stale ? "Stale" : "Current",
+            45_000m, 30_000m, 0m, 15_000m, 500m, 0m, 0m, 30_500m, 10_000m, Today.AddMonths(-4),
+            new CollectionsNextPaymentDto("INST-OCT-2026", Today.AddDays(13), 10_000m), []);
 
-        private CollectionsOutstandingResponseDto Outstanding()
-        {
-            var asOf = Stale ? Now.AddHours(-5) : Now.AddMinutes(-2);
-            var arrears = new CollectionsAccountDto(
-                "ACC-9001-1204", "9200", "1204", "Tiger Tower A", "AED", asOf, Stale, "Consistent", [],
-                new CollectionsBalanceDto(44_000m, 14_000m, 0m, 30_000m, 500m, 14_500m, 10_000m, new CollectionsNextPaymentDto("INS-4", Today.AddDays(5), 10_000m)),
-                new CollectionsReminderEligibilityDto(true, 24_000m, null, []),
-                [
-                    new CollectionsInstalmentDto("INS-1", 1, Today.AddMonths(-3), 10_000m, 10_000m, 0m, "Paid"),
-                    new CollectionsInstalmentDto("INS-2", 2, Today.AddMonths(-2), 10_000m, 6_000m, 4_000m, "Overdue"),
-                    new CollectionsInstalmentDto("INS-4", 4, Today.AddDays(5), 10_000m, 2_000m, 8_000m, "PartiallyPaid"),
-                ],
-                [new CollectionsChargeDto("FINE-1", "Fine", "Late payment fine", 500m, 500m, null, true)]);
-            var settled = new CollectionsAccountDto(
-                "ACC-9001-0805", "9201", "0805", "Tiger Marina Residences", "AED", asOf, Stale, "Consistent", [],
-                new CollectionsBalanceDto(0m, 0m, 0m, 0m, 0m, 0m, 0m, null),
-                new CollectionsReminderEligibilityDto(false, 0m, "Settled", []), [], []);
-            return new CollectionsOutstandingResponseDto("9001", "Test source", asOf, Stale, Today, [arrears, settled],
-                new CollectionsViewerDto(CanSend, ["VoiceBot", "Email"]),
-                new CollectionsDocumentsDto(false, false, "No verified receipt or statement-of-account document API is connected."));
-        }
+        private static CollectionsAccountDto Settled => new(
+            "ACC-45002", 45002, "Example Tower", "0805", "AED", Now.AddMinutes(-2), "Current",
+            0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, null, null, []);
 
-        private static CollectionsReminderListResultDto Reminders() => new(
+        private static CollectionsReminderHistoryResponseDto Reminders() => new(9001, null,
         [
-            new CollectionsReminderDto(12, "9001", "ACC-9001-1204", "9200", "OverdueMoreThanOneMonth", "VoiceBot", "2026-10", "Delivered", null,
-                14_000m, "AED", false, Now.AddDays(-1), null, "Integration", Now.AddDays(-1), Now.AddDays(-1), Now.AddDays(-1), null, null,
-                [
-                    new CollectionsReminderEventDto(1, "tigercs:queued", "Queued", Now.AddDays(-1), Now.AddDays(-1), null, null, null, null, null, false, false, null, null, null),
-                    new CollectionsReminderEventDto(2, "resp-1", "CustomerResponded", Now.AddDays(-1), Now.AddDays(-1), null, "AlreadyPaid", "conv-1", null, null, true, true, "Linked", 77, "TG-COL-00077"),
-                ])
-        ], 1, 1, 20);
+            new CollectionsReminderHistoryItemDto("REM-12", "ACC-45001", "OverdueMonthly", "2026-10:OverdueMonthly", "AED", 30_000m,
+                "UnpaidPrincipalOlderThanOneCalendarMonth", Now.AddDays(-1), "Integration",
+                [new CollectionsChannelStatusDto("VoiceBot", "Answered", Now.AddDays(-1), 1, null)],
+                "AlreadyPaid", 77, "TG-COL-00077",
+                [new CollectionsReminderResponseDto("EVT-1", "VoiceBot", "AlreadyPaid", Now.AddDays(-1), true, true, "Created", 77, "TG-COL-00077")])
+        ], null);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request.RequestUri!.PathAndQuery);
             var path = Uri.UnescapeDataString(request.RequestUri.AbsolutePath);
+            var query = HttpUtility.ParseQueryString(request.RequestUri.Query);
 
-            if (path.StartsWith("/api/genesys/collections", StringComparison.Ordinal))
+            if (path.StartsWith("/api/collections", StringComparison.Ordinal))
             {
                 if (request.Method == HttpMethod.Post)
                 {
                     LastPostBody = await request.Content!.ReadAsStringAsync(cancellationToken);
-                    var reminder = Reminders().Items[0] with { ReminderId = 13, Channel = "Email", ReminderType = "Manual", Status = "Queued", Amount = 14_000m };
-                    return Json(HttpStatusCode.Created, new CreateCollectionsReminderResponseDto("Created", reminder));
+                    LastIdempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var keys) ? keys.Single() : null;
+                    return QueueAnswer == HttpStatusCode.Conflict
+                        ? Problem(HttpStatusCode.Conflict, "CandidateChanged")
+                        : Json(HttpStatusCode.Accepted, new CollectionsReminderJobDto("REM-90001", 9001, "ACC-45001", "OverdueMonthly", "2026-10:OverdueMonthly",
+                            "AED", 30_000m, "UnpaidPrincipalOlderThanOneCalendarMonth", ["INST-JUN-2026"], Now, "Queued",
+                            [new("Email", "Queued", Now, 1, null), new("Sms", "Queued", Now, 1, null)]));
                 }
 
                 if (path.EndsWith("/reminders", StringComparison.Ordinal))
                 {
-                    return Mode is "forbidden" ? Problem(HttpStatusCode.Forbidden, "collections-forbidden") : Json(HttpStatusCode.OK, Reminders());
+                    return Mode == "forbidden" ? Problem(HttpStatusCode.Forbidden, "Forbidden") : Json(HttpStatusCode.OK, Reminders());
+                }
+
+                if (path.EndsWith("/candidates", StringComparison.Ordinal))
+                {
+                    if (!CanSend)
+                    {
+                        return Problem(HttpStatusCode.Forbidden, "Forbidden");
+                    }
+
+                    var items = query["reminderType"] == "OverdueMonthly" && query["accountId"] == "ACC-45001" && !Stale
+                        ? new List<CollectionsReminderCandidateDto>
+                        {
+                            new("CAND-1", 9001, "ACC-45001", 45001, "Example Tower", "1205", "AED", 30_000m, "UnpaidPrincipalOlderThanOneCalendarMonth",
+                                ["INST-JUN-2026", "INST-JUL-2026"], Today.AddMonths(-4), ["VoiceBot", "Sms", "Email"], Now, Now.AddMinutes(15))
+                        }
+                        : [];
+                    return Json(HttpStatusCode.OK, new CollectionsReminderCandidatesResponseDto(query["reminderType"]!, "2026-10:" + query["reminderType"], Today, "Asia/Dubai", true, items, null));
                 }
 
                 return Mode switch
                 {
-                    "forbidden" => Problem(HttpStatusCode.Forbidden, "collections-forbidden"),
-                    "disabled" => Problem(HttpStatusCode.ServiceUnavailable, "collections-disabled"),
-                    "unavailable" => Problem(HttpStatusCode.ServiceUnavailable, "collections-source-unavailable"),
-                    "notfound" => Problem(HttpStatusCode.NotFound, "collections-customer-not-found"),
-                    _ when path.EndsWith("/outstanding", StringComparison.Ordinal) => Json(HttpStatusCode.OK, Outstanding()),
-                    _ => Json(HttpStatusCode.OK, new CollectionsPaymentsResponseDto("9001", "Test source", Now, false,
+                    "forbidden" => Problem(HttpStatusCode.Forbidden, "Forbidden"),
+                    "disabled" => Problem(HttpStatusCode.ServiceUnavailable, "CollectionsDisabled"),
+                    "unavailable" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),
+                    "notfound" => Problem(HttpStatusCode.NotFound, "AccountNotFound"),
+                    _ when path.EndsWith("/outstanding", StringComparison.Ordinal) =>
+                        Json(HttpStatusCode.OK, new CollectionsOutstandingResponseDto(9001, Today, Now, Stale ? "Stale" : "Current", "Test source", [Arrears, Settled], null)),
+                    _ when query["view"] == "history" => Json(HttpStatusCode.OK, new CollectionsPaymentHistoryResponseDto(9001, query["accountId"]!, "AED", Now, "Current", "history",
+                        [new CollectionsPaymentDto("PAY-70001", Today.AddMonths(-5), 5_000m, "BankTransfer", "Posted", "RCT-70001", true, [new("INST-MAY-2026", 5_000m, null)])], null)),
+                    _ => Json(HttpStatusCode.OK, new CollectionsInstalmentsResponseDto(9001, query["accountId"]!, "AED", Now, "Current", "instalments",
                     [
-                        new CollectionsPaymentDto("PAY-3", "ACC-9001-1204", "9200", "1204", Today.AddDays(-1), null, 6_000m, "AED", "BankTransfer", "Customer upload", "PendingVerification", false, false),
-                        new CollectionsPaymentDto("PAY-2", "ACC-9001-1204", "9200", "1204", Today.AddMonths(-2), Today.AddMonths(-2), 6_000m, "AED", "Cheque", "CHQ-4411", "Posted", true, false),
-                    ], 2, 1, 20)),
+                        new CollectionsInstalmentDto("INST-JUN-2026", Today.AddMonths(-4), 5_000m, 2_000m, 3_000m, "PartiallyPaid", true),
+                        new CollectionsInstalmentDto("INST-OCT-2026", Today.AddDays(13), 10_000m, 0m, 10_000m, "Upcoming", false),
+                    ], null)),
                 };
             }
 
@@ -333,7 +378,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         private static HttpResponseMessage Json(HttpStatusCode status, object body) =>
             new(status) { Content = JsonContent.Create(body, body.GetType()) };
 
-        private static HttpResponseMessage Problem(HttpStatusCode status, string type) =>
-            new(status) { Content = JsonContent.Create(new { type = $"https://tigercs.internal/problems/{type}", title = type, detail = type }) };
+        private static HttpResponseMessage Problem(HttpStatusCode status, string code) =>
+            new(status) { Content = JsonContent.Create(new { type = $"https://tigercs.internal/problems/collections/{code}", title = code, detail = code, code, message = code }) };
     }
 }

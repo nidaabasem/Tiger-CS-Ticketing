@@ -4,95 +4,135 @@ namespace TigerCS.Tests.Collections.Domain;
 
 public class CollectionsReminderDomainTests
 {
-    private static readonly DateTime Now = new(2026, 10, 15, 6, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime Now = new(2026, 10, 2, 6, 0, 0, DateTimeKind.Utc);
 
-    private static CollectionsReminder Reminder(ReminderChannel channel = ReminderChannel.VoiceBot) =>
-        new("9001", "ACC-1", "9200", ReminderType.CurrentMonthDue, channel, "2026-10", "AED", 10_000m, false, Now,
-            ReminderTrigger.Integration, Guid.NewGuid(), Now);
+    private static readonly ReminderEligibility Eligible =
+        new(true, 30_000m, "AED", "UnpaidPrincipalOlderThanOneCalendarMonth", ["INST-JUN-2026", "INST-JUL-2026"], new DateOnly(2026, 6, 1), null);
+
+    private static CollectionsReminder Job(params ReminderChannel[] channels) =>
+        new(12345, "ACC-45001", 45001, ReminderType.OverdueMonthly, "2026-10:OverdueMonthly", Eligible, Now, "en",
+            ReminderTrigger.Integration, Guid.NewGuid(), "key-1", "HASH", channels.Length == 0 ? [ReminderChannel.VoiceBot, ReminderChannel.Sms] : channels, Now);
 
     [Fact]
-    public void DeduplicationKey_IsAccountTypeCycleChannel()
+    public void EachChannel_CarriesItsOwnDeduplicationKey()
     {
-        Assert.Equal("ACC-1|CurrentMonthDue|2026-10|VoiceBot", Reminder().DeduplicationKey);
-        Assert.NotEqual(Reminder(ReminderChannel.Sms).DeduplicationKey, Reminder().DeduplicationKey);
+        var job = Job(ReminderChannel.VoiceBot, ReminderChannel.Sms, ReminderChannel.Email);
+
+        Assert.Equal(
+            ["ACC-45001|OverdueMonthly|2026-10:OverdueMonthly|VoiceBot", "ACC-45001|OverdueMonthly|2026-10:OverdueMonthly|Sms", "ACC-45001|OverdueMonthly|2026-10:OverdueMonthly|Email"],
+            job.Channels.Select(c => c.DeduplicationKey));
+        Assert.All(job.Channels, c => Assert.Equal(ChannelStatus.Queued, c.Status));
+        Assert.Equal("INST-JUN-2026,INST-JUL-2026", job.InstalmentIds);
     }
 
     [Fact]
-    public void AReminderIsOnlyRecordedForAnAmountOwed() =>
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new CollectionsReminder("9001", "ACC-1", null, ReminderType.Manual, ReminderChannel.Email, "2026-10-15", "AED", 0m, false, Now,
-                ReminderTrigger.Manual, null, Now));
+    public void OnlyAnEligibleAmountIsEverQueued() =>
+        Assert.Throws<ArgumentException>(() => new CollectionsReminder(12345, "ACC-1", null, ReminderType.CurrentMonth, "2026-10:CurrentMonth",
+            ReminderEligibility.NotEligible("AED", ReminderPolicy.SettledReason), Now, "en", ReminderTrigger.User, null, null, null, [ReminderChannel.Sms], Now));
 
     [Fact]
-    public void QueuedSentDelivered_MoveForwardOnly()
+    public void PublicIds_RoundTrip()
     {
-        var reminder = Reminder();
-        Assert.Equal(ReminderStatus.Queued, reminder.Status);
-
-        Assert.True(reminder.ApplyDelivery(ReminderEventType.Sent, Now.AddMinutes(1), null, "call-1"));
-        Assert.True(reminder.ApplyDelivery(ReminderEventType.Delivered, Now.AddMinutes(2), null, null));
-        Assert.Equal(ReminderStatus.Delivered, reminder.Status);
-
-        // A late Sent or Failed never undoes Delivered.
-        Assert.False(reminder.ApplyDelivery(ReminderEventType.Sent, Now.AddMinutes(3), null, null));
-        Assert.False(reminder.ApplyDelivery(ReminderEventType.Failed, Now.AddMinutes(3), "late", null));
-        Assert.Equal(ReminderStatus.Delivered, reminder.Status);
-        Assert.Equal(Now.AddMinutes(1), reminder.SentAtUtc);
-        Assert.Equal("call-1", reminder.ProviderReference);
+        Assert.True(CollectionsReminder.TryParsePublicId("REM-90001", out var id));
+        Assert.Equal(90001, id);
+        Assert.True(CollectionsReminder.TryParsePublicId("90001", out _));
+        Assert.False(CollectionsReminder.TryParsePublicId("REM-x", out _));
+        Assert.False(CollectionsReminder.TryParsePublicId("REM--4", out _));
     }
 
     [Fact]
-    public void ASuppressedReminderAcceptsNoDelivery()
+    public void ADelayedEvent_NeverOverwritesALaterStatus()
     {
-        var reminder = Reminder();
-        Assert.True(reminder.Suppress("Settled before dispatch.", Now));
-        Assert.False(reminder.ApplyDelivery(ReminderEventType.Delivered, Now, null, null));
-        Assert.Equal(ReminderStatus.Suppressed, reminder.Status);
-        Assert.False(reminder.Suppress("again", Now));
+        var sms = Job().ChannelFor(ReminderChannel.Sms)!;
+
+        Assert.True(sms.Apply(ChannelStatus.Sent, Now.AddMinutes(1), "m-1", null));
+        Assert.True(sms.Apply(ChannelStatus.Failed, Now.AddMinutes(5), null, "bounced"));
+        Assert.False(sms.Apply(ChannelStatus.Sent, Now.AddMinutes(2), null, null)); // older than the last applied
+        Assert.Equal(ChannelStatus.Failed, sms.Status);
+        Assert.Equal("bounced", sms.StatusReason);
+    }
+
+    [Fact]
+    public void DeliveredOrAnswered_IsFinal()
+    {
+        var job = Job();
+        var voice = job.ChannelFor(ReminderChannel.VoiceBot)!;
+        Assert.True(voice.Apply(ChannelStatus.Answered, Now.AddMinutes(1), "call-1", null));
+        Assert.False(voice.Apply(ChannelStatus.Failed, Now.AddMinutes(9), null, "late"));
+        Assert.Equal(ChannelStatus.Answered, voice.Status);
+
+        var sms = job.ChannelFor(ReminderChannel.Sms)!;
+        sms.Apply(ChannelStatus.Delivered, Now.AddMinutes(1), null, null);
+        Assert.False(sms.Apply(ChannelStatus.Sent, Now.AddMinutes(2), null, null));
+    }
+
+    [Fact]
+    public void AChannelRejectsAnotherChannelsVocabulary() =>
+        Assert.Throws<ArgumentException>(() => Job().ChannelFor(ReminderChannel.VoiceBot)!.Apply(ChannelStatus.Delivered, Now, null, null));
+
+    [Fact]
+    public void OnlyAFailedChannelIsRetried_AndASuppressedOneAcceptsNothing()
+    {
+        var job = Job();
+        var voice = job.ChannelFor(ReminderChannel.VoiceBot)!;
+        Assert.Throws<InvalidOperationException>(() => voice.Requeue(Now, null));
+
+        voice.Apply(ChannelStatus.NoAnswer, Now.AddMinutes(1), null, "no answer");
+        voice.Requeue(Now.AddHours(1), null);
+        Assert.Equal(ChannelStatus.Queued, voice.Status);
+        Assert.Equal(2, voice.Attempts);
+
+        var sms = job.ChannelFor(ReminderChannel.Sms)!;
+        Assert.True(sms.Suppress("Settled before dispatch.", Now));
+        Assert.False(sms.Apply(ChannelStatus.Delivered, Now.AddMinutes(1), null, null));
+        Assert.Contains(job.Events, e => e.ExternalEventId == "tigercs:suppressed:Sms:1");
     }
 
     [Theory]
-    [InlineData(CustomerResponseKind.AlreadyPaid, true, true)]
-    [InlineData(CustomerResponseKind.RequestedHuman, false, true)]
-    [InlineData(CustomerResponseKind.AiDisconnected, false, true)]
-    [InlineData(CustomerResponseKind.Disputed, false, true)]
-    [InlineData(CustomerResponseKind.PromiseToPay, false, false)]
-    public void ResponseKinds_RaiseTheRightFollowUp(CustomerResponseKind kind, bool verification, bool human)
+    [InlineData(CustomerIntent.AlreadyPaid, false, true, true)]
+    [InlineData(CustomerIntent.RequestedHuman, false, false, true)]
+    [InlineData(CustomerIntent.AiDisconnected, false, false, true)]
+    [InlineData(CustomerIntent.Disputed, false, false, true)]
+    [InlineData(CustomerIntent.PromiseToPay, false, false, false)]
+    [InlineData(CustomerIntent.PromiseToPay, true, false, true)]
+    public void Intents_RaiseTheRightFollowUp(CustomerIntent intent, bool callerRequestsHuman, bool verification, bool human)
     {
-        var reminder = Reminder();
-        var response = CollectionsReminderEvent.Response(reminder, "evt-1", kind, Now, Now, null, "conv-1", "+971500000900", null, null, null);
+        var e = CollectionsReminderEvent.Reported(Job(), "EVT-1", null, "H", ReminderChannel.VoiceBot, ChannelStatus.Answered, "GEN-1",
+            "conv-1", Now, Now, null, customerResponded: true, intent, callerRequestsHuman, null);
 
-        Assert.Equal(verification, response.VerificationFollowUpRequired);
-        Assert.Equal(human, response.HumanFollowUpRequired);
-        Assert.Equal(ResponseTicketStatus.Pending, response.TicketStatus);
+        Assert.Equal(verification, e.VerificationFollowUpRequired);
+        Assert.Equal(human, e.RequiresHumanFollowUp);
+        Assert.Equal(TicketResult.Pending, e.TicketResult);
     }
 
     [Fact]
-    public void AResponseOutsideAConversation_OwesNoTicket()
+    public void AnAnsweredCallAlone_IsNotAResponse_AndOwesNoTicket()
     {
-        var response = CollectionsReminderEvent.Response(Reminder(), "evt-1", CustomerResponseKind.PromiseToPay, Now, Now, null,
-            conversationId: null, customerPhone: null, note: "Reply by SMS", new DateOnly(2026, 10, 20), 5_000m);
+        var e = CollectionsReminderEvent.Reported(Job(), "EVT-1", null, "H", ReminderChannel.VoiceBot, ChannelStatus.Answered, null,
+            "conv-1", Now, Now, null, customerResponded: false, null, requiresHumanFollowUp: true, null);
 
-        Assert.Equal(ResponseTicketStatus.NotApplicable, response.TicketStatus);
-        Assert.Throws<InvalidOperationException>(() => response.LinkTicket(1, "T-1", Now));
+        Assert.False(e.CustomerResponded);
+        Assert.False(e.FollowUpRequired);
+        Assert.Equal(TicketResult.NotRequired, e.TicketResult);
     }
 
     [Fact]
-    public void LinkTicket_IsIdempotentForTheSameTicket_AndRefusesAnother()
+    public void LinkTicket_RecordsCreatedOrReused_IsIdempotent_AndRefusesAnotherTicket()
     {
-        var response = CollectionsReminderEvent.Response(Reminder(), "evt-1", CustomerResponseKind.AlreadyPaid, Now, Now, null, "conv-1", null, null, null, null);
+        var e = CollectionsReminderEvent.Reported(Job(), "EVT-1", null, "H", ReminderChannel.VoiceBot, null, null,
+            "conv-1", Now, Now, null, true, CustomerIntent.AlreadyPaid, false, null);
 
-        response.LinkTicket(10, "TG-1", Now);
-        response.LinkTicket(10, "TG-1", Now.AddMinutes(5));
-        Assert.Equal(ResponseTicketStatus.Linked, response.TicketStatus);
-        Assert.Equal(Now, response.TicketLinkedAtUtc);
-        Assert.Throws<InvalidOperationException>(() => response.LinkTicket(11, "TG-2", Now));
+        e.LinkTicket(10, "TG-1", created: false, Now);
+        e.LinkTicket(10, "TG-1", created: true, Now.AddMinutes(5));
+        Assert.Equal(TicketResult.Reused, e.TicketResult);
+        Assert.Equal(Now, e.TicketLinkedAtUtc);
+        Assert.Throws<InvalidOperationException>(() => e.LinkTicket(11, "TG-2", true, Now));
     }
 
     [Fact]
-    public void CallerEventIds_MayNotImpersonateTigerCsEvents() =>
-        Assert.Throws<ArgumentException>(() =>
-            CollectionsReminderEvent.Delivery(Reminder(), "tigercs:sent", ReminderEventType.Sent, Now, Now, null, null));
+    public void CallerEventIds_MayNotUseTheReservedPrefix() =>
+        Assert.Throws<ArgumentException>(() => CollectionsReminderEvent.Reported(Job(), "tigercs:queued:Sms:1", null, "H", ReminderChannel.Sms,
+            ChannelStatus.Sent, null, null, Now, Now, null, false, null, false, null));
 
     [Fact]
     public void ThereIsNoLegalReminderType() =>

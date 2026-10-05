@@ -4,27 +4,25 @@ namespace TigerCS.Application.Modules.Collections.Abstractions;
 
 public interface ICollectionsReminderRepository
 {
-    /// <summary>The reminder with its events.</summary>
+    /// <summary>The reminder job with its channels and events.</summary>
     Task<CollectionsReminder?> GetByIdAsync(long reminderId, CancellationToken cancellationToken = default);
 
-    Task<CollectionsReminder?> GetByDeduplicationKeyAsync(string deduplicationKey, CancellationToken cancellationToken = default);
+    Task<CollectionsReminder?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default);
 
-    /// <summary>Which of these de-duplication keys already have a reminder.</summary>
-    Task<IReadOnlySet<string>> GetExistingDeduplicationKeysAsync(IReadOnlyCollection<string> deduplicationKeys, CancellationToken cancellationToken = default);
+    /// <summary>The channel rows already holding any of these de-duplication keys, with their reminders.</summary>
+    Task<IReadOnlyList<CollectionsReminderChannel>> GetChannelsByDeduplicationKeysAsync(
+        IReadOnlyCollection<string> deduplicationKeys, CancellationToken cancellationToken = default);
 
     Task AddAsync(CollectionsReminder reminder, CancellationToken cancellationToken = default);
 
-    /// <summary>A customer's reminders, newest first, with their events.</summary>
-    Task<(IReadOnlyList<CollectionsReminder> Items, int TotalCount)> ListForCustomerAsync(
-        string crmCustomerId, string? accountId, int page, int pageSize, CancellationToken cancellationToken = default);
-
-    /// <summary>One event with its reminder.</summary>
-    Task<CollectionsReminderEvent?> GetEventAsync(long reminderEventId, CancellationToken cancellationToken = default);
+    /// <summary>A customer's reminders, newest first, with channels and events.</summary>
+    Task<(IReadOnlyList<CollectionsReminder> Items, bool HasMore)> ListForCustomerAsync(
+        long crmCustomerId, string? accountId, int offset, int take, CancellationToken cancellationToken = default);
 }
 
 public interface ICollectionsUnitOfWork
 {
-    /// <exception cref="CustomerVerification.Abstractions.DuplicateWriteException">A unique index (reminder de-duplication key, or reminder + event id) was violated by a concurrent write.</exception>
+    /// <exception cref="CustomerVerification.Abstractions.DuplicateWriteException">A unique index (channel de-duplication key, idempotency key, or reminder + event id) was violated by a concurrent write.</exception>
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Forgets unsaved changes after a lost race, so the winner can be read back cleanly.</summary>
@@ -34,6 +32,8 @@ public interface ICollectionsUnitOfWork
 /// <summary>
 /// A channel TigerCS itself sends through (SMS, email). The voice bot is not
 /// one: Genesys places those calls and reports back, so TigerCS never dials.
+/// Contact details come from the financial source's approved record — never
+/// from a caller.
 /// </summary>
 public interface IReminderDeliveryProvider
 {
@@ -43,20 +43,21 @@ public interface IReminderDeliveryProvider
 }
 
 public sealed record ReminderDeliveryRequest(
-    long ReminderId,
+    string ReminderId,
     ReminderType Type,
+    string Language,
     string? CustomerName,
     string? Phone,
     string? Email,
     decimal Amount,
     string Currency,
     string? UnitNumber,
-    string? ProjectName,
+    string? TowerName,
     Guid CorrelationId);
 
 public enum ReminderDeliveryOutcome
 {
-    /// <summary>The provider accepted the message. That is "Sent" — delivery is only ever reported by the provider afterwards.</summary>
+    /// <summary>The provider accepted the message — "Sent". Delivery is only reported by the provider afterwards.</summary>
     Accepted = 1,
 
     TransientFailure = 2,
@@ -64,4 +65,4 @@ public enum ReminderDeliveryOutcome
     PermanentFailure = 3
 }
 
-public sealed record ReminderDeliveryResult(ReminderDeliveryOutcome Outcome, string? ProviderReference = null, string? Error = null);
+public sealed record ReminderDeliveryResult(ReminderDeliveryOutcome Outcome, string? ProviderMessageId = null, string? Error = null);

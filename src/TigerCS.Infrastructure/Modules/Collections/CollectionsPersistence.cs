@@ -9,8 +9,9 @@ using TigerCS.Infrastructure.Persistence;
 namespace TigerCS.Infrastructure.Modules.Collections;
 
 /// <summary>
-/// Reminders store what TigerCS decided and sent — never a balance. Amounts
-/// are decimal(19,4) so a source figure is stored exactly as reported.
+/// Reminder jobs store what TigerCS quoted and did — never a balance, which
+/// is always read from the financial source. Amounts are decimal(19,4) so a
+/// source figure is stored exactly as reported.
 /// </summary>
 public class CollectionsReminderConfiguration : IEntityTypeConfiguration<CollectionsReminder>
 {
@@ -20,37 +21,59 @@ public class CollectionsReminderConfiguration : IEntityTypeConfiguration<Collect
 
         builder.HasKey(r => r.CollectionsReminderId);
         builder.Property(r => r.CollectionsReminderId).ValueGeneratedOnAdd();
+        builder.Ignore(r => r.PublicId);
 
-        builder.Property(r => r.CrmCustomerId).HasMaxLength(CollectionsReminder.IdentifierMaxLength).IsRequired();
-        builder.Property(r => r.AccountId).HasMaxLength(CollectionsReminder.IdentifierMaxLength).IsRequired();
-        builder.Property(r => r.CrmUnitId).HasMaxLength(CollectionsReminder.IdentifierMaxLength);
-        builder.Property(r => r.Type).HasConversion<string>().HasMaxLength(32).IsRequired();
-        builder.Property(r => r.Channel).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(r => r.AccountId).HasMaxLength(CollectionsReminder.AccountIdMaxLength).IsRequired();
+        builder.Property(r => r.Type).HasConversion<string>().HasMaxLength(24).IsRequired();
         builder.Property(r => r.CycleKey).HasMaxLength(CollectionsReminder.CycleKeyMaxLength).IsRequired();
-        builder.Property(r => r.DeduplicationKey).HasMaxLength(CollectionsReminder.DeduplicationKeyMaxLength).IsRequired();
         builder.Property(r => r.Currency).HasMaxLength(3).IsFixedLength().IsUnicode(false).IsRequired();
         builder.Property(r => r.Amount).HasPrecision(19, 4);
-        builder.Property(r => r.DispatchAmount).HasPrecision(19, 4);
-        builder.Property(r => r.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
-        builder.Property(r => r.StatusReason).HasMaxLength(CollectionsReminder.ReasonMaxLength);
-        builder.Property(r => r.ProviderReference).HasMaxLength(CollectionsReminder.ProviderReferenceMaxLength);
+        builder.Property(r => r.AmountBasis).HasMaxLength(CollectionsReminder.AmountBasisMaxLength).IsRequired();
+        builder.Property(r => r.InstalmentIds).HasMaxLength(CollectionsReminder.InstalmentIdsMaxLength).IsRequired();
+        builder.Property(r => r.Language).HasMaxLength(2).IsUnicode(false).IsRequired();
         builder.Property(r => r.Trigger).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(r => r.IdempotencyKey).HasMaxLength(CollectionsReminder.IdempotencyKeyMaxLength);
+        builder.Property(r => r.RequestHash).HasMaxLength(64).IsFixedLength().IsUnicode(false);
+
+        builder.HasIndex(r => r.IdempotencyKey)
+            .IsUnique()
+            .HasFilter("[IdempotencyKey] IS NOT NULL")
+            .HasDatabaseName("UX_CollectionsReminders_IdempotencyKey");
+
+        builder.HasIndex(r => new { r.CrmCustomerId, r.QueuedAtUtc })
+            .HasDatabaseName("IX_CollectionsReminders_Customer_Queued");
+
+        builder.HasMany(r => r.Channels).WithOne(c => c.Reminder).HasForeignKey(c => c.CollectionsReminderId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasMany(r => r.Events).WithOne(e => e.Reminder).HasForeignKey(e => e.CollectionsReminderId).OnDelete(DeleteBehavior.Restrict);
+        builder.Navigation(r => r.Channels).UsePropertyAccessMode(PropertyAccessMode.Field);
+        builder.Navigation(r => r.Events).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+}
+
+public class CollectionsReminderChannelConfiguration : IEntityTypeConfiguration<CollectionsReminderChannel>
+{
+    public void Configure(EntityTypeBuilder<CollectionsReminderChannel> builder)
+    {
+        builder.ToTable("CollectionsReminderChannels");
+
+        builder.HasKey(c => c.CollectionsReminderChannelId);
+        builder.Property(c => c.CollectionsReminderChannelId).ValueGeneratedOnAdd();
+        builder.Ignore(c => c.CanRetry);
+
+        builder.Property(c => c.Channel).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(c => c.DeduplicationKey).HasMaxLength(CollectionsReminderChannel.DeduplicationKeyMaxLength).IsRequired();
+        builder.Property(c => c.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(c => c.StatusReason).HasMaxLength(CollectionsReminder.ReasonMaxLength);
+        builder.Property(c => c.ProviderMessageId).HasMaxLength(CollectionsReminderChannel.ProviderMessageIdMaxLength);
+        builder.Property(c => c.DispatchAmount).HasPrecision(19, 4);
 
         // Duplicate prevention per account / type / cycle / channel — the
-        // database guarantee behind the service's read-before-write.
-        builder.HasIndex(r => r.DeduplicationKey)
+        // database guarantee behind the service's read-before-write, and what
+        // makes concurrent schedulers and duplicate requests unable to send a
+        // channel twice in a cycle.
+        builder.HasIndex(c => c.DeduplicationKey)
             .IsUnique()
-            .HasDatabaseName("UX_CollectionsReminders_DeduplicationKey");
-
-        builder.HasIndex(r => new { r.CrmCustomerId, r.CreatedAtUtc })
-            .HasDatabaseName("IX_CollectionsReminders_Customer_Created");
-
-        builder.HasMany(r => r.Events)
-            .WithOne(e => e.Reminder)
-            .HasForeignKey(e => e.CollectionsReminderId)
-            .OnDelete(DeleteBehavior.Restrict);
-
-        builder.Navigation(r => r.Events).UsePropertyAccessMode(PropertyAccessMode.Field);
+            .HasDatabaseName("UX_CollectionsReminderChannels_DeduplicationKey");
     }
 }
 
@@ -62,15 +85,19 @@ public class CollectionsReminderEventConfiguration : IEntityTypeConfiguration<Co
 
         builder.HasKey(e => e.CollectionsReminderEventId);
         builder.Property(e => e.CollectionsReminderEventId).ValueGeneratedOnAdd();
+        builder.Ignore(e => e.FollowUpRequired);
 
         builder.Property(e => e.ExternalEventId).HasMaxLength(CollectionsReminderEvent.ExternalEventIdMaxLength).IsRequired();
-        builder.Property(e => e.EventType).HasConversion<string>().HasMaxLength(24).IsRequired();
-        builder.Property(e => e.Detail).HasMaxLength(CollectionsReminderEvent.NoteMaxLength);
-        builder.Property(e => e.ResponseKind).HasConversion<string>().HasMaxLength(24);
+        builder.Property(e => e.IdempotencyKey).HasMaxLength(CollectionsReminder.IdempotencyKeyMaxLength);
+        builder.Property(e => e.RequestHash).HasMaxLength(64).IsFixedLength().IsUnicode(false);
+        builder.Property(e => e.Channel).HasConversion<string>().HasMaxLength(16);
+        builder.Property(e => e.DeliveryStatus).HasConversion<string>().HasMaxLength(16);
+        builder.Property(e => e.ProviderMessageId).HasMaxLength(CollectionsReminderChannel.ProviderMessageIdMaxLength);
         builder.Property(e => e.ConversationId).HasMaxLength(CollectionsReminderEvent.ConversationIdMaxLength);
+        builder.Property(e => e.Detail).HasMaxLength(CollectionsReminderEvent.DetailMaxLength);
+        builder.Property(e => e.CustomerIntent).HasConversion<string>().HasMaxLength(24);
         builder.Property(e => e.CustomerPhone).HasMaxLength(CollectionsReminderEvent.PhoneMaxLength);
-        builder.Property(e => e.PromisedAmount).HasPrecision(19, 4);
-        builder.Property(e => e.TicketStatus).HasConversion<string>().HasMaxLength(16);
+        builder.Property(e => e.TicketResult).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(e => e.TicketNumber).HasMaxLength(CollectionsReminderEvent.TicketNumberMaxLength);
         builder.Property(e => e.TicketLastError).HasMaxLength(CollectionsReminder.ReasonMaxLength);
 
@@ -79,34 +106,31 @@ public class CollectionsReminderEventConfiguration : IEntityTypeConfiguration<Co
             .IsUnique()
             .HasDatabaseName("UX_CollectionsReminderEvents_Reminder_EventId");
 
-        // The linked ticket, for "which reminder produced this ticket". No FK:
-        // the ticket is Ticketing's, and a reminder event must never block it.
-        builder.HasIndex(e => e.TicketId)
-            .HasDatabaseName("IX_CollectionsReminderEvents_TicketId");
+        builder.HasIndex(e => e.TicketId).HasDatabaseName("IX_CollectionsReminderEvents_TicketId");
     }
 }
 
 public sealed class CollectionsReminderRepository(TigerCsDbContext dbContext) : ICollectionsReminderRepository
 {
+    private IQueryable<CollectionsReminder> Jobs =>
+        dbContext.CollectionsReminders.Include(r => r.Channels).Include(r => r.Events).AsSplitQuery();
+
     public Task<CollectionsReminder?> GetByIdAsync(long reminderId, CancellationToken cancellationToken = default) =>
-        dbContext.CollectionsReminders.Include(r => r.Events)
-            .FirstOrDefaultAsync(r => r.CollectionsReminderId == reminderId, cancellationToken);
+        Jobs.FirstOrDefaultAsync(r => r.CollectionsReminderId == reminderId, cancellationToken);
 
-    public Task<CollectionsReminder?> GetByDeduplicationKeyAsync(string deduplicationKey, CancellationToken cancellationToken = default) =>
-        dbContext.CollectionsReminders.Include(r => r.Events)
-            .FirstOrDefaultAsync(r => r.DeduplicationKey == deduplicationKey, cancellationToken);
+    public Task<CollectionsReminder?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default) =>
+        Jobs.FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey, cancellationToken);
 
-    public async Task<IReadOnlySet<string>> GetExistingDeduplicationKeysAsync(
+    public async Task<IReadOnlyList<CollectionsReminderChannel>> GetChannelsByDeduplicationKeysAsync(
         IReadOnlyCollection<string> deduplicationKeys, CancellationToken cancellationToken = default)
     {
-        var found = new HashSet<string>(StringComparer.Ordinal);
+        var found = new List<CollectionsReminderChannel>();
         // Chunked to stay well under SQL Server's parameter limit.
         foreach (var chunk in deduplicationKeys.Distinct().Chunk(500))
         {
             var keys = chunk.ToList();
-            found.UnionWith(await dbContext.CollectionsReminders
-                .Where(r => keys.Contains(r.DeduplicationKey))
-                .Select(r => r.DeduplicationKey)
+            found.AddRange(await dbContext.CollectionsReminderChannels
+                .Where(c => keys.Contains(c.DeduplicationKey))
                 .ToListAsync(cancellationToken));
         }
 
@@ -116,8 +140,8 @@ public sealed class CollectionsReminderRepository(TigerCsDbContext dbContext) : 
     public async Task AddAsync(CollectionsReminder reminder, CancellationToken cancellationToken = default) =>
         await dbContext.CollectionsReminders.AddAsync(reminder, cancellationToken);
 
-    public async Task<(IReadOnlyList<CollectionsReminder> Items, int TotalCount)> ListForCustomerAsync(
-        string crmCustomerId, string? accountId, int page, int pageSize, CancellationToken cancellationToken = default)
+    public async Task<(IReadOnlyList<CollectionsReminder> Items, bool HasMore)> ListForCustomerAsync(
+        long crmCustomerId, string? accountId, int offset, int take, CancellationToken cancellationToken = default)
     {
         var query = dbContext.CollectionsReminders.Where(r => r.CrmCustomerId == crmCustomerId);
         if (accountId is not null)
@@ -125,20 +149,15 @@ public sealed class CollectionsReminderRepository(TigerCsDbContext dbContext) : 
             query = query.Where(r => r.AccountId == accountId);
         }
 
-        var total = await query.CountAsync(cancellationToken);
         var items = await query
-            .OrderByDescending(r => r.CreatedAtUtc).ThenByDescending(r => r.CollectionsReminderId)
-            .Skip((page - 1) * pageSize).Take(pageSize)
-            .Include(r => r.Events)
+            .OrderByDescending(r => r.QueuedAtUtc).ThenByDescending(r => r.CollectionsReminderId)
+            .Skip(offset).Take(take + 1)
+            .Include(r => r.Channels).Include(r => r.Events)
             .AsSplitQuery()
             .ToListAsync(cancellationToken);
 
-        return (items, total);
+        return (items.Take(take).ToList(), items.Count > take);
     }
-
-    public Task<CollectionsReminderEvent?> GetEventAsync(long reminderEventId, CancellationToken cancellationToken = default) =>
-        dbContext.CollectionsReminderEvents.Include(e => e.Reminder)
-            .FirstOrDefaultAsync(e => e.CollectionsReminderEventId == reminderEventId, cancellationToken);
 }
 
 public sealed class CollectionsUnitOfWork(TigerCsDbContext dbContext) : ICollectionsUnitOfWork

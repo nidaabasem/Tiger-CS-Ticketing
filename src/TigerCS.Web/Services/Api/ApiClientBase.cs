@@ -78,6 +78,36 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
         }
     }
 
+    /// <summary>POST with extra request headers (e.g. Idempotency-Key).</summary>
+    protected async Task<ApiResult<TResponse>> PostAsync<TRequest, TResponse>(
+        string requestUri, TRequest body, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+            {
+                Content = JsonContent.Create(body, options: ApiJson.Options)
+            };
+            foreach (var (name, value) in headers)
+            {
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+
+            using var response = await Http.SendAsync(request, cancellationToken);
+            return await ToResultAsync<TResponse>(HttpMethod.Post, requestUri, response, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            LogUnreachable(HttpMethod.Post, requestUri, ex);
+            return ApiResult<TResponse>.Failure(ApiOutcome.Unreachable, ex.Message);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogUnreachable(HttpMethod.Post, requestUri, ex);
+            return ApiResult<TResponse>.Failure(ApiOutcome.Unreachable, "The request timed out.");
+        }
+    }
+
     protected async Task<ApiResult> PostAsync<TRequest>(string requestUri, TRequest body, CancellationToken cancellationToken)
     {
         try

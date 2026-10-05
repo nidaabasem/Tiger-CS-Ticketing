@@ -17,22 +17,19 @@ using TigerCS.Tests.Notifications.Fakes;
 namespace TigerCS.Tests.Collections.Services;
 
 /// <summary>
-/// The reminder service against a fixed business date, so the FAQ windows
-/// are deterministic: candidates, the designated scheduler and its gating,
-/// revalidation immediately before dispatch, and duplicate prevention under a
-/// concurrent write.
+/// Candidates, the queue and dispatch against a fixed Dubai business date
+/// (2 October 2026 — the OverdueMonthly window is open), with in-memory fakes.
 /// </summary>
 public class CollectionsReminderServiceTests
 {
-    // 2 Oct 2026, 10:00 in Dubai — inside the days 1–4 overdue window.
     private static readonly DateTime WindowDayUtc = new(2026, 10, 2, 6, 0, 0, DateTimeKind.Utc);
 
-    private sealed class Fixture
+    internal sealed class Fixture
     {
         public CollectionsOptions Options { get; } = new()
         {
             Enabled = true,
-            Channels = { EmailEnabled = true, VoiceBotEnabled = true, ScheduledChannels = [ReminderChannel.Email, ReminderChannel.VoiceBot] },
+            Channels = { EmailEnabled = true, SmsEnabled = true, VoiceBotEnabled = true },
         };
 
         public FakeTimeProvider Time { get; }
@@ -41,16 +38,19 @@ public class CollectionsReminderServiceTests
         public InMemoryReminders Reminders { get; } = new();
         public FakeUnitOfWork UnitOfWork { get; }
         public RecordingOutbox Outbox { get; } = new();
-        public NoAudit Audit { get; } = new();
+        public RecordingAudit Audit { get; } = new();
         public CollectionsReminderAppService Service { get; }
         public CollectionsCaller Supervisor { get; } = new(Guid.NewGuid(), [Roles.CsSupervisor], []);
+        public CollectionsCaller Integration { get; }
 
         public Fixture(DateTime utcNow)
         {
             Time = new FakeTimeProvider(utcNow);
             Clock = new CollectionsClock(Options, Time);
-            Source = new MutableSource(FixtureCollectionsFinancialSource.All(Clock.Today, utcNow).ToList());
+            Source = new MutableSource(FixtureCollectionsFinancialSource.All(Clock.BusinessDate, utcNow).ToList());
             UnitOfWork = new FakeUnitOfWork(Reminders);
+            Integration = new CollectionsCaller(Guid.NewGuid(), [Roles.CsAgent], []);
+            Options.Authorization.IntegrationEmployeeIds.Add(Integration.EmployeeId);
             Service = new CollectionsReminderAppService(
                 Options, new CollectionsAuthorizationService(Options, new FakeDepartmentRepository()), Clock, Source, Reminders, UnitOfWork,
                 Outbox, Audit, NullLogger<CollectionsReminderAppService>.Instance);
@@ -58,213 +58,357 @@ public class CollectionsReminderServiceTests
 
         public CollectionsReminderDispatchHandler Dispatcher(IReminderDeliveryProvider? provider = null) =>
             new(Reminders, Source, provider is null ? [] : [provider], Clock);
+
+        public async Task<CollectionsReminderCandidateDto> CandidateAsync(string accountId = "ACC-9001-1204") =>
+            (await Service.ListCandidatesAsync(Supervisor, "OverdueMonthly", null, 9001, accountId, null, null)).Value!.Items.Single();
+
+        public Task<CollectionsResult<CollectionsReminderJobDto>> QueueAsync(
+            CollectionsReminderCandidateDto candidate, string? key = null, CollectionsCaller? caller = null, params string[] channels) =>
+            Service.QueueAsync(caller ?? Supervisor, new QueueCollectionsReminderRequestDto(candidate.CandidateId, channels.Length == 0 ? ["Sms", "Email"] : channels, "en"), key);
     }
 
+    // ------------------------------------------------------------------
+    // Candidates
+    // ------------------------------------------------------------------
+
     [Fact]
-    public async Task Candidates_OnTheOverdueWindowDay_ListTheAccountInArrears_WithPendingChannels()
+    public async Task Candidates_QuoteQualifyingPrincipalOnly_WithBasisInstalmentsAndExpiry_AndNoContactDetails()
     {
         var f = new Fixture(WindowDayUtc);
 
-        var result = await f.Service.ListCandidatesAsync(f.Supervisor, null, null, 1, 50);
+        var result = await f.Service.ListCandidatesAsync(f.Supervisor, "OverdueMonthly", new DateOnly(2026, 10, 2), null, null, null, null);
 
         Assert.Equal(CollectionsOutcome.Success, result.Outcome);
-        Assert.Equal(new DateOnly(2026, 10, 2), result.Value!.BusinessDate);
-        Assert.Equal(["OverdueMoreThanOneMonth"], result.Value.OpenWindows);
-        var candidate = Assert.Single(result.Value.Items);
-        Assert.Equal("ACC-9001-1204", candidate.AccountId);
-        Assert.Equal("2026-10", candidate.CycleKey);
-        Assert.Equal(14_000m, candidate.Amount); // 4,000 partial + 10,000 last month — everything overdue
-        Assert.Equal(["VoiceBot", "Email"], candidate.PendingChannels.Order(StringComparer.Ordinal).Reverse());
+        var body = result.Value!;
+        Assert.Equal("2026-10:OverdueMonthly", body.CycleKey);
+        Assert.Equal("Asia/Dubai", body.TimeZone);
+        Assert.True(body.WindowOpen);
+
+        // ACC-9001-1204: Jul 10 paid; Aug 10 has 4,000 left and is before 2 Sep. Sep 10 is overdue but not by a month.
+        var candidate = Assert.Single(body.Items, c => c.AccountId == "ACC-9001-1204");
+        Assert.Equal(4_000m, candidate.ReminderAmount);
+        Assert.Equal(["INS-1204-02"], candidate.InstalmentIds);
+        Assert.Equal("UnpaidPrincipalOlderThanOneCalendarMonth", candidate.AmountBasis);
+        Assert.Equal(["VoiceBot", "Sms", "Email"], candidate.AvailableChannels);
+        Assert.Equal(WindowDayUtc.AddMinutes(15), candidate.ExpiresAtUtc);
+        Assert.DoesNotContain(body.Items, c => c.AccountId is "ACC-9001-0805" or "ACC-9002-0310" or "ACC-9001-1204-P");
     }
 
     [Fact]
-    public async Task Candidates_DropAChannelOnceItWasUsedThisCycle()
+    public async Task Candidates_RequireAReminderTypeAndTodaysBusinessDate_AndAClosedWindowListsNothing()
     {
         var f = new Fixture(WindowDayUtc);
-        var created = await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email", "OverdueMoreThanOneMonth"));
-        Assert.Equal(CollectionsOutcome.Created, created.Outcome);
 
-        var candidate = Assert.Single((await f.Service.ListCandidatesAsync(f.Supervisor, null, null, 1, 50)).Value!.Items);
-        Assert.Equal(["VoiceBot"], candidate.PendingChannels);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await f.Service.ListCandidatesAsync(f.Supervisor, null, null, null, null, null, null)).Outcome);
+        Assert.Equal(CollectionsOutcome.InvalidRequest,
+            (await f.Service.ListCandidatesAsync(f.Supervisor, "OverdueMonthly", new DateOnly(2026, 10, 3), null, null, null, null)).Outcome);
+
+        var closed = (await f.Service.ListCandidatesAsync(f.Supervisor, "CurrentMonth", null, null, null, null, null)).Value!;
+        Assert.False(closed.WindowOpen);
+        Assert.Empty(closed.Items);
     }
 
     [Fact]
-    public async Task AScheduledTypeOutsideItsWindow_IsRefused()
+    public async Task Candidates_SkipStaleReads()
     {
         var f = new Fixture(WindowDayUtc);
-        var result = await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email", "CurrentMonthDue"));
-        Assert.Equal(CollectionsOutcome.NotEligible, result.Outcome);
+        f.Source.Replace("ACC-9001-1204", a => a with { AsOfUtc = WindowDayUtc.AddHours(-3) });
+
+        Assert.Empty((await f.Service.ListCandidatesAsync(f.Supervisor, "OverdueMonthly", null, null, null, null, null)).Value!.Items);
+    }
+
+    // ------------------------------------------------------------------
+    // Queue
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Queue_PersistsTheQuotedAmount_PerChannel_AndQueuesTigerCsChannelsInTheOutbox()
+    {
+        var f = new Fixture(WindowDayUtc);
+        var result = await f.QueueAsync(await f.CandidateAsync(), "key-1");
+
+        Assert.Equal(CollectionsOutcome.Accepted, result.Outcome);
+        var job = result.Value!;
+        Assert.StartsWith("REM-", job.ReminderId, StringComparison.Ordinal);
+        Assert.Equal(4_000m, job.ReminderAmount);
+        Assert.Equal("Queued", job.Status);
+        Assert.Equal(["Sms", "Email"], job.Channels.Select(c => c.Channel));
+        Assert.Equal(2, f.Outbox.Messages.Count);
+        Assert.Equal(2, f.Audit.EntityIds.Count);
     }
 
     [Fact]
-    public async Task Scheduler_StaysOff_UntilCollectionsConfirmsTheRules()
+    public async Task Queue_ReplaysTheSameKeyAndBody_AndRefusesTheSameKeyWithADifferentBody()
     {
         var f = new Fixture(WindowDayUtc);
-        f.Options.AutomaticSchedulingEnabled = true; // switched on, but not confirmed
+        var candidate = await f.CandidateAsync();
+        var first = await f.QueueAsync(candidate, "key-1", null, "Sms");
 
-        var result = await f.Service.RunScheduledAsync();
+        var replay = await f.QueueAsync(candidate, "key-1", null, "Sms");
+        Assert.Equal(CollectionsOutcome.Replayed, replay.Outcome);
+        Assert.Equal(first.Value!.ReminderId, replay.Value!.ReminderId);
 
-        Assert.False(result.Ran);
-        Assert.Empty(f.Reminders.Committed);
-    }
-
-    [Fact]
-    public async Task Scheduler_QueuesOncePerAccountTypeCycleChannel_AndNeverDialsTheVoiceBot()
-    {
-        var f = new Fixture(WindowDayUtc);
-        f.Options.AutomaticSchedulingEnabled = true;
-        f.Options.BusinessRulesConfirmed = true;
-
-        var first = await f.Service.RunScheduledAsync();
-        Assert.True(first.Ran);
-        Assert.Equal(1, first.Created);
-        var reminder = Assert.Single(f.Reminders.Committed);
-        Assert.Equal(ReminderChannel.Email, reminder.Channel);
-        Assert.Equal(ReminderTrigger.Scheduled, reminder.Trigger);
-        Assert.Single(f.Outbox.Messages);
-
-        // The same day again (a retry, a second server): nothing new.
-        var second = await f.Service.RunScheduledAsync();
-        Assert.Equal(0, second.Created);
-        Assert.Equal(1, second.AlreadyExisted);
-
-        // The next day of the same window: once-per-window means still nothing new.
-        f.Time.Advance(TimeSpan.FromDays(1));
-        Assert.Equal(0, (await f.Service.RunScheduledAsync()).Created);
+        var conflict = await f.QueueAsync(candidate, "key-1", null, "Email");
+        Assert.Equal(CollectionsOutcome.IdempotencyConflict, conflict.Outcome);
         Assert.Single(f.Reminders.Committed);
     }
 
     [Fact]
-    public async Task Scheduler_DailyFrequency_SendsOncePerDay()
+    public async Task ADifferentKey_CannotBypassCycleDeduplication()
     {
         var f = new Fixture(WindowDayUtc);
-        f.Options.AutomaticSchedulingEnabled = true;
-        f.Options.BusinessRulesConfirmed = true;
-        f.Options.Rules.SendFrequency = ReminderSendFrequency.Daily;
+        var candidate = await f.CandidateAsync();
+        await f.QueueAsync(candidate, "key-1", null, "Sms");
 
-        await f.Service.RunScheduledAsync();
-        f.Time.Advance(TimeSpan.FromDays(1));
-        await f.Service.RunScheduledAsync();
-        await f.Service.RunScheduledAsync();
+        var again = await f.QueueAsync(candidate, "key-2", null, "Sms");
+        Assert.Equal(CollectionsOutcome.CandidateChanged, again.Outcome);
+        Assert.Equal(["VoiceBot", "Email"], again.Replacement!.AvailableChannels);
 
-        Assert.Equal(["2026-10-02", "2026-10-03"], f.Reminders.Committed.Select(r => r.CycleKey).Order());
+        Assert.Equal(CollectionsOutcome.Accepted, (await f.QueueAsync(candidate, "key-3", null, "Email")).Outcome);
+        Assert.Equal(2, f.Reminders.Committed.Count);
     }
 
     [Fact]
-    public async Task Dispatch_RevalidatesTheBalance_AndSuppressesAnAccountSettledSinceQueueing()
+    public async Task APaymentPostedAfterTheCandidate_IsCandidateChanged_WithAReplacement()
     {
         var f = new Fixture(WindowDayUtc);
-        await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"));
-        var provider = new RecordingProvider();
-
-        // The customer pays everything before the outbox runs.
+        var candidate = await f.CandidateAsync();
         f.Source.Replace("ACC-9001-1204", a => a with
         {
-            Instalments = a.Instalments.Select(i => i with { PrincipalOutstanding = 0m }).ToList(),
+            Instalments = a.Instalments.Select(i => i.InstalmentId == "INS-1204-02" ? i with { RemainingAmount = 1_000m } : i).ToList(),
+            ReportedOutstandingPrincipal = a.ReportedOutstandingPrincipal - 3_000m
+        });
+
+        var result = await f.QueueAsync(candidate);
+
+        Assert.Equal(CollectionsOutcome.CandidateChanged, result.Outcome);
+        Assert.Equal(1_000m, result.Replacement!.ReminderAmount);
+        Assert.Empty(f.Reminders.Committed);
+    }
+
+    [Fact]
+    public async Task ASettledAccount_IsSuppressed_NeverQueued()
+    {
+        var f = new Fixture(WindowDayUtc);
+        var candidate = await f.CandidateAsync();
+        f.Source.Replace("ACC-9001-1204", a => a with
+        {
+            Instalments = a.Instalments.Select(i => i with { RemainingAmount = 0m }).ToList(),
             ReportedOutstandingPrincipal = 0m
         });
 
-        var handled = await f.Dispatcher(provider).HandleAsync(f.Outbox.Messages.Single());
-
-        Assert.Equal(OutboxHandlingOutcome.Succeeded, handled.Outcome);
-        Assert.Empty(provider.Sent);
-        var reminder = f.Reminders.Committed.Single();
-        Assert.Equal(ReminderStatus.Suppressed, reminder.Status);
-        Assert.Equal("Settled before dispatch.", reminder.StatusReason);
+        var result = await f.QueueAsync(candidate);
+        Assert.Equal(CollectionsOutcome.CandidateChanged, result.Outcome);
+        Assert.Contains("settled", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.Replacement);
     }
 
     [Fact]
-    public async Task Dispatch_SendsTheRevalidatedAmount_AndRecordsSentNotDelivered()
+    public async Task AnExpiredCandidate_IsRefused_WithAFreshReplacement()
     {
         var f = new Fixture(WindowDayUtc);
-        await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"));
-        var queued = f.Reminders.Committed.Single().Amount;
+        var candidate = await f.CandidateAsync();
+        f.Time.Advance(TimeSpan.FromMinutes(16));
+        f.Source.Replace("ACC-9001-1204", a => a with { AsOfUtc = WindowDayUtc.AddMinutes(16) });
 
-        // A partial payment posts before dispatch.
-        f.Source.Replace("ACC-9001-1204", a => a with
-        {
-            Instalments = a.Instalments.Select(i => i.InstalmentId == "INS-1204-03" ? i with { PrincipalOutstanding = 2_500m } : i).ToList(),
-            ReportedOutstandingPrincipal = a.ReportedOutstandingPrincipal - 7_500m
-        });
-        var provider = new RecordingProvider();
-
-        await f.Dispatcher(provider).HandleAsync(f.Outbox.Messages.Single());
-
-        var reminder = f.Reminders.Committed.Single();
-        Assert.Equal(ReminderStatus.Sent, reminder.Status);
-        Assert.Equal(queued, reminder.Amount);
-        Assert.Equal(queued - 7_500m, reminder.DispatchAmount);
-        Assert.Equal(queued - 7_500m, Assert.Single(provider.Sent).Amount);
+        var result = await f.QueueAsync(candidate);
+        Assert.Equal(CollectionsOutcome.CandidateChanged, result.Outcome);
+        Assert.True(result.Replacement!.ExpiresAtUtc > candidate.ExpiresAtUtc);
     }
 
     [Fact]
-    public async Task Dispatch_WaitsForTheSource_RatherThanSendingOnStaleFigures()
+    public async Task AStaleReadNeverAuthorizesASend()
     {
         var f = new Fixture(WindowDayUtc);
-        await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"));
-        f.Source.Down = true;
-        var provider = new RecordingProvider();
+        var candidate = await f.CandidateAsync();
+        f.Source.Replace("ACC-9001-1204", a => a with { AsOfUtc = WindowDayUtc.AddHours(-2) });
 
-        var handled = await f.Dispatcher(provider).HandleAsync(f.Outbox.Messages.Single());
-
-        Assert.Equal(OutboxHandlingOutcome.TransientFailure, handled.Outcome);
-        Assert.Empty(provider.Sent);
-        Assert.Equal(ReminderStatus.Queued, f.Reminders.Committed.Single().Status);
+        Assert.Equal(CollectionsOutcome.FinanceUnavailable, (await f.QueueAsync(candidate)).Outcome);
     }
 
     [Fact]
-    public async Task Dispatch_WithoutAnApprovedProvider_FailsClosed()
+    public async Task ATamperedCandidate_IsRefused()
     {
         var f = new Fixture(WindowDayUtc);
-        await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"));
+        var real = await f.CandidateAsync();
+        Assert.True(CollectionsCandidate.TryDecode(real.CandidateId, out var decoded));
+        var tampered = real with { CandidateId = (decoded! with { Amount = 1m }).Encode() };
 
-        await f.Dispatcher(provider: null).HandleAsync(f.Outbox.Messages.Single());
-
-        var reminder = f.Reminders.Committed.Single();
-        Assert.Equal(ReminderStatus.Failed, reminder.Status);
-        Assert.Contains("No approved delivery provider", reminder.StatusReason, StringComparison.Ordinal);
+        Assert.Equal(CollectionsOutcome.CandidateChanged, (await f.QueueAsync(tampered)).Outcome);
+        Assert.Equal(CollectionsOutcome.InvalidRequest,
+            (await f.Service.QueueAsync(f.Supervisor, new QueueCollectionsReminderRequestDto("CAND-not-base64!", ["Sms"]), null)).Outcome);
     }
 
     [Fact]
-    public async Task ConcurrentDuplicate_ResolvesToTheWinningReminder()
+    public async Task VoiceBot_IsQueuedOnlyByTheIntegrationAccount()
     {
         var f = new Fixture(WindowDayUtc);
-        f.UnitOfWork.LoseNextRaceTo = winner => f.Reminders.Commit(winner);
+        var candidate = await f.CandidateAsync();
 
-        var result = await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"));
+        Assert.Equal(CollectionsOutcome.Forbidden, (await f.QueueAsync(candidate, null, f.Supervisor, "VoiceBot")).Outcome);
+        Assert.Equal(CollectionsOutcome.Accepted, (await f.QueueAsync(candidate, null, f.Integration, "VoiceBot")).Outcome);
+        Assert.Empty(f.Outbox.Messages); // Genesys dials; TigerCS dispatches nothing for voice
+    }
 
-        Assert.Equal(CollectionsOutcome.AlreadyExists, result.Outcome);
+    [Fact]
+    public async Task NoApprovedContact_IsNoEligibleContact()
+    {
+        var f = new Fixture(WindowDayUtc);
+        f.Source.Replace("ACC-9001-1204", a => a with { CustomerEmail = null });
+        var candidate = await f.CandidateAsync();
+        Assert.DoesNotContain("Email", candidate.AvailableChannels);
+
+        Assert.Equal(CollectionsOutcome.NoEligibleContact, (await f.QueueAsync(candidate, null, null, "Email")).Outcome);
+    }
+
+    [Fact]
+    public async Task AFailedChannel_IsRetriedOnItsOwnJob_WithinItsAttemptBudget()
+    {
+        var f = new Fixture(WindowDayUtc);
+        var job = (await f.QueueAsync(await f.CandidateAsync(), null, null, "Sms")).Value!;
+        f.Reminders.Committed.Single().ChannelFor(ReminderChannel.Sms)!.Apply(ChannelStatus.Failed, WindowDayUtc.AddMinutes(1), null, "bounced");
+
+        var retry = await f.QueueAsync(await f.CandidateAsync(), null, null, "Sms");
+        Assert.Equal(CollectionsOutcome.Accepted, retry.Outcome);
+        Assert.Equal(job.ReminderId, retry.Value!.ReminderId);
+        Assert.Equal(2, retry.Value.Channels.Single().Attempts);
         Assert.Single(f.Reminders.Committed);
-        Assert.Equal(f.Reminders.Committed.Single().CollectionsReminderId, result.Value!.Reminder.ReminderId);
+
+        f.Options.MaxDeliveryAttempts = 2;
+        f.Reminders.Committed.Single().ChannelFor(ReminderChannel.Sms)!.Apply(ChannelStatus.Failed, WindowDayUtc.AddMinutes(2), null, "bounced");
+        Assert.DoesNotContain("Sms", (await f.CandidateAsync()).AvailableChannels);
     }
 
     [Fact]
-    public async Task SourceDown_IsReportedAsUnavailable_NeverAsSettled()
+    public async Task AConcurrentDuplicate_LosesAtTheUniqueKey()
     {
         var f = new Fixture(WindowDayUtc);
+        f.UnitOfWork.FailNextSaveAsDuplicate = true;
+
+        Assert.Equal(CollectionsOutcome.CandidateChanged, (await f.QueueAsync(await f.CandidateAsync(), null, null, "Sms")).Outcome);
+        Assert.Empty(f.Reminders.Committed);
+    }
+
+    [Fact]
+    public async Task FinanceUnavailable_IsNeverSettled()
+    {
+        var f = new Fixture(WindowDayUtc);
+        var candidate = await f.CandidateAsync();
         f.Source.Down = true;
 
-        Assert.Equal(CollectionsOutcome.SourceUnavailable,
-            (await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", "ACC-9001-1204", "Email"))).Outcome);
-        Assert.Equal(CollectionsOutcome.SourceUnavailable, (await f.Service.ListCandidatesAsync(f.Supervisor, null, null, 1, 50)).Outcome);
-        Assert.Empty(f.Reminders.Committed);
+        Assert.Equal(CollectionsOutcome.FinanceUnavailable, (await f.QueueAsync(candidate)).Outcome);
+        Assert.Equal(CollectionsOutcome.FinanceUnavailable,
+            (await f.Service.ListCandidatesAsync(f.Supervisor, "OverdueMonthly", null, null, null, null, null)).Outcome);
     }
 
     [Fact]
     public async Task ALongAccountId_StillFitsTheAuditEntityIdColumn()
     {
         var f = new Fixture(WindowDayUtc);
-        var longId = new string('A', CollectionsReminder.IdentifierMaxLength);
-        var template = (await f.Source.GetCustomerAccountsAsync("9001"))!.First(a => a.AccountId == "ACC-9001-1204");
-        f.Source.Add(template with { AccountId = longId });
+        var longId = new string('A', CollectionsReminder.AccountIdMaxLength);
+        f.Source.Add(f.Source.Get("ACC-9001-1204") with { AccountId = longId });
 
-        var result = await f.Service.CreateAsync(f.Supervisor, new CreateCollectionsReminderRequestDto("9001", longId, "Email", "OverdueMoreThanOneMonth"));
+        Assert.Equal(CollectionsOutcome.Accepted, (await f.QueueAsync(await f.CandidateAsync(longId), null, null, "Sms")).Outcome);
+        Assert.True(f.Reminders.Committed.Single().Channels.Single().DeduplicationKey.Length > 100);
+        Assert.True(Assert.Single(f.Audit.EntityIds)!.Length <= 100);
+    }
 
-        Assert.Equal(CollectionsOutcome.Created, result.Outcome);
-        Assert.True(f.Reminders.Committed.Single().DeduplicationKey.Length > 100);
-        var audited = Assert.Single(f.Audit.EntityIds);
-        Assert.True(audited!.Length <= 100);
-        Assert.StartsWith(longId, audited, StringComparison.Ordinal);
+    // ------------------------------------------------------------------
+    // The designated scheduler
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Scheduler_StaysOff_UnlessTigerCsOwnsTheCycleAndTheRulesAreConfirmed()
+    {
+        var f = new Fixture(WindowDayUtc);
+        f.Options.BusinessRulesConfirmed = true;          // confirmed, but no owner
+        Assert.False((await f.Service.RunScheduledAsync()).Ran);
+
+        f.Options.SchedulerOwner = "Genesys";             // Genesys owns the cycle: TigerCS must not also dispatch
+        Assert.False((await f.Service.RunScheduledAsync()).Ran);
+
+        f.Options.SchedulerOwner = "TigerCS";
+        f.Options.BusinessRulesConfirmed = false;
+        Assert.False((await f.Service.RunScheduledAsync()).Ran);
+        Assert.Empty(f.Reminders.Committed);
+    }
+
+    [Fact]
+    public async Task Scheduler_QueuesOncePerCycle_AndNeverTheVoiceBot()
+    {
+        var f = new Fixture(WindowDayUtc);
+        f.Options.SchedulerOwner = "TigerCS";
+        f.Options.BusinessRulesConfirmed = true;
+
+        Assert.Equal(1, (await f.Service.RunScheduledAsync()).Queued);
+        Assert.Equal(0, (await f.Service.RunScheduledAsync()).Queued);   // a second run the same day
+        f.Time.Advance(TimeSpan.FromDays(1));
+        f.Source.Replace("ACC-9001-1204", a => a with { AsOfUtc = WindowDayUtc.AddDays(1) });
+        Assert.Equal(0, (await f.Service.RunScheduledAsync()).Queued);   // the next day of the same window
+
+        var job = Assert.Single(f.Reminders.Committed);
+        Assert.Equal(ReminderTrigger.Scheduled, job.Trigger);
+        Assert.DoesNotContain(job.Channels, c => c.Channel == ReminderChannel.VoiceBot);
+    }
+
+    // ------------------------------------------------------------------
+    // Dispatch revalidation
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Dispatch_SuppressesAnAccountSettledSinceQueueing()
+    {
+        var f = new Fixture(WindowDayUtc);
+        await f.QueueAsync(await f.CandidateAsync(), null, null, "Email");
+        f.Source.Replace("ACC-9001-1204", a => a with
+        {
+            Instalments = a.Instalments.Select(i => i with { RemainingAmount = 0m }).ToList(),
+            ReportedOutstandingPrincipal = 0m
+        });
+        var provider = new RecordingProvider();
+
+        await f.Dispatcher(provider).HandleAsync(f.Outbox.Messages.Single());
+
+        Assert.Empty(provider.Sent);
+        var channel = f.Reminders.Committed.Single().Channels.Single();
+        Assert.Equal(ChannelStatus.Suppressed, channel.Status);
+        Assert.Equal("Settled before dispatch.", channel.StatusReason);
+    }
+
+    [Fact]
+    public async Task Dispatch_SendsTheRevalidatedAmount_AndRecordsSentNotDelivered()
+    {
+        var f = new Fixture(WindowDayUtc);
+        await f.QueueAsync(await f.CandidateAsync(), null, null, "Email");
+        f.Source.Replace("ACC-9001-1204", a => a with
+        {
+            Instalments = a.Instalments.Select(i => i.InstalmentId == "INS-1204-02" ? i with { RemainingAmount = 1_500m } : i).ToList(),
+            ReportedOutstandingPrincipal = a.ReportedOutstandingPrincipal - 2_500m
+        });
+        var provider = new RecordingProvider();
+
+        await f.Dispatcher(provider).HandleAsync(f.Outbox.Messages.Single());
+
+        var job = f.Reminders.Committed.Single();
+        Assert.Equal(4_000m, job.Amount);                          // quoted, never rewritten
+        Assert.Equal(1_500m, job.Channels.Single().DispatchAmount);
+        Assert.Equal(1_500m, Assert.Single(provider.Sent).Amount);
+        Assert.Equal(ChannelStatus.Sent, job.Channels.Single().Status);
+    }
+
+    [Fact]
+    public async Task Dispatch_WaitsForTheSource_AndFailsClosedWithoutAProvider()
+    {
+        var f = new Fixture(WindowDayUtc);
+        await f.QueueAsync(await f.CandidateAsync(), null, null, "Sms");
+        f.Source.Down = true;
+        Assert.Equal(OutboxHandlingOutcome.TransientFailure, (await f.Dispatcher().HandleAsync(f.Outbox.Messages.Single())).Outcome);
+
+        f.Source.Down = false;
+        await f.Dispatcher(provider: null).HandleAsync(f.Outbox.Messages.Single());
+        var channel = f.Reminders.Committed.Single().Channels.Single();
+        Assert.Equal(ChannelStatus.Failed, channel.Status);
+        Assert.Contains("No approved delivery provider", channel.StatusReason, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------
@@ -276,6 +420,8 @@ public class CollectionsReminderServiceTests
         public bool Down { get; set; }
         public string SourceName => "Test source";
 
+        public FinancialAccountSnapshot Get(string accountId) => accounts.Single(a => a.AccountId == accountId);
+
         public void Add(FinancialAccountSnapshot account) => accounts.Add(account);
 
         public void Replace(string accountId, Func<FinancialAccountSnapshot, FinancialAccountSnapshot> change)
@@ -284,7 +430,7 @@ public class CollectionsReminderServiceTests
             accounts[index] = change(accounts[index]);
         }
 
-        public Task<IReadOnlyList<FinancialAccountSnapshot>?> GetCustomerAccountsAsync(string crmCustomerId, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<FinancialAccountSnapshot>?> GetCustomerAccountsAsync(long crmCustomerId, CancellationToken cancellationToken = default)
         {
             ThrowIfDown();
             var matches = accounts.Where(a => a.CrmCustomerId == crmCustomerId).ToList();
@@ -294,7 +440,7 @@ public class CollectionsReminderServiceTests
         public Task<FinancialAccountPage> ListAccountsWithOutstandingPrincipalAsync(int page, int pageSize, CancellationToken cancellationToken = default)
         {
             ThrowIfDown();
-            var open = accounts.Where(a => a.Instalments.Any(i => i.PrincipalOutstanding > 0m)).ToList();
+            var open = accounts.Where(a => a.Instalments.Any(i => i.RemainingAmount > 0m)).ToList();
             return Task.FromResult(new FinancialAccountPage(open.Skip((page - 1) * pageSize).Take(pageSize).ToList(), page * pageSize < open.Count));
         }
 
@@ -315,19 +461,32 @@ public class CollectionsReminderServiceTests
 
         public void Commit(CollectionsReminder reminder)
         {
+            if (reminder.CollectionsReminderId != 0)
+            {
+                return;
+            }
+
             typeof(CollectionsReminder).GetProperty(nameof(CollectionsReminder.CollectionsReminderId), BindingFlags.Public | BindingFlags.Instance)!
                 .SetValue(reminder, _nextId++);
+            foreach (var channel in reminder.Channels)
+            {
+                typeof(CollectionsReminderChannel).GetProperty(nameof(CollectionsReminderChannel.CollectionsReminderId))!
+                    .SetValue(channel, reminder.CollectionsReminderId);
+            }
+
             Committed.Add(reminder);
         }
 
         public Task<CollectionsReminder?> GetByIdAsync(long reminderId, CancellationToken cancellationToken = default) =>
             Task.FromResult(Committed.FirstOrDefault(r => r.CollectionsReminderId == reminderId));
 
-        public Task<CollectionsReminder?> GetByDeduplicationKeyAsync(string deduplicationKey, CancellationToken cancellationToken = default) =>
-            Task.FromResult(Committed.FirstOrDefault(r => r.DeduplicationKey == deduplicationKey));
+        public Task<CollectionsReminder?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Committed.FirstOrDefault(r => r.IdempotencyKey == idempotencyKey));
 
-        public Task<IReadOnlySet<string>> GetExistingDeduplicationKeysAsync(IReadOnlyCollection<string> deduplicationKeys, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlySet<string>>(Committed.Select(r => r.DeduplicationKey).Where(deduplicationKeys.Contains).ToHashSet());
+        public Task<IReadOnlyList<CollectionsReminderChannel>> GetChannelsByDeduplicationKeysAsync(
+            IReadOnlyCollection<string> deduplicationKeys, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<CollectionsReminderChannel>>(
+                Committed.SelectMany(r => r.Channels).Where(c => deduplicationKeys.Contains(c.DeduplicationKey)).ToList());
 
         public Task AddAsync(CollectionsReminder reminder, CancellationToken cancellationToken = default)
         {
@@ -335,35 +494,24 @@ public class CollectionsReminderServiceTests
             return Task.CompletedTask;
         }
 
-        public Task<(IReadOnlyList<CollectionsReminder> Items, int TotalCount)> ListForCustomerAsync(
-            string crmCustomerId, string? accountId, int page, int pageSize, CancellationToken cancellationToken = default) =>
-            Task.FromResult<(IReadOnlyList<CollectionsReminder>, int)>((Committed.Where(r => r.CrmCustomerId == crmCustomerId).ToList(), Committed.Count));
-
-        public Task<CollectionsReminderEvent?> GetEventAsync(long reminderEventId, CancellationToken cancellationToken = default) =>
-            Task.FromResult<CollectionsReminderEvent?>(null);
+        public Task<(IReadOnlyList<CollectionsReminder> Items, bool HasMore)> ListForCustomerAsync(
+            long crmCustomerId, string? accountId, int offset, int take, CancellationToken cancellationToken = default) =>
+            Task.FromResult<(IReadOnlyList<CollectionsReminder>, bool)>((Committed.Where(r => r.CrmCustomerId == crmCustomerId).ToList(), false));
     }
 
     internal sealed class FakeUnitOfWork(InMemoryReminders reminders) : ICollectionsUnitOfWork
     {
-        /// <summary>Simulates a concurrent writer committing the same de-duplication key first.</summary>
-        public Action<CollectionsReminder>? LoseNextRaceTo { get; set; }
+        public bool FailNextSaveAsDuplicate { get; set; }
 
         public Task SaveChangesAsync(CancellationToken cancellationToken = default)
         {
-            if (LoseNextRaceTo is { } race && reminders.Pending.Count > 0)
+            if (FailNextSaveAsDuplicate && reminders.Pending.Count > 0)
             {
-                LoseNextRaceTo = null;
-                var mine = reminders.Pending[0];
-                race(new CollectionsReminder(mine.CrmCustomerId, mine.AccountId, mine.CrmUnitId, mine.Type, mine.Channel, mine.CycleKey,
-                    mine.Currency, mine.Amount, mine.AmountIncludesFines, mine.SourceAsOfUtc, mine.Trigger, null, mine.CreatedAtUtc));
-                throw new DuplicateWriteException(new InvalidOperationException("UX_CollectionsReminders_DeduplicationKey"));
+                FailNextSaveAsDuplicate = false;
+                throw new DuplicateWriteException(new InvalidOperationException("UX_CollectionsReminderChannels_DeduplicationKey"));
             }
 
-            foreach (var reminder in reminders.Pending)
-            {
-                reminders.Commit(reminder);
-            }
-
+            reminders.Pending.ForEach(reminders.Commit);
             reminders.Pending.Clear();
             return Task.CompletedTask;
         }
@@ -373,8 +521,8 @@ public class CollectionsReminderServiceTests
 
     internal sealed class RecordingOutbox : IOutboxWriter
     {
-        public List<OutboxMessage> Messages { get; } = [];
         private readonly HashSet<string> _keys = [];
+        public List<OutboxMessage> Messages { get; } = [];
 
         public Task<OutboxMessage?> WriteAsync(string eventType, string payload, Guid correlationId, string idempotencyKey, DateTime occurredAtUtc, CancellationToken cancellationToken = default)
         {
@@ -390,7 +538,7 @@ public class CollectionsReminderServiceTests
         }
     }
 
-    internal sealed class NoAudit : IAuditEntryWriter
+    internal sealed class RecordingAudit : IAuditEntryWriter
     {
         public List<string?> EntityIds { get; } = [];
 

@@ -11,33 +11,32 @@ using TigerCS.Domain.Modules.Collections;
 namespace TigerCS.Application.Modules.Collections.Services;
 
 /// <summary>
-/// Delivery events and customer responses reported back for a reminder.
+/// Delivery events and customer responses reported for a reminder.
 ///
 /// <para>
-/// <b>Idempotent per event.</b> Each callback carries the caller's own
-/// <c>eventId</c>; (reminder, eventId) is unique, so a resend is answered
-/// with what was stored the first time and records nothing twice.
+/// <b>Idempotent.</b> (reminder, eventId) is unique. A resend with the same
+/// body returns the original result; the same eventId or Idempotency-Key with
+/// a different body is <c>409 IdempotencyConflict</c>. Delivery statuses are
+/// validated per channel and applied in occurrence order, so a delayed event
+/// never overwrites a later or final status.
 /// </para>
 ///
 /// <para>
-/// <b>A response in a conversation gets a ticket through the existing
-/// Genesys ingestion</b> — <see cref="GenesysInquiryIngestionAppService"/>,
-/// idempotent on the conversation id, routed by the configured Collections
-/// department code or Genesys queue, created Unclassified under the existing
-/// classification and lifecycle rules. Nothing here classifies, resolves or
-/// closes a ticket. "I already paid", a dispute, a request for a human and
-/// an AI disconnection each raise human follow-up through the existing
-/// handoff path (<see cref="GenesysTicketUpdateAppService"/>); nothing posts
-/// a payment or changes a balance.
+/// <b>A customer response in a conversation gets a ticket through the
+/// existing Genesys ingestion</b> — <see cref="GenesysInquiryIngestionAppService"/>,
+/// keyed by conversationId, routed by the configured Collections queue or
+/// department code, created Unclassified under the existing classification
+/// and lifecycle rules. AlreadyPaid requests verification and posts nothing;
+/// a human request, an AI disconnection, a dispute or an explicit
+/// requiresHumanFollowUp keeps human work outstanding through the existing
+/// handoff. Nothing here resolves or closes a ticket.
 /// </para>
 ///
 /// <para>
-/// <b>Durable.</b> The response row and an outbox message are committed
-/// together before the ticket is attempted. If ingestion fails (Genesys
-/// switched off, routing unconfigured, a transient database error) the
-/// response stays recorded with its ticket Pending, and the outbox retries
-/// it (<see cref="CollectionsResponseTicketHandler"/>) until it links or is
-/// dead-lettered for an operator.
+/// <b>Durable.</b> The event and an outbox message commit together before the
+/// ticket is attempted; if the ticket cannot be created yet the answer is
+/// <c>202</c> with <c>ticketResult: "Pending"</c>, and the outbox retries
+/// (<see cref="CollectionsResponseTicketHandler"/>).
 /// </para>
 /// </summary>
 public sealed class CollectionsReminderOutcomeAppService(
@@ -55,7 +54,8 @@ public sealed class CollectionsReminderOutcomeAppService(
     public const string ResponseTicketEventType = "CollectionsReminderResponseTicket";
 
     public async Task<CollectionsResult<RecordReminderOutcomeResponseDto>> RecordAsync(
-        CollectionsCaller caller, long reminderId, RecordReminderOutcomeRequestDto request, CancellationToken cancellationToken = default)
+        CollectionsCaller caller, string reminderId, RecordReminderOutcomeRequestDto request, string? idempotencyKey,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -64,96 +64,121 @@ public sealed class CollectionsReminderOutcomeAppService(
             return Fail(CollectionsOutcome.Disabled);
         }
 
-        var permissions = await authorization.ResolveAsync(caller, cancellationToken);
-        if (!permissions.CanReportOutcomes)
+        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReportOutcomes)
         {
             return Fail(CollectionsOutcome.Forbidden, "Only a configured integration account may report reminder outcomes.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.EventId) || request.EventId.Trim().Length > CollectionsReminderEvent.ExternalEventIdMaxLength
-            || request.EventId.Trim().StartsWith("tigercs:", StringComparison.OrdinalIgnoreCase))
+        var key = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim();
+        var eventId = request.EventId?.Trim();
+        if (string.IsNullOrWhiteSpace(eventId) || eventId.Length > CollectionsReminderEvent.ExternalEventIdMaxLength
+            || eventId.StartsWith(CollectionsReminderEvent.ReservedPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            return Fail(CollectionsOutcome.ValidationFailed, $"eventId is required, at most {CollectionsReminderEvent.ExternalEventIdMaxLength} characters, and may not start with 'tigercs:'.");
+            return Fail(CollectionsOutcome.InvalidRequest,
+                $"eventId is required, at most {CollectionsReminderEvent.ExternalEventIdMaxLength} characters, and may not start with '{CollectionsReminderEvent.ReservedPrefix}'.");
         }
 
-        if (!CollectionsEnums.TryParse<ReminderEventType>(request.Outcome, out var eventType)
-            || eventType is not (ReminderEventType.Sent or ReminderEventType.Delivered or ReminderEventType.Failed or ReminderEventType.CustomerResponded))
+        if (key is { Length: > CollectionsReminder.IdempotencyKeyMaxLength })
         {
-            return Fail(CollectionsOutcome.ValidationFailed, "outcome must be Sent, Delivered, Failed or CustomerResponded.");
+            return Fail(CollectionsOutcome.InvalidRequest, $"Idempotency-Key is at most {CollectionsReminder.IdempotencyKeyMaxLength} characters.");
         }
 
-        CustomerResponseKind kind = default;
-        if (eventType == ReminderEventType.CustomerResponded)
+        if (!CollectionsEnums.TryParse<ReminderChannel>(request.Channel, out var channel))
         {
-            if (request.Response is null || !CollectionsEnums.TryParse(request.Response.Kind, out kind))
+            return Fail(CollectionsOutcome.InvalidRequest, $"channel must be one of {CollectionsEnums.Names<ReminderChannel>()}.");
+        }
+
+        ChannelStatus? deliveryStatus = null;
+        if (!string.IsNullOrWhiteSpace(request.DeliveryStatus))
+        {
+            if (!CollectionsEnums.TryParse<ChannelStatus>(request.DeliveryStatus, out var parsed) || !ReminderPolicy.IsValidDeliveryStatus(channel, parsed))
             {
-                return Fail(CollectionsOutcome.ValidationFailed, $"response.kind is required with CustomerResponded and must be one of {CollectionsEnums.Names<CustomerResponseKind>()}.");
+                return Fail(CollectionsOutcome.InvalidRequest, channel == ReminderChannel.VoiceBot
+                    ? "deliveryStatus for VoiceBot must be Answered, NoAnswer or Failed."
+                    : $"deliveryStatus for {channel} must be Sent, Delivered or Failed.");
             }
 
-            if (request.Response.PromisedAmount is <= 0m)
+            deliveryStatus = parsed;
+        }
+
+        CustomerIntent? intent = null;
+        if (request.CustomerResponded)
+        {
+            if (!CollectionsEnums.TryParse<CustomerIntent>(request.CustomerIntent, out var parsedIntent))
             {
-                return Fail(CollectionsOutcome.ValidationFailed, "response.promisedAmount must be positive when supplied.");
+                return Fail(CollectionsOutcome.InvalidRequest, $"customerIntent is required when customerResponded and must be one of {CollectionsEnums.Names<CustomerIntent>()}.");
             }
 
-            if (request.Response.ConversationId is { Length: > CollectionsReminderEvent.ConversationIdMaxLength })
+            intent = parsedIntent;
+            if (channel == ReminderChannel.VoiceBot && string.IsNullOrWhiteSpace(request.ConversationId))
             {
-                return Fail(CollectionsOutcome.ValidationFailed, $"response.conversationId is at most {CollectionsReminderEvent.ConversationIdMaxLength} characters.");
+                return Fail(CollectionsOutcome.InvalidRequest, "conversationId is required for a customer voice response.");
             }
         }
 
-        var reminder = await reminderRepository.GetByIdAsync(reminderId, cancellationToken);
-        if (reminder is null)
+        if (deliveryStatus is null && !request.CustomerResponded)
+        {
+            return Fail(CollectionsOutcome.InvalidRequest, "Report a deliveryStatus, a customer response, or both.");
+        }
+
+        if (request.ConversationId is { Length: > CollectionsReminderEvent.ConversationIdMaxLength })
+        {
+            return Fail(CollectionsOutcome.InvalidRequest, $"conversationId is at most {CollectionsReminderEvent.ConversationIdMaxLength} characters.");
+        }
+
+        if (!CollectionsReminder.TryParsePublicId(reminderId, out var id) || await reminderRepository.GetByIdAsync(id, cancellationToken) is not { } reminder)
         {
             return Fail(CollectionsOutcome.ReminderNotFound, $"No reminder {reminderId}.");
         }
 
-        var eventId = request.EventId.Trim();
-        if (reminder.Events.FirstOrDefault(e => e.ExternalEventId == eventId) is { } already)
+        var hash = CollectionsHashing.Hash(request);
+        if (reminder.Events.FirstOrDefault(e => e.ExternalEventId == eventId) is { } same)
         {
-            return CollectionsResult<RecordReminderOutcomeResponseDto>.Ok(Response("AlreadyRecorded", reminder, already));
+            return same.RequestHash == hash && (key is null || same.IdempotencyKey is null || same.IdempotencyKey == key)
+                ? Replay(reminder, same)
+                : Fail(CollectionsOutcome.IdempotencyConflict, $"eventId '{eventId}' was already recorded with different content.");
         }
 
-        if (reminder.Status == ReminderStatus.Suppressed)
+        if (key is not null && reminder.Events.FirstOrDefault(e => e.IdempotencyKey == key) is { } sameKey)
         {
-            return Fail(CollectionsOutcome.Conflict, $"Reminder {reminderId} was suppressed before dispatch and was never sent; it accepts no outcomes.");
+            return sameKey.RequestHash == hash
+                ? Replay(reminder, sameKey)
+                : Fail(CollectionsOutcome.IdempotencyConflict, "This Idempotency-Key was already used with a different event.");
+        }
+
+        if (reminder.ChannelFor(channel) is not { } channelRow)
+        {
+            return Fail(CollectionsOutcome.InvalidRequest, $"Reminder {reminder.PublicId} was not queued on {channel}.");
+        }
+
+        if (channelRow.Status == ChannelStatus.Suppressed)
+        {
+            return Fail(CollectionsOutcome.ReminderSuppressed, $"The {channel} reminder was suppressed before dispatch and was never sent; it accepts no outcomes.");
         }
 
         var now = clock.UtcNow;
         var occurredAt = request.OccurredAtUtc?.ToUniversalTime() ?? now;
-        CollectionsReminderEvent recorded;
+        if (deliveryStatus is { } status)
+        {
+            channelRow.Apply(status, occurredAt, request.ProviderMessageId, null);
+        }
+
+        var recorded = reminder.AddEvent(CollectionsReminderEvent.Reported(
+            reminder, eventId, key, hash, channel, deliveryStatus, request.ProviderMessageId, request.ConversationId,
+            occurredAt, now, caller.EmployeeId, request.CustomerResponded, intent, request.RequiresHumanFollowUp, request.CustomerPhone));
+
         var correlationId = Guid.NewGuid();
-
-        if (eventType == ReminderEventType.CustomerResponded)
+        if (recorded.TicketResult == TicketResult.Pending)
         {
-            var response = request.Response!;
-            recorded = reminder.AddEvent(CollectionsReminderEvent.Response(
-                reminder, eventId, kind, occurredAt, now, caller.EmployeeId,
-                response.ConversationId, response.CustomerPhone, response.Note,
-                response.PromisedPaymentDate, response.PromisedAmount));
-
-            if (recorded.TicketStatus == ResponseTicketStatus.Pending)
-            {
-                await outboxWriter.WriteAsync(
-                    ResponseTicketEventType,
-                    JsonSerializer.Serialize(new ResponseTicketPayload(reminderId, eventId, caller.EmployeeId)),
-                    correlationId,
-                    idempotencyKey: $"collections-response-ticket:{reminderId}:{eventId}",
-                    now,
-                    cancellationToken);
-            }
-        }
-        else
-        {
-            reminder.ApplyDelivery(eventType, occurredAt, request.FailureReason, request.ProviderReference);
-            recorded = reminder.AddEvent(CollectionsReminderEvent.Delivery(
-                reminder, eventId, eventType, occurredAt, now, caller.EmployeeId,
-                eventType == ReminderEventType.Failed ? request.FailureReason : request.ProviderReference));
+            await outboxWriter.WriteAsync(ResponseTicketEventType,
+                JsonSerializer.Serialize(new ResponseTicketPayload(reminder.CollectionsReminderId, eventId, caller.EmployeeId)),
+                correlationId, $"collections-response-ticket:{reminder.CollectionsReminderId}:{eventId}", now, cancellationToken);
         }
 
-        await auditWriter.WriteAsync(
-            caller.EmployeeId, "CollectionsReminderOutcomeRecorded", CollectionsReminderAppService.AuditEntityType,
-            CollectionsMapper.AuditEntityId(reminder.DeduplicationKey), null,
-            $"ReminderId={reminderId};EventId={eventId};Outcome={eventType}{(eventType == ReminderEventType.CustomerResponded ? $";Response={kind}" : "")};Status={reminder.Status}",
+        await auditWriter.WriteAsync(caller.EmployeeId, "CollectionsReminderOutcomeRecorded", CollectionsReminderAppService.AuditEntityType,
+            CollectionsHashing.AuditEntityId(channelRow.DeduplicationKey), null,
+            $"Reminder={reminder.PublicId};EventId={eventId};Channel={channel};DeliveryStatus={deliveryStatus?.ToString() ?? "-"};"
+            + $"CustomerResponded={request.CustomerResponded};Intent={intent?.ToString() ?? "-"};ChannelStatus={channelRow.Status}",
             correlationId, cancellationToken);
 
         try
@@ -162,51 +187,51 @@ public sealed class CollectionsReminderOutcomeAppService(
         }
         catch (DuplicateWriteException)
         {
-            // The same event id raced in concurrently and won.
+            // The same event raced in concurrently and won.
             unitOfWork.DiscardPendingChanges();
-            var reloaded = await reminderRepository.GetByIdAsync(reminderId, cancellationToken);
+            var reloaded = await reminderRepository.GetByIdAsync(id, cancellationToken);
             var winner = reloaded?.Events.FirstOrDefault(e => e.ExternalEventId == eventId);
             if (reloaded is null || winner is null)
             {
                 throw;
             }
 
-            return CollectionsResult<RecordReminderOutcomeResponseDto>.Ok(Response("AlreadyRecorded", reloaded, winner));
+            return winner.RequestHash == hash
+                ? Replay(reloaded, winner)
+                : Fail(CollectionsOutcome.IdempotencyConflict, $"eventId '{eventId}' was already recorded with different content.");
         }
 
-        if (recorded.TicketStatus == ResponseTicketStatus.Pending)
+        if (recorded.TicketResult == TicketResult.Pending)
         {
             // Best effort now; the outbox message already guarantees a retry.
-            await ProcessResponseTicketAsync(reminderId, eventId, caller.EmployeeId, cancellationToken);
-            reminder = await reminderRepository.GetByIdAsync(reminderId, cancellationToken) ?? reminder;
+            await ProcessResponseTicketAsync(id, eventId, caller.EmployeeId, cancellationToken);
+            reminder = await reminderRepository.GetByIdAsync(id, cancellationToken) ?? reminder;
             recorded = reminder.Events.First(e => e.ExternalEventId == eventId);
         }
 
-        var dto = Response("Recorded", reminder, recorded);
-        return recorded.TicketStatus == ResponseTicketStatus.Pending
-            ? CollectionsResult<RecordReminderOutcomeResponseDto>.Ok(dto, CollectionsOutcome.Accepted)
-            : CollectionsResult<RecordReminderOutcomeResponseDto>.Ok(dto);
+        var dto = ToDto(reminder, recorded, replayed: false);
+        return CollectionsResult<RecordReminderOutcomeResponseDto>.Ok(dto,
+            recorded.TicketResult == TicketResult.Pending ? CollectionsOutcome.Accepted : CollectionsOutcome.Success);
     }
 
     /// <summary>
-    /// Creates or reuses the response's ticket and raises any human
-    /// follow-up, then links the ticket. Safe to run any number of times,
-    /// concurrently too: ingestion is idempotent on the conversation id, the
-    /// handoff on the conversation's outstanding work, and the link on the
-    /// ticket. The link is written last, so a response is only ever marked
-    /// Linked once its follow-up exists.
+    /// Creates or reuses the conversation's ticket, raises human follow-up,
+    /// then links the ticket — last, so an event is only Created/Reused once
+    /// its follow-up exists. Safe to run any number of times, concurrently
+    /// too: ingestion is idempotent on the conversation id, the handoff on the
+    /// conversation's outstanding work, and the link on the ticket.
     /// </summary>
     public async Task<ResponseTicketProcessingResult> ProcessResponseTicketAsync(
         long reminderId, string eventId, Guid actorEmployeeId, CancellationToken cancellationToken = default)
     {
         var reminder = await reminderRepository.GetByIdAsync(reminderId, cancellationToken);
-        var response = reminder?.Events.FirstOrDefault(e => e.ExternalEventId == eventId && e.EventType == ReminderEventType.CustomerResponded);
+        var response = reminder?.Events.FirstOrDefault(e => e.ExternalEventId == eventId);
         if (reminder is null || response is null)
         {
             return new ResponseTicketProcessingResult(ResponseTicketProcessingOutcome.Gone, $"Reminder {reminderId} event '{eventId}' no longer exists.");
         }
 
-        if (response.TicketStatus != ResponseTicketStatus.Pending)
+        if (response.TicketResult != TicketResult.Pending)
         {
             return new ResponseTicketProcessingResult(ResponseTicketProcessingOutcome.Done);
         }
@@ -218,7 +243,7 @@ public sealed class CollectionsReminderOutcomeAppService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "Ticket for Collections reminder {ReminderId} response {EventId} failed; it stays pending for retry.", reminderId, eventId);
+            logger.LogError(ex, "Ticket for Collections reminder {ReminderId} event {EventId} failed; it stays pending for retry.", reminderId, eventId);
             failure = $"Ticket creation threw {ex.GetType().Name}.";
             unitOfWork.DiscardPendingChanges();
             reminder = await reminderRepository.GetByIdAsync(reminderId, cancellationToken);
@@ -232,12 +257,12 @@ public sealed class CollectionsReminderOutcomeAppService(
         if (failure is not null)
         {
             response.RecordTicketAttemptFailed(failure);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            return new ResponseTicketProcessingResult(ResponseTicketProcessingOutcome.Pending, failure);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new ResponseTicketProcessingResult(ResponseTicketProcessingOutcome.Done);
+        return failure is null
+            ? new ResponseTicketProcessingResult(ResponseTicketProcessingOutcome.Done)
+            : new ResponseTicketProcessingResult(ResponseTicketProcessingOutcome.Pending, failure);
     }
 
     private async Task<string?> CreateOrReuseTicketAsync(
@@ -248,7 +273,7 @@ public sealed class CollectionsReminderOutcomeAppService(
         var departmentCode = queueId is null && !string.IsNullOrWhiteSpace(routing.DepartmentCode) ? routing.DepartmentCode.Trim() : null;
         if (queueId is null && departmentCode is null)
         {
-            return "No Collections ticket routing is configured (Collections:ResponseTickets:DepartmentCode or QueueId).";
+            return "DepartmentNotResolved: no Collections ticket routing is configured (Collections:ResponseTickets:QueueId or DepartmentCode).";
         }
 
         var ingest = await ingestion.IngestAsync(actorEmployeeId, new GenesysInquiryDto(
@@ -258,25 +283,26 @@ public sealed class CollectionsReminderOutcomeAppService(
             CustomerPhone: response.CustomerPhone,
             QueueId: queueId,
             DepartmentCode: departmentCode,
-            Subject: $"Collections reminder response: {Describe(response.ResponseKind!.Value)} (account {reminder.AccountId}, reminder {reminder.CollectionsReminderId})"),
+            Subject: $"Collections reminder response: {Describe(response.CustomerIntent!.Value)} (account {reminder.AccountId}, {reminder.PublicId})"),
             cancellationToken);
 
         if (ingest.Outcome is not (GenesysIngestionOutcome.TicketCreated or GenesysIngestionOutcome.AlreadyIngested) || ingest.Ticket is null)
         {
-            return $"Genesys ingestion answered {ingest.Outcome}{(ingest.Detail is null ? "" : $": {ingest.Detail}")}.";
+            var prefix = ingest.Outcome == GenesysIngestionOutcome.DepartmentNotResolved ? "DepartmentNotResolved: " : "";
+            return $"{prefix}Genesys ingestion answered {ingest.Outcome}{(ingest.Detail is null ? "" : $" — {ingest.Detail}")}.";
         }
 
-        if (response.HumanFollowUpRequired)
+        if (response.RequiresHumanFollowUp)
         {
             var update = await ticketUpdates.UpdateAsync(actorEmployeeId, ingest.Ticket.TicketId, new GenesysTicketUpdateDto(
                 response.ConversationId!,
                 Handoff: new GenesysHandoffUpdateDto(
                     Required: true,
                     Reason: FollowUpReason(reminder, response),
-                    Trigger: response.ResponseKind switch
+                    Trigger: response.CustomerIntent switch
                     {
-                        CustomerResponseKind.RequestedHuman => "CustomerRequestedHuman",
-                        CustomerResponseKind.AiDisconnected => "AiConnectionLost",
+                        CustomerIntent.RequestedHuman => "CustomerRequestedHuman",
+                        CustomerIntent.AiDisconnected => "AiConnectionLost",
                         _ => "AiEscalated"
                     })),
                 cancellationToken);
@@ -287,35 +313,44 @@ public sealed class CollectionsReminderOutcomeAppService(
             }
         }
 
-        response.LinkTicket(ingest.Ticket.TicketId, ingest.Ticket.TicketNumber, clock.UtcNow);
+        response.LinkTicket(ingest.Ticket.TicketId, ingest.Ticket.TicketNumber,
+            created: ingest.Outcome == GenesysIngestionOutcome.TicketCreated, clock.UtcNow);
         return null;
     }
 
-    private static string FollowUpReason(CollectionsReminder reminder, CollectionsReminderEvent response) => response.ResponseKind switch
+    private static string FollowUpReason(CollectionsReminder reminder, CollectionsReminderEvent response) => response.CustomerIntent switch
     {
-        CustomerResponseKind.AlreadyPaid =>
+        CustomerIntent.AlreadyPaid =>
             $"Payment verification: the customer says the payment for account {reminder.AccountId} was already made. "
             + "Verify it in the financial source. No payment has been posted and no balance has changed.",
-        CustomerResponseKind.Disputed =>
+        CustomerIntent.Disputed =>
             $"The customer disputes the reminder amount ({reminder.Amount} {reminder.Currency}) for account {reminder.AccountId}.",
-        CustomerResponseKind.RequestedHuman =>
+        CustomerIntent.RequestedHuman =>
             $"The customer asked for a person during the payment reminder for account {reminder.AccountId}.",
-        _ =>
+        CustomerIntent.AiDisconnected =>
             $"The voice bot lost the payment reminder call for account {reminder.AccountId}; follow up with the customer.",
+        _ =>
+            $"Human follow-up requested on the payment reminder for account {reminder.AccountId}.",
     };
 
-    private static string Describe(CustomerResponseKind kind) => kind switch
+    private static string Describe(CustomerIntent intent) => intent switch
     {
-        CustomerResponseKind.PromiseToPay => "promise to pay",
-        CustomerResponseKind.AlreadyPaid => "customer says already paid",
-        CustomerResponseKind.RequestedHuman => "customer requested a human",
-        CustomerResponseKind.AiDisconnected => "AI disconnected",
-        CustomerResponseKind.Disputed => "amount disputed",
+        CustomerIntent.PromiseToPay => "promise to pay",
+        CustomerIntent.AlreadyPaid => "customer says already paid",
+        CustomerIntent.RequestedHuman => "customer requested a human",
+        CustomerIntent.AiDisconnected => "AI disconnected",
+        CustomerIntent.Disputed => "amount disputed",
         _ => "other"
     };
 
-    private static RecordReminderOutcomeResponseDto Response(string outcome, CollectionsReminder reminder, CollectionsReminderEvent e) =>
-        new(outcome, reminder.CollectionsReminderId, reminder.Status.ToString(), CollectionsMapper.ToDto(e));
+    private static RecordReminderOutcomeResponseDto ToDto(CollectionsReminder reminder, CollectionsReminderEvent e, bool replayed) =>
+        new(reminder.PublicId, e.ExternalEventId, "Recorded", e.DeliveryStatus?.ToString(),
+            reminder.ChannelFor(e.Channel!.Value)?.Status.ToString() ?? "",
+            e.TicketId, e.TicketNumber, e.TicketResult.ToString(), e.FollowUpRequired, replayed);
+
+    private static CollectionsResult<RecordReminderOutcomeResponseDto> Replay(CollectionsReminder reminder, CollectionsReminderEvent e) =>
+        CollectionsResult<RecordReminderOutcomeResponseDto>.Ok(ToDto(reminder, e, replayed: true),
+            e.TicketResult == TicketResult.Pending ? CollectionsOutcome.Accepted : CollectionsOutcome.Success);
 
     private static CollectionsResult<RecordReminderOutcomeResponseDto> Fail(CollectionsOutcome outcome, string? detail = null) =>
         CollectionsResult<RecordReminderOutcomeResponseDto>.Fail(outcome, detail);

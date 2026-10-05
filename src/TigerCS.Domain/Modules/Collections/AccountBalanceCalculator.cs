@@ -4,23 +4,22 @@ namespace TigerCS.Domain.Modules.Collections;
 /// Buckets the authoritative source's outstanding amounts by due date. This
 /// is <b>not</b> a second balance calculation: it never allocates a payment,
 /// never subtracts the payment history and never invents an amount. Every
-/// figure is a sum of <see cref="FinancialInstalment.PrincipalOutstanding"/>
-/// or <see cref="FinancialCharge.Outstanding"/> values the source reported,
-/// grouped by where their due date falls relative to <c>today</c> (a date in
-/// the business time zone).
+/// figure is a sum of <see cref="FinancialInstalment.RemainingAmount"/> or
+/// <see cref="FinancialCharge.Outstanding"/> values the source reported,
+/// grouped by where their due date falls relative to <c>businessDate</c>
+/// (a date in Asia/Dubai).
 ///
 /// <para>
 /// When the source also reports its own unpaid-principal total, the schedule
 /// is cross-checked against it. A disagreement is reported as
 /// <see cref="BalanceConsistency.Mismatch"/> rather than resolved in either
-/// direction — TigerCS cannot know which of the two is wrong, so it shows the
-/// source's total and refuses to send reminders on that account until the
-/// source is consistent again.
+/// direction: TigerCS shows the source's total and refuses reminders on that
+/// account until the source is consistent again.
 /// </para>
 /// </summary>
 public static class AccountBalanceCalculator
 {
-    public static AccountBalance Calculate(FinancialAccountSnapshot account, DateOnly today)
+    public static AccountBalance Calculate(FinancialAccountSnapshot account, DateOnly businessDate)
     {
         ArgumentNullException.ThrowIfNull(account);
 
@@ -30,88 +29,100 @@ public static class AccountBalanceCalculator
             return AccountBalance.Invalid(account.Currency, problems);
         }
 
-        var monthStart = new DateOnly(today.Year, today.Month, 1);
+        var monthStart = new DateOnly(businessDate.Year, businessDate.Month, 1);
         var monthEnd = monthStart.AddMonths(1).AddDays(-1);
 
-        decimal overdue = 0m, dueToday = 0m, future = 0m, currentMonth = 0m, throughMonthEnd = 0m;
+        decimal overdue = 0m, dueToday = 0m, future = 0m, currentMonth = 0m;
         FinancialInstalment? next = null;
+        DateOnly? oldestUnpaid = null;
 
         foreach (var instalment in account.Instalments)
         {
-            var outstanding = instalment.PrincipalOutstanding;
-            if (outstanding == 0m)
+            var remaining = instalment.RemainingAmount;
+            if (remaining == 0m)
             {
                 continue;
             }
 
-            if (instalment.DueDate < today)
+            if (instalment.DueDate < businessDate)
             {
-                overdue += outstanding;
+                overdue += remaining;
             }
-            else if (instalment.DueDate == today)
+            else if (instalment.DueDate == businessDate)
             {
-                dueToday += outstanding;
+                dueToday += remaining;
             }
             else
             {
-                future += outstanding;
+                future += remaining;
             }
 
+            // Overlaps the three buckets above by design and is never added to them.
             if (instalment.DueDate >= monthStart && instalment.DueDate <= monthEnd)
             {
-                currentMonth += outstanding;
+                currentMonth += remaining;
             }
 
-            if (instalment.DueDate <= monthEnd)
+            if (oldestUnpaid is null || instalment.DueDate < oldestUnpaid)
             {
-                throughMonthEnd += outstanding;
+                oldestUnpaid = instalment.DueDate;
             }
 
-            if (instalment.DueDate >= today
-                && (next is null
-                    || instalment.DueDate < next.DueDate
-                    || (instalment.DueDate == next.DueDate && instalment.Sequence < next.Sequence)))
+            if (instalment.DueDate >= businessDate && (next is null || instalment.DueDate < next.DueDate))
             {
                 next = instalment;
             }
         }
 
-        var payableCharges = account.Charges
-            .Where(c => c.IsPayable && c.Outstanding > 0m && (c.DueDate is null || c.DueDate <= today))
-            .Sum(c => c.Outstanding);
+        var payable = account.Charges
+            .Where(c => c.IsPayable && c.Outstanding > 0m && (c.DueDate is null || c.DueDate <= businessDate))
+            .ToList();
+        var penalties = payable.Where(c => c.Type == FinancialChargeType.Penalty).Sum(c => c.Outstanding);
+        var fees = payable.Where(c => c.Type == FinancialChargeType.Fee).Sum(c => c.Outstanding);
 
-        var remaining = overdue + dueToday + future;
-
-        var consistency = account.ReportedOutstandingPrincipal is { } reported && reported != remaining
+        var remainingPrincipal = overdue + dueToday + future;
+        var consistency = account.ReportedOutstandingPrincipal is { } reported && reported != remainingPrincipal
             ? BalanceConsistency.Mismatch
             : BalanceConsistency.Consistent;
 
+        // A source-applied credit reduces what is due now, once; it never
+        // goes below zero and never touches the principal buckets, which are
+        // the source's own allocated figures.
+        var dueNow = Math.Max(0m, overdue + dueToday + penalties + fees - account.AppliedCreditAmount);
+
         return new AccountBalance(
             Currency: account.Currency,
-            // The source's own total wins when it reports one; on a mismatch
-            // it is still the figure shown, flagged as inconsistent.
-            RemainingUnpaidPrincipal: account.ReportedOutstandingPrincipal ?? remaining,
-            OverduePrincipal: overdue,
-            PrincipalDueToday: dueToday,
-            FuturePrincipal: future,
-            PayableFinesAndFees: payableCharges,
-            AmountDueNow: overdue + dueToday + payableCharges,
-            CurrentMonthRemaining: currentMonth,
-            PrincipalDueThroughMonthEnd: throughMonthEnd,
-            NextPayment: next is null ? null : new NextPayment(next.InstalmentId, next.DueDate, next.PrincipalOutstanding),
+            RemainingPrincipalAmount: account.ReportedOutstandingPrincipal ?? remainingPrincipal,
+            OverduePrincipalAmount: overdue,
+            DueTodayPrincipalAmount: dueToday,
+            FuturePrincipalAmount: future,
+            PayablePenaltyAmount: penalties,
+            PayableFeeAmount: fees,
+            AppliedCreditAmount: account.AppliedCreditAmount,
+            AmountDueNow: dueNow,
+            CurrentMonthRemainingAmount: currentMonth,
+            OldestUnpaidDueDate: oldestUnpaid,
+            NextPayment: next is null ? null : new NextPayment(next.InstalmentId, next.DueDate, next.RemainingAmount),
             Consistency: consistency,
             Problems: consistency == BalanceConsistency.Mismatch
-                ? [$"The source reports {account.ReportedOutstandingPrincipal} {account.Currency} unpaid principal but its instalment schedule sums to {remaining} {account.Currency}."]
+                ? [$"The source reports {account.ReportedOutstandingPrincipal} {account.Currency} unpaid principal but its instalment schedule sums to {remainingPrincipal} {account.Currency}."]
                 : []);
     }
 
     /// <summary>
-    /// Unpaid principal on instalments that fell due strictly before
-    /// <paramref name="cutoff"/> — the "overdue for more than N" test the
-    /// reminder windows use. Same source values, same no-allocation rule.
+    /// The unpaid instalments that fell due strictly before <paramref name="cutoff"/>
+    /// — the reminder age test. Examined per instalment, never inferred from
+    /// the oldest unpaid date alone.
     /// </summary>
-    public static decimal OutstandingDueBefore(FinancialAccountSnapshot account, DateOnly cutoff) =>
-        account.Instalments.Where(i => i.DueDate < cutoff).Sum(i => i.PrincipalOutstanding);
+    public static IReadOnlyList<FinancialInstalment> UnpaidDueBefore(FinancialAccountSnapshot account, DateOnly cutoff) =>
+        account.Instalments.Where(i => i.RemainingAmount > 0m && i.DueDate < cutoff).OrderBy(i => i.DueDate).ToList();
+
+    /// <summary>The unpaid instalments due in <paramref name="businessDate"/>'s calendar month, whether already due or upcoming.</summary>
+    public static IReadOnlyList<FinancialInstalment> UnpaidInMonth(FinancialAccountSnapshot account, DateOnly businessDate) =>
+        account.Instalments
+            .Where(i => i.RemainingAmount > 0m && i.DueDate.Year == businessDate.Year && i.DueDate.Month == businessDate.Month)
+            .OrderBy(i => i.DueDate)
+            .ToList();
 
     private static List<string> Validate(FinancialAccountSnapshot account)
     {
@@ -124,9 +135,9 @@ public static class AccountBalanceCalculator
 
         foreach (var instalment in account.Instalments)
         {
-            if (instalment.PrincipalAmount < 0m || instalment.PrincipalOutstanding < 0m || instalment.PrincipalOutstanding > instalment.PrincipalAmount)
+            if (instalment.ScheduledAmount < 0m || instalment.RemainingAmount < 0m || instalment.RemainingAmount > instalment.ScheduledAmount)
             {
-                problems.Add($"Instalment {instalment.InstalmentId} reports {instalment.PrincipalOutstanding} outstanding of {instalment.PrincipalAmount}.");
+                problems.Add($"Instalment {instalment.InstalmentId} reports {instalment.RemainingAmount} remaining of {instalment.ScheduledAmount}.");
             }
         }
 
@@ -143,6 +154,11 @@ public static class AccountBalanceCalculator
             problems.Add("The reported outstanding principal is negative.");
         }
 
+        if (account.AppliedCreditAmount < 0m)
+        {
+            problems.Add("The applied credit is negative.");
+        }
+
         return problems;
     }
 }
@@ -155,33 +171,32 @@ public enum BalanceConsistency
     /// <summary>The schedule and the source's total disagree. Shown, flagged, and never reminded on.</summary>
     Mismatch = 2,
 
-    /// <summary>The source returned values that cannot be right (negative, more outstanding than charged, no currency). Nothing is shown as a figure.</summary>
+    /// <summary>The source returned values that cannot be right. No figure is shown.</summary>
     InvalidSourceData = 3
 }
 
-/// <summary>The next instalment that still has principal outstanding, due today or later.</summary>
-public sealed record NextPayment(string InstalmentId, DateOnly DueDate, decimal Amount);
+/// <summary>The next instalment that still has principal remaining, due on or after the business date.</summary>
+public sealed record NextPayment(string InstalmentId, DateOnly DueDate, decimal RemainingAmount);
 
-/// <summary>An account's figures, all in <see cref="Currency"/>, all derived only from what the source reported.</summary>
+/// <summary>An account's figures, all in <see cref="Currency"/>, all derived only from what the source reported. Null — never zero — when the source data is invalid.</summary>
 public sealed record AccountBalance(
     string Currency,
-    decimal? RemainingUnpaidPrincipal,
-    decimal? OverduePrincipal,
-    decimal? PrincipalDueToday,
-    decimal? FuturePrincipal,
-    decimal? PayableFinesAndFees,
+    decimal? RemainingPrincipalAmount,
+    decimal? OverduePrincipalAmount,
+    decimal? DueTodayPrincipalAmount,
+    decimal? FuturePrincipalAmount,
+    decimal? PayablePenaltyAmount,
+    decimal? PayableFeeAmount,
+    decimal? AppliedCreditAmount,
     decimal? AmountDueNow,
-    decimal? CurrentMonthRemaining,
-    decimal? PrincipalDueThroughMonthEnd,
+    decimal? CurrentMonthRemainingAmount,
+    DateOnly? OldestUnpaidDueDate,
     NextPayment? NextPayment,
     BalanceConsistency Consistency,
     IReadOnlyList<string> Problems)
 {
-    /// <summary>
-    /// Bad source data yields no figures at all — null, never zero. A zero
-    /// would read as "nothing owed", which is the one wrong answer that
-    /// could stop a legitimate collection or misinform a customer.
-    /// </summary>
+    public bool HasFigures => Consistency != BalanceConsistency.InvalidSourceData;
+
     public static AccountBalance Invalid(string currency, IReadOnlyList<string> problems) =>
-        new(currency, null, null, null, null, null, null, null, null, null, BalanceConsistency.InvalidSourceData, problems);
+        new(currency, null, null, null, null, null, null, null, null, null, null, null, BalanceConsistency.InvalidSourceData, problems);
 }

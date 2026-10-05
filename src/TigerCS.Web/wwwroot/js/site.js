@@ -96,38 +96,55 @@
   });
 
   // Customer Profile · Payment tab: its content is fetched the first time
-  // the tab is opened, so the profile itself never waits on the financial
-  // source. Without JS the placeholder's own link loads the page with the
-  // tab rendered server-side (?tab=payment), which is also how the account
-  // selector and Send Reminder return here.
+  // the tab is opened, so the profile itself never waits on the finance
+  // source, and fetched again when the account changes. Only the response
+  // to the LATEST request is applied: a slow answer for a previously
+  // selected account is discarded. Without JS every link and the account
+  // form load the page with the tab rendered server-side (?tab=payment).
   document.querySelectorAll("[data-payment-src]").forEach(function (panel) {
     var radio = document.getElementById("tab-payment");
     if (!radio) return;
-    var load = function () {
-      var placeholder = panel.querySelector('[data-payment-state="Deferred"]');
-      if (!placeholder || panel.hasAttribute("data-loading")) return;
-      panel.setAttribute("data-loading", "");
-      fetch(panel.getAttribute("data-payment-src"), { credentials: "same-origin", headers: { "Accept": "text/html" } })
+    var latest = 0;
+
+    var load = function (account) {
+      var request = ++latest;
+      var url = panel.getAttribute("data-payment-src") + (account ? "&account=" + encodeURIComponent(account) : "");
+      var current = panel.querySelector(".payment-tab");
+      if (current) current.setAttribute("aria-busy", "true");
+      fetch(url, { credentials: "same-origin", headers: { "Accept": "text/html" } })
         .then(function (response) {
           if (!response.ok) throw new Error(String(response.status));
           return response.text();
         })
         .then(function (html) {
-          placeholder.outerHTML = html;
-          panel.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
-            el.addEventListener("change", function () {
-              if (el.form && !el.form.hasAttribute("data-submitting")) el.form.requestSubmit();
-            });
-          });
+          if (request !== latest) return; // a newer selection superseded this one
+          var tab = panel.querySelector(".payment-tab");
+          if (tab) tab.outerHTML = html;
         })
         .catch(function () {
-          var status = placeholder.querySelector('[role="status"] span:not(.payment-spinner)') || placeholder;
-          status.textContent = "Payment details could not be loaded.";
-        })
-        .finally(function () { panel.removeAttribute("data-loading"); });
+          if (request !== latest) return;
+          var tab = panel.querySelector(".payment-tab");
+          if (tab) {
+            tab.removeAttribute("aria-busy");
+            tab.insertAdjacentHTML("afterbegin", '<div class="alert alert-error" role="alert"><span>Payment details could not be loaded. Use Retry or reload the page.</span></div>');
+          }
+        });
     };
-    radio.addEventListener("change", function () { if (radio.checked) load(); });
-    if (radio.checked) load();
+
+    panel.addEventListener("change", function (event) {
+      if (event.target && event.target.id === "paymentAccount") load(event.target.value);
+    });
+    panel.addEventListener("click", function (event) {
+      var link = event.target.closest && event.target.closest("[data-payment-account-link], [data-payment-retry]");
+      if (!link || !panel.contains(link)) return;
+      event.preventDefault();
+      var tab = panel.querySelector(".payment-tab");
+      load(link.getAttribute("data-payment-account-link") || (tab && tab.getAttribute("data-payment-account")) || "");
+    });
+
+    var deferred = function () { return panel.querySelector('[data-payment-state="Deferred"]'); };
+    radio.addEventListener("change", function () { if (radio.checked && deferred()) load(""); });
+    if (radio.checked && deferred()) load("");
   });
 
   // Prevent duplicate submission: the FIRST submit of a form wins, and every

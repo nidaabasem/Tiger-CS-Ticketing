@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,47 +11,68 @@ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
 namespace TigerCS.Api.Controllers;
 
 /// <summary>
-/// Collections on the Genesys boundary: what a customer owes, what they have
-/// paid, who is due a payment reminder, recording a reminder, and the
-/// reminder's delivery events and customer responses.
+/// Collections for Genesys: <c>/api/genesys/collections</c>. Genesys reaches it
+/// the same way it reaches the rest of <c>api/genesys</c> — through
+/// TigerGroupWeb, signed in as a TigerCS integration service account. The
+/// account must also be listed in <c>Collections:Authorization:IntegrationEmployeeIds</c>
+/// for outcomes and VoiceBot queueing; the Genesys scope alone grants no
+/// financial operation.
+/// </summary>
+[Route("api/genesys/collections")]
+[Tags(OpenApiTags.Collections)]
+public sealed class GenesysCollectionsController(
+    CollectionsAccountQueryAppService queries,
+    CollectionsReminderAppService reminders,
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, reminders, outcomes);
+
+/// <summary>
+/// Collections for TigerCS Web's Payment tab: <c>/api/collections</c> — the
+/// same service and the same server-side financial checks, under the existing
+/// Web-to-API authentication. No Genesys credential ever reaches the browser.
+/// </summary>
+[Route("api/collections")]
+[Tags(OpenApiTags.Collections)]
+public sealed class CollectionsController(
+    CollectionsAccountQueryAppService queries,
+    CollectionsReminderAppService reminders,
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, reminders, outcomes);
+
+/// <summary>
+/// The six Collections routes (TigerCS_Collections_API_Specification.md).
 ///
 /// <para>
-/// <b>Two callers, one contract.</b> The Genesys outbound voice bot reaches
-/// these routes the same way it reaches the rest of <c>api/genesys</c> —
-/// through TigerGroupWeb, signed in as a TigerCS integration service
-/// account; Genesys never holds a TigerCS credential. TigerCS Web's Payment
-/// tab calls the same routes server-side as the signed-in user. Every route
-/// authorizes the actual caller against the explicit Collections financial
-/// permissions (<see cref="CollectionsAuthorizationService"/>) on top of the
-/// authenticated-staff policy; ticket permissions are not involved.
+/// Every route authorizes the actual caller against explicit Collections
+/// grants — financial read, reminder send, outcome reporting — on top of the
+/// authenticated-staff policy; ticket permissions are not involved. Figures
+/// come from the authoritative financial source on every call: while it is
+/// unavailable the financial routes answer <c>503 FinanceUnavailable</c>,
+/// never an empty list or a zero.
 /// </para>
 ///
 /// <para>
-/// <b>No balance is ever invented.</b> Figures come from the authoritative
-/// financial source on every call. While no source is integrated the
-/// financial routes answer <c>503 collections-source-unavailable</c> — never
-/// an empty list or a zero that could read as "nothing owed".
+/// Errors are the standard ProblemDetails body with the specification's
+/// machine-readable <c>code</c> and a <c>message</c>, plus <c>traceId</c>.
 /// </para>
 /// </summary>
 [ApiController]
-[Route("api/genesys/collections")]
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
-[Tags(OpenApiTags.Collections)]
-public class GenesysCollectionsController(
+public abstract class CollectionsControllerBase(
     CollectionsAccountQueryAppService queries,
     CollectionsReminderAppService reminders,
     CollectionsReminderOutcomeAppService outcomes) : ControllerBase
 {
-    /// <summary>A customer's accounts: remaining, overdue, due-today and future principal, payable fines and fees, amount due now, this month's remainder, the next payment, and the instalment schedule.</summary>
+    /// <summary>Outstanding amounts for one or all of a customer's accounts.</summary>
     /// <param name="crmCustomerId">The Tiger CRM customer id.</param>
-    /// <param name="accountId">Narrow to one account. Must belong to the customer.</param>
-    /// <param name="crmUnitId">Narrow to the account(s) for one CRM unit. Must belong to the customer.</param>
+    /// <param name="accountId">One finance account. Must belong to the customer.</param>
+    /// <param name="unitId">The account(s) for one CRM unit; several contracts on a unit are returned separately.</param>
+    /// <param name="cursor">From a previous response's nextCursor.</param>
+    /// <param name="pageSize">1–100, default 50.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">The customer's accounts, each in its own currency, with the source and as-of time.</response>
-    /// <response code="400">crmCustomerId was blank or too long.</response>
-    /// <response code="403">The caller lacks the Collections financial-read permission.</response>
-    /// <response code="404">The source does not know the customer, or the account/unit is not the customer's.</response>
-    /// <response code="503">Collections is switched off, or the financial source is unavailable.</response>
+    /// <response code="200">The accounts, each in its own currency.</response>
+    /// <response code="400">InvalidRequest.</response>
+    /// <response code="403">Forbidden — no financial-read permission.</response>
+    /// <response code="404">AccountNotFound — absent, or not this customer's.</response>
+    /// <response code="503">FinanceUnavailable, or Collections disabled.</response>
     [HttpGet("customers/{crmCustomerId}/outstanding")]
     [ProducesResponseType<CollectionsOutstandingResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -58,31 +80,32 @@ public class GenesysCollectionsController(
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetOutstanding(
-        string crmCustomerId, [FromQuery] string? accountId, [FromQuery] string? crmUnitId, CancellationToken cancellationToken)
+        string crmCustomerId, [FromQuery] string? accountId, [FromQuery] long? unitId, [FromQuery] string? cursor, [FromQuery] int? pageSize,
+        CancellationToken cancellationToken)
     {
-        if (Caller() is not { } caller)
-        {
-            return Unauthorized();
-        }
-
-        return ToResponse(await queries.GetOutstandingAsync(caller, crmCustomerId, accountId, crmUnitId, cancellationToken));
+        if (Caller() is not { } caller) return Unauthorized();
+        if (!TryCustomer(crmCustomerId, out var id)) return InvalidCustomer();
+        return ToResponse(await queries.GetOutstandingAsync(caller, id, accountId, unitId, cursor, pageSize, cancellationToken));
     }
 
-    /// <summary>A customer's payment history, newest first. Posted payments only unless <c>includeUnposted</c> is set; an unposted payment never counts toward a balance.</summary>
+    /// <summary>The instalment schedule (<c>view=instalments</c>, default) or posted payment history (<c>view=history</c>) of one account.</summary>
     /// <param name="crmCustomerId">The Tiger CRM customer id.</param>
-    /// <param name="accountId">Narrow to one account.</param>
-    /// <param name="crmUnitId">Narrow to one CRM unit.</param>
-    /// <param name="includeUnposted">Also list payments pending verification, reversed or rejected — each marked <c>countsTowardBalance: false</c>.</param>
-    /// <param name="page">1-based page.</param>
-    /// <param name="pageSize">1–100, default 25.</param>
+    /// <param name="accountId">Required when the customer has more than one account in scope.</param>
+    /// <param name="unitId">Narrow to one CRM unit.</param>
+    /// <param name="view">instalments or history.</param>
+    /// <param name="fromDate">history only: earliest payment date (YYYY-MM-DD).</param>
+    /// <param name="toDate">history only: latest payment date.</param>
+    /// <param name="cursor">From a previous response's nextCursor.</param>
+    /// <param name="pageSize">1–100, default 50.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">One page of payments.</response>
-    /// <response code="400">crmCustomerId blank, or paging out of range.</response>
-    /// <response code="403">The caller lacks the Collections financial-read permission.</response>
-    /// <response code="404">Unknown customer, or the account/unit is not the customer's.</response>
-    /// <response code="503">Collections is switched off, or the financial source is unavailable.</response>
+    /// <response code="200">One page of instalments or posted payments.</response>
+    /// <response code="400">InvalidRequest — e.g. accountId needed, bad view or date range.</response>
+    /// <response code="403">Forbidden.</response>
+    /// <response code="404">AccountNotFound.</response>
+    /// <response code="503">FinanceUnavailable, or Collections disabled.</response>
     [HttpGet("customers/{crmCustomerId}/payments")]
-    [ProducesResponseType<CollectionsPaymentsResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<CollectionsInstalmentsResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<CollectionsPaymentHistoryResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -90,37 +113,44 @@ public class GenesysCollectionsController(
     public async Task<IActionResult> GetPayments(
         string crmCustomerId,
         [FromQuery] string? accountId,
-        [FromQuery] string? crmUnitId,
-        [FromQuery] bool includeUnposted = false,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 25,
-        CancellationToken cancellationToken = default)
+        [FromQuery] long? unitId,
+        [FromQuery] string? view,
+        [FromQuery] DateOnly? fromDate,
+        [FromQuery] DateOnly? toDate,
+        [FromQuery] string? cursor,
+        [FromQuery] int? pageSize,
+        CancellationToken cancellationToken)
     {
-        if (Caller() is not { } caller)
-        {
-            return Unauthorized();
-        }
+        if (Caller() is not { } caller) return Unauthorized();
+        if (!TryCustomer(crmCustomerId, out var id)) return InvalidCustomer();
 
-        return ToResponse(await queries.GetPaymentsAsync(caller, crmCustomerId, accountId, crmUnitId, includeUnposted, page, pageSize, cancellationToken));
+        return (view ?? "instalments").Trim().ToLowerInvariant() switch
+        {
+            "instalments" => ToResponse(await queries.GetInstalmentsAsync(caller, id, accountId, unitId, cursor, pageSize, cancellationToken)),
+            "history" => ToResponse(await queries.GetPaymentHistoryAsync(caller, id, accountId, unitId, fromDate, toDate, cursor, pageSize, cancellationToken)),
+            _ => Error(StatusCodes.Status400BadRequest, "InvalidRequest", "view must be \"instalments\" or \"history\".")
+        };
     }
 
-    /// <summary>Accounts due a scheduled reminder today, with the amount to state and the channels not yet used this cycle.</summary>
+    /// <summary>Accounts eligible for one reminder type today, with the quoted amount, its basis and qualifying instalments.</summary>
     /// <remarks>
-    /// Windows: days 1–4 for principal overdue more than one month, day 15 for
-    /// the current month's unpaid payment, three days before month end for an
-    /// unsettled current month. Settled accounts and accounts whose source data
-    /// is inconsistent are never listed. Pull this before an outbound campaign,
-    /// then record each call with <c>POST /reminders</c> immediately before dialing.
+    /// Windows (Dubai calendar): OverdueMonthly 1st–4th, CurrentMonth 15th,
+    /// MonthEndFollowUp three days before month end. Settled, stale and
+    /// inconsistent accounts are never listed, and contact details are never
+    /// exposed. Queue a candidate with <c>POST reminders</c> before
+    /// <c>expiresAtUtc</c>.
     /// </remarks>
-    /// <param name="reminderType">OverdueMoreThanOneMonth, CurrentMonthDue or MonthEndFollowUp.</param>
-    /// <param name="channel">VoiceBot, Sms or Email.</param>
-    /// <param name="page">1-based page.</param>
+    /// <param name="reminderType">Required: OverdueMonthly, CurrentMonth or MonthEndFollowUp.</param>
+    /// <param name="businessDate">Optional; must be today in Asia/Dubai.</param>
+    /// <param name="crmCustomerId">Extension: only this customer's accounts.</param>
+    /// <param name="accountId">Extension: only this account (with crmCustomerId).</param>
+    /// <param name="cursor">From a previous response's nextCursor.</param>
     /// <param name="pageSize">1–100, default 50.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">One page of candidates (possibly empty — no window open, or nobody due).</response>
-    /// <response code="400">An unrecognized filter, or paging out of range.</response>
-    /// <response code="403">The caller lacks the Collections reminder permission.</response>
-    /// <response code="503">Collections is switched off, or the financial source is unavailable.</response>
+    /// <response code="200">One page of candidates (empty when the window is closed or nobody is due).</response>
+    /// <response code="400">InvalidRequest.</response>
+    /// <response code="403">Forbidden — no reminder permission.</response>
+    /// <response code="503">FinanceUnavailable, or Collections disabled.</response>
     [HttpGet("reminders/candidates")]
     [ProducesResponseType<CollectionsReminderCandidatesResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -128,84 +158,77 @@ public class GenesysCollectionsController(
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> ListCandidates(
         [FromQuery] string? reminderType,
-        [FromQuery] string? channel,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50,
-        CancellationToken cancellationToken = default)
+        [FromQuery] DateOnly? businessDate,
+        [FromQuery] long? crmCustomerId,
+        [FromQuery] string? accountId,
+        [FromQuery] string? cursor,
+        [FromQuery] int? pageSize,
+        CancellationToken cancellationToken)
     {
-        if (Caller() is not { } caller)
-        {
-            return Unauthorized();
-        }
-
-        return ToResponse(await reminders.ListCandidatesAsync(caller, reminderType, channel, page, pageSize, cancellationToken));
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await reminders.ListCandidatesAsync(caller, reminderType, businessDate, crmCustomerId, accountId, cursor, pageSize, cancellationToken));
     }
 
-    /// <summary>Record (and, for SMS/email, queue for dispatch) one reminder for one account, after revalidating the balance.</summary>
+    /// <summary>Queue one reminder from a candidate, on one or more channels.</summary>
     /// <remarks>
-    /// <b>Idempotent per account / reminder type / cycle / channel.</b> A second
-    /// request in the same cycle returns the existing reminder with
-    /// <c>outcome: "AlreadyExists"</c> and <c>200</c>; nothing is sent twice.
-    /// A settled account is refused with <c>422</c>. VoiceBot reminders are
-    /// recorded only by the Genesys integration account, right before it dials.
+    /// The balance and eligibility are re-read before accepting (and again
+    /// before each TigerCS delivery). An expired or changed candidate is
+    /// <c>409 CandidateChanged</c> with a <c>replacementCandidate</c>. Duplicate
+    /// prevention is per account + type + cycle + channel; an Idempotency-Key
+    /// replay returns the original job (200), the same key with a different
+    /// body is <c>409 IdempotencyConflict</c>. Retries apply to failed channels
+    /// only. VoiceBot is queued only by the Genesys integration account.
     /// </remarks>
-    /// <param name="request">The customer, account, channel and reminder type.</param>
+    /// <param name="request">The candidate, channels and language.</param>
+    /// <param name="idempotencyKey">Recommended. Replays return the original job.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">This reminder already exists for the cycle — returned, nothing new queued.</response>
-    /// <response code="201">The reminder was recorded with its amount (and queued for SMS/email dispatch).</response>
-    /// <response code="400">A required field is missing or unrecognized, or a VoiceBot reminder from a non-integration caller.</response>
-    /// <response code="403">The caller lacks the Collections reminder permission.</response>
-    /// <response code="404">Unknown customer, or the account is not the customer's.</response>
-    /// <response code="422">Not eligible (settled, inconsistent source, window closed, no contact detail) or the channel is not enabled.</response>
-    /// <response code="503">Collections is switched off, or the financial source is unavailable.</response>
+    /// <response code="200">Replay of an earlier request with the same Idempotency-Key.</response>
+    /// <response code="202">Queued. Queued does not mean delivered.</response>
+    /// <response code="400">InvalidRequest.</response>
+    /// <response code="403">Forbidden.</response>
+    /// <response code="409">CandidateChanged or IdempotencyConflict.</response>
+    /// <response code="422">NoEligibleContact or ChannelNotEnabled.</response>
+    /// <response code="503">FinanceUnavailable (including stale data), or Collections disabled.</response>
     [HttpPost("reminders")]
-    [ProducesResponseType<CreateCollectionsReminderResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<CreateCollectionsReminderResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<CollectionsReminderJobDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<CollectionsReminderJobDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> CreateReminder([FromBody] CreateCollectionsReminderRequestDto request, CancellationToken cancellationToken)
+    public async Task<IActionResult> QueueReminder(
+        [FromBody] QueueCollectionsReminderRequestDto request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken)
     {
-        if (Caller() is not { } caller)
-        {
-            return Unauthorized();
-        }
-
-        var result = await reminders.CreateAsync(caller, request, cancellationToken);
-        return result.Outcome == CollectionsOutcome.Created
-            ? Created($"/api/genesys/collections/customers/{Uri.EscapeDataString(result.Value!.Reminder.CrmCustomerId)}/reminders", result.Value)
-            : ToResponse(result);
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await reminders.QueueAsync(caller, request, idempotencyKey, cancellationToken));
     }
 
-    /// <summary>Report a reminder's delivery event (Sent, Delivered, Failed) or the customer's response.</summary>
+    /// <summary>Record a delivery event and/or the customer's response for one channel of a reminder.</summary>
     /// <remarks>
-    /// <b>Idempotent on <c>eventId</c>.</b> A resend returns
-    /// <c>outcome: "AlreadyRecorded"</c> with what was stored the first time.
-    ///
-    /// <para>
-    /// A <c>CustomerResponded</c> event with a <c>conversationId</c> creates or
-    /// reuses that conversation's ticket through the existing Genesys
-    /// ingestion, routed to Collections by configuration, Unclassified, never
-    /// resolved or closed. AlreadyPaid opens a verification follow-up and posts
-    /// nothing; RequestedHuman, AiDisconnected and Disputed keep human
-    /// follow-up outstanding. When the ticket cannot be created yet the
-    /// response is still stored and the answer is <c>202</c>: the ticket is
-    /// retried durably.
-    /// </para>
+    /// Idempotent on <c>eventId</c> (and the Idempotency-Key header): a resend
+    /// returns the original result; different content is
+    /// <c>409 IdempotencyConflict</c>. A customer response in a conversation
+    /// creates or reuses that conversation's ticket through the existing
+    /// Genesys ingestion, routed to Collections by configuration, Unclassified,
+    /// never resolved or closed. AlreadyPaid requests verification and posts
+    /// nothing. When the ticket cannot be created yet the event is kept and the
+    /// answer is 202 with <c>ticketResult: "Pending"</c>.
     /// </remarks>
-    /// <param name="reminderId">The reminder, as returned by <c>POST /reminders</c>.</param>
+    /// <param name="reminderId">"REM-123".</param>
     /// <param name="request">The event.</param>
+    /// <param name="idempotencyKey">Optional.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">Recorded (or already recorded); any ticket it owed is linked.</response>
-    /// <response code="202">Recorded; its ticket is pending and will be retried.</response>
-    /// <response code="400">Missing/unrecognized eventId, outcome or response kind.</response>
-    /// <response code="403">Only a configured integration account may report outcomes.</response>
-    /// <response code="404">No such reminder.</response>
-    /// <response code="409">The reminder was suppressed before dispatch and accepts no outcomes.</response>
-    /// <response code="503">Collections is switched off.</response>
-    [HttpPost("reminders/{reminderId:long}/outcomes")]
+    /// <response code="200">Recorded (or replayed); ticketResult Created, Reused or NotRequired.</response>
+    /// <response code="202">Recorded; ticketResult Pending — retried durably.</response>
+    /// <response code="400">InvalidRequest.</response>
+    /// <response code="403">Forbidden — only a configured integration account reports outcomes.</response>
+    /// <response code="404">ReminderNotFound.</response>
+    /// <response code="409">IdempotencyConflict, or ReminderSuppressed.</response>
+    /// <response code="503">Collections disabled.</response>
+    [HttpPost("reminders/{reminderId}/outcomes")]
     [ProducesResponseType<RecordReminderOutcomeResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<RecordReminderOutcomeResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -214,106 +237,86 @@ public class GenesysCollectionsController(
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> RecordOutcome(
-        long reminderId, [FromBody] RecordReminderOutcomeRequestDto request, CancellationToken cancellationToken)
+        string reminderId,
+        [FromBody] RecordReminderOutcomeRequestDto request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken)
     {
-        if (Caller() is not { } caller)
-        {
-            return Unauthorized();
-        }
-
-        var result = await outcomes.RecordAsync(caller, reminderId, request, cancellationToken);
-        return result.Outcome == CollectionsOutcome.Accepted
-            ? Accepted(result.Value)
-            : ToResponse(result);
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await outcomes.RecordAsync(caller, reminderId, request, idempotencyKey, cancellationToken));
     }
 
-    /// <summary>A customer's reminder history — amounts, delivery status, every event and response, and linked tickets. Read from TigerCS's own records, so it stays available while the financial source is down.</summary>
+    /// <summary>A customer's reminder history: the amount quoted, per-channel status, responses and linked tickets. Read from TigerCS's own records, so it stays available while the financial source is down.</summary>
     /// <param name="crmCustomerId">The Tiger CRM customer id.</param>
     /// <param name="accountId">Narrow to one account.</param>
-    /// <param name="page">1-based page.</param>
-    /// <param name="pageSize">1–100, default 25.</param>
+    /// <param name="cursor">From a previous response's nextCursor.</param>
+    /// <param name="pageSize">1–100, default 50.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <response code="200">One page of reminders, newest first.</response>
-    /// <response code="400">crmCustomerId blank, or paging out of range.</response>
-    /// <response code="403">The caller lacks the Collections financial-read permission.</response>
-    /// <response code="503">Collections is switched off.</response>
+    /// <response code="400">InvalidRequest.</response>
+    /// <response code="403">Forbidden.</response>
+    /// <response code="503">Collections disabled.</response>
     [HttpGet("customers/{crmCustomerId}/reminders")]
-    [ProducesResponseType<CollectionsReminderListResultDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<CollectionsReminderHistoryResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetReminders(
-        string crmCustomerId,
-        [FromQuery] string? accountId,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 25,
-        CancellationToken cancellationToken = default)
+        string crmCustomerId, [FromQuery] string? accountId, [FromQuery] string? cursor, [FromQuery] int? pageSize,
+        CancellationToken cancellationToken)
     {
-        if (Caller() is not { } caller)
-        {
-            return Unauthorized();
-        }
-
-        return ToResponse(await queries.GetRemindersAsync(caller, crmCustomerId, accountId, page, pageSize, cancellationToken));
+        if (Caller() is not { } caller) return Unauthorized();
+        if (!TryCustomer(crmCustomerId, out var id)) return InvalidCustomer();
+        return ToResponse(await queries.GetRemindersAsync(caller, id, accountId, cursor, pageSize, cancellationToken));
     }
 
     private IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
     {
-        CollectionsOutcome.Success or CollectionsOutcome.AlreadyExists => Ok(result.Value),
-        CollectionsOutcome.Created => StatusCode(StatusCodes.Status201Created, result.Value),
-        CollectionsOutcome.Accepted => Accepted(result.Value),
-        CollectionsOutcome.Disabled => Problem(
-            type: "https://tigercs.internal/problems/collections-disabled",
-            title: "Collections is disabled",
-            detail: "Collections:Enabled is false — no Collections request is processed.",
-            statusCode: StatusCodes.Status503ServiceUnavailable),
-        CollectionsOutcome.SourceUnavailable => Problem(
-            type: "https://tigercs.internal/problems/collections-source-unavailable",
-            title: "The financial source is unavailable",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status503ServiceUnavailable),
-        CollectionsOutcome.Forbidden => Problem(
-            type: "https://tigercs.internal/problems/collections-forbidden",
-            title: "Not permitted",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status403Forbidden),
-        CollectionsOutcome.ValidationFailed => Problem(
-            type: "https://tigercs.internal/problems/collections-invalid-request",
-            title: "The request is not valid",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status400BadRequest),
-        CollectionsOutcome.CustomerNotFound => Problem(
-            type: "https://tigercs.internal/problems/collections-customer-not-found",
-            title: "Customer not found",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status404NotFound),
-        CollectionsOutcome.AccountNotFound => Problem(
-            type: "https://tigercs.internal/problems/collections-account-not-found",
-            title: "Account not found for this customer",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status404NotFound),
-        CollectionsOutcome.ReminderNotFound => Problem(
-            type: "https://tigercs.internal/problems/collections-reminder-not-found",
-            title: "Reminder not found",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status404NotFound),
-        CollectionsOutcome.NotEligible => Problem(
-            type: "https://tigercs.internal/problems/collections-reminder-not-eligible",
-            title: "The account is not eligible for this reminder",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status422UnprocessableEntity),
-        CollectionsOutcome.ChannelNotEnabled => Problem(
-            type: "https://tigercs.internal/problems/collections-channel-not-enabled",
-            title: "The reminder channel is not enabled",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status422UnprocessableEntity),
-        CollectionsOutcome.Conflict => Problem(
-            type: "https://tigercs.internal/problems/collections-reminder-conflict",
-            title: "The reminder cannot accept this event",
-            detail: result.Detail,
-            statusCode: StatusCodes.Status409Conflict),
+        CollectionsOutcome.Success or CollectionsOutcome.Replayed => Ok(result.Value),
+        CollectionsOutcome.Accepted => StatusCode(StatusCodes.Status202Accepted, result.Value),
+        CollectionsOutcome.Disabled => Error(StatusCodes.Status503ServiceUnavailable, "CollectionsDisabled",
+            "Collections is not enabled (Collections:Enabled is false)."),
+        CollectionsOutcome.FinanceUnavailable => Error(StatusCodes.Status503ServiceUnavailable, "FinanceUnavailable",
+            result.Detail ?? "Payment information is temporarily unavailable. Please try again."),
+        CollectionsOutcome.Forbidden => Error(StatusCodes.Status403Forbidden, "Forbidden", result.Detail ?? "Not permitted."),
+        CollectionsOutcome.InvalidRequest => Error(StatusCodes.Status400BadRequest, "InvalidRequest", result.Detail ?? "The request is not valid."),
+        CollectionsOutcome.AccountNotFound => Error(StatusCodes.Status404NotFound, "AccountNotFound", result.Detail ?? "Account not found."),
+        CollectionsOutcome.ReminderNotFound => Error(StatusCodes.Status404NotFound, "ReminderNotFound", result.Detail ?? "Reminder not found."),
+        CollectionsOutcome.CandidateChanged => Error(StatusCodes.Status409Conflict, "CandidateChanged",
+            result.Detail ?? "The candidate expired or changed.", result.Replacement),
+        CollectionsOutcome.IdempotencyConflict => Error(StatusCodes.Status409Conflict, "IdempotencyConflict", result.Detail ?? "Idempotency conflict."),
+        CollectionsOutcome.ReminderSuppressed => Error(StatusCodes.Status409Conflict, "ReminderSuppressed", result.Detail ?? "The reminder was suppressed."),
+        CollectionsOutcome.NoEligibleContact => Error(StatusCodes.Status422UnprocessableEntity, "NoEligibleContact", result.Detail ?? "No approved destination."),
+        CollectionsOutcome.ChannelNotEnabled => Error(StatusCodes.Status422UnprocessableEntity, "ChannelNotEnabled", result.Detail ?? "Channel not enabled."),
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };
+
+    /// <summary>The standard ProblemDetails body plus the specification's <c>code</c> and <c>message</c> — one error format, not two.</summary>
+    private ObjectResult Error(int status, string code, string message, CollectionsReminderCandidateDto? replacement = null)
+    {
+        var result = Problem(
+            type: $"https://tigercs.internal/problems/collections/{code}",
+            title: code,
+            detail: message,
+            statusCode: status);
+        if (result.Value is ProblemDetails problem)
+        {
+            problem.Extensions["code"] = code;
+            problem.Extensions["message"] = message;
+            if (replacement is not null)
+            {
+                problem.Extensions["replacementCandidate"] = replacement;
+            }
+        }
+
+        return result;
+    }
+
+    private ObjectResult InvalidCustomer() =>
+        Error(StatusCodes.Status400BadRequest, "InvalidRequest", "crmCustomerId must be a positive CRM customer id.");
+
+    private static bool TryCustomer(string value, out long id) =>
+        long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
 
     private CollectionsCaller? Caller()
     {
@@ -325,7 +328,7 @@ public class GenesysCollectionsController(
 
         var roles = User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray();
         var departments = User.FindAll(TigerCsClaimTypes.DepartmentId)
-            .Select(c => int.TryParse(c.Value, out var id) ? id : (int?)null)
+            .Select(c => int.TryParse(c.Value, out var d) ? d : (int?)null)
             .OfType<int>()
             .ToArray();
         return new CollectionsCaller(employeeId, roles, departments);

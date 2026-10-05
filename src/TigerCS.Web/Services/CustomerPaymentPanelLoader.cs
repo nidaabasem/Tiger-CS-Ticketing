@@ -1,75 +1,113 @@
+using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services.Api;
 
 namespace TigerCS.Web.Services;
 
 /// <summary>
-/// Builds the Payment tab from TigerCS.Api's Collections routes. Every state
-/// comes from what the Api answered: a 403 is "no permission", a 503 is
-/// "switched off" or "source unavailable" (told apart by the problem type),
-/// and a figure that did not arrive is never filled in as zero.
+/// Builds the Payment tab from TigerCS.Api's <c>/api/collections</c> routes.
+/// Every state comes from what the Api answered: 403 is "no permission",
+/// 503 is "switched off" or "finance unavailable" (told apart by the error
+/// code), 404 is "no linked account", and a figure that did not arrive is
+/// never filled in as zero.
 /// </summary>
 public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
 {
-    public const int PageSize = 20;
+    private static readonly string[] ReminderTypes = ["OverdueMonthly", "CurrentMonth", "MonthEndFollowUp"];
 
     public async Task<CustomerPaymentPanel> LoadAsync(
-        string customerKey, string? crmCustomerId, string? accountId, string? notice, bool noticeIsError, CancellationToken cancellationToken)
+        string customerKey, long? crmCustomerId, string? accountId, string? notice, bool noticeIsError, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(crmCustomerId))
+        if (crmCustomerId is not { } customer)
         {
             return new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer };
         }
 
-        var outstanding = await collections.GetOutstandingAsync(crmCustomerId, cancellationToken);
-
+        var outstanding = await collections.GetOutstandingAsync(customer, cancellationToken);
         var state = outstanding.Outcome switch
         {
             ApiOutcome.Success => PaymentPanelState.Loaded,
             ApiOutcome.Forbidden => PaymentPanelState.Forbidden,
             ApiOutcome.NotFound => PaymentPanelState.NoAccounts,
-            ApiOutcome.ServiceUnavailable when outstanding.ProblemType == CustomerPaymentPanel.CollectionsDisabledProblem => PaymentPanelState.Disabled,
-            ApiOutcome.ServiceUnavailable => PaymentPanelState.SourceUnavailable,
+            ApiOutcome.ServiceUnavailable when outstanding.ProblemType?.EndsWith("/" + CustomerPaymentPanel.DisabledCode, StringComparison.Ordinal) == true
+                => PaymentPanelState.Disabled,
+            ApiOutcome.ServiceUnavailable => PaymentPanelState.Unavailable,
             _ => PaymentPanelState.Error
+        };
+
+        var basePanel = new CustomerPaymentPanel
+        {
+            CustomerKey = customerKey, CrmCustomerId = customer, State = state, Notice = notice, NoticeIsError = noticeIsError
         };
 
         if (state is PaymentPanelState.Forbidden or PaymentPanelState.Disabled or PaymentPanelState.Error)
         {
-            return new CustomerPaymentPanel
-            {
-                CustomerKey = customerKey, CrmCustomerId = crmCustomerId, State = state, StateDetail = outstanding.Detail,
-                Notice = notice, NoticeIsError = noticeIsError
-            };
+            return basePanel;
         }
 
-        var accounts = outstanding.Value?.Accounts ?? [];
-        var selected = accounts.FirstOrDefault(a => a.AccountId == accountId) ?? accounts.FirstOrDefault();
-        var scopeAccountId = selected?.AccountId;
+        if (state != PaymentPanelState.Loaded)
+        {
+            // Reminder history is TigerCS's own record — still shown when the
+            // finance source is unavailable or holds no account.
+            var history = await collections.GetRemindersAsync(customer, null, cancellationToken);
+            return Copy(basePanel, state, reminders: history.Value);
+        }
 
-        // Reminder history is TigerCS's own record, so it is still shown when
-        // the financial source is down; payments come from the source.
-        var remindersTask = collections.GetRemindersAsync(crmCustomerId, scopeAccountId, 1, PageSize, cancellationToken);
-        var paymentsTask = state == PaymentPanelState.Loaded
-            ? collections.GetPaymentsAsync(crmCustomerId, scopeAccountId, 1, PageSize, cancellationToken)
-            : null;
+        var accounts = outstanding.Value!.Accounts;
+        var selected = accounts.Count == 1
+            ? accounts[0]
+            : accounts.FirstOrDefault(a => a.AccountId == accountId);
+        if (selected is null)
+        {
+            return Copy(basePanel, PaymentPanelState.SelectAccount, outstanding.Value);
+        }
 
-        var reminders = await remindersTask;
-        var payments = paymentsTask is null ? null : await paymentsTask;
+        var instalmentsTask = collections.GetInstalmentsAsync(customer, selected.AccountId, cancellationToken);
+        var historyTask = collections.GetPaymentHistoryAsync(customer, selected.AccountId, cancellationToken);
+        var remindersTask = collections.GetRemindersAsync(customer, selected.AccountId, cancellationToken);
+
+        var candidates = new List<CollectionsReminderCandidateDto>();
+        var canSend = true;
+        foreach (var type in ReminderTypes)
+        {
+            var result = await collections.GetCandidatesAsync(type, customer, selected.AccountId, cancellationToken);
+            if (result.Outcome == ApiOutcome.Forbidden)
+            {
+                canSend = false;
+                break;
+            }
+
+            candidates.AddRange(result.Value?.Items ?? []);
+        }
 
         return new CustomerPaymentPanel
         {
             CustomerKey = customerKey,
-            CrmCustomerId = crmCustomerId,
-            State = state,
-            StateDetail = outstanding.Detail,
+            CrmCustomerId = customer,
+            State = PaymentPanelState.Loaded,
             Outstanding = outstanding.Value,
             SelectedAccount = selected,
-            Payments = payments?.Value,
-            PaymentsOutcome = payments?.Outcome ?? ApiOutcome.ServiceUnavailable,
-            Reminders = reminders.Value,
-            RemindersOutcome = reminders.Outcome,
+            Instalments = (await instalmentsTask).Value,
+            History = (await historyTask).Value,
+            Reminders = (await remindersTask).Value,
+            Candidates = candidates,
+            CanSend = canSend,
             Notice = notice,
             NoticeIsError = noticeIsError
         };
     }
+
+    private static CustomerPaymentPanel Copy(
+        CustomerPaymentPanel panel, PaymentPanelState state, CollectionsOutstandingResponseDto? outstanding = null,
+        CollectionsReminderHistoryResponseDto? reminders = null) =>
+        new()
+        {
+            CustomerKey = panel.CustomerKey,
+            CrmCustomerId = panel.CrmCustomerId,
+            State = state,
+            Outstanding = outstanding,
+            Reminders = reminders,
+            Notice = panel.Notice,
+            NoticeIsError = panel.NoticeIsError
+        };
 }

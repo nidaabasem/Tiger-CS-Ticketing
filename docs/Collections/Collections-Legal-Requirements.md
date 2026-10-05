@@ -19,9 +19,31 @@ to Legal. This document records that stage as **requirements to confirm**.
   `POST /api/genesys/collections/reminders` rejects any other type with `400`.
   The scheduler, the candidates list and the voice bot can never produce one.
 
-The FAQ document was not available in this repository, so the items below
-restate the legal stage only at the level the work request describes it.
-Collections and Legal must supply the specifics.
+## The legal stage as the specification states it
+
+`TigerCS_Collections_API_Specification.md` (§ legal stage, from the FAQ)
+lists two steps. It marks them as *internal workflow requirements from the
+supplied document, not independently verified legal requirements*:
+
+| Step | Window | Condition | Channel / owner |
+|---|---|---|---|
+| Legal notice without action | 12th to 14th | Previous month's outstanding amount exceeding AED 1,500 | Call and email |
+| New legal case referral | 28th to 30th | Outstanding amount exceeding AED 20,000 **and** overdue more than three months | Legal department |
+
+**Neither is implemented.** The specification itself requires a separately
+approved workflow, templates and permissions, and says an ordinary reminder
+request must not open a legal case or imply management approval. Points the
+specification leaves open:
+
+- whether "outstanding" means principal only or includes penalties and fees,
+  and as of which date (these figures would come from EDSM, which is not yet
+  connected);
+- how the 28th–30th window behaves in February (no 29th/30th, and no 30th in
+  leap years);
+- whether "overdue more than three months" uses calendar months (like the
+  ordinary overdue reminder) or a day count;
+- whether "notice without action" is a scripted call by the voice bot or by a
+  person, and who approves the email.
 
 ## Requirements to confirm before anything is built
 

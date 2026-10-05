@@ -9,28 +9,32 @@ namespace TigerCS.Application.Modules.Collections;
 ///
 /// <para>
 /// <b>Everything that sends is off by default.</b> <see cref="Enabled"/>
-/// gates the whole API; each channel is off until switched on; automatic
-/// scheduling additionally requires <see cref="BusinessRulesConfirmed"/>,
-/// which stays false until Collections confirms the four open FAQ points
-/// (calendar months vs fixed days, fines in the amount, once per window vs
-/// daily, month-end and February handling).
+/// gates every route; each channel is off until switched on; automatic
+/// scheduling additionally needs <see cref="BusinessRulesConfirmed"/> and a
+/// <see cref="SchedulerOwner"/> of <c>TigerCS</c>.
 /// </para>
 /// </summary>
 public sealed class CollectionsOptions
 {
     public const string SectionName = "Collections";
 
-    /// <summary>Feature flag for every Collections endpoint. False answers 503 and reads nothing.</summary>
+    /// <summary>Feature flag for every Collections route. False answers 503 and reads nothing.</summary>
     public bool Enabled { get; set; }
 
     /// <summary>The TigerCS department whose Department Employees/Heads hold Collections permissions. Matched by code, never by name.</summary>
     public string CollectionsDepartmentCode { get; set; } = "COL";
 
-    /// <summary>The business time zone that decides "today", "overdue" and the month windows.</summary>
+    /// <summary>The business calendar for businessDate, overdue and the reminder windows.</summary>
     public string TimeZoneId { get; set; } = "Asia/Dubai";
 
-    /// <summary>Source figures older than this are flagged stale in every response.</summary>
+    /// <summary>Source figures older than this are <c>dataStatus: "Stale"</c>, and a stale read never authorizes a send.</summary>
     public int StaleAfterMinutes { get; set; } = 60;
+
+    /// <summary>How long a reminder candidate may be queued after it was issued (proposed: 15 minutes).</summary>
+    public int CandidateValidityMinutes { get; set; } = 15;
+
+    /// <summary>Delivery attempts per channel per cycle, the first included. Retries affect failed channels only.</summary>
+    public int MaxDeliveryAttempts { get; set; } = 3;
 
     /// <summary>Upper bound on accounts read from the source per candidates/scheduler scan.</summary>
     public int MaxAccountsPerScan { get; set; } = 5000;
@@ -43,48 +47,46 @@ public sealed class CollectionsOptions
 
     public CollectionsReminderRulesOptions Rules { get; set; } = new();
 
-    /// <summary>Registers the designated recurring job. Ignored unless <see cref="BusinessRulesConfirmed"/> is also true.</summary>
-    public bool AutomaticSchedulingEnabled { get; set; }
+    /// <summary>
+    /// Who owns the reminder cycle: "None" (default — nobody schedules),
+    /// "TigerCS" (the Hangfire job queues SMS/email reminders) or "Genesys"
+    /// (the outbound campaign pulls candidates and queues). One designated
+    /// scheduler: the TigerCS job is registered only for "TigerCS".
+    /// </summary>
+    public string SchedulerOwner { get; set; } = "None";
 
-    /// <summary>Collections has confirmed the four open rule decisions in <see cref="Rules"/>.</summary>
+    /// <summary>Collections has confirmed the open rule decisions in <see cref="Rules"/>.</summary>
     public bool BusinessRulesConfirmed { get; set; }
 
-    /// <summary>Cron for the daily scheduler run, in <see cref="TimeZoneId"/>.</summary>
+    /// <summary>Cron for the TigerCS scheduler's daily run, in <see cref="TimeZoneId"/>.</summary>
     public string ScheduleCron { get; set; } = "0 9 * * *";
 
-    public bool IsAutomaticSchedulingActive => Enabled && AutomaticSchedulingEnabled && BusinessRulesConfirmed;
-}
-
-/// <summary>Explicit financial authorization. Role lists are configuration so Collections can tighten them without a release.</summary>
-public sealed class CollectionsAuthorizationOptions
-{
-    /// <summary>Roles that may read balances, instalments, payments and reminder history for any customer.</summary>
-    public List<string> FinancialReadRoles { get; set; } =
-        [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo];
-
-    /// <summary>Roles that may send a reminder and list reminder candidates.</summary>
-    public List<string> ReminderSendRoles { get; set; } = [Roles.CsSupervisor, Roles.CsManager];
-
-    /// <summary>
-    /// Department roles that hold BOTH permissions, but only for members of
-    /// the Collections department (<see cref="CollectionsOptions.CollectionsDepartmentCode"/>).
-    /// </summary>
-    public List<string> CollectionsDepartmentRoles { get; set; } = [Roles.DepartmentEmployee, Roles.DepartmentHead];
-
-    /// <summary>
-    /// TigerCS employee ids of integration service accounts (the TigerGroupWeb
-    /// account Genesys calls through). Only these may report reminder
-    /// outcomes; they may also read, list candidates and record reminders.
-    /// </summary>
-    public List<Guid> IntegrationEmployeeIds { get; set; } = [];
+    public bool IsTigerCsSchedulerActive =>
+        Enabled && BusinessRulesConfirmed && string.Equals(SchedulerOwner, "TigerCS", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
-/// Where a reminder response's ticket is routed: a department code or a
-/// Genesys queue id, resolved by the existing Genesys ingestion exactly as
-/// for any other conversation. Neither set means responses are recorded and
-/// their ticket stays pending (retried) until it is configured.
+/// Explicit financial authorization — separate grants for viewing payments,
+/// queueing reminders and reporting delivery. Role lists are configuration so
+/// Collections can tighten them without a release.
 /// </summary>
+public sealed class CollectionsAuthorizationOptions
+{
+    /// <summary>Roles that may read balances, instalments, payments and reminder history.</summary>
+    public List<string> FinancialReadRoles { get; set; } =
+        [Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo];
+
+    /// <summary>Roles that may list candidates and queue reminders.</summary>
+    public List<string> ReminderSendRoles { get; set; } = [Roles.CsSupervisor, Roles.CsManager];
+
+    /// <summary>Department roles that hold both grants, but only for members of the Collections department.</summary>
+    public List<string> CollectionsDepartmentRoles { get; set; } = [Roles.DepartmentEmployee, Roles.DepartmentHead];
+
+    /// <summary>TigerCS employee ids of integration service accounts (the TigerGroupWeb account Genesys calls through). Only these report outcomes or queue VoiceBot reminders.</summary>
+    public List<Guid> IntegrationEmployeeIds { get; set; } = [];
+}
+
+/// <summary>Where a reminder response's ticket is routed — a Genesys queue id (via the queue mapping) or a department code. Never a guessed department id.</summary>
 public sealed class CollectionsResponseTicketOptions
 {
     public string? DepartmentCode { get; set; } = "COL";
@@ -94,17 +96,17 @@ public sealed class CollectionsResponseTicketOptions
 
 public sealed class CollectionsChannelOptions
 {
-    /// <summary>Genesys outbound voice bot. Genesys places the call and reports outcomes; TigerCS never dials.</summary>
+    /// <summary>Genesys outbound voice bot. Genesys dials and reports outcomes; TigerCS never dials.</summary>
     public bool VoiceBotEnabled { get; set; }
 
-    /// <summary>No approved SMS provider exists in TigerCS; enabling this without one fails closed at dispatch.</summary>
+    /// <summary>No approved SMS provider exists in TigerCS; enabling this fails closed at dispatch.</summary>
     public bool SmsEnabled { get; set; }
 
-    /// <summary>Email through the existing EmailNotifications sender (SMTP, or Recording in tests).</summary>
+    /// <summary>Email through the existing EmailNotifications sender.</summary>
     public bool EmailEnabled { get; set; }
 
-    /// <summary>Channels the automatic scheduler uses.</summary>
-    public List<ReminderChannel> ScheduledChannels { get; set; } = [ReminderChannel.VoiceBot];
+    /// <summary>Channels the TigerCS scheduler queues (VoiceBot is never TigerCS-scheduled).</summary>
+    public List<ReminderChannel> ScheduledChannels { get; set; } = [ReminderChannel.Sms, ReminderChannel.Email];
 
     public bool IsEnabled(ReminderChannel channel) => channel switch
     {
@@ -115,16 +117,16 @@ public sealed class CollectionsChannelOptions
     };
 }
 
-/// <summary>Bindable form of <see cref="ReminderRuleSettings"/>. Every default is the conservative, unconfirmed reading.</summary>
+/// <summary>Bindable form of <see cref="ReminderRuleSettings"/>. Defaults are the specification's proposed drafts, not confirmed rules.</summary>
 public sealed class CollectionsReminderRulesOptions
 {
     public OverdueAgeRule OverdueAgeRule { get; set; } = OverdueAgeRule.CalendarMonth;
     public int OverdueFixedDays { get; set; } = 30;
     public int OverdueWindowFirstDay { get; set; } = 1;
     public int OverdueWindowLastDay { get; set; } = 4;
-    public int CurrentMonthDueDay { get; set; } = 15;
+    public int CurrentMonthDay { get; set; } = 15;
     public int MonthEndOffsetDays { get; set; } = 3;
-    public bool IncludeFinesInReminderAmount { get; set; }
+    public bool IncludePenaltiesAndFees { get; set; }
     public ReminderSendFrequency SendFrequency { get; set; } = ReminderSendFrequency.OncePerWindow;
 
     public ReminderRuleSettings ToSettings() => new()
@@ -133,9 +135,9 @@ public sealed class CollectionsReminderRulesOptions
         OverdueFixedDays = Math.Clamp(OverdueFixedDays, 1, 366),
         OverdueWindowFirstDay = Math.Clamp(OverdueWindowFirstDay, 1, 28),
         OverdueWindowLastDay = Math.Clamp(OverdueWindowLastDay, 1, 28),
-        CurrentMonthDueDay = Math.Clamp(CurrentMonthDueDay, 1, 28),
+        CurrentMonthDay = Math.Clamp(CurrentMonthDay, 1, 28),
         MonthEndOffsetDays = Math.Clamp(MonthEndOffsetDays, 0, 20),
-        IncludeFinesInReminderAmount = IncludeFinesInReminderAmount,
+        IncludePenaltiesAndFees = IncludePenaltiesAndFees,
         SendFrequency = SendFrequency
     };
 }
