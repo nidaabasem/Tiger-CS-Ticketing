@@ -269,6 +269,37 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task SiteCssAndJs_AreVersioned_SoADeploymentNeverLeavesAStaleStylesheetHidingThePanel()
+    {
+        // Root cause of the "empty Payment panel" report: an unversioned, heuristically cached
+        // site.css from before the tab existed has no #panel-payment display rule.
+        var profile = await Ok(await Client().GetAsync("/Customers/crm:9001"));
+        var login = await Ok(await _factory.CreateClient().GetAsync("/Login"));
+
+        foreach (var html in new[] { profile, login })
+        {
+            Assert.Matches(new Regex("href=\"/css/site\\.css\\?v=[A-Za-z0-9_-]{20,}\""), html);
+            Assert.Matches(new Regex("src=\"/js/site\\.js\\?v=[A-Za-z0-9_-]{20,}\""), html);
+        }
+    }
+
+    [Fact]
+    public async Task ACrmCustomerWithNoFinancialSource_GetsTheExplicitNotMappedMessage_NotAnEmptyOrTemporaryState()
+    {
+        _api.Mode = "nosource";
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?handler=PaymentPanel"));
+
+        Assert.Contains("data-payment-state=\"NotMapped\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-not-mapped", html, StringComparison.Ordinal);
+        Assert.Contains("no verified mapping from a CRM customer to a PACT tenant exists", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("temporarily unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-balance-unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("due now", html, StringComparison.Ordinal);
+        Assert.Contains("Reminder history", html, StringComparison.Ordinal);   // TigerCS's own record is still shown
+        Assert.Contains("/payment-summary", string.Join("\n", _api.Requests), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task APactCustomer_IsDeferred_NotRefusedAsNonCrm()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001"));
@@ -366,6 +397,11 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         private static CollectionsEdsmFieldDto F(string key, string label, string status, decimal? value, string? raw, string? meaning = null) =>
             new(key, label, $"Definition of {label}.", status, value, raw, meaning);
 
+        private static CollectionsPaymentSummaryResponseDto CrmNotMapped() => new(
+            "crm:9001", "NotMapped",
+            "This customer is identified by Tiger CRM (customerId 9001). EDSM is keyed by PACT companyID and tenantID, and no verified mapping from a CRM customer to a PACT tenant exists.",
+            null, "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, null, null, [], []);
+
         private static CollectionsPaymentSummaryResponseDto Summary() => new(
             "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, Now.AddMinutes(-5), "Cached",
             [
@@ -460,6 +496,8 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
                 return Mode switch
                 {
+                    "nosource" when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, CrmNotMapped()),
+                    "nosource" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),
                     "forbidden" => Problem(HttpStatusCode.Forbidden, "Forbidden"),
                     "disabled" => Problem(HttpStatusCode.ServiceUnavailable, "CollectionsDisabled"),
                     "unavailable" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),

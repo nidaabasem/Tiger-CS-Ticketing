@@ -47,6 +47,23 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             return basePanel;
         }
 
+        if (state == PaymentPanelState.Unavailable)
+        {
+            // No per-account source answered. Ask the EDSM service (the same one PACT
+            // customers use). If it confirms there is no verified mapping for this customer,
+            // say so explicitly instead of implying a temporary outage.
+            var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
+            if (summary is { Outcome: ApiOutcome.Success, Value.MappingStatus: "NotMapped" })
+            {
+                var reminderHistory = await collections.GetRemindersAsync(customer, null, cancellationToken);
+                return new CustomerPaymentPanel
+                {
+                    CustomerKey = customerKey, CrmCustomerId = customer, State = PaymentPanelState.NotMapped,
+                    PaymentSummary = summary.Value, Reminders = reminderHistory.Value, Notice = notice, NoticeIsError = noticeIsError
+                };
+            }
+        }
+
         if (state != PaymentPanelState.Loaded)
         {
             // Reminder history is TigerCS's own record — still shown when the
