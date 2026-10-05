@@ -63,9 +63,9 @@
                                 <dt>@field.Label <small class="field-hint edsm-definition">@field.Definition</small></dt>
                                 <dd>
                                     @CustomerPaymentPanel.EdsmField(field)
-                                    @if (field.Status == "Unreadable")
+                                    @if (field.Status is "Unreadable" or "FormatNotConfigured" && !string.IsNullOrEmpty(field.Raw))
                                     {
-                                        <small class="field-hint">EDSM sent “@field.Raw”</small>
+                                        <small class="field-hint" data-edsm-raw>EDSM sent “@field.Raw”</small>
                                     }
                                 </dd>
                             </div>
