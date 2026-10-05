@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
+using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Ticketing.Services;
 using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
@@ -142,12 +143,13 @@ using (var crmStartupScope = app.Services.CreateScope())
 using (var collectionsStartupScope = app.Services.CreateScope())
 {
     var sourceOptions = collectionsStartupScope.ServiceProvider.GetRequiredService<IOptions<CollectionsSourceOptions>>().Value;
-    if (CollectionsSourceSafety.IsUnsafe(sourceOptions, app.Environment.EnvironmentName))
+    var edsmOptions = collectionsStartupScope.ServiceProvider.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value;
+    if (CollectionsSourceSafety.IsUnsafe(sourceOptions, edsmOptions, app.Environment.EnvironmentName))
     {
         throw new InvalidOperationException(
-            $"CollectionsSource:Provider or PaymentSummaryProvider is 'Fixture' in environment '{app.Environment.EnvironmentName}'. Fixture balances are "
+            $"CollectionsSource:Provider or EdsmProvider is 'Fixture' in environment '{app.Environment.EnvironmentName}'. Fixture balances are "
             + $"sample data and may only run in {string.Join("/", CollectionsSourceSafety.FixtureAllowedEnvironments)}. "
-            + "Set CollectionsSource:Provider / PaymentSummaryProvider to \"Unavailable\" (or PaymentSummaryProvider to \"Pact\").");
+            + "Set CollectionsSource:Provider / EdsmProvider to \"Unavailable\" (or EdsmProvider to \"Pact\").");
     }
 }
 

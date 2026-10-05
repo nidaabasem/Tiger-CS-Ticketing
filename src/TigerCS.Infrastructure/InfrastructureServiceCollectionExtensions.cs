@@ -302,6 +302,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<CollectionsClock>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
+        services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
         services.AddScoped<CollectionsPaymentSummaryAppService>();
         services.AddScoped<CollectionsReminderAppService>();
         services.AddScoped<CollectionsReminderOutcomeAppService>();

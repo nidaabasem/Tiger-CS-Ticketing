@@ -266,15 +266,14 @@ public sealed record CollectionsReminderResponseDto(
 
 /// <summary>
 /// <c>GET api/collections/customers/by-key/{customerKey}/payment-summary</c>:
-/// EDSM's payment summary for the PACT tenant behind a TigerCS customer, one
-/// entry per PACT company the tenant has contracts with.
+/// EDSM's figures for the PACT tenant behind a TigerCS customer, one entry per
+/// (companyID, tenantID) pair taken from that tenant's own PACT contracts.
 /// <para>
-/// <c>mappingStatus</c>: <c>Mapped</c>; <c>NotMapped</c> (not a PACT-identified
-/// customer, or PACT returned no contracts for the tenant). <c>retrievedAtUtc</c>
-/// is when TigerCS called EDSM; EDSM provides no as-of time, so
-/// <c>sourceAsOfUtc</c> and <c>currency</c> are always null. The field
-/// definitions are unconfirmed and there is no instalment or transaction
-/// detail — the flags say so explicitly.
+/// <c>mappingStatus</c> is <c>Mapped</c> or <c>NotMapped</c>. <c>retrievedAtUtc</c>
+/// is when TigerCS called EDSM; EDSM returns no as-of time, so <c>sourceAsOfUtc</c>
+/// is always null, and figures may lag a posted payment by up to
+/// <c>maxSourceDelayMinutes</c> (EDSM's nested caches). <c>currency</c> is
+/// configured in TigerCS (<c>currencySource: "Configured"</c>): EDSM returns none.
 /// </para>
 /// </summary>
 public sealed record CollectionsPaymentSummaryResponseDto(
@@ -285,37 +284,88 @@ public sealed record CollectionsPaymentSummaryResponseDto(
     string Source,
     DateTime RetrievedAtUtc,
     DateTime? SourceAsOfUtc,
-    string? Currency,
-    bool FieldDefinitionsConfirmed,
-    bool InstalmentDetailAvailable,
-    bool TransactionDetailAvailable,
+    string Currency,
+    string CurrencySource,
+    string? NumberCulture,
+    int SourceCacheMinutes,
+    int MaxSourceDelayMinutes,
     IReadOnlyList<CollectionsCompanyPaymentSummaryDto> Companies,
     IReadOnlyList<CollectionsPactContractRefDto> ContractsWithoutCompany);
 
 /// <summary>
-/// One (CompanyId, TenantId) summary. <c>status</c>: Available, NotFound,
-/// Unauthorized, InvalidResponse, Unavailable — amounts are null unless Available.
-/// <c>contracts</c> are the tenant's PACT contracts under this company; whether
-/// EDSM's figures cover exactly these is unconfirmed.
+/// One (companyID, tenantID). <c>businessModel</c> is <c>Owned</c> (4, 32) or
+/// <c>Rented</c> (25, 7, 20) and selects the field definitions. <c>status</c>:
+/// Available, NotSupported, BusinessRuleRejected, ValidationRejected,
+/// Unauthorized, InvalidResponse, Unavailable. <c>totalCheck</c> compares
+/// total with paid + due + outstanding (Consistent, Inconsistent, NotChecked).
 /// </summary>
 public sealed record CollectionsCompanyPaymentSummaryDto(
     int CompanyId,
+    string? CompanyName,
+    string? BusinessModel,
     string Status,
     string? StatusDetail,
-    string? Envelope,
     IReadOnlyList<CollectionsPactContractRefDto> Contracts,
-    CollectionsEdsmAmountDto? TotalAmount,
-    CollectionsEdsmAmountDto? PaidAmount,
-    CollectionsEdsmAmountDto? DueAmount,
-    CollectionsEdsmAmountDto? OutstandingAmount,
-    CollectionsEdsmAmountDto? LateFines);
+    IReadOnlyList<CollectionsEdsmFieldDto> Fields,
+    string TotalCheck,
+    bool AllZero,
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<CollectionsEdsmTransactionListDto> Transactions,
+    CollectionsEdsmDueInstallmentsDto? DueInstallments);
 
 /// <summary>
-/// One EDSM amount as received. <c>status</c>: Provided, Missing, Empty,
-/// Unreadable. <c>value</c> is null unless Provided — never a substituted zero;
-/// <c>raw</c> is EDSM's exact string.
+/// One payment-summary field, defined per business model from EDSM's source
+/// code. <c>status</c>: Provided, Missing, Empty, Unreadable,
+/// FormatNotConfigured. <c>value</c> is null unless Provided; <c>raw</c> is
+/// EDSM's string. <c>meaning</c> explains a blank late-fines value:
+/// <c>ZeroOrLess</c> (owned) or <c>NotComputedForRented</c>.
 /// </summary>
-public sealed record CollectionsEdsmAmountDto(string Status, decimal? Value, string? Raw);
+public sealed record CollectionsEdsmFieldDto(
+    string Key,
+    string Label,
+    string Definition,
+    string Status,
+    decimal? Value,
+    string? Raw,
+    string? Meaning);
 
-/// <summary>A PACT contract the summary was resolved through (display only).</summary>
-public sealed record CollectionsPactContractRefDto(string? ContractNumber, string ExternalUnitId, string? UnitNumber, string? ProjectName);
+/// <summary>Read-only payment-transactions for one type (Paid, Due, Outstanding). No totals are carried; see <c>caveat</c>.</summary>
+public sealed record CollectionsEdsmTransactionListDto(
+    string TransactionType,
+    string Status,
+    string? StatusDetail,
+    string? Caveat,
+    IReadOnlyList<CollectionsEdsmTransactionDto> Items);
+
+/// <summary>One transaction row: <c>amount</c> is EDSM's raw number rounded to 2 dp; <c>date</c> is null for opening-balance/contract rows.</summary>
+public sealed record CollectionsEdsmTransactionDto(
+    decimal? Amount,
+    string FormattedStatus,
+    string? FormattedRaw,
+    DateOnly? Date,
+    string? DateRaw,
+    string? ChequeNumber,
+    string? PaymentType);
+
+/// <summary>
+/// Due-installments for this tenant and company only, over [fromDate, toDate].
+/// <c>status</c>: Available, Disabled, NotSupported (company 20), or an EDSM
+/// failure. <c>sourceStatus</c> is EDSM's raw value — whether a row is unpaid is UNVERIFIED.
+/// </summary>
+public sealed record CollectionsEdsmDueInstallmentsDto(
+    string Status,
+    string? StatusDetail,
+    DateOnly FromDate,
+    DateOnly ToDate,
+    IReadOnlyList<CollectionsEdsmDueInstallmentDto> Items);
+
+public sealed record CollectionsEdsmDueInstallmentDto(
+    int? UnitId,
+    string? VoucherNumber,
+    string? ChequeNumber,
+    DateOnly? ChequeDueDate,
+    decimal? Amount,
+    string? SourceStatus);
+
+/// <summary>A PACT contract the account was resolved through (display only). <c>unitType</c> marks Parking units.</summary>
+public sealed record CollectionsPactContractRefDto(string? ContractNumber, string ExternalUnitId, string? UnitNumber, string? ProjectName, string? UnitType);

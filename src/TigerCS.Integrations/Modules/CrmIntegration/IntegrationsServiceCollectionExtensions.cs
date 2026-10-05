@@ -1,3 +1,4 @@
+using TigerCS.Application.Modules.Collections;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -79,7 +80,7 @@ public static class IntegrationsServiceCollectionExtensions
 
         AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);
-        AddEdsmPaymentSummary(services);
+        AddEdsmCollections(services, configuration);
         AddTasleehGateway(services, configuration);
         AddEmailSender(services, configuration);
 
@@ -181,32 +182,34 @@ public static class IntegrationsServiceCollectionExtensions
     }
 
     /// <summary>
-    /// EDSM payment summary — PACT's <c>v1/reports/payment-summary</c> on the
-    /// same <c>PactApi</c> base URL and key as the PACT lookup (registered by
-    /// <see cref="AddPactGateway"/>). "Unavailable" unless
-    /// <c>CollectionsSource:PaymentSummaryProvider</c> says otherwise.
+    /// EDSM's read-only Collections routes (payment-summary, payment-transactions 1-3,
+    /// due-installments) on the same <c>PactApi</c> base URL and key as the PACT lookup
+    /// (registered by <see cref="AddPactGateway"/>). "Unavailable" unless
+    /// <c>CollectionsSource:EdsmProvider</c> says otherwise.
     /// </summary>
-    private static void AddEdsmPaymentSummary(IServiceCollection services)
+    private static void AddEdsmCollections(IServiceCollection services, IConfiguration configuration)
     {
-        services.AddHttpClient<EdsmPaymentSummaryHttpGateway>((sp, client) =>
+        services.Configure<CollectionsEdsmOptions>(configuration.GetSection(CollectionsEdsmOptions.SectionName));
+        services.AddHttpClient<EdsmCollectionsHttpGateway>((sp, client) =>
         {
             if (sp.GetRequiredService<IOptions<PactApiOptions>>().Value.ResolveBaseAddress() is { } baseAddress)
             {
                 client.BaseAddress = baseAddress;
             }
 
-            client.Timeout = TimeSpan.FromSeconds(15);
+            // EDSM allows each stored procedure 360 s (contract §1); TigerCS will not hold a page that long.
+            client.Timeout = TimeSpan.FromSeconds(30);
         });
-        services.AddScoped<UnavailableEdsmPaymentSummaryGateway>();
-        services.AddScoped<FixtureEdsmPaymentSummaryGateway>();
-        services.AddScoped<IEdsmPaymentSummaryGateway>(sp =>
-            sp.GetRequiredService<IOptions<CollectionsSourceOptions>>().Value.PaymentSummaryProvider switch
+        services.AddScoped<UnavailableEdsmCollectionsGateway>();
+        services.AddScoped<FixtureEdsmCollectionsGateway>();
+        services.AddScoped<IEdsmCollectionsGateway>(sp =>
+            sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value.EdsmProvider switch
             {
-                var p when string.Equals(p, "Pact", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<EdsmPaymentSummaryHttpGateway>(),
-                var p when string.Equals(p, "Fixture", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<FixtureEdsmPaymentSummaryGateway>(),
-                var p when string.Equals(p, "Unavailable", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<UnavailableEdsmPaymentSummaryGateway>(),
+                var p when string.Equals(p, "Pact", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<EdsmCollectionsHttpGateway>(),
+                var p when string.Equals(p, "Fixture", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<FixtureEdsmCollectionsGateway>(),
+                var p when string.Equals(p, "Unavailable", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<UnavailableEdsmCollectionsGateway>(),
                 var p => throw new NotSupportedException(
-                    $"CollectionsSource:PaymentSummaryProvider '{p}' is not supported. Use \"Unavailable\", \"Pact\" (or \"Fixture\" in Development/Testing).")
+                    $"CollectionsSource:EdsmProvider '{p}' is not supported. Use \"Unavailable\", \"Pact\" (or \"Fixture\" in Development/Testing).")
             });
     }
 

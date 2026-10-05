@@ -59,17 +59,31 @@ public sealed class CustomerPaymentPanel
     public static bool HasPaymentSource(string customerKey, long? crmCustomerId) => crmCustomerId is not null || IsPactCustomer(customerKey);
 
     /// <summary>
-    /// An EDSM amount exactly as far as it is known: the parsed number (no
-    /// currency — EDSM states none), or why there is none. Never "0.00" for
-    /// a value that was not provided.
+    /// An EDSM summary field exactly as far as it is known: EDSM's own formatted
+    /// string when it was read, or why there is none. Never "0.00" for a value
+    /// that was not provided; a blank late-fines value is explained per business model.
     /// </summary>
-    public static string EdsmAmount(CollectionsEdsmAmountDto? amount) => amount switch
+    public static string EdsmField(CollectionsEdsmFieldDto field) => field switch
     {
-        null => "Unavailable",
-        { Status: "Provided", Value: { } v } => v.ToString("N2", CultureInfo.InvariantCulture),
+        { Status: "Provided", Raw: { } raw } => raw.Trim(),
+        { Meaning: "ZeroOrLess" } => "None above zero",
+        { Meaning: "NotComputedForRented" } => "Not computed for rented companies",
         { Status: "Missing" } => "Not provided",
         { Status: "Empty" } => "Blank in EDSM",
+        { Status: "FormatNotConfigured" } => "Not read (EDSM number format not configured)",
         _ => "Not readable"
+    };
+
+    public static string EdsmStatusText(string status) => status switch
+    {
+        "NotSupported" => "EDSM does not support this company",
+        "BusinessRuleRejected" => "EDSM refused the request",
+        "ValidationRejected" => "EDSM rejected the request parameters",
+        "Unauthorized" => "EDSM rejected TigerCS's credentials",
+        "InvalidResponse" => "EDSM's response could not be read",
+        "Disabled" => "Not enabled",
+        "NotMatchable" => "Cannot be matched",
+        _ => "EDSM is unavailable"
     };
     public CollectionsAccountDto? SelectedAccount { get; init; }
 

@@ -279,26 +279,33 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task APactCustomer_ShowsEdsmSummaryFieldsAsReported_NeverZeroForMissingValues()
+    public async Task APactCustomer_ShowsEdsmFiguresPerCompanyAndModel_NeverZeroForMissingValues()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
         var requests = string.Join("\n", _api.Requests);
 
         Assert.Contains("data-payment-state=\"EdsmSummary\"", html, StringComparison.Ordinal);
         Assert.Contains("/api/collections/customers/by-key/ext%3APact%3A3001/payment-summary", requests, StringComparison.Ordinal);
-        Assert.Contains("1,250,000.00", html, StringComparison.Ordinal);
-        Assert.Contains("437,500.00", html, StringComparison.Ordinal);
-        Assert.Matches(new Regex("data-edsm-field=\"Paid amount\" data-edsm-amount-status=\"Missing\">\\s*<dt>Paid amount</dt>\\s*<dd>\\s*Not provided"), html);
-        Assert.Matches(new Regex("data-edsm-field=\"Late fines\" data-edsm-amount-status=\"Empty\">\\s*<dt>Late fines</dt>\\s*<dd>\\s*Blank in EDSM"), html);
-        Assert.Contains("Not readable", html, StringComparison.Ordinal);
-        Assert.Contains("1,500.00", html, StringComparison.Ordinal);           // the raw string, shown as received
+        Assert.Contains("data-edsm-company=\"4\" data-edsm-model=\"Owned\"", html, StringComparison.Ordinal);
+        Assert.Contains("Tiger Group Dubai · owned (sale)", html, StringComparison.Ordinal);
+        Assert.Contains("Hirmas Dubai · rented (lease)", html, StringComparison.Ordinal);
+        Assert.Contains("1,250,000.00", html, StringComparison.Ordinal);                 // EDSM's own formatted string
+        Assert.Contains("Definition of Total.", html, StringComparison.Ordinal);
+        Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<dt>Paid.*?</dt>\\s*<dd>\\s*Not provided", RegexOptions.Singleline), html);
+        Assert.Contains("None above zero", html, StringComparison.Ordinal);               // owned blank fine
+        Assert.Contains("Not computed for rented companies", html, StringComparison.Ordinal);
+        Assert.Contains("-500.00", html, StringComparison.Ordinal);                      // rented due may be negative
+        Assert.Contains("EDSM sent “1.500,00”", html, StringComparison.Ordinal);
         Assert.DoesNotContain(">0.00", html, StringComparison.Ordinal);
-        Assert.DoesNotContain("AED", html, StringComparison.Ordinal);           // EDSM states no currency
-        Assert.Contains("data-currency-unstated", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM gives no as-of time", html, StringComparison.Ordinal);
-        Assert.Contains("data-definitions-unconfirmed", html, StringComparison.Ordinal);
-        Assert.Contains("data-edsm-company=\"2\" data-edsm-status=\"Unavailable\"", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM payment summary timed out.", html, StringComparison.Ordinal);
+        Assert.Contains("AED <small class=\"field-hint\">(configured in TigerCS — EDSM returns no currency)</small>", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM returns no as-of time", html, StringComparison.Ordinal);
+        Assert.Contains("up to about 20 minutes", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-transactions=\"Paid\"", html, StringComparison.Ordinal);
+        Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
+        Assert.Contains("Whether a row is still unpaid is not confirmed.", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-company=\"7\" data-edsm-model=\"Rented\" data-edsm-status=\"Unauthorized\"", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
         Assert.Contains("data-detail-unavailable", html, StringComparison.Ordinal);
         Assert.DoesNotContain("handler=SendReminder", html, StringComparison.Ordinal);
         Assert.DoesNotContain("/outstanding", requests, StringComparison.Ordinal);
@@ -352,15 +359,36 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         private static readonly CustomerDirectoryProfileDto PactCustomer = new(
             "ext:Pact:3001", "External", "Fatima Noor", ["+971500000002"], [], "Pact", null, "Pact", "3001", 0, 1, Now.AddDays(-30), Now.AddDays(-1), 8, [], [], []);
 
-        private static readonly CollectionsPactContractRefDto Contract = new("88001", "41230", "0304", "Tiger Marina Residences");
+        private static readonly CollectionsPactContractRefDto Contract = new("88001", "41230", "0304", "Tiger Marina Residences", "Residential");
+
+        private static CollectionsEdsmFieldDto F(string key, string label, string status, decimal? value, string? raw, string? meaning = null) =>
+            new(key, label, $"Definition of {label}.", status, value, raw, meaning);
 
         private static CollectionsPaymentSummaryResponseDto Summary() => new(
-            "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, null, false, false, false,
+            "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, "AED", "Configured", "en-US", 10, 20,
             [
-                new CollectionsCompanyPaymentSummaryDto(1, "Available", null, "data", [Contract],
-                    new("Provided", 1_250_000m, "1250000.00"), new("Missing", null, null), new("Unreadable", null, "1,500.00"),
-                    new("Provided", 437_500m, "437500.00"), new("Empty", null, "")),
-                new CollectionsCompanyPaymentSummaryDto(2, "Unavailable", "EDSM payment summary timed out.", null, [], null, null, null, null, null),
+                new CollectionsCompanyPaymentSummaryDto(4, "Tiger Group Dubai", "Owned", "Available", null, [Contract],
+                [
+                    F("paidAmount", "Paid", "Missing", null, null),
+                    F("dueAmount", "Due", "Unreadable", null, "1.500,00"),
+                    F("outstandingAmount", "Not yet due", "Provided", 437_500m, "437,500.00"),
+                    F("lateFines", "Late fines", "Empty", null, "", "ZeroOrLess"),
+                    F("totalAmount", "Total", "Provided", 1_250_000m, "1,250,000.00"),
+                ], "NotChecked", false, [],
+                [
+                    new CollectionsEdsmTransactionListDto("Paid", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(500_000m, "Provided", "500,000.00", new DateOnly(2026, 1, 15), "15-Jan-2026", null, null)]),
+                ],
+                new CollectionsEdsmDueInstallmentsDto("Available", null, new DateOnly(2026, 9, 4), new DateOnly(2026, 11, 5),
+                    [new CollectionsEdsmDueInstallmentDto(41230, "PDC-0412", "000412", new DateOnly(2026, 9, 15), 62_500m, "Due ")])),
+                new CollectionsCompanyPaymentSummaryDto(25, "Hirmas Dubai", "Rented", "Available", null, [],
+                [
+                    F("dueAmount", "Due", "Provided", -500m, "-500.00"),
+                    F("lateFines", "Late fines", "Empty", null, "", "NotComputedForRented"),
+                ], "NotChecked", false, [],
+                [new CollectionsEdsmTransactionListDto("Paid", "Available", null, "Refunds appear in this list as positive payments.", [])], null),
+                new CollectionsCompanyPaymentSummaryDto(7, "Alsabeel Sharjah", "Rented", "Unauthorized", "EDSM rejected the configured API key.", [], [],
+                    "NotChecked", false, [], [], null),
             ],
             []);
 

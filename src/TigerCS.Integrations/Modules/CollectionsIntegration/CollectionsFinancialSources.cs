@@ -1,3 +1,4 @@
+using TigerCS.Application.Modules.Collections;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Services;
@@ -17,16 +18,6 @@ public sealed class CollectionsSourceOptions
     public const string SectionName = "CollectionsSource";
 
     public string Provider { get; set; } = "Unavailable";
-
-    /// <summary>
-    /// EDSM payment summary (PACT <c>v1/reports/payment-summary</c>):
-    /// "Unavailable" (default), "Pact" (the real call, needs the PactApi
-    /// section) or "Fixture" (Development/Testing only).
-    /// </summary>
-    public string PaymentSummaryProvider { get; set; } = "Unavailable";
-
-    /// <summary>Accepted amount-string format; widen only once EDSM confirms its formatting.</summary>
-    public EdsmAmountFormat PaymentSummaryAmountFormat { get; set; } = EdsmAmountFormat.PlainInvariant;
 }
 
 public static class CollectionsSourceSafety
@@ -34,8 +25,8 @@ public static class CollectionsSourceSafety
     public static readonly IReadOnlyCollection<string> FixtureAllowedEnvironments = ["Development", "Testing"];
 
     /// <summary>True when fixture balances would be served outside Development/Testing.</summary>
-    public static bool IsUnsafe(CollectionsSourceOptions options, string environmentName) =>
-        IsUnsafe(options.Provider, environmentName) || IsUnsafe(options.PaymentSummaryProvider, environmentName);
+    public static bool IsUnsafe(CollectionsSourceOptions options, CollectionsEdsmOptions edsm, string environmentName) =>
+        IsUnsafe(options.Provider, environmentName) || IsUnsafe(edsm.EdsmProvider, environmentName);
 
     public static bool IsUnsafe(string? provider, string environmentName) =>
         string.Equals(provider, "Fixture", StringComparison.OrdinalIgnoreCase)
