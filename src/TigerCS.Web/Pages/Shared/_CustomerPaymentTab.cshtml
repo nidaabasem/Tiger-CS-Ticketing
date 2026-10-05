@@ -10,7 +10,7 @@
     var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
 }
 
-<div class="payment-tab" data-payment-state="@panel.State" data-payment-account="@account?.AccountId">
+<div class="payment-tab" data-payment-state="@panel.State" data-payment-account="@(account?.AccountId ?? panel.SelectedCompanyId?.ToString(System.Globalization.CultureInfo.InvariantCulture))">
     @if (!string.IsNullOrEmpty(panel.Notice))
     {
         <div class="alert @(panel.NoticeIsError ? "alert-error" : "alert-success")" role="@(panel.NoticeIsError ? "alert" : "status")">
@@ -39,7 +39,7 @@
             break;
 
         case PaymentPanelState.EdsmSummary:
-            <partial name="_EdsmPaymentSummary" model="panel.PaymentSummary" />
+            <partial name="_EdsmPaymentSummary" model="panel" />
             break;
 
         case PaymentPanelState.NoAccounts:

@@ -402,34 +402,40 @@ The tab handles these states: loading, select account, loaded, settled, stale,
 forbidden, disabled, not a CRM customer, no accounts, and **unavailable**
 (no figures and a retry link, never zero).
 
-**PACT customers** (`ext:Pact:{tenantID}`) get the **EDSM view** instead of
-the account view:
-- **Header:** source, PACT tenant, retrieval time (labelled "EDSM returns no
-  as-of time"), and currency "AED (configured in TigerCS — EDSM returns no
-  currency)".
-- **Delay notice:** EDSM caches its figures, so a recent payment can take up to
-  about 20 minutes to appear, and refreshing does not bypass the cache.
-- **One block per company:**
-  - the company name and model (owned/sale or rented/lease), plus the PACT
-    contracts that confirmed it (unit type shown, so Parking is visible);
-  - the five fields with the **model's own labels and definitions**, EDSM's
-    formatted strings, and explicit text for blank, missing, unreadable or
-    not-configured values ("None above zero" for an owned blank late fine,
-    "Not computed for rented companies" for rented);
-  - notes for a total that doesn't add up, or an all-zero result;
-  - the read-only Payments, Due items and Not yet due / Post-dated cheques
-    lists, with the rented caveats;
-  - due-installments when enabled, with raw EDSM status.
-- **Failures:** a failing company shows only its own error (for example
-  "EDSM rejected TigerCS's credentials").
-- **Not offered:** Send Reminder and reminder history.
+**PACT customers** (`ext:Pact:{tenantID}`) get the **EDSM view**, laid out
+like the account view:
+- **Account selector:** a compact selector for the verified (company · tenant)
+  pairs, with the currency (configured), source and retrieval time. Below it,
+  a one-line delay notice: payments can take about 20 minutes to appear.
+- **Contracts:** the contracts the pair covers, with the note "one figure set
+  for this company and tenant, not a balance per unit".
+- **Amount cards:** **Paid · Due · Not yet due / Post-dated cheques · Late
+  fines · Total**, using EDSM's own strings with the configured currency. A
+  value that isn't available says why, e.g. "None above zero", "Not computed
+  for rented companies", "Not provided", or "Not read (EDSM number format not
+  configured)".
+- **Send Reminder:** shown disabled, with the reason.
+- **Tables:** the Payments, Due items and Not yet due / Post-dated cheques
+  tables (date, amount, type, cheque), with the rented caveats. The EDSM
+  due-installments table appears when that read is enabled.
+- **Expandable "Definitions and source details":** the owned or rented field
+  definitions, EDSM's raw string for any value that wasn't read, the currency
+  and no-as-of-time notes, the tenant/company, the mapping confirmation and
+  the number format.
 
-| EDSM summary view | |
+**CRM customers** with no financial source show the explicit NotMapped
+message, with reminder history below it.
+
+EDSM view. **Fixture data** from the stand-in API, not real EDSM:
+
+| | |
 |---|---|
-| Two companies, all amount states | ![](screenshots/12-edsm-summary.png) |
-| One company's summary unavailable | ![](screenshots/13-edsm-summary-company-unavailable.png) |
-| PACT unreachable | ![](screenshots/14-edsm-summary-unavailable.png) |
-| Phone width | ![](screenshots/15-edsm-summary-mobile.png) |
+| Owned company: amount cards, contracts, tables, disabled Send Reminder | ![](screenshots/16-edsm-owned-desktop.png) |
+| Rented company selected, definitions expanded | ![](screenshots/17-edsm-rented-details-desktop.png) |
+| Phone width | ![](screenshots/18-edsm-owned-mobile.png) |
+| CRM customer: explicit NotMapped | ![](screenshots/19-crm-not-mapped.png) |
+| EDSM/PACT unavailable | ![](screenshots/20-edsm-unavailable.png) |
+| Loading | ![](screenshots/21-loading.png) |
 
 Screenshots of the account view (real TigerCS.Web against responses captured
 from the real API with the fixture source):

@@ -1,3 +1,4 @@
+using System.Globalization;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services.Api;
@@ -21,7 +22,7 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         if (crmCustomerId is not { } customer)
         {
             return CustomerPaymentPanel.IsPactCustomer(customerKey)
-                ? await LoadEdsmSummaryAsync(customerKey, notice, noticeIsError, cancellationToken)
+                ? await LoadEdsmSummaryAsync(customerKey, accountId, notice, noticeIsError, cancellationToken)
                 : new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer };
         }
 
@@ -117,7 +118,8 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
     }
 
     /// <summary>A PACT customer: EDSM's summary is all there is — never instalments, transactions or reminders.</summary>
-    private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(string customerKey, string? notice, bool noticeIsError, CancellationToken cancellationToken)
+    private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(
+        string customerKey, string? companyId, string? notice, bool noticeIsError, CancellationToken cancellationToken)
     {
         var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
         var state = summary.Outcome switch
@@ -135,6 +137,11 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             CustomerKey = customerKey,
             State = state,
             PaymentSummary = state == PaymentPanelState.EdsmSummary ? summary.Value : null,
+            // The "account" of an EDSM view is a confirmed company (with its tenant); default to the first.
+            SelectedCompanyId = state == PaymentPanelState.EdsmSummary
+                ? summary.Value!.Companies.FirstOrDefault(c => c.CompanyId.ToString(CultureInfo.InvariantCulture) == companyId)?.CompanyId
+                    ?? summary.Value.Companies.FirstOrDefault()?.CompanyId
+                : null,
             Notice = notice,
             NoticeIsError = noticeIsError
         };
