@@ -506,7 +506,8 @@ Authorization: Bearer {access_token}
   - `date` is parsed from `dateRaw` (`dd-MMM-yyyy`), and is null for
     opening-balance and contract rows;
   - `paymentType` is `Cash`, `Cheque`, `Fees`, `Opening balance` or
-    `Contract amount`, and is always null for owned companies.
+    `Current contract amount` (EDSM `PaymentTypeEnum`), and is always null for owned companies;
+  - `paymentTypeId` is EDSM's raw id (1–5), or null when EDSM sent none.
 
 ### 4.1 Owned: Paid / Due / Outstanding (Fixture)
 
@@ -540,7 +541,8 @@ Authorization: Bearer {access_token}
       "date": "2026-01-15",
       "dateRaw": "15-Jan-2026",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     },
     {
       "amount": 312500,
@@ -549,7 +551,8 @@ Authorization: Bearer {access_token}
       "date": "2026-06-15",
       "dateRaw": "15-Jun-2026",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     }
   ]
 }
@@ -585,7 +588,8 @@ Authorization: Bearer {access_token}
       "date": "2026-09-15",
       "dateRaw": "15-Sep-2026",
       "chequeNumber": "000412",
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     }
   ]
 }
@@ -621,7 +625,8 @@ Authorization: Bearer {access_token}
       "date": "2026-12-15",
       "dateRaw": "15-Dec-2026",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     },
     {
       "amount": 187500,
@@ -630,7 +635,8 @@ Authorization: Bearer {access_token}
       "date": "2027-03-15",
       "dateRaw": "15-Mar-2027",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     }
   ]
 }
@@ -668,7 +674,8 @@ Authorization: Bearer {access_token}
       "date": "2026-02-01",
       "dateRaw": "01-Feb-2026",
       "chequeNumber": "100201",
-      "paymentType": "Cheque"
+      "paymentType": "Cheque",
+      "paymentTypeId": 2
     }
   ]
 }
@@ -704,7 +711,8 @@ Authorization: Bearer {access_token}
       "date": "2026-03-01",
       "dateRaw": "01-Mar-2026",
       "chequeNumber": null,
-      "paymentType": "Fees"
+      "paymentType": "Fees",
+      "paymentTypeId": 3
     }
   ]
 }
@@ -740,7 +748,8 @@ Authorization: Bearer {access_token}
       "date": "2026-12-01",
       "dateRaw": "01-Dec-2026",
       "chequeNumber": "100205",
-      "paymentType": "Cheque"
+      "paymentType": "Cheque",
+      "paymentTypeId": 2
     }
   ]
 }

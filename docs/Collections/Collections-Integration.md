@@ -415,9 +415,18 @@ like the account view:
   for rented companies", "Not provided", or "Not read (EDSM number format not
   configured)".
 - **Send Reminder:** shown disabled, with the reason.
-- **Tables:** the Payments, Due items and Not yet due / Post-dated cheques
-  tables (date, amount, type, cheque), with the rented caveats. The EDSM
-  due-installments table appears when that read is enabled.
+- **Payment details:** one table, **# | Date | Status | Payment Type | Amount
+  | Cheque Number**, built from EDSM's read-only Paid, Due and Outstanding
+  lists (types 1–3) and ordered by date.
+  - **Status** is the list a row came from, shown as a badge with its text:
+    Paid (green), Due (red), Outstanding (amber).
+  - **Payment Type** is EDSM's `paymentTypeId` mapped to its documented
+    `PaymentTypeEnum` name (1 Cash, 2 Cheque, 3 Fees, 4 Opening balance,
+    5 Current contract amount). A missing id shows "Not provided", which is
+    always the case for owned companies. It is never inferred from the
+    status or the cheque number.
+  - The rented caveats are listed under the table. The EDSM due-installments
+    table appears when that read is enabled.
 - **Expandable "Definitions and source details":** the owned or rented field
   definitions, EDSM's raw string for any value that wasn't read, the currency
   and no-as-of-time notes, the tenant/company, the mapping confirmation and
@@ -681,7 +690,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-01-15",
               "dateRaw": "15-Jan-2026",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             },
             {
               "amount": 312500,
@@ -690,7 +700,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-06-15",
               "dateRaw": "15-Jun-2026",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             }
           ]
         },
@@ -707,7 +718,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-09-15",
               "dateRaw": "15-Sep-2026",
               "chequeNumber": "000412",
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             }
           ]
         },
@@ -724,7 +736,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-12-15",
               "dateRaw": "15-Dec-2026",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             },
             {
               "amount": 187500,
@@ -733,7 +746,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2027-03-15",
               "dateRaw": "15-Mar-2027",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             }
           ]
         }
@@ -842,7 +856,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-02-01",
               "dateRaw": "01-Feb-2026",
               "chequeNumber": "100201",
-              "paymentType": "Cheque"
+              "paymentType": "Cheque",
+              "paymentTypeId": 2
             }
           ]
         },
@@ -859,7 +874,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-03-01",
               "dateRaw": "01-Mar-2026",
               "chequeNumber": null,
-              "paymentType": "Fees"
+              "paymentType": "Fees",
+              "paymentTypeId": 3
             }
           ]
         },
@@ -876,7 +892,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-12-01",
               "dateRaw": "01-Dec-2026",
               "chequeNumber": "100205",
-              "paymentType": "Cheque"
+              "paymentType": "Cheque",
+              "paymentTypeId": 2
             }
           ]
         }
