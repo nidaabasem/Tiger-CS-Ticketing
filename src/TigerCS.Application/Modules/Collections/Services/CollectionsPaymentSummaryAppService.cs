@@ -415,16 +415,19 @@ public sealed class CollectionsPaymentSummaryAppService(
 
     private static CollectionsEdsmTransactionDto ToDto(EdsmTransaction t) => new(
         t.Amount, t.FormattedAmount.Status.ToString(), t.FormattedAmount.Raw, t.Date, string.IsNullOrEmpty(t.DateRaw) ? null : t.DateRaw,
-        t.ChequeNumber, t.PaymentTypeId switch
-        {
-            1 => "Cash",
-            2 => "Cheque",
-            3 => "Fees",
-            4 => "Opening balance",
-            5 => "Contract amount",
-            null => null,
-            var other => other.Value.ToString(CultureInfo.InvariantCulture)
-        });
+        t.ChequeNumber, PaymentTypeName(t.PaymentTypeId), t.PaymentTypeId);
+
+    /// <summary>EDSM's <c>PaymentTypeEnum</c> (contract §5.3). Never inferred from the list or the cheque number.</summary>
+    public static string? PaymentTypeName(int? paymentTypeId) => paymentTypeId switch
+    {
+        1 => "Cash",
+        2 => "Cheque",
+        3 => "Fees",
+        4 => "Opening balance",
+        5 => "Current contract amount",
+        null => null,
+        var other => $"Unknown ({other.Value.ToString(CultureInfo.InvariantCulture)})"
+    };
 
     private async Task<CollectionsEdsmDueInstallmentsDto?> DueInstallmentsAsync(EdsmCompany company, long tenantId, CancellationToken cancellationToken)
     {

@@ -9,7 +9,6 @@
     string Amount(decimal? a) => a is { } v ? $"{currency} {v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}" : "—";
     TigerCS.Application.Modules.Collections.Dto.CollectionsEdsmFieldDto? Field(string key) => company?.Fields.FirstOrDefault(f => f.Key == key);
     var rented = company?.BusinessModel == "Rented";
-    var listTitle = new Dictionary<string, string> { ["Paid"] = "Payments", ["Due"] = "Due items", ["Outstanding"] = rented ? "Post-dated cheques" : "Not yet due" };
     var sourceLabel = summary?.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : summary?.Source == "Pact" ? "EDSM" : summary?.Source;
 }
 
@@ -112,29 +111,44 @@
                     </div>
                 </div>
 
-                @foreach (var list in company.Transactions)
+                @if (company.Transactions.Count > 0)
                 {
-                    <h3 class="payment-section-title" data-edsm-transactions="@list.TransactionType">@(listTitle.GetValueOrDefault(list.TransactionType, list.TransactionType))</h3>
-                    @if (list.Status != "Available")
+                    // One table across EDSM's read-only lists. Status = the list a row came from;
+                    // Payment Type = EDSM's paymentTypeId, never inferred from the status or cheque.
+                    var order = new[] { "Paid", "Due", "Outstanding" };
+                    var rows = company.Transactions
+                        .Where(l => l.Status == "Available")
+                        .SelectMany(l => l.Items.Select(item => (Status: l.TransactionType, Item: item)))
+                        .OrderBy(r => r.Item.Date is null)
+                        .ThenBy(r => r.Item.Date)
+                        .ThenBy(r => Array.IndexOf(order, r.Status))
+                        .ToList();
+                    var failed = company.Transactions.Where(l => l.Status != "Available").ToList();
+
+                    <h3 class="payment-section-title" data-edsm-payment-details>Payment details</h3>
+                    @foreach (var list in failed)
                     {
-                        <p class="field-hint">@CustomerPaymentPanel.EdsmStatusText(list.Status).</p>
+                        <p class="field-hint" data-edsm-list-unavailable="@list.TransactionType">@list.TransactionType rows: @CustomerPaymentPanel.EdsmStatusText(list.Status).</p>
                     }
-                    else if (list.Items.Count == 0)
+                    @if (rows.Count == 0)
                     {
-                        <div class="empty-state empty-state--compact"><p>None reported by EDSM.</p></div>
+                        <div class="empty-state empty-state--compact"><p>@(failed.Count == company.Transactions.Count ? "Payment details could not be read from EDSM." : "No payments, due items or outstanding items reported by EDSM.")</p></div>
                     }
                     else
                     {
                         <div class="table-scroll">
-                            <table class="data-table">
-                                <thead><tr><th>Date</th><th class="col-num">Amount</th><th>Type</th><th>Cheque</th></tr></thead>
+                            <table class="data-table edsm-payment-details">
+                                <thead><tr><th class="col-num">#</th><th>Date</th><th>Status</th><th>Payment Type</th><th class="col-num">Amount</th><th>Cheque Number</th></tr></thead>
                                 <tbody>
-                                    @foreach (var row in list.Items)
+                                    @for (var n = 0; n < rows.Count; n++)
                                     {
-                                        <tr>
+                                        var (status, row) = rows[n];
+                                        <tr data-edsm-row-status="@status" data-edsm-payment-type-id="@row.PaymentTypeId">
+                                            <td class="col-num">@(n + 1)</td>
                                             <td>@(row.Date is { } d ? CustomerPaymentPanel.Date(d) : row.DateRaw ?? "—")</td>
+                                            <td><span class="badge badge-pay-@(status switch { "Paid" => "ok", "Due" => "critical", _ => "pending" })">@status</span></td>
+                                            <td>@(row.PaymentType ?? "Not provided")</td>
                                             <td class="col-num">@(row.FormattedStatus == "Provided" ? $"{currency} {row.FormattedRaw!.Replace(" AED", "", StringComparison.Ordinal)}" : Amount(row.Amount))</td>
-                                            <td>@(row.PaymentType ?? "—")</td>
                                             <td class="text-mono">@(row.ChequeNumber ?? "—")</td>
                                         </tr>
                                     }
@@ -142,9 +156,9 @@
                             </table>
                         </div>
                     }
-                    @if (list.Caveat is not null)
+                    @foreach (var list in company.Transactions.Where(l => l.Caveat is not null))
                     {
-                        <p class="field-hint" data-edsm-caveat>@list.Caveat</p>
+                        <p class="field-hint" data-edsm-caveat>@list.TransactionType: @list.Caveat</p>
                     }
                 }
 
@@ -201,6 +215,7 @@
                         {
                             <span data-mapping-verified="@summary.MappingSource"> Accounts confirmed through PACT contracts @verified.ToLocalTime().ToString("d MMM yyyy HH:mm")@(summary.MappingSource == "Cached" ? " (reused)" : "").</span>
                         }</li>
+                        <li>Payment details: Status is the EDSM list a row came from (Paid, Due, Outstanding@(rented ? " = post-dated cheques" : " = not yet due")). Payment Type is EDSM's paymentTypeId (1 Cash, 2 Cheque, 3 Fees, 4 Opening balance, 5 Current contract amount); "Not provided" means EDSM sent none, which is always the case for owned companies.</li>
                         <li>Number format: @(summary.NumberCulture ?? "not configured (CollectionsSource:EdsmNumberCulture), so amounts are not read").</li>
                         @if (company.DueInstallments is { Status: not "Available" } di)
                         {

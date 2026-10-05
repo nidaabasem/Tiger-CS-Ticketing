@@ -49,6 +49,8 @@
     --color-warning: #B4681A;                     /* warning / SLA approaching */
     --color-warning-tint: rgba(180, 104, 26, 0.10);
     --color-warning-line: #EFD8BC;
+    --color-success-text: #256641;                /* success text on the pale tint, AA for small bold text (6.0:1) */
+    --color-warning-text: #8A4D10;                /* warning text on the warning tint, AA for small bold text (5.9:1) */
     --color-critical: #C0342B;                    /* SLA breached / critical */
     --color-critical-pale: #FBEAE8;
     --color-critical-line: #EFC6C1;
@@ -1964,6 +1966,9 @@ a.badge:hover { text-decoration: underline; }
 .badge-pay-pending { background: var(--color-warning-tint); border-color: var(--color-warning-line); color: var(--color-warning); }
 .badge-pay-progress { background: var(--color-progress-tint); border-color: var(--color-progress-line); color: var(--color-progress); }
 .badge-pay-neutral { background: var(--color-bg); border-color: var(--color-border); color: var(--color-text-secondary); }
+/* Payment details status badges: same pale backgrounds, darker text so the 12px label meets WCAG AA. */
+.edsm-payment-details .badge-pay-ok { color: var(--color-success-text); }
+.edsm-payment-details .badge-pay-pending { color: var(--color-warning-text); }
 
 /* ---- Responsive ------------------------------------------------------- */
 

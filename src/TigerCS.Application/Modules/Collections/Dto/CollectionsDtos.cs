@@ -342,7 +342,12 @@ public sealed record CollectionsEdsmTransactionListDto(
     string? Caveat,
     IReadOnlyList<CollectionsEdsmTransactionDto> Items);
 
-/// <summary>One transaction row: <c>amount</c> is EDSM's raw number rounded to 2 dp; <c>date</c> is null for opening-balance/contract rows.</summary>
+/// <summary>
+/// One transaction row: <c>amount</c> is EDSM's raw number rounded to 2 dp; <c>date</c> is null for opening-balance/contract rows.
+/// <c>paymentTypeId</c> is EDSM's raw <c>paymentTypeId</c> (null when EDSM sent none — always for owned companies);
+/// <c>paymentType</c> is its documented <c>PaymentTypeEnum</c> name: 1 Cash, 2 Cheque, 3 Fees, 4 Opening balance,
+/// 5 Current contract amount; any other id is "Unknown (n)".
+/// </summary>
 public sealed record CollectionsEdsmTransactionDto(
     decimal? Amount,
     string FormattedStatus,
@@ -350,7 +355,8 @@ public sealed record CollectionsEdsmTransactionDto(
     DateOnly? Date,
     string? DateRaw,
     string? ChequeNumber,
-    string? PaymentType);
+    string? PaymentType,
+    int? PaymentTypeId = null);
 
 /// <summary>
 /// Due-installments for this tenant and company only, over [fromDate, toDate].

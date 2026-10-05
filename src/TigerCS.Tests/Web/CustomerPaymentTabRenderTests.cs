@@ -345,8 +345,14 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("data-mapping-verified=\"Cached\"", details, StringComparison.Ordinal);
 
         // Transactions and EDSM due-installments as tables; Send Reminder present but unavailable.
-        Assert.Contains("data-edsm-transactions=\"Paid\">Payments</h3>", html, StringComparison.Ordinal);
-        Assert.Contains("AED 500,000.00", html, StringComparison.Ordinal);
+        // Unified Payment details: Status (source list, badge) and Payment Type (EDSM paymentTypeId) side by side.
+        Assert.Contains("data-edsm-payment-details>Payment details</h3>", html, StringComparison.Ordinal);
+        Assert.Contains("<th class=\"col-num\">#</th><th>Date</th><th>Status</th><th>Payment Type</th><th class=\"col-num\">Amount</th><th>Cheque Number</th>", html, StringComparison.Ordinal);
+        var table = html[html.IndexOf("edsm-payment-details", StringComparison.Ordinal)..html.IndexOf("</table>", html.IndexOf("edsm-payment-details", StringComparison.Ordinal), StringComparison.Ordinal)];
+        Assert.Matches(new Regex("<td class=\"col-num\">1</td>\\s*<td>15 Jan 2026</td>\\s*<td><span class=\"badge badge-pay-ok\">Paid</span></td>\\s*<td>Not provided</td>\\s*<td class=\"col-num\">AED 500,000.00</td>"), table);
+        Assert.Matches(new Regex("<td class=\"col-num\">2</td>\\s*<td>15 Sep 2026</td>\\s*<td><span class=\"badge badge-pay-critical\">Due</span></td>\\s*<td>Not provided</td>\\s*<td class=\"col-num\">AED 62,500.00</td>\\s*<td class=\"text-mono\">000412</td>"), table);
+        Assert.Matches(new Regex("<td class=\"col-num\">3</td>\\s*<td>15 Dec 2026</td>\\s*<td><span class=\"badge badge-pay-pending\">Outstanding</span></td>"), table);
+        Assert.DoesNotContain("<td>Cheque</td>", table, StringComparison.Ordinal);   // never inferred from a cheque number
         Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
         Assert.Contains("whether a row is still unpaid is not confirmed", html, StringComparison.Ordinal);
         Assert.Contains("<button type=\"button\" class=\"btn btn-sm\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
@@ -368,6 +374,9 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("<strong>Not computed for rented companies</strong>", html, StringComparison.Ordinal);
         Assert.Contains("<span>Post-dated cheques</span>", html, StringComparison.Ordinal);
         Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.Matches(new Regex("data-edsm-row-status=\"Paid\" data-edsm-payment-type-id=\"2\">[\\s\\S]*?badge-pay-ok\">Paid</span></td>\\s*<td>Cheque</td>"), html);
+        Assert.Matches(new Regex("data-edsm-row-status=\"Due\" data-edsm-payment-type-id=\"3\">[\\s\\S]*?badge-pay-critical\">Due</span></td>\\s*<td>Fees</td>\\s*<td class=\"col-num\">AED 1,000.00</td>"), html);
+        Assert.Contains("data-edsm-list-unavailable=\"Outstanding\"", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -451,6 +460,10 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                 [
                     new CollectionsEdsmTransactionListDto("Paid", "Available", null, null,
                         [new CollectionsEdsmTransactionDto(500_000m, "Provided", "500,000.00", new DateOnly(2026, 1, 15), "15-Jan-2026", null, null)]),
+                    new CollectionsEdsmTransactionListDto("Due", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(62_500m, "Provided", "62,500.00", new DateOnly(2026, 9, 15), "15-Sep-2026", "000412", null)]),
+                    new CollectionsEdsmTransactionListDto("Outstanding", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(187_500m, "Provided", "187,500.00", new DateOnly(2026, 12, 15), "15-Dec-2026", null, null)]),
                 ],
                 new CollectionsEdsmDueInstallmentsDto("Available", null, new DateOnly(2026, 9, 4), new DateOnly(2026, 11, 5),
                     [new CollectionsEdsmDueInstallmentDto(41230, "PDC-0412", "000412", new DateOnly(2026, 9, 15), 62_500m, "Due ")])),
@@ -459,7 +472,13 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                     F("dueAmount", "Due", "Provided", -500m, "-500.00"),
                     F("lateFines", "Late fines", "Empty", null, "", "NotComputedForRented"),
                 ], "NotChecked", false, [],
-                [new CollectionsEdsmTransactionListDto("Paid", "Available", null, "Refunds appear in this list as positive payments.", [])], null),
+                [
+                    new CollectionsEdsmTransactionListDto("Paid", "Available", null, "Refunds appear in this list as positive payments.",
+                        [new CollectionsEdsmTransactionDto(60_000m, "Provided", "60,000.00", new DateOnly(2026, 2, 1), "01-Feb-2026", "100201", "Cheque", 2)]),
+                    new CollectionsEdsmTransactionListDto("Due", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(1_000m, "Provided", "1,000.00 AED", new DateOnly(2026, 3, 1), "01-Mar-2026", null, "Fees", 3)]),
+                    new CollectionsEdsmTransactionListDto("Outstanding", "Unavailable", "timed out", null, []),
+                ], null),
                 new CollectionsCompanyPaymentSummaryDto(7, "Alsabeel Sharjah", "Rented", "Unauthorized", "EDSM rejected the configured API key.", [], [],
                     "NotChecked", false, [], [], null),
             ],
