@@ -58,33 +58,181 @@ public sealed class CollectionsPaymentSummaryAppService(
     private const int MaxPhoneLookups = 5;
     private const decimal TotalTolerance = 0.03m;   // three independently rounded 2-dp strings
 
+    /// <param name="caller">The authenticated caller.</param>
+    /// <param name="customerKey">The TigerCS customer key, e.g. <c>ext:Pact:{tenantID}</c>.</param>
+    /// <param name="includeTransactions">Also read payment-transactions types 1–3 per company (default true, as the Payment tab uses).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task<CollectionsResult<CollectionsPaymentSummaryResponseDto>> GetAsync(
-        CollectionsCaller caller, string customerKey, CancellationToken cancellationToken = default)
+        CollectionsCaller caller, string customerKey, bool includeTransactions = true, CancellationToken cancellationToken = default)
+    {
+        var resolution = await ResolveAsync(caller, customerKey, cancellationToken);
+        if (resolution.Failure is { } failure)
+        {
+            return Fail(failure.Outcome, failure.Detail);
+        }
+
+        var r = resolution.Value!;
+        var retrievedAt = clock.UtcNow;
+        if (r.NotMappedDetail is { } notMapped)
+        {
+            var withoutCompany = r.Mapping is null ? [] : Distinct(r.Mapping).Where(c => c.CompanyId is null).Select(ToRef).ToList();
+            return Ok(Response(r.Profile.CustomerKey, "NotMapped", notMapped, r.TenantKey, retrievedAt, [], withoutCompany, r.Mapping?.VerifiedAtUtc, r.MappingSource));
+        }
+
+        var distinct = Distinct(r.Mapping!);
+        var companies = new List<CollectionsCompanyPaymentSummaryDto>();
+        foreach (var group in distinct.Where(c => c.CompanyId is not null).GroupBy(c => c.CompanyId!.Value).OrderBy(g => g.Key))
+        {
+            companies.Add(await CompanyAsync(group.Key, r.TenantKey!, r.TenantId, r.Mapping!.MatchedMobile!, group.Select(ToRef).ToList(),
+                includeTransactions, cancellationToken));
+        }
+
+        if (companies.Any(c => c.Status is nameof(EdsmOutcome.BusinessRuleRejected) or nameof(EdsmOutcome.ValidationRejected)))
+        {
+            // EDSM refused a pair PACT gave us: the mapping may be out of date, so rediscover next time.
+            mappingCache.Invalidate(r.CacheKey!);
+        }
+
+        return Ok(Response(r.Profile.CustomerKey, "Mapped", null, r.TenantKey, retrievedAt, companies,
+            distinct.Where(c => c.CompanyId is null).Select(ToRef).ToList(), r.Mapping!.VerifiedAtUtc, r.MappingSource));
+    }
+
+    /// <summary>
+    /// Read-only payment history for one of the customer's confirmed companies:
+    /// EDSM payment-transactions type 1 (Paid), 2 (Due) or 3 (Outstanding).
+    /// Type 4 ("All") is refused with <see cref="CollectionsOutcome.InvalidRequest"/>
+    /// because, for rented companies, EDSM writes to its databases on that path.
+    /// A company that is not among the tenant's PACT contracts is
+    /// <see cref="CollectionsOutcome.AccountNotFound"/>. A customer without a
+    /// verified PACT mapping is <see cref="CollectionsOutcome.NotMapped"/>.
+    /// </summary>
+    public async Task<CollectionsResult<CollectionsPaymentTransactionsResponseDto>> GetTransactionsAsync(
+        CollectionsCaller caller, string customerKey, int? companyId, string? type, CancellationToken cancellationToken = default)
+    {
+        if (!TryParseTransactionType(type, out var transactionType, out var typeError))
+        {
+            // Validate before any lookup: a refused type never triggers contract discovery.
+            return TxFail(options.Enabled ? CollectionsOutcome.InvalidRequest : CollectionsOutcome.Disabled, typeError);
+        }
+
+        if (companyId is not > 0)
+        {
+            return TxFail(options.Enabled ? CollectionsOutcome.InvalidRequest : CollectionsOutcome.Disabled, "companyId is required: one of the customer's EDSM companies.");
+        }
+
+        var resolution = await ResolveAsync(caller, customerKey, cancellationToken);
+        if (resolution.Failure is { } failure)
+        {
+            return TxFail(failure.Outcome, failure.Detail);
+        }
+
+        var r = resolution.Value!;
+        if (r.NotMappedDetail is { } notMapped)
+        {
+            return TxFail(CollectionsOutcome.NotMapped, notMapped);
+        }
+
+        if (!Distinct(r.Mapping!).Any(c => c.CompanyId == companyId))
+        {
+            return TxFail(CollectionsOutcome.AccountNotFound, $"Company {companyId} is not among this customer's confirmed PACT contracts.");
+        }
+
+        if (EdsmCompanies.Find(companyId.Value) is not { } company)
+        {
+            return TxFail(CollectionsOutcome.FinanceUnavailable, $"EDSM does not support company {companyId}.");
+        }
+
+        var result = await edsm.GetPaymentTransactionsAsync(company.CompanyId, r.TenantKey!, r.Mapping!.MatchedMobile!, transactionType, cancellationToken);
+        if (result is not { Outcome: EdsmOutcome.Success, Value: { } value })
+        {
+            if (result.Outcome is EdsmOutcome.BusinessRuleRejected or EdsmOutcome.ValidationRejected)
+            {
+                mappingCache.Invalidate(r.CacheKey!);
+            }
+
+            return TxFail(CollectionsOutcome.FinanceUnavailable, $"EDSM payment-transactions failed ({result.Outcome}): {result.Message}");
+        }
+
+        return CollectionsResult<CollectionsPaymentTransactionsResponseDto>.Ok(new CollectionsPaymentTransactionsResponseDto(
+            r.Profile.CustomerKey, r.TenantKey!, company.CompanyId, company.Name, company.Model.ToString(), transactionType.ToString(), (int)transactionType,
+            Caveat(company.Model, transactionType), edsmOptions.Currency, "Configured", edsm.SourceName, clock.UtcNow, SourceAsOfUtc: null,
+            edsmOptions.MaxSourceDelayMinutes, r.Mapping.VerifiedAtUtc, r.MappingSource!, value.Items.Select(ToDto).ToList()));
+    }
+
+    /// <summary>Accepts Paid/Due/Outstanding or 1/2/3. 4 / "All" is refused.</summary>
+    public static bool TryParseTransactionType(string? value, out EdsmTransactionType type, out string? error)
+    {
+        type = default;
+        error = null;
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            error = "type is required: Paid (1), Due (2) or Outstanding (3).";
+            return false;
+        }
+
+        if (text == "4" || string.Equals(text, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "type All (4) is not supported: for rented companies it writes to EDSM's databases. Use Paid (1), Due (2) or Outstanding (3).";
+            return false;
+        }
+
+        type = text switch
+        {
+            "1" => EdsmTransactionType.Paid,
+            "2" => EdsmTransactionType.Due,
+            "3" => EdsmTransactionType.Outstanding,
+            _ when Enum.TryParse<EdsmTransactionType>(text, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed) && !int.TryParse(text, out _) => parsed,
+            _ => (EdsmTransactionType)0
+        };
+        if (type == 0)
+        {
+            error = "type must be Paid (1), Due (2) or Outstanding (3).";
+            return false;
+        }
+
+        return true;
+    }
+
+    private sealed record Resolved(
+        CustomerDirectoryProfileDto Profile, string? TenantKey, long TenantId, string? CacheKey,
+        PactAccountMapping? Mapping, string? MappingSource, string? NotMappedDetail);
+
+    /// <summary>
+    /// The shared front half of every EDSM read:
+    /// <list type="number">
+    /// <item>Collections enabled;</item>
+    /// <item>the financial-read grant;</item>
+    /// <item>the Customer Directory profile, under the caller's own visibility;</item>
+    /// <item>the PACT identity;</item>
+    /// <item>the verified mapping (cached, or discovered).</item>
+    /// </list>
+    /// </summary>
+    private async Task<(Resolved? Value, (CollectionsOutcome Outcome, string? Detail)? Failure)> ResolveAsync(
+        CollectionsCaller caller, string customerKey, CancellationToken cancellationToken)
     {
         if (!options.Enabled)
         {
-            return Fail(CollectionsOutcome.Disabled);
+            return (null, (CollectionsOutcome.Disabled, null));
         }
 
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
         {
-            return Fail(CollectionsOutcome.Forbidden, "Viewing customer payments requires the Collections financial-read permission.");
+            return (null, (CollectionsOutcome.Forbidden, "Viewing customer payments requires the Collections financial-read permission."));
         }
 
         var profileResult = await directory.GetProfileAsync(caller.EmployeeId, caller.Roles, customerKey, cancellationToken);
         switch (profileResult.Outcome)
         {
             case CustomerDirectoryProfileOutcome.InvalidKey:
-                return Fail(CollectionsOutcome.InvalidRequest, "customerKey is not a valid customer key.");
+                return (null, (CollectionsOutcome.InvalidRequest, "customerKey is not a valid customer key."));
             case CustomerDirectoryProfileOutcome.Success when profileResult.Response is not null:
                 break;
             default:
-                return Fail(CollectionsOutcome.AccountNotFound, "Customer not found, or not visible to you.");
+                return (null, (CollectionsOutcome.AccountNotFound, "Customer not found, or not visible to you."));
         }
 
         var profile = profileResult.Response;
-        var retrievedAt = clock.UtcNow;
-
         if (!string.Equals(profile.ExternalSource, PactSource, StringComparison.OrdinalIgnoreCase)
             || !long.TryParse(profile.ExternalCustomerId, NumberStyles.None, CultureInfo.InvariantCulture, out var tenantId)
             || tenantId <= 0)
@@ -92,7 +240,7 @@ public sealed class CollectionsPaymentSummaryAppService(
             var why = profile.CrmBuyerCustomerId is { } crmId
                 ? $"This customer is identified by Tiger CRM (customerId {crmId}). EDSM is keyed by PACT companyID and tenantID, and no verified mapping from a CRM customer to a PACT tenant exists."
                 : "This customer is not identified as a PACT tenant, so EDSM cannot be asked.";
-            return Ok(Response(profile.CustomerKey, "NotMapped", why, null, retrievedAt, [], []));
+            return (new Resolved(profile, null, 0, null, null, null, why), null);
         }
 
         var tenantKey = tenantId.ToString(CultureInfo.InvariantCulture);
@@ -108,40 +256,27 @@ public sealed class CollectionsPaymentSummaryAppService(
             if (mapping is null)
             {
                 // PACT unreachable: nothing is cached, so the next load has a reason to retry.
-                return Fail(CollectionsOutcome.FinanceUnavailable,
-                    "PACT could not be reached to confirm the customer's accounts, so EDSM figures are unavailable.");
+                return (null, (CollectionsOutcome.FinanceUnavailable,
+                    "PACT could not be reached to confirm the customer's accounts, so EDSM figures are unavailable."));
             }
 
             mappingCache.Set(cacheKey, mapping);
             mappingSource = "PactLookup";
         }
 
-        var contracts = mapping.Contracts;
-        var matchedMobile = mapping.MatchedMobile;
-        if (contracts.Count == 0)
-        {
-            return Ok(Response(profile.CustomerKey, "NotMapped",
-                $"PACT returned no contracts for tenant {tenantKey} under this customer's phone numbers, so no EDSM account can be confirmed.",
-                tenantKey, retrievedAt, [], [], mapping.VerifiedAtUtc, mappingSource));
-        }
-
-        var distinct = contracts.DistinctBy(c => (c.CompanyId, c.ContractNumber, c.ExternalUnitId)).ToList();
-        var companies = new List<CollectionsCompanyPaymentSummaryDto>();
-        foreach (var group in distinct.Where(c => c.CompanyId is not null).GroupBy(c => c.CompanyId!.Value).OrderBy(g => g.Key))
-        {
-            companies.Add(await CompanyAsync(group.Key, tenantKey, tenantId, matchedMobile!, group.Select(ToRef).ToList(), cancellationToken));
-        }
-
-        if (companies.Any(c => c.Status is nameof(EdsmOutcome.BusinessRuleRejected) or nameof(EdsmOutcome.ValidationRejected)))
-        {
-            // EDSM refused a pair PACT gave us: the mapping may be out of date, so rediscover next time.
-            mappingCache.Invalidate(cacheKey);
-        }
-
-        return Ok(Response(profile.CustomerKey, companies.Count == 0 ? "NotMapped" : "Mapped",
-            companies.Count == 0 ? "PACT returned this tenant's contracts without a companyID, so no EDSM account can be confirmed." : null,
-            tenantKey, retrievedAt, companies, distinct.Where(c => c.CompanyId is null).Select(ToRef).ToList(), mapping.VerifiedAtUtc, mappingSource));
+        string? notMapped = mapping.Contracts.Count == 0
+            ? $"PACT returned no contracts for tenant {tenantKey} under this customer's phone numbers, so no EDSM account can be confirmed."
+            : mapping.Contracts.All(c => c.CompanyId is null)
+                ? "PACT returned this tenant's contracts without a companyID, so no EDSM account can be confirmed."
+                : null;
+        return (new Resolved(profile, tenantKey, tenantId, cacheKey, mapping, mappingSource, notMapped), null);
     }
+
+    private static List<PactContractDto> Distinct(PactAccountMapping mapping) =>
+        mapping.Contracts.DistinctBy(c => (c.CompanyId, c.ContractNumber, c.ExternalUnitId)).ToList();
+
+    private static CollectionsResult<CollectionsPaymentTransactionsResponseDto> TxFail(CollectionsOutcome outcome, string? detail) =>
+        CollectionsResult<CollectionsPaymentTransactionsResponseDto>.Fail(outcome, detail);
 
     /// <summary>
     /// Contract discovery: PACT <c>v1/contracts/{mobile}</c> for each of the profile's numbers,
@@ -175,7 +310,8 @@ public sealed class CollectionsPaymentSummaryAppService(
     }
 
     private async Task<CollectionsCompanyPaymentSummaryDto> CompanyAsync(
-        int companyId, string tenantKey, long tenantId, string mobile, IReadOnlyList<CollectionsPactContractRefDto> contracts, CancellationToken cancellationToken)
+        int companyId, string tenantKey, long tenantId, string mobile, IReadOnlyList<CollectionsPactContractRefDto> contracts,
+        bool includeTransactions, CancellationToken cancellationToken)
     {
         if (EdsmCompanies.Find(companyId) is not { } company)
         {
@@ -220,7 +356,7 @@ public sealed class CollectionsPaymentSummaryAppService(
             notes.Add("EDSM's source code never sets late fines for rented companies, yet a value was returned. It is shown as received.");
         }
 
-        var transactions = edsmOptions.TransactionsEnabled
+        var transactions = edsmOptions.TransactionsEnabled && includeTransactions
             ? await TransactionsAsync(company, tenantKey, mobile, cancellationToken)
             : [];
         var due = await DueInstallmentsAsync(company, tenantId, cancellationToken);
@@ -261,12 +397,7 @@ public sealed class CollectionsPaymentSummaryAppService(
         foreach (var type in new[] { EdsmTransactionType.Paid, EdsmTransactionType.Due, EdsmTransactionType.Outstanding })
         {
             var result = await edsm.GetPaymentTransactionsAsync(company.CompanyId, tenantKey, mobile, type, cancellationToken);
-            var caveat = (company.Model, type) switch
-            {
-                (EdsmBusinessModel.Rented, EdsmTransactionType.Paid) => "Refunds appear in this list as positive payments (an EDSM defect), so the list is not a ledger of payments received.",
-                (EdsmBusinessModel.Rented, EdsmTransactionType.Due) => "EDSM's total for this list can differ from the summary's due amount (a fee-allocation defect). No total is taken from it.",
-                _ => null
-            };
+            var caveat = Caveat(company.Model, type);
             lists.Add(result is { Outcome: EdsmOutcome.Success, Value: { } value }
                 ? new CollectionsEdsmTransactionListDto(type.ToString(), "Available", null, caveat, value.Items.Select(ToDto).ToList())
                 : new CollectionsEdsmTransactionListDto(type.ToString(), result.Outcome.ToString(), result.Message, caveat, []));
@@ -274,6 +405,13 @@ public sealed class CollectionsPaymentSummaryAppService(
 
         return lists;
     }
+
+    private static string? Caveat(EdsmBusinessModel model, EdsmTransactionType type) => (model, type) switch
+    {
+        (EdsmBusinessModel.Rented, EdsmTransactionType.Paid) => "Refunds appear in this list as positive payments (an EDSM defect), so the list is not a ledger of payments received.",
+        (EdsmBusinessModel.Rented, EdsmTransactionType.Due) => "EDSM's total for this list can differ from the summary's due amount (a fee-allocation defect). No total is taken from it.",
+        _ => null
+    };
 
     private static CollectionsEdsmTransactionDto ToDto(EdsmTransaction t) => new(
         t.Amount, t.FormattedAmount.Status.ToString(), t.FormattedAmount.Raw, t.Date, string.IsNullOrEmpty(t.DateRaw) ? null : t.DateRaw,

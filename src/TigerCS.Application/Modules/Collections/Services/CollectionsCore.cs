@@ -33,7 +33,10 @@ public enum CollectionsOutcome
     IdempotencyConflict,
     NoEligibleContact,
     ChannelNotEnabled,
-    ReminderSuppressed
+    ReminderSuppressed,
+
+    /// <summary>The customer has no verified PACT company/tenant mapping, so no EDSM figure can be returned.</summary>
+    NotMapped
 }
 
 public sealed record CollectionsResult<T>(

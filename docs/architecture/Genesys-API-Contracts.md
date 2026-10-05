@@ -56,6 +56,9 @@ grant_type=client_credentials&scope=ticketing.genesys&client_id=…&client_secre
    unchanged, so every contract below is exactly what Genesys sends and
    receives.
 
+Collections (payment summary, read-only payment history, reminders and outcomes)
+has its own contract: [`docs/Collections/Genesys-Collections-API.md`](../Collections/Genesys-Collections-API.md).
+
 The Genesys-side setup (integration, Custom Auth action, data actions,
 Architect flows) is in `docs/Genesys/Genesys-Cloud-Configuration.md`.
 

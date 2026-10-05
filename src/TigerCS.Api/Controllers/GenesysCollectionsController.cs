@@ -22,8 +22,9 @@ namespace TigerCS.Api.Controllers;
 [Tags(OpenApiTags.Collections)]
 public sealed class GenesysCollectionsController(
     CollectionsAccountQueryAppService queries,
+    CollectionsPaymentSummaryAppService paymentSummaries,
     CollectionsReminderAppService reminders,
-    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, reminders, outcomes);
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes);
 
 /// <summary>
 /// Collections for TigerCS Web's Payment tab: <c>/api/collections</c> — the
@@ -36,33 +37,7 @@ public sealed class CollectionsController(
     CollectionsAccountQueryAppService queries,
     CollectionsPaymentSummaryAppService paymentSummaries,
     CollectionsReminderAppService reminders,
-    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, reminders, outcomes)
-{
-    /// <summary>
-    /// EDSM's payment summary for a TigerCS customer (PACT
-    /// <c>v1/reports/payment-summary</c>), one entry per PACT company. Web only:
-    /// keyed by the TigerCS customer key, so the server — not the browser —
-    /// decides which PACT tenant is asked about.
-    /// </summary>
-    /// <param name="customerKey">The Customer Profile key, e.g. <c>ext:Pact:3001</c>.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <response code="200">Mapped (with per-company status) or NotMapped.</response>
-    /// <response code="400">InvalidRequest — malformed customer key.</response>
-    /// <response code="403">Forbidden — no financial-read permission.</response>
-    /// <response code="404">AccountNotFound — customer not found or not visible.</response>
-    /// <response code="503">FinanceUnavailable (PACT unreachable), or Collections disabled.</response>
-    [HttpGet("customers/by-key/{customerKey}/payment-summary")]
-    [ProducesResponseType<CollectionsPaymentSummaryResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> GetPaymentSummary(string customerKey, CancellationToken cancellationToken)
-    {
-        if (Caller() is not { } caller) return Unauthorized();
-        return ToResponse(await paymentSummaries.GetAsync(caller, customerKey, cancellationToken));
-    }
-}
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes);
 
 /// <summary>
 /// The six Collections routes (TigerCS_Collections_API_Specification.md).
@@ -85,9 +60,65 @@ public sealed class CollectionsController(
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
 public abstract class CollectionsControllerBase(
     CollectionsAccountQueryAppService queries,
+    CollectionsPaymentSummaryAppService paymentSummaries,
     CollectionsReminderAppService reminders,
     CollectionsReminderOutcomeAppService outcomes) : ControllerBase
 {
+    /// <summary>
+    /// EDSM's payment summary for a PACT-identified TigerCS customer: one entry per
+    /// confirmed (companyID, tenantID) pair (docs/Collections/Genesys-Collections-API.md).
+    /// The same service backs the Payment tab and Genesys.
+    /// </summary>
+    /// <param name="customerKey">The TigerCS customer key: <c>ext:Pact:{tenantID}</c>. CRM keys answer NotMapped.</param>
+    /// <param name="includeTransactions">Also return payment-transactions types 1–3 per company (default true).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <response code="200">Mapped (with per-company status), or NotMapped with the reason.</response>
+    /// <response code="400">InvalidRequest — malformed customer key.</response>
+    /// <response code="403">Forbidden — no financial-read permission.</response>
+    /// <response code="404">AccountNotFound — customer not known to TigerCS, or not visible.</response>
+    /// <response code="503">FinanceUnavailable (PACT unreachable), or CollectionsDisabled.</response>
+    [HttpGet("customers/by-key/{customerKey}/payment-summary")]
+    [ProducesResponseType<CollectionsPaymentSummaryResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> GetPaymentSummary(
+        string customerKey, [FromQuery] bool? includeTransactions, CancellationToken cancellationToken)
+    {
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await paymentSummaries.GetAsync(caller, customerKey, includeTransactions ?? true, cancellationToken));
+    }
+
+    /// <summary>
+    /// Read-only payment history for one of the customer's confirmed EDSM companies:
+    /// EDSM payment-transactions type Paid (1), Due (2) or Outstanding (3). Type All (4)
+    /// is refused, because for rented companies EDSM writes to its databases on that path.
+    /// </summary>
+    /// <param name="customerKey">The TigerCS customer key: <c>ext:Pact:{tenantID}</c>.</param>
+    /// <param name="companyId">Required. One of the companies the payment summary lists for this customer.</param>
+    /// <param name="type">Required. <c>Paid</c>, <c>Due</c>, <c>Outstanding</c> (or 1, 2, 3).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <response code="200">The rows EDSM returned (possibly none).</response>
+    /// <response code="400">InvalidRequest — missing companyId, or type missing, unknown or All (4).</response>
+    /// <response code="403">Forbidden — no financial-read permission.</response>
+    /// <response code="404">AccountNotFound — customer unknown/not visible, or the company is not among its PACT contracts.</response>
+    /// <response code="422">CustomerNotMapped — no verified PACT mapping (e.g. a CRM customer).</response>
+    /// <response code="503">FinanceUnavailable (PACT or EDSM failed), or CollectionsDisabled.</response>
+    [HttpGet("customers/by-key/{customerKey}/payment-transactions")]
+    [ProducesResponseType<CollectionsPaymentTransactionsResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> GetPaymentTransactions(
+        string customerKey, [FromQuery] int? companyId, [FromQuery] string? type, CancellationToken cancellationToken)
+    {
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await paymentSummaries.GetTransactionsAsync(caller, customerKey, companyId, type, cancellationToken));
+    }
+
     /// <summary>Outstanding amounts for one or all of a customer's accounts.</summary>
     /// <param name="crmCustomerId">The Tiger CRM customer id.</param>
     /// <param name="accountId">One finance account. Must belong to the customer.</param>
@@ -297,7 +328,7 @@ public abstract class CollectionsControllerBase(
         return ToResponse(await queries.GetRemindersAsync(caller, id, accountId, cursor, pageSize, cancellationToken));
     }
 
-    protected IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
+    private IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
     {
         CollectionsOutcome.Success or CollectionsOutcome.Replayed => Ok(result.Value),
         CollectionsOutcome.Accepted => StatusCode(StatusCodes.Status202Accepted, result.Value),
@@ -315,6 +346,7 @@ public abstract class CollectionsControllerBase(
         CollectionsOutcome.ReminderSuppressed => Error(StatusCodes.Status409Conflict, "ReminderSuppressed", result.Detail ?? "The reminder was suppressed."),
         CollectionsOutcome.NoEligibleContact => Error(StatusCodes.Status422UnprocessableEntity, "NoEligibleContact", result.Detail ?? "No approved destination."),
         CollectionsOutcome.ChannelNotEnabled => Error(StatusCodes.Status422UnprocessableEntity, "ChannelNotEnabled", result.Detail ?? "Channel not enabled."),
+        CollectionsOutcome.NotMapped => Error(StatusCodes.Status422UnprocessableEntity, "CustomerNotMapped", result.Detail ?? "No verified PACT mapping for this customer."),
         _ => Problem(statusCode: StatusCodes.Status500InternalServerError)
     };
 
@@ -345,7 +377,7 @@ public abstract class CollectionsControllerBase(
     private static bool TryCustomer(string value, out long id) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
 
-    protected CollectionsCaller? Caller()
+    private CollectionsCaller? Caller()
     {
         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (idValue is null || !Guid.TryParse(idValue, out var employeeId))

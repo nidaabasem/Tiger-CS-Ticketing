@@ -110,6 +110,100 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
         Assert.Equal(0, _pact.Calls);
     }
 
+    // ---- Genesys boundary: /api/genesys/collections (same service as the Payment tab) ----
+
+    private static string G(string key, string tail) => $"/api/genesys/collections/customers/by-key/{Uri.EscapeDataString(key)}/{tail}";
+
+    [Fact]
+    public async Task Genesys_PaymentSummary_IsTheSameEdsmServiceAsThePaymentTab()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        var genesys = await client.GetFromJsonAsync<CollectionsPaymentSummaryResponseDto>(G(PactKey, "payment-summary?includeTransactions=false"));
+        var web = await client.GetFromJsonAsync<CollectionsPaymentSummaryResponseDto>(
+            $"/api/collections/customers/by-key/{Uri.EscapeDataString(PactKey)}/payment-summary");
+
+        Assert.Equal("Fixture", genesys!.Source);                       // the EDSM gateway, not the Unavailable per-account provider
+        Assert.Equal("Mapped", genesys.MappingStatus);
+        Assert.Equal([4, 25], genesys.Companies.Select(c => c.CompanyId));
+        Assert.All(genesys.Companies, c => Assert.Empty(c.Transactions));   // includeTransactions=false
+        Assert.All(web!.Companies, c => Assert.Equal(3, c.Transactions.Count));
+        Assert.Equal(genesys.Companies.SelectMany(c => c.Fields.Select(f => f.Raw)), web.Companies.SelectMany(c => c.Fields.Select(f => f.Raw)));
+        Assert.Equal(1, _pact.Calls);                                   // one mapping, shared by both prefixes
+    }
+
+    [Theory]
+    [InlineData("Paid", 1)]
+    [InlineData("2", 2)]
+    [InlineData("outstanding", 3)]
+    public async Task Genesys_PaymentTransactions_ReadOnlyTypes(string type, int expectedId)
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        var response = await client.GetAsync(G(PactKey, $"payment-transactions?companyId=4&type={type}"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = (await response.Content.ReadFromJsonAsync<CollectionsPaymentTransactionsResponseDto>())!;
+        Assert.Equal(expectedId, dto.TransactionTypeId);
+        Assert.Equal("Owned", dto.BusinessModel);
+        Assert.Equal("AED", dto.Currency);
+        Assert.Null(dto.SourceAsOfUtc);
+        Assert.NotEmpty(dto.Items);
+    }
+
+    [Theory]
+    [InlineData("All")]
+    [InlineData("4")]
+    [InlineData("")]
+    [InlineData("5")]
+    public async Task Genesys_PaymentTransactions_TypeAllAndUnknownTypes_Are400_WithoutAnyLookup(string type)
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        var response = await client.GetAsync(G(PactKey, $"payment-transactions?companyId=25&type={type}"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("InvalidRequest", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(0, _pact.Calls);
+    }
+
+    [Fact]
+    public async Task Genesys_PaymentTransactions_ForACompanyOutsideThePactContracts_Is404()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        var response = await client.GetAsync(G(PactKey, "payment-transactions?companyId=32&type=Paid"));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Contains("not among this customer's confirmed PACT contracts", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Genesys_UnmappedCrmCustomer_GetsNoFinancialData()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+
+        var summary = await client.GetFromJsonAsync<CollectionsPaymentSummaryResponseDto>(G("crm:9001", "payment-summary"));
+        var history = await client.GetAsync(G("crm:9001", "payment-transactions?companyId=4&type=Paid"));
+
+        Assert.Equal("NotMapped", summary!.MappingStatus);
+        Assert.Empty(summary.Companies);
+        Assert.Equal((HttpStatusCode)422, history.StatusCode);
+        Assert.Contains("CustomerNotMapped", await history.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(0, _pact.Calls);
+    }
+
+    [Fact]
+    public async Task Genesys_WithoutAToken_Is401_AndWithoutFinancialRead_Is403()
+    {
+        var anonymous = _factory.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(G(PactKey, "payment-summary"))).StatusCode);
+
+        var reporting = await ClientAsync(Roles.ReportingUser);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reporting.GetAsync(G(PactKey, "payment-summary"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reporting.GetAsync(G(PactKey, "payment-transactions?companyId=4&type=Paid"))).StatusCode);
+    }
+
     private async Task<HttpClient> ClientAsync(string role)
     {
         var (username, password, _) = await _factory.SeedEmployeeAsync(role);

@@ -374,3 +374,29 @@ public sealed record CollectionsEdsmDueInstallmentDto(
 
 /// <summary>A PACT contract the account was resolved through (display only). <c>unitType</c> marks Parking units.</summary>
 public sealed record CollectionsPactContractRefDto(string? ContractNumber, string ExternalUnitId, string? UnitNumber, string? ProjectName, string? UnitType);
+
+/// <summary>
+/// <c>GET …/customers/by-key/{customerKey}/payment-transactions?companyId=&amp;type=</c>:
+/// EDSM payment-transactions for one confirmed company, type 1–3 only.
+/// <c>items[].amount</c> is EDSM's raw number rounded to 2 dp, and
+/// <c>formattedRaw</c> is EDSM's string. No total is returned: for rented
+/// companies EDSM's list totals are not reliable (see <c>caveat</c>).
+/// </summary>
+public sealed record CollectionsPaymentTransactionsResponseDto(
+    string CustomerKey,
+    string PactTenantId,
+    int CompanyId,
+    string CompanyName,
+    string BusinessModel,
+    string TransactionType,
+    int TransactionTypeId,
+    string? Caveat,
+    string Currency,
+    string CurrencySource,
+    string Source,
+    DateTime RetrievedAtUtc,
+    DateTime? SourceAsOfUtc,
+    int MaxSourceDelayMinutes,
+    DateTime MappingVerifiedAtUtc,
+    string MappingSource,
+    IReadOnlyList<CollectionsEdsmTransactionDto> Items);

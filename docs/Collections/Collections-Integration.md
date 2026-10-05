@@ -276,11 +276,14 @@ explicit Collections permission below. `Collections:Enabled = false` answers
 | `POST reminders/{reminderId}/outcomes` (header `Idempotency-Key` optional; `eventId` is the key) | report-outcomes (integration only) | 200 / 202 ticket pending | 400, 403, 404, 409, 503 |
 | `GET customers/{crmCustomerId}/reminders?accountId=&cursor=&pageSize=` | financial-read | 200 | 400, 403, 503 |
 
-Plus one Web-only route (`api/collections` only, not forwarded to Genesys):
+Plus two EDSM routes, on **both** prefixes, backed by the same
+`CollectionsPaymentSummaryAppService` the Payment tab uses. The Genesys
+contract, with examples, is [`Genesys-Collections-API.md`](Genesys-Collections-API.md):
 
 | Route | Permission | Success | Errors |
 |---|---|---|---|
-| `GET customers/by-key/{customerKey}/payment-summary` | financial-read (and the directory's own customer visibility) | 200 `Mapped` / `NotMapped` | 400, 403, 404, 503 |
+| `GET customers/by-key/{customerKey}/payment-summary[?includeTransactions=false]` | financial-read (and the directory's own customer visibility) | 200 `Mapped` / `NotMapped` | 400, 403, 404, 503 |
+| `GET customers/by-key/{customerKey}/payment-transactions?companyId=&type=Paid\|Due\|Outstanding` | financial-read | 200 | 400 (incl. `type=All`/4), 403, 404, 422 `CustomerNotMapped`, 503 |
 
 Errors are RFC 7807 problem bodies with `code` and `message` extensions
 (`CandidateChanged` also carries `replacementCandidate`):

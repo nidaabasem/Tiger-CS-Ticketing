@@ -319,8 +319,13 @@ public sealed class CollectionsEndpointsTests(CollectionsApiFixture fixture) : I
                 HttpStatusCode.NotFound, "ReminderNotFound");
         }
 
-        await Problem(await admin.GetAsync($"{W}/customers/by-key/{Uri.EscapeDataString("ext:Pact:999999")}/payment-summary"),
-            HttpStatusCode.NotFound, "AccountNotFound");
+        foreach (var prefix in new[] { G, W })
+        {
+            await Problem(await admin.GetAsync($"{prefix}/customers/by-key/{Uri.EscapeDataString("ext:Pact:999999")}/payment-summary"),
+                HttpStatusCode.NotFound, "AccountNotFound");
+            await Problem(await admin.GetAsync($"{prefix}/customers/by-key/{Uri.EscapeDataString("ext:Pact:999999")}/payment-transactions?companyId=4&type=Paid"),
+                HttpStatusCode.NotFound, "AccountNotFound");
+        }
     }
 
     // ------------------------------------------------------------------
