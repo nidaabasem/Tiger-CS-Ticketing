@@ -256,7 +256,8 @@ public sealed class PactCustomerHttpGateway(
                 row.Row.ContractID?.ToString(CultureInfo.InvariantCulture),
                 FirstNonBlank(row.Row.UnitNumber),
                 FirstNonBlank(row.Row.ProjectName),
-                FirstNonBlank(row.Row.UnitType)))
+                FirstNonBlank(row.Row.UnitType),
+                row.Row.CompanyID))
             .ToList();
 
     /// <summary>

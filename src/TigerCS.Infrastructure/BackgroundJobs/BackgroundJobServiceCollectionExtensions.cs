@@ -2,6 +2,7 @@ using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 
 namespace TigerCS.Infrastructure.BackgroundJobs;
@@ -34,6 +35,7 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<SlaDeadlineCheckJob>();
         services.AddScoped<SlaSweepJob>();
         services.AddScoped<OutboxDispatchJob>();
+        services.AddScoped<CollectionsReminderScheduleJob>();
 
         if (!options.Enabled)
         {
@@ -131,5 +133,36 @@ public static class BackgroundJobServiceCollectionExtensions
             SlaSweepJob.RecurringJobId,
             job => job.RunAsync(CancellationToken.None),
             $"*/{minutes} * * * *");
+    }
+
+    /// <summary>
+    /// Registers the Collections reminder schedule only while TigerCS is the
+    /// designated scheduler and the rules are confirmed, and removes it otherwise — so switching the
+    /// setting off stops an already-registered schedule at the next start.
+    /// </summary>
+    public static void UseTigerCsRecurringCollectionsReminders(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, CollectionsOptions collectionsOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(backgroundJobOptions);
+        ArgumentNullException.ThrowIfNull(collectionsOptions);
+
+        if (!backgroundJobOptions.Enabled)
+        {
+            return;
+        }
+
+        var manager = services.GetRequiredService<IRecurringJobManager>();
+        if (!collectionsOptions.IsTigerCsSchedulerActive)
+        {
+            manager.RemoveIfExists(CollectionsReminderScheduleJob.RecurringJobId);
+            return;
+        }
+
+        manager.AddOrUpdate<CollectionsReminderScheduleJob>(
+            CollectionsReminderScheduleJob.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            collectionsOptions.ScheduleCron,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById(collectionsOptions.TimeZoneId) });
     }
 }

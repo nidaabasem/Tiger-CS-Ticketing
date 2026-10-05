@@ -630,7 +630,8 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 #tab-customer:checked ~ .tabs-body #panel-customer,
 #tab-approvals:checked ~ .tabs-body #panel-approvals,
 #tab-attachments:checked ~ .tabs-body #panel-attachments,
-#tab-interactions:checked ~ .tabs-body #panel-interactions { display: block; }
+#tab-interactions:checked ~ .tabs-body #panel-interactions,
+#tab-payment:checked ~ .tabs-body #panel-payment { display: block; }
 .tab-count {
   display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 17px; padding: 0 5px; margin-left: 4px;
   border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: var(--text-2xs); font-weight: 700;
@@ -1903,6 +1904,49 @@ a.badge:hover { text-decoration: underline; }
 /* Read-only notice on a Published/Historical version. */
 .alert-info { background: var(--color-ink-tint); color: var(--color-ink); border: 1px solid var(--color-ink-line); }
 .alert-lock svg { color: var(--color-ink); }
+
+/* ---- Customer Profile · Payment tab ----------------------------------- */
+
+.payment-tab { display: flex; flex-direction: column; gap: var(--space-4); }
+.edsm-summary { display: flex; flex-direction: column; gap: var(--space-4); }
+.edsm-company .alert { margin-top: var(--space-3); }
+.edsm-company .field-hint { margin: 0 0 var(--space-2); }
+.edsm-company .facts-row dt .edsm-definition { display: block; margin: 2px 0 0; font-weight: 400; max-width: 46ch; }
+.edsm-company .payment-section-title { margin-top: var(--space-4); }
+.payment-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-5); }
+.payment-toolbar__selector, .payment-toolbar__selector .field-group { min-width: 0; max-width: 100%; }
+.payment-toolbar__selector .field-select { max-width: 100%; }
+.payment-toolbar__single { display: flex; flex-direction: column; gap: 2px; }
+.payment-toolbar__meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-sm); color: var(--color-text-secondary); }
+.payment-toolbar__meta strong { color: var(--color-text); font-weight: 600; }
+.payment-kpis { margin-bottom: 0; }
+.payment-section-title { margin: var(--space-2) 0 0; font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.payment-send { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-5); padding: var(--space-4); background: var(--color-gold-pale); border: 1px solid var(--color-gold-line); border-radius: var(--radius-md); }
+.payment-send__summary { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; font-size: var(--text-sm); }
+.payment-send__summary strong { font-size: 18px; }
+.payment-send__channels { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); border: 0; padding: 0; margin: 0; }
+.payment-alert-action { align-items: center; }
+.payment-alert-action .btn { margin-left: auto; flex: none; }
+.payment-account-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-3); }
+.payment-account-card { display: flex; flex-direction: column; gap: 4px; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: inherit; text-decoration: none; }
+.payment-account-card:hover, .payment-account-card:focus-visible { border-color: var(--color-gold); box-shadow: var(--shadow-sm); }
+.payment-account-card__unit { font-weight: 600; }
+.payment-account-card__due { font-size: 18px; font-weight: 700; }
+.payment-account-card__due small { font-size: var(--text-xs); font-weight: 500; color: var(--color-text-secondary); }
+.payment-loading { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-5) 0; color: var(--color-text-secondary); font-size: var(--text-sm); }
+.payment-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--color-border-strong); border-top-color: var(--color-gold-dark); animation: payment-spin .8s linear infinite; }
+@keyframes payment-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .payment-spinner { animation: none; } }
+.anchor-target { display: block; position: relative; top: -80px; visibility: hidden; }
+
+.alert-warning { background: var(--color-warning-tint); border-color: var(--color-warning-line); color: var(--color-warning); }
+
+/* Payment badge tones — the semantic operational palette. */
+.badge-pay-ok { background: var(--color-success-pale); border-color: var(--color-success-line); color: var(--color-success); }
+.badge-pay-critical { background: var(--color-critical-pale); border-color: var(--color-critical-line); color: var(--color-critical); }
+.badge-pay-pending { background: var(--color-warning-tint); border-color: var(--color-warning-line); color: var(--color-warning); }
+.badge-pay-progress { background: var(--color-progress-tint); border-color: var(--color-progress-line); color: var(--color-progress); }
+.badge-pay-neutral { background: var(--color-bg); border-color: var(--color-border); color: var(--color-text-secondary); }
 
 /* ---- Responsive ------------------------------------------------------- */
 

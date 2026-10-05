@@ -78,6 +78,36 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
         }
     }
 
+    /// <summary>POST with extra request headers (e.g. Idempotency-Key).</summary>
+    protected async Task<ApiResult<TResponse>> PostAsync<TRequest, TResponse>(
+        string requestUri, TRequest body, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+            {
+                Content = JsonContent.Create(body, options: ApiJson.Options)
+            };
+            foreach (var (name, value) in headers)
+            {
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+
+            using var response = await Http.SendAsync(request, cancellationToken);
+            return await ToResultAsync<TResponse>(HttpMethod.Post, requestUri, response, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            LogUnreachable(HttpMethod.Post, requestUri, ex);
+            return ApiResult<TResponse>.Failure(ApiOutcome.Unreachable, ex.Message);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogUnreachable(HttpMethod.Post, requestUri, ex);
+            return ApiResult<TResponse>.Failure(ApiOutcome.Unreachable, "The request timed out.");
+        }
+    }
+
     protected async Task<ApiResult> PostAsync<TRequest>(string requestUri, TRequest body, CancellationToken cancellationToken)
     {
         try
@@ -88,8 +118,8 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
                 return ApiResult.Success();
             }
 
-            var (outcome, detail) = await DescribeFailureAsync(HttpMethod.Post, requestUri, response, cancellationToken);
-            return ApiResult.Failure(outcome, detail);
+            var (outcome, detail, problemType) = await DescribeFailureAsync(HttpMethod.Post, requestUri, response, cancellationToken);
+            return ApiResult.Failure(outcome, detail, problemType);
         }
         catch (HttpRequestException ex)
         {
@@ -117,7 +147,7 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
     protected async Task<ApiResult> DeleteAsync(string requestUri, CancellationToken cancellationToken)
     {
         var result = await SendJsonAsync<object?, object?>(HttpMethod.Delete, requestUri, null, cancellationToken);
-        return result.IsSuccess ? ApiResult.Success() : ApiResult.Failure(result.Outcome, result.Detail);
+        return result.IsSuccess ? ApiResult.Success() : ApiResult.Failure(result.Outcome, result.Detail, result.ProblemType);
     }
 
     /// <summary>One implementation for the verbs that carry an optional JSON body and return a JSON body (PUT/PATCH/DELETE); GET/POST keep their original shape above.</summary>
@@ -161,11 +191,11 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
             return ApiResult<TResponse>.Success(value!);
         }
 
-        var (outcome, detail) = await DescribeFailureAsync(method, requestUri, response, cancellationToken);
-        return ApiResult<TResponse>.Failure(outcome, detail);
+        var (outcome, detail, problemType) = await DescribeFailureAsync(method, requestUri, response, cancellationToken);
+        return ApiResult<TResponse>.Failure(outcome, detail, problemType);
     }
 
-    private async Task<(ApiOutcome Outcome, string? Detail)> DescribeFailureAsync(
+    private async Task<(ApiOutcome Outcome, string? Detail, string? ProblemType)> DescribeFailureAsync(
         HttpMethod method, string requestUri, HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var outcome = response.StatusCode switch
@@ -178,10 +208,12 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
             HttpStatusCode.Locked => ApiOutcome.Locked,
             HttpStatusCode.UnprocessableEntity => ApiOutcome.UnprocessableEntity,
             HttpStatusCode.BadGateway => ApiOutcome.BadGateway,
+            HttpStatusCode.ServiceUnavailable => ApiOutcome.ServiceUnavailable,
             _ => ApiOutcome.Unknown
         };
 
         string? detail = null;
+        string? problemType = null;
         try
         {
             using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -202,6 +234,12 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
                 }
             }
 
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.String)
+            {
+                problemType = typeEl.GetString();
+            }
+
             if (detail is null && document.RootElement.TryGetProperty("detail", out var detailEl))
             {
                 detail = detailEl.GetString();
@@ -220,7 +258,7 @@ public abstract class ApiClientBase(HttpClient httpClient, ILogger logger)
             "TigerCS.Api call failed: {HttpMethod} {RequestUri} -> {StatusCode} ({Outcome}). Detail: {Detail}",
             method, requestUri, (int)response.StatusCode, outcome, detail ?? "(none)");
 
-        return (outcome, detail);
+        return (outcome, detail, problemType);
     }
 
     private void LogUnreachable(HttpMethod method, string requestUri, Exception ex) =>

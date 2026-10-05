@@ -65,6 +65,9 @@ builder.Services.AddHttpClient<CustomerHistoryApiClient>(client => client.BaseAd
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<CustomersApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddHttpClient<CollectionsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddScoped<CustomerPaymentPanelLoader>();
 builder.Services.AddHttpClient<DashboardApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<AdminApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))

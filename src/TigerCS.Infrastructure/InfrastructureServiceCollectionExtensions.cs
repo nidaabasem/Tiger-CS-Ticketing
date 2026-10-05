@@ -9,6 +9,9 @@ using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.ClassificationAndRouting.Services;
+using TigerCS.Application.Modules.Collections;
+using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration;
@@ -29,6 +32,7 @@ using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Identity;
+using TigerCS.Infrastructure.Modules.Collections;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Repositories;
 using TigerCS.Infrastructure.Modules.GenesysIntegration.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
@@ -284,6 +288,31 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GenesysAgentHandoffAppService>();
         services.AddScoped<GenesysTicketUpdateAppService>();
         services.AddScoped<GenesysCustomerLookupAppService>();
+
+        // Collections — balances read from the authoritative financial source
+        // (ICollectionsFinancialSource, registered by AddTigerCsIntegrations),
+        // reminders and their delivery events persisted here, customer
+        // responses turned into tickets through the Genesys ingestion above.
+        // Collections:Enabled gates every entry point; nothing sends by default.
+        services.Configure<CollectionsOptions>(configuration.GetSection(CollectionsOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<CollectionsOptions>>().Value);
+        services.AddScoped<ICollectionsReminderRepository, CollectionsReminderRepository>();
+        services.AddScoped<ICollectionsUnitOfWork, CollectionsUnitOfWork>();
+        services.AddScoped<CollectionsAuthorizationService>();
+        services.AddScoped<CollectionsClock>();
+        services.AddScoped<CollectionsAccountQueryAppService>();
+        services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
+        services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
+        services.AddSingleton(sp => new PactAccountMappingCache(sp.GetService<TimeProvider>() ?? TimeProvider.System));
+        services.AddScoped<CollectionsPaymentSummaryAppService>();
+        services.AddScoped<CollectionsReminderAppService>();
+        services.AddScoped<CollectionsReminderOutcomeAppService>();
+        services.AddScoped<IOutboxEventHandler, CollectionsReminderDispatchHandler>();
+        services.AddScoped<IOutboxEventHandler, CollectionsResponseTicketHandler>();
+        // Email is the only reminder channel with an approved provider (the
+        // existing EmailNotifications sender). SMS has none and fails closed;
+        // the voice bot is dialled by Genesys, not by TigerCS.
+        services.AddScoped<IReminderDeliveryProvider, EmailReminderDeliveryProvider>();
         services.AddScoped<TicketInteractionQueryAppService>();
         services.AddScoped<TicketClassificationAppService>();
         services.AddScoped<AgentHandoffAppService>();

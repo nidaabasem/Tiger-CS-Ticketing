@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Web.Models;
@@ -23,8 +24,28 @@ namespace TigerCS.Web.Pages;
 public sealed class CustomerProfileModel(
     CustomersApiClient customersApiClient,
     TicketsApiClient ticketsApiClient,
-    TicketNameResolver nameResolver) : PageModel
+    TicketNameResolver nameResolver,
+    CollectionsApiClient collectionsApiClient,
+    CustomerPaymentPanelLoader paymentPanelLoader) : PageModel
 {
+    public const string PaymentTab = "payment";
+
+    /// <summary>
+    /// The Payment tab. Deferred (fetched when the tab is opened, via
+    /// <see cref="OnGetPaymentPanelAsync"/>) unless the page was asked for
+    /// with <c>?tab=payment</c> — the no-JavaScript path, the account
+    /// selector and the return from Send Reminder — when it is rendered here.
+    /// </summary>
+    public CustomerPaymentPanel PaymentPanel { get; private set; } = new() { CustomerKey = string.Empty, State = PaymentPanelState.Deferred };
+
+    public bool PaymentTabActive { get; private set; }
+
+    [TempData]
+    public string? PaymentNotice { get; set; }
+
+    [TempData]
+    public bool PaymentNoticeIsError { get; set; }
+
     public string CustomerKey { get; private set; } = string.Empty;
     public ApiOutcome Outcome { get; private set; }
     public CustomerDirectoryProfileDto? Profile { get; private set; }
@@ -81,7 +102,7 @@ public sealed class CustomerProfileModel(
     public string NewTicketHref =>
         PrimaryPhone is { } phone ? $"/NewTicket?phoneNumber={Uri.EscapeDataString(phone)}" : "/NewTicket";
 
-    public async Task<IActionResult> OnGetAsync(string customerKey, long? fromTicket, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnGetAsync(string customerKey, long? fromTicket, string? tab, string? account, CancellationToken cancellationToken)
     {
         CustomerKey = customerKey;
         Viewer = CurrentUser.FromPrincipal(User);
@@ -109,8 +130,63 @@ public sealed class CustomerProfileModel(
             CrmProfile = crm.IsSuccess ? crm.Value : null;
         }
 
+        PaymentTabActive = string.Equals(tab, PaymentTab, StringComparison.OrdinalIgnoreCase);
+        PaymentPanel = PaymentTabActive
+            ? await paymentPanelLoader.LoadAsync(customerKey, CrmCustomerIdOf(Profile), account, PaymentNotice, PaymentNoticeIsError, cancellationToken)
+            : new CustomerPaymentPanel { CustomerKey = customerKey, CrmCustomerId = CrmCustomerIdOf(Profile), State = CustomerPaymentPanel.HasPaymentSource(customerKey, CrmCustomerIdOf(Profile)) ? PaymentPanelState.Deferred : PaymentPanelState.NotCrmCustomer };
+
         return Page();
     }
+
+    /// <summary>
+    /// The Payment tab's content alone, fetched by site.js when the tab is
+    /// opened. The CRM customer id is always taken from the profile the
+    /// viewer is allowed to see — never from the request.
+    /// </summary>
+    public async Task<IActionResult> OnGetPaymentPanelAsync(string customerKey, string? account, CancellationToken cancellationToken)
+    {
+        var result = await customersApiClient.GetProfileAsync(customerKey, cancellationToken);
+        if (!result.IsSuccess || result.Value is null)
+        {
+            return result.Outcome is ApiOutcome.NotFound or ApiOutcome.ValidationError ? NotFound() : StatusCode(StatusCodes.Status502BadGateway);
+        }
+
+        var panel = await paymentPanelLoader.LoadAsync(customerKey, CrmCustomerIdOf(result.Value), account, null, false, cancellationToken);
+        return Partial("_CustomerPaymentTab", panel);
+    }
+
+    /// <summary>
+    /// Send Reminder. Queues the selected candidate on the chosen channels;
+    /// the Api re-reads the balance, enforces the reminder permission, refuses
+    /// a changed or expired candidate (409) and a duplicate in the cycle. The
+    /// form's own Idempotency-Key makes a double submit queue once.
+    /// </summary>
+    public async Task<IActionResult> OnPostSendReminderAsync(
+        string customerKey, string? accountId, string? candidateId, string[]? channels, string? language, string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var profile = await customersApiClient.GetProfileAsync(customerKey, cancellationToken);
+        if (!profile.IsSuccess || profile.Value is null || CrmCustomerIdOf(profile.Value) is null)
+        {
+            return NotFound();
+        }
+
+        var result = await collectionsApiClient.QueueReminderAsync(
+            new QueueCollectionsReminderRequestDto(candidateId, channels ?? [], language),
+            string.IsNullOrWhiteSpace(idempotencyKey) ? Guid.NewGuid().ToString("N") : idempotencyKey,
+            cancellationToken);
+
+        (PaymentNotice, PaymentNoticeIsError) = result.IsSuccess
+            ? ($"Reminder {result.Value!.ReminderId} queued for {CustomerPaymentPanel.Money(result.Value.ReminderAmount, result.Value.Currency)} on "
+               + $"{string.Join(", ", result.Value.Channels.Select(c => CustomerPaymentPanel.Label(c.Channel)))}. Queued does not mean delivered.", false)
+            : (CustomerPaymentPanel.ApiOutcomeMessage(result.Outcome, result.Detail), true);
+
+        return RedirectToPage(null, null, new { customerKey, tab = PaymentTab, account = accountId }, "payment");
+    }
+
+    /// <summary>The Tiger CRM customer id, only for a customer identified in CRM.</summary>
+    public static long? CrmCustomerIdOf(CustomerDirectoryProfileDto profile) =>
+        profile.IdentityKind == "Crm" && profile.CrmBuyerCustomerId is { } id ? id : null;
 
     public static string SourceLabel(string verificationSource) => CustomersModel.SourceLabel(verificationSource);
 

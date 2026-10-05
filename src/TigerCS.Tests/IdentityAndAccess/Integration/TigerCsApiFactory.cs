@@ -55,6 +55,9 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
     /// </summary>
     public string CrmProvider { get; init; } = "Mock";
 
+    /// <summary>Extra test-only service registrations, applied last (e.g. a fixed clock for one module).</summary>
+    public Action<IServiceCollection>? ExtraServices { get; init; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // Explicit, deterministic environment name — distinct from "Development"
@@ -200,6 +203,8 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                         ])
                 ])));
             services.AddScoped<ICrmBuyerLookupGateway>(sp => sp.GetRequiredService<FakeCrmBuyerLookupGateway>());
+
+            ExtraServices?.Invoke(services);
         });
     }
 
