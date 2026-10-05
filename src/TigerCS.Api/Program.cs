@@ -10,6 +10,7 @@ using TigerCS.Infrastructure.BackgroundJobs;
 using TigerCS.Infrastructure.Http;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
+using TigerCS.Integrations.Modules.CollectionsIntegration;
 using TigerCS.Integrations.Modules.CrmIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 
@@ -134,6 +135,22 @@ using (var crmStartupScope = app.Services.CreateScope())
     }
 }
 
+// Fail fast if fixture Collections balances would be served outside
+// Development/Testing — a sample balance shown to an agent, or read by the
+// voice bot, as if it were a customer's real debt is the one failure this
+// module must never have. Same conditional-on-provider shape as the CRM guard.
+using (var collectionsStartupScope = app.Services.CreateScope())
+{
+    var sourceOptions = collectionsStartupScope.ServiceProvider.GetRequiredService<IOptions<CollectionsSourceOptions>>().Value;
+    if (CollectionsSourceSafety.IsUnsafe(sourceOptions.Provider, app.Environment.EnvironmentName))
+    {
+        throw new InvalidOperationException(
+            $"CollectionsSource:Provider is 'Fixture' in environment '{app.Environment.EnvironmentName}'. Fixture balances are "
+            + $"sample data and may only run in {string.Join("/", CollectionsSourceSafety.FixtureAllowedEnvironments)}. "
+            + "Set CollectionsSource:Provider to \"Unavailable\" until a real financial source is integrated.");
+    }
+}
+
 // Fail fast if the recording email adapter would run outside
 // Development/Testing while email delivery is expected. Same
 // conditional-on-provider shape as the CRM guard above
@@ -208,6 +225,12 @@ using (var backgroundJobScope = app.Services.CreateScope())
     var outboxOptions = backgroundJobScope.ServiceProvider
         .GetRequiredService<IOptions<OutboxDispatchOptions>>().Value;
     app.Services.UseTigerCsRecurringOutboxDispatch(backgroundJobOptions, outboxOptions);
+
+    // Collections payment reminders — registered only while automatic
+    // scheduling is active (off until Collections confirms the open rules).
+    app.Services.UseTigerCsRecurringCollectionsReminders(
+        backgroundJobOptions,
+        backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.CollectionsOptions>());
 }
 
 app.UseExceptionHandler();

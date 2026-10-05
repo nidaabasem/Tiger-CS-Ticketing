@@ -104,7 +104,7 @@
         </section>
 
         <div class="tabs-card tabs-card--page">
-            <input type="radio" name="customerProfileTab" id="tab-overview" class="tab-input" checked />
+            <input type="radio" name="customerProfileTab" id="tab-overview" class="tab-input" checked="@(!Model.PaymentTabActive)" />
             <label class="tab-label" for="tab-overview">Overview</label>
             <input type="radio" name="customerProfileTab" id="tab-contact" class="tab-input" />
             <label class="tab-label" for="tab-contact">Contact Info</label>
@@ -114,6 +114,8 @@
             <label class="tab-label" for="tab-history">Tickets <span class="tab-count">@profile.TotalTickets</span></label>
             <input type="radio" name="customerProfileTab" id="tab-interactions" class="tab-input" />
             <label class="tab-label" for="tab-interactions">Interactions <span class="tab-count">@profile.Interactions.Count</span></label>
+            <input type="radio" name="customerProfileTab" id="tab-payment" class="tab-input" checked="@Model.PaymentTabActive" />
+            <label class="tab-label" for="tab-payment">Payment</label>
 
             <div class="tabs-body">
                 @* ---- Overview ---- *@
@@ -377,6 +379,15 @@
                             </table>
                         </div>
                     }
+                </div>
+
+                @* ---- Payment ---- *@
+                @* Rendered here only for ?tab=payment (no-JS path, account selector,
+                   return from Send Reminder); otherwise a loading placeholder that
+                   site.js replaces with ?handler=PaymentPanel when the tab opens. *@
+                <div class="tab-panel" id="panel-payment" data-payment-src="/Customers/@Uri.EscapeDataString(Model.CustomerKey)?handler=PaymentPanel">
+                    <span id="payment" class="anchor-target"></span>
+                    <partial name="_CustomerPaymentTab" model="Model.PaymentPanel" />
                 </div>
             </div>
         </div>

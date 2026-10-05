@@ -47,6 +47,7 @@ public static class OpenApiTags
     public const string SlaAndEscalation = "SLA and Escalation";
     public const string RequestTypes = "Request Types";
     public const string Genesys = "Genesys";
+    public const string Collections = "Collections";
     public const string PendingCustomerInteractions = "Pending Customer Interactions";
     public const string Administration = "Administration";
 
@@ -119,6 +120,12 @@ public static class OpenApiTags
             + "supplied messageId), and human-handoff state. It carries no field for category, "
             + "priority, status, owner or closure: those move through their own TigerCS operations, and ending a "
             + "conversation never closes the ticket."),
+        (Collections,
+            "Collections: balances, instalments and posted payments read from the authoritative financial source (never "
+            + "calculated or stored by TigerCS — 503 while no source is integrated), payment reminders with duplicate "
+            + "prevention per account/type/cycle/channel, delivery outcomes and customer responses. A response given in a "
+            + "conversation creates or reuses its ticket through the Genesys conversation-id ingestion; nothing here posts a "
+            + "payment, resolves or closes a ticket, or sends a legal notice. Collections:Enabled gates every route."),
         (PendingCustomerInteractions,
             "Customer interactions waiting for a human agent, on every channel — the agent work list. A callback is one "
             + "possible follow-up mode here, not the concept: a website chat, a WhatsApp thread and a social-media message "

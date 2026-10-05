@@ -1,0 +1,346 @@
+@using TigerCS.Web.Models
+@model CustomerPaymentPanel
+@{
+    var panel = Model;
+    var account = panel.SelectedAccount;
+    var balance = account?.Balance;
+    var currency = account?.Currency ?? "";
+    var showReminders = panel.State is PaymentPanelState.Loaded or PaymentPanelState.SourceUnavailable or PaymentPanelState.NoAccounts;
+    var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
+}
+
+<div class="payment-tab" data-payment-state="@panel.State">
+    @if (!string.IsNullOrEmpty(panel.Notice))
+    {
+        <div class="alert @(panel.NoticeIsError ? "alert-error" : "alert-success")" role="@(panel.NoticeIsError ? "alert" : "status")">
+            <span>@panel.Notice</span>
+        </div>
+    }
+
+    @switch (panel.State)
+    {
+        case PaymentPanelState.Deferred:
+            <div class="payment-loading" role="status" aria-live="polite">
+                <span class="payment-spinner" aria-hidden="true"></span>
+                <span>Loading payment details…</span>
+                <a class="link-muted" href="/Customers/@Uri.EscapeDataString(panel.CustomerKey)?tab=payment#payment" data-payment-fallback>Load payment details</a>
+            </div>
+            break;
+
+        case PaymentPanelState.NotCrmCustomer:
+            <div class="empty-state"><p>Payment information is available only for customers identified in Tiger CRM.</p></div>
+            break;
+
+        case PaymentPanelState.Forbidden:
+            <div class="error-state">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" /></svg>
+                <p>You don't have permission to view this customer's payment information.</p>
+            </div>
+            break;
+
+        case PaymentPanelState.Disabled:
+            <div class="alert alert-info" role="status"><span>Collections is not enabled in this environment, so payment information is not shown.</span></div>
+            break;
+
+        case PaymentPanelState.Error:
+            <div class="error-state">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" /></svg>
+                <p>Payment information could not be loaded. Try again shortly.</p>
+            </div>
+            break;
+
+        case PaymentPanelState.SourceUnavailable:
+            <div class="alert alert-error" role="alert" data-balance-unavailable>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                <span><strong>Balance unavailable.</strong> The financial source could not provide this customer's figures, so none are shown. Do not quote a balance to the customer.</span>
+            </div>
+            break;
+
+        case PaymentPanelState.NoAccounts:
+            <div class="empty-state"><p>The financial source has no payment accounts for this customer.</p></div>
+            break;
+
+        case PaymentPanelState.Loaded:
+            var outstanding = panel.Outstanding!;
+
+            <div class="payment-toolbar">
+                @if (outstanding.Accounts.Count > 1)
+                {
+                    <form class="payment-toolbar__selector" method="get" action="/Customers/@Uri.EscapeDataString(panel.CustomerKey)">
+                        <input type="hidden" name="tab" value="payment" />
+                        <div class="field-group">
+                            <label class="field-label" for="paymentAccount">Account / unit</label>
+                            <select class="field-select" id="paymentAccount" name="account" data-autosubmit>
+                                @foreach (var option in outstanding.Accounts)
+                                {
+                                    <option value="@option.AccountId" selected="@(option.AccountId == account?.AccountId)">@(option.UnitNumber ?? option.AccountId)@(option.ProjectName is null ? "" : $" · {option.ProjectName}") (@option.AccountId)</option>
+                                }
+                            </select>
+                        </div>
+                        <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+                    </form>
+                }
+                else if (account is not null)
+                {
+                    <div class="payment-toolbar__single">
+                        <span class="field-label">Account / unit</span>
+                        <strong>@(account.UnitNumber ?? account.AccountId)@(account.ProjectName is null ? "" : $" · {account.ProjectName}")</strong>
+                        <span class="id-fallback">@account.AccountId</span>
+                    </div>
+                }
+                @if (account is not null)
+                {
+                    <div class="payment-toolbar__meta">
+                        <span>Currency <strong>@account.Currency</strong></span>
+                        <span>Source <strong>@outstanding.Source</strong></span>
+                        <span title="@account.AsOfUtc.ToString("O")">Last updated <strong>@account.AsOfUtc.ToLocalTime().ToString("d MMM yyyy HH:mm")</strong></span>
+                    </div>
+                }
+            </div>
+
+            @if (panel.IsStale)
+            {
+                <div class="alert alert-warning" role="status" data-balance-stale>
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                    <span><strong>These figures may be out of date</strong> — the source last updated them @account?.AsOfUtc.ToLocalTime().ToString("d MMM yyyy HH:mm"). Confirm before quoting.</span>
+                </div>
+            }
+
+            @if (account is not null && account.Consistency != "Consistent")
+            {
+                <div class="alert alert-error" role="alert">
+                    <span><strong>@(account.Consistency == "Mismatch" ? "The source's figures disagree." : "The source returned invalid figures.")</strong> @string.Join(" ", account.Problems) Reminders are disabled for this account until the source is corrected.</span>
+                </div>
+            }
+
+            @if (account is not null && balance is null)
+            {
+                <div class="alert alert-error" role="alert" data-balance-unavailable><span><strong>Balance unavailable</strong> for this account.</span></div>
+            }
+            else if (account is not null && balance is not null)
+            {
+                <section class="kpi-grid payment-kpis" aria-label="Balance summary">
+                    <div class="kpi-card @(balance.AmountDueNow > 0 ? "kpi-card--attention" : "")">
+                        <strong>@CustomerPaymentPanel.Money(balance.AmountDueNow, currency)</strong>
+                        <span>Amount due now</span>
+                    </div>
+                    <div class="kpi-card">
+                        <strong>@CustomerPaymentPanel.Money(balance.OverduePrincipal, currency)</strong>
+                        <span>Overdue principal</span>
+                    </div>
+                    <div class="kpi-card">
+                        <strong>@CustomerPaymentPanel.Money(balance.CurrentMonthRemaining, currency)</strong>
+                        <span>This month's remaining payment</span>
+                    </div>
+                    <div class="kpi-card">
+                        <strong>@(balance.NextPayment is { } next ? CustomerPaymentPanel.Money(next.Amount, currency) : "—")</strong>
+                        <span>Next payment@(balance.NextPayment is { } nextDue ? $" · {CustomerPaymentPanel.Date(nextDue.DueDate)}" : "")</span>
+                    </div>
+                </section>
+
+                <div class="two-col">
+                    <div class="facts-panel facts-panel--flat">
+                        <div class="facts-section__title">Principal</div>
+                        <dl>
+                            <div class="facts-row"><dt>Remaining unpaid principal</dt><dd>@CustomerPaymentPanel.Money(balance.RemainingUnpaidPrincipal, currency)</dd></div>
+                            <div class="facts-row"><dt>Overdue</dt><dd class="@(balance.OverduePrincipal > 0 ? "is-critical" : "")">@CustomerPaymentPanel.Money(balance.OverduePrincipal, currency)</dd></div>
+                            <div class="facts-row"><dt>Due today</dt><dd>@CustomerPaymentPanel.Money(balance.PrincipalDueToday, currency)</dd></div>
+                            <div class="facts-row"><dt>Future</dt><dd>@CustomerPaymentPanel.Money(balance.FuturePrincipal, currency)</dd></div>
+                        </dl>
+                    </div>
+                    <div class="facts-panel facts-panel--flat">
+                        <div class="facts-section__title">Fines, fees and reminders</div>
+                        <dl>
+                            <div class="facts-row"><dt>Payable fines and fees</dt><dd>@CustomerPaymentPanel.Money(balance.PayableFinesAndFees, currency)</dd></div>
+                            <div class="facts-row"><dt>Amount due now</dt><dd>@CustomerPaymentPanel.Money(balance.AmountDueNow, currency)</dd></div>
+                            <div class="facts-row"><dt>Reminder</dt><dd>@(account.ReminderEligibility.Eligible ? $"Eligible · {CustomerPaymentPanel.Money(account.ReminderEligibility.Amount, currency)}" : account.ReminderEligibility.Reason == "Settled" ? "Not needed — settled" : "Not available")</dd></div>
+                        </dl>
+
+                        @if (panel.CanSendReminder)
+                        {
+                            <form class="payment-send" method="post" asp-page="/CustomerProfile" asp-page-handler="SendReminder" asp-route-customerKey="@panel.CustomerKey"
+                                  data-confirm="Send a payment reminder for @CustomerPaymentPanel.Money(account.ReminderEligibility.Amount, currency)? The balance is checked again before it is sent.">
+                                <input type="hidden" name="accountId" value="@account.AccountId" />
+                                <div class="field-group">
+                                    <label class="field-label" for="reminderChannel">Channel</label>
+                                    <select class="field-select" id="reminderChannel" name="channel">
+                                        @foreach (var channel in panel.SendChannels)
+                                        {
+                                            <option value="@channel">@CustomerPaymentPanel.Label(channel)</option>
+                                        }
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-gold">Send Reminder</button>
+                            </form>
+                        }
+                    </div>
+                </div>
+
+                <h3 class="payment-section-title">Instalments</h3>
+                @if (account.Instalments.Count == 0)
+                {
+                    <div class="empty-state empty-state--compact"><p>No instalment schedule for this account.</p></div>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>#</th><th>Due date</th><th class="col-num">Principal</th><th class="col-num">Paid</th><th class="col-num">Outstanding</th><th>Status</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var instalment in account.Instalments)
+                                {
+                                    <tr>
+                                        <td class="text-mono">@instalment.Sequence</td>
+                                        <td class="text-mono">@CustomerPaymentPanel.Date(instalment.DueDate)</td>
+                                        <td class="col-num text-mono">@CustomerPaymentPanel.Money(instalment.PrincipalAmount, currency)</td>
+                                        <td class="col-num text-mono">@CustomerPaymentPanel.Money(instalment.PrincipalPaid, currency)</td>
+                                        <td class="col-num text-mono cell-primary">@CustomerPaymentPanel.Money(instalment.PrincipalOutstanding, currency)</td>
+                                        <td><span class="badge badge-pay-@CustomerPaymentPanel.StatusCss(instalment.Status)">@CustomerPaymentPanel.Label(instalment.Status)</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @if (account.Charges.Count > 0)
+                {
+                    <h3 class="payment-section-title">Fines and fees</h3>
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead><tr><th>Type</th><th>Description</th><th>Due</th><th class="col-num">Amount</th><th class="col-num">Outstanding</th><th>Payable now</th></tr></thead>
+                            <tbody>
+                                @foreach (var charge in account.Charges)
+                                {
+                                    <tr>
+                                        <td>@charge.Kind</td>
+                                        <td>@(charge.Description ?? "—")</td>
+                                        <td class="text-mono">@(charge.DueDate is { } chargeDue ? CustomerPaymentPanel.Date(chargeDue) : "—")</td>
+                                        <td class="col-num text-mono">@CustomerPaymentPanel.Money(charge.Amount, currency)</td>
+                                        <td class="col-num text-mono">@CustomerPaymentPanel.Money(charge.Outstanding, currency)</td>
+                                        <td>@(charge.IsPayable ? "Yes" : "On hold")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+
+            <h3 class="payment-section-title">Payment history</h3>
+            @if (panel.Payments is null)
+            {
+                <div class="alert alert-error" role="status"><span>Payment history is unavailable right now.</span></div>
+            }
+            else if (panel.Payments.Items.Count == 0)
+            {
+                <div class="empty-state empty-state--compact"><p>No payments recorded for this account.</p></div>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead><tr><th>Received</th><th>Posted</th><th class="col-num">Amount</th><th>Method</th><th>Reference</th><th>Status</th><th>Receipt</th></tr></thead>
+                        <tbody>
+                            @foreach (var payment in panel.Payments.Items)
+                            {
+                                <tr>
+                                    <td class="text-mono">@CustomerPaymentPanel.Date(payment.ReceivedOn)</td>
+                                    <td class="text-mono">@(payment.PostedOn is { } posted ? CustomerPaymentPanel.Date(posted) : "—")</td>
+                                    <td class="col-num text-mono">@CustomerPaymentPanel.Money(payment.Amount, payment.Currency)</td>
+                                    <td>@(payment.Method ?? "—")</td>
+                                    <td class="text-mono">@(payment.Reference ?? "—")</td>
+                                    <td>
+                                        <span class="badge badge-pay-@CustomerPaymentPanel.StatusCss(payment.Status)">@CustomerPaymentPanel.Label(payment.Status)</span>
+                                        @if (!payment.CountsTowardBalance)
+                                        {
+                                            <div class="cell-sub">Not counted in the balance</div>
+                                        }
+                                    </td>
+                                    <td class="text-secondary">—</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (panel.Payments.TotalCount > panel.Payments.Items.Count)
+                {
+                    <p class="field-hint">Showing the latest @panel.Payments.Items.Count of @panel.Payments.TotalCount payments.</p>
+                }
+            }
+            @if (!panel.DocumentsAvailable)
+            {
+                <p class="field-hint" data-documents-unavailable>Receipt and statement-of-account downloads are not available: no verified document source is connected.</p>
+            }
+            break;
+    }
+
+    @if (showReminders)
+    {
+        <h3 class="payment-section-title">Reminder history</h3>
+        @if (panel.Reminders is null)
+        {
+            <div class="alert alert-error" role="status"><span>Reminder history is unavailable right now.</span></div>
+        }
+        else if (panel.Reminders.Items.Count == 0)
+        {
+            <div class="empty-state empty-state--compact"><p>No payment reminders have been sent@(account is null ? "" : " for this account").</p></div>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead><tr><th>Queued</th><th>Reminder</th><th>Channel</th><th class="col-num">Amount</th><th>Delivery</th><th>Customer response</th><th>Ticket</th></tr></thead>
+                    <tbody>
+                        @foreach (var reminder in panel.Reminders.Items)
+                        {
+                            var responses = reminder.Events.Where(e => e.EventType == "CustomerResponded").ToList();
+                            <tr>
+                                <td class="text-mono">@reminder.CreatedAtUtc.ToLocalTime().ToString("d MMM yyyy HH:mm")</td>
+                                <td>@CustomerPaymentPanel.Label(reminder.ReminderType)<div class="cell-sub">@reminder.AccountId · @reminder.Trigger</div></td>
+                                <td>@CustomerPaymentPanel.Label(reminder.Channel)</td>
+                                <td class="col-num text-mono">@CustomerPaymentPanel.Money(reminder.Amount, reminder.Currency)</td>
+                                <td>
+                                    <span class="badge badge-pay-@CustomerPaymentPanel.StatusCss(reminder.Status)">@reminder.Status</span>
+                                    @if (reminder.StatusReason is { } reason)
+                                    {
+                                        <div class="cell-sub">@reason</div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (responses.Count == 0)
+                                    {
+                                        <span class="text-secondary">—</span>
+                                    }
+                                    @foreach (var response in responses)
+                                    {
+                                        <div>@CustomerPaymentPanel.Label(response.ResponseKind ?? "Other")@(response.VerificationFollowUpRequired ? " · verification needed" : "")</div>
+                                    }
+                                </td>
+                                <td>
+                                    @foreach (var response in responses)
+                                    {
+                                        @if (response.TicketId is { } ticketId)
+                                        {
+                                            <div><a class="ticket-id-link" href="/Tickets/@ticketId">@(response.TicketNumber ?? $"#{ticketId}")</a></div>
+                                        }
+                                        else if (response.TicketStatus == "Pending")
+                                        {
+                                            <div><span class="badge badge-pay-pending">Ticket pending</span></div>
+                                        }
+                                    }
+                                    @if (responses.All(r => r.TicketId is null && r.TicketStatus != "Pending"))
+                                    {
+                                        <span class="text-secondary">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</div>

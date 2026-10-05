@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TigerCS.Domain.Audit;
 using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -13,6 +14,7 @@ using TigerCS.Domain.Modules.WorkflowConfiguration;
 using TigerCS.Infrastructure.Audit;
 using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.ClassificationAndRouting.Configurations;
+using TigerCS.Infrastructure.Modules.Collections;
 using TigerCS.Infrastructure.Modules.CustomerVerification.Configurations;
 using TigerCS.Infrastructure.Modules.GenesysIntegration.Configurations;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Configurations;
@@ -132,6 +134,10 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<GenesysScreenPopLaunch> GenesysScreenPopLaunches => Set<GenesysScreenPopLaunch>();
 
+    public DbSet<CollectionsReminder> CollectionsReminders => Set<CollectionsReminder>();
+
+    public DbSet<CollectionsReminderEvent> CollectionsReminderEvents => Set<CollectionsReminderEvent>();
+
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
 
     public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
@@ -191,6 +197,9 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketAgentHandoffConfiguration());
         builder.ApplyConfiguration(new GenesysQueueMappingConfiguration());
         builder.ApplyConfiguration(new GenesysScreenPopLaunchConfiguration());
+
+        builder.ApplyConfiguration(new CollectionsReminderConfiguration());
+        builder.ApplyConfiguration(new CollectionsReminderEventConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
         builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());

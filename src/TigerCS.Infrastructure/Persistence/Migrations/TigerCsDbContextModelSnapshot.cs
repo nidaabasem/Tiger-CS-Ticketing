@@ -293,6 +293,212 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("Categories", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Collections.CollectionsReminder", b =>
+                {
+                    b.Property<long>("CollectionsReminderId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CollectionsReminderId"));
+
+                    b.Property<string>("AccountId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<bool>("AmountIncludesFines")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CrmCustomerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("CrmUnitId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .IsUnicode(false)
+                        .HasColumnType("char(3)")
+                        .IsFixedLength();
+
+                    b.Property<string>("CycleKey")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("DeduplicationKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime?>("DeliveredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal?>("DispatchAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<DateTime?>("DispatchSourceAsOfUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("FailedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ProviderReference")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid?>("RequestedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("SourceAsOfUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("StatusReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("SuppressedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("CollectionsReminderId");
+
+                    b.HasIndex("DeduplicationKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CollectionsReminders_DeduplicationKey");
+
+                    b.HasIndex("CrmCustomerId", "CreatedAtUtc")
+                        .HasDatabaseName("IX_CollectionsReminders_Customer_Created");
+
+                    b.ToTable("CollectionsReminders", (string)null);
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Collections.CollectionsReminderEvent", b =>
+                {
+                    b.Property<long>("CollectionsReminderEventId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CollectionsReminderEventId"));
+
+                    b.Property<long>("CollectionsReminderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ConversationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("CustomerPhone")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<string>("ExternalEventId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("HumanFollowUpRequired")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal?>("PromisedAmount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<DateOnly?>("PromisedPaymentDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ReportedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ResponseKind")
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<int>("TicketAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TicketLastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("TicketLinkedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TicketNumber")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("TicketStatus")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<bool>("VerificationFollowUpRequired")
+                        .HasColumnType("bit");
+
+                    b.HasKey("CollectionsReminderEventId");
+
+                    b.HasIndex("TicketId")
+                        .HasDatabaseName("IX_CollectionsReminderEvents_TicketId");
+
+                    b.HasIndex("CollectionsReminderId", "ExternalEventId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CollectionsReminderEvents_Reminder_EventId");
+
+                    b.ToTable("CollectionsReminderEvents", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.ContactReference", b =>
                 {
                     b.Property<int>("ContactReferenceId")
@@ -2475,6 +2681,17 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.Collections.CollectionsReminderEvent", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Collections.CollectionsReminder", "Reminder")
+                        .WithMany("Events")
+                        .HasForeignKey("CollectionsReminderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Reminder");
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.ContactReference", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.CustomerVerification.ContactReference", null)
@@ -3071,6 +3288,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("WorkflowTemplate");
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.Collections.CollectionsReminder", b =>
+                {
+                    b.Navigation("Events");
                 });
 
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.UnitReference", b =>

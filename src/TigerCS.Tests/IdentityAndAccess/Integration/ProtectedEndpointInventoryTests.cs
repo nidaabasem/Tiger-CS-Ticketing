@@ -80,6 +80,13 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/genesys/agent-context"] = nameof(GenesysIntegration.Integration.GenesysAgentMappingEndpointsTests.MappedAgent_ResolvesToTheTicketingUser_AndRecordsInteractionOwnership),
         // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).
         ["POST /api/genesys/screen-pop"] = nameof(GenesysIntegration.Integration.GenesysScreenPopEndpointsTests.Issue_ReturnsAOneHourLaunchUrl_AndStoresOnlyTheHash),
+        // Collections — the explicit financial permissions, with the System Administrator override.
+        ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+        ["GET /api/genesys/collections/customers/{crmCustomerId}/payments"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+        ["GET /api/genesys/collections/reminders/candidates"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+        ["POST /api/genesys/collections/reminders"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+        ["POST /api/genesys/collections/reminders/{reminderId:long}/outcomes"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+        ["GET /api/genesys/collections/customers/{crmCustomerId}/reminders"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
         ["GET /api/pending-customer-interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/start"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/complete"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),

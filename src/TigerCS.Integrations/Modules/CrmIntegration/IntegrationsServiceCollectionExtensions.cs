@@ -1,12 +1,14 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Application.Modules.Notifications;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications.Services;
+using TigerCS.Integrations.Modules.CollectionsIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Integrations.Modules.PactIntegration;
 using TigerCS.Integrations.Modules.TasleehIntegration;
@@ -18,6 +20,22 @@ public static class IntegrationsServiceCollectionExtensions
     public static IServiceCollection AddTigerCsIntegrations(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<CrmGatewayOptions>(configuration.GetSection(CrmGatewayOptions.SectionName));
+
+        // The Collections financial source. "Unavailable" (the default, and
+        // the only value for real environments today) fails closed — no
+        // financial source has been integrated. "Fixture" is sample data for
+        // Development/Testing only; CollectionsSourceSafety refuses it
+        // elsewhere at startup.
+        services.Configure<CollectionsSourceOptions>(configuration.GetSection(CollectionsSourceOptions.SectionName));
+        services.AddScoped<UnavailableCollectionsFinancialSource>();
+        services.AddScoped<FixtureCollectionsFinancialSource>();
+        services.AddScoped<ICollectionsFinancialSource>(sp =>
+            sp.GetRequiredService<IOptions<CollectionsSourceOptions>>().Value.Provider switch
+            {
+                var p when string.Equals(p, "Fixture", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<FixtureCollectionsFinancialSource>(),
+                var p when string.Equals(p, "Unavailable", StringComparison.OrdinalIgnoreCase) => sp.GetRequiredService<UnavailableCollectionsFinancialSource>(),
+                var p => throw new NotSupportedException($"CollectionsSource:Provider '{p}' is not supported. Use \"Unavailable\" (or \"Fixture\" in Development/Testing).")
+            });
 
         // ICrmGateway (unit/contact lookup) and ICrmCustomerLookupGateway
         // (phone-based customer search, CustomerLookupAppService's only caller)

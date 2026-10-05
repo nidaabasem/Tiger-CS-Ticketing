@@ -95,6 +95,41 @@
     apply();
   });
 
+  // Customer Profile · Payment tab: its content is fetched the first time
+  // the tab is opened, so the profile itself never waits on the financial
+  // source. Without JS the placeholder's own link loads the page with the
+  // tab rendered server-side (?tab=payment), which is also how the account
+  // selector and Send Reminder return here.
+  document.querySelectorAll("[data-payment-src]").forEach(function (panel) {
+    var radio = document.getElementById("tab-payment");
+    if (!radio) return;
+    var load = function () {
+      var placeholder = panel.querySelector('[data-payment-state="Deferred"]');
+      if (!placeholder || panel.hasAttribute("data-loading")) return;
+      panel.setAttribute("data-loading", "");
+      fetch(panel.getAttribute("data-payment-src"), { credentials: "same-origin", headers: { "Accept": "text/html" } })
+        .then(function (response) {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.text();
+        })
+        .then(function (html) {
+          placeholder.outerHTML = html;
+          panel.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
+            el.addEventListener("change", function () {
+              if (el.form && !el.form.hasAttribute("data-submitting")) el.form.requestSubmit();
+            });
+          });
+        })
+        .catch(function () {
+          var status = placeholder.querySelector('[role="status"] span:not(.payment-spinner)') || placeholder;
+          status.textContent = "Payment details could not be loaded.";
+        })
+        .finally(function () { panel.removeAttribute("data-loading"); });
+    };
+    radio.addEventListener("change", function () { if (radio.checked) load(); });
+    if (radio.checked) load();
+  });
+
   // Prevent duplicate submission: the FIRST submit of a form wins, and every
   // further submit while that one is still in flight is dropped. This covers
   // the double-click, the second Enter in a search box, and a filter control

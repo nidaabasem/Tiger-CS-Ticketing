@@ -11,7 +11,14 @@ surface: **there is nothing else on `api/genesys`.**
 | 4 | Agent context (agent identity mapping) | `POST /api/genesys/agent-context` |
 
 All four are behind the `Genesys:Enabled` feature flag and answer `503` while
-it is off. Contract 4 is the agent-identity addition described under
+it is off.
+
+**Collections** adds six routes under `api/genesys/collections/*` (balances,
+payments, reminder candidates, recording a reminder, reminder outcomes,
+reminder history). They have their own `Collections:Enabled` flag and explicit
+financial permissions, and they change nothing about contracts 1–4: a customer
+response creates or reuses its ticket through contract 1's ingestion. See
+`docs/Collections/Collections-Integration.md`. Contract 4 is the agent-identity addition described under
 *Agent identity mapping* below; it changes nothing about contracts 1–3.
 
 ---

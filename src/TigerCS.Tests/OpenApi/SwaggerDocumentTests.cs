@@ -142,6 +142,14 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/genesys/agent-context",
         // Genesys Secure Screen Pop: issue a one-time, one-hour launch URL.
         "POST /api/genesys/screen-pop",
+        // Collections: balances/payments from the financial source, reminder
+        // candidates, recording a reminder, its outcomes, reminder history.
+        "GET /api/genesys/collections/customers/{crmCustomerId}/outstanding",
+        "GET /api/genesys/collections/customers/{crmCustomerId}/payments",
+        "GET /api/genesys/collections/reminders/candidates",
+        "POST /api/genesys/collections/reminders",
+        "POST /api/genesys/collections/reminders/{reminderId}/outcomes",
+        "GET /api/genesys/collections/customers/{crmCustomerId}/reminders",
         "GET /api/pending-customer-interactions",
         "POST /api/pending-customer-interactions/{handoffId}/start",
         "POST /api/pending-customer-interactions/{handoffId}/complete",
