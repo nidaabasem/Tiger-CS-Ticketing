@@ -90,6 +90,22 @@ retrieval time.
 | g | **Freshness** | Post a test receipt in PACT UAT. Expect it to appear within about 20 minutes, not immediately; reloading does not speed it up. Record the actual delay (this confirms the deployed `CacheDuration`) |
 | h | **Errors** | A wrong API key gives *"EDSM rejected TigerCS's credentials"* for that company and no figures; with EDSM stopped, *"EDSM is unavailable"* |
 
+## 4a. Short procedure for one known PACT customer
+
+1. **Pick the customer.** In TigerCS **Customers**, filter by source **PACT** and open a customer whose key is `ext:Pact:{tenantID}`. Record the tenant ID from the profile ("PACT ID"). For a broad first run, choose a customer with an owned unit (company 4 or 32) and, if possible, a rented one (25, 7 or 20).
+2. **Record the identifiers.** On the Payment tab, each company block lists the PACT contracts it was confirmed through (project, unit, unit type, contract number). For each block, note the **companyID**, the **tenantID** and the contract numbers.
+3. **Compare the figures.** For each block, compare with EDSM for the same pair, using the EDSM owners' tooling or the PACT/EDSM screens:
+   - the five summary fields against `GET v1/reports/payment-summary?TenantId=&CompanyId=`;
+   - the Payments, Due items and Not yet due / Post-dated cheques lists against `GET v1/reports/payment-transactions` types 1, 2 and 3.
+
+   TigerCS shows EDSM's strings unchanged, so they must match character for character. Never call type 4.
+4. **Confirm the mapping is reused.** Reload the tab, and use its Retry link, a few times within 30 minutes:
+   - "Accounts confirmed" keeps the **same time** and shows **"(PACT contracts, reused)"**;
+   - the API response's `mappingSource` is `Cached`;
+   - PACT/EDSM request logs show **one** `GET v1/contracts/{mobile}` per customer phone number for the first load only;
+   - after 30 minutes (or a phone-number change), exactly one new discovery occurs.
+5. **Check a CRM customer.** Open a `crm:{id}` customer. The tab shows "identified by Tiger CRM … no verified mapping from a CRM customer to a PACT tenant exists", with no figures, and the logs show no PACT or EDSM call for it.
+
 ## 5. Sign-off record
 
 Record the following for each case:
