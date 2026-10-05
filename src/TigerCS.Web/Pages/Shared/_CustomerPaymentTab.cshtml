@@ -6,7 +6,7 @@
     var currency = account?.Currency ?? "";
     var baseHref = $"/Customers/{Uri.EscapeDataString(panel.CustomerKey)}?tab=payment";
     var showReminders = panel.CrmCustomerId is not null
-        && panel.State is PaymentPanelState.Loaded or PaymentPanelState.Unavailable or PaymentPanelState.NoAccounts;
+        && panel.State is PaymentPanelState.Loaded or PaymentPanelState.Unavailable or PaymentPanelState.NoAccounts or PaymentPanelState.NotMapped;
     var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
 }
 
@@ -30,6 +30,12 @@
 
         case PaymentPanelState.NotCrmCustomer:
             <div class="empty-state"><p>Payment information is available only for customers identified in Tiger CRM or PACT.</p></div>
+            break;
+
+        case PaymentPanelState.NotMapped:
+            <div class="alert alert-info" role="status" data-payment-not-mapped>
+                <span><strong>No payment figures for this customer.</strong> @(panel.PaymentSummary?.MappingDetail ?? "There is no verified financial account mapping for this customer.") No balance is shown, so do not quote one.</span>
+            </div>
             break;
 
         case PaymentPanelState.EdsmSummary:

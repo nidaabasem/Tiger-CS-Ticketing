@@ -21,6 +21,12 @@ public enum PaymentPanelState
 
     Loaded,
 
+    /// <summary>
+    /// A CRM customer with no financial source: the per-account source is not integrated, and EDSM
+    /// has no verified mapping for this customer (the Api's NotMapped reason is shown).
+    /// </summary>
+    NotMapped,
+
     /// <summary>A PACT customer: EDSM's payment summary only — no instalments, transactions or reminders.</summary>
     EdsmSummary,
 
