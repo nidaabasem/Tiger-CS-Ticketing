@@ -52,6 +52,22 @@ Startup refuses `Fixture` outside Development/Testing.
 4. Choose the .NET culture that formats `#,##0.00` and `dd-MMM-yyyy`
    identically, e.g. `en-US` gives `1,234.50` and `15-Mar-2026`. Ask the EDSM
    host owner to confirm the IIS app-pool culture, and record it.
+
+   With no culture set, the Payment tab shows each amount as *"Not read (EDSM
+   number format not configured)"* followed by **EDSM sent "…"**, the exact
+   string. Match what you see:
+
+   | EDSM sends (amount ≥ 1,000; a date) | Grouping / decimal | Set `EdsmNumberCulture` |
+   |---|---|---|
+   | `1,234.50`, `-500.00`; `15-Mar-2026`, `15-Sep-2026` | `,` / `.` | `en-US` |
+   | `1,234.50`; September as `15-Sept-2026` | `,` / `.` | `en-GB` (its September abbreviation is "Sept") |
+   | `1.234,50`; `15-Mär-2026` | `.` / `,` | the matching European culture (e.g. `de-DE`); check the month names |
+   | `1 234,50` (space group) | space / `,` | e.g. `fr-FR`; confirm the space character with the host owner |
+   | Arabic month names, or a sign other than a leading `-` | — | ask the EDSM host owner for the exact IIS culture name |
+
+   Do not choose from fixture data. Read at least one amount ≥ 1,000, one
+   negative amount if one exists (rented `dueAmount`), and one transaction
+   date from **real** responses.
 5. Set `CollectionsSource__EdsmNumberCulture` and reload. Pass when:
    - no field shows "Not readable";
    - the values match `raw` exactly;

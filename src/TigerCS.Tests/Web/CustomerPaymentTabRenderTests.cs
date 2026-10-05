@@ -327,6 +327,8 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("Not computed for rented companies", html, StringComparison.Ordinal);
         Assert.Contains("-500.00", html, StringComparison.Ordinal);                      // rented due may be negative
         Assert.Contains("EDSM sent “1.500,00”", html, StringComparison.Ordinal);
+        Assert.Contains("Not read (EDSM number format not configured)", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM sent “812.500,00”", html, StringComparison.Ordinal);   // raw shown so the format can be verified
         Assert.DoesNotContain(">0.00", html, StringComparison.Ordinal);
         Assert.Contains("AED <small class=\"field-hint\">(configured in TigerCS — EDSM returns no currency)</small>", html, StringComparison.Ordinal);
         Assert.Contains("EDSM returns no as-of time", html, StringComparison.Ordinal);
@@ -410,6 +412,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                     F("paidAmount", "Paid", "Missing", null, null),
                     F("dueAmount", "Due", "Unreadable", null, "1.500,00"),
                     F("outstandingAmount", "Not yet due", "Provided", 437_500m, "437,500.00"),
+                    F("paidAmountUnconfigured", "Paid (format check)", "FormatNotConfigured", null, "812.500,00"),
                     F("lateFines", "Late fines", "Empty", null, "", "ZeroOrLess"),
                     F("totalAmount", "Total", "Provided", 1_250_000m, "1,250,000.00"),
                 ], "NotChecked", false, [],
