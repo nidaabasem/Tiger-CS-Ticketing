@@ -63,7 +63,8 @@ in §9.
 
 ## 2. EDSM
 
-Source of truth: [`EDSM_Collections_Contract.md`](EDSM_Collections_Contract.md).
+Source of truth: [`EDSM_Collections_Contract.md`](EDSM_Collections_Contract.md)
+(a sanitized public copy). UAT steps: [`EDSM-UAT-Guide.md`](EDSM-UAT-Guide.md).
 Section references below (§ in brackets) point into it.
 
 ### 2.1 What is implemented
@@ -111,8 +112,33 @@ Section references below (§ in brackets) point into it.
   - CRM-identified customers are `NotMapped`: a ticket stores either CRM IDs
     or a PACT tenant, never both.
 - **Side effect.** `/v1/contracts/{mobile}` **writes** customer-type and
-  `UserUnit` rows in EDSM [§8.3]. TigerCS's existing customer lookup already
-  makes this call; the Payment tab adds one call per load per phone number.
+  `UserUnit` rows in EDSM [§8.3], so contract discovery runs only when there
+  is a reason.
+
+**Verified mapping reuse** (`PactAccountMappingCache`):
+- **Why a cache is needed.** TigerCS's persisted facts hold the PACT
+  `tenantID` (the ticket's `ExternalCustomerId`), but not `companyID`, so the
+  company/tenant pairs come from one discovery.
+- **What is cached.** The pairs are kept in memory for
+  `CollectionsSource:PactMappingTtlMinutes` (default 30, at most 24 h). The key
+  is the tenant plus the profile's phone numbers.
+- **What isn't cached.** Authorization: every request still checks the
+  financial-read grant and the Customer Directory's department visibility first.
+- **Discovery runs again when:**
+  - the TTL expires;
+  - the customer's phone numbers change;
+  - EDSM refuses a cached pair (business-rule or validation 400), which
+    invalidates the entry;
+  - the previous attempt could not reach PACT (failures are never cached).
+- **No contracts.** "PACT answered: no contracts for this tenant" is reused for
+  `PactMappingNegativeTtlMinutes` (default 5), so retries on an unmapped
+  customer don't each write.
+- **What the response shows.** `mappingVerifiedAtUtc` and `mappingSource`
+  (`PactLookup` or `Cached`) tell you when PACT last confirmed the accounts;
+  the tab shows "Accounts confirmed … (PACT contracts, reused)".
+- **Still read every load.** EDSM's own read-only figures (summary,
+  transactions) are still read on each load.
+- **Scope.** The cache is per instance; a restart costs one discovery.
 
 **Companies** [§2.1–2.2]:
 
@@ -217,7 +243,7 @@ that read. Until then automatic dispatch stays disabled.
 
 | # | What | Needed from |
 |---|---|---|
-| 1 | SP bodies: `p{4,32,7,25,20}tenantStat`, `p{4,32}tenantStatTest`, `p{4,32}DuePayments`, `p{25,7}GetCheques`, tenant-phone SPs. These set the status sets, date inclusivity, column types and TenantId granularity | DB owner, `PACTRPT` [contract §10.1] |
+| 1 | SP bodies: `p{4,32,7,25,20}tenantStat`, `p{4,32}tenantStatTest`, `p{4,32}DuePayments`, `p{25,7}GetCheques`, tenant-phone SPs. These set the status sets, date inclusivity, column types and TenantId granularity | DB owner [contract §10.1] |
 | 2 | Production host culture (number and date format). Then set `EdsmNumberCulture` | IIS host [§10.3] |
 | 3 | The deployed build matches the analysed source; the deployed `CacheDuration` values; the base URL | Deployed EDSM [§10.2] |
 | 4 | Whether owned rows with NULL credit exist. If they do, owned due and outstanding understate unpaid instalments [§3.4] | SP source / UAT |
@@ -452,7 +478,9 @@ from the real API with the fixture source):
   "DueInstallmentsLookbackDays": 31,
   "DueInstallmentsLookaheadDays": 31,
   "SourceCacheMinutes": 10,             // EDSM CacheDuration in source config (display only)
-  "MaxSourceDelayMinutes": 20           // nested caches (display only); confirm from the deployed config
+  "MaxSourceDelayMinutes": 20,          // nested caches (display only); confirm from the deployed config
+  "PactMappingTtlMinutes": 30,          // reuse of verified PACT company/tenant pairs (v1/contracts writes in EDSM)
+  "PactMappingNegativeTtlMinutes": 5    // reuse of "no contracts for this tenant"
 }
 // EDSM reuses the existing "PactApi": { "BaseUrl", "ApiKey" } (key via PactApi__ApiKey, never committed).
 ```
@@ -555,6 +583,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
   "numberCulture": "en-US",
   "sourceCacheMinutes": 10,
   "maxSourceDelayMinutes": 20,
+  "mappingVerifiedAtUtc": "2026-10-05T08:00:00Z",
+  "mappingSource": "PactLookup",
   "companies": [
     {
       "companyId": 4,
@@ -916,6 +946,8 @@ GET /api/collections/customers/by-key/crm%3A9001/payment-summary
   "numberCulture": "en-US",
   "sourceCacheMinutes": 10,
   "maxSourceDelayMinutes": 20,
+  "mappingVerifiedAtUtc": null,
+  "mappingSource": null,
   "companies": [],
   "contractsWithoutCompany": []
 }

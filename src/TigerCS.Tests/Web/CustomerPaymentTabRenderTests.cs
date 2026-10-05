@@ -300,6 +300,8 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("AED <small class=\"field-hint\">(configured in TigerCS — EDSM returns no currency)</small>", html, StringComparison.Ordinal);
         Assert.Contains("EDSM returns no as-of time", html, StringComparison.Ordinal);
         Assert.Contains("up to about 20 minutes", html, StringComparison.Ordinal);
+        Assert.Contains("data-mapping-verified=\"Cached\"", html, StringComparison.Ordinal);
+        Assert.Contains("(PACT contracts, reused)", html, StringComparison.Ordinal);
         Assert.Contains("data-edsm-transactions=\"Paid\"", html, StringComparison.Ordinal);
         Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
         Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
@@ -365,7 +367,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
             new(key, label, $"Definition of {label}.", status, value, raw, meaning);
 
         private static CollectionsPaymentSummaryResponseDto Summary() => new(
-            "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, "AED", "Configured", "en-US", 10, 20,
+            "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, Now.AddMinutes(-5), "Cached",
             [
                 new CollectionsCompanyPaymentSummaryDto(4, "Tiger Group Dubai", "Owned", "Available", null, [Contract],
                 [

@@ -186,7 +186,7 @@ public sealed class EdsmEnvelopeTests
 
 public sealed class EdsmCollectionsHttpGatewayTests
 {
-    private const string BaseUrl = "http://10.30.10.117:6020/";
+    private const string BaseUrl = "http://pact.example.test:6020/";
     private const string ApiKey = "pact-test-key";
 
     private static EdsmCollectionsHttpGateway Gateway(StubHttpMessageHandler handler, string? apiKey = ApiKey) =>
@@ -359,11 +359,15 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
 
     public CollectionsPaymentSummaryAppServiceTests() => _edsm = new RecordingEdsm(new FixtureEdsmCollectionsGateway(Options.Create(_edsmOptions)));
 
+    private readonly FakeTimeProvider _time = new(Now);
+    private PactAccountMappingCache? _cache;
+
+    /// <summary>A fresh service per call, like a request scope; the mapping cache is shared, like the singleton.</summary>
     private CollectionsPaymentSummaryAppService Service() => new(
         _options, _edsmOptions,
         new CollectionsAuthorizationService(_options, new FakeDepartmentRepository()),
-        new CollectionsClock(_options, new FakeTimeProvider(Now)),
-        _profiles, _pact, _edsm);
+        new CollectionsClock(_options, _time),
+        _profiles, _pact, _edsm, _cache ??= new PactAccountMappingCache(_time));
 
     private static CustomerDirectoryProfileDto Profile(string key, int? crmId, string? source, string? externalId, params string[] phones) =>
         new(key, crmId is null ? (source is null ? "Phone" : "External") : "Crm", "Customer", phones, [], source ?? (crmId is null ? "Unverified" : "Crm"),
@@ -591,11 +595,123 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
         Assert.Equal(CollectionsOutcome.Disabled, (await Service().GetAsync(_agent, PactKey)).Outcome);
     }
 
+    // ---- Contract discovery (v1/contracts/{mobile} writes inside EDSM) ----
+
+    [Fact]
+    public async Task RepeatedTabLoads_DiscoverContractsOnce_AndReuseTheVerifiedMapping()
+    {
+        SeedPactCustomer(Owned, Rented);
+
+        var first = (await Service().GetAsync(_agent, PactKey)).Value!;
+        for (var load = 0; load < 4; load++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            var again = (await Service().GetAsync(_agent, PactKey)).Value!;
+            Assert.Equal("Cached", again.MappingSource);
+            Assert.Equal(first.MappingVerifiedAtUtc, again.MappingVerifiedAtUtc);
+            Assert.Equal("Mapped", again.MappingStatus);
+        }
+
+        Assert.Equal("PactLookup", first.MappingSource);
+        Assert.Equal(Now, first.MappingVerifiedAtUtc);
+        Assert.Equal(1, _pact.SearchCallCount);                  // one discovery for five loads
+        Assert.Equal(10, _edsm.SummaryCalls.Count);              // EDSM's read-only figures are still read each load
+    }
+
+    [Fact]
+    public async Task TheMapping_IsRevalidatedAfterItsTtl()
+    {
+        SeedPactCustomer(Owned);
+        await Service().GetAsync(_agent, PactKey);
+
+        _time.Advance(TimeSpan.FromMinutes(29));
+        Assert.Equal("Cached", (await Service().GetAsync(_agent, PactKey)).Value!.MappingSource);
+        _time.Advance(TimeSpan.FromMinutes(2));
+        var after = (await Service().GetAsync(_agent, PactKey)).Value!;
+
+        Assert.Equal("PactLookup", after.MappingSource);
+        Assert.Equal(Now.AddMinutes(31), after.MappingVerifiedAtUtc);
+        Assert.Equal(2, _pact.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task AChangedPhoneNumber_TriggersDiscovery()
+    {
+        SeedPactCustomer(Owned);
+        await Service().GetAsync(_agent, PactKey);
+
+        _profiles.Add(Profile(PactKey, null, "Pact", "3001", Phone, "+971500000003"));
+        var after = (await Service().GetAsync(_agent, PactKey)).Value!;
+
+        Assert.Equal("PactLookup", after.MappingSource);
+        Assert.Equal(3, _pact.SearchCallCount);                  // 1 + both numbers
+    }
+
+    [Fact]
+    public async Task APactFailure_IsNeverCached_SoTheRetryRediscovers()
+    {
+        SeedPactCustomer(Owned);
+        _pact.ForcedOutcome = PactCustomerLookupOutcome.Unavailable;
+        Assert.Equal(CollectionsOutcome.FinanceUnavailable, (await Service().GetAsync(_agent, PactKey)).Outcome);
+
+        _pact.ForcedOutcome = null;
+        var retry = (await Service().GetAsync(_agent, PactKey)).Value!;
+
+        Assert.Equal("PactLookup", retry.MappingSource);
+        Assert.Equal("Mapped", retry.MappingStatus);
+        Assert.Equal(2, _pact.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task NoContractsForTheTenant_IsReusedBriefly_ThenRechecked()
+    {
+        _profiles.Add(Profile(PactKey, null, "Pact", "3001", Phone));
+        _pact.Seed(Phone, Tenant("4444", Owned));
+
+        await Service().GetAsync(_agent, PactKey);
+        var retry = (await Service().GetAsync(_agent, PactKey)).Value!;
+        Assert.Equal("NotMapped", retry.MappingStatus);
+        Assert.Equal(1, _pact.SearchCallCount);
+
+        _time.Advance(TimeSpan.FromMinutes(6));
+        await Service().GetAsync(_agent, PactKey);
+        Assert.Equal(2, _pact.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task AnEdsmRejectionOfACachedPair_InvalidatesTheMapping()
+    {
+        SeedPactCustomer(Owned);
+        _edsm.SummaryOverride[(4, "3001")] = """{"title":"Company not supported","status":400,"data":null}""";
+
+        var first = (await Service().GetAsync(_agent, PactKey)).Value!;
+        var second = (await Service().GetAsync(_agent, PactKey)).Value!;
+
+        Assert.Equal("BusinessRuleRejected", first.Companies.Single().Status);
+        Assert.Equal("PactLookup", second.MappingSource);
+        Assert.Equal(2, _pact.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task ACachedMapping_NeverBypassesAuthorizationOrVisibility()
+    {
+        SeedPactCustomer(Owned);
+        await Service().GetAsync(_agent, PactKey);
+
+        Assert.Equal(CollectionsOutcome.Forbidden,
+            (await Service().GetAsync(new CollectionsCaller(Guid.NewGuid(), [Roles.ReportingUser], []), PactKey)).Outcome);
+        _profiles.Remove(PactKey);                                // e.g. the caller can no longer see the customer
+        Assert.Equal(CollectionsOutcome.AccountNotFound, (await Service().GetAsync(_agent, PactKey)).Outcome);
+        Assert.Equal(1, _pact.SearchCallCount);
+    }
+
     private sealed class FakeProfiles : ICollectionsCustomerProfiles
     {
         private readonly Dictionary<string, CustomerDirectoryProfileDto> _profiles = [];
 
         public void Add(CustomerDirectoryProfileDto profile) => _profiles[profile.CustomerKey] = profile;
+
+        public void Remove(string key) => _profiles.Remove(key);
 
         public Task<CustomerDirectoryProfileResult> GetProfileAsync(
             Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, string customerKey, CancellationToken cancellationToken = default) =>

@@ -51,7 +51,8 @@ public sealed class CollectionsPaymentSummaryAppService(
     CollectionsClock clock,
     ICollectionsCustomerProfiles directory,
     IPactCustomerLookupGateway pact,
-    IEdsmCollectionsGateway edsm)
+    IEdsmCollectionsGateway edsm,
+    PactAccountMappingCache mappingCache)
 {
     public const string PactSource = "Pact";
     private const int MaxPhoneLookups = 5;
@@ -95,10 +96,63 @@ public sealed class CollectionsPaymentSummaryAppService(
         }
 
         var tenantKey = tenantId.ToString(CultureInfo.InvariantCulture);
+        var cacheKey = PactAccountMappingCache.Key(tenantKey, profile.PhoneNumbers);
+        var ttl = TimeSpan.FromMinutes(Math.Clamp(edsmOptions.PactMappingTtlMinutes, 1, 1440));
+        var negativeTtl = TimeSpan.FromMinutes(Math.Clamp(edsmOptions.PactMappingNegativeTtlMinutes, 1, 60));
+
+        var mapping = mappingCache.Get(cacheKey, ttl, negativeTtl);
+        var mappingSource = "Cached";
+        if (mapping is null)
+        {
+            mapping = await DiscoverAsync(tenantKey, profile.PhoneNumbers, cancellationToken);
+            if (mapping is null)
+            {
+                // PACT unreachable: nothing is cached, so the next load has a reason to retry.
+                return Fail(CollectionsOutcome.FinanceUnavailable,
+                    "PACT could not be reached to confirm the customer's accounts, so EDSM figures are unavailable.");
+            }
+
+            mappingCache.Set(cacheKey, mapping);
+            mappingSource = "PactLookup";
+        }
+
+        var contracts = mapping.Contracts;
+        var matchedMobile = mapping.MatchedMobile;
+        if (contracts.Count == 0)
+        {
+            return Ok(Response(profile.CustomerKey, "NotMapped",
+                $"PACT returned no contracts for tenant {tenantKey} under this customer's phone numbers, so no EDSM account can be confirmed.",
+                tenantKey, retrievedAt, [], [], mapping.VerifiedAtUtc, mappingSource));
+        }
+
+        var distinct = contracts.DistinctBy(c => (c.CompanyId, c.ContractNumber, c.ExternalUnitId)).ToList();
+        var companies = new List<CollectionsCompanyPaymentSummaryDto>();
+        foreach (var group in distinct.Where(c => c.CompanyId is not null).GroupBy(c => c.CompanyId!.Value).OrderBy(g => g.Key))
+        {
+            companies.Add(await CompanyAsync(group.Key, tenantKey, tenantId, matchedMobile!, group.Select(ToRef).ToList(), cancellationToken));
+        }
+
+        if (companies.Any(c => c.Status is nameof(EdsmOutcome.BusinessRuleRejected) or nameof(EdsmOutcome.ValidationRejected)))
+        {
+            // EDSM refused a pair PACT gave us: the mapping may be out of date, so rediscover next time.
+            mappingCache.Invalidate(cacheKey);
+        }
+
+        return Ok(Response(profile.CustomerKey, companies.Count == 0 ? "NotMapped" : "Mapped",
+            companies.Count == 0 ? "PACT returned this tenant's contracts without a companyID, so no EDSM account can be confirmed." : null,
+            tenantKey, retrievedAt, companies, distinct.Where(c => c.CompanyId is null).Select(ToRef).ToList(), mapping.VerifiedAtUtc, mappingSource));
+    }
+
+    /// <summary>
+    /// Contract discovery: PACT <c>v1/contracts/{mobile}</c> for each of the profile's numbers,
+    /// keeping only rows whose own tenantID is the stored tenant. Null when PACT could not answer at all.
+    /// </summary>
+    private async Task<PactAccountMapping?> DiscoverAsync(string tenantKey, IReadOnlyList<string> phoneNumbers, CancellationToken cancellationToken)
+    {
         var contracts = new List<PactContractDto>();
         string? matchedMobile = null;
         var anyAnswered = false;
-        foreach (var phone in profile.PhoneNumbers.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().Take(MaxPhoneLookups))
+        foreach (var phone in phoneNumbers.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().Take(MaxPhoneLookups))
         {
             var lookup = await pact.SearchByMobileAsync(phone, cancellationToken);
             if (lookup.Outcome is PactCustomerLookupOutcome.Success or PactCustomerLookupOutcome.NotFound)
@@ -117,26 +171,7 @@ public sealed class CollectionsPaymentSummaryAppService(
             }
         }
 
-        if (contracts.Count == 0)
-        {
-            return anyAnswered
-                ? Ok(Response(profile.CustomerKey, "NotMapped",
-                    $"PACT returned no contracts for tenant {tenantKey} under this customer's phone numbers, so no EDSM account can be confirmed.",
-                    tenantKey, retrievedAt, [], []))
-                : Fail(CollectionsOutcome.FinanceUnavailable,
-                    "PACT could not be reached to confirm the customer's accounts, so EDSM figures are unavailable.");
-        }
-
-        var distinct = contracts.DistinctBy(c => (c.CompanyId, c.ContractNumber, c.ExternalUnitId)).ToList();
-        var companies = new List<CollectionsCompanyPaymentSummaryDto>();
-        foreach (var group in distinct.Where(c => c.CompanyId is not null).GroupBy(c => c.CompanyId!.Value).OrderBy(g => g.Key))
-        {
-            companies.Add(await CompanyAsync(group.Key, tenantKey, tenantId, matchedMobile!, group.Select(ToRef).ToList(), cancellationToken));
-        }
-
-        return Ok(Response(profile.CustomerKey, companies.Count == 0 ? "NotMapped" : "Mapped",
-            companies.Count == 0 ? "PACT returned this tenant's contracts without a companyID, so no EDSM account can be confirmed." : null,
-            tenantKey, retrievedAt, companies, distinct.Where(c => c.CompanyId is null).Select(ToRef).ToList()));
+        return anyAnswered || contracts.Count > 0 ? new PactAccountMapping(tenantKey, contracts, matchedMobile, clock.UtcNow) : null;
     }
 
     private async Task<CollectionsCompanyPaymentSummaryDto> CompanyAsync(
@@ -293,10 +328,11 @@ public sealed class CollectionsPaymentSummaryAppService(
 
     private CollectionsPaymentSummaryResponseDto Response(
         string customerKey, string mappingStatus, string? detail, string? tenantId, DateTime retrievedAt,
-        IReadOnlyList<CollectionsCompanyPaymentSummaryDto> companies, IReadOnlyList<CollectionsPactContractRefDto> withoutCompany) =>
+        IReadOnlyList<CollectionsCompanyPaymentSummaryDto> companies, IReadOnlyList<CollectionsPactContractRefDto> withoutCompany,
+        DateTime? mappingVerifiedAt = null, string? mappingSource = null) =>
         new(customerKey, mappingStatus, detail, tenantId, edsm.SourceName, retrievedAt, SourceAsOfUtc: null,
             edsmOptions.Currency, "Configured", EdsmAmountParser.ResolveCulture(edsmOptions.EdsmNumberCulture)?.Name,
-            edsmOptions.SourceCacheMinutes, edsmOptions.MaxSourceDelayMinutes, companies, withoutCompany);
+            edsmOptions.SourceCacheMinutes, edsmOptions.MaxSourceDelayMinutes, mappingVerifiedAt, mappingSource, companies, withoutCompany);
 
     private static CollectionsResult<CollectionsPaymentSummaryResponseDto> Ok(CollectionsPaymentSummaryResponseDto value) =>
         CollectionsResult<CollectionsPaymentSummaryResponseDto>.Ok(value);

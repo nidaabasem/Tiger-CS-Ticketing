@@ -39,6 +39,15 @@ public sealed class CollectionsEdsmOptions
     /// </summary>
     public int MaxSourceDelayMinutes { get; set; } = 20;
 
+    /// <summary>
+    /// How long a verified PACT account mapping (company/tenant pairs) is reused before
+    /// <c>v1/contracts/{mobile}</c>, which writes inside EDSM, is called again. Clamped to 1–1440.
+    /// </summary>
+    public int PactMappingTtlMinutes { get; set; } = 30;
+
+    /// <summary>How long "PACT returned no contracts for this tenant" is reused. Clamped to 1–60.</summary>
+    public int PactMappingNegativeTtlMinutes { get; set; } = 5;
+
     /// <summary>The cache, as EDSM's own config sets it per entry (contract §8.1). Shown, not enforced.</summary>
     public int SourceCacheMinutes { get; set; } = 10;
 }

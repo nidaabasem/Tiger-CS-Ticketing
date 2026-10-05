@@ -19,6 +19,10 @@
             <div class="facts-row"><dt>Source</dt><dd>@(summary.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : "EDSM, via PACT")</dd></div>
             <div class="facts-row"><dt>PACT tenant</dt><dd class="text-mono">@(summary.PactTenantId ?? "—")</dd></div>
             <div class="facts-row"><dt>Retrieved</dt><dd data-retrieved-at>@summary.RetrievedAtUtc.ToLocalTime().ToString("d MMM yyyy HH:mm") <small class="field-hint">(when TigerCS asked — EDSM returns no as-of time)</small></dd></div>
+            @if (summary.MappingVerifiedAtUtc is { } verified)
+            {
+                <div class="facts-row"><dt>Accounts confirmed</dt><dd data-mapping-verified="@summary.MappingSource">@verified.ToLocalTime().ToString("d MMM yyyy HH:mm") <small class="field-hint">(PACT contracts@(summary.MappingSource == "Cached" ? ", reused" : ""))</small></dd></div>
+            }
             <div class="facts-row"><dt>Currency</dt><dd data-currency-configured>@summary.Currency <small class="field-hint">(configured in TigerCS — EDSM returns no currency)</small></dd></div>
         </dl>
     </div>

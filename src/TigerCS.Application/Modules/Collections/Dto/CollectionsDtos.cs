@@ -274,6 +274,9 @@ public sealed record CollectionsReminderResponseDto(
 /// is always null, and figures may lag a posted payment by up to
 /// <c>maxSourceDelayMinutes</c> (EDSM's nested caches). <c>currency</c> is
 /// configured in TigerCS (<c>currencySource: "Configured"</c>): EDSM returns none.
+/// <c>mappingVerifiedAtUtc</c> is when PACT last confirmed the tenant's contracts;
+/// <c>mappingSource</c> is <c>PactLookup</c> (discovered on this request) or
+/// <c>Cached</c> (reused within <c>CollectionsSource:PactMappingTtlMinutes</c>).
 /// </para>
 /// </summary>
 public sealed record CollectionsPaymentSummaryResponseDto(
@@ -289,6 +292,8 @@ public sealed record CollectionsPaymentSummaryResponseDto(
     string? NumberCulture,
     int SourceCacheMinutes,
     int MaxSourceDelayMinutes,
+    DateTime? MappingVerifiedAtUtc,
+    string? MappingSource,
     IReadOnlyList<CollectionsCompanyPaymentSummaryDto> Companies,
     IReadOnlyList<CollectionsPactContractRefDto> ContractsWithoutCompany);
 

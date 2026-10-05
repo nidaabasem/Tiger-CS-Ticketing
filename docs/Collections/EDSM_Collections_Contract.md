@@ -1,6 +1,6 @@
 # EDSM Collections Contract (for TigerCS)
 
-> Copy supplied on 2026-10-05 from a static analysis of the EDSM source. Kept verbatim except that a personal file-system path was redacted. TigerCS code cites its section numbers.
+> Public copy of a static analysis of the EDSM source (supplied 2026-10-05). **Sanitized:** server addresses, database and login names, connection-string keys, local paths and security-finding details are removed. The API contract, financial definitions and code references are unchanged. TigerCS code cites its section numbers. The unsanitized original is held by the EDSM owners.
 
 **Source:** static analysis of `external-data-source-manager` (EDSM), .NET 10 / ASP.NET Core, Dapper over SQL Server.
 **Date:** 2026-10-05
@@ -59,16 +59,16 @@
 
 `EDSM.BusinessLogic/Enums/CompanyEnum.cs:5-9`
 
-| CompanyId | Enum name | Business model | Connection-string key | SP prefix |
-|---|---|---|---|---|
-| 4 | TigerGroupDubai | **Owned** (buyer) | `TigerPropertiesDubai` | `p4…` |
-| 32 | TigerGroupSharjah | **Owned** (buyer) | `TigerPropertiesSharjah` | `p32…` |
-| 25 | HirmasDubai | **Rented** (tenant) | `HirmasDubai` | `p25…` |
-| 7 | AlsabeelSharjah | **Rented** (tenant) | `AlsabeelSharjah` | `p7…` |
-| 20 | AlsabeelSharjahTrio3 | **Rented** (tenant) | `AlsabeelSharjah` (shared with 7) | `p20…` |
+| CompanyId | Enum name | Business model | SP prefix |
+|---|---|---|---|
+| 4 | TigerGroupDubai | **Owned** (buyer) | `p4…` |
+| 32 | TigerGroupSharjah | **Owned** (buyer) | `p32…` |
+| 25 | HirmasDubai | **Rented** (tenant) | `p25…` |
+| 7 | AlsabeelSharjah | **Rented** (tenant) | `p7…` |
+| 20 | AlsabeelSharjahTrio3 | **Rented** (tenant) | `p20…` (shares company 7's connection) |
 
 Connection mapping: `EDSM.DataAccess/Repositories/Accounting/PactRepo.cs:22-89`.
-In current config, all five connection strings point to the same server and database (`PACTRPT`). The company is distinguished only by the SP prefix (`EDSM.API/appsettings.json:20-23`).
+In the analysed config, all five companies resolve to the same reporting database. The company is distinguished only by the SP prefix.
 `helper.txt` lists only 4 companies and omits `20`. **The enum is authoritative.**
 
 ### 2.2 Company support per endpoint (VERIFIED)
@@ -86,7 +86,7 @@ In current config, all five connection strings point to the same server and data
 - Type: **string** on input (`TenantId`). It is passed unchanged as SP parameter `@tid` (`PactRepo.cs:56-89`). Values are numeric strings.
 - Despite the name, it is the PACT account/tenant ID **for buyers too** (companies 4 and 32).
 - **Where TigerCS gets it:** `GET /v1/contracts/{mobile}` returns one item per unit with `tenantID` (long) and `companyID` (int). Those come from SP columns `TenantID` and `CompanyID` (`ContractsService.cs:122-126`, `ContractSpEntity.cs:5,16`). Always send the **pair** (`tenantID`, `companyID`) from the same item.
-- **TigerCS DB caveat:** EDSM writes units to `TigerCustomerServiceV1.Info.UserUnit` (`CustomerServiceRepo.cs:33-57`). In that table, `RefId = TenantID`, **except Parking units, where `RefId = ContractID`** (`ContractsService.cs:315`). **Do not use `UserUnit.RefId` as TenantId for Parking rows.** `UserUnit.CompanyId` is the CompanyId above.
+- **TigerCS DB caveat:** EDSM writes units to the TigerCS customer-service database table `Info.UserUnit` (`CustomerServiceRepo.cs:33-57`). In that table, `RefId = TenantID`, **except Parking units, where `RefId = ContractID`** (`ContractsService.cs:315`). **Do not use `UserUnit.RefId` as TenantId for Parking rows.** `UserUnit.CompanyId` is the CompanyId above.
 - Granularity: whether one TenantID covers one unit or all of a customer's units in that company depends on the `p{N}tenantStat` SPs. **UNVERIFIED.** Every endpoint here aggregates per (CompanyId, TenantId), not per unit.
 
 ---
@@ -342,7 +342,7 @@ The full set of status values the SPs can emit is **UNVERIFIED** (needs the SP s
 
 - **Nested caches.** Payment-summary is built from the cached transactions entry (and, for owned, the cached late-fines entry). That data can already be 10 min old, and the summary is then cached another 10 min. **A payment posted in PACT can take up to about 20 minutes to appear in payment-summary.** The same applies to payment-transactions.
 - The summary and transactions share the upstream transactions cache, so they are consistent with each other within a window, apart from the rented bugs in §5.5.
-- **Side effect:** rented `payment-transactions` with `TransactionTypeId=4` calls `ContractsService.GetCustomerContractsAsync`. That method **writes** to `IdentityManagementV1` (customer type) and inserts into `TigerCustomerServiceV1.Info.UserUnit` (`ContractsService.cs:160, 288-309`). `/v1/contracts/{mobile}` behaves the same way. The other three endpoints are read-only.
+- **Side effect:** rented `payment-transactions` with `TransactionTypeId=4` calls `ContractsService.GetCustomerContractsAsync`. That method **writes** to the identity-management database (customer type) and inserts into the customer-service table `Info.UserUnit` (`ContractsService.cs:160, 288-309`). `/v1/contracts/{mobile}` behaves the same way. The other three endpoints are read-only.
 - `ContractsService.cs:64-66` contains a hard-coded mobile-number substitution that affects contract lookups for one specific number.
 
 ---
@@ -363,7 +363,7 @@ The full set of status values the SPs can emit is **UNVERIFIED** (needs the SP s
 | 10 | Low | `UserUnit.RefId` is ContractID for Parking, not TenantID | `ContractsService.cs:315` |
 | 11 | Low | Unsupported CompanyId on `/v1/contracts/transactions` gives 500, not 400 | `ContractsService.cs:237` |
 | 12 | Low | Public `GET /v1/contracts/{mobile}/customer-type` ignores CompanyId 20 for tenants, while the internal classifier includes it | `ContractsService.cs:265` vs `:353` |
-| 13 | Security | DB credentials (including `sa`) and the API key are committed in `appsettings*.json` (root, `EDSM.API/`, `bin/`, `obj/`). Rotate them and move them to a secret store. Values are deliberately not copied here. | `EDSM.API/appsettings.json:9-23` |
+| 13 | Security | A configuration-handling finding was reported to the EDSM owners. Details are intentionally omitted from this public copy. | (withheld) |
 
 ---
 
@@ -371,7 +371,7 @@ The full set of status values the SPs can emit is **UNVERIFIED** (needs the SP s
 
 | # | What | Where (exact) | Why |
 |---|---|---|---|
-| 1 | **Stored-procedure definitions** (`sp_helptext` or script) for: `p4tenantStat`, `p32tenantStat`, `p7tenantStat`, `p25tenantStat`, `p20tenantStat`, `p4tenantStatTest`, `p32tenantStatTest`, `p4DuePayments`, `p32DuePayments`, `p25GetCheques`, `p7GetCheques` (and, for TenantId origin, `p4tenantphone2`, `_p4tenantphone2`, `p32tenantphone2`, `p7tenantphone`, `p20tenantphone`, `p25tenantphone`) | SQL Server **10.10.10.94**, database **`PACTRPT`**. Called unqualified, so they live in the default schema of login `CrmPact` (likely `dbo`). | Status value sets, date-range inclusivity, column types (money/decimal vs float), TenantId granularity, and the meaning of the `Test` variants |
-| 2 | Deployed build and config | Publish target (a local folder named in `EDSM.API/Properties/PublishProfiles/FolderProfile.pubxml`; path redacted in this copy), **not present on this machine**, plus the production host's `appsettings.json` and IIS site | Confirm the deployed version matches source (last local Release build is 2026-08-27; source changed 2026-09-09), the real `CacheDuration`, and the base URL |
+| 1 | **Stored-procedure definitions** (`sp_helptext` or script) for: `p4tenantStat`, `p32tenantStat`, `p7tenantStat`, `p25tenantStat`, `p20tenantStat`, `p4tenantStatTest`, `p32tenantStatTest`, `p4DuePayments`, `p32DuePayments`, `p25GetCheques`, `p7GetCheques` (and, for TenantId origin, `p4tenantphone2`, `_p4tenantphone2`, `p32tenantphone2`, `p7tenantphone`, `p20tenantphone`, `p25tenantphone`) | EDSM's reporting database (server, database and login from the EDSM owners). Called unqualified, so they live in the EDSM login's default schema (likely `dbo`). | Status value sets, date-range inclusivity, column types (money/decimal vs float), TenantId granularity, and the meaning of the `Test` variants |
+| 2 | Deployed build and config | The EDSM publish output (see `EDSM.API/Properties/PublishProfiles/`), plus the production host's configuration and IIS site | Confirm the deployed version matches source (last local Release build is 2026-08-27; source changed 2026-09-09), the real `CacheDuration`, and the base URL |
 | 3 | Production host culture | Windows regional settings / app-pool identity culture on the IIS host | Number and date string format (§7) |
-| 4 | `Info.UserUnit` schema | `TigerCustomerServiceV1` on **10.30.10.69** | TigerCS-side join on `RefId` / `CompanyId` |
+| 4 | `Info.UserUnit` schema | TigerCS customer-service database (from its DBA) | TigerCS-side join on `RefId` / `CompanyId` |
