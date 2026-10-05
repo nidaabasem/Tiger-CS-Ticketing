@@ -61,11 +61,29 @@ public sealed class CollectionsPaymentSummaryAppService(
     /// <param name="caller">The authenticated caller.</param>
     /// <param name="customerKey">The TigerCS customer key, e.g. <c>ext:Pact:{tenantID}</c>.</param>
     /// <param name="includeTransactions">Also read payment-transactions types 1–3 per company (default true, as the Payment tab uses).</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="deadline">
+    /// Overall budget for PACT discovery and every EDSM call together (default: the Payment tab's,
+    /// <see cref="CollectionsEdsmOptions.WebReadDeadlineSeconds"/>). When it passes, what was read
+    /// is returned and the rest is marked <c>DeadlineExceeded</c>; if the accounts could not even be
+    /// confirmed, the answer is <see cref="CollectionsOutcome.FinanceUnavailable"/>.
+    /// </param>
+    /// <param name="cancellationToken">The caller's token (request aborted). Its cancellation propagates.</param>
     public async Task<CollectionsResult<CollectionsPaymentSummaryResponseDto>> GetAsync(
-        CollectionsCaller caller, string customerKey, bool includeTransactions = true, CancellationToken cancellationToken = default)
+        CollectionsCaller caller, string customerKey, bool includeTransactions = true, TimeSpan? deadline = null,
+        CancellationToken cancellationToken = default)
     {
-        var resolution = await ResolveAsync(caller, customerKey, cancellationToken);
+        using var budget = new ReadBudget(deadline ?? edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
+
+        (Resolved? Value, (CollectionsOutcome Outcome, string? Detail)? Failure) resolution;
+        try
+        {
+            resolution = await ResolveAsync(caller, customerKey, budget.Token);
+        }
+        catch (OperationCanceledException) when (budget.Expired)
+        {
+            return Fail(CollectionsOutcome.FinanceUnavailable, $"No figures: {budget.Describe("before the customer's accounts were confirmed with PACT")}.");
+        }
+
         if (resolution.Failure is { } failure)
         {
             return Fail(failure.Outcome, failure.Detail);
@@ -76,7 +94,8 @@ public sealed class CollectionsPaymentSummaryAppService(
         if (r.NotMappedDetail is { } notMapped)
         {
             var withoutCompany = r.Mapping is null ? [] : Distinct(r.Mapping).Where(c => c.CompanyId is null).Select(ToRef).ToList();
-            return Ok(Response(r.Profile.CustomerKey, "NotMapped", notMapped, r.TenantKey, retrievedAt, [], withoutCompany, r.Mapping?.VerifiedAtUtc, r.MappingSource));
+            return Ok(Response(r.Profile.CustomerKey, "NotMapped", notMapped, r.TenantKey, retrievedAt, [], withoutCompany, r.Mapping?.VerifiedAtUtc, r.MappingSource)
+                with { Completeness = CollectionsCompleteness.NoFigures, IncompleteReasons = [] });
         }
 
         var distinct = Distinct(r.Mapping!);
@@ -84,7 +103,7 @@ public sealed class CollectionsPaymentSummaryAppService(
         foreach (var group in distinct.Where(c => c.CompanyId is not null).GroupBy(c => c.CompanyId!.Value).OrderBy(g => g.Key))
         {
             companies.Add(await CompanyAsync(group.Key, r.TenantKey!, r.TenantId, r.Mapping!.MatchedMobile!, group.Select(ToRef).ToList(),
-                includeTransactions, cancellationToken));
+                includeTransactions, budget));
         }
 
         if (companies.Any(c => c.Status is nameof(EdsmOutcome.BusinessRuleRejected) or nameof(EdsmOutcome.ValidationRejected)))
@@ -93,8 +112,111 @@ public sealed class CollectionsPaymentSummaryAppService(
             mappingCache.Invalidate(r.CacheKey!);
         }
 
+        var withoutCompanyId = distinct.Where(c => c.CompanyId is null).Select(ToRef).ToList();
+        var reasons = IncompleteReasons(r.DiscoveryIncomplete, companies, withoutCompanyId.Count, budget);
+        var completeness = !companies.Any(c => c.Status == "Available")
+            ? CollectionsCompleteness.NoFigures
+            : reasons.Count == 0 ? CollectionsCompleteness.Complete : CollectionsCompleteness.Partial;
+
         return Ok(Response(r.Profile.CustomerKey, "Mapped", null, r.TenantKey, retrievedAt, companies,
-            distinct.Where(c => c.CompanyId is null).Select(ToRef).ToList(), r.Mapping!.VerifiedAtUtc, r.MappingSource));
+            withoutCompanyId, r.Mapping!.VerifiedAtUtc, r.MappingSource)
+            with { Completeness = completeness, IncompleteReasons = reasons });
+    }
+
+    /// <summary>
+    /// What keeps a Mapped summary from being the whole picture. Anything listed here means the
+    /// response must not be described as the customer's complete balance.
+    /// </summary>
+    private static List<string> IncompleteReasons(
+        string? discoveryIncomplete, IReadOnlyList<CollectionsCompanyPaymentSummaryDto> companies, int contractsWithoutCompany, ReadBudget budget)
+    {
+        var reasons = new List<string>();
+        if (discoveryIncomplete is not null)
+        {
+            reasons.Add(discoveryIncomplete);
+        }
+
+        if (contractsWithoutCompany > 0)
+        {
+            reasons.Add($"{contractsWithoutCompany} PACT contract(s) have no companyID, so EDSM cannot be asked about them.");
+        }
+
+        foreach (var c in companies)
+        {
+            var name = c.CompanyName is null ? $"Company {c.CompanyId}" : $"Company {c.CompanyId} ({c.CompanyName})";
+            if (c.Status != "Available")
+            {
+                reasons.Add(c.Status == CollectionsCompleteness.DeadlineExceeded
+                    ? $"{name}: not read; {budget.Describe("first")}."
+                    : $"{name}: no figures ({c.Status}).");
+                continue;
+            }
+
+            foreach (var list in c.Transactions.Where(l => l.Status != "Available"))
+            {
+                reasons.Add($"{name}: {list.TransactionType} transactions not read ({list.Status}).");
+            }
+
+            if (c.DueInstallments is { Status: not ("Available" or "Disabled" or "NotSupported" or "NotMatchable") } due)
+            {
+                reasons.Add($"{name}: due-installments not read ({due.Status}).");
+            }
+        }
+
+        return reasons;
+    }
+
+    /// <summary>
+    /// One read's overall deadline, linked to the caller's own token. Only the deadline is turned
+    /// into a result; the caller's cancellation (a client disconnect) always propagates.
+    /// </summary>
+    private sealed class ReadBudget : IDisposable
+    {
+        private readonly CancellationToken _caller;
+        private readonly CancellationTokenSource _timer;
+        private readonly CancellationTokenSource _linked;
+
+        public ReadBudget(TimeSpan deadline, CancellationToken caller)
+        {
+            Deadline = deadline;
+            _caller = caller;
+            _timer = new CancellationTokenSource(deadline);
+            _linked = CancellationTokenSource.CreateLinkedTokenSource(caller, _timer.Token);
+        }
+
+        public TimeSpan Deadline { get; }
+
+        public CancellationToken Token => _linked.Token;
+
+        public bool Expired => _timer.IsCancellationRequested && !_caller.IsCancellationRequested;
+
+        public string Describe(string when) =>
+            $"the request's {Deadline.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s deadline passed {when}";
+
+        /// <summary>The call's result, or null when the deadline passed before or during it.</summary>
+        public async Task<T?> RunAsync<T>(Func<CancellationToken, Task<T>> call) where T : class
+        {
+            _caller.ThrowIfCancellationRequested();
+            if (Expired)
+            {
+                return null;
+            }
+
+            try
+            {
+                return await call(Token);
+            }
+            catch (OperationCanceledException) when (Expired)
+            {
+                return null;
+            }
+        }
+
+        public void Dispose()
+        {
+            _linked.Dispose();
+            _timer.Dispose();
+        }
     }
 
     /// <summary>
@@ -107,8 +229,24 @@ public sealed class CollectionsPaymentSummaryAppService(
     /// verified PACT mapping is <see cref="CollectionsOutcome.NotMapped"/>.
     /// </summary>
     public async Task<CollectionsResult<CollectionsPaymentTransactionsResponseDto>> GetTransactionsAsync(
-        CollectionsCaller caller, string customerKey, int? companyId, string? type, CancellationToken cancellationToken = default)
+        CollectionsCaller caller, string customerKey, int? companyId, string? type, TimeSpan? deadline = null,
+        CancellationToken cancellationToken = default)
     {
+        using var budget = new ReadBudget(deadline ?? edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
+        try
+        {
+            return await GetTransactionsWithinAsync(caller, customerKey, companyId, type, budget);
+        }
+        catch (OperationCanceledException) when (budget.Expired)
+        {
+            return TxFail(CollectionsOutcome.FinanceUnavailable, $"No rows: {budget.Describe("before EDSM answered")}.");
+        }
+    }
+
+    private async Task<CollectionsResult<CollectionsPaymentTransactionsResponseDto>> GetTransactionsWithinAsync(
+        CollectionsCaller caller, string customerKey, int? companyId, string? type, ReadBudget budget)
+    {
+        var cancellationToken = budget.Token;
         if (!TryParseTransactionType(type, out var transactionType, out var typeError))
         {
             // Validate before any lookup: a refused type never triggers contract discovery.
@@ -134,7 +272,10 @@ public sealed class CollectionsPaymentSummaryAppService(
 
         if (!Distinct(r.Mapping!).Any(c => c.CompanyId == companyId))
         {
-            return TxFail(CollectionsOutcome.AccountNotFound, $"Company {companyId} is not among this customer's confirmed PACT contracts.");
+            // With a partial discovery the company may simply be on a number PACT did not answer for.
+            return r.DiscoveryIncomplete is { } partial
+                ? TxFail(CollectionsOutcome.FinanceUnavailable, $"Company {companyId} could not be confirmed: {partial}")
+                : TxFail(CollectionsOutcome.AccountNotFound, $"Company {companyId} is not among this customer's confirmed PACT contracts.");
         }
 
         if (EdsmCompanies.Find(companyId.Value) is not { } company)
@@ -196,7 +337,7 @@ public sealed class CollectionsPaymentSummaryAppService(
 
     private sealed record Resolved(
         CustomerDirectoryProfileDto Profile, string? TenantKey, long TenantId, string? CacheKey,
-        PactAccountMapping? Mapping, string? MappingSource, string? NotMappedDetail);
+        PactAccountMapping? Mapping, string? MappingSource, string? NotMappedDetail, string? DiscoveryIncomplete = null);
 
     /// <summary>
     /// The shared front half of every EDSM read:
@@ -250,18 +391,36 @@ public sealed class CollectionsPaymentSummaryAppService(
 
         var mapping = mappingCache.Get(cacheKey, ttl, negativeTtl);
         var mappingSource = "Cached";
+        string? discoveryIncomplete = null;
         if (mapping is null)
         {
-            mapping = await DiscoverAsync(tenantKey, profile.PhoneNumbers, cancellationToken);
-            if (mapping is null)
+            var discovery = await DiscoverAsync(tenantKey, profile.PhoneNumbers, cancellationToken);
+            if (discovery.Mapping is null)
             {
                 // PACT unreachable: nothing is cached, so the next load has a reason to retry.
                 return (null, (CollectionsOutcome.FinanceUnavailable,
                     "PACT could not be reached to confirm the customer's accounts, so EDSM figures are unavailable."));
             }
 
-            mappingCache.Set(cacheKey, mapping);
-            mappingSource = "PactLookup";
+            mapping = discovery.Mapping;
+            if (discovery.Failed == 0)
+            {
+                mappingCache.Set(cacheKey, mapping);
+                mappingSource = "PactLookup";
+            }
+            else
+            {
+                // Some numbers went unanswered: what was found is real, but not the whole picture.
+                // Never cached (it would hide accounts for the cache's lifetime), and never NotMapped.
+                mappingSource = "PactLookupPartial";
+                discoveryIncomplete =
+                    $"PACT did not answer for {discovery.Failed} of the customer's {discovery.Asked} phone number(s), so other accounts may exist. This result was not cached.";
+                if (!mapping.Contracts.Any(c => c.CompanyId is not null))
+                {
+                    return (null, (CollectionsOutcome.FinanceUnavailable,
+                        $"The customer's accounts could not be confirmed: {discoveryIncomplete}"));
+                }
+            }
         }
 
         string? notMapped = mapping.Contracts.Count == 0
@@ -269,7 +428,7 @@ public sealed class CollectionsPaymentSummaryAppService(
             : mapping.Contracts.All(c => c.CompanyId is null)
                 ? "PACT returned this tenant's contracts without a companyID, so no EDSM account can be confirmed."
                 : null;
-        return (new Resolved(profile, tenantKey, tenantId, cacheKey, mapping, mappingSource, notMapped), null);
+        return (new Resolved(profile, tenantKey, tenantId, cacheKey, mapping, mappingSource, notMapped, discoveryIncomplete), null);
     }
 
     private static List<PactContractDto> Distinct(PactAccountMapping mapping) =>
@@ -280,19 +439,27 @@ public sealed class CollectionsPaymentSummaryAppService(
 
     /// <summary>
     /// Contract discovery: PACT <c>v1/contracts/{mobile}</c> for each of the profile's numbers,
-    /// keeping only rows whose own tenantID is the stored tenant. Null when PACT could not answer at all.
+    /// keeping only rows whose own tenantID is the stored tenant. Mapping is null when PACT could not
+    /// answer at all; <c>Failed</c> counts the numbers PACT did not answer for (timeout, outage, key).
     /// </summary>
-    private async Task<PactAccountMapping?> DiscoverAsync(string tenantKey, IReadOnlyList<string> phoneNumbers, CancellationToken cancellationToken)
+    private async Task<(PactAccountMapping? Mapping, int Failed, int Asked)> DiscoverAsync(
+        string tenantKey, IReadOnlyList<string> phoneNumbers, CancellationToken cancellationToken)
     {
         var contracts = new List<PactContractDto>();
         string? matchedMobile = null;
         var anyAnswered = false;
-        foreach (var phone in phoneNumbers.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().Take(MaxPhoneLookups))
+        var failed = 0;
+        var phones = phoneNumbers.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().Take(MaxPhoneLookups).ToList();
+        foreach (var phone in phones)
         {
             var lookup = await pact.SearchByMobileAsync(phone, cancellationToken);
             if (lookup.Outcome is PactCustomerLookupOutcome.Success or PactCustomerLookupOutcome.NotFound)
             {
                 anyAnswered = true;
+            }
+            else
+            {
+                failed++;
             }
 
             var mine = (lookup.Customers ?? [])
@@ -306,12 +473,13 @@ public sealed class CollectionsPaymentSummaryAppService(
             }
         }
 
-        return anyAnswered || contracts.Count > 0 ? new PactAccountMapping(tenantKey, contracts, matchedMobile, clock.UtcNow) : null;
+        var mapping = anyAnswered || contracts.Count > 0 ? new PactAccountMapping(tenantKey, contracts, matchedMobile, clock.UtcNow) : null;
+        return (mapping, failed, phones.Count);
     }
 
     private async Task<CollectionsCompanyPaymentSummaryDto> CompanyAsync(
         int companyId, string tenantKey, long tenantId, string mobile, IReadOnlyList<CollectionsPactContractRefDto> contracts,
-        bool includeTransactions, CancellationToken cancellationToken)
+        bool includeTransactions, ReadBudget budget)
     {
         if (EdsmCompanies.Find(companyId) is not { } company)
         {
@@ -319,7 +487,13 @@ public sealed class CollectionsPaymentSummaryAppService(
                 $"EDSM does not support company {companyId}.", contracts, [], "NotChecked", false, [], [], null);
         }
 
-        var summary = await edsm.GetPaymentSummaryAsync(companyId, tenantKey, cancellationToken);
+        if (await budget.RunAsync(ct => edsm.GetPaymentSummaryAsync(companyId, tenantKey, ct)) is not { } summary)
+        {
+            // No figures, never zeros: the fields list stays empty.
+            return new CollectionsCompanyPaymentSummaryDto(companyId, company.Name, company.Model.ToString(), CollectionsCompleteness.DeadlineExceeded,
+                $"Not read: {budget.Describe("before EDSM answered for this company")}.", contracts, [], "NotChecked", false, [], [], null);
+        }
+
         if (summary.Outcome != EdsmOutcome.Success || summary.Value is not { } s)
         {
             return new CollectionsCompanyPaymentSummaryDto(companyId, company.Name, company.Model.ToString(), summary.Outcome.ToString(),
@@ -357,9 +531,9 @@ public sealed class CollectionsPaymentSummaryAppService(
         }
 
         var transactions = edsmOptions.TransactionsEnabled && includeTransactions
-            ? await TransactionsAsync(company, tenantKey, mobile, cancellationToken)
+            ? await TransactionsAsync(company, tenantKey, mobile, budget)
             : [];
-        var due = await DueInstallmentsAsync(company, tenantId, cancellationToken);
+        var due = await DueInstallmentsAsync(company, tenantId, budget);
 
         return new CollectionsCompanyPaymentSummaryDto(companyId, company.Name, company.Model.ToString(), "Available", null,
             contracts, fields, totalCheck, allZero, notes, transactions, due);
@@ -391,13 +565,20 @@ public sealed class CollectionsPaymentSummaryAppService(
         new(key, label, definition, amount.Status.ToString(), amount.Value, amount.Raw, meaning);
 
     private async Task<IReadOnlyList<CollectionsEdsmTransactionListDto>> TransactionsAsync(
-        EdsmCompany company, string tenantKey, string mobile, CancellationToken cancellationToken)
+        EdsmCompany company, string tenantKey, string mobile, ReadBudget budget)
     {
         var lists = new List<CollectionsEdsmTransactionListDto>();
         foreach (var type in new[] { EdsmTransactionType.Paid, EdsmTransactionType.Due, EdsmTransactionType.Outstanding })
         {
-            var result = await edsm.GetPaymentTransactionsAsync(company.CompanyId, tenantKey, mobile, type, cancellationToken);
+            var result = await budget.RunAsync(ct => edsm.GetPaymentTransactionsAsync(company.CompanyId, tenantKey, mobile, type, ct));
             var caveat = Caveat(company.Model, type);
+            if (result is null)
+            {
+                lists.Add(new CollectionsEdsmTransactionListDto(type.ToString(), CollectionsCompleteness.DeadlineExceeded,
+                    $"Not read: {budget.Describe("before EDSM answered")}.", caveat, []));
+                continue;
+            }
+
             lists.Add(result is { Outcome: EdsmOutcome.Success, Value: { } value }
                 ? new CollectionsEdsmTransactionListDto(type.ToString(), "Available", null, caveat, value.Items.Select(ToDto).ToList())
                 : new CollectionsEdsmTransactionListDto(type.ToString(), result.Outcome.ToString(), result.Message, caveat, []));
@@ -429,7 +610,7 @@ public sealed class CollectionsPaymentSummaryAppService(
         var other => $"Unknown ({other.Value.ToString(CultureInfo.InvariantCulture)})"
     };
 
-    private async Task<CollectionsEdsmDueInstallmentsDto?> DueInstallmentsAsync(EdsmCompany company, long tenantId, CancellationToken cancellationToken)
+    private async Task<CollectionsEdsmDueInstallmentsDto?> DueInstallmentsAsync(EdsmCompany company, long tenantId, ReadBudget budget)
     {
         var today = clock.BusinessDate;
         var from = today.AddDays(-Math.Clamp(edsmOptions.DueInstallmentsLookbackDays, 0, 366));
@@ -450,7 +631,13 @@ public sealed class CollectionsPaymentSummaryAppService(
             return new CollectionsEdsmDueInstallmentsDto("NotMatchable", "This tenant id exceeds EDSM's 32-bit due-installments tenantID, so rows cannot be matched.", from, to, []);
         }
 
-        var result = await edsm.GetDueInstallmentsAsync(company.CompanyId, from, to, cancellationToken);
+        var result = await budget.RunAsync(ct => edsm.GetDueInstallmentsAsync(company.CompanyId, from, to, ct));
+        if (result is null)
+        {
+            return new CollectionsEdsmDueInstallmentsDto(CollectionsCompleteness.DeadlineExceeded,
+                $"Not read: {budget.Describe("before EDSM answered")}.", from, to, []);
+        }
+
         if (result is not { Outcome: EdsmOutcome.Success, Value: { } rows })
         {
             return new CollectionsEdsmDueInstallmentsDto(result.Outcome.ToString(), result.Message, from, to, []);

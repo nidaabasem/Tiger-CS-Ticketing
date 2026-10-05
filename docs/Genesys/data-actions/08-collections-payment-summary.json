@@ -1,0 +1,161 @@
+{
+  "name": "TigerCS - Collections Payment Summary",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/collections/customers/by-key/$esc.url(${input.customerKey})/payment-summary?includeTransactions=false",
+      "requestType": "GET",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Accept": "application/json",
+        "X-Genesys-Flow-Timeout-Seconds": "$!{input.flowTimeoutSeconds}"
+      },
+      "requestTemplate": "${input.rawRequest}"
+    },
+    "response": {
+      "translationMap": {
+        "mappingStatus": "$.mappingStatus",
+        "completeness": "$.completeness",
+        "incompleteReasons": "$.incompleteReasons",
+        "currency": "$.currency",
+        "maxSourceDelayMinutes": "$.maxSourceDelayMinutes",
+        "availableCompanyIds": "$.companies[?(@.status == 'Available')].companyId",
+        "availableCompanyNames": "$.companies[?(@.status == 'Available')].companyName",
+        "availableBusinessModels": "$.companies[?(@.status == 'Available')].businessModel",
+        "availablePaidRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'paidAmount')].raw",
+        "availableDueRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'dueAmount')].raw",
+        "availableOutstandingRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'outstandingAmount')].raw",
+        "availableTotalRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'totalAmount')].raw",
+        "unavailableCompanyIds": "$.companies[?(@.status != 'Available')].companyId"
+      },
+      "translationMapDefaults": {
+        "mappingStatus": "\"\"",
+        "completeness": "\"NoFigures\"",
+        "incompleteReasons": "[]",
+        "currency": "\"\"",
+        "maxSourceDelayMinutes": "20",
+        "availableCompanyIds": "[]",
+        "availableCompanyNames": "[]",
+        "availableBusinessModels": "[]",
+        "availablePaidRaw": "[]",
+        "availableDueRaw": "[]",
+        "availableOutstandingRaw": "[]",
+        "availableTotalRaw": "[]",
+        "unavailableCompanyIds": "[]"
+      },
+      "successTemplate": "{\"mappingStatus\": ${mappingStatus}, \"completeness\": ${completeness}, \"incompleteReasons\": ${incompleteReasons}, \"currency\": ${currency}, \"maxSourceDelayMinutes\": ${maxSourceDelayMinutes}, \"availableCompanyIds\": ${availableCompanyIds}, \"availableCompanyNames\": ${availableCompanyNames}, \"availableBusinessModels\": ${availableBusinessModels}, \"availablePaidRaw\": ${availablePaidRaw}, \"availableDueRaw\": ${availableDueRaw}, \"availableOutstandingRaw\": ${availableOutstandingRaw}, \"availableTotalRaw\": ${availableTotalRaw}, \"unavailableCompanyIds\": ${unavailableCompanyIds}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Collections Payment Summary",
+        "type": "object",
+        "required": [
+          "customerKey"
+        ],
+        "properties": {
+          "customerKey": {
+            "type": "string",
+            "description": "ext:Pact:{externalCustomerId} from Customer Lookup, only when verificationSource is Pact and matchedCustomerCount is 1. Unencoded; the action URL-encodes it. A customer never verified by an agent answers 404."
+          },
+          "flowTimeoutSeconds": {
+            "type": "string",
+            "description": "This flow's Call Data Action timeout in seconds (e.g. \"30\"). TigerGroupWeb answers within it minus 2 s. Optional."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Collections Payment Summary result",
+        "type": "object",
+        "properties": {
+          "mappingStatus": {
+            "type": "string",
+            "description": "Mapped, or NotMapped (no figures exist for this customer)."
+          },
+          "completeness": {
+            "type": "string",
+            "description": "Complete, Partial or NoFigures. An agent may quote a figure as the balance ONLY when Complete, after verifying the caller. Not for self-service flows (pending identity-verification policy)."
+          },
+          "incompleteReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What is missing when not Complete. For the agent, not for the caller."
+          },
+          "currency": {
+            "type": "string",
+            "description": "AED, configured in TigerCS (EDSM returns none)."
+          },
+          "maxSourceDelayMinutes": {
+            "type": "integer",
+            "description": "A payment can take up to this long to appear."
+          },
+          "availableCompanyIds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Companies with figures. Pass one to Collections Payment Transactions."
+          },
+          "availableCompanyNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Same order as availableCompanyIds."
+          },
+          "availableBusinessModels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Owned or Rented, same order. The field meanings differ."
+          },
+          "availablePaidRaw": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EDSM's paid amount string per available company, as EDSM formatted it."
+          },
+          "availableDueRaw": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EDSM's due amount string per available company. Rented can be negative."
+          },
+          "availableOutstandingRaw": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Not yet due (owned) or post-dated cheques (rented), per available company."
+          },
+          "availableTotalRaw": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EDSM's total per available company. Never add companies together."
+          },
+          "unavailableCompanyIds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Companies without figures (EDSM error or deadline). Non-empty means not Complete."
+          }
+        }
+      }
+    }
+  }
+}

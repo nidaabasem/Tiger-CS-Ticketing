@@ -390,6 +390,42 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task APartialSummary_IsFlaggedAsNotTheFullBalance_WithEachReason()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
+
+        Assert.Contains("data-edsm-incomplete=\"Partial\"", html, StringComparison.Ordinal);
+        Assert.Contains("Incomplete: not the customer's full balance.", html, StringComparison.Ordinal);
+        Assert.Contains("Company 7 (Alsabeel Sharjah): no figures (Unauthorized).", html, StringComparison.Ordinal);
+        Assert.Contains("Company 25 (Hirmas Dubai): Outstanding transactions not read (Unavailable).", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACompleteSummary_ShowsNoIncompleteWarning()
+    {
+        _api.SummaryCompleteness = "Complete";
+
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
+
+        Assert.Contains("data-payment-state=\"EdsmSummary\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-incomplete", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACompanyCutOffByTheDeadline_SaysEdsmDidNotAnswerInTime_AndShowsNoFigures()
+    {
+        _api.DeadlineCompany = 4;
+
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment&account=4"));
+
+        Assert.Contains("data-edsm-status=\"DeadlineExceeded\"", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>EDSM did not answer in time.</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("No figures are shown for this account.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
+        Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task APactCustomer_WhenTheSummaryIsUnavailable_ShowsNoFigures()
     {
         _api.Mode = "unavailable";
@@ -445,7 +481,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
             "This customer is identified by Tiger CRM (customerId 9001). EDSM is keyed by PACT companyID and tenantID, and no verified mapping from a CRM customer to a PACT tenant exists.",
             null, "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, null, null, [], []);
 
-        private static CollectionsPaymentSummaryResponseDto Summary() => new(
+        private CollectionsPaymentSummaryResponseDto Summary() => new CollectionsPaymentSummaryResponseDto(
             "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, Now.AddMinutes(-5), "Cached",
             [
                 new CollectionsCompanyPaymentSummaryDto(4, "Tiger Group Dubai", "Owned", "Available", null, [Contract],
@@ -482,7 +518,34 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                 new CollectionsCompanyPaymentSummaryDto(7, "Alsabeel Sharjah", "Rented", "Unauthorized", "EDSM rejected the configured API key.", [], [],
                     "NotChecked", false, [], [], null),
             ],
-            []);
+            [])
+            with
+            {
+                // What the service reports for this data: one company refused, one list timed out.
+                Completeness = SummaryCompleteness,
+                IncompleteReasons = SummaryCompleteness == "Complete"
+                    ? []
+                    : ["Company 7 (Alsabeel Sharjah): no figures (Unauthorized).", "Company 25 (Hirmas Dubai): Outstanding transactions not read (Unavailable)."]
+            };
+
+        public string SummaryCompleteness { get; set; } = "Partial";
+
+        /// <summary>When set, this company comes back as cut off by the read deadline: no fields, no lists.</summary>
+        public int? DeadlineCompany { get; set; }
+
+        private CollectionsPaymentSummaryResponseDto SummaryForMode() => DeadlineCompany is not { } cut
+            ? Summary()
+            : Summary() with
+            {
+                Companies = Summary().Companies
+                    .Select(c => c.CompanyId != cut ? c : c with
+                    {
+                        Status = "DeadlineExceeded",
+                        StatusDetail = "Not read: the request's 60 s deadline passed before EDSM answered for this company.",
+                        Fields = [], TotalCheck = "NotChecked", AllZero = false, Notes = [], Transactions = [], DueInstallments = null
+                    })
+                    .ToList()
+            };
 
         private static readonly CustomerDirectoryProfileDto Caller = new(
             "phone:%2B971501112222", "Phone", null, ["+971501112222"], [], "Unverified", null, null, null, 0, 0, Now.AddDays(-3), Now.AddDays(-3), 7, [], [], []);
@@ -556,7 +619,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                     "disabled" => Problem(HttpStatusCode.ServiceUnavailable, "CollectionsDisabled"),
                     "unavailable" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),
                     "notfound" => Problem(HttpStatusCode.NotFound, "AccountNotFound"),
-                    _ when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, Summary()),
+                    _ when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, SummaryForMode()),
                     _ when path.EndsWith("/outstanding", StringComparison.Ordinal) =>
                         Json(HttpStatusCode.OK, new CollectionsOutstandingResponseDto(9001, Today, Now, Stale ? "Stale" : "Current", "Test source", [Arrears, Settled], null)),
                     _ when query["view"] == "history" => Json(HttpStatusCode.OK, new CollectionsPaymentHistoryResponseDto(9001, query["accountId"]!, "AED", Now, "Current", "history",

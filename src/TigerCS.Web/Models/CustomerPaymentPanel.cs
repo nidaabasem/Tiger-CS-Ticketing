@@ -102,6 +102,7 @@ public sealed class CustomerPaymentPanel
         "InvalidResponse" => "EDSM's response could not be read",
         "Disabled" => "Not enabled",
         "NotMatchable" => "Cannot be matched",
+        "DeadlineExceeded" => "EDSM did not answer in time",
         _ => "EDSM is unavailable"
     };
     public CollectionsAccountDto? SelectedAccount { get; init; }

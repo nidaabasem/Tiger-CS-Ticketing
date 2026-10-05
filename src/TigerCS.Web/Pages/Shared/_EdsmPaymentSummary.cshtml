@@ -60,6 +60,16 @@
 
         <p class="edsm-delay" role="note" data-source-delay>New payments can take up to about @summary.MaxSourceDelayMinutes minutes to appear here.</p>
 
+        @if (summary.Completeness != "Complete")
+        {
+            <div class="alert alert-warning" role="alert" data-edsm-incomplete="@summary.Completeness">
+                <span>
+                    <strong>Incomplete: not the customer's full balance.</strong>
+                    @string.Join(" ", summary.IncompleteReasons ?? [])
+                </span>
+            </div>
+        }
+
         <div class="edsm-company" data-edsm-company="@company.CompanyId" data-edsm-model="@company.BusinessModel" data-edsm-status="@company.Status">
             @if (company.Contracts.Count > 0)
             {
