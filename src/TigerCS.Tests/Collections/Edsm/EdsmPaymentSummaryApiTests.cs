@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
@@ -202,6 +203,63 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
         var reporting = await ClientAsync(Roles.ReportingUser);
         Assert.Equal(HttpStatusCode.Forbidden, (await reporting.GetAsync(G(PactKey, "payment-summary"))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await reporting.GetAsync(G(PactKey, "payment-transactions?companyId=4&type=Paid"))).StatusCode);
+    }
+
+    // ---- Genesys service account: CS Agent listed in Collections:Authorization:IntegrationEmployeeIds ----
+
+    [Fact]
+    public async Task Genesys_IntegrationServiceAccount_WithBearer_ReadsSummaryAndHistory_AndHoldsTheIntegrationGrant()
+    {
+        var (client, employeeId) = await ClientWithIdAsync(Roles.CsAgent);
+        _factory.Services.GetRequiredService<CollectionsOptions>().Authorization.IntegrationEmployeeIds.Add(employeeId);
+
+        var summary = await client.GetAsync(G(PactKey, "payment-summary?includeTransactions=false"));
+        var history = await client.GetAsync(G(PactKey, "payment-transactions?companyId=25&type=Paid"));
+
+        Assert.Equal(HttpStatusCode.OK, summary.StatusCode);
+        Assert.Equal("Mapped", (await summary.Content.ReadFromJsonAsync<CollectionsPaymentSummaryResponseDto>())!.MappingStatus);
+        Assert.Equal(HttpStatusCode.OK, history.StatusCode);
+        var tx = (await history.Content.ReadFromJsonAsync<CollectionsPaymentTransactionsResponseDto>())!;
+        Assert.Equal("Rented", tx.BusinessModel);
+        Assert.NotNull(tx.Caveat);
+
+        using var scope = _factory.Services.CreateScope();
+        var permissions = await scope.ServiceProvider.GetRequiredService<CollectionsAuthorizationService>()
+            .ResolveAsync(new CollectionsCaller(employeeId, [Roles.CsAgent], []));
+        Assert.True(permissions.IsIntegration);
+        Assert.True(permissions.CanReportOutcomes);   // outcomes/VoiceBot need the listing; reads need financial-read
+    }
+
+    [Fact]
+    public async Task Genesys_AnInvalidBearerToken_Is401_OnBothRoutes()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "not-a-valid-token");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(G(PactKey, "payment-summary"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(G(PactKey, "payment-transactions?companyId=4&type=Paid"))).StatusCode);
+        Assert.Equal(0, _pact.Calls);
+    }
+
+    [Fact]
+    public async Task Genesys_AnUnlistedAccountWithoutFinancialRead_Is403_WithTheCode()
+    {
+        var reporting = await ClientAsync(Roles.ReportingUser);
+
+        var response = await reporting.GetAsync(G(PactKey, "payment-transactions?companyId=4&type=Paid"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains("\"code\":\"Forbidden\"", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(0, _pact.Calls);
+    }
+
+    private async Task<(HttpClient Client, Guid EmployeeId)> ClientWithIdAsync(string role)
+    {
+        var (username, password, employeeId) = await _factory.SeedEmployeeAsync(role);
+        var client = _factory.CreateClient();
+        var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password))).Content.ReadFromJsonAsync<LoginResponseDto>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
+        return (client, employeeId);
     }
 
     private async Task<HttpClient> ClientAsync(string role)

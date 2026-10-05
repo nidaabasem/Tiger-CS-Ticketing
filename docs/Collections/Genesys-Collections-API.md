@@ -61,6 +61,39 @@ The same boundary as every other `api/genesys` route
 
 `Collections:Enabled` must be `true`. Otherwise every route answers `503 CollectionsDisabled`.
 
+### 1.1 Service-account configuration (TigerCS side)
+
+There are two bearer hops:
+1. **Genesys → TigerGroupWeb.** Genesys gets an OAuth `client_credentials`
+   token for `scope=ticketing.genesys`.
+2. **TigerGroupWeb → TigerCS.** TigerGroupWeb sends a TigerCS JWT for the
+   service account, obtained with `POST /api/auth/login`.
+
+TigerCS authenticates the second hop only. The tests below send that TigerCS
+bearer token directly to `/api/genesys/collections/…`.
+
+**Setting up the service account:**
+1. Create one TigerCS user for TigerGroupWeb with the role **CS Agent**. This
+   grants financial-read and cross-department Customer Directory visibility.
+   Keep its credentials only in TigerGroupWeb's secret configuration.
+2. Add that user's **employee ID** (GUID) to
+   `Collections:Authorization:IntegrationEmployeeIds`, as an environment
+   variable `Collections__Authorization__IntegrationEmployeeIds__0={employee-guid}`.
+   - **Required for:** `POST …/outcomes` and VoiceBot queueing.
+   - **Also grants:** reminder-send and financial-read.
+   - **Not required for** the two read routes when the account is a CS Agent,
+     but recommended so that one account serves every Collections route.
+3. Leave `Collections:Authorization:FinancialReadRoles` at its default
+   (CS Agent, CS Supervisor, CS Manager, General Manager, Chairman/CEO), or
+   include the service account's role if you change it.
+
+| Caller | Summary / history | Outcomes / VoiceBot |
+|---|---|---|
+| CS Agent, listed in `IntegrationEmployeeIds` (recommended) | ✅ 200 | ✅ |
+| CS Agent, not listed | ✅ 200 | ❌ 403 |
+| Role without financial-read (e.g. Reporting User), not listed | ❌ 403 `Forbidden` | ❌ 403 |
+| No or invalid bearer token | ❌ 401 | ❌ 401 |
+
 ## 2. Customer identifier
 
 | Key | Format | Financial data? |
@@ -1299,6 +1332,29 @@ GET /api/genesys/collections/customers/9001/reminders?accountId=ACC-9001-1204&pa
   "nextCursor": null
 }
 ```
+
+## 7a. Tests through the Genesys route (Bearer)
+
+`src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryApiTests.cs` runs the
+real TigerCS host with:
+- authentication, the controllers and DI;
+- the Fixture EDSM provider and the mock PACT gateway;
+- a stand-in Customer Directory read, so no tickets need seeding.
+
+Each request carries `Authorization: Bearer {TigerCS JWT}`:
+
+| Test | Asserts |
+|---|---|
+| `Genesys_IntegrationServiceAccount_WithBearer_ReadsSummaryAndHistory_AndHoldsTheIntegrationGrant` | A CS Agent listed in `IntegrationEmployeeIds` gets 200 on both routes and holds the integration grant |
+| `Genesys_PaymentSummary_IsTheSameEdsmServiceAsThePaymentTab` | The Genesys and Web prefixes return the same EDSM figures and share one PACT mapping |
+| `Genesys_PaymentTransactions_ReadOnlyTypes` | `Paid`, `2` and `outstanding` all return 200 |
+| `Genesys_PaymentTransactions_TypeAllAndUnknownTypes_Are400_WithoutAnyLookup` | `All`, `4`, empty and `5` return 400, and PACT is never called |
+| `Genesys_PaymentTransactions_ForACompanyOutsideThePactContracts_Is404` | A company outside the tenant's contracts returns 404 |
+| `Genesys_UnmappedCrmCustomer_GetsNoFinancialData` | `crm:9001` gets a summary of `NotMapped`, history 422 `CustomerNotMapped`, and no PACT call |
+| `Genesys_WithoutAToken_Is401_AndWithoutFinancialRead_Is403`, `Genesys_AnInvalidBearerToken_Is401_OnBothRoutes`, `Genesys_AnUnlistedAccountWithoutFinancialRead_Is403_WithTheCode` | 401 and 403 |
+
+These tests prove TigerCS's routes and contracts. They do **not** prove
+TigerGroupWeb's forwarding, or anything about a real EDSM or UAT data.
 
 ## 8. TigerCS configuration (financial reads only)
 
