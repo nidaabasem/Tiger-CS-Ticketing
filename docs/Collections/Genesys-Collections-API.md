@@ -1656,3 +1656,50 @@ X-Genesys-Flow-Timeout-Seconds: {the flow's Call Data Action timeout, e.g. 30}  
 The reminder routes (`reminders/candidates`, `POST reminders`, `…/outcomes`,
 `customers/{id}/reminders`) are **not** forwarded: reminder sending stays
 disabled.
+
+### 9.1 Verified through both running applications (2026-10-06)
+
+TigerGroupWeb (branch `genesys/collections-forwarding`) and TigerCS (this
+branch) ran on Kestrel together:
+- **Database:** an isolated LocalDB database, created with the EF migrations
+  and seeded by the Development seed, plus one PACT lookup source for CS.
+- **Accounts:** test accounts only; no development or UAT database or service
+  was used.
+- **Data:** **Fixture only.** Nothing here proves real EDSM data or real
+  EDSM/PACT timings.
+
+| Run | TigerCS sources | Result |
+|---|---|---|
+| A | built-in Mock PACT + Fixture EDSM | **27/27** |
+| B | real PACT/EDSM HTTP gateways → local stub serving the Fixture bodies, able to hold a call open | **20/20** |
+| C | TigerGroupWeb pointed at an endpoint that never answers (TigerCS silent) | **4/4** |
+
+**Run A:** authentication, mapping, payment responses, completeness.
+- **Authentication:** the Genesys token works; a wrong secret gets 401, a
+  missing token 401, and a TigerCS token presented to TigerGroupWeb 401.
+- **Mapping:**
+  - A PACT phone match alone returns `404`, passed through as
+    `application/problem+json`, and so does a Genesys-created ticket.
+  - After an agent selects the PACT customer, the light summary is `200`,
+    `Complete`, with source `Fixture`.
+- **Pass-through:** TigerGroupWeb's body equals TigerCS's own (timestamps
+  aside) for the summary and all six transaction lists (companies 4 and 25,
+  Paid, Due and Outstanding). The lowercase `%3a` key works.
+- **Errors:** `type=All` → 400; a company outside the contracts → 404; a
+  role without financial-read → 403.
+
+**Run B** (measured):
+
+| Case | Answer | Time | Held call cancelled after |
+|---|---|---|---|
+| 19 s flow, PACT never answers | 503 FinanceUnavailable | 14.4 s | 14.2 s |
+| healthy, over HTTP | 200 Complete | 0.16 s | n/a |
+| 30 s flow, company 25 never answers | 200 Partial, company 25 `DeadlineExceeded` | 22.0 s | 22.2 s |
+| 20 s flow, same | 200 Partial | 15.0 s | 15.3 s |
+| 19 s flow, same | 200 Partial | 14.0 s | 14.2 s |
+| no flow header, same | 200 Partial | 22.0 s | 22.3 s |
+| 19 s flow, transactions never answer | 503 FinanceUnavailable | 14.0 s | yes |
+| Genesys disconnects after 3 s | abandoned | 3 s | 3.3 s (not at 22 s) |
+
+**Run C:** 504 at 17.1 s (19 s flow) and at 27.0 s (30 s flow); the held
+TigerCS login was cancelled each time.
