@@ -7,8 +7,10 @@ using TigerCS.Web.Services.Auth;
 
 namespace TigerCS.Web.Pages;
 
-/// <summary>One unit/contract belonging to a search candidate — display snapshot only, no raw external ids.</summary>
-public sealed record CandidateUnit(string? UnitNumber, string? ProjectName, string? UnitType, int? FloorNumber);
+/// <summary>One unit/contract belonging to a search candidate — display snapshot only, no raw external ids. <paramref name="IsContractExpired"/> marks a PACT contract that has already ended: still listed here (the workspace serves historical tickets, payments and fines), never selectable for a new ticket.</summary>
+public sealed record CandidateUnit(
+    string? UnitNumber, string? ProjectName, string? UnitType, int? FloorNumber,
+    bool IsContractExpired = false, DateOnly? ContractEndDate = null);
 
 /// <summary>
 /// One customer a verification source matched for the searched phone number.
@@ -26,7 +28,14 @@ public sealed record CustomerCandidate(
     string? CustomerType,
     int? CrmCustomerId,
     string? ExternalCustomerId,
-    IReadOnlyList<CandidateUnit> Units);
+    IReadOnlyList<CandidateUnit> Units)
+{
+    /// <summary>How many of the candidate's units are expired PACT contracts — shown as a label, so the count never passes as current units.</summary>
+    public int ExpiredUnitsCount => Units.Count(u => u.IsContractExpired);
+
+    /// <summary>True when every unit the source reports is an expired contract: the customer is still discoverable here for historical tickets, payments and fines, but has nothing a new ticket could be raised against.</summary>
+    public bool AllContractsExpired => Units.Count > 0 && ExpiredUnitsCount == Units.Count;
+}
 
 /// <summary>
 /// Customer Lookup (`/Customers/Lookup`): search a customer by phone across
@@ -164,7 +173,7 @@ public sealed class CustomerLookupModel(
                     CrmCustomerId: null,
                     external.ExternalCustomerId,
                     external.Units
-                        .Select(u => new CandidateUnit(u.UnitNumber, u.PropertyName, u.UnitType, FloorNumber: null))
+                        .Select(u => new CandidateUnit(u.UnitNumber, u.PropertyName, u.UnitType, FloorNumber: null, u.IsContractExpired, u.ContractEndDate))
                         .ToList()));
             }
         }

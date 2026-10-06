@@ -1,0 +1,43 @@
+@using TigerCS.Web.Models
+@model TigerCS.Web.Pages.NewTicketModel
+@*
+    Payments & Fines before ticket submission — the selected unit's verified
+    identity (CRM finance account, or PACT tenant's EDSM summary), and under
+    the unified card the other identity as well. Rendered by the same
+    _CustomerPaymentTab partial as the Customer Profile's Payment tab, so
+    every figure, transaction, fine, account scope and availability state is
+    presented exactly as the Api reported it. Shown whether or not the
+    customer has any previous ticket. Nothing here gates ticket creation.
+*@
+@{
+    static string Heading(string? source) => source switch
+    {
+        "Crm" => "Tiger CRM finance account",
+        "Pact" => "PACT tenant — EDSM payment summary",
+        null => "Payments",
+        _ => $"{TicketDisplay.LookupSourceLabel(source)} customer"
+    };
+
+    var primaryScope = $"{Heading(Model.PaymentPanelSource)} · {Model.SummaryCustomerName ?? "—"}";
+    var linkedScope = $"{Heading(Model.LinkedPaymentPanelSource)} · same customer, verified by a shared unit";
+}
+@if (Model.PaymentPanel is { } panel)
+{
+    <section class="payments-fines" id="payments-fines" aria-label="Payments and fines" data-payments-fines="primary" data-payments-fines-source="@Model.PaymentPanelSource">
+        <div class="payments-fines__head">
+            <h3 class="payment-section-title">Payments &amp; Fines</h3>
+            <span class="payments-fines__scope">@primaryScope</span>
+        </div>
+        <partial name="_CustomerPaymentTab" model="panel" />
+    </section>
+}
+@if (Model.LinkedPaymentPanel is { } linkedPanel)
+{
+    <section class="payments-fines" aria-label="Payments and fines, linked identity" data-payments-fines="linked" data-payments-fines-source="@Model.LinkedPaymentPanelSource">
+        <div class="payments-fines__head">
+            <h3 class="payment-section-title">Payments &amp; Fines — linked identity</h3>
+            <span class="payments-fines__scope">@linkedScope</span>
+        </div>
+        <partial name="_CustomerPaymentTab" model="linkedPanel" />
+    </section>
+}

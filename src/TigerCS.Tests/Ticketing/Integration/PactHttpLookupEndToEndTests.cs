@@ -49,15 +49,23 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
     private TigerCsApiFactory _factory = null!;
     private Task? _stubLoop;
 
-    /// <summary>PACT's real response shape for <see cref="KnownMobile"/>: one tenant (7001), two contract rows — two units, same tenantID.</summary>
-    private const string KnownMobileContractsJson = """
+    /// <summary>
+    /// PACT's real response shape for <see cref="KnownMobile"/>: one tenant
+    /// (7001), three contract rows, same tenantID — two CURRENT contracts
+    /// (ending a year and two years from now, computed per run so the
+    /// fixture never silently expires) and one contract that ended in 2020.
+    /// The lookup layer must show exactly the two current units and drop
+    /// the expired one; the row is still there so the end-to-end flow
+    /// proves the filter against the real wire shape and the real gateway.
+    /// </summary>
+    private static readonly string KnownMobileContractsJson = $$"""
         {
           "data": [
             {
               "tenantID": 7001, "companyID": 3,
               "projectCode": "104", "projectName": "Tiger Marina Residences",
               "unitID": 700, "unitCode": "104-2304", "unitType": "Residential", "unitNumber": "2304", "unitStatus": "Occupied",
-              "contractID": 88001, "contractStartDate": "2025-01-01T00:00:00", "contractEndDate": "2026-01-01T00:00:00",
+              "contractID": 88001, "contractStartDate": "2025-01-01T00:00:00", "contractEndDate": "{{PactDate(DateTime.UtcNow.AddYears(1))}}",
               "contractNetAmount": 52000.50, "contractDiscountAmount": 0, "contractServicesNetAmount": 1200.00, "contractServicesDiscountAmount": 0,
               "customerMobile": "+971509990002", "customerName": "Fatima Noor", "customerEmail": "fatima@example.test",
               "customerBuyerType": 2, "grossArea": 120.5, "netArea": 98.2
@@ -66,14 +74,26 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
               "tenantID": 7001, "companyID": 3,
               "projectCode": "105", "projectName": "Tiger Bay Towers",
               "unitID": 701, "unitCode": "105-1105", "unitType": "Commercial", "unitNumber": "1105", "unitStatus": "Occupied",
-              "contractID": 88002, "contractStartDate": "2024-06-01T00:00:00", "contractEndDate": "2026-06-01T00:00:00",
+              "contractID": 88002, "contractStartDate": "2024-06-01T00:00:00", "contractEndDate": "{{PactDate(DateTime.UtcNow.AddYears(2))}}",
               "contractNetAmount": 91000.00, "contractDiscountAmount": 500.00, "contractServicesNetAmount": 2100.00, "contractServicesDiscountAmount": 0,
               "customerMobile": "+971509990002", "customerName": "Fatima Noor", "customerEmail": "fatima@example.test",
               "customerBuyerType": 2, "grossArea": 210.0, "netArea": 180.0
+            },
+            {
+              "tenantID": 7001, "companyID": 3,
+              "projectCode": "106", "projectName": "Tiger Heights",
+              "unitID": 702, "unitCode": "106-0801", "unitType": "Residential", "unitNumber": "0801", "unitStatus": "Vacant",
+              "contractID": 88003, "contractStartDate": "2019-01-01 00:00:00", "contractEndDate": "2020-12-31 00:00:00",
+              "contractNetAmount": 40000.00, "contractDiscountAmount": 0, "contractServicesNetAmount": 900.00, "contractServicesDiscountAmount": 0,
+              "customerMobile": "+971509990002", "customerName": "Fatima Noor", "customerEmail": "fatima@example.test",
+              "customerBuyerType": 2, "grossArea": 95.0, "netArea": 80.0
             }
           ]
         }
         """;
+
+    /// <summary>A date in the ISO-8601 form PACT's contracts endpoint emits.</summary>
+    private static string PactDate(DateTime value) => value.ToString("yyyy-MM-dd'T'HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
 
     public Task InitializeAsync()
     {
@@ -141,7 +161,10 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         Assert.Equal("Found", pactSource.Status);
 
         // tenantID, name, project, unit numbers, unitID-based external ids,
-        // raw buyer-type code — and BOTH units, nothing auto-selected.
+        // raw buyer-type code — and BOTH current units, nothing
+        // auto-selected; the contract that ended in 2020 (unit 702) is
+        // filtered out by the lookup layer, so it is neither counted nor
+        // listed.
         var customer = Assert.Single(pactSource.Customers);
         Assert.Equal("7001", customer.ExternalCustomerId);
         Assert.Equal("Fatima Noor", customer.DisplayName);
@@ -156,6 +179,7 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         var bayUnit = Assert.Single(customer.Units, u => u.ExternalUnitId == "701");
         Assert.Equal("1105", bayUnit.UnitNumber);
         Assert.Equal("Tiger Bay Towers", bayUnit.PropertyName);
+        Assert.DoesNotContain(customer.Units, u => u.ExternalUnitId == "702");
         // No local reference ids for PACT — display enrichment, never
         // linkable by id (so also never auto-linked to the ticket).
         Assert.All(customer.Units, u =>

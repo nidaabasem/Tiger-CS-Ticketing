@@ -93,6 +93,10 @@
                                 @if (candidate.Units.Count > 0)
                                 {
                                     <text> · @candidate.Units.Count unit@(candidate.Units.Count == 1 ? "" : "s")</text>
+                                    @if (candidate.ExpiredUnitsCount > 0)
+                                    {
+                                        <text> (@($"{candidate.ExpiredUnitsCount} expired contract{(candidate.ExpiredUnitsCount == 1 ? "" : "s")}"))</text>
+                                    }
                                 }
                             </div>
                         </div>
@@ -227,6 +231,12 @@
                     </section>
 
                     <section class="tab-panel" id="panel-cust-units" aria-label="Customer units and contracts">
+                        @if (selected.AllContractsExpired)
+                        {
+                            <div class="alert alert-info" role="status" data-all-contracts-expired>
+                                <span><strong>Every @TicketDisplay.LookupSourceLabel(selected.Source) contract for this customer has ended.</strong> Their tickets, payments and fines stay available here; a new ticket cannot be raised against an expired contract.</span>
+                            </div>
+                        }
                         @if (selected.Units.Count == 0)
                         {
                             <div class="empty-state">
@@ -244,17 +254,35 @@
                                             <th scope="col">Unit</th>
                                             <th scope="col">Type</th>
                                             <th scope="col">Floor</th>
+                                            <th scope="col">Contract</th>
                                             <th scope="col"></th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         @foreach (var unitRow in selected.Units)
                                         {
-                                            <tr>
+                                            <tr data-contract-expired="@(unitRow.IsContractExpired ? "true" : "false")">
                                                 <td class="cell-primary">@(unitRow.ProjectName ?? "—")</td>
                                                 <td>@(unitRow.UnitNumber ?? "—")</td>
                                                 <td>@(unitRow.UnitType ?? "—")</td>
                                                 <td>@(unitRow.FloorNumber?.ToString() ?? "—")</td>
+                                                <td>
+                                                    @* An expired PACT contract stays listed for history, payments and
+                                                       fines, but is labelled so it is never mistaken for a current unit
+                                                       (the New Ticket wizard never offers it). *@
+                                                    @if (unitRow.IsContractExpired)
+                                                    {
+                                                        <span class="badge badge-contract-expired"><span class="badge-dot"></span>Expired contract@(unitRow.ContractEndDate is { } ended ? $" · ended {ended:d MMM yyyy}" : "")</span>
+                                                    }
+                                                    else if (unitRow.ContractEndDate is { } endsOn)
+                                                    {
+                                                        <span class="text-secondary">Ends @endsOn.ToString("d MMM yyyy")</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-secondary">—</span>
+                                                    }
+                                                </td>
                                                 <td>
                                                     @if (!string.IsNullOrWhiteSpace(unitRow.UnitNumber))
                                                     {

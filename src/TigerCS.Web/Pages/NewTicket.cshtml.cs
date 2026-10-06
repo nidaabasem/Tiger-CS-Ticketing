@@ -7,6 +7,7 @@ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
 
 namespace TigerCS.Web.Pages;
@@ -17,9 +18,27 @@ namespace TigerCS.Web.Pages;
 /// token ("crm", or "ext:{source}:{escaped external id}") carried in the
 /// query string; everything the ticket ultimately persists still travels
 /// through the packed unit selections, exactly as before the redesign.
+///
+/// <para>
+/// <b>A unified card</b> (<see cref="IsUnified"/>) is the CRM Buyer and a
+/// PACT customer that a verified unit link proved to be the same person
+/// (see <see cref="NewTicketModel.LinkedPactCustomer"/>): <see cref="Key"/>
+/// stays "crm", <see cref="Sources"/> names both, and
+/// <see cref="LinkedPactCustomerId"/> keeps the PACT tenant id so both
+/// identities (and both ticket histories) stay reachable. Neither identity
+/// replaces the other — a ticket still persists exactly one of them,
+/// decided by the unit the agent selects on Step 2.
+/// </para>
 /// </summary>
 public sealed record NewTicketCandidate(
-    string Key, string Source, string? DisplayName, string? PhoneNumber, string? Email, int UnitsCount);
+    string Key, string Source, string? DisplayName, string? PhoneNumber, string? Email, int UnitsCount,
+    IReadOnlyList<string>? Sources = null, string? LinkedPactCustomerId = null)
+{
+    /// <summary>Every source that verified this card — the primary <see cref="Source"/> alone unless the card is unified.</summary>
+    public IReadOnlyList<string> Sources { get; init; } = Sources ?? [Source];
+
+    public bool IsUnified => Sources.Count > 1;
+}
 
 /// <summary>
 /// "+ New Ticket" — redesigned as a four-step wizard (Customer → Property →
@@ -81,7 +100,8 @@ public sealed class NewTicketModel(
     TicketsApiClient ticketsClient,
     CustomerHistoryApiClient customerHistoryClient,
     RequestTypesApiClient? requestTypesClient = null,
-    ChannelsApiClient? channelsClient = null) : PageModel
+    ChannelsApiClient? channelsClient = null,
+    CustomerPaymentPanelLoader? paymentPanelLoader = null) : PageModel
 {
     public const string StepCustomer = "customer";
     public const string StepProperty = "property";
@@ -216,6 +236,44 @@ public sealed class NewTicketModel(
     public NewTicketCandidate? SelectedCandidate { get; private set; }
 
     /// <summary>
+    /// The PACT customer unified with the CRM Buyer on one card, when the
+    /// two share a <b>verified unit link</b>: at least one of the Buyer's
+    /// CRM units and one of the PACT customer's current contracts name the
+    /// same unit number in the same project (compared trimmed,
+    /// case-insensitively — see <see cref="UnitsLink"/>). A shared phone
+    /// number alone never unifies: the phone is what produced both matches
+    /// in the first place, so it proves nothing about identity. Null when
+    /// no PACT customer links. Both identities are kept intact: the CRM
+    /// Buyer ids and the PACT tenant id each travel exactly as before, and
+    /// the unit the agent selects on Step 2 decides which one the ticket
+    /// persists.
+    /// </summary>
+    public CustomerLookupCustomerDto? LinkedPactCustomer { get; private set; }
+
+    /// <summary>The linked PACT customer's current units that no CRM unit matches — offered on Step 2 under the unified card, selectable through the external (PACT) path. Empty when there is no link.</summary>
+    public IReadOnlyList<CustomerLookupUnitDto> LinkedPactOnlyUnits { get; private set; } = [];
+
+    /// <summary>The PACT selection token of the linked customer ("ext:Pact:{tenant id}"), for the workspace hand-off and the card's identity line.</summary>
+    public string? LinkedPactCustomerKey =>
+        LinkedPactCustomer is { } linked ? $"ext:Pact:{Uri.EscapeDataString(linked.ExternalCustomerId)}" : null;
+
+    /// <summary>True when this CRM unit is also one of the linked PACT customer's current contracts — shown as a note on the unit row; the CRM identity is still what the selection persists.</summary>
+    public bool IsLinkedToPact(CrmBuyerUnitDto unit) =>
+        LinkedPactCustomer is { } linked && linked.Units.Any(pactUnit => UnitsLink(unit, pactUnit));
+
+    /// <summary>
+    /// The verified unit link: same unit number AND same project name,
+    /// compared trimmed and case-insensitively. Both are required — a unit
+    /// number alone ("1506") repeats across projects, and a project alone
+    /// is shared by every unit in it.
+    /// </summary>
+    public static bool UnitsLink(CrmBuyerUnitDto crmUnit, CustomerLookupUnitDto pactUnit) =>
+        !string.IsNullOrWhiteSpace(crmUnit.UnitNumber)
+        && !string.IsNullOrWhiteSpace(crmUnit.ProjectName)
+        && string.Equals(crmUnit.UnitNumber.Trim(), pactUnit.UnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
+        && string.Equals(crmUnit.ProjectName.Trim(), pactUnit.PropertyName?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// The PACT/Tasleeh customer+unit the agent selected on Step 2, packed
     /// exactly like the CRM value (see <see cref="OnPostUseExternalUnit"/>)
     /// and carried step-to-step via query string/hidden field like every
@@ -275,6 +333,40 @@ public sealed class NewTicketModel(
     public long? CreatedTicketId { get; private set; }
     public string? CreatedTicketNumber { get; private set; }
 
+    // ---- Payments & Fines — shown before ticket submission (Step 2 once a
+    // verified unit is selected, and again read-only on Step 4), for the
+    // verified identity the selection carries: a CRM Buyer's finance
+    // accounts, or a PACT tenant's EDSM payment summary. Loaded through the
+    // same CustomerPaymentPanelLoader the Customer Profile's Payment tab
+    // uses, so every figure, transaction, fine and availability state is
+    // the Api's own answer — never inferred, never zero-filled — and it
+    // never depends on the customer having any previous ticket. ----
+
+    /// <summary>The payment panel for the selected unit's verified identity. Null on the manual path, before a unit is selected, or when the loader is not configured.</summary>
+    public CustomerPaymentPanel? PaymentPanel { get; private set; }
+
+    /// <summary>
+    /// Under the unified CRM + PACT card, the OTHER identity's payment
+    /// panel (the PACT tenant's EDSM summary when a CRM unit is selected;
+    /// the CRM finance account when a PACT unit is selected), each scoped
+    /// to the account/company holding the selected unit where the source
+    /// confirms one. Both identities' verified mappings stay exactly as the
+    /// Api resolves them — nothing is cross-wired between the two.
+    /// </summary>
+    public CustomerPaymentPanel? LinkedPaymentPanel { get; private set; }
+
+    /// <summary>The agent's explicit account/company choice for <see cref="PaymentPanel"/> (query string <c>paymentAccount</c>); null scopes to the selected unit.</summary>
+    public string? PaymentAccount { get; private set; }
+
+    /// <summary>The agent's explicit account/company choice for <see cref="LinkedPaymentPanel"/> (query string <c>linkedPaymentAccount</c>).</summary>
+    public string? LinkedPaymentAccount { get; private set; }
+
+    /// <summary>Which identity <see cref="PaymentPanel"/> describes — "Crm", "Pact", or another external source's name.</summary>
+    public string? PaymentPanelSource => CrmBuyerCustomerId is not null ? "Crm" : ExternalSource;
+
+    /// <summary>Which identity <see cref="LinkedPaymentPanel"/> describes — the unified card's other half.</summary>
+    public string? LinkedPaymentPanelSource => LinkedPaymentPanel is null ? null : CrmBuyerCustomerId is not null ? "Pact" : "Crm";
+
     // ---- Summary panel (the right-hand sticky panel) — selected display
     // values only, never technical ids, with "Not selected yet" placeholders
     // rendered by the view when these are null. ----
@@ -290,10 +382,11 @@ public sealed class NewTicketModel(
         ?? SelectedCandidate?.DisplayName
         ?? (CustomerKey == "manual" ? "Manual entry" : null);
 
-    /// <summary>The verification-source label for the summary/review — "Tiger CRM"/"PACT"/"Tasleeh", or "Manual entry" (manual entry is not externally verified; the wording never says "not verified").</summary>
+    /// <summary>The verification-source label for the summary/review — "Tiger CRM"/"PACT"/"Tasleeh", or "Manual entry" (manual entry is not externally verified; the wording never says "not verified"). A PACT unit selected under the unified CRM card is a PACT selection: the ticket persists the PACT identity, and the label says so.</summary>
     public string? SummarySourceKey =>
-        CrmBuyerUnitId is not null || CustomerKey == "crm" ? "Crm"
-        : ExternalSource ?? (CustomerKey is { } key && key.StartsWith("ext:", StringComparison.Ordinal)
+        CrmBuyerUnitId is not null ? "Crm"
+        : ExternalSource ?? (CustomerKey == "crm" ? "Crm"
+        : CustomerKey is { } key && key.StartsWith("ext:", StringComparison.Ordinal)
             ? Uri.UnescapeDataString(key.Split(':', 3)[1])
             : CustomerKey == "manual" ? "Manual" : null);
 
@@ -341,18 +434,21 @@ public sealed class NewTicketModel(
         string? crmBuyerCustomerName, string? crmBuyerProjectName, string? crmBuyerUnitNumber,
         string? externalSelection, string? manualProjectName, string? manualUnitNumber,
         int? departmentId, long? createdTicketId, string? createdTicketNumber,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? paymentAccount = null, string? linkedPaymentAccount = null)
     {
         ApplyWizardState(
             step ?? StepCustomer, intakeRecordId, phoneNumber, customer,
             crmBuyerCustomerId, crmBuyerLeadId, crmBuyerUnitId, crmBuyerProjectId,
             crmBuyerCustomerName, crmBuyerProjectName, crmBuyerUnitNumber,
             externalSelection, manualProjectName, manualUnitNumber);
+        PaymentAccount = string.IsNullOrWhiteSpace(paymentAccount) ? null : paymentAccount;
+        LinkedPaymentAccount = string.IsNullOrWhiteSpace(linkedPaymentAccount) ? null : linkedPaymentAccount;
 
         switch (Step)
         {
             case StepProperty:
                 await LoadPropertyStepAsync(cancellationToken);
+                await LoadPaymentPanelsAsync(readOnly: false, cancellationToken);
                 break;
 
             case StepIssue:
@@ -557,22 +653,51 @@ public sealed class NewTicketModel(
     private void BuildCandidates()
     {
         var candidates = new List<NewTicketCandidate>();
+        LinkedPactCustomer = null;
+        LinkedPactOnlyUnits = [];
 
         if (CrmBuyerMatch is { } match)
         {
+            // Unify with the one PACT customer a verified unit link proves
+            // to be the same person. If several PACT customers link (a data
+            // oddity), none is unified — the agent sees separate cards and
+            // chooses, exactly as without the link.
+            var linkedPact = ExternalLookupSources
+                .Where(s => s.Status == "Found" && string.Equals(s.Source, "Pact", StringComparison.Ordinal))
+                .SelectMany(s => s.Customers)
+                .Where(pact => pact.Units.Any(pactUnit => match.Units.Any(crmUnit => UnitsLink(crmUnit, pactUnit))))
+                .ToList();
+            if (linkedPact.Count == 1)
+            {
+                LinkedPactCustomer = linkedPact[0];
+                LinkedPactOnlyUnits = LinkedPactCustomer.Units
+                    .Where(pactUnit => !match.Units.Any(crmUnit => UnitsLink(crmUnit, pactUnit)))
+                    .ToList();
+            }
+
             candidates.Add(new NewTicketCandidate(
                 "crm",
                 "Crm",
                 match.Customer.FullNameEnglish ?? match.Customer.FullNameArabic,
                 match.Customer.MobileNumber ?? PhoneNumber,
-                match.Customer.Email,
-                match.Units.Count));
+                match.Customer.Email ?? LinkedPactCustomer?.Email,
+                match.Units.Count + LinkedPactOnlyUnits.Count,
+                LinkedPactCustomer is null ? null : ["Crm", "Pact"],
+                LinkedPactCustomer?.ExternalCustomerId));
         }
 
         foreach (var source in ExternalLookupSources.Where(s => s.Status == "Found"))
         {
             foreach (var external in source.Customers)
             {
+                if (LinkedPactCustomer is { } linked
+                    && string.Equals(source.Source, "Pact", StringComparison.Ordinal)
+                    && string.Equals(external.ExternalCustomerId, linked.ExternalCustomerId, StringComparison.Ordinal))
+                {
+                    // Already on the unified card.
+                    continue;
+                }
+
                 candidates.Add(new NewTicketCandidate(
                     $"ext:{Uri.EscapeDataString(source.Source)}:{Uri.EscapeDataString(external.ExternalCustomerId)}",
                     source.Source,
@@ -593,7 +718,10 @@ public sealed class NewTicketModel(
     /// persisted source + external customer id), never a name or phone
     /// match. Serves both the card's counts and the compact existing-tickets
     /// notice. A failed read leaves that card without the notice; the wizard
-    /// never blocks on it.
+    /// never blocks on it. The unified card reads BOTH of its identities and
+    /// combines them without duplicate ticket ids
+    /// (<see cref="CustomerHistoryMerge"/>); if only one read succeeds, the
+    /// card shows that one.
     /// </summary>
     private async Task LoadCandidateHistoriesAsync(CancellationToken cancellationToken)
     {
@@ -604,10 +732,21 @@ public sealed class NewTicketModel(
                 ? await customerHistoryClient.GetByCrmCustomerIdAsync(
                     match.Customer.CustomerId, CandidateHistoryLimit, cancellationToken, orderActiveFirst: true)
                 : await LoadExternalCandidateHistoryAsync(candidate, cancellationToken);
+            var history = result is { IsSuccess: true, Value: not null } ? result.Value : null;
 
-            if (result is { IsSuccess: true, Value: not null })
+            if (candidate.LinkedPactCustomerId is { } linkedPactCustomerId)
             {
-                histories[candidate.Key] = result.Value;
+                var linkedResult = await customerHistoryClient.GetByExternalIdentityAsync(
+                    "Pact", linkedPactCustomerId, CandidateHistoryLimit, cancellationToken, orderActiveFirst: true);
+                var linkedHistory = linkedResult is { IsSuccess: true, Value: not null } ? linkedResult.Value : null;
+                history = history is null ? linkedHistory
+                    : linkedHistory is null ? history
+                    : CustomerHistoryMerge.Combine(history, linkedHistory, CandidateHistoryLimit);
+            }
+
+            if (history is not null)
+            {
+                histories[candidate.Key] = history;
             }
         }
 
@@ -746,22 +885,53 @@ public sealed class NewTicketModel(
     /// </summary>
     private async Task LoadRelatedTicketsAsync(CancellationToken cancellationToken)
     {
+        const int relatedLimit = 5;
+        CustomerHistoryDto? related = null;
+        string? unitNumber = null;
+
         if (CrmBuyerCustomerId is { } crmBuyerCustomerId)
         {
+            unitNumber = CrmBuyerUnitNumber;
             var result = await customerHistoryClient.GetByCrmCustomerIdAsync(
-                crmBuyerCustomerId, limit: 5, cancellationToken,
-                unitNumber: CrmBuyerUnitNumber, orderActiveFirst: true);
-            RelatedTickets = result.IsSuccess ? result.Value : null;
+                crmBuyerCustomerId, relatedLimit, cancellationToken,
+                unitNumber: unitNumber, orderActiveFirst: true);
+            related = result.IsSuccess ? result.Value : null;
+        }
+        else if (ExternalSource is { } externalSource && ExternalCustomerId is { } externalCustomerId)
+        {
+            unitNumber = ExternalUnitNumber;
+            var result = await customerHistoryClient.GetByExternalIdentityAsync(
+                externalSource, externalCustomerId, relatedLimit, cancellationToken,
+                unitNumber: unitNumber, orderActiveFirst: true);
+            related = result.IsSuccess ? result.Value : null;
+        }
+        else
+        {
             return;
         }
 
-        if (ExternalSource is { } externalSource && ExternalCustomerId is { } externalCustomerId)
+        // Under the unified card the same unit may carry tickets under the
+        // OTHER identity too (a CRM-selected unit's earlier PACT tickets, or
+        // a PACT-selected unit's earlier CRM tickets) — read it as well and
+        // combine without duplicate ticket ids, so duplicate-ticket
+        // awareness sees the whole unit.
+        if (LinkedPactCustomer is { } linked && CrmBuyerMatch is { } match)
         {
-            var result = await customerHistoryClient.GetByExternalIdentityAsync(
-                externalSource, externalCustomerId, limit: 5, cancellationToken,
-                unitNumber: ExternalUnitNumber, orderActiveFirst: true);
-            RelatedTickets = result.IsSuccess ? result.Value : null;
+            var otherResult = CrmBuyerCustomerId is not null
+                ? await customerHistoryClient.GetByExternalIdentityAsync(
+                    "Pact", linked.ExternalCustomerId, relatedLimit, cancellationToken, unitNumber: unitNumber, orderActiveFirst: true)
+                : await customerHistoryClient.GetByCrmCustomerIdAsync(
+                    match.Customer.CustomerId, relatedLimit, cancellationToken, unitNumber: unitNumber, orderActiveFirst: true);
+            if (otherResult is { IsSuccess: true, Value: not null } other)
+            {
+                related = related is null ? other.Value
+                    : CrmBuyerCustomerId is not null
+                        ? CustomerHistoryMerge.Combine(related, other.Value, relatedLimit)
+                        : CustomerHistoryMerge.Combine(other.Value, related, relatedLimit);
+            }
         }
+
+        RelatedTickets = related;
     }
 
     // ---------------------------------------------------------------
@@ -857,7 +1027,120 @@ public sealed class NewTicketModel(
         // The review resolves the selected Category/Department to their
         // display names from the same directory the Issue step used.
         await LoadIssueStepAsync(cancellationToken);
+        await LoadReviewPaymentsAsync(cancellationToken);
         return Page();
+    }
+
+    /// <summary>
+    /// Payments &amp; Fines on the Review step: the selected identity's
+    /// panel again, read-only (no reminder is sent from a ticket-creation
+    /// screen). The Review step runs no customer lookups — the agent's
+    /// selections are what carry forward, never re-derived — so the unified
+    /// card's other identity (which only the lookups can establish) is
+    /// shown on Step 2, where the agent selects the unit, and not here.
+    /// </summary>
+    private Task LoadReviewPaymentsAsync(CancellationToken cancellationToken) =>
+        LoadPaymentPanelsAsync(readOnly: true, cancellationToken);
+
+    /// <summary>
+    /// Loads <see cref="PaymentPanel"/> (and, under the unified card,
+    /// <see cref="LinkedPaymentPanel"/>) for the selected unit's verified
+    /// identity. A CRM Buyer selection reads the CRM customer's finance
+    /// accounts, scoped to the account holding the selected unit number
+    /// unless the agent chose one; a PACT selection reads the PACT tenant's
+    /// EDSM summary by the same <c>ext:Pact:{tenant}</c> key the Customer
+    /// Profile uses (the Api resolves the verified tenant/company mapping —
+    /// unfiltered, every contract), scoped to the company whose contract
+    /// covers the selected unit. Any other external source has no payment
+    /// source, and the panel says so. Manual entry has no identity, so no
+    /// panel. Never blocks the wizard: every failure is a panel state.
+    /// </summary>
+    private async Task LoadPaymentPanelsAsync(bool readOnly, CancellationToken cancellationToken)
+    {
+        PaymentPanel = null;
+        LinkedPaymentPanel = null;
+        if (paymentPanelLoader is null || !HasUnitSelection || CustomerKey == "manual")
+        {
+            return;
+        }
+
+        if (CrmBuyerCustomerId is { } crmBuyerCustomerId)
+        {
+            PaymentPanel = await paymentPanelLoader.LoadAsync(
+                $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, PaymentAccount, null, false, cancellationToken,
+                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber));
+
+            if (LinkedPactCustomer is { } linked)
+            {
+                // The PACT contract that IS the selected CRM unit, when the
+                // link named one — EDSM is then scoped to its company.
+                var linkedUnit = linked.Units.FirstOrDefault(pactUnit =>
+                    string.Equals(pactUnit.UnitNumber?.Trim(), CrmBuyerUnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(pactUnit.PropertyName?.Trim(), CrmBuyerProjectName?.Trim(), StringComparison.OrdinalIgnoreCase));
+                LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
+                    LinkedPactCustomerKey!, null, LinkedPaymentAccount, null, false, cancellationToken,
+                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: linkedUnit?.ExternalUnitId));
+            }
+
+            return;
+        }
+
+        if (ExternalSource is { } externalSource && ExternalCustomerId is { } externalCustomerId)
+        {
+            PaymentPanel = await paymentPanelLoader.LoadAsync(
+                $"ext:{externalSource}:{Uri.EscapeDataString(externalCustomerId)}", null, PaymentAccount, null, false, cancellationToken,
+                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: ExternalUnitId));
+
+            if (LinkedPactCustomer is not null && CrmBuyerMatch is { } match
+                && string.Equals(externalSource, "Pact", StringComparison.Ordinal)
+                && string.Equals(externalCustomerId, LinkedPactCustomer.ExternalCustomerId, StringComparison.Ordinal))
+            {
+                LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
+                    $"crm:{match.Customer.CustomerId}", match.Customer.CustomerId, LinkedPaymentAccount, null, false, cancellationToken,
+                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: ExternalUnitNumber));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The payment panel's navigation inside the wizard: the account
+    /// selector and Retry links reload Step 2 with the full carried state
+    /// plus the chosen account under <paramref name="accountParameter"/>
+    /// (the other panel's choice is carried along untouched).
+    /// </summary>
+    public PaymentPanelLinks PaymentLinks(string accountParameter)
+    {
+        var hidden = new Dictionary<string, string?>
+        {
+            ["step"] = StepProperty,
+            ["intakeRecordId"] = IntakeRecordId?.ToString(),
+            ["phoneNumber"] = PhoneNumber,
+            ["customer"] = CustomerKey,
+            ["crmBuyerCustomerId"] = CrmBuyerCustomerId?.ToString(),
+            ["crmBuyerLeadId"] = CrmBuyerLeadId?.ToString(),
+            ["crmBuyerUnitId"] = CrmBuyerUnitId?.ToString(),
+            ["crmBuyerProjectId"] = CrmBuyerProjectId?.ToString(),
+            ["crmBuyerCustomerName"] = CrmBuyerCustomerName,
+            ["crmBuyerProjectName"] = CrmBuyerProjectName,
+            ["crmBuyerUnitNumber"] = CrmBuyerUnitNumber,
+            ["externalSelection"] = ExternalSelection,
+            ["manualProjectName"] = ManualProjectName,
+            ["manualUnitNumber"] = ManualUnitNumber,
+            [accountParameter == "paymentAccount" ? "linkedPaymentAccount" : "paymentAccount"] =
+                accountParameter == "paymentAccount" ? LinkedPaymentAccount : PaymentAccount
+        }
+        .Where(kv => !string.IsNullOrEmpty(kv.Value))
+        .ToDictionary(kv => kv.Key, kv => kv.Value!);
+
+        var baseQuery = string.Join("&", hidden.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+        return new PaymentPanelLinks(
+            "/NewTicket",
+            hidden,
+            accountParameter,
+            account => account is null
+                ? $"/NewTicket?{baseQuery}#payments-fines"
+                : $"/NewTicket?{baseQuery}&{accountParameter}={Uri.EscapeDataString(account)}#payments-fines",
+            AutoSubmit: true);
     }
 
     public async Task<IActionResult> OnPostCreateAsync(
@@ -925,6 +1208,7 @@ public sealed class NewTicketModel(
             ErrorMessage = result.Detail ?? DescribeFailure(result.Outcome, "Could not create the ticket.");
             Step = StepReview;
             await LoadIssueStepAsync(cancellationToken);
+            await LoadReviewPaymentsAsync(cancellationToken);
             return Page();
         }
 

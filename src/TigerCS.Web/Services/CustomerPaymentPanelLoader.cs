@@ -17,13 +17,15 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
     private static readonly string[] ReminderTypes = ["OverdueMonthly", "CurrentMonth", "MonthEndFollowUp"];
 
     public async Task<CustomerPaymentPanel> LoadAsync(
-        string customerKey, long? crmCustomerId, string? accountId, string? notice, bool noticeIsError, CancellationToken cancellationToken)
+        string customerKey, long? crmCustomerId, string? accountId, string? notice, bool noticeIsError, CancellationToken cancellationToken,
+        PaymentPanelOptions? options = null)
     {
+        options ??= new PaymentPanelOptions();
         if (crmCustomerId is not { } customer)
         {
             return CustomerPaymentPanel.IsPactCustomer(customerKey)
-                ? await LoadEdsmSummaryAsync(customerKey, accountId, notice, noticeIsError, cancellationToken)
-                : new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer };
+                ? await LoadEdsmSummaryAsync(customerKey, accountId, notice, noticeIsError, options, cancellationToken)
+                : new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer, Links = options.Links!, AllowSending = options.AllowSending };
         }
 
         var outstanding = await collections.GetOutstandingAsync(customer, cancellationToken);
@@ -40,7 +42,8 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
 
         var basePanel = new CustomerPaymentPanel
         {
-            CustomerKey = customerKey, CrmCustomerId = customer, State = state, Notice = notice, NoticeIsError = noticeIsError
+            CustomerKey = customerKey, CrmCustomerId = customer, State = state, Notice = notice, NoticeIsError = noticeIsError,
+            Links = options.Links!, AllowSending = options.AllowSending
         };
 
         if (state is PaymentPanelState.Forbidden or PaymentPanelState.Disabled or PaymentPanelState.Error)
@@ -60,7 +63,8 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
                 return new CustomerPaymentPanel
                 {
                     CustomerKey = customerKey, CrmCustomerId = customer, State = PaymentPanelState.NotMapped,
-                    PaymentSummary = summary.Value, Reminders = reminderHistory.Value, Notice = notice, NoticeIsError = noticeIsError
+                    PaymentSummary = summary.Value, Reminders = reminderHistory.Value, Notice = notice, NoticeIsError = noticeIsError,
+                    Links = options.Links!, AllowSending = options.AllowSending
                 };
             }
         }
@@ -77,6 +81,17 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         var selected = accounts.Count == 1
             ? accounts[0]
             : accounts.FirstOrDefault(a => a.AccountId == accountId);
+        var scopedByUnit = false;
+        if (selected is null && accountId is null && !string.IsNullOrWhiteSpace(options.PreferredUnitNumber))
+        {
+            // No explicit choice: scope to the account holding the unit the
+            // caller is working on. Only an exact unit-number match counts;
+            // anything looser would quote another unit's balance.
+            selected = accounts.FirstOrDefault(a =>
+                string.Equals(a.UnitNumber?.Trim(), options.PreferredUnitNumber.Trim(), StringComparison.OrdinalIgnoreCase));
+            scopedByUnit = selected is not null;
+        }
+
         if (selected is null)
         {
             return Copy(basePanel, PaymentPanelState.SelectAccount, outstanding.Value);
@@ -113,13 +128,16 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             Candidates = candidates,
             CanSend = canSend,
             Notice = notice,
-            NoticeIsError = noticeIsError
+            NoticeIsError = noticeIsError,
+            Links = options.Links!,
+            AllowSending = options.AllowSending,
+            ScopedByUnit = scopedByUnit
         };
     }
 
     /// <summary>A PACT customer: EDSM's summary is all there is — never instalments, transactions or reminders.</summary>
     private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(
-        string customerKey, string? companyId, string? notice, bool noticeIsError, CancellationToken cancellationToken)
+        string customerKey, string? companyId, string? notice, bool noticeIsError, PaymentPanelOptions options, CancellationToken cancellationToken)
     {
         var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
         var state = summary.Outcome switch
@@ -132,18 +150,37 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             _ => PaymentPanelState.Error
         };
 
+        // The "account" of an EDSM view is a confirmed company (with its
+        // tenant): the explicit choice, else the company whose verified
+        // contracts include the caller's unit, else the first.
+        int? selectedCompanyId = null;
+        var scopedByUnit = false;
+        if (state == PaymentPanelState.EdsmSummary)
+        {
+            var companies = summary.Value!.Companies;
+            selectedCompanyId = companies.FirstOrDefault(c => c.CompanyId.ToString(CultureInfo.InvariantCulture) == companyId)?.CompanyId;
+            if (selectedCompanyId is null && companyId is null && !string.IsNullOrWhiteSpace(options.PreferredExternalUnitId))
+            {
+                selectedCompanyId = companies
+                    .FirstOrDefault(c => c.Contracts.Any(contract => string.Equals(contract.ExternalUnitId, options.PreferredExternalUnitId, StringComparison.Ordinal)))
+                    ?.CompanyId;
+                scopedByUnit = selectedCompanyId is not null;
+            }
+
+            selectedCompanyId ??= companies.FirstOrDefault()?.CompanyId;
+        }
+
         return new CustomerPaymentPanel
         {
             CustomerKey = customerKey,
             State = state,
             PaymentSummary = state == PaymentPanelState.EdsmSummary ? summary.Value : null,
-            // The "account" of an EDSM view is a confirmed company (with its tenant); default to the first.
-            SelectedCompanyId = state == PaymentPanelState.EdsmSummary
-                ? summary.Value!.Companies.FirstOrDefault(c => c.CompanyId.ToString(CultureInfo.InvariantCulture) == companyId)?.CompanyId
-                    ?? summary.Value.Companies.FirstOrDefault()?.CompanyId
-                : null,
+            SelectedCompanyId = selectedCompanyId,
+            ScopedByUnit = scopedByUnit,
             Notice = notice,
-            NoticeIsError = noticeIsError
+            NoticeIsError = noticeIsError,
+            Links = options.Links!,
+            AllowSending = options.AllowSending
         };
     }
 
@@ -158,6 +195,8 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             Outstanding = outstanding,
             Reminders = reminders,
             Notice = panel.Notice,
-            NoticeIsError = panel.NoticeIsError
+            NoticeIsError = panel.NoticeIsError,
+            Links = panel.Links,
+            AllowSending = panel.AllowSending
         };
 }

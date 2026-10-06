@@ -6,6 +6,7 @@ using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.CustomerVerification.Fakes;
+using TigerCS.Tests.Notifications.Fakes;
 using TigerCS.Tests.Ticketing.Fakes;
 
 namespace TigerCS.Tests.Ticketing.Services;
@@ -36,7 +37,7 @@ public class CustomerLookupAppServiceTests
         FakeTasleehGateway Tasleeh,
         FakeCrmGateway CrmUnitGateway);
 
-    private static Fixture CreateService()
+    private static Fixture CreateService(TimeProvider? timeProvider = null)
     {
         var intakeRecords = new FakeIntakeRecordRepository();
         var departmentSources = new FakeDepartmentCustomerLookupSourceRepository();
@@ -57,7 +58,7 @@ public class CustomerLookupAppServiceTests
         var crmUnitOfWork = new FakeCustomerVerificationUnitOfWork();
         var crmUnitLookup = new CrmUnitLookupAppService(crmGateway, unitReferences, contactReferences, crmUnitOfWork, TimeProvider.System);
 
-        var service = new CustomerLookupAppService(intakeRecords, departmentSources, crmLookup, pact, tasleeh, crmUnitLookup);
+        var service = new CustomerLookupAppService(intakeRecords, departmentSources, crmLookup, pact, tasleeh, crmUnitLookup, timeProvider ?? TimeProvider.System);
 
         return new Fixture(service, intakeRecords, departmentSources, crmLookup, pact, tasleeh, crmGateway);
     }
@@ -302,6 +303,226 @@ public class CustomerLookupAppServiceTests
 
         var customer = Assert.Single(Assert.Single(result.Response!.Sources, s => s.Source == "Pact").Customers);
         Assert.Single(customer.Units);
+    }
+
+    // ---------------------------------------------------------------
+    // PACT contract expiry: contractEndDate before today's DUBAI date hides
+    // the contract; today or later keeps it. The clock below is
+    // 2026-10-05 21:30 UTC — still 5 October on a UTC server, but already
+    // 6 October 01:30 in Dubai — so "today" for every test here is
+    // 6 October, and a contract ending on 5 October counts as expired
+    // even though the server's own calendar still says it ends today.
+    // ---------------------------------------------------------------
+
+    private static readonly DateTime DubaiBoundaryUtc = new(2026, 10, 5, 21, 30, 0, DateTimeKind.Utc);
+    private static readonly DateOnly DubaiToday = new(2026, 10, 6);
+
+    private static PactContractDto Contract(string unitId, DateOnly? endDate) =>
+        new(unitId, $"CNT-{unitId}", unitId, "Tiger Marina Residences", "Residential", ContractEndDate: endDate);
+
+    private static CustomerLookupSourceResultDto PactSource(CustomerLookupResult result) =>
+        Assert.Single(result.Response!.Sources, s => s.Source == "Pact");
+
+    [Fact]
+    public async Task SearchAsync_PactContractEndedYesterdayInDubai_IsHiddenAndCustomerDropped()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday.AddDays(-1))]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        // The only contract expired on the Dubai calendar (UTC still says
+        // 5 October): nothing current remains, so no PACT card at all.
+        var pactResult = PactSource(result);
+        Assert.Equal("NotFound", pactResult.Status);
+        Assert.Empty(pactResult.Customers);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactContractEndsTodayInDubai_StaysVisible()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday)]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = PactSource(result);
+        Assert.Equal("Found", pactResult.Status);
+        var unit = Assert.Single(Assert.Single(pactResult.Customers).Units);
+        Assert.Equal("U-1", unit.ExternalUnitId);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactContractEndsInFuture_StaysVisible()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday.AddYears(1))]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = PactSource(result);
+        Assert.Equal("Found", pactResult.Status);
+        Assert.Single(Assert.Single(pactResult.Customers).Units);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactMixedActiveAndExpiredContracts_CountsAndListsOnlyActiveUnits()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, "fatima@example.com", "2",
+            Contracts:
+            [
+                Contract("U-EXPIRED", DubaiToday.AddDays(-1)),
+                Contract("U-TODAY", DubaiToday),
+                Contract("U-FUTURE", DubaiToday.AddMonths(6)),
+                Contract("U-LONG-GONE", new DateOnly(2020, 1, 31))
+            ]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = PactSource(result);
+        Assert.Equal("Found", pactResult.Status);
+        var customer = Assert.Single(pactResult.Customers);
+        // Identity is untouched by the filter.
+        Assert.Equal("PACT-CUST-1", customer.ExternalCustomerId);
+        Assert.Equal("Fatima Noor", customer.DisplayName);
+        Assert.Equal("fatima@example.com", customer.Email);
+        Assert.Equal("2", customer.CustomerType);
+        // The unit count the wizard card shows is Units.Count — filtered
+        // BEFORE the list is built, so expired units are not counted either.
+        Assert.Equal(2, customer.Units.Count);
+        Assert.Equal(["U-TODAY", "U-FUTURE"], customer.Units.Select(u => u.ExternalUnitId).ToArray());
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactCustomerWithAllContractsExpired_IsDroppedWhileOtherCustomersRemain()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-EXPIRED", "Former Tenant", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday.AddDays(-1)), Contract("U-2", new DateOnly(2024, 12, 31))]));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-CURRENT", "Current Tenant", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-3", DubaiToday.AddDays(30))]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = PactSource(result);
+        Assert.Equal("Found", pactResult.Status);
+        var customer = Assert.Single(pactResult.Customers);
+        Assert.Equal("PACT-CUST-CURRENT", customer.ExternalCustomerId);
+        Assert.Equal("U-3", Assert.Single(customer.Units).ExternalUnitId);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactEveryCustomerExpired_ReportsNotFoundNotFailed()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Former Tenant", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday.AddDays(-1))]));
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-2", "Other Former Tenant", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-2", DubaiToday.AddDays(-400))]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        // "Nothing current on file" is a NotFound, never a Failed source —
+        // the agent sees the normal not-found path, not a PACT outage.
+        Assert.Equal(CustomerLookupOutcome.Success, result.Outcome);
+        Assert.Equal("NotFound", PactSource(result).Status);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactContractWithMissingOrUnreadableEndDate_StaysVisible()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        // The gateway maps an absent or malformed contractEndDate to null —
+        // the filter must treat that as current, never as expired.
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-NO-DATE", endDate: null), Contract("U-EXPIRED", DubaiToday.AddDays(-1))]));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        var pactResult = PactSource(result);
+        Assert.Equal("Found", pactResult.Status);
+        var unit = Assert.Single(Assert.Single(pactResult.Customers).Units);
+        Assert.Equal("U-NO-DATE", unit.ExternalUnitId);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PactCustomerWithNoContractsAtAll_IsStillShown()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null, Contracts: []));
+
+        var result = await f.Service.SearchAsync(intakeRecordId);
+
+        // Nothing expired — a contract-less tenant surfaces exactly as before.
+        var pactResult = PactSource(result);
+        Assert.Equal("Found", pactResult.Status);
+        Assert.Empty(Assert.Single(pactResult.Customers).Units);
+    }
+
+    [Fact]
+    public async Task SearchExternalSourcesByPhoneAsync_WorkspaceLeg_KeepsExpiredContractsFlagged_WhileSearchAsyncExcludesThem()
+    {
+        // The same seeded PACT customer, through both legs: the Customer
+        // Workspace search keeps the expired contract (labelled) so the
+        // agent can reach historical tickets, payments and fines; the
+        // intake-anchored New Ticket lookup never offers it for selection.
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-EXPIRED", DubaiToday.AddDays(-1)), Contract("U-FUTURE", DubaiToday.AddDays(1))]));
+
+        var workspace = await f.Service.SearchExternalSourcesByPhoneAsync(Phone);
+        var wizard = await f.Service.SearchAsync(intakeRecordId);
+
+        var workspaceCustomer = Assert.Single(Assert.Single(workspace, s => s.Source == "Pact").Customers);
+        Assert.Equal(2, workspaceCustomer.Units.Count);
+        Assert.True(workspaceCustomer.Units.Single(u => u.ExternalUnitId == "U-EXPIRED").IsContractExpired);
+        Assert.False(workspaceCustomer.Units.Single(u => u.ExternalUnitId == "U-FUTURE").IsContractExpired);
+
+        var wizardCustomer = Assert.Single(PactSource(wizard).Customers);
+        var selectable = Assert.Single(wizardCustomer.Units);
+        Assert.Equal("U-FUTURE", selectable.ExternalUnitId);
+        Assert.False(selectable.IsContractExpired);
+    }
+
+    [Fact]
+    public async Task SearchExternalSourcesByPhoneAsync_AllContractsExpired_CustomerRemainsDiscoverableForTheWorkspace()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Former Tenant", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday.AddDays(-1))]));
+
+        var workspace = await f.Service.SearchExternalSourcesByPhoneAsync(Phone);
+        var wizard = await f.Service.SearchAsync(intakeRecordId);
+
+        var workspacePact = Assert.Single(workspace, s => s.Source == "Pact");
+        Assert.Equal("Found", workspacePact.Status);
+        Assert.True(Assert.Single(Assert.Single(workspacePact.Customers).Units).IsContractExpired);
+        Assert.Equal("NotFound", PactSource(wizard).Status);
     }
 
     [Fact]

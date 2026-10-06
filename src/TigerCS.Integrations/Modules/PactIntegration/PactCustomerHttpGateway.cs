@@ -257,7 +257,11 @@ public sealed class PactCustomerHttpGateway(
                 FirstNonBlank(row.Row.UnitNumber),
                 FirstNonBlank(row.Row.ProjectName),
                 FirstNonBlank(row.Row.UnitType),
-                row.Row.CompanyID))
+                row.Row.CompanyID,
+                // Already a calendar date or null: the wire DTO's tolerant
+                // converter absorbed PACT's date-format variety, so an odd
+                // or missing contractEndDate never reaches here as an error.
+                row.Row.ContractEndDate))
             .ToList();
 
     /// <summary>

@@ -50,6 +50,24 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// match from either is pure display enrichment, never linked to a Ticket by
 /// id (see <see cref="ICrmCustomerLookupGateway"/>'s remarks).
 /// </para>
+///
+/// <para>
+/// <b>PACT contract expiry is applied here, and differently per caller.</b>
+/// The intake-anchored <see cref="SearchAsync"/> (the New Ticket wizard's
+/// selectable results) drops every PACT contract whose
+/// <c>contractEndDate</c> falls before today's Dubai calendar date before
+/// the customer's units are counted or listed, and drops a customer whose
+/// every contract has expired (no card, nothing selectable). The Customer
+/// Workspace's <see cref="SearchExternalSourcesByPhoneAsync"/> keeps every
+/// contract and flags the expired ones
+/// (<see cref="CustomerLookupUnitDto.IsContractExpired"/>), so an agent can
+/// still find a customer whose contracts have all ended and reach their
+/// historical tickets, payments and fines. The rule itself is
+/// <see cref="PactContractActivity"/>; it lives in this lookup/list layer
+/// and nowhere lower, so the Collections account mapping (which reads the
+/// PACT gateway directly and needs every contract) and persisted ticket
+/// history are untouched.
+/// </para>
 /// </summary>
 public sealed class CustomerLookupAppService(
     IIntakeRecordRepository intakeRecordRepository,
@@ -57,7 +75,8 @@ public sealed class CustomerLookupAppService(
     ICrmCustomerLookupGateway crmCustomerLookupGateway,
     IPactCustomerLookupGateway pactCustomerLookupGateway,
     ITasleehGateway tasleehGateway,
-    CrmUnitLookupAppService crmUnitLookupAppService)
+    CrmUnitLookupAppService crmUnitLookupAppService,
+    TimeProvider timeProvider)
 {
     private static readonly IReadOnlyCollection<CustomerLookupSource> AllSources =
         [CustomerLookupSource.Crm, CustomerLookupSource.Pact, CustomerLookupSource.Tasleeh];
@@ -91,13 +110,16 @@ public sealed class CustomerLookupAppService(
     /// fixture-backed generic CRM leg here would only duplicate it. All
     /// department-source configuration stays intake-scoped: a pre-intake
     /// search has no department, so both external sources are always asked.
+    /// Expired PACT contracts are returned here, flagged — the workspace
+    /// must still find a customer whose contracts have all ended (see this
+    /// type's remarks).
     /// </summary>
     public async Task<IReadOnlyList<CustomerLookupSourceResultDto>> SearchExternalSourcesByPhoneAsync(
         string phoneNumber, CancellationToken cancellationToken = default)
     {
         var tasks = new[]
         {
-            SearchPactAsync(phoneNumber, cancellationToken),
+            SearchPactAsync(phoneNumber, includeExpiredContracts: true, cancellationToken),
             SearchTasleehAsync(phoneNumber, cancellationToken)
         };
         return await Task.WhenAll(tasks);
@@ -107,7 +129,7 @@ public sealed class CustomerLookupAppService(
         CustomerLookupSource source, string phoneNumber, CancellationToken cancellationToken) => source switch
     {
         CustomerLookupSource.Crm => SearchCrmAsync(phoneNumber, cancellationToken),
-        CustomerLookupSource.Pact => SearchPactAsync(phoneNumber, cancellationToken),
+        CustomerLookupSource.Pact => SearchPactAsync(phoneNumber, includeExpiredContracts: false, cancellationToken),
         CustomerLookupSource.Tasleeh => SearchTasleehAsync(phoneNumber, cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(source), source, "Unknown customer lookup source.")
     };
@@ -203,10 +225,28 @@ public sealed class CustomerLookupAppService(
     /// the same "reported, never blocking" treatment the throwing sources
     /// get from their catch blocks. PACT contracts/units carry no local
     /// UnitReferenceId/ContactReferenceId (no cache table exists for PACT),
-    /// so every unit is display enrichment for the agent — all of them are
-    /// returned and none is ever auto-selected.
+    /// so every unit is display enrichment for the agent — all current
+    /// units are returned and none is ever auto-selected.
+    ///
+    /// <para>
+    /// With <paramref name="includeExpiredContracts"/> false (the New Ticket
+    /// wizard's intake-anchored lookup), expired contracts (end date before
+    /// today in Dubai — see <see cref="PactContractActivity"/>) are filtered
+    /// out per customer BEFORE the unit list is built, so the card's unit
+    /// count reflects only current contracts. A customer left with no
+    /// current contract, having had at least one, is dropped — and when
+    /// every matched customer is dropped the source reports NotFound,
+    /// exactly as if PACT had no current customer on file. With it true
+    /// (the Customer Workspace), every contract is returned and expired
+    /// ones carry <see cref="CustomerLookupUnitDto.IsContractExpired"/>.
+    /// Either way a customer PACT returned with no contracts at all is
+    /// still shown (nothing expired; that is how PACT has always surfaced a
+    /// contract-less tenant), and a contract with no readable end date is
+    /// treated as current, never hidden.
+    /// </para>
     /// </summary>
-    private async Task<CustomerLookupSourceResultDto> SearchPactAsync(string phoneNumber, CancellationToken cancellationToken)
+    private async Task<CustomerLookupSourceResultDto> SearchPactAsync(
+        string phoneNumber, bool includeExpiredContracts, CancellationToken cancellationToken)
     {
         var sourceName = CustomerLookupSource.Pact.ToString();
 
@@ -221,26 +261,45 @@ public sealed class CustomerLookupAppService(
             return CustomerLookupSourceResultDto.Failed(sourceName);
         }
 
-        var customers = result.Customers
-            .Select(match => new CustomerLookupCustomerDto(
-                match.PactCustomerId,
-                match.DisplayName,
-                match.PhoneNumber,
-                match.Email,
-                match.CustomerType,
+        var today = PactContractActivity.TodayInDubai(timeProvider);
+        var matches = result.Customers
+            .Select(match => (
+                Match: match,
+                Contracts: match.Contracts
+                    .Select(contract => (Contract: contract, IsActive: PactContractActivity.IsActiveOn(contract, today)))
+                    .Where(contract => includeExpiredContracts || contract.IsActive)
+                    .ToList()))
+            .Where(current => current.Contracts.Count > 0 || current.Match.Contracts.Count == 0)
+            .ToList();
+        if (matches.Count == 0)
+        {
+            return CustomerLookupSourceResultDto.NotFound(sourceName);
+        }
+
+        var customers = matches
+            .Select(current => new CustomerLookupCustomerDto(
+                current.Match.PactCustomerId,
+                current.Match.DisplayName,
+                current.Match.PhoneNumber,
+                current.Match.Email,
+                current.Match.CustomerType,
                 // Distinct by ExternalUnitId for the same reason as the CRM
                 // leg: a duplicate contract row for the same unit must never
-                // surface as two units for the same customer.
-                match.Contracts
-                    .DistinctBy(contract => contract.ExternalUnitId)
+                // surface as two units for the same customer. A current
+                // contract wins over an expired one for the same unit.
+                current.Contracts
+                    .OrderByDescending(contract => contract.IsActive)
+                    .DistinctBy(contract => contract.Contract.ExternalUnitId)
                     .Select(contract => new CustomerLookupUnitDto(
-                        contract.ExternalUnitId,
-                        contract.UnitNumber,
-                        contract.ProjectName,
+                        contract.Contract.ExternalUnitId,
+                        contract.Contract.UnitNumber,
+                        contract.Contract.ProjectName,
                         TowerName: null,
-                        contract.UnitType,
+                        contract.Contract.UnitType,
                         UnitReferenceId: null,
-                        ContactReferenceId: null))
+                        ContactReferenceId: null,
+                        contract.Contract.ContractEndDate,
+                        IsContractExpired: !contract.IsActive))
                     .ToList()))
             .ToList();
         return CustomerLookupSourceResultDto.Found(sourceName, customers);

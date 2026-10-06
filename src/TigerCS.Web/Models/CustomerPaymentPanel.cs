@@ -43,6 +43,54 @@ public enum PaymentPanelState
     Error
 }
 
+/// <summary>
+/// Where the Payment panel's own navigation goes — the account/company
+/// selector form, the Retry/Refresh links and the account cards. The
+/// Customer Profile's tab is the default (<see cref="ForProfile"/>); the
+/// New Ticket wizard supplies its own so the same panel, loaded by the same
+/// loader, navigates within the wizard's carried state instead of leaving
+/// it.
+/// </summary>
+/// <param name="SelectorAction">The GET form action of the account selector.</param>
+/// <param name="HiddenFields">Hidden fields the selector form must carry (the profile's <c>tab=payment</c>; the wizard's whole step state).</param>
+/// <param name="AccountParameter">The query parameter the selector posts the chosen account/company id as.</param>
+/// <param name="AccountHref">A link that reloads the panel for the given account id (null for "no account chosen").</param>
+/// <param name="AutoSubmit">True when the selector should submit itself on change (the profile's tab has its own fetch script; the wizard relies on this).</param>
+public sealed record PaymentPanelLinks(
+    string SelectorAction,
+    IReadOnlyDictionary<string, string> HiddenFields,
+    string AccountParameter,
+    Func<string?, string> AccountHref,
+    bool AutoSubmit = false)
+{
+    public static PaymentPanelLinks ForProfile(string customerKey)
+    {
+        var baseHref = $"/Customers/{Uri.EscapeDataString(customerKey)}?tab=payment";
+        return new PaymentPanelLinks(
+            $"/Customers/{Uri.EscapeDataString(customerKey)}",
+            new Dictionary<string, string> { ["tab"] = "payment" },
+            "account",
+            account => account is null ? $"{baseHref}#payment" : $"{baseHref}&account={Uri.EscapeDataString(account)}#payment");
+    }
+}
+
+/// <summary>
+/// Caller-specific options for <see cref="TigerCS.Web.Services.CustomerPaymentPanelLoader"/>:
+/// where the panel navigates, whether reminders may be sent from it, and —
+/// when no account was chosen explicitly — which account/company to scope
+/// to first (the one holding the unit the agent selected). Nothing here
+/// changes what the Api answers or how its states are interpreted.
+/// </summary>
+/// <param name="Links">The panel's navigation; null means the Customer Profile's tab.</param>
+/// <param name="AllowSending">False hides the Send Reminder forms (a read-only view, e.g. before ticket submission). The Api still enforces the permission either way.</param>
+/// <param name="PreferredUnitNumber">For a CRM customer with several finance accounts and no explicit choice: pick the account whose unit number matches (trimmed, case-insensitive); otherwise selection is still required.</param>
+/// <param name="PreferredExternalUnitId">For a PACT customer with several EDSM companies and no explicit choice: pick the company whose contracts include this PACT unit id; otherwise the first company.</param>
+public sealed record PaymentPanelOptions(
+    PaymentPanelLinks? Links = null,
+    bool AllowSending = true,
+    string? PreferredUnitNumber = null,
+    string? PreferredExternalUnitId = null);
+
 public sealed class CustomerPaymentPanel
 {
     public const string DisabledCode = "CollectionsDisabled";
@@ -50,6 +98,21 @@ public sealed class CustomerPaymentPanel
     public required string CustomerKey { get; init; }
     public long? CrmCustomerId { get; init; }
     public PaymentPanelState State { get; init; }
+
+    private PaymentPanelLinks? _links;
+
+    /// <summary>Where this panel's selector, Retry and account links go — the Customer Profile's tab unless the caller supplied its own.</summary>
+    public PaymentPanelLinks Links
+    {
+        get => _links ??= PaymentPanelLinks.ForProfile(CustomerKey);
+        init => _links = value;
+    }
+
+    /// <summary>Whether Send Reminder forms may render at all (the viewer's permission, <see cref="CanSend"/>, is still required on top).</summary>
+    public bool AllowSending { get; init; } = true;
+
+    /// <summary>True when the account/company shown was chosen by the caller's preferred unit rather than an explicit selection — the scope is then labelled for the agent.</summary>
+    public bool ScopedByUnit { get; init; }
 
     public CollectionsOutstandingResponseDto? Outstanding { get; init; }
 
@@ -134,7 +197,7 @@ public sealed class CustomerPaymentPanel
         candidate.AvailableChannels.Where(c => c is "Sms" or "Email").ToList();
 
     public IReadOnlyList<CollectionsReminderCandidateDto> SendableCandidates =>
-        CanSend && !IsStale ? Candidates.Where(c => WebChannels(c).Count > 0).ToList() : [];
+        CanSend && AllowSending && !IsStale ? Candidates.Where(c => WebChannels(c).Count > 0).ToList() : [];
 
     public string AccountLabel(CollectionsAccountDto a) =>
         $"{a.TowerName ?? "—"} · {a.UnitNumber ?? "—"} · {a.AccountId}";
