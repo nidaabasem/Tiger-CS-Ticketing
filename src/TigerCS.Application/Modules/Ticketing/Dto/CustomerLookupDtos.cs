@@ -30,6 +30,8 @@ public enum CustomerLookupSourceStatus
 /// <param name="UnitType">The unit type, when the source has one on file.</param>
 /// <param name="UnitReferenceId">This system's local cache id for the unit, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
 /// <param name="ContactReferenceId">This system's local cache id for the specific customer/unit relationship, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+/// <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
+/// <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Only the Customer Workspace search ever returns such a unit (labelled, for historical tickets, payments and fines); the intake-anchored New Ticket lookup drops it before the unit is listed or counted, so it can never be selected for a new ticket.</param>
 public sealed record CustomerLookupUnitDto(
     string ExternalUnitId,
     string? UnitNumber,
@@ -37,7 +39,9 @@ public sealed record CustomerLookupUnitDto(
     string? TowerName,
     string? UnitType,
     int? UnitReferenceId,
-    int? ContactReferenceId);
+    int? ContactReferenceId,
+    DateOnly? ContractEndDate = null,
+    bool IsContractExpired = false);
 
 /// <summary>
 /// One matched customer inside a <see cref="CustomerLookupSourceResultDto"/>.

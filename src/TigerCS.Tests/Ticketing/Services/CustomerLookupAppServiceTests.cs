@@ -481,17 +481,48 @@ public class CustomerLookupAppServiceTests
     }
 
     [Fact]
-    public async Task SearchExternalSourcesByPhoneAsync_PactExpiredContracts_AreFilteredTheSameWay()
+    public async Task SearchExternalSourcesByPhoneAsync_WorkspaceLeg_KeepsExpiredContractsFlagged_WhileSearchAsyncExcludesThem()
     {
+        // The same seeded PACT customer, through both legs: the Customer
+        // Workspace search keeps the expired contract (labelled) so the
+        // agent can reach historical tickets, payments and fines; the
+        // intake-anchored New Ticket lookup never offers it for selection.
         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
         f.Pact.Seed(Phone, new PactCustomerMatchDto(
             "PACT-CUST-1", "Fatima Noor", Phone, Email: null, CustomerType: null,
             Contracts: [Contract("U-EXPIRED", DubaiToday.AddDays(-1)), Contract("U-FUTURE", DubaiToday.AddDays(1))]));
 
-        var sources = await f.Service.SearchExternalSourcesByPhoneAsync(Phone);
+        var workspace = await f.Service.SearchExternalSourcesByPhoneAsync(Phone);
+        var wizard = await f.Service.SearchAsync(intakeRecordId);
 
-        var pactResult = Assert.Single(sources, s => s.Source == "Pact");
-        Assert.Equal("U-FUTURE", Assert.Single(Assert.Single(pactResult.Customers).Units).ExternalUnitId);
+        var workspaceCustomer = Assert.Single(Assert.Single(workspace, s => s.Source == "Pact").Customers);
+        Assert.Equal(2, workspaceCustomer.Units.Count);
+        Assert.True(workspaceCustomer.Units.Single(u => u.ExternalUnitId == "U-EXPIRED").IsContractExpired);
+        Assert.False(workspaceCustomer.Units.Single(u => u.ExternalUnitId == "U-FUTURE").IsContractExpired);
+
+        var wizardCustomer = Assert.Single(PactSource(wizard).Customers);
+        var selectable = Assert.Single(wizardCustomer.Units);
+        Assert.Equal("U-FUTURE", selectable.ExternalUnitId);
+        Assert.False(selectable.IsContractExpired);
+    }
+
+    [Fact]
+    public async Task SearchExternalSourcesByPhoneAsync_AllContractsExpired_CustomerRemainsDiscoverableForTheWorkspace()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        f.Pact.Seed(Phone, new PactCustomerMatchDto(
+            "PACT-CUST-1", "Former Tenant", Phone, Email: null, CustomerType: null,
+            Contracts: [Contract("U-1", DubaiToday.AddDays(-1))]));
+
+        var workspace = await f.Service.SearchExternalSourcesByPhoneAsync(Phone);
+        var wizard = await f.Service.SearchAsync(intakeRecordId);
+
+        var workspacePact = Assert.Single(workspace, s => s.Source == "Pact");
+        Assert.Equal("Found", workspacePact.Status);
+        Assert.True(Assert.Single(Assert.Single(workspacePact.Customers).Units).IsContractExpired);
+        Assert.Equal("NotFound", PactSource(wizard).Status);
     }
 
     [Fact]

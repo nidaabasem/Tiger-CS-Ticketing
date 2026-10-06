@@ -10,11 +10,14 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Logging.Abstractions;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
+using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Tests.Web.Fakes;
+using TigerCsWeb::TigerCS.Web.Models;
 using TigerCsWeb::TigerCS.Web.Pages;
+using TigerCsWeb::TigerCS.Web.Services;
 using TigerCsWeb::TigerCS.Web.Services.Api;
 
 namespace TigerCS.Tests.Web;
@@ -41,7 +44,8 @@ public sealed class NewTicketModelTests
         Func<HttpRequestMessage, string?, HttpResponseMessage>? ticketsResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerHistoryResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerLookupResponder = null,
-        Func<HttpRequestMessage, string?, HttpResponseMessage>? channelsResponder = null)
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? channelsResponder = null,
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? collectionsResponder = null)
     {
         var intakeHandler = new FakeApiHandler(intakeResponder ?? ((_, _) => throw new InvalidOperationException("Intake API not expected to be called.")));
         var crmBuyerLookupHandler = new FakeApiHandler(crmBuyerLookupResponder ?? ((_, _) => throw new InvalidOperationException("CRM Buyer Lookup API not expected to be called.")));
@@ -88,11 +92,24 @@ public sealed class NewTicketModelTests
         var channelsClient = new ChannelsApiClient(
             new HttpClient(channelsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<ChannelsApiClient>.Instance);
 
+        // Payments & Fines: the same loader the Customer Profile's Payment
+        // tab uses, over /api/collections. The default answers "Collections
+        // is switched off" (a benign panel state, like a non-Collections
+        // environment) so the wizard's own tests are unaffected; only the
+        // tests about the panel supply figures.
+        var collectionsHandler = new FakeApiHandler(collectionsResponder ?? ((_, _) => Problem(HttpStatusCode.ServiceUnavailable, "CollectionsDisabled")));
+        var collectionsClient = new CollectionsApiClient(
+            new HttpClient(collectionsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CollectionsApiClient>.Instance);
+        LastCollectionsHandler = collectionsHandler;
+
         var model = new NewTicketModel(
             intakeClient, customerLookupClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient,
-            channelsClient: channelsClient);
+            channelsClient: channelsClient, paymentPanelLoader: new CustomerPaymentPanelLoader(collectionsClient));
         return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler, customerLookupHandler);
     }
+
+    /// <summary>The Collections fake behind the most recently created model (the tuple above was already eight wide).</summary>
+    [ThreadStatic] private static FakeApiHandler? LastCollectionsHandler;
 
     /// <summary>The nine approved active channels exactly as GET /api/channels returns them (active only, display order).</summary>
     private static readonly ChannelDto[] SeededChannels =
@@ -118,13 +135,14 @@ public sealed class NewTicketModelTests
         int? crmBuyerCustomerId = null, int? crmBuyerLeadId = null, int? crmBuyerUnitId = null, int? crmBuyerProjectId = null,
         string? crmBuyerCustomerName = null, string? crmBuyerProjectName = null, string? crmBuyerUnitNumber = null,
         string? externalSelection = null, string? manualProjectName = null, string? manualUnitNumber = null,
-        int? departmentId = null, long? createdTicketId = null, string? createdTicketNumber = null) =>
+        int? departmentId = null, long? createdTicketId = null, string? createdTicketNumber = null,
+        string? paymentAccount = null, string? linkedPaymentAccount = null) =>
         model.OnGetAsync(
             step, intakeRecordId, phoneNumber, customer,
             crmBuyerCustomerId, crmBuyerLeadId, crmBuyerUnitId, crmBuyerProjectId,
             crmBuyerCustomerName, crmBuyerProjectName, crmBuyerUnitNumber,
             externalSelection, manualProjectName, manualUnitNumber,
-            departmentId, createdTicketId, createdTicketNumber, CancellationToken.None);
+            departmentId, createdTicketId, createdTicketNumber, CancellationToken.None, paymentAccount, linkedPaymentAccount);
 
     private static Func<HttpRequestMessage, string?, HttpResponseMessage> CustomerLookupReturning(params CustomerLookupSourceResultDto[] sources) =>
         (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(42, "+", sources));
@@ -449,6 +467,419 @@ public sealed class NewTicketModelTests
         Assert.Equal(2, model.Candidates.Count);
         Assert.Contains(model.Candidates, c => c.Key == "crm");
         Assert.Contains(model.Candidates, c => c.Source == "Pact");
+    }
+
+    // ---------------------------------------------------------------
+    // Unified CRM + PACT card: one customer whose CRM Buyer and PACT tenant
+    // share a verified unit link (same unit number in the same project).
+    // Both identities stay intact; the histories are read by each stable id
+    // and combined without duplicate ticket ids.
+    // ---------------------------------------------------------------
+
+    /// <summary>A PACT customer whose unit 1506 / Nobles Tower is the same unit as <see cref="SingleUnitBuyer"/>'s, plus a PACT-only unit.</summary>
+    private static CustomerLookupCustomerDto PactCustomerLinkedToNoblesTower1506() => new(
+        "7001", "Sami Nasser", "+971509990001", "sami@pact.example", CustomerType: "2",
+        [
+            new CustomerLookupUnitDto("700", " 1506 ", "nobles tower", null, "Residential", null, null),
+            new CustomerLookupUnitDto("701", "2304", "Tiger Marina Residences", null, "Residential", null, null)
+        ]);
+
+    private static CustomerHistoryTicketDto Ticket(long id, string status, string unit = "1506", int daysAgo = 1) =>
+        new(id, $"TG-CS-20260901-{id:D4}", DateTime.UtcNow.AddDays(-daysAgo), status, 2, 2, 2, "Nobles Tower", unit, "Verified", $"Issue {id}");
+
+    /// <summary>Routes the CRM-keyed and the external-keyed history reads to their own answers, so a test can prove which identity each call used.</summary>
+    private static Func<HttpRequestMessage, string?, HttpResponseMessage> HistoriesByIdentity(CustomerHistoryDto crm, CustomerHistoryDto external) =>
+        (request, _) => request.RequestUri!.AbsolutePath.Contains("/customers/crm/", StringComparison.Ordinal)
+            ? FakeApiHandler.JsonResponse(HttpStatusCode.OK, crm)
+            : FakeApiHandler.JsonResponse(HttpStatusCode.OK, external);
+
+    [Fact]
+    public async Task OnGetAsync_CrmAndPactShareAVerifiedUnit_OneUnifiedCard_KeepsBothIdentities_AndCombinesHistoryWithoutDuplicates()
+    {
+        var crmHistory = new CustomerHistoryDto("Verified", 5001, null, "Sami Nasser", 2, 1, 1,
+            [Ticket(50, "InProgress", daysAgo: 2), Ticket(40, "Resolved", daysAgo: 20)], CustomerKey: "crm:5001");
+        // The same ticket 50 is deliberately echoed by the external read to
+        // prove the combined view never lists or counts a ticket id twice.
+        var externalHistory = new CustomerHistoryDto("ExternalVerified", null, null, "Sami Nasser", 2, 2, 0,
+            [Ticket(50, "InProgress", daysAgo: 2), Ticket(60, "Open", unit: "2304", daysAgo: 1)], "Pact", "7001", "ext:Pact:7001");
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506()])),
+            customerHistoryResponder: HistoriesByIdentity(crmHistory, externalHistory));
+
+        await GetAsync(model, step: NewTicketModel.StepCustomer, intakeRecordId: 42, phoneNumber: "+971509990001");
+
+        // One card, not two — keyed "crm", verified via both sources, with
+        // the PACT tenant id kept alongside the CRM Buyer.
+        var candidate = Assert.Single(model.Candidates);
+        Assert.Equal("crm", candidate.Key);
+        Assert.True(candidate.IsUnified);
+        Assert.Equal(["Crm", "Pact"], candidate.Sources);
+        Assert.Equal("7001", candidate.LinkedPactCustomerId);
+        Assert.Equal("ext:Pact:7001", model.LinkedPactCustomerKey);
+        // The shared unit counts once; the PACT-only unit adds one.
+        Assert.Equal(2, candidate.UnitsCount);
+        Assert.Equal("701", Assert.Single(model.LinkedPactOnlyUnits).ExternalUnitId);
+
+        // Both histories were read by their own stable identity — never by
+        // name or phone.
+        Assert.Contains(customerHistory.Requests, r => r.RequestUri.Contains("/api/customers/crm/5001/ticket-history"));
+        Assert.Contains(customerHistory.Requests, r => r.RequestUri.Contains("/api/customers/external/Pact/7001/ticket-history"));
+        Assert.DoesNotContain(customerHistory.Requests, r => r.RequestUri.Contains("Sami"));
+
+        // Active first, then newest (60 was created after 50); the duplicate
+        // 50 appears once; 40 is the only finished ticket.
+        var history = model.CandidateHistories["crm"];
+        Assert.Equal([60L, 50L, 40L], history.Tickets.Select(t => t.TicketId).ToArray());
+        Assert.Equal(3, history.TotalTickets);
+        Assert.Equal(2, history.OpenTickets);
+        Assert.Equal(1, history.ClosedTickets);
+        Assert.Equal(5001, history.CrmBuyerCustomerId);
+        Assert.Equal("7001", history.ExternalCustomerId);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_CrmAndPactShareOnlyThePhone_StayTwoSeparateCards()
+    {
+        // A phone match produced both results in the first place, so it
+        // proves nothing — only a shared unit (number AND project) unifies.
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Tiger Sky Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506()])));
+
+        await GetAsync(model, step: NewTicketModel.StepCustomer, intakeRecordId: 42, phoneNumber: "+971509990001");
+
+        Assert.Equal(2, model.Candidates.Count);
+        Assert.All(model.Candidates, c => Assert.False(c.IsUnified));
+        Assert.Null(model.LinkedPactCustomer);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_UnifiedCard_OneHistoryReadFailing_StillShowsTheOtherIdentitysHistory()
+    {
+        var crmHistory = new CustomerHistoryDto("Verified", 5001, null, "Sami Nasser", 1, 1, 0, [Ticket(50, "Open")]);
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506()])),
+            customerHistoryResponder: (request, _) => request.RequestUri!.AbsolutePath.Contains("/customers/crm/", StringComparison.Ordinal)
+                ? FakeApiHandler.JsonResponse(HttpStatusCode.OK, crmHistory)
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+
+        await GetAsync(model, step: NewTicketModel.StepCustomer, intakeRecordId: 42, phoneNumber: "+971509990001");
+
+        Assert.Equal(1, model.CandidateHistories["crm"].TotalTickets);
+    }
+
+    [Fact]
+    public async Task PropertyStep_UnifiedCard_OffersCrmUnits_AndThePactOnlyCurrentUnit_SelectableThroughThePactPath()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506()])));
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm");
+
+        Assert.NotNull(model.LinkedPactCustomer);
+        Assert.True(model.IsLinkedToPact(model.CrmBuyerMatch!.Units[0]));
+        Assert.Equal("2304", Assert.Single(model.LinkedPactOnlyUnits).UnitNumber);
+
+        // Selecting the PACT-only unit under the unified card persists the
+        // PACT identity, exactly as a PACT selection from its own card would.
+        var redirect = Assert.IsType<RedirectToPageResult>(model.OnPostUseExternalUnit(
+            42, "+971509990001", "crm", PackedExternal(customerId: "7001", unitId: "701", name: "Sami Nasser", project: "Tiger Marina Residences", unit: "2304")));
+        Assert.Equal("crm", RouteValues(redirect)["customer"]);
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            externalSelection: (string)RouteValues(redirect)["externalSelection"]!);
+
+        Assert.True(model.HasUnitSelection);
+        Assert.Equal("Pact", model.SummarySourceKey);
+        Assert.Equal("7001", model.ExternalCustomerId);
+        Assert.Equal("2304", model.SummaryUnitNumber);
+        Assert.Null(model.CrmBuyerUnitId);
+    }
+
+    [Fact]
+    public async Task PropertyStep_UnifiedCard_RelatedTicketsForTheSelectedUnit_CombineBothIdentities()
+    {
+        var crmRelated = new CustomerHistoryDto("Verified", 5001, null, "Sami Nasser", 1, 1, 0, [Ticket(50, "Open")]);
+        var pactRelated = new CustomerHistoryDto("ExternalVerified", null, null, "Sami Nasser", 1, 0, 1, [Ticket(40, "Resolved", daysAgo: 30)], "Pact", "7001");
+        var (model, _, _, _, _, _, customerHistory, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506()])),
+            customerHistoryResponder: HistoriesByIdentity(crmRelated, pactRelated));
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506");
+
+        Assert.Contains(customerHistory.Requests, r => r.RequestUri.Contains("/api/customers/crm/5001/ticket-history") && r.RequestUri.Contains("unitNumber=1506"));
+        Assert.Contains(customerHistory.Requests, r => r.RequestUri.Contains("/api/customers/external/Pact/7001/ticket-history") && r.RequestUri.Contains("unitNumber=1506"));
+        Assert.Equal([50L, 40L], model.RelatedTickets!.Tickets.Select(t => t.TicketId).ToArray());
+        Assert.Equal(2, model.RelatedTickets.TotalTickets);
+    }
+
+    // ---------------------------------------------------------------
+    // Payments & Fines before ticket submission — Step 2 (unit selected)
+    // and the Review step, through the Customer Profile's own loader over
+    // /api/collections. Never depends on ticket history; never gates.
+    // ---------------------------------------------------------------
+
+    private static readonly DateTime PayNow = DateTime.UtcNow;
+
+    private static CollectionsAccountDto Account(string accountId, string unit, decimal dueNow) => new(
+        accountId, 45001, "Nobles Tower", unit, "AED", PayNow.AddMinutes(-2), "Current",
+        45_000m, 30_000m, 0m, 15_000m, 500m, 0m, 0m, dueNow, 10_000m, DateOnly.FromDateTime(PayNow).AddMonths(-4), null, []);
+
+    private static CollectionsPaymentSummaryResponseDto PactSummary(string customerKey, string tenantId) => new(
+        customerKey, "Mapped", null, tenantId, "Pact", PayNow, null, "AED", "Configured", "en-US", 10, 20, PayNow, "Cached",
+        [
+            new CollectionsCompanyPaymentSummaryDto(4, "Tiger Group Dubai", "Owned", "Available", null,
+                [new CollectionsPactContractRefDto("88001", "700", "2304", "Tiger Marina Residences", "Residential")],
+                [new CollectionsEdsmFieldDto("dueAmount", "Due", "Definition.", "Provided", 1_500m, "1,500.00", null),
+                 new CollectionsEdsmFieldDto("lateFines", "Late fines", "Definition.", "Provided", 250m, "250.00", null)],
+                "NotChecked", false, [], [], null),
+            new CollectionsCompanyPaymentSummaryDto(25, "Hirmas Dubai", "Rented", "Unavailable", "timed out",
+                [new CollectionsPactContractRefDto("88002", "701", "1105", "Tiger Bay Towers", "Commercial")],
+                [], "NotChecked", false, [], [], null)
+        ],
+        []);
+
+    private static HttpResponseMessage Problem(HttpStatusCode status, string code) =>
+        new(status) { Content = System.Net.Http.Json.JsonContent.Create(new { type = $"https://tigercs.internal/problems/collections/{code}", title = code, detail = code }) };
+
+    /// <summary>A Collections fake: two CRM finance accounts (units 1506 and 1204), and PACT tenant 7001's EDSM summary with two companies.</summary>
+    private static Func<HttpRequestMessage, string?, HttpResponseMessage> CollectionsReturningFigures() =>
+        (request, _) =>
+        {
+            var path = Uri.UnescapeDataString(request.RequestUri!.AbsolutePath);
+            var query = System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query);
+            if (path.EndsWith("/payment-summary", StringComparison.Ordinal))
+            {
+                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, PactSummary("ext:Pact:7001", "7001"));
+            }
+
+            if (path.EndsWith("/outstanding", StringComparison.Ordinal))
+            {
+                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CollectionsOutstandingResponseDto(
+                    5001, DateOnly.FromDateTime(PayNow), PayNow, "Current", "Test source",
+                    [Account("ACC-1204", "1204", 0m), Account("ACC-1506", "1506", 30_500m)], null));
+            }
+
+            if (path.EndsWith("/candidates", StringComparison.Ordinal))
+            {
+                return Problem(HttpStatusCode.Forbidden, "Forbidden");
+            }
+
+            if (path.EndsWith("/reminders", StringComparison.Ordinal))
+            {
+                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CollectionsReminderHistoryResponseDto(5001, query["accountId"], [], null));
+            }
+
+            return query["view"] == "history"
+                ? FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CollectionsPaymentHistoryResponseDto(5001, query["accountId"]!, "AED", PayNow, "Current", "history", [], null))
+                : FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CollectionsInstalmentsResponseDto(5001, query["accountId"]!, "AED", PayNow, "Current", "instalments", [], null));
+        };
+
+    [Fact]
+    public async Task PropertyStep_CrmUnitSelected_ShowsPaymentsAndFines_ScopedToTheSelectedUnitsAccount_WithoutAnyTicketHistory()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            collectionsResponder: CollectionsReturningFigures());
+        var collections = LastCollectionsHandler!;
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506");
+
+        var panel = Assert.IsType<CustomerPaymentPanel>(model.PaymentPanel);
+        Assert.Equal("Crm", model.PaymentPanelSource);
+        Assert.Equal(PaymentPanelState.Loaded, panel.State);
+        // Two finance accounts, none chosen: the one holding unit 1506 is
+        // scoped automatically — never the other unit's balance.
+        Assert.Equal("ACC-1506", panel.SelectedAccount!.AccountId);
+        Assert.True(panel.ScopedByUnit);
+        Assert.Equal(30_500m, panel.SelectedAccount.AmountDueNow);
+        Assert.Equal(500m, panel.SelectedAccount.PayablePenaltyAmount);
+        // Read by the CRM customer id, as the profile's tab does.
+        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customers/5001/outstanding"));
+        // Before ticket submission there is no reminder sending.
+        Assert.True(panel.AllowSending);
+        Assert.False(panel.CanSend);
+        Assert.Null(model.LinkedPaymentPanel);
+        // The panel's own navigation stays inside the wizard with the full carried state.
+        Assert.Equal("/NewTicket", panel.Links.SelectorAction);
+        Assert.Equal("paymentAccount", panel.Links.AccountParameter);
+        Assert.Equal("property", panel.Links.HiddenFields["step"]);
+        Assert.Equal("1506", panel.Links.HiddenFields["crmBuyerUnitNumber"]);
+        Assert.Contains("paymentAccount=ACC-1204", panel.Links.AccountHref("ACC-1204"));
+        Assert.True(panel.Links.AutoSubmit);
+    }
+
+    [Fact]
+    public async Task PropertyStep_CrmUnitSelected_ExplicitAccountChoice_WinsOverTheUnitScope()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            collectionsResponder: CollectionsReturningFigures());
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506",
+            paymentAccount: "ACC-1204");
+
+        Assert.Equal("ACC-1204", model.PaymentPanel!.SelectedAccount!.AccountId);
+        Assert.False(model.PaymentPanel.ScopedByUnit);
+    }
+
+    [Fact]
+    public async Task PropertyStep_PactUnitSelected_ShowsTheTenantsEdsmSummary_ScopedToTheCompanyHoldingTheUnit()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])),
+            collectionsResponder: CollectionsReturningFigures());
+        var collections = LastCollectionsHandler!;
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990002", customer: "ext:Pact:7001",
+            externalSelection: PackedExternal(customerId: "7001", unitId: "701", unit: "1105", project: "Tiger Bay Towers"));
+
+        var panel = Assert.IsType<CustomerPaymentPanel>(model.PaymentPanel);
+        Assert.Equal("Pact", model.PaymentPanelSource);
+        Assert.Equal(PaymentPanelState.EdsmSummary, panel.State);
+        // Resolved by the same ext:Pact:{tenant} key the profile uses — the
+        // Api's verified tenant/company mapping, untouched.
+        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customers/by-key/ext%3APact%3A7001/payment-summary"));
+        Assert.Equal("7001", panel.PaymentSummary!.PactTenantId);
+        // Unit 701 belongs to company 25's contract: that company is scoped,
+        // and its availability state is shown as the source reported it.
+        Assert.Equal(25, panel.SelectedCompanyId);
+        Assert.True(panel.ScopedByUnit);
+        Assert.Equal("Unavailable", panel.SelectedCompany!.Status);
+        // The other company's figures (due, late fines) are still on the panel for the selector.
+        Assert.Contains(panel.PaymentSummary.Companies, c => c.CompanyId == 4 && c.Fields.Any(f => f.Key == "lateFines" && f.Value == 250m));
+    }
+
+    [Fact]
+    public async Task PropertyStep_CollectionsSwitchedOff_ShowsTheDisabledState_NotAnError()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")));
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506");
+
+        Assert.Equal(PaymentPanelState.Disabled, model.PaymentPanel!.State);
+        Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task PropertyStep_ManualProperty_HasNoPaymentsPanel_AndNeverCallsCollections()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel();
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990009", customer: "manual",
+            manualProjectName: "Somewhere", manualUnitNumber: "1");
+
+        Assert.True(model.HasUnitSelection);
+        Assert.Null(model.PaymentPanel);
+        Assert.Empty(LastCollectionsHandler!.Requests);
+    }
+
+    [Fact]
+    public async Task PropertyStep_FinanceSourceUnavailable_ShowsTheUnavailableState_AndTheWizardStillContinues()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            collectionsResponder: (request, _) => request.RequestUri!.AbsolutePath.EndsWith("/payment-summary", StringComparison.Ordinal)
+                ? Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable")
+                : request.RequestUri.AbsolutePath.EndsWith("/reminders", StringComparison.Ordinal)
+                    ? FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CollectionsReminderHistoryResponseDto(5001, null, [], null))
+                    : Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"));
+
+        var result = await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506");
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal(PaymentPanelState.Unavailable, model.PaymentPanel!.State);
+        Assert.Null(model.PaymentPanel.SelectedAccount);
+        Assert.True(model.HasUnitSelection);
+        Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ReviewStep_ShowsPaymentsAndFinesReadOnly_ForAPactSelection_EvenWithNoPreviousTickets()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(3, "Maintenance", 2, "Facility Management")),
+            collectionsResponder: CollectionsReturningFigures());
+        model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = 3, PriorityId = 3, RequestSummary = "Leak" };
+
+        var result = await model.OnPostReviewAsync(
+            42, "+971509990002", "ext:Pact:7001", null, null, null, null, null, null, null,
+            PackedExternal(customerId: "7001", unitId: "700", unit: "2304", project: "Tiger Marina Residences"), null, null, CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal(NewTicketModel.StepReview, model.Step);
+        var panel = Assert.IsType<CustomerPaymentPanel>(model.PaymentPanel);
+        Assert.Equal(PaymentPanelState.EdsmSummary, panel.State);
+        Assert.Equal(4, panel.SelectedCompanyId);
+        Assert.False(panel.AllowSending);
+    }
+
+    [Fact]
+    public async Task PropertyStep_UnifiedCard_CrmUnitSelected_ShowsBothIdentitiesPayments_EachByItsOwnVerifiedMapping()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "2304", "Tiger Marina Residences")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])),
+            collectionsResponder: CollectionsReturningFigures());
+        var collections = LastCollectionsHandler!;
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Tiger Marina Residences", crmBuyerUnitNumber: "2304");
+
+        Assert.NotNull(model.LinkedPactCustomer);
+        Assert.Equal("Crm", model.PaymentPanelSource);
+        Assert.Equal(PaymentPanelState.SelectAccount, model.PaymentPanel!.State); // no CRM account holds unit 2304 — selection stays required
+        var linked = Assert.IsType<CustomerPaymentPanel>(model.LinkedPaymentPanel);
+        Assert.Equal("Pact", model.LinkedPaymentPanelSource);
+        Assert.Equal(PaymentPanelState.EdsmSummary, linked.State);
+        Assert.Equal("ext:Pact:7001", linked.CustomerKey);
+        // EDSM scoped to the company whose contract is the shared unit (700 → company 4).
+        Assert.Equal(4, linked.SelectedCompanyId);
+        Assert.True(linked.ScopedByUnit);
+        Assert.Equal("linkedPaymentAccount", linked.Links.AccountParameter);
+        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/customers/5001/outstanding"));
+        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("by-key/ext%3APact%3A7001/payment-summary"));
     }
 
     [Fact]

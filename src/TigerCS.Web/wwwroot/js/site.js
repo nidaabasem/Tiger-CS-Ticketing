@@ -101,6 +101,13 @@
   // to the LATEST request is applied: a slow answer for a previously
   // selected account is discarded. Without JS every link and the account
   // form load the page with the tab rendered server-side (?tab=payment).
+  // A payment account selector rendered outside the profile's fetched tab
+  // (the New Ticket wizard's Payments & Fines panel) reloads the page with
+  // its carried state on change; the <noscript> button covers the rest.
+  document.querySelectorAll("[data-payment-selector][data-autosubmit='true'] select").forEach(function (select) {
+    select.addEventListener("change", function () { select.form.submit(); });
+  });
+
   document.querySelectorAll("[data-payment-src]").forEach(function (panel) {
     var radio = document.getElementById("tab-payment");
     if (!radio) return;

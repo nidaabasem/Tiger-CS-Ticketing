@@ -94,6 +94,34 @@ public sealed class NewTicketCustomerAwarenessTests
     }
 
     [Fact]
+    public void View_ShowsPaymentsAndFines_OnThePropertyStepAndTheReviewStep_ThroughTheProfilesPaymentPartial()
+    {
+        var html = NewTicketViewHtml();
+        var partial = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "Shared", "_NewTicketPaymentsAndFines.cshtml")));
+
+        // Rendered twice: inside the Step 2 unit-selected block and on Review,
+        // before the Create Ticket form.
+        Assert.Equal(2, html.Split("_NewTicketPaymentsAndFines").Length - 1);
+        Assert.True(html.IndexOf("_NewTicketPaymentsAndFines", StringComparison.Ordinal) < html.IndexOf("asp-page-handler=\"UseCrmBuyerUnit\"", StringComparison.Ordinal));
+        Assert.True(html.LastIndexOf("_NewTicketPaymentsAndFines", StringComparison.Ordinal) < html.IndexOf("asp-page-handler=\"Create\"", StringComparison.Ordinal));
+
+        Assert.Contains("Payments &amp; Fines", partial);
+        Assert.Contains("<partial name=\"_CustomerPaymentTab\" model=\"panel\" />", partial);
+        Assert.Contains("data-payments-fines=\"linked\"", partial);
+    }
+
+    [Fact]
+    public void View_UnifiedCard_NamesBothSources_AndOffersPactOnlyUnitsUnderTheCrmCustomer()
+    {
+        var html = NewTicketViewHtml();
+
+        Assert.Contains("candidate.Sources.Select(TicketDisplay.LookupSourceLabel)", html);
+        Assert.Contains("data-unified-identities", html);
+        Assert.Contains("Model.LinkedPactOnlyUnits", html);
+        Assert.Contains("also on file in PACT", html);
+    }
+
+    [Fact]
     public void View_NeverExposesRawIdentifiersAsPrimaryInformation()
     {
         // Technical ids travel only inside packed hidden values — never as

@@ -9,6 +9,7 @@
     string Amount(decimal? a) => a is { } v ? $"{currency} {v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}" : "—";
     TigerCS.Application.Modules.Collections.Dto.CollectionsEdsmFieldDto? Field(string key) => company?.Fields.FirstOrDefault(f => f.Key == key);
     var rented = company?.BusinessModel == "Rented";
+    var selectId = panel.Links.AccountParameter == "account" ? "paymentAccount" : $"paymentAccount-{panel.Links.AccountParameter}";
     var sourceLabel = summary?.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : summary?.Source == "Pact" ? "EDSM" : summary?.Source;
 }
 
@@ -30,11 +31,14 @@
         <div class="payment-toolbar">
             @if (summary.Companies.Count > 1)
             {
-                <form class="payment-toolbar__selector" method="get" action="/Customers/@Uri.EscapeDataString(panel.CustomerKey)" data-payment-selector>
-                    <input type="hidden" name="tab" value="payment" />
+                <form class="payment-toolbar__selector" method="get" action="@panel.Links.SelectorAction" data-payment-selector data-autosubmit="@(panel.Links.AutoSubmit ? "true" : null)">
+                    @foreach (var hidden in panel.Links.HiddenFields)
+                    {
+                        <input type="hidden" name="@hidden.Key" value="@hidden.Value" />
+                    }
                     <div class="field-group">
-                        <label class="field-label" for="paymentAccount">Account / unit</label>
-                        <select class="field-select" id="paymentAccount" name="account">
+                        <label class="field-label" for="@selectId">Account / unit</label>
+                        <select class="field-select" id="@selectId" name="@panel.Links.AccountParameter">
                             @foreach (var option in summary.Companies)
                             {
                                 <option value="@option.CompanyId" selected="@(option.CompanyId == company.CompanyId)">@CustomerPaymentPanel.EdsmCompanyLabel(option, summary.PactTenantId)</option>
@@ -50,6 +54,10 @@
                     <span class="field-label">Account / unit</span>
                     <strong>@CustomerPaymentPanel.EdsmCompanyLabel(company, summary.PactTenantId)</strong>
                 </div>
+            }
+            @if (panel.ScopedByUnit)
+            {
+                <span class="field-hint" data-payment-scoped-by-unit>Showing the company whose contract covers the selected unit.</span>
             }
             <div class="payment-toolbar__meta">
                 <span data-currency-configured>Currency <strong>@currency</strong></span>

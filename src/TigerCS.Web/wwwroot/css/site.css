@@ -1184,6 +1184,9 @@ a.bar-row:hover .bar-fill { filter: saturate(1.25) brightness(0.92); }
 .badge-source-external { background: var(--color-ink-tint); color: var(--color-ink); border-color: var(--color-ink-line); }
 .badge-source-unverified { background: var(--color-neutral-tint); color: var(--color-text-secondary); border-color: var(--color-border); }
 .badge-neutral { background: var(--color-neutral-tint); color: var(--color-text-secondary); border-color: var(--color-border); }
+/* An expired PACT contract: listed in the Customer Workspace for history, payments and fines; never selectable for a new ticket. */
+.badge-contract-expired { background: var(--color-warning-tint); color: var(--color-warning-text); border-color: var(--color-warning-line); }
+.badge-contract-expired .badge-dot { background: var(--color-warning); }
 
 .count-pill {
   display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 22px; padding: 0 8px;
@@ -1920,6 +1923,11 @@ a.badge:hover { text-decoration: underline; }
 @media (max-width: 640px) { .edsm-kpis .kpi-card strong { font-size: 22px; } }
 .payment-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-5); }
 .payment-toolbar__selector, .payment-toolbar__selector .field-group { min-width: 0; max-width: 100%; }
+/* Payments & Fines inside the New Ticket wizard (Step 2 and Review). */
+.payments-fines { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
+.payments-fines__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
+.payments-fines__head .payment-section-title { margin: 0; }
+.payments-fines__scope { color: var(--color-text-secondary); font-size: 0.9rem; }
 .payment-toolbar__selector .field-select { max-width: 100%; }
 .payment-toolbar__single { display: flex; flex-direction: column; gap: 2px; }
 .payment-toolbar__meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-sm); color: var(--color-text-secondary); }

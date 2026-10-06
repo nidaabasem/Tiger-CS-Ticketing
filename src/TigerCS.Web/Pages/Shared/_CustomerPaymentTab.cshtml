@@ -4,7 +4,9 @@
     var panel = Model;
     var account = panel.SelectedAccount;
     var currency = account?.Currency ?? "";
-    var baseHref = $"/Customers/{Uri.EscapeDataString(panel.CustomerKey)}?tab=payment";
+    var links = panel.Links;
+    // The profile's tab keeps its historical select id; any other host gets a parameter-suffixed one.
+    var selectId = links.AccountParameter == "account" ? "paymentAccount" : $"paymentAccount-{links.AccountParameter}";
     var showReminders = panel.CrmCustomerId is not null
         && panel.State is PaymentPanelState.Loaded or PaymentPanelState.Unavailable or PaymentPanelState.NoAccounts or PaymentPanelState.NotMapped;
     var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
@@ -24,7 +26,7 @@
             <div class="payment-loading" role="status" aria-live="polite">
                 <span class="payment-spinner" aria-hidden="true"></span>
                 <span>Loading payment details…</span>
-                <a class="link-muted" href="@baseHref#payment" data-payment-fallback>Load payment details</a>
+                <a class="link-muted" href="@links.AccountHref(null)" data-payment-fallback>Load payment details</a>
             </div>
             break;
 
@@ -61,7 +63,7 @@
             <div class="error-state">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" /></svg>
                 <p>Payment information could not be loaded.</p>
-                <a class="btn btn-sm" href="@baseHref#payment" data-payment-retry>Retry</a>
+                <a class="btn btn-sm" href="@links.AccountHref(null)" data-payment-retry>Retry</a>
             </div>
             break;
 
@@ -69,7 +71,7 @@
             <div class="alert alert-error payment-alert-action" role="alert" data-balance-unavailable>
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
                 <span><strong>Balance unavailable.</strong> Payment information is temporarily unavailable, so no figures are shown. Do not quote a balance to the customer.</span>
-                <a class="btn btn-sm" href="@baseHref#payment" data-payment-retry>Retry</a>
+                <a class="btn btn-sm" href="@links.AccountHref(null)" data-payment-retry>Retry</a>
             </div>
             break;
 
@@ -79,7 +81,7 @@
                 @foreach (var option in panel.Outstanding.Accounts)
                 {
                     <li>
-                        <a class="payment-account-card" href="@baseHref&account=@Uri.EscapeDataString(option.AccountId)#payment" data-payment-account-link="@option.AccountId">
+                        <a class="payment-account-card" href="@links.AccountHref(option.AccountId)" data-payment-account-link="@option.AccountId">
                             <span class="payment-account-card__unit">@(option.TowerName ?? "—") · @(option.UnitNumber ?? "—")</span>
                             <span class="id-fallback">@option.AccountId</span>
                             <span class="payment-account-card__due">@CustomerPaymentPanel.Money(option.AmountDueNow, option.Currency) <small>due now</small></span>
@@ -96,11 +98,14 @@
             <div class="payment-toolbar">
                 @if (outstanding.Accounts.Count > 1)
                 {
-                    <form class="payment-toolbar__selector" method="get" action="/Customers/@Uri.EscapeDataString(panel.CustomerKey)" data-payment-selector>
-                        <input type="hidden" name="tab" value="payment" />
+                    <form class="payment-toolbar__selector" method="get" action="@links.SelectorAction" data-payment-selector data-autosubmit="@(links.AutoSubmit ? "true" : null)">
+                        @foreach (var hidden in links.HiddenFields)
+                        {
+                            <input type="hidden" name="@hidden.Key" value="@hidden.Value" />
+                        }
                         <div class="field-group">
-                            <label class="field-label" for="paymentAccount">Account / unit</label>
-                            <select class="field-select" id="paymentAccount" name="account">
+                            <label class="field-label" for="@selectId">Account / unit</label>
+                            <select class="field-select" id="@selectId" name="@links.AccountParameter">
                                 @foreach (var option in outstanding.Accounts)
                                 {
                                     <option value="@option.AccountId" selected="@(option.AccountId == acct.AccountId)">@panel.AccountLabel(option)</option>
@@ -117,6 +122,10 @@
                         <strong>@panel.AccountLabel(acct)</strong>
                     </div>
                 }
+                @if (panel.ScopedByUnit)
+                {
+                    <span class="field-hint" data-payment-scoped-by-unit>Showing the finance account for the selected unit.</span>
+                }
                 <div class="payment-toolbar__meta">
                     <span>Currency <strong>@acct.Currency</strong></span>
                     <span>Source <strong>@outstanding.Source</strong></span>
@@ -129,7 +138,7 @@
                 <div class="alert alert-warning payment-alert-action" role="status" data-balance-stale>
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
                     <span><strong>These figures may be out of date</strong> — last updated @acct.AsOfUtc.ToLocalTime().ToString("d MMM yyyy HH:mm"). Confirm before quoting. Reminders cannot be sent on stale figures.</span>
-                    <a class="btn btn-sm" href="@baseHref&account=@Uri.EscapeDataString(acct.AccountId)#payment" data-payment-retry>Refresh</a>
+                    <a class="btn btn-sm" href="@links.AccountHref(acct.AccountId)" data-payment-retry>Refresh</a>
                 </div>
             }
 
@@ -194,7 +203,7 @@
                     </div>
                 </div>
 
-                @if (panel.CanSend)
+                @if (panel.CanSend && panel.AllowSending)
                 {
                     <h3 class="payment-section-title">Send reminder</h3>
                     @if (panel.SendableCandidates.Count == 0)

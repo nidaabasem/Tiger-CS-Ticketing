@@ -177,6 +177,55 @@ public sealed class CustomerWorkspaceTests
     }
 
     [Fact]
+    public async Task OnGet_PactCustomerWithEveryContractExpired_StillSelectsAndLoadsHistory_LabellingTheContractsExpired()
+    {
+        // A customer whose PACT contracts have all ended must remain
+        // discoverable here: their historical tickets, payments and fines
+        // hang off this identity. The contracts are labelled expired —
+        // never hidden, and (per the wizard's own tests) never selectable
+        // for a new ticket.
+        var search = new CustomerSearchResultDto(
+            Phone, "NotFound", [],
+            [
+                CustomerLookupSourceResultDto.Found("Pact",
+                    [new CustomerLookupCustomerDto("PACT-CUST-77", "Aisha Rahman", Phone, null, "Tenant",
+                        [
+                            new CustomerLookupUnitDto("PU-1", "1506", "Marina Heights", null, "Apartment", null, null, new DateOnly(2025, 12, 31), IsContractExpired: true),
+                            new CustomerLookupUnitDto("PU-2", "0802", "Marina Heights", null, "Apartment", null, null, new DateOnly(2021, 3, 31), IsContractExpired: true)
+                        ])]),
+                CustomerLookupSourceResultDto.NotFound("Tasleeh")
+            ]);
+        var externalHistory = new CustomerHistoryDto(
+            "ExternalVerified", null, null, "Aisha Rahman", 1, 0, 1,
+            [HistoryRow(7, "1506")], "Pact", "PACT-CUST-77");
+        var (model, handler) = CreateCustomerLookupModel(RespondingWith(search, externalHistory));
+
+        await model.OnGetAsync(Phone, customer: null, unit: null, CancellationToken.None);
+
+        var selected = Assert.IsType<CustomerCandidate>(model.Selected);
+        Assert.Equal("PACT-CUST-77", selected.ExternalCustomerId);
+        Assert.True(selected.AllContractsExpired);
+        Assert.Equal(2, selected.ExpiredUnitsCount);
+        Assert.All(selected.Units, u => Assert.True(u.IsContractExpired));
+        Assert.Contains(handler.Requests, r => r.RequestUri.Contains("/api/customers/external/Pact/PACT-CUST-77/ticket-history"));
+        Assert.Single(model.FilteredTickets);
+        // The expired unit still feeds the unit filter: its history is reachable.
+        Assert.Contains("1506", model.UnitOptions);
+    }
+
+    [Fact]
+    public void CustomersLookupView_LabelsExpiredContracts_AndSaysWhenEveryContractHasEnded()
+    {
+        var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "CustomerLookup.cshtml")));
+
+        Assert.Contains("badge-contract-expired", html);
+        Assert.Contains("Expired contract", html);
+        Assert.Contains("data-all-contracts-expired", html);
+        Assert.Contains("a new ticket cannot be raised against an expired contract", html);
+        Assert.Contains("expired contract{(candidate.ExpiredUnitsCount == 1", html);
+    }
+
+    [Fact]
     public async Task OnGet_MultipleCandidates_RendersThePickerInsteadOfGuessing()
     {
         var search = new CustomerSearchResultDto(
