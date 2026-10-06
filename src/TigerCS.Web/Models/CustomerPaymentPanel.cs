@@ -79,18 +79,17 @@ public sealed class CustomerPaymentPanel
 
     /// <summary>
     /// An EDSM summary field exactly as far as it is known: EDSM's own formatted
-    /// string when it was read, or why there is none. Never "0.00" for a value
-    /// that was not provided; a blank late-fines value is explained per business model.
+    /// string when it was read, or a short label for why there is none. Never
+    /// "0.00" for a value that was not provided.
     /// </summary>
     public static string EdsmField(CollectionsEdsmFieldDto field) => field switch
     {
         { Status: "Provided", Raw: { } raw } => raw.Trim(),
-        { Meaning: "ZeroOrLess" } => "None above zero",
-        { Meaning: "NotComputedForRented" } => "Not computed for rented companies",
+        { Meaning: "ZeroOrLess" } => "None",
+        { Meaning: "NotComputedForRented" } => "Not computed",
         { Status: "Missing" } => "Not provided",
-        { Status: "Empty" } => "Blank in EDSM",
-        { Status: "FormatNotConfigured" } => "Not read (EDSM number format not configured)",
-        _ => "Not readable"
+        { Status: "Empty" } => "Blank",
+        _ => "Not read"
     };
 
     public static string EdsmStatusText(string status) => status switch

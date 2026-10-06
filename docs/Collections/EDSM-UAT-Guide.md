@@ -97,8 +97,8 @@ retrieval time.
 
 | # | Case | Expected on the tab |
 |---|---|---|
-| a | **Owned** (company 4 or 32) | Labels: Paid, Due, **Not yet due**, Late fines, Total; Total = Paid + Due + Not yet due (**late fines excluded**), with no "total does not add up" note; a blank late fine shows **"None above zero"** |
-| b | **Rented** (company 25, 7 or 20) | Labels: Paid, Due, **Post-dated cheques**, Late fines, Total; late fines **"Not computed for rented companies"**; Due may be **negative**; the Payments and Due lists carry the refund and fee caveats |
+| a | **Owned** (company 4 or 32) | Labels: Paid, Due, **Not yet due**, Late fines, Total; Total = Paid + Due + Not yet due (**late fines excluded**), a blank late fine shows **"None"** |
+| b | **Rented** (company 25, 7 or 20) | Labels: Paid, Due, **Post-dated cheques**, Late fines, Total; late fines **"Not computed"**; Due may be **negative**; no caveat text is shown under the Payment details table (the tab shows data only) |
 | c | **Partial payment** (one instalment part-paid) | Owned Due / Not yet due show the **unpaid remainder** (Debit − Credit) of that instalment. Check against PACT. If a fully unpaid instalment is missing from Due, that is the UNVERIFIED "no credit recorded" exclusion (contract §3.4): report it with the instalment |
 | d | **Multi-company** tenant | One block per company, each listing only that company's PACT contracts; figures are not combined across companies |
 | e | **Parking** unit | Listed under its company with "(Parking)"; the figures come from the row's `tenantID`, never the Parking ContractID. Confirm the summary matches EDSM for that tenant/company |
