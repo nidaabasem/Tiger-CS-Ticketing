@@ -226,8 +226,11 @@
         <member name="T:TigerCS.Api.Controllers.AuthController">
             <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
         </member>
-        <member name="M:TigerCS.Api.Controllers.AuthController.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService)">
+        <member name="M:TigerCS.Api.Controllers.AuthController.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysScreenPopAppService)">
             <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.AuthController.ScreenPopErrorCodes">
+            <summary>Stable, machine-readable Screen Pop redemption codes — the <c>code</c> member of the ProblemDetails body.</summary>
         </member>
         <member name="M:TigerCS.Api.Controllers.AuthController.Login(TigerCS.Application.Modules.IdentityAndAccess.Dto.LoginRequestDto,System.Threading.CancellationToken)">
             <summary>Sign in and obtain a JWT access token.</summary>
@@ -241,6 +244,35 @@
             <response code="400">Username or password was missing or blank.</response>
             <response code="401">The username/password combination was not accepted.</response>
             <response code="423">The account is locked.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AuthController.RedeemScreenPop(TigerCS.Application.Modules.GenesysIntegration.Dto.ScreenPopRedeemRequestDto,System.Threading.CancellationToken)">
+             <summary>Redeem a Genesys Secure Screen Pop token for the mapped agent's ordinary TigerCS session.</summary>
+             <remarks>
+             Called by TigerCS Web when a Genesys launch URL is opened. Anonymous
+             because the one-time token is itself the credential — issued by
+             <c>POST /api/genesys/screen-pop</c> to the authenticated Genesys
+             service account, valid for one hour, redeemable once.
+            
+             <para>
+             The answer is exactly the session <c>POST /api/auth/login</c> would
+             give the mapped user — the same access token, roles and primary
+             department — plus the page to open. It confers no access beyond that
+             user's own: the target page is authorized like any other request.
+             </para>
+            
+             <para>
+             The Genesys agent mapping is re-checked here: an agent unmapped,
+             re-mapped, deactivated or locked out since the launch was issued is
+             refused, and the token is consumed regardless.
+             </para>
+             </remarks>
+             <param name="request">The token from the launch URL.</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">Signed in as the mapped user.</response>
+             <response code="400">token was missing or blank.</response>
+             <response code="401">The token is unknown (<c>SCREEN_POP_TOKEN_INVALID</c>), older than one hour (<c>SCREEN_POP_TOKEN_EXPIRED</c>), or already used (<c>SCREEN_POP_TOKEN_USED</c>).</response>
+             <response code="403">The agent is no longer mapped (<c>GENESYS_AGENT_NOT_MAPPED</c>) or the mapped user is deactivated or locked out (<c>GENESYS_AGENT_INACTIVE</c>).</response>
+             <response code="503">The Genesys integration is switched off.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.AuthController.Logout(System.Threading.CancellationToken)">
             <summary>Sign out the current user.</summary>
@@ -499,6 +531,30 @@
             <response code="200">Each source actually searched, one entry per source, each Found/NotFound/Failed.</response>
             <response code="404">No such intake record.</response>
         </member>
+        <member name="T:TigerCS.Api.Controllers.CustomersController">
+            <summary>
+            The Customers directory: the customers TigerCS already knows, derived from
+            its own persisted tickets (never a CRM list call — no integrated system
+            offers one), and the profile behind each. Same visibility scope as the
+            ticket queue: a customer is only reachable through tickets the caller may
+            see.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomersController.#ctor(TigerCS.Application.Modules.Ticketing.Services.CustomerDirectoryAppService)">
+            <summary>
+            The Customers directory: the customers TigerCS already knows, derived from
+            its own persisted tickets (never a CRM list call — no integrated system
+            offers one), and the profile behind each. Same visibility scope as the
+            ticket queue: a customer is only reachable through tickets the caller may
+            see.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomersController.List(TigerCS.Application.Modules.Ticketing.Dto.CustomerDirectoryListRequestDto,System.Threading.CancellationToken)">
+            <summary>Lists known customers, most recently active first — paginated, optionally searched and filtered.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.CustomersController.GetProfile(System.String,System.Threading.CancellationToken)">
+            <summary>One customer's profile by directory key (<c>crm:{id}</c>, <c>ext:{source}:{externalCustomerId}</c>, <c>phone:{number}</c>).</summary>
+        </member>
         <member name="T:TigerCS.Api.Controllers.DashboardController">
             <summary>
             The operational Dashboard (Customer Workspace phase): KPI counts and the
@@ -524,6 +580,21 @@
         <member name="M:TigerCS.Api.Controllers.DashboardController.GetSummary(System.Threading.CancellationToken)">
             <summary>The caller's operational dashboard: KPI counts and Tickets Requiring Attention, scoped to their visible departments.</summary>
             <response code="200">The dashboard summary. Counts cover only tickets the caller may view.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.DashboardController.GetOverview(TigerCS.Application.Modules.Ticketing.Dto.DashboardOverviewRequestDto,System.Threading.CancellationToken)">
+            <summary>The Operational Dashboard: filters, KPI cards, the six operational breakdowns and the Recent/Critical list, scoped to the caller's visible departments.</summary>
+            <remarks>
+            Dashboard Phase 1. Every filter is optional and can only narrow the
+            caller's visible scope — a department outside it yields empty
+            numbers, never someone else's. KPIs, Open Backlog Ageing and the
+            Recent/Critical list are current-state (all active tickets in scope,
+            whatever their age); the volume breakdowns cover tickets created in
+            the date range, which defaults to the last 30 UTC calendar days. The
+            response echoes the filters as applied and the picker options
+            (departments, agents, channels, request types, statuses, priorities)
+            drawn from the existing master data within the caller's scope.
+            </remarks>
+            <response code="200">The dashboard overview. Counts cover only tickets the caller may view.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.DepartmentsController.List(System.Boolean,System.Threading.CancellationToken)">
             <summary>
@@ -565,19 +636,19 @@
              </para>
              </summary>
              <param name="ConversationId">Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</param>
-             <param name="Channel">Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</param>
+             <param name="Channel">Required. One of "Phone", "LiveChat", "WhatsApp", "SocialMedia" (case-insensitive). "WebsiteChat" and "WebMessaging" (Genesys' own name for its web chat) are accepted as the same Live Chat channel.</param>
              <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id.</param>
              <param name="ParticipantId">Genesys' customer-participant id, where available.</param>
              <param name="CommunicationId">Genesys' communication id, where available.</param>
              <param name="Direction">"Inbound"/"Outbound", where available.</param>
-             <param name="CustomerPhone">The customer's mobile number — what the existing TigerCS customer lookup searches with.</param>
+             <param name="CustomerPhone">The customer's number — what the existing TigerCS customer lookup searches with. A telephony address is accepted as Genesys reports it (<c>Call.Ani</c>: "tel:+971…"); it is normalized to "+971…" before it is searched or stored.</param>
              <param name="CustomerName">The customer's name, where the channel collected one (e.g. the website chat form).</param>
              <param name="CustomerEmail">The customer's email, where the channel collected one.</param>
              <param name="CalledNumber">The Tiger number the customer dialed. Recorded, never used for routing.</param>
              <param name="QueueId">The Genesys queue — resolved to a department via the configured queue mapping when the customer chose no department.</param>
              <param name="QueueName">The queue's display name, where available.</param>
-             <param name="AgentId">The handling Genesys agent, where available.</param>
-             <param name="AgentName">The handling agent's display name, where available.</param>
+             <param name="AgentId">The handling Genesys agent's <b>Genesys User ID</b> (the immutable id, not a name), where available. When supplied, it is resolved server-side to the mapped Ticketing user and that user is recorded as the interaction's handler; an unmapped id is recorded verbatim with no handler.</param>
+             <param name="AgentName">The handling agent's display name, where available. Display only — never an identity key.</param>
              <param name="StartedAtUtc">When the interaction started, UTC.</param>
              <param name="DepartmentId">The department the customer explicitly selected (website chat). Wins over the queue mapping.</param>
              <param name="DepartmentCode">The same explicit selection as a TigerCS department code, for a caller that knows codes rather than ids.</param>
@@ -606,19 +677,19 @@
              </para>
              </summary>
              <param name="ConversationId">Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</param>
-             <param name="Channel">Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</param>
+             <param name="Channel">Required. One of "Phone", "LiveChat", "WhatsApp", "SocialMedia" (case-insensitive). "WebsiteChat" and "WebMessaging" (Genesys' own name for its web chat) are accepted as the same Live Chat channel.</param>
              <param name="InteractionId">Genesys' interaction id, where it differs from the conversation id.</param>
              <param name="ParticipantId">Genesys' customer-participant id, where available.</param>
              <param name="CommunicationId">Genesys' communication id, where available.</param>
              <param name="Direction">"Inbound"/"Outbound", where available.</param>
-             <param name="CustomerPhone">The customer's mobile number — what the existing TigerCS customer lookup searches with.</param>
+             <param name="CustomerPhone">The customer's number — what the existing TigerCS customer lookup searches with. A telephony address is accepted as Genesys reports it (<c>Call.Ani</c>: "tel:+971…"); it is normalized to "+971…" before it is searched or stored.</param>
              <param name="CustomerName">The customer's name, where the channel collected one (e.g. the website chat form).</param>
              <param name="CustomerEmail">The customer's email, where the channel collected one.</param>
              <param name="CalledNumber">The Tiger number the customer dialed. Recorded, never used for routing.</param>
              <param name="QueueId">The Genesys queue — resolved to a department via the configured queue mapping when the customer chose no department.</param>
              <param name="QueueName">The queue's display name, where available.</param>
-             <param name="AgentId">The handling Genesys agent, where available.</param>
-             <param name="AgentName">The handling agent's display name, where available.</param>
+             <param name="AgentId">The handling Genesys agent's <b>Genesys User ID</b> (the immutable id, not a name), where available. When supplied, it is resolved server-side to the mapped Ticketing user and that user is recorded as the interaction's handler; an unmapped id is recorded verbatim with no handler.</param>
+             <param name="AgentName">The handling agent's display name, where available. Display only — never an identity key.</param>
              <param name="StartedAtUtc">When the interaction started, UTC.</param>
              <param name="DepartmentId">The department the customer explicitly selected (website chat). Wins over the queue mapping.</param>
              <param name="DepartmentCode">The same explicit selection as a TigerCS department code, for a caller that knows codes rather than ids.</param>
@@ -630,7 +701,7 @@
             <summary>Required. Genesys' conversation id — the idempotency key: the same value always resolves to the same ticket.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.Channel">
-            <summary>Required. One of "Phone", "WebsiteChat", "WhatsApp", "SocialMedia" (case-insensitive).</summary>
+            <summary>Required. One of "Phone", "LiveChat", "WhatsApp", "SocialMedia" (case-insensitive). "WebsiteChat" and "WebMessaging" (Genesys' own name for its web chat) are accepted as the same Live Chat channel.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.InteractionId">
             <summary>Genesys' interaction id, where it differs from the conversation id.</summary>
@@ -645,7 +716,7 @@
             <summary>"Inbound"/"Outbound", where available.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CustomerPhone">
-            <summary>The customer's mobile number — what the existing TigerCS customer lookup searches with.</summary>
+            <summary>The customer's number — what the existing TigerCS customer lookup searches with. A telephony address is accepted as Genesys reports it (<c>Call.Ani</c>: "tel:+971…"); it is normalized to "+971…" before it is searched or stored.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.CustomerName">
             <summary>The customer's name, where the channel collected one (e.g. the website chat form).</summary>
@@ -663,10 +734,10 @@
             <summary>The queue's display name, where available.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.AgentId">
-            <summary>The handling Genesys agent, where available.</summary>
+            <summary>The handling Genesys agent's <b>Genesys User ID</b> (the immutable id, not a name), where available. When supplied, it is resolved server-side to the mapped Ticketing user and that user is recorded as the interaction's handler; an unmapped id is recorded verbatim with no handler.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.AgentName">
-            <summary>The handling agent's display name, where available.</summary>
+            <summary>The handling agent's display name, where available. Display only — never an identity key.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysInquiryRequest.StartedAtUtc">
             <summary>When the interaction started, UTC.</summary>
@@ -833,12 +904,15 @@
              </para>
              </summary>
              <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
-             <param name="AgentId">The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</param>
-             <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
+             <param name="AgentId">The Genesys User ID of the agent handling it, when known. Applied only if the interaction does not already name one; when it maps to a Ticketing user, that user is recorded as the interaction's handler (same apply-if-absent rule).</param>
+             <param name="AgentName">That agent's display name, same apply-if-absent rule. Display only — never an identity key.</param>
              <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
              <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
+             <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
+             <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
+             <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart)">
+        <member name="M:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.#ctor(System.String,System.String,System.String,TigerCS.Api.Controllers.GenesysConversationEndPart,TigerCS.Api.Controllers.GenesysHandoffPart,System.Nullable{System.DateTime},TigerCS.Api.Controllers.GenesysRoutingPart,TigerCS.Api.Controllers.GenesysCustomerConfirmationPart)">
              <summary>
              The one Genesys update body. Every part is optional and independently
              idempotent — send only what changed, and resend freely.
@@ -851,25 +925,108 @@
              </para>
              </summary>
              <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
-             <param name="AgentId">The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</param>
-             <param name="AgentName">That agent's display name, same apply-if-absent rule.</param>
+             <param name="AgentId">The Genesys User ID of the agent handling it, when known. Applied only if the interaction does not already name one; when it maps to a Ticketing user, that user is recorded as the interaction's handler (same apply-if-absent rule).</param>
+             <param name="AgentName">That agent's display name, same apply-if-absent rule. Display only — never an identity key.</param>
              <param name="Ended">Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></param>
              <param name="Handoff">Set when the conversation needs a human agent, or when one has taken it.</param>
+             <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
+             <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
+             <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.ConversationId">
             <summary>Required. Must resolve to an interaction on the ticket in the route.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.AgentId">
-            <summary>The Genesys agent handling it, when known. Applied only if the interaction does not already name one.</summary>
+            <summary>The Genesys User ID of the agent handling it, when known. Applied only if the interaction does not already name one; when it maps to a Ticketing user, that user is recorded as the interaction's handler (same apply-if-absent rule).</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.AgentName">
-            <summary>That agent's display name, same apply-if-absent rule.</summary>
+            <summary>That agent's display name, same apply-if-absent rule. Display only — never an identity key.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.Ended">
             <summary>Set when the conversation has finished, for any reason. <b>Never closes the ticket.</b></summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.Handoff">
             <summary>Set when the conversation needs a human agent, or when one has taken it.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.StartedAtUtc">
+            <summary>When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.Routing">
+            <summary>Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateRequest.CustomerConfirmation">
+            <summary>Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart">
+            <summary>
+            The customer explicitly confirmed, during the interaction, that the issue
+            is resolved. TigerCS records it on the same ticket — Ticket Details and the
+            audit trail show it — and does <b>not</b> resolve or close the ticket:
+            those stay with the ticket owner and Customer Service, under their existing
+            authorization.
+            </summary>
+            <param name="ConfirmedResolved">Must be <c>true</c>; anything else is refused with 400.</param>
+            <param name="ConfirmedAtUtc">When the customer said it, UTC. Defaults to now. Send it: a resend with the same value stores nothing twice.</param>
+            <param name="Note">What the customer said, or the flow's note. Display only.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart.#ctor(System.Nullable{System.Boolean},System.Nullable{System.DateTime},System.String)">
+            <summary>
+            The customer explicitly confirmed, during the interaction, that the issue
+            is resolved. TigerCS records it on the same ticket — Ticket Details and the
+            audit trail show it — and does <b>not</b> resolve or close the ticket:
+            those stay with the ticket owner and Customer Service, under their existing
+            authorization.
+            </summary>
+            <param name="ConfirmedResolved">Must be <c>true</c>; anything else is refused with 400.</param>
+            <param name="ConfirmedAtUtc">When the customer said it, UTC. Defaults to now. Send it: a resend with the same value stores nothing twice.</param>
+            <param name="Note">What the customer said, or the flow's note. Display only.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart.ConfirmedResolved">
+            <summary>Must be <c>true</c>; anything else is refused with 400.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart.ConfirmedAtUtc">
+            <summary>When the customer said it, UTC. Defaults to now. Send it: a resend with the same value stores nothing twice.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysCustomerConfirmationPart.Note">
+            <summary>What the customer said, or the flow's note. Display only.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysRoutingPart">
+            <summary>
+            Where the conversation is now: its current queue and connected agent. Send
+            it when the conversation enters a queue, when an agent connects, and on
+            every transfer. It never creates a ticket and never moves the ticket's
+            department, owner or status; when an agent connects to human work that is
+            still waiting for one, that work is recorded as taken by them.
+            </summary>
+            <param name="QueueId">The Genesys queue id the conversation is now in.</param>
+            <param name="QueueName">That queue's name.</param>
+            <param name="AgentId">The Genesys User ID of the agent now connected.</param>
+            <param name="AgentName">That agent's display name. Display only.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysRoutingPart.#ctor(System.String,System.String,System.String,System.String)">
+            <summary>
+            Where the conversation is now: its current queue and connected agent. Send
+            it when the conversation enters a queue, when an agent connects, and on
+            every transfer. It never creates a ticket and never moves the ticket's
+            department, owner or status; when an agent connects to human work that is
+            still waiting for one, that work is recorded as taken by them.
+            </summary>
+            <param name="QueueId">The Genesys queue id the conversation is now in.</param>
+            <param name="QueueName">That queue's name.</param>
+            <param name="AgentId">The Genesys User ID of the agent now connected.</param>
+            <param name="AgentName">That agent's display name. Display only.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysRoutingPart.QueueId">
+            <summary>The Genesys queue id the conversation is now in.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysRoutingPart.QueueName">
+            <summary>That queue's name.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysRoutingPart.AgentId">
+            <summary>The Genesys User ID of the agent now connected.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysRoutingPart.AgentName">
+            <summary>That agent's display name. Display only.</summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysConversationEndPart">
             <summary>The conversation has finished — for any reason: the agent ended it, the customer closed the browser, the connection dropped, Genesys timed it out.</summary>
@@ -894,16 +1051,38 @@
         </member>
         <member name="T:TigerCS.Api.Controllers.GenesysHandoffPart">
             <summary>Human-agent state for the conversation, on any channel. A callback is one possible <paramref name="Mode"/>, never the concept.</summary>
-            <param name="Required">True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</param>
+            <param name="Required">
+            <c>true</c> records that the conversation needs a human agent — idempotent,
+            as outstanding work is answered with that same work item.
+            <c>false</c> <b>stands outstanding work down</b> (the AI reconnected and
+            resumed, or the human is no longer needed), which requires
+            <paramref name="Reason"/> and leaves the ticket untouched; nothing
+            outstanding is not an error.
+            <b>Omit it</b> to do neither — an update reporting only
+            <paramref name="AssignedAgentId"/> must not read as a cancellation, which
+            is why this is nullable rather than defaulting to false.
+            </param>
+            <param name="Trigger">Why a human is needed, typed: "CustomerRequestedHuman", "AiConnectionLost", "AiEscalated", "RoutingDecision" or "AgentTransfer". <b>Omit it</b> unless Genesys states it — TigerCS never derives it from the channel or the end reason.</param>
             <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</param>
             <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
             <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
             <param name="WorkItemId">Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</param>
             <param name="AssignedAgentId">Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</param>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysHandoffPart.#ctor(System.Boolean,System.Boolean,System.String,System.String,System.String,System.String)">
+        <member name="M:TigerCS.Api.Controllers.GenesysHandoffPart.#ctor(System.Nullable{System.Boolean},System.Boolean,System.String,System.String,System.String,System.String,System.String)">
             <summary>Human-agent state for the conversation, on any channel. A callback is one possible <paramref name="Mode"/>, never the concept.</summary>
-            <param name="Required">True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</param>
+            <param name="Required">
+            <c>true</c> records that the conversation needs a human agent — idempotent,
+            as outstanding work is answered with that same work item.
+            <c>false</c> <b>stands outstanding work down</b> (the AI reconnected and
+            resumed, or the human is no longer needed), which requires
+            <paramref name="Reason"/> and leaves the ticket untouched; nothing
+            outstanding is not an error.
+            <b>Omit it</b> to do neither — an update reporting only
+            <paramref name="AssignedAgentId"/> must not read as a cancellation, which
+            is why this is nullable rather than defaulting to false.
+            </param>
+            <param name="Trigger">Why a human is needed, typed: "CustomerRequestedHuman", "AiConnectionLost", "AiEscalated", "RoutingDecision" or "AgentTransfer". <b>Omit it</b> unless Genesys states it — TigerCS never derives it from the channel or the end reason.</param>
             <param name="AgentAvailable">True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</param>
             <param name="Mode">"Callback", "ContinueChat", "ReplyInChannel" or "HumanTakeover". <b>Omit it</b> unless Genesys actually states it — TigerCS never derives it from the channel.</param>
             <param name="Reason">Why a human is needed (a virtual agent's escalation reason, a routing note).</param>
@@ -911,7 +1090,17 @@
             <param name="AssignedAgentId">Set to record that this Genesys agent took the outstanding work. Applies to the existing work item, never a second one.</param>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.Required">
-            <summary>True to record that the conversation needs a human agent. Idempotent — outstanding work is answered with that same work item.</summary>
+            <summary>
+            <c>true</c> records that the conversation needs a human agent — idempotent,
+            as outstanding work is answered with that same work item.
+            <c>false</c> <b>stands outstanding work down</b> (the AI reconnected and
+            resumed, or the human is no longer needed), which requires
+            <paramref name="Reason"/> and leaves the ticket untouched; nothing
+            outstanding is not an error.
+            <b>Omit it</b> to do neither — an update reporting only
+            <paramref name="AssignedAgentId"/> must not read as a cancellation, which
+            is why this is nullable rather than defaulting to false.
+            </summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.AgentAvailable">
             <summary>True when Genesys is handing straight over to a named human; false when nobody is available and the work must wait.</summary>
@@ -921,6 +1110,9 @@
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.Reason">
             <summary>Why a human is needed (a virtual agent's escalation reason, a routing note).</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.Trigger">
+            <summary>Why a human is needed, typed: "CustomerRequestedHuman", "AiConnectionLost", "AiEscalated", "RoutingDecision" or "AgentTransfer". <b>Omit it</b> unless Genesys states it — TigerCS never derives it from the channel or the end reason.</summary>
         </member>
         <member name="P:TigerCS.Api.Controllers.GenesysHandoffPart.WorkItemId">
             <summary>Genesys' own routing-task id, if it has one — the stronger idempotency key. Omit if Genesys has none.</summary>
@@ -979,6 +1171,188 @@
         <member name="P:TigerCS.Api.Controllers.GenesysTicketUpdateResponse.TicketAgentHandoffId">
             <summary>That work item's id, when there is one.</summary>
         </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysAgentContextRequest">
+             <summary>
+             The transport shape of a Genesys <b>agent action</b>: the Ticketing screen
+             opened from Genesys identifying which agent is working, and on which
+             conversation. This is the strict agent endpoint — <c>genesysUserId</c> is
+             required and must be mapped to an active Ticketing user.
+            
+             <para>
+             <b>There is deliberately no Ticketing user id in this body.</b> Which
+             Ticketing user handled the interaction is resolved on the server from
+             <paramref name="GenesysUserId"/> alone; any such property a client sends
+             is ignored by model binding, never honoured.
+             </para>
+             </summary>
+             <param name="GenesysUserId">Required. The agent's immutable Genesys User ID — the only value used to identify the agent.</param>
+             <param name="AgentEmail">The agent's email as Genesys knows it. Informational only: recorded on the audit trail, never used to resolve the agent.</param>
+             <param name="ConversationId">The conversation the agent is working, when there is one. Its interaction then records the resolved user as the handler.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysAgentContextRequest.#ctor(System.String,System.String,System.String)">
+             <summary>
+             The transport shape of a Genesys <b>agent action</b>: the Ticketing screen
+             opened from Genesys identifying which agent is working, and on which
+             conversation. This is the strict agent endpoint — <c>genesysUserId</c> is
+             required and must be mapped to an active Ticketing user.
+            
+             <para>
+             <b>There is deliberately no Ticketing user id in this body.</b> Which
+             Ticketing user handled the interaction is resolved on the server from
+             <paramref name="GenesysUserId"/> alone; any such property a client sends
+             is ignored by model binding, never honoured.
+             </para>
+             </summary>
+             <param name="GenesysUserId">Required. The agent's immutable Genesys User ID — the only value used to identify the agent.</param>
+             <param name="AgentEmail">The agent's email as Genesys knows it. Informational only: recorded on the audit trail, never used to resolve the agent.</param>
+             <param name="ConversationId">The conversation the agent is working, when there is one. Its interaction then records the resolved user as the handler.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextRequest.GenesysUserId">
+            <summary>Required. The agent's immutable Genesys User ID — the only value used to identify the agent.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextRequest.AgentEmail">
+            <summary>The agent's email as Genesys knows it. Informational only: recorded on the audit trail, never used to resolve the agent.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextRequest.ConversationId">
+            <summary>The conversation the agent is working, when there is one. Its interaction then records the resolved user as the handler.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysAgentContextResponse">
+            <summary>What the agent-context endpoint answers: who the agent is in Ticketing, and — when a conversation was named — which ticket and interaction it belongs to.</summary>
+            <param name="Outcome">"Resolved".</param>
+            <param name="GenesysUserId">The Genesys User ID, echoed back as stored on the mapping.</param>
+            <param name="UserId">The Ticketing user id the agent resolved to.</param>
+            <param name="UserName">That user's account name.</param>
+            <param name="DisplayName">That user's display name.</param>
+            <param name="Roles">The user's Ticketing roles.</param>
+            <param name="DepartmentIds">The departments the user is a member of.</param>
+            <param name="ConversationId">The conversation, echoed back, when one was supplied.</param>
+            <param name="TicketId">The ticket that conversation belongs to, when one was supplied.</param>
+            <param name="TicketNumber">That ticket's number.</param>
+            <param name="TicketInteractionId">The interaction that now records the handler.</param>
+            <param name="HandledByUserId">The Ticketing user recorded as the interaction's handler — the first agent to be resolved on it, which may differ from <paramref name="UserId"/> after a transfer.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysAgentContextResponse.#ctor(System.String,System.String,System.Guid,System.String,System.String,System.Collections.Generic.IReadOnlyCollection{System.String},System.Collections.Generic.IReadOnlyCollection{System.Int32},System.String,System.Nullable{System.Int64},System.String,System.Nullable{System.Int64},System.Nullable{System.Guid})">
+            <summary>What the agent-context endpoint answers: who the agent is in Ticketing, and — when a conversation was named — which ticket and interaction it belongs to.</summary>
+            <param name="Outcome">"Resolved".</param>
+            <param name="GenesysUserId">The Genesys User ID, echoed back as stored on the mapping.</param>
+            <param name="UserId">The Ticketing user id the agent resolved to.</param>
+            <param name="UserName">That user's account name.</param>
+            <param name="DisplayName">That user's display name.</param>
+            <param name="Roles">The user's Ticketing roles.</param>
+            <param name="DepartmentIds">The departments the user is a member of.</param>
+            <param name="ConversationId">The conversation, echoed back, when one was supplied.</param>
+            <param name="TicketId">The ticket that conversation belongs to, when one was supplied.</param>
+            <param name="TicketNumber">That ticket's number.</param>
+            <param name="TicketInteractionId">The interaction that now records the handler.</param>
+            <param name="HandledByUserId">The Ticketing user recorded as the interaction's handler — the first agent to be resolved on it, which may differ from <paramref name="UserId"/> after a transfer.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.Outcome">
+            <summary>"Resolved".</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.GenesysUserId">
+            <summary>The Genesys User ID, echoed back as stored on the mapping.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.UserId">
+            <summary>The Ticketing user id the agent resolved to.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.UserName">
+            <summary>That user's account name.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.DisplayName">
+            <summary>That user's display name.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.Roles">
+            <summary>The user's Ticketing roles.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.DepartmentIds">
+            <summary>The departments the user is a member of.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.ConversationId">
+            <summary>The conversation, echoed back, when one was supplied.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.TicketId">
+            <summary>The ticket that conversation belongs to, when one was supplied.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.TicketNumber">
+            <summary>That ticket's number.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.TicketInteractionId">
+            <summary>The interaction that now records the handler.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysAgentContextResponse.HandledByUserId">
+            <summary>The Ticketing user recorded as the interaction's handler — the first agent to be resolved on it, which may differ from <paramref name="UserId"/> after a transfer.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysScreenPopRequest">
+            <summary>
+            The transport shape of a Secure Screen Pop launch request. Only
+            <paramref name="GenesysUserId"/> is required; the others choose the landing
+            page, in priority order: the conversation's ticket → <paramref name="TicketId"/>
+            → the customer lookup for <paramref name="CustomerPhone"/> → the Tickets list.
+            A value that does not resolve (a conversation with no ticket yet, an
+            unknown ticket id) falls through to the next choice rather than failing.
+            </summary>
+            <param name="GenesysUserId">Required. The agent's immutable Genesys User ID — the only value that identifies the agent. Must be mapped to an active TigerCS user.</param>
+            <param name="ConversationId">The Genesys conversation being worked. When it produced a ticket, the agent lands on that ticket and is recorded as the interaction's handler.</param>
+            <param name="TicketId">A TigerCS ticket id to open when the conversation names no ticket.</param>
+            <param name="CustomerPhone">The caller's number, opening Customer Lookup when no ticket applies.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysScreenPopRequest.#ctor(System.String,System.String,System.Nullable{System.Int64},System.String)">
+            <summary>
+            The transport shape of a Secure Screen Pop launch request. Only
+            <paramref name="GenesysUserId"/> is required; the others choose the landing
+            page, in priority order: the conversation's ticket → <paramref name="TicketId"/>
+            → the customer lookup for <paramref name="CustomerPhone"/> → the Tickets list.
+            A value that does not resolve (a conversation with no ticket yet, an
+            unknown ticket id) falls through to the next choice rather than failing.
+            </summary>
+            <param name="GenesysUserId">Required. The agent's immutable Genesys User ID — the only value that identifies the agent. Must be mapped to an active TigerCS user.</param>
+            <param name="ConversationId">The Genesys conversation being worked. When it produced a ticket, the agent lands on that ticket and is recorded as the interaction's handler.</param>
+            <param name="TicketId">A TigerCS ticket id to open when the conversation names no ticket.</param>
+            <param name="CustomerPhone">The caller's number, opening Customer Lookup when no ticket applies.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopRequest.GenesysUserId">
+            <summary>Required. The agent's immutable Genesys User ID — the only value that identifies the agent. Must be mapped to an active TigerCS user.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopRequest.ConversationId">
+            <summary>The Genesys conversation being worked. When it produced a ticket, the agent lands on that ticket and is recorded as the interaction's handler.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopRequest.TicketId">
+            <summary>A TigerCS ticket id to open when the conversation names no ticket.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopRequest.CustomerPhone">
+            <summary>The caller's number, opening Customer Lookup when no ticket applies.</summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysScreenPopResponse">
+            <summary>An issued Screen Pop launch.</summary>
+            <param name="LaunchUrl">Open this in any browser or WebView. It carries a one-time token (valid once, for one hour) and nothing else — no username, password or user data.</param>
+            <param name="ExpiresAtUtc">When the launch stops being redeemable, in UTC.</param>
+            <param name="ExpiresInSeconds">The same deadline as a duration: 3600.</param>
+            <param name="TargetPath">The TigerCS Web page the agent will land on.</param>
+            <param name="TicketId">The ticket that page shows, when it shows one.</param>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysScreenPopResponse.#ctor(System.String,System.DateTime,System.Int32,System.String,System.Nullable{System.Int64})">
+            <summary>An issued Screen Pop launch.</summary>
+            <param name="LaunchUrl">Open this in any browser or WebView. It carries a one-time token (valid once, for one hour) and nothing else — no username, password or user data.</param>
+            <param name="ExpiresAtUtc">When the launch stops being redeemable, in UTC.</param>
+            <param name="ExpiresInSeconds">The same deadline as a duration: 3600.</param>
+            <param name="TargetPath">The TigerCS Web page the agent will land on.</param>
+            <param name="TicketId">The ticket that page shows, when it shows one.</param>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopResponse.LaunchUrl">
+            <summary>Open this in any browser or WebView. It carries a one-time token (valid once, for one hour) and nothing else — no username, password or user data.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopResponse.ExpiresAtUtc">
+            <summary>When the launch stops being redeemable, in UTC.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopResponse.ExpiresInSeconds">
+            <summary>The same deadline as a duration: 3600.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopResponse.TargetPath">
+            <summary>The TigerCS Web page the agent will land on.</summary>
+        </member>
+        <member name="P:TigerCS.Api.Controllers.GenesysScreenPopResponse.TicketId">
+            <summary>The ticket that page shows, when it shows one.</summary>
+        </member>
         <member name="T:TigerCS.Api.Controllers.GenesysContractMapper">
             <summary>
             Translates the transport records above into the normalized application
@@ -987,21 +1361,41 @@
             never guessed at deeper in the system.
             </summary>
         </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysContractMapper.Absent(System.String)">
+            <summary>
+            A blank optional value means "not supplied". A Genesys data action
+            cannot leave a field out of its request template, so an unset
+            Architect variable arrives as "" — which must never win over a value
+            TigerCS found itself (a CRM customer name) or be parsed as a
+            vocabulary word (a handoff mode).
+            </summary>
+        </member>
+        <member name="F:TigerCS.Api.Controllers.GenesysContractMapper.ChannelAliases">
+            <summary>
+            The channel names Genesys may use for the one Live Chat channel, beside
+            the normalized enum names themselves. "LiveChat" is the name the
+            business and the channel catalogue use (<c>LIVE_CHAT</c>);
+            "WebMessaging" is what Genesys Cloud calls its web chat. Both are the
+            same channel as <see cref="F:TigerCS.Application.Modules.GenesysIntegration.Dto.GenesysChannel.WebsiteChat"/> — an alias,
+            never a second channel.
+            </summary>
+        </member>
         <member name="T:TigerCS.Api.Controllers.GenesysController">
              <summary>
              The inbound Genesys boundary: Genesys tells TigerCS that an inquiry
              reached an agent, and later that the conversation ended.
             
              <para>
-             <b>Authentication is TigerCS', not an invented Genesys scheme.</b> Genesys
-             calls these endpoints as an ordinary authenticated TigerCS service
-             account — the same JWT bearer authentication every other client of this
-             API uses (<c>POST /api/auth/login</c>), scoped to the same policy as
-             manual ticket creation because that is precisely what these endpoints do.
-             No webhook signature header, HMAC scheme or OAuth client is implemented,
-             because none has been confirmed by the Genesys team; when the real
-             mechanism is known it is added here, at the boundary, without touching
-             anything behind it.
+             <b>Genesys never calls TigerCS directly.</b> Genesys Cloud authenticates
+             to TigerGroupWeb with OAuth 2.0 client credentials
+             (<c>POST https://tigergroup.ae/api/genesys/oauth/token</c>, scope
+             <c>ticketing.genesys</c>), and TigerGroupWeb's <c>TicketingGenesysService</c>
+             forwards the same three routes here unchanged, authenticated as an
+             ordinary TigerCS service account — the same JWT bearer authentication
+             every other client of this API uses (<c>POST /api/auth/login</c>), scoped
+             to the same policy as manual ticket creation because that is precisely
+             what these endpoints do. The service account's credentials live only in
+             TigerGroupWeb's configuration; Genesys never holds them.
              </para>
             
              <para>
@@ -1014,21 +1408,22 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Api.Controllers.GenesysController.#ctor(TigerCS.Application.Modules.GenesysIntegration.Services.GenesysInquiryIngestionAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService)">
+        <member name="M:TigerCS.Api.Controllers.GenesysController.#ctor(TigerCS.Application.Modules.GenesysIntegration.Services.GenesysInquiryIngestionAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysTicketUpdateAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysCustomerLookupAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAgentContextAppService,TigerCS.Application.Modules.GenesysIntegration.Services.GenesysScreenPopAppService)">
              <summary>
              The inbound Genesys boundary: Genesys tells TigerCS that an inquiry
              reached an agent, and later that the conversation ended.
             
              <para>
-             <b>Authentication is TigerCS', not an invented Genesys scheme.</b> Genesys
-             calls these endpoints as an ordinary authenticated TigerCS service
-             account — the same JWT bearer authentication every other client of this
-             API uses (<c>POST /api/auth/login</c>), scoped to the same policy as
-             manual ticket creation because that is precisely what these endpoints do.
-             No webhook signature header, HMAC scheme or OAuth client is implemented,
-             because none has been confirmed by the Genesys team; when the real
-             mechanism is known it is added here, at the boundary, without touching
-             anything behind it.
+             <b>Genesys never calls TigerCS directly.</b> Genesys Cloud authenticates
+             to TigerGroupWeb with OAuth 2.0 client credentials
+             (<c>POST https://tigergroup.ae/api/genesys/oauth/token</c>, scope
+             <c>ticketing.genesys</c>), and TigerGroupWeb's <c>TicketingGenesysService</c>
+             forwards the same three routes here unchanged, authenticated as an
+             ordinary TigerCS service account — the same JWT bearer authentication
+             every other client of this API uses (<c>POST /api/auth/login</c>), scoped
+             to the same policy as manual ticket creation because that is precisely
+             what these endpoints do. The service account's credentials live only in
+             TigerGroupWeb's configuration; Genesys never holds them.
              </para>
             
              <para>
@@ -1040,6 +1435,9 @@
              the New Ticket wizard already uses.
              </para>
              </summary>
+        </member>
+        <member name="T:TigerCS.Api.Controllers.GenesysController.ErrorCodes">
+            <summary>Stable, machine-readable error codes for the agent identity mapping — carried as the <c>code</c> member of the standard ProblemDetails body.</summary>
         </member>
         <member name="M:TigerCS.Api.Controllers.GenesysController.Ingest(TigerCS.Api.Controllers.GenesysInquiryRequest,System.Threading.CancellationToken)">
              <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
@@ -1053,10 +1451,14 @@
              <para>
              <b>This endpoint means exactly one thing:</b> create or reuse the
              ticket for this conversation. It is not an event receiver for call
-             progress, and there is no event field — a ringing call simply never
-             reaches TigerCS. The phone flow starts at pickup: look the caller up,
-             then post this. Digital channels (website chat, chatbot, WhatsApp,
-             social) post it when the conversation starts.
+             progress, and there is no event field. The voice flow posts it from
+             the Genesys inbound call flow, right after the caller lookup and
+             before the call is queued, with <c>Call.Ani</c> as the customer phone
+             (a "tel:" address is normalized here). Digital channels (Live Chat /
+             Web Messaging, WhatsApp, social) post it when the conversation starts.
+             Queue changes, agent connects, transfers, handoffs and the end all
+             arrive on <c>PATCH</c> against the same ticket — never a second
+             ticket.
              </para>
             
              <para>
@@ -1110,18 +1512,20 @@
              <param name="request">The conversation facts that changed.</param>
              <param name="cancellationToken">Cancellation token.</param>
              <response code="200">Everything supplied was applied, or was already in that state.</response>
-             <response code="400">conversationId was blank, a transcript message had an unrecognized sender or empty body, or the handoff mode is not recognized.</response>
+             <response code="400">conversationId was blank, a transcript message had an unrecognized sender or empty body, the handoff mode or trigger is not recognized, a handoff stand-down named no reason, or customerConfirmation was sent without confirmedResolved: true.</response>
              <response code="404">No such ticket, or no interaction exists for this conversation.</response>
              <response code="409">The conversation belongs to a different ticket than the one in the route.</response>
              <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to.</response>
              <response code="503">The Genesys integration is switched off.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.GenesysController.LookUpCustomer(System.String,System.Threading.CancellationToken)">
-             <summary>Look a caller up by phone number when an agent picks up — customer, units, and their existing tickets.</summary>
+             <summary>Look a caller up by phone number — customer, units, their existing tickets, and a flat screen pop.</summary>
              <remarks>
-             The call-pickup flow: a ringing call does nothing, and when the agent
-             answers Genesys calls this to find out who is on the line before
-             creating the ticket.
+             Called from the Genesys inbound call flow with <c>Call.Ani</c>, before
+             the ticket is created, so the agent's screen pop already names the
+             caller. Any Genesys ANI format is accepted ("tel:+971…", "+971…",
+             "971…"); it is searched as "+971…". A withheld caller id is a normal
+             "nobody found".
             
              <para>
              <b>Context, not a yes/no.</b> Where a customer is found this returns
@@ -1149,6 +1553,87 @@
              <response code="200">What each source found — possibly nothing, which is a normal answer.</response>
              <response code="400">phoneNumber was missing or blank.</response>
              <response code="503">The Genesys integration is switched off.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.ResolveAgentContext(TigerCS.Api.Controllers.GenesysAgentContextRequest,System.Threading.CancellationToken)">
+             <summary>Identify the Genesys agent working in Ticketing, and record them as the handler of the conversation's interaction.</summary>
+             <remarks>
+             The <b>agent action</b> endpoint: when an agent opens or works with
+             Ticketing from Genesys, this resolves exactly which Ticketing user that
+             agent is — by the immutable Genesys User ID, never by name or email —
+             and answers with that user's id, roles and departments.
+            
+             <para>
+             <b>Mapping is administrative, never automatic.</b> A Genesys User ID
+             that no Ticketing user carries is refused with <c>403</c> and the code
+             <c>GENESYS_AGENT_NOT_MAPPED</c>; no user is ever created here. Set the
+             mapping on the Ticketing user (<c>AspNetUsers.GenesysUserId</c>) first.
+             </para>
+            
+             <para>
+             <b>The handler is resolved on the server.</b> The request carries no
+             Ticketing user id, and none would be honoured: the interaction's
+             <c>HandledByUserId</c> is whatever the Genesys User ID maps to. When
+             <c>conversationId</c> is supplied it must resolve to an ingested
+             conversation; the first agent resolved on an interaction is the one
+             recorded, and a later agent does not overwrite it.
+             </para>
+            
+             <para>
+             <b>Records who handled the interaction and nothing else.</b> The
+             ticket's assignee, department, queue, status and workflow are not
+             changed by this call.
+             </para>
+             </remarks>
+             <param name="request">The agent's Genesys identity, and the conversation being worked.</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">The agent resolved to a Ticketing user; when a conversation was supplied, its interaction now records that user as the handler.</response>
+             <response code="400">genesysUserId was missing or blank.</response>
+             <response code="403">The Genesys agent is not mapped to a Ticketing user (<c>GENESYS_AGENT_NOT_MAPPED</c>), or the mapped user is deactivated (<c>GENESYS_AGENT_INACTIVE</c>).</response>
+             <response code="404">A conversation id was supplied but no interaction exists for it.</response>
+             <response code="503">The Genesys integration is switched off.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.IssueScreenPop(TigerCS.Api.Controllers.GenesysScreenPopRequest,System.Threading.CancellationToken)">
+             <summary>Issue a Secure Screen Pop launch URL that opens TigerCS Web, signed in as the Genesys agent's mapped TigerCS user.</summary>
+             <remarks>
+             Genesys opens the returned <c>launchUrl</c> in any browser or WebView —
+             no TigerCS login cookie is needed beforehand. TigerCS Web redeems the
+             token, creates an ordinary authenticated session for the mapped user,
+             and redirects to <c>targetPath</c>.
+            
+             <para>
+             <b>The token:</b> 256 bits of cryptographic randomness, valid for one
+             hour and exactly one use. Only its SHA-256 hash is stored, and it
+             carries no username, password or user data.
+             </para>
+            
+             <para>
+             <b>Authentication only.</b> The session is the one a password login
+             would give the mapped user; the target page is authorized under the
+             normal department-visibility rules, and a ticket the user may not see
+             stays refused. The token grants no access of its own.
+             </para>
+            
+             <para>
+             <b>Landing priority:</b> the ticket <c>conversationId</c> produced
+             (whose interaction then records this agent as handler) → <c>ticketId</c>
+             → Customer Lookup for <c>customerPhone</c> → the Tickets list. A value
+             that resolves to nothing falls through to the next.
+             </para>
+             </remarks>
+             <param name="request">The agent's Genesys User ID and, optionally, what to open.</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">A launch URL, valid once for one hour.</response>
+             <response code="400">genesysUserId was missing or blank.</response>
+             <response code="403">The Genesys agent is not mapped (<c>GENESYS_AGENT_NOT_MAPPED</c>) or the mapped user is deactivated (<c>GENESYS_AGENT_INACTIVE</c>).</response>
+             <response code="503">The Genesys integration is switched off, or <c>Genesys:ScreenPopWebBaseUrl</c> is not configured (<c>GENESYS_SCREEN_POP_NOT_CONFIGURED</c>).</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.GenesysController.CodedProblem(System.String,System.String,System.String,System.String,System.Int32)">
+            <summary>
+            The standard ProblemDetails body every other refusal on this API uses,
+            plus a stable machine-readable <c>code</c> member — so an integrator
+            can branch on the code while the human-facing title/detail stay free
+            to change. Not a second error format.
+            </summary>
         </member>
         <member name="T:TigerCS.Api.Controllers.IntakeRecordsController">
             <summary>
@@ -1273,14 +1758,41 @@
              <response code="200">The work list.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.Start(System.Int64,System.Threading.CancellationToken)">
-            <summary>Start handling a waiting customer interaction — which also takes it, if nobody had.</summary>
-            <remarks>Idempotent: starting work already in progress changes nothing and does not move the recorded start time.</remarks>
-            <param name="handoffId">The work item.</param>
-            <param name="cancellationToken">Cancellation token.</param>
-            <response code="200">The work is now in progress.</response>
-            <response code="403">The caller may not act on work in this department.</response>
-            <response code="404">No such work item.</response>
-            <response code="409">The work was already completed or cancelled.</response>
+             <summary>Accept a waiting customer interaction — take the work, own the ticket, and start.</summary>
+             <remarks>
+             <b>One indivisible act.</b> The work item is claimed exclusively, the
+             ticket's owner becomes the accepting employee, and an Open ticket moves
+             to In Progress — all in one transaction, or none of it.
+            
+             <para>
+             <b>The accepting employee must be an active member of the ticket's
+             current department</b>, because accepting makes them its owner and an
+             owner must belong to that department. A non-member receives <c>422</c>
+             and <b>nothing changes</b>: the interaction is still waiting, unclaimed,
+             and the ticket is still Open and unowned. To handle work from another
+             department, transfer the ticket first and then have a member of its new
+             current department accept.
+             </para>
+            
+             <para>
+             Idempotent for the holder: accepting work you already hold changes
+             nothing and does not move the recorded start time. A different agent
+             receives <c>409</c> naming who holds it.
+             </para>
+            
+             <para>
+             Accepting is <b>not</b> replying, so it does not satisfy the First
+             Response SLA — the first actual message a human sends the customer
+             does.
+             </para>
+             </remarks>
+             <param name="handoffId">The work item.</param>
+             <param name="cancellationToken">Cancellation token.</param>
+             <response code="200">The work is yours and in progress. Repeating the call is idempotent.</response>
+             <response code="403">The caller may not act on work in this department.</response>
+             <response code="404">No such work item.</response>
+             <response code="409">Another agent already holds this work (the response names them), the work was already completed or cancelled, the ticket behind it is closed, or the ticket moved underneath the request.</response>
+             <response code="422">The caller is not an active member of the ticket's current department, so they cannot become its owner. Nothing was changed.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.PendingCustomerInteractionsController.Complete(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CompleteAgentHandoffRequestDto,System.Threading.CancellationToken)">
             <summary>Record that the human work on this interaction is finished.</summary>
@@ -1383,7 +1895,9 @@
             <param name="request">
             Filtering, sorting, and paging. All filters are optional and combine
             with AND. <c>ticketStatus</c> is one of Open, InProgress,
-            PendingCustomer, PendingThirdParty, Resolved, Closed;
+            PendingCustomer, Resolved, Closed — the retired PendingThirdParty is
+            no longer an offered filter, though a historical ticket still reports
+            it as its own status;
             <c>verificationStatus</c> one of Unverified, PendingCrmVerification,
             Verified; <c>priorityId</c> 1=Critical, 2=High, 3=Medium, 4=Low.
             </param>
@@ -1514,20 +2028,29 @@
             <response code="422">The requested change is not valid for this ticket's current state.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketsController.ChangeStatus(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ChangeStatusRequestDto,System.Threading.CancellationToken)">
-            <summary>Change a ticket's working status.</summary>
-            <remarks>
-            MVP-API-Contracts.md §3.7 — the "work" sub-machine only
-            (Open to InProgress, InProgress to and from PendingCustomer/
-            PendingThirdParty). Resolved and Closed are reached only via
-            <see cref="M:TigerCS.Api.Controllers.TicketsController.Resolve(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ResolveTicketRequestDto,System.Threading.CancellationToken)"/> and <see cref="M:TigerCS.Api.Controllers.TicketsController.Close(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CloseTicketRequestDto,System.Threading.CancellationToken)"/>.
-            </remarks>
-            <param name="ticketId">The ticket to update.</param>
-            <param name="request">The new status (Open, InProgress, PendingCustomer, or PendingThirdParty) and the ticket's current rowVersion.</param>
-            <response code="200">The updated ticket.</response>
-            <response code="400">The request body was malformed.</response>
-            <response code="404">No such ticket, or it is not visible to the caller.</response>
-            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
-            <response code="422">The requested change is not valid for this ticket's current state.</response>
+             <summary>Change a ticket's working status.</summary>
+             <remarks>
+             MVP-API-Contracts.md §3.7 — the "work" sub-machine only
+             (Open to InProgress, and InProgress to and from PendingCustomer, which
+             is optional: a ticket may go straight from InProgress to Resolved).
+             Resolved and Closed are reached only via <see cref="M:TigerCS.Api.Controllers.TicketsController.Resolve(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ResolveTicketRequestDto,System.Threading.CancellationToken)"/> and
+             <see cref="M:TigerCS.Api.Controllers.TicketsController.Close(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.CloseTicketRequestDto,System.Threading.CancellationToken)"/>, and Closed returns to InProgress only via
+             <see cref="M:TigerCS.Api.Controllers.TicketsController.Reopen(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ReopenTicketRequestDto,System.Threading.CancellationToken)"/>.
+            
+             <para>
+             PendingThirdParty is a legacy-readable status and is refused as a
+             target here with the ordinary 422 invalid-transition response, however
+             the request is shaped. A ticket that was already in it moves back to
+             InProgress through this same endpoint.
+             </para>
+             </remarks>
+             <param name="ticketId">The ticket to update.</param>
+             <param name="request">The new status (InProgress or PendingCustomer) and the ticket's current rowVersion.</param>
+             <response code="200">The updated ticket.</response>
+             <response code="400">The request body was malformed.</response>
+             <response code="404">No such ticket, or it is not visible to the caller.</response>
+             <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
+             <response code="422">The requested change is not valid for this ticket's current state.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketsController.Resolve(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ResolveTicketRequestDto,System.Threading.CancellationToken)">
             <summary>Resolve a ticket. Department Employee/Department Head only.</summary>
@@ -1556,28 +2079,64 @@
             <response code="422">The requested change is not valid for this ticket's current state.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketsController.Reopen(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.ReopenTicketRequestDto,System.Threading.CancellationToken)">
-            <summary>Reopen a resolved/closed ticket. CS Agent/CS Supervisor/CS Manager only.</summary>
-            <remarks>
-            MVP-API-Contracts.md §3.11 / FR-RES-04: Reopen is a domain event, not
-            a status value — the ticket returns to InProgress, its ReopenCount
-            increments, and the prior resolution is archived (never deleted).
-            Only allowed within ISSUE-011's reopen window (7 days from the
-            current resolution, configurable); past it, create a new linked
-            ticket instead. The action is audited with the actor, the prior and
-            new status, and the caller's reason.
-            </remarks>
-            <param name="ticketId">The ticket to reopen.</param>
-            <param name="request">Why the ticket is being reopened, and the ticket's current rowVersion.</param>
-            <response code="200">The reopened ticket, back InProgress.</response>
-            <response code="400">The request body was malformed, or Reason was missing/blank.</response>
-            <response code="404">No such ticket, or it is not visible to the caller.</response>
-            <response code="409">rowVersion did not match — another request already modified this ticket. Reload it and retry.</response>
-            <response code="422">The ticket is not Resolved/Closed, or the reopen window has passed.</response>
+             <summary>Reopen a closed ticket. CS Agent, CS Supervisor or CS Manager (System Administrator through ADR-0024's override).</summary>
+             <remarks>
+             MVP-API-Contracts.md §3.11 / FR-RES-04, as approved: Reopen is a
+             domain event, not a status value. A <b>Closed</b> ticket that was
+             closed as Resolved returns to InProgress in the department the caller
+             names, its previous owner is cleared, the existing assignment
+             automation re-runs against that department (leaving it in the
+             department queue when no rule applies), its ReopenCount increments,
+             and the prior resolution is archived (never deleted). A Resolved
+             ticket is NOT reopenable, and neither is one closed as Cancelled,
+             Rejected or Duplicate.
+            
+             <para>
+             A new <b>Resolution</b> SLA cycle opens at the reopen moment, computed
+             from the ticket's existing SLA policy; the First Response clock is
+             carried across untouched and never restarts. The historical cycle is
+             retained, so the reopened ticket is not breached on the strength of the
+             original deadline.
+             </para>
+            
+             <para>
+             Only allowed within ISSUE-011's reopen window (7 days from CLOSURE,
+             configurable); past it, create a new linked ticket instead.
+             Authorization is the CS-layer role set — CS Agent, CS Supervisor,
+             CS Manager (<c>TicketRoleSets.Reopen</c>), plus System Administrator
+             through ADR-0024 — together with the caller's own access to the
+             ticket. Every other role receives 403. The action is audited with the actor, the prior and new status,
+             both departments, both owners and the caller's reason, and appears in
+             the ticket's lifecycle history.
+             </para>
+             </remarks>
+             <param name="ticketId">The ticket to reopen.</param>
+             <param name="request">Why the ticket is being reopened, which department takes it on, and the ticket's current rowVersion.</param>
+             <response code="200">The reopened ticket, back InProgress.</response>
+             <response code="403">The caller is not CS-layer, or has no access to this ticket.</response>
+             <response code="400">The request body was malformed, Reason was missing/blank or too long, or TargetDepartmentId was missing.</response>
+             <response code="404">No such ticket, or the target department does not exist or is inactive.</response>
+             <response code="409">rowVersion did not match — another request (possibly a concurrent reopen) already modified this ticket. Reload it and retry.</response>
+             <response code="422">The ticket is not Closed, was closed as Cancelled/Rejected/Duplicate, its request type forbids reopening, or the reopen window has passed.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketsController.GetApprovals(System.Int64,System.Threading.CancellationToken)">
             <summary>The ticket's Approvals / Dependencies view: approval cycles (full history), still-requestable configured approvals, typed workflow events, and the derived maintenance/prerequisite states.</summary>
             <param name="ticketId">The ticket.</param>
             <response code="200">The approvals/dependencies view, with per-caller request/decide capability flags.</response>
+            <response code="404">No such ticket, or it is not visible to the caller.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.TicketsController.GetLifecycleHistory(System.Int64,System.Threading.CancellationToken)">
+            <summary>The ticket's lifecycle history — every recorded change to its five lifecycle dimensions, oldest first.</summary>
+            <remarks>
+            ADR-0018's append-only <c>TicketStatusHistory</c>, served for the first
+            time so Ticket Details can show what actually happened to a ticket:
+            status changes with the note recorded against them (a reopen reason, a
+            resolution note), verification and escalation transitions, and
+            system-recorded SLA state changes. Visible to exactly the callers who
+            can see the ticket itself.
+            </remarks>
+            <param name="ticketId">The ticket.</param>
+            <response code="200">The ticket's lifecycle history.</response>
             <response code="404">No such ticket, or it is not visible to the caller.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketsController.RequestApproval(System.Int64,TigerCS.Application.Modules.Ticketing.Dto.RequestApprovalRequestDto,System.Threading.CancellationToken)">
