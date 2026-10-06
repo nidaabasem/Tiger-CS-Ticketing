@@ -1384,7 +1384,7 @@ public sealed class NewTicketModelTests
         // Issue-step input is empty, so its [Required] members invalidate
         // the page-wide ModelState.
         model.CreateStep = new NewTicketModel.CreateStepInput();
-        model.ModelState.AddModelError("CreateStep.CategoryId", "Select a request type.");
+        model.ModelState.AddModelError("CreateStep.CategoryId", "Select a category.");
         model.ModelState.AddModelError("CreateStep.PriorityId", "Select a priority.");
         model.ModelState.AddModelError("CreateStep.RequestSummary", "The RequestSummary field is required.");
 

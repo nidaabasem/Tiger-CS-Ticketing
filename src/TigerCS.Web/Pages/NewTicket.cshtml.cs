@@ -41,8 +41,8 @@ public sealed record NewTicketCandidate(
 /// and PACT/Tasleeh units keep their packed-selection integrity (ids and
 /// display text always travel together), manual entry stays the fallback —
 /// and surfaces the existing related-tickets advisory for the selected
-/// unit. <b>Step 3 (Issue)</b> chooses Department → Request Type (the
-/// existing Category, scoped to the Department) → Priority → the request
+/// unit. <b>Step 3 (Issue)</b> chooses Department → Category (scoped to
+/// the Department) → optional Request Type → Priority → the request
 /// text. <b>Step 4 (Review)</b> shows a concise summary before the one
 /// create action.
 /// </para>
@@ -250,7 +250,7 @@ public sealed class NewTicketModel(
     public string? DepartmentsErrorMessage { get; private set; }
 
     /// <summary>
-    /// The active Request Types (Categories) the Issue step offers — scoped
+    /// The active Categories the Issue step offers — scoped
     /// to the selected Department when one is chosen, otherwise every active
     /// Category grouped by its Department (the pre-redesign behavior,
     /// preserved so a Department choice is a narrowing aid, never a gate).
@@ -793,9 +793,9 @@ public sealed class NewTicketModel(
 
     /// <summary>
     /// Redisplays the Issue step after the Department selection changed —
-    /// the Request Type list reloads scoped to that Department, and every
+    /// the Category list reloads scoped to that Department, and every
     /// other entered value (priority, request text) survives because this is
-    /// a plain POST round-trip of the same form. A Request Type that no
+    /// a plain POST round-trip of the same form. A Category that no
     /// longer belongs to the chosen Department is cleared rather than
     /// silently submitted against it.
     /// </summary>
@@ -854,7 +854,7 @@ public sealed class NewTicketModel(
         }
 
         Step = StepReview;
-        // The review resolves the selected Request Type/Department to their
+        // The review resolves the selected Category/Department to their
         // display names from the same directory the Issue step used.
         await LoadIssueStepAsync(cancellationToken);
         return Page();
@@ -936,7 +936,7 @@ public sealed class NewTicketModel(
         });
     }
 
-    /// <summary>The pre-create guards, shared by Review and Create: a property (verified or manual pair), a Request Type, a Priority, and the request text. The Api re-validates all of it.</summary>
+    /// <summary>The pre-create guards, shared by Review and Create: a property (verified or manual pair), a Category, a Priority, and the request text. The Api re-validates all of it.</summary>
     private string? ValidateIssue()
     {
         var hasCrmBuyerMatch = CrmBuyerUnitId is not null;
@@ -950,7 +950,7 @@ public sealed class NewTicketModel(
 
         if (CreateStep.CategoryId is null)
         {
-            return "Select a request type before continuing.";
+            return "Select a category before continuing.";
         }
 
         if (CreateStep.PriorityId is null)
@@ -1147,11 +1147,11 @@ public sealed class NewTicketModel(
 
     public sealed class CreateStepInput
     {
-        /// <summary>The Issue step's Department narrowing for the Request Type list — a real DepartmentId from the dropdown, never typed. The ticket's own department still derives from the selected Request Type server-side.</summary>
+        /// <summary>The Issue step's Department narrowing for the Category list — a real DepartmentId from the dropdown, never typed. The ticket's own department still derives from the selected Category server-side.</summary>
         public int? DepartmentId { get; set; }
 
-        /// <summary>The real CategoryId of a dropdown selection ("Request Type") — never typed in by hand. Nullable so "nothing selected" is a distinct, validatable state rather than a fake id like 0.</summary>
-        [Required(ErrorMessage = "Select a request type.")]
+        /// <summary>The real CategoryId of a dropdown selection ("Category") — never typed in by hand. Nullable so "nothing selected" is a distinct, validatable state rather than a fake id like 0.</summary>
+        [Required(ErrorMessage = "Select a category.")]
         public int? CategoryId { get; set; }
 
         /// <summary>1=Critical, 2=High, 3=Medium, 4=Low — dropdown only. Nullable so "nothing selected" is distinct and validatable.</summary>
