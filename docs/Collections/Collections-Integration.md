@@ -402,34 +402,49 @@ The tab handles these states: loading, select account, loaded, settled, stale,
 forbidden, disabled, not a CRM customer, no accounts, and **unavailable**
 (no figures and a retry link, never zero).
 
-**PACT customers** (`ext:Pact:{tenantID}`) get the **EDSM view** instead of
-the account view:
-- **Header:** source, PACT tenant, retrieval time (labelled "EDSM returns no
-  as-of time"), and currency "AED (configured in TigerCS — EDSM returns no
-  currency)".
-- **Delay notice:** EDSM caches its figures, so a recent payment can take up to
-  about 20 minutes to appear, and refreshing does not bypass the cache.
-- **One block per company:**
-  - the company name and model (owned/sale or rented/lease), plus the PACT
-    contracts that confirmed it (unit type shown, so Parking is visible);
-  - the five fields with the **model's own labels and definitions**, EDSM's
-    formatted strings, and explicit text for blank, missing, unreadable or
-    not-configured values ("None above zero" for an owned blank late fine,
-    "Not computed for rented companies" for rented);
-  - notes for a total that doesn't add up, or an all-zero result;
-  - the read-only Payments, Due items and Not yet due / Post-dated cheques
-    lists, with the rented caveats;
-  - due-installments when enabled, with raw EDSM status.
-- **Failures:** a failing company shows only its own error (for example
-  "EDSM rejected TigerCS's credentials").
-- **Not offered:** Send Reminder and reminder history.
+**PACT customers** (`ext:Pact:{tenantID}`) get the **EDSM view**, laid out
+like the account view:
+- **Account selector:** a compact selector for the verified (company · tenant)
+  pairs, with the currency (configured), source and retrieval time. Below it,
+  a one-line delay notice: payments can take about 20 minutes to appear.
+- **Contracts:** the contracts the pair covers, with the note "one figure set
+  for this company and tenant, not a balance per unit".
+- **Amount cards:** **Paid · Due · Not yet due / Post-dated cheques · Late
+  fines · Total**, using EDSM's own strings with the configured currency. A
+  value that isn't available says why, e.g. "None above zero", "Not computed
+  for rented companies", "Not provided", or "Not read (EDSM number format not
+  configured)".
+- **Send Reminder:** shown disabled, with the reason.
+- **Payment details:** one table, **# | Date | Status | Payment Type | Amount
+  | Cheque Number**, built from EDSM's read-only Paid, Due and Outstanding
+  lists (types 1–3) and ordered by date.
+  - **Status** is the list a row came from, shown as a badge with its text:
+    Paid (green), Due (red), Outstanding (amber).
+  - **Payment Type** is EDSM's `paymentTypeId` mapped to its documented
+    `PaymentTypeEnum` name (1 Cash, 2 Cheque, 3 Fees, 4 Opening balance,
+    5 Current contract amount). A missing id shows "Not provided", which is
+    always the case for owned companies. It is never inferred from the
+    status or the cheque number.
+  - The rented caveats are listed under the table. The EDSM due-installments
+    table appears when that read is enabled.
+- **Expandable "Definitions and source details":** the owned or rented field
+  definitions, EDSM's raw string for any value that wasn't read, the currency
+  and no-as-of-time notes, the tenant/company, the mapping confirmation and
+  the number format.
 
-| EDSM summary view | |
+**CRM customers** with no financial source show the explicit NotMapped
+message, with reminder history below it.
+
+EDSM view. **Fixture data** from the stand-in API, not real EDSM:
+
+| | |
 |---|---|
-| Two companies, all amount states | ![](screenshots/12-edsm-summary.png) |
-| One company's summary unavailable | ![](screenshots/13-edsm-summary-company-unavailable.png) |
-| PACT unreachable | ![](screenshots/14-edsm-summary-unavailable.png) |
-| Phone width | ![](screenshots/15-edsm-summary-mobile.png) |
+| Owned company: amount cards, contracts, tables, disabled Send Reminder | ![](screenshots/16-edsm-owned-desktop.png) |
+| Rented company selected, definitions expanded | ![](screenshots/17-edsm-rented-details-desktop.png) |
+| Phone width | ![](screenshots/18-edsm-owned-mobile.png) |
+| CRM customer: explicit NotMapped | ![](screenshots/19-crm-not-mapped.png) |
+| EDSM/PACT unavailable | ![](screenshots/20-edsm-unavailable.png) |
+| Loading | ![](screenshots/21-loading.png) |
 
 Screenshots of the account view (real TigerCS.Web against responses captured
 from the real API with the fixture source):
@@ -675,7 +690,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-01-15",
               "dateRaw": "15-Jan-2026",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             },
             {
               "amount": 312500,
@@ -684,7 +700,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-06-15",
               "dateRaw": "15-Jun-2026",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             }
           ]
         },
@@ -701,7 +718,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-09-15",
               "dateRaw": "15-Sep-2026",
               "chequeNumber": "000412",
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             }
           ]
         },
@@ -718,7 +736,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-12-15",
               "dateRaw": "15-Dec-2026",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             },
             {
               "amount": 187500,
@@ -727,7 +746,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2027-03-15",
               "dateRaw": "15-Mar-2027",
               "chequeNumber": null,
-              "paymentType": null
+              "paymentType": null,
+              "paymentTypeId": null
             }
           ]
         }
@@ -836,7 +856,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-02-01",
               "dateRaw": "01-Feb-2026",
               "chequeNumber": "100201",
-              "paymentType": "Cheque"
+              "paymentType": "Cheque",
+              "paymentTypeId": 2
             }
           ]
         },
@@ -853,7 +874,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-03-01",
               "dateRaw": "01-Mar-2026",
               "chequeNumber": null,
-              "paymentType": "Fees"
+              "paymentType": "Fees",
+              "paymentTypeId": 3
             }
           ]
         },
@@ -870,7 +892,8 @@ GET /api/collections/customers/by-key/ext%3APact%3A3001/payment-summary
               "date": "2026-12-01",
               "dateRaw": "01-Dec-2026",
               "chequeNumber": "100205",
-              "paymentType": "Cheque"
+              "paymentType": "Cheque",
+              "paymentTypeId": 2
             }
           ]
         }

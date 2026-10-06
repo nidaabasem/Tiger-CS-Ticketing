@@ -10,6 +10,7 @@ switching the integration on).
 |---|---|
 | `data-actions/00-custom-auth-request-config.json` | Request configuration for the auto-created **Custom Auth** action |
 | `data-actions/01-customer-lookup.json` … `07-customer-confirmed-resolved.json` | Data actions in Genesys' import format |
+| `data-actions/08-collections-payment-summary.json`, `09-collections-payment-transactions.json` | Collections reads (§11a). Not yet imported or run in Genesys |
 | `TigerCS-Genesys.postman_collection.json` | End-to-end Postman run of every call below |
 | `../architecture/Genesys-API-Contracts.md` | The HTTP contracts in full |
 
@@ -446,6 +447,49 @@ never be dropped because TigerCS is unavailable.
 | `503` | `Genesys:Enabled` is off | Continue |
 
 ---
+
+## 11a. Collections reads (payment summary and transactions)
+
+**Status:** the data actions are written against the implemented API, but they
+have **not** been imported or run in Genesys. Their JSONPath translation maps
+are unverified there. No real EDSM or UAT data has been read through them.
+The full contract is in `../Collections/Genesys-Collections-API.md`.
+
+**Who may ask, and when.**
+- **Agent-facing only for now.** Use these actions in the agent script, never
+  in an IVR, bot or other self-service flow. Self-service disclosure is pending
+  an approved identity-verification policy for that channel
+  (`Genesys-Collections-API.md` §2).
+- **A mapping must exist.** TigerCS answers only for a customer an agent has
+  already matched to PACT in TigerCS. A phone match from Customer Lookup, or a
+  ticket Genesys created, is not enough: the summary answers `404` (Failure
+  path).
+- **A mapping is not caller verification.** Even with a mapping, the agent
+  verifies who is on this call before disclosing anything.
+
+**Settings per action:**
+- **Execution Timeout:** the flow's timeout + 1 s (Genesys guidance). Keep the
+  flow's Call Data Action timeout at 30 s or less.
+- **Input `flowTimeoutSeconds`:** pass the flow's (or script action's) timeout,
+  e.g. `"30"`. For a 30 s flow, TigerGroupWeb answers within 27 s and TigerCS
+  within 22 s; for 20 s, within 18 s and 15 s; for 19 s, within 17 s and 14 s.
+
+**Sequence (agent script, after the agent has verified the caller):**
+```
+Customer Lookup (01) result on the interaction
+ └─ verificationSource == "Pact" and matchedCustomerCount == 1 ?
+     ├─ no  → no payment data
+     └─ yes → Collections Payment Summary (08), customerKey = "ext:Pact:" + externalCustomerId
+               ├─ Failure / Timeout (404 no mapping yet, 503, 504) → "figures unavailable"
+               ├─ completeness == "Complete" → the agent may quote the figures as the balance
+               └─ "Partial" / "NoFigures"    → the agent must not quote a balance
+                   └─ amount and date of a payment? → Collections Payment Transactions (09)
+                        companyId = one of availableCompanyIds, type = Paid | Due | Outstanding
+```
+
+Read amounts from the `…Raw` strings (EDSM's own formatting). Never add
+companies or list rows together. A payment can take up to
+`maxSourceDelayMinutes` to appear.
 
 ## 12. Go-live checklist
 

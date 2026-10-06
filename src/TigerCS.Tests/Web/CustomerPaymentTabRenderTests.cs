@@ -269,6 +269,37 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task SiteCssAndJs_AreVersioned_SoADeploymentNeverLeavesAStaleStylesheetHidingThePanel()
+    {
+        // Root cause of the "empty Payment panel" report: an unversioned, heuristically cached
+        // site.css from before the tab existed has no #panel-payment display rule.
+        var profile = await Ok(await Client().GetAsync("/Customers/crm:9001"));
+        var login = await Ok(await _factory.CreateClient().GetAsync("/Login"));
+
+        foreach (var html in new[] { profile, login })
+        {
+            Assert.Matches(new Regex("href=\"/css/site\\.css\\?v=[A-Za-z0-9_-]{20,}\""), html);
+            Assert.Matches(new Regex("src=\"/js/site\\.js\\?v=[A-Za-z0-9_-]{20,}\""), html);
+        }
+    }
+
+    [Fact]
+    public async Task ACrmCustomerWithNoFinancialSource_GetsTheExplicitNotMappedMessage_NotAnEmptyOrTemporaryState()
+    {
+        _api.Mode = "nosource";
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?handler=PaymentPanel"));
+
+        Assert.Contains("data-payment-state=\"NotMapped\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-not-mapped", html, StringComparison.Ordinal);
+        Assert.Contains("no verified mapping from a CRM customer to a PACT tenant exists", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("temporarily unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-balance-unavailable", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("due now", html, StringComparison.Ordinal);
+        Assert.Contains("Reminder history", html, StringComparison.Ordinal);   // TigerCS's own record is still shown
+        Assert.Contains("/payment-summary", string.Join("\n", _api.Requests), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task APactCustomer_IsDeferred_NotRefusedAsNonCrm()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001"));
@@ -279,40 +310,119 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task APactCustomer_ShowsEdsmFiguresPerCompanyAndModel_NeverZeroForMissingValues()
+    public async Task APactCustomer_ShowsTheSelectedCompanysCardsAndTables_NeverZeroForMissingValues()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
         var requests = string.Join("\n", _api.Requests);
 
         Assert.Contains("data-payment-state=\"EdsmSummary\"", html, StringComparison.Ordinal);
         Assert.Contains("/api/collections/customers/by-key/ext%3APact%3A3001/payment-summary", requests, StringComparison.Ordinal);
+
+        // Compact selector: one option per verified company + tenant pair; the first is shown.
+        Assert.Contains("id=\"paymentAccount\"", html, StringComparison.Ordinal);
+        Assert.Contains(">Tiger Group Dubai &#xB7; owned &#xB7; tenant 3001</option>", html, StringComparison.Ordinal);
+        Assert.Contains(">Hirmas Dubai &#xB7; rented &#xB7; tenant 3001</option>", html, StringComparison.Ordinal);
         Assert.Contains("data-edsm-company=\"4\" data-edsm-model=\"Owned\"", html, StringComparison.Ordinal);
-        Assert.Contains("Tiger Group Dubai · owned (sale)", html, StringComparison.Ordinal);
-        Assert.Contains("Hirmas Dubai · rented (lease)", html, StringComparison.Ordinal);
-        Assert.Contains("1,250,000.00", html, StringComparison.Ordinal);                 // EDSM's own formatted string
-        Assert.Contains("Definition of Total.", html, StringComparison.Ordinal);
-        Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<dt>Paid.*?</dt>\\s*<dd>\\s*Not provided", RegexOptions.Singleline), html);
-        Assert.Contains("None above zero", html, StringComparison.Ordinal);               // owned blank fine
-        Assert.Contains("Not computed for rented companies", html, StringComparison.Ordinal);
-        Assert.Contains("-500.00", html, StringComparison.Ordinal);                      // rented due may be negative
-        Assert.Contains("EDSM sent “1.500,00”", html, StringComparison.Ordinal);
-        Assert.DoesNotContain(">0.00", html, StringComparison.Ordinal);
-        Assert.Contains("AED <small class=\"field-hint\">(configured in TigerCS — EDSM returns no currency)</small>", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM returns no as-of time", html, StringComparison.Ordinal);
-        Assert.Contains("up to about 20 minutes", html, StringComparison.Ordinal);
-        Assert.Contains("data-mapping-verified=\"Cached\"", html, StringComparison.Ordinal);
-        Assert.Contains("(PACT contracts, reused)", html, StringComparison.Ordinal);
-        Assert.Contains("data-edsm-transactions=\"Paid\"", html, StringComparison.Ordinal);
-        Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-company=\"25\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-payment-account=\"4\"", html, StringComparison.Ordinal);
+        Assert.Contains("One figure set for this company and tenant, not a balance per unit.", html, StringComparison.Ordinal);
+
+        // Amount cards: EDSM's own strings with the configured currency; unavailable values say why.
+        Assert.Contains("<strong>AED 1,250,000.00</strong>", html, StringComparison.Ordinal);
+        Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<strong>Not provided</strong>"), html);
+        Assert.Matches(new Regex("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\">\\s*<strong>None above zero</strong>"), html);
+        Assert.Contains("<span>Not yet due</span>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
+
+        // Brief delay notice stays visible; definitions and diagnostics are in the expandable section.
+        Assert.Contains("data-source-delay>New payments can take up to about 20 minutes to appear here.", html, StringComparison.Ordinal);
+        Assert.Contains("<summary>Definitions and source details</summary>", html, StringComparison.Ordinal);
+        var details = html[html.IndexOf("data-edsm-details", StringComparison.Ordinal)..];
+        Assert.Contains("Definition of Total.", details, StringComparison.Ordinal);
+        Assert.Contains("EDSM sent “1.500,00”", details, StringComparison.Ordinal);
+        Assert.Contains("EDSM sent “812.500,00”", details, StringComparison.Ordinal);
+        Assert.Contains("EDSM returns no as-of time", details, StringComparison.Ordinal);
+        Assert.Contains("data-mapping-verified=\"Cached\"", details, StringComparison.Ordinal);
+
+        // Transactions and EDSM due-installments as tables; Send Reminder present but unavailable.
+        // Unified Payment details: Status (source list, badge) and Payment Type (EDSM paymentTypeId) side by side.
+        Assert.Contains("data-edsm-payment-details>Payment details</h3>", html, StringComparison.Ordinal);
+        Assert.Contains("<th class=\"col-num\">#</th><th>Date</th><th>Status</th><th>Payment Type</th><th class=\"col-num\">Amount</th><th>Cheque Number</th>", html, StringComparison.Ordinal);
+        var table = html[html.IndexOf("edsm-payment-details", StringComparison.Ordinal)..html.IndexOf("</table>", html.IndexOf("edsm-payment-details", StringComparison.Ordinal), StringComparison.Ordinal)];
+        Assert.Matches(new Regex("<td class=\"col-num\">1</td>\\s*<td>15 Jan 2026</td>\\s*<td><span class=\"badge badge-pay-ok\">Paid</span></td>\\s*<td>Not provided</td>\\s*<td class=\"col-num\">AED 500,000.00</td>"), table);
+        Assert.Matches(new Regex("<td class=\"col-num\">2</td>\\s*<td>15 Sep 2026</td>\\s*<td><span class=\"badge badge-pay-critical\">Due</span></td>\\s*<td>Not provided</td>\\s*<td class=\"col-num\">AED 62,500.00</td>\\s*<td class=\"text-mono\">000412</td>"), table);
+        Assert.Matches(new Regex("<td class=\"col-num\">3</td>\\s*<td>15 Dec 2026</td>\\s*<td><span class=\"badge badge-pay-pending\">Outstanding</span></td>"), table);
+        Assert.DoesNotContain("<td>Cheque</td>", table, StringComparison.Ordinal);   // never inferred from a cheque number
         Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
-        Assert.Contains("Whether a row is still unpaid is not confirmed.", html, StringComparison.Ordinal);
-        Assert.Contains("data-edsm-company=\"7\" data-edsm-model=\"Rented\" data-edsm-status=\"Unauthorized\"", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
-        Assert.Contains("data-detail-unavailable", html, StringComparison.Ordinal);
+        Assert.Contains("whether a row is still unpaid is not confirmed", html, StringComparison.Ordinal);
+        Assert.Contains("<button type=\"button\" class=\"btn btn-sm\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("handler=SendReminder", html, StringComparison.Ordinal);
+
         Assert.DoesNotContain("/outstanding", requests, StringComparison.Ordinal);
         Assert.DoesNotContain("/reminders", requests, StringComparison.Ordinal);
         Assert.DoesNotContain("/candidates", requests, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APactCustomer_SelectingTheRentedCompany_ShowsItsOwnLabelsAndCaveats()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?handler=PaymentPanel&account=25"));
+
+        Assert.Contains("data-edsm-company=\"25\" data-edsm-model=\"Rented\"", html, StringComparison.Ordinal);
+        Assert.Contains("<option value=\"25\" selected=\"selected\">", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>AED -500.00</strong>", html, StringComparison.Ordinal);        // rented due may be negative
+        Assert.Contains("<strong>Not computed for rented companies</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("<span>Post-dated cheques</span>", html, StringComparison.Ordinal);
+        Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.Matches(new Regex("data-edsm-row-status=\"Paid\" data-edsm-payment-type-id=\"2\">[\\s\\S]*?badge-pay-ok\">Paid</span></td>\\s*<td>Cheque</td>"), html);
+        Assert.Matches(new Regex("data-edsm-row-status=\"Due\" data-edsm-payment-type-id=\"3\">[\\s\\S]*?badge-pay-critical\">Due</span></td>\\s*<td>Fees</td>\\s*<td class=\"col-num\">AED 1,000.00</td>"), html);
+        Assert.Contains("data-edsm-list-unavailable=\"Outstanding\"", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APactCompanyRefusedByEdsm_ShowsItsErrorAndNoFigures()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?handler=PaymentPanel&account=7"));
+
+        Assert.Contains("data-edsm-company=\"7\" data-edsm-model=\"Rented\" data-edsm-status=\"Unauthorized\"", html, StringComparison.Ordinal);
+        Assert.Contains("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APartialSummary_IsFlaggedAsNotTheFullBalance_WithEachReason()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
+
+        Assert.Contains("data-edsm-incomplete=\"Partial\"", html, StringComparison.Ordinal);
+        Assert.Contains("Incomplete: not the customer's full balance.", html, StringComparison.Ordinal);
+        Assert.Contains("Company 7 (Alsabeel Sharjah): no figures (Unauthorized).", html, StringComparison.Ordinal);
+        Assert.Contains("Company 25 (Hirmas Dubai): Outstanding transactions not read (Unavailable).", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACompleteSummary_ShowsNoIncompleteWarning()
+    {
+        _api.SummaryCompleteness = "Complete";
+
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
+
+        Assert.Contains("data-payment-state=\"EdsmSummary\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-incomplete", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACompanyCutOffByTheDeadline_SaysEdsmDidNotAnswerInTime_AndShowsNoFigures()
+    {
+        _api.DeadlineCompany = 4;
+
+        var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment&account=4"));
+
+        Assert.Contains("data-edsm-status=\"DeadlineExceeded\"", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>EDSM did not answer in time.</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("No figures are shown for this account.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
+        Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -366,7 +476,12 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         private static CollectionsEdsmFieldDto F(string key, string label, string status, decimal? value, string? raw, string? meaning = null) =>
             new(key, label, $"Definition of {label}.", status, value, raw, meaning);
 
-        private static CollectionsPaymentSummaryResponseDto Summary() => new(
+        private static CollectionsPaymentSummaryResponseDto CrmNotMapped() => new(
+            "crm:9001", "NotMapped",
+            "This customer is identified by Tiger CRM (customerId 9001). EDSM is keyed by PACT companyID and tenantID, and no verified mapping from a CRM customer to a PACT tenant exists.",
+            null, "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, null, null, [], []);
+
+        private CollectionsPaymentSummaryResponseDto Summary() => new CollectionsPaymentSummaryResponseDto(
             "ext:Pact:3001", "Mapped", null, "3001", "Pact", Now, null, "AED", "Configured", "en-US", 10, 20, Now.AddMinutes(-5), "Cached",
             [
                 new CollectionsCompanyPaymentSummaryDto(4, "Tiger Group Dubai", "Owned", "Available", null, [Contract],
@@ -374,12 +489,17 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                     F("paidAmount", "Paid", "Missing", null, null),
                     F("dueAmount", "Due", "Unreadable", null, "1.500,00"),
                     F("outstandingAmount", "Not yet due", "Provided", 437_500m, "437,500.00"),
+                    F("paidAmountUnconfigured", "Paid (format check)", "FormatNotConfigured", null, "812.500,00"),
                     F("lateFines", "Late fines", "Empty", null, "", "ZeroOrLess"),
                     F("totalAmount", "Total", "Provided", 1_250_000m, "1,250,000.00"),
                 ], "NotChecked", false, [],
                 [
                     new CollectionsEdsmTransactionListDto("Paid", "Available", null, null,
                         [new CollectionsEdsmTransactionDto(500_000m, "Provided", "500,000.00", new DateOnly(2026, 1, 15), "15-Jan-2026", null, null)]),
+                    new CollectionsEdsmTransactionListDto("Due", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(62_500m, "Provided", "62,500.00", new DateOnly(2026, 9, 15), "15-Sep-2026", "000412", null)]),
+                    new CollectionsEdsmTransactionListDto("Outstanding", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(187_500m, "Provided", "187,500.00", new DateOnly(2026, 12, 15), "15-Dec-2026", null, null)]),
                 ],
                 new CollectionsEdsmDueInstallmentsDto("Available", null, new DateOnly(2026, 9, 4), new DateOnly(2026, 11, 5),
                     [new CollectionsEdsmDueInstallmentDto(41230, "PDC-0412", "000412", new DateOnly(2026, 9, 15), 62_500m, "Due ")])),
@@ -388,11 +508,44 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
                     F("dueAmount", "Due", "Provided", -500m, "-500.00"),
                     F("lateFines", "Late fines", "Empty", null, "", "NotComputedForRented"),
                 ], "NotChecked", false, [],
-                [new CollectionsEdsmTransactionListDto("Paid", "Available", null, "Refunds appear in this list as positive payments.", [])], null),
+                [
+                    new CollectionsEdsmTransactionListDto("Paid", "Available", null, "Refunds appear in this list as positive payments.",
+                        [new CollectionsEdsmTransactionDto(60_000m, "Provided", "60,000.00", new DateOnly(2026, 2, 1), "01-Feb-2026", "100201", "Cheque", 2)]),
+                    new CollectionsEdsmTransactionListDto("Due", "Available", null, null,
+                        [new CollectionsEdsmTransactionDto(1_000m, "Provided", "1,000.00 AED", new DateOnly(2026, 3, 1), "01-Mar-2026", null, "Fees", 3)]),
+                    new CollectionsEdsmTransactionListDto("Outstanding", "Unavailable", "timed out", null, []),
+                ], null),
                 new CollectionsCompanyPaymentSummaryDto(7, "Alsabeel Sharjah", "Rented", "Unauthorized", "EDSM rejected the configured API key.", [], [],
                     "NotChecked", false, [], [], null),
             ],
-            []);
+            [])
+            with
+            {
+                // What the service reports for this data: one company refused, one list timed out.
+                Completeness = SummaryCompleteness,
+                IncompleteReasons = SummaryCompleteness == "Complete"
+                    ? []
+                    : ["Company 7 (Alsabeel Sharjah): no figures (Unauthorized).", "Company 25 (Hirmas Dubai): Outstanding transactions not read (Unavailable)."]
+            };
+
+        public string SummaryCompleteness { get; set; } = "Partial";
+
+        /// <summary>When set, this company comes back as cut off by the read deadline: no fields, no lists.</summary>
+        public int? DeadlineCompany { get; set; }
+
+        private CollectionsPaymentSummaryResponseDto SummaryForMode() => DeadlineCompany is not { } cut
+            ? Summary()
+            : Summary() with
+            {
+                Companies = Summary().Companies
+                    .Select(c => c.CompanyId != cut ? c : c with
+                    {
+                        Status = "DeadlineExceeded",
+                        StatusDetail = "Not read: the request's 60 s deadline passed before EDSM answered for this company.",
+                        Fields = [], TotalCheck = "NotChecked", AllZero = false, Notes = [], Transactions = [], DueInstallments = null
+                    })
+                    .ToList()
+            };
 
         private static readonly CustomerDirectoryProfileDto Caller = new(
             "phone:%2B971501112222", "Phone", null, ["+971501112222"], [], "Unverified", null, null, null, 0, 0, Now.AddDays(-3), Now.AddDays(-3), 7, [], [], []);
@@ -460,11 +613,13 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
                 return Mode switch
                 {
+                    "nosource" when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, CrmNotMapped()),
+                    "nosource" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),
                     "forbidden" => Problem(HttpStatusCode.Forbidden, "Forbidden"),
                     "disabled" => Problem(HttpStatusCode.ServiceUnavailable, "CollectionsDisabled"),
                     "unavailable" => Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable"),
                     "notfound" => Problem(HttpStatusCode.NotFound, "AccountNotFound"),
-                    _ when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, Summary()),
+                    _ when path.EndsWith("/payment-summary", StringComparison.Ordinal) => Json(HttpStatusCode.OK, SummaryForMode()),
                     _ when path.EndsWith("/outstanding", StringComparison.Ordinal) =>
                         Json(HttpStatusCode.OK, new CollectionsOutstandingResponseDto(9001, Today, Now, Stale ? "Stale" : "Current", "Test source", [Arrears, Settled], null)),
                     _ when query["view"] == "history" => Json(HttpStatusCode.OK, new CollectionsPaymentHistoryResponseDto(9001, query["accountId"]!, "AED", Now, "Current", "history",
