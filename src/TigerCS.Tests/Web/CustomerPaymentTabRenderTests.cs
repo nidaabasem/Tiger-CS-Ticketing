@@ -343,7 +343,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         // Data only: no delay notice, definitions, cache or mapping-verification notes, and no field explanations.
         Assert.Contains("data-currency-configured>Currency <strong>AED</strong>", html, StringComparison.Ordinal);
-        Assert.Contains("data-retrieved-at>Retrieved <strong>", html, StringComparison.Ordinal);
+        Assert.Contains("data-retrieved-at>Last updated <strong>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-source-delay", html, StringComparison.Ordinal);
         Assert.DoesNotContain("Definitions and source details", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-edsm-details", html, StringComparison.Ordinal);
