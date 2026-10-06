@@ -1,3 +1,4 @@
+using System.Globalization;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services.Api;
@@ -21,7 +22,7 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         if (crmCustomerId is not { } customer)
         {
             return CustomerPaymentPanel.IsPactCustomer(customerKey)
-                ? await LoadEdsmSummaryAsync(customerKey, notice, noticeIsError, cancellationToken)
+                ? await LoadEdsmSummaryAsync(customerKey, accountId, notice, noticeIsError, cancellationToken)
                 : new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer };
         }
 
@@ -45,6 +46,23 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         if (state is PaymentPanelState.Forbidden or PaymentPanelState.Disabled or PaymentPanelState.Error)
         {
             return basePanel;
+        }
+
+        if (state == PaymentPanelState.Unavailable)
+        {
+            // No per-account source answered. Ask the EDSM service (the same one PACT
+            // customers use). If it confirms there is no verified mapping for this customer,
+            // say so explicitly instead of implying a temporary outage.
+            var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
+            if (summary is { Outcome: ApiOutcome.Success, Value.MappingStatus: "NotMapped" })
+            {
+                var reminderHistory = await collections.GetRemindersAsync(customer, null, cancellationToken);
+                return new CustomerPaymentPanel
+                {
+                    CustomerKey = customerKey, CrmCustomerId = customer, State = PaymentPanelState.NotMapped,
+                    PaymentSummary = summary.Value, Reminders = reminderHistory.Value, Notice = notice, NoticeIsError = noticeIsError
+                };
+            }
         }
 
         if (state != PaymentPanelState.Loaded)
@@ -100,7 +118,8 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
     }
 
     /// <summary>A PACT customer: EDSM's summary is all there is — never instalments, transactions or reminders.</summary>
-    private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(string customerKey, string? notice, bool noticeIsError, CancellationToken cancellationToken)
+    private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(
+        string customerKey, string? companyId, string? notice, bool noticeIsError, CancellationToken cancellationToken)
     {
         var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
         var state = summary.Outcome switch
@@ -118,6 +137,11 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             CustomerKey = customerKey,
             State = state,
             PaymentSummary = state == PaymentPanelState.EdsmSummary ? summary.Value : null,
+            // The "account" of an EDSM view is a confirmed company (with its tenant); default to the first.
+            SelectedCompanyId = state == PaymentPanelState.EdsmSummary
+                ? summary.Value!.Companies.FirstOrDefault(c => c.CompanyId.ToString(CultureInfo.InvariantCulture) == companyId)?.CompanyId
+                    ?? summary.Value.Companies.FirstOrDefault()?.CompanyId
+                : null,
             Notice = notice,
             NoticeIsError = noticeIsError
         };

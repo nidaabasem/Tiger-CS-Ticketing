@@ -1,0 +1,144 @@
+{
+  "name": "TigerCS - Collections Payment Transactions",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/collections/customers/by-key/$esc.url(${input.customerKey})/payment-transactions?companyId=${input.companyId}&type=$esc.url(${input.type})",
+      "requestType": "GET",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Accept": "application/json",
+        "X-Genesys-Flow-Timeout-Seconds": "$!{input.flowTimeoutSeconds}"
+      },
+      "requestTemplate": "${input.rawRequest}"
+    },
+    "response": {
+      "translationMap": {
+        "companyId": "$.companyId",
+        "companyName": "$.companyName",
+        "businessModel": "$.businessModel",
+        "transactionType": "$.transactionType",
+        "caveat": "$.caveat",
+        "currency": "$.currency",
+        "itemCount": "$.items.length()",
+        "formattedRaw": "$.items[*].formattedRaw",
+        "dateRaw": "$.items[*].dateRaw",
+        "chequeNumbers": "$.items[*].chequeNumber",
+        "paymentTypes": "$.items[*].paymentType"
+      },
+      "translationMapDefaults": {
+        "companyId": "0",
+        "companyName": "\"\"",
+        "businessModel": "\"\"",
+        "transactionType": "\"\"",
+        "caveat": "\"\"",
+        "currency": "\"\"",
+        "itemCount": "0",
+        "formattedRaw": "[]",
+        "dateRaw": "[]",
+        "chequeNumbers": "[]",
+        "paymentTypes": "[]"
+      },
+      "successTemplate": "{\"companyId\": ${companyId}, \"companyName\": ${companyName}, \"businessModel\": ${businessModel}, \"transactionType\": ${transactionType}, \"caveat\": ${caveat}, \"currency\": ${currency}, \"itemCount\": ${itemCount}, \"formattedRaw\": ${formattedRaw}, \"dateRaw\": ${dateRaw}, \"chequeNumbers\": ${chequeNumbers}, \"paymentTypes\": ${paymentTypes}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Collections Payment Transactions",
+        "type": "object",
+        "required": [
+          "customerKey",
+          "companyId",
+          "type"
+        ],
+        "properties": {
+          "customerKey": {
+            "type": "string",
+            "description": "The same ext:Pact:{tenantID} key used for the summary. Unencoded."
+          },
+          "companyId": {
+            "type": "integer",
+            "description": "One of availableCompanyIds from Collections Payment Summary."
+          },
+          "type": {
+            "type": "string",
+            "description": "Paid, Due or Outstanding. All is refused (400)."
+          },
+          "flowTimeoutSeconds": {
+            "type": "string",
+            "description": "This flow's Call Data Action timeout in seconds (e.g. \"30\"). Optional."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Collections Payment Transactions result",
+        "type": "object",
+        "properties": {
+          "companyId": {
+            "type": "integer",
+            "description": "The company asked about."
+          },
+          "companyName": {
+            "type": "string",
+            "description": "Its name."
+          },
+          "businessModel": {
+            "type": "string",
+            "description": "Owned or Rented."
+          },
+          "transactionType": {
+            "type": "string",
+            "description": "Paid, Due or Outstanding."
+          },
+          "caveat": {
+            "type": "string",
+            "description": "Set for rented Paid (refunds appear as payments) and rented Due. Never total the list."
+          },
+          "currency": {
+            "type": "string",
+            "description": "AED, configured in TigerCS."
+          },
+          "itemCount": {
+            "type": "integer",
+            "description": "Rows returned. 0 is a real empty list; an error never reaches this output (503 takes the Failure path)."
+          },
+          "formattedRaw": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EDSM's amount string per row (rented Due/Fees rows end in \" AED\")."
+          },
+          "dateRaw": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EDSM's date per row (dd-MMM-yyyy); empty for opening-balance and contract rows. Same order as formattedRaw."
+          },
+          "chequeNumbers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cheque number per row, or null."
+          },
+          "paymentTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cash, Cheque, Fees, Opening balance or Current contract amount (rented only); null for owned."
+          }
+        }
+      }
+    }
+  }
+}

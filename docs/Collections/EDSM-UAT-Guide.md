@@ -52,6 +52,22 @@ Startup refuses `Fixture` outside Development/Testing.
 4. Choose the .NET culture that formats `#,##0.00` and `dd-MMM-yyyy`
    identically, e.g. `en-US` gives `1,234.50` and `15-Mar-2026`. Ask the EDSM
    host owner to confirm the IIS app-pool culture, and record it.
+
+   With no culture set, the Payment tab shows each amount as *"Not read (EDSM
+   number format not configured)"* followed by **EDSM sent "…"**, the exact
+   string. Match what you see:
+
+   | EDSM sends (amount ≥ 1,000; a date) | Grouping / decimal | Set `EdsmNumberCulture` |
+   |---|---|---|
+   | `1,234.50`, `-500.00`; `15-Mar-2026`, `15-Sep-2026` | `,` / `.` | `en-US` |
+   | `1,234.50`; September as `15-Sept-2026` | `,` / `.` | `en-GB` (its September abbreviation is "Sept") |
+   | `1.234,50`; `15-Mär-2026` | `.` / `,` | the matching European culture (e.g. `de-DE`); check the month names |
+   | `1 234,50` (space group) | space / `,` | e.g. `fr-FR`; confirm the space character with the host owner |
+   | Arabic month names, or a sign other than a leading `-` | — | ask the EDSM host owner for the exact IIS culture name |
+
+   Do not choose from fixture data. Read at least one amount ≥ 1,000, one
+   negative amount if one exists (rented `dueAmount`), and one transaction
+   date from **real** responses.
 5. Set `CollectionsSource__EdsmNumberCulture` and reload. Pass when:
    - no field shows "Not readable";
    - the values match `raw` exactly;
@@ -81,8 +97,8 @@ retrieval time.
 
 | # | Case | Expected on the tab |
 |---|---|---|
-| a | **Owned** (company 4 or 32) | Labels: Paid, Due, **Not yet due**, Late fines, Total; Total = Paid + Due + Not yet due (**late fines excluded**), with no "total does not add up" note; a blank late fine shows **"None above zero"** |
-| b | **Rented** (company 25, 7 or 20) | Labels: Paid, Due, **Post-dated cheques**, Late fines, Total; late fines **"Not computed for rented companies"**; Due may be **negative**; the Payments and Due lists carry the refund and fee caveats |
+| a | **Owned** (company 4 or 32) | Labels: Paid, Due, **Not yet due**, Late fines, Total; Total = Paid + Due + Not yet due (**late fines excluded**), a blank late fine shows **"None"** |
+| b | **Rented** (company 25, 7 or 20) | Labels: Paid, Due, **Post-dated cheques**, Late fines, Total; late fines **"Not computed"**; Due may be **negative**; no caveat text is shown under the Payment details table (the tab shows data only) |
 | c | **Partial payment** (one instalment part-paid) | Owned Due / Not yet due show the **unpaid remainder** (Debit − Credit) of that instalment. Check against PACT. If a fully unpaid instalment is missing from Due, that is the UNVERIFIED "no credit recorded" exclusion (contract §3.4): report it with the instalment |
 | d | **Multi-company** tenant | One block per company, each listing only that company's PACT contracts; figures are not combined across companies |
 | e | **Parking** unit | Listed under its company with "(Parking)"; the figures come from the row's `tenantID`, never the Parking ContractID. Confirm the summary matches EDSM for that tenant/company |

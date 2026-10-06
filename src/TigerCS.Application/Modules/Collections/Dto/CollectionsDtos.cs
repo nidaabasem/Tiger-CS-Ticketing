@@ -275,8 +275,18 @@ public sealed record CollectionsReminderResponseDto(
 /// <c>maxSourceDelayMinutes</c> (EDSM's nested caches). <c>currency</c> is
 /// configured in TigerCS (<c>currencySource: "Configured"</c>): EDSM returns none.
 /// <c>mappingVerifiedAtUtc</c> is when PACT last confirmed the tenant's contracts;
-/// <c>mappingSource</c> is <c>PactLookup</c> (discovered on this request) or
-/// <c>Cached</c> (reused within <c>CollectionsSource:PactMappingTtlMinutes</c>).
+/// <c>mappingSource</c> is <c>PactLookup</c> (discovered on this request),
+/// <c>PactLookupPartial</c> (discovered, but PACT did not answer for every phone
+/// number, so not cached) or <c>Cached</c> (reused within
+/// <c>CollectionsSource:PactMappingTtlMinutes</c>).
+/// </para>
+/// <para>
+/// <c>completeness</c> says whether the response is the whole picture:
+/// <c>Complete</c> (every account and every requested list answered),
+/// <c>Partial</c> (something is missing; <c>incompleteReasons</c> says what) or
+/// <c>NoFigures</c> (no account has figures: NotMapped, or every company failed).
+/// Only a <c>Complete</c> response may be described as the customer's balance.
+/// Missing figures are never zero: a company without figures has no fields.
 /// </para>
 /// </summary>
 public sealed record CollectionsPaymentSummaryResponseDto(
@@ -295,13 +305,27 @@ public sealed record CollectionsPaymentSummaryResponseDto(
     DateTime? MappingVerifiedAtUtc,
     string? MappingSource,
     IReadOnlyList<CollectionsCompanyPaymentSummaryDto> Companies,
-    IReadOnlyList<CollectionsPactContractRefDto> ContractsWithoutCompany);
+    IReadOnlyList<CollectionsPactContractRefDto> ContractsWithoutCompany,
+    string Completeness = CollectionsCompleteness.Complete,
+    IReadOnlyList<string>? IncompleteReasons = null);
+
+/// <summary>Values of <see cref="CollectionsPaymentSummaryResponseDto.Completeness"/>.</summary>
+public static class CollectionsCompleteness
+{
+    public const string Complete = "Complete";
+    public const string Partial = "Partial";
+    public const string NoFigures = "NoFigures";
+
+    /// <summary>A company, list or due-installments read the request's overall deadline cut off.</summary>
+    public const string DeadlineExceeded = "DeadlineExceeded";
+}
 
 /// <summary>
 /// One (companyID, tenantID). <c>businessModel</c> is <c>Owned</c> (4, 32) or
 /// <c>Rented</c> (25, 7, 20) and selects the field definitions. <c>status</c>:
 /// Available, NotSupported, BusinessRuleRejected, ValidationRejected,
-/// Unauthorized, InvalidResponse, Unavailable. <c>totalCheck</c> compares
+/// Unauthorized, InvalidResponse, Unavailable, DeadlineExceeded (the request's
+/// overall deadline passed before this company was read). <c>totalCheck</c> compares
 /// total with paid + due + outstanding (Consistent, Inconsistent, NotChecked).
 /// </summary>
 public sealed record CollectionsCompanyPaymentSummaryDto(
@@ -342,7 +366,12 @@ public sealed record CollectionsEdsmTransactionListDto(
     string? Caveat,
     IReadOnlyList<CollectionsEdsmTransactionDto> Items);
 
-/// <summary>One transaction row: <c>amount</c> is EDSM's raw number rounded to 2 dp; <c>date</c> is null for opening-balance/contract rows.</summary>
+/// <summary>
+/// One transaction row: <c>amount</c> is EDSM's raw number rounded to 2 dp; <c>date</c> is null for opening-balance/contract rows.
+/// <c>paymentTypeId</c> is EDSM's raw <c>paymentTypeId</c> (null when EDSM sent none — always for owned companies);
+/// <c>paymentType</c> is its documented <c>PaymentTypeEnum</c> name: 1 Cash, 2 Cheque, 3 Fees, 4 Opening balance,
+/// 5 Current contract amount; any other id is "Unknown (n)".
+/// </summary>
 public sealed record CollectionsEdsmTransactionDto(
     decimal? Amount,
     string FormattedStatus,
@@ -350,7 +379,8 @@ public sealed record CollectionsEdsmTransactionDto(
     DateOnly? Date,
     string? DateRaw,
     string? ChequeNumber,
-    string? PaymentType);
+    string? PaymentType,
+    int? PaymentTypeId = null);
 
 /// <summary>
 /// Due-installments for this tenant and company only, over [fromDate, toDate].

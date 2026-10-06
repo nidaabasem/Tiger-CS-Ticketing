@@ -50,4 +50,40 @@ public sealed class CollectionsEdsmOptions
 
     /// <summary>The cache, as EDSM's own config sets it per entry (contract §8.1). Shown, not enforced.</summary>
     public int SourceCacheMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// Overall budget, in seconds, for one Genesys payment read (<c>api/genesys/collections</c>):
+    /// PACT discovery and every EDSM call together. It must end before TigerGroupWeb's own
+    /// timeout, which must end before the Genesys flow's (docs/Collections/Genesys-Collections-API.md §1.2).
+    /// Clamped to 1–<see cref="MaxReadDeadlineSeconds"/>.
+    /// </summary>
+    public int GenesysReadDeadlineSeconds { get; set; } = 22;
+
+    /// <summary>The same budget for the Payment tab (<c>api/collections</c>), which also loads transactions by default.</summary>
+    public int WebReadDeadlineSeconds { get; set; } = 60;
+
+    public const int MaxReadDeadlineSeconds = 300;
+
+    /// <summary>A caller may ask for a shorter budget with this header (whole seconds); never a longer one.</summary>
+    public const string DeadlineHeader = "X-Collections-Deadline-Seconds";
+
+    /// <summary>
+    /// The budget for one read: the surface's configured value, shortened (never lengthened)
+    /// by a positive <paramref name="requestedSeconds"/>.
+    /// </summary>
+    public TimeSpan ReadDeadline(CollectionsReadSurface surface, int? requestedSeconds = null)
+    {
+        var configured = Math.Clamp(
+            surface == CollectionsReadSurface.Genesys ? GenesysReadDeadlineSeconds : WebReadDeadlineSeconds,
+            1, MaxReadDeadlineSeconds);
+        var seconds = requestedSeconds is > 0 ? Math.Min(configured, requestedSeconds.Value) : configured;
+        return TimeSpan.FromSeconds(seconds);
+    }
+}
+
+/// <summary>Which route prefix a Collections read came through; selects its default deadline.</summary>
+public enum CollectionsReadSurface
+{
+    Web,
+    Genesys
 }

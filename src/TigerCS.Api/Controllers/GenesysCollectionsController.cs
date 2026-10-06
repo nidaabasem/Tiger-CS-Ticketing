@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TigerCS.Api.OpenApi;
+using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
@@ -24,7 +25,10 @@ public sealed class GenesysCollectionsController(
     CollectionsAccountQueryAppService queries,
     CollectionsPaymentSummaryAppService paymentSummaries,
     CollectionsReminderAppService reminders,
-    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes);
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes)
+{
+    protected override CollectionsReadSurface Surface => CollectionsReadSurface.Genesys;
+}
 
 /// <summary>
 /// Collections for TigerCS Web's Payment tab: <c>/api/collections</c> — the
@@ -37,7 +41,10 @@ public sealed class CollectionsController(
     CollectionsAccountQueryAppService queries,
     CollectionsPaymentSummaryAppService paymentSummaries,
     CollectionsReminderAppService reminders,
-    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes);
+    CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes)
+{
+    protected override CollectionsReadSurface Surface => CollectionsReadSurface.Web;
+}
 
 /// <summary>
 /// The six Collections routes (TigerCS_Collections_API_Specification.md).
@@ -87,7 +94,7 @@ public abstract class CollectionsControllerBase(
         string customerKey, [FromQuery] bool? includeTransactions, CancellationToken cancellationToken)
     {
         if (Caller() is not { } caller) return Unauthorized();
-        return ToResponse(await paymentSummaries.GetAsync(caller, customerKey, includeTransactions ?? true, cancellationToken));
+        return ToResponse(await paymentSummaries.GetAsync(caller, customerKey, includeTransactions ?? true, ReadDeadline(), cancellationToken));
     }
 
     /// <summary>
@@ -116,7 +123,7 @@ public abstract class CollectionsControllerBase(
         string customerKey, [FromQuery] int? companyId, [FromQuery] string? type, CancellationToken cancellationToken)
     {
         if (Caller() is not { } caller) return Unauthorized();
-        return ToResponse(await paymentSummaries.GetTransactionsAsync(caller, customerKey, companyId, type, cancellationToken));
+        return ToResponse(await paymentSummaries.GetTransactionsAsync(caller, customerKey, companyId, type, ReadDeadline(), cancellationToken));
     }
 
     /// <summary>Outstanding amounts for one or all of a customer's accounts.</summary>
@@ -376,6 +383,23 @@ public abstract class CollectionsControllerBase(
 
     private static bool TryCustomer(string value, out long id) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
+
+    /// <summary>Which prefix this controller serves; selects the read deadline's default.</summary>
+    protected abstract CollectionsReadSurface Surface { get; }
+
+    /// <summary>
+    /// The read's overall deadline: this surface's configured value, shortened (never lengthened)
+    /// by <see cref="CollectionsEdsmOptions.DeadlineHeader"/> — TigerGroupWeb sends what it has
+    /// left of the Genesys data action's time.
+    /// </summary>
+    private TimeSpan ReadDeadline()
+    {
+        int? requested = Request.Headers.TryGetValue(CollectionsEdsmOptions.DeadlineHeader, out var values)
+            && int.TryParse(values.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+            ? seconds
+            : null;
+        return HttpContext.RequestServices.GetRequiredService<CollectionsEdsmOptions>().ReadDeadline(Surface, requested);
+    }
 
     private CollectionsCaller? Caller()
     {

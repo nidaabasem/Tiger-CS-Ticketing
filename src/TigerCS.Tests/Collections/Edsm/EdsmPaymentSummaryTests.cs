@@ -420,7 +420,11 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
         Assert.Null(fines.Value);
         Assert.NotNull(rented.Transactions.Single(t => t.TransactionType == "Paid").Caveat);
         Assert.NotNull(rented.Transactions.Single(t => t.TransactionType == "Due").Caveat);
-        Assert.Equal(1000m, rented.Transactions.Single(t => t.TransactionType == "Due").Items.Single().Amount);
+        var fee = rented.Transactions.Single(t => t.TransactionType == "Due").Items.Single();
+        Assert.Equal(1000m, fee.Amount);
+        Assert.Equal(3, fee.PaymentTypeId);
+        Assert.Equal("Fees", fee.PaymentType);
+        Assert.All(owned.Transactions.SelectMany(t => t.Items), i => { Assert.Null(i.PaymentTypeId); Assert.Null(i.PaymentType); });
     }
 
     [Fact]
@@ -753,4 +757,18 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
             return inner.GetDueInstallmentsAsync(companyId, fromDate, toDate, cancellationToken);
         }
     }
+}
+
+public sealed class EdsmPaymentTypeMappingTests
+{
+    [Theory]
+    [InlineData(1, "Cash")]
+    [InlineData(2, "Cheque")]
+    [InlineData(3, "Fees")]
+    [InlineData(4, "Opening balance")]
+    [InlineData(5, "Current contract amount")]
+    [InlineData(9, "Unknown (9)")]
+    [InlineData(null, null)]
+    public void PaymentTypeId_MapsToTheDocumentedPaymentTypeEnumName(int? id, string? expected) =>
+        Assert.Equal(expected, CollectionsPaymentSummaryAppService.PaymentTypeName(id));
 }

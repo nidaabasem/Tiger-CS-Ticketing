@@ -13,18 +13,25 @@
 >   fixture data. The `source` field in every financial response says
 >   `"Fixture"`.
 > - **Validation:** **no endpoint has been validated against a real EDSM or UAT.**
-> - **Public URL:** **pending.** TigerGroupWeb (the proxy Genesys calls)
->   is not available to this work, so whether it forwards these routes is unverified (§9).
+> - **Public URL:** TigerGroupWeb (the proxy Genesys calls) now forwards the two
+>   `by-key` routes (§9). It is **implemented and tested, not deployed**, so the
+>   public URLs have not been called yet.
+> - **For Genesys:** call the summary with `includeTransactions=false`, and read
+>   amounts and dates with a separate `payment-transactions` call (§3, §4).
+>   An agent may quote a figure as the customer's balance only when
+>   `completeness` is `Complete` (§3), after verifying the caller on this
+>   interaction. Self-service (IVR/bot) disclosure is **pending** an approved
+>   identity-verification policy (§2).
 
 | Endpoint | Implemented in TigerCS | Publicly reachable via TigerGroupWeb | Real EDSM / UAT validated |
 |---|---|---|---|
-| `GET /api/genesys/collections/customers/by-key/{customerKey}/payment-summary` | ✅ (EDSM, PACT customers) | ⏳ pending (§9) | ❌ |
-| `GET /api/genesys/collections/customers/by-key/{customerKey}/payment-transactions` | ✅ (EDSM types 1–3) | ⏳ pending | ❌ |
-| `GET /api/genesys/collections/reminders/candidates` | ✅ (CRM per-account source only) | ⏳ pending | ❌ — no real source: answers `503` |
-| `POST /api/genesys/collections/reminders` | ✅ | ⏳ pending | ❌ — sending disabled |
-| `POST /api/genesys/collections/reminders/{reminderId}/outcomes` | ✅ (ticket handling) | ⏳ pending | ❌ |
-| `GET /api/genesys/collections/customers/{crmCustomerId}/reminders` | ✅ | ⏳ pending | ❌ |
-| `GET /api/genesys/collections/customers/{crmCustomerId}/outstanding` / `payments` | ✅ (CRM per-account source) | ⏳ pending | ❌ — **no financial source**: answers `503 FinanceUnavailable` |
+| `GET /api/genesys/collections/customers/by-key/{customerKey}/payment-summary` | ✅ (EDSM, PACT customers) | 🔧 forwarding implemented and tested, not deployed (§9) | ❌ |
+| `GET /api/genesys/collections/customers/by-key/{customerKey}/payment-transactions` | ✅ (EDSM types 1–3) | 🔧 forwarding implemented and tested, not deployed (§9) | ❌ |
+| `GET /api/genesys/collections/reminders/candidates` | ✅ (CRM per-account source only) | ❌ not forwarded | ❌ — no real source: answers `503` |
+| `POST /api/genesys/collections/reminders` | ✅ | ❌ not forwarded | ❌ — sending disabled |
+| `POST /api/genesys/collections/reminders/{reminderId}/outcomes` | ✅ (ticket handling) | ❌ not forwarded | ❌ |
+| `GET /api/genesys/collections/customers/{crmCustomerId}/reminders` | ✅ | ❌ not forwarded | ❌ |
+| `GET /api/genesys/collections/customers/{crmCustomerId}/outstanding` / `payments` | ✅ (CRM per-account source) | ❌ not forwarded | ❌ — **no financial source**: answers `503 FinanceUnavailable` |
 
 The two `by-key` routes are the ones that return **real EDSM data** (once
 `EdsmProvider` is `Pact`). They use the same service as the TigerCS Payment tab
@@ -94,6 +101,53 @@ bearer token directly to `/api/genesys/collections/…`.
 | Role without financial-read (e.g. Reporting User), not listed | ❌ 403 `Forbidden` | ❌ 403 |
 | No or invalid bearer token | ❌ 401 | ❌ 401 |
 
+### 1.2 Time budget: Genesys flow → TigerGroupWeb → TigerCS
+
+Each hop must give up **before** the hop that called it, so the caller always
+gets a definite answer instead of its own timeout. Genesys Cloud documents a
+data-action execution timeout of 1–60 s (default 60) and recommends a flow
+timeout of at most 30 s, with the data action set one second longer than the
+flow.
+
+| Hop | Setting | Default | Rule |
+|---|---|---|---|
+| Architect **Call Data Action** | flow timeout *F* | Genesys default 60 s; **use ≤ 30 s** | Genesys guidance |
+| Genesys data action | Execution Timeout (data action settings) | 60 s | *F* + 1 |
+| Genesys data action | request header `X-Genesys-Flow-Timeout-Seconds` | not sent | set to *F* (§9) |
+| TigerGroupWeb | `Ticketing:CollectionsTimeoutSeconds` | 27 s | budget = min(27, *F* − 2); answers `504` when spent |
+| TigerGroupWeb → TigerCS | request header `X-Collections-Deadline-Seconds` | sent on every call | budget left after the TigerCS login, to the nearest second, minus 3 |
+| TigerCS | `CollectionsSource:GenesysReadDeadlineSeconds` | 22 s | deadline = min(22, header): the header can shorten it, never lengthen it |
+
+Worked through, with a negligible TigerCS login (a slow login lowers the last
+two columns by the time it took):
+
+| Flow *F* | Data action | TigerGroupWeb budget | Header to TigerCS | TigerCS deadline |
+|---|---|---|---|---|
+| 30 s (or no header) | 31 s | 27 s | 24 | **22 s** (its own cap) |
+| 20 s | 21 s | 18 s | 15 | 15 s |
+| 19 s | 20 s | 17 s | 14 | 14 s |
+
+For a 30 s flow, TigerCS stops at 22 s, TigerGroupWeb at 27 s, and Genesys at
+30 s. A flow longer than 30 s gains nothing: TigerGroupWeb and TigerCS keep
+their caps. Pinned by `TigerCs_IsToldWhatIsLeftOfTheBudget` and
+`CollectionsBudget_…` (TigerGroupWeb) and
+`ReadDeadline_IsTheSurfaceDefault_…` (TigerCS), and measured through both
+running applications (§9.1).
+
+**What TigerCS does when its deadline passes.** The budget covers PACT
+discovery and every EDSM call together; a client disconnect cancels the same
+calls.
+- Accounts not yet confirmed with PACT: `503 FinanceUnavailable`. Nothing is
+  cached, so the next call starts again.
+- Accounts confirmed, some companies not yet read: `200` with those companies
+  at `status: "DeadlineExceeded"`, no `fields` (never zeros), and
+  `completeness: "Partial"`.
+- `payment-transactions` not answered: `503 FinanceUnavailable`.
+
+The Payment tab (`/api/collections`) has its own budget,
+`CollectionsSource:WebReadDeadlineSeconds` (default 60 s), because it also
+loads every transaction list.
+
 ## 2. Customer identifier
 
 | Key | Format | Financial data? |
@@ -109,9 +163,48 @@ is non-empty, the key is `ext:Pact:{screenPop.externalCustomerId}`.
 If several PACT customers matched (`screenPop.matchedCustomerCount > 1`),
 do not pick one automatically.
 
-**Precondition.** TigerCS must already know the customer, meaning at least one
-TigerCS ticket was verified through PACT for that tenant. Otherwise the answer
-is `404 AccountNotFound`.
+**Precondition: a PACT customer mapping, established by an agent.** TigerCS
+must already know the customer as a PACT tenant: at least one TigerCS ticket
+was created with that PACT customer **selected by an agent**. Without it, the
+answer is `404 AccountNotFound`.
+
+A phone match does not establish the mapping, and Genesys cannot create it:
+
+| Step | What it gives | Payment data returned? |
+|---|---|---|
+| `GET /api/genesys/customers/lookup` matches PACT | a candidate key `ext:Pact:{externalCustomerId}` | ❌ `404 AccountNotFound` |
+| `POST /api/genesys/tickets` | an **unverified** inquiry: Genesys never selects a customer match | ❌ still `404` |
+| Agent, in TigerCS: New Ticket → customer lookup (department-scoped) → **selects** the PACT customer → creates the ticket | a ticket with `CustomerVerificationSource = Pact` and the tenant id: the customer **mapping** | ✅ `200` |
+
+**A mapping is not caller verification.** The PACT-verified ticket proves that
+an agent once matched this TigerCS customer to a PACT tenant. It says nothing
+about who is on the **current** interaction. Caller ID can be shared,
+forwarded or spoofed, and a family member may call from the customer's number.
+TigerCS answers once the mapping exists, but whether the figures may be
+**disclosed** to the person on this call is decided by the caller's identity
+verification on that call, not by the API.
+
+**Approved use today:**
+1. The IVR looks up the number and creates or reuses the ticket as usual. It
+   does **not** request payment data.
+2. The call goes to an agent. The agent verifies the caller's identity on this
+   interaction under the existing agent procedure.
+3. If no mapping exists yet, the agent selects the PACT customer while creating
+   the ticket, which establishes it.
+4. Only then does the agent (in TigerCS, or through an agent-script data
+   action) read the summary, and the agent decides what to disclose.
+
+**Self-service disclosure is pending.** No IVR, bot or other self-service path
+may read figures to a caller until an identity-verification policy for that
+channel is approved. That holds even when a mapping exists and the API returns
+`200`. Until then the Collections data actions (§9) belong only in
+agent-facing contexts.
+
+The server enforces the mapping, financial-read permission and customer
+visibility on every call, whatever key Genesys sends. Pinned by
+`GenesysCollectionsFlowApiTests.UnverifiedCustomer_HasNoPaymentData_UntilAnAgentVerifiesThemThroughPact`.
+It does **not** and cannot enforce caller verification. That is the policy
+above.
 
 **How TigerCS confirms the account (never by EDSM alone):**
 - EDSM answers an unknown tenant with `200` and zeros, so TigerCS asks EDSM
@@ -119,6 +212,10 @@ is `404 AccountNotFound`.
   return for this tenant, under the customer's phone numbers.
 - That mapping is reused for up to 30 minutes (`mappingSource: "Cached"`),
   and `mappingVerifiedAtUtc` says when PACT last confirmed it.
+- If PACT does not answer for some of the customer's numbers, what it did
+  return is used for this call only (`mappingSource: "PactLookupPartial"`,
+  `completeness: "Partial"`) and is **never cached**. If nothing with a
+  company came back, the answer is `503 FinanceUnavailable`, never `NotMapped`.
 - Parking units: the tenant always comes from the PACT row's `tenantID`,
   never the Parking ContractID.
 
@@ -131,7 +228,7 @@ Authorization: Bearer {access_token}
 
 | Query | Default | Meaning |
 |---|---|---|
-| `includeTransactions` | `true` | Also return each company's read-only transaction lists (types 1–3). Use `false` for a light, IVR-friendly call and fetch history with §4 |
+| `includeTransactions` | `true` | Also return each company's read-only transaction lists (types 1–3), which costs three more EDSM calls per company. **Genesys: always send `false`**, and fetch amounts and dates with §4 for the one company and list the caller asked about. The Payment tab keeps the default `true` |
 
 **Response, top level:**
 
@@ -145,7 +242,9 @@ Authorization: Bearer {access_token}
 | `currency`, `currencySource` | `AED` / `Configured`. EDSM returns **no** currency, so TigerCS labels the configured one |
 | `numberCulture` | The configured EDSM number culture; `null` means amounts are not parsed (`status: "FormatNotConfigured"`) |
 | `sourceCacheMinutes`, `maxSourceDelayMinutes` | EDSM caches each layer about 10 minutes, so **a payment can take up to about 20 minutes to appear** |
-| `mappingVerifiedAtUtc`, `mappingSource` | When PACT last confirmed the accounts; `PactLookup` or `Cached` |
+| `mappingVerifiedAtUtc`, `mappingSource` | When PACT last confirmed the accounts; `PactLookup`, `PactLookupPartial` (not cached) or `Cached` |
+| `completeness` | `Complete`: every account and every requested list was read. `Partial`: something is missing. `NoFigures`: no account has figures (`NotMapped`, or every company failed). **Only `Complete` may be described as the customer's balance** |
+| `incompleteReasons[]` | One plain sentence per missing piece (a company not read and why, a list not read, PACT numbers not answered, contracts without a company). Empty when `Complete` |
 
 **Each company:**
 
@@ -153,7 +252,7 @@ Authorization: Bearer {access_token}
 |---|---|
 | `companyId`, `companyName` | The company |
 | `businessModel` | `Owned` or `Rented` |
-| `status` | `Available`, `NotSupported`, `BusinessRuleRejected`, `ValidationRejected`, `Unauthorized`, `InvalidResponse` or `Unavailable` |
+| `status` | `Available`, `NotSupported`, `BusinessRuleRejected`, `ValidationRejected`, `Unauthorized`, `InvalidResponse`, `Unavailable` (includes EDSM's own 30 s per-call timeout) or `DeadlineExceeded` (the request's overall deadline passed first, §1.2). Anything but `Available` has no `fields` |
 | `contracts[]` | The PACT contracts that confirmed the company; `unitType` shows Parking |
 | `fields[]` | `key`, `label`, `definition`, `status` (`Provided`, `Missing`, `Empty`, `Unreadable`, `FormatNotConfigured`), `value` (null unless Provided, **never a substituted 0**), `raw` (EDSM's exact string) and `meaning` |
 | `totalCheck` | `Consistent`, `Inconsistent` or `NotChecked` |
@@ -189,14 +288,14 @@ Authorization: Bearer {access_token}
   "mappingDetail": null,
   "pactTenantId": "3001",
   "source": "Fixture",
-  "retrievedAtUtc": "2026-10-05T16:52:38.3164055Z",
+  "retrievedAtUtc": "2026-10-05T19:29:22.5862091Z",
   "sourceAsOfUtc": null,
   "currency": "AED",
   "currencySource": "Configured",
   "numberCulture": "en-US",
   "sourceCacheMinutes": 10,
   "maxSourceDelayMinutes": 20,
-  "mappingVerifiedAtUtc": "2026-10-05T16:52:38.3147927Z",
+  "mappingVerifiedAtUtc": "2026-10-05T19:29:22.5852036Z",
   "mappingSource": "PactLookup",
   "companies": [
     {
@@ -348,7 +447,9 @@ Authorization: Bearer {access_token}
       }
     }
   ],
-  "contractsWithoutCompany": []
+  "contractsWithoutCompany": [],
+  "completeness": "Complete",
+  "incompleteReasons": []
 }
 ```
 
@@ -477,7 +578,99 @@ Authorization: Bearer {access_token}
       "dueInstallments": null
     }
   ],
-  "contractsWithoutCompany": []
+  "contractsWithoutCompany": [],
+  "completeness": "Partial",
+  "incompleteReasons": [
+    "Company 25 (Hirmas Dubai): no figures (Unauthorized)."
+  ]
+}
+```
+
+### 3.4 Example: the deadline passes before one company answers (Fixture, EDSM held for company 25)
+
+Company 4 keeps its figures. Company 25 has none, `completeness` is
+`Partial`, and nothing may be described as the customer's balance. Here the
+caller shortened the deadline to 1 s with `X-Collections-Deadline-Seconds`
+(TigerGroupWeb always sends it, §9). Company 4's fields are elided:
+
+```http
+GET /api/genesys/collections/customers/by-key/ext%3APact%3A3001/payment-summary?includeTransactions=false
+Authorization: Bearer {access_token}
+X-Collections-Deadline-Seconds: 1
+
+--> 200
+{
+  "customerKey": "ext:Pact:3001",
+  "mappingStatus": "Mapped",
+  "mappingDetail": null,
+  "pactTenantId": "3001",
+  "source": "Fixture",
+  "retrievedAtUtc": "2026-10-05T19:29:22.6292846Z",
+  "sourceAsOfUtc": null,
+  "currency": "AED",
+  "currencySource": "Configured",
+  "numberCulture": "en-US",
+  "sourceCacheMinutes": 10,
+  "maxSourceDelayMinutes": 20,
+  "mappingVerifiedAtUtc": "2026-10-05T19:29:22.5852036Z",
+  "mappingSource": "Cached",
+  "companies": [
+    {
+      "companyId": 4,
+      "companyName": "Tiger Group Dubai",
+      "businessModel": "Owned",
+      "status": "Available",
+      "statusDetail": null,
+      "contracts": [
+        {
+          "contractNumber": "88001",
+          "externalUnitId": "41230",
+          "unitNumber": "0304",
+          "projectName": "Tiger Marina Residences",
+          "unitType": "Residential"
+        }
+      ],
+      "fields": [ … five Provided fields, as in §3.2 … ],
+      "totalCheck": "Consistent",
+      "allZero": false,
+      "notes": [],
+      "transactions": [],
+      "dueInstallments": {
+        "status": "Disabled",
+        "statusDetail": "Due-installments is off (CollectionsSource:DueInstallmentsEnabled).",
+        "fromDate": "2026-09-04",
+        "toDate": "2026-11-05",
+        "items": []
+      }
+    },
+    {
+      "companyId": 25,
+      "companyName": "Hirmas Dubai",
+      "businessModel": "Rented",
+      "status": "DeadlineExceeded",
+      "statusDetail": "Not read: the request's 1 s deadline passed before EDSM answered for this company.",
+      "contracts": [
+        {
+          "contractNumber": "99002",
+          "externalUnitId": "51200",
+          "unitNumber": "1101",
+          "projectName": "Hirmas Residence",
+          "unitType": "Residential"
+        }
+      ],
+      "fields": [],
+      "totalCheck": "NotChecked",
+      "allZero": false,
+      "notes": [],
+      "transactions": [],
+      "dueInstallments": null
+    }
+  ],
+  "contractsWithoutCompany": [],
+  "completeness": "Partial",
+  "incompleteReasons": [
+    "Company 25 (Hirmas Dubai): not read; the request's 1 s deadline passed first."
+  ]
 }
 ```
 
@@ -493,6 +686,21 @@ Authorization: Bearer {access_token}
 | `companyId` | yes | one of the `companies[].companyId` from the summary |
 | `type` | yes | `Paid` / `1`, `Due` / `2`, `Outstanding` / `3` (case-insensitive) |
 
+**For "how much and when" answers** (last payment, next cheque), Genesys makes
+this call after the light summary (§3, `includeTransactions=false`):
+1. Pick the company from the summary: one with `status: "Available"`. With
+   more than one, ask the caller which property, or hand over to an agent;
+   never merge companies.
+2. Pick the list: `Paid` for payments received, `Due` for what is due now,
+   `Outstanding` for not yet due (owned) or post-dated cheques (rented).
+3. Read `formattedRaw` and `dateRaw` from the row the caller asked about. A
+   `503` here means no rows were read: say the figures are unavailable, never
+   "nothing is due".
+
+One list for one company is one EDSM call, so it fits a short flow budget.
+The Payment tab reads all three lists for every company through the summary
+instead; that is unchanged.
+
 - **Type All is blocked.** `type=All` or `4` is **refused with 400**, before
   any PACT or EDSM call. For rented companies, EDSM writes to its databases on
   that path.
@@ -506,7 +714,8 @@ Authorization: Bearer {access_token}
   - `date` is parsed from `dateRaw` (`dd-MMM-yyyy`), and is null for
     opening-balance and contract rows;
   - `paymentType` is `Cash`, `Cheque`, `Fees`, `Opening balance` or
-    `Contract amount`, and is always null for owned companies.
+    `Current contract amount` (EDSM `PaymentTypeEnum`), and is always null for owned companies;
+  - `paymentTypeId` is EDSM's raw id (1–5), or null when EDSM sent none.
 
 ### 4.1 Owned: Paid / Due / Outstanding (Fixture)
 
@@ -540,7 +749,8 @@ Authorization: Bearer {access_token}
       "date": "2026-01-15",
       "dateRaw": "15-Jan-2026",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     },
     {
       "amount": 312500,
@@ -549,7 +759,8 @@ Authorization: Bearer {access_token}
       "date": "2026-06-15",
       "dateRaw": "15-Jun-2026",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     }
   ]
 }
@@ -585,7 +796,8 @@ Authorization: Bearer {access_token}
       "date": "2026-09-15",
       "dateRaw": "15-Sep-2026",
       "chequeNumber": "000412",
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     }
   ]
 }
@@ -621,7 +833,8 @@ Authorization: Bearer {access_token}
       "date": "2026-12-15",
       "dateRaw": "15-Dec-2026",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     },
     {
       "amount": 187500,
@@ -630,7 +843,8 @@ Authorization: Bearer {access_token}
       "date": "2027-03-15",
       "dateRaw": "15-Mar-2027",
       "chequeNumber": null,
-      "paymentType": null
+      "paymentType": null,
+      "paymentTypeId": null
     }
   ]
 }
@@ -668,7 +882,8 @@ Authorization: Bearer {access_token}
       "date": "2026-02-01",
       "dateRaw": "01-Feb-2026",
       "chequeNumber": "100201",
-      "paymentType": "Cheque"
+      "paymentType": "Cheque",
+      "paymentTypeId": 2
     }
   ]
 }
@@ -704,7 +919,8 @@ Authorization: Bearer {access_token}
       "date": "2026-03-01",
       "dateRaw": "01-Mar-2026",
       "chequeNumber": null,
-      "paymentType": "Fees"
+      "paymentType": "Fees",
+      "paymentTypeId": 3
     }
   ]
 }
@@ -740,7 +956,8 @@ Authorization: Bearer {access_token}
       "date": "2026-12-01",
       "dateRaw": "01-Dec-2026",
       "chequeNumber": "100205",
-      "paymentType": "Cheque"
+      "paymentType": "Cheque",
+      "paymentTypeId": 2
     }
   ]
 }
@@ -757,12 +974,17 @@ extensions (`traceId` is omitted below).
 | No financial-read permission | 403 | `Forbidden` |
 | Malformed `customerKey` | 400 | `InvalidRequest` |
 | `type` missing, unknown, or `All`/`4`; `companyId` missing | 400 | `InvalidRequest` |
-| Customer unknown to TigerCS or not visible | 404 | `AccountNotFound` |
+| Customer unknown to TigerCS or not visible, **including a PACT phone match never verified by an agent** (§2) | 404 | `AccountNotFound` |
 | `companyId` not among the customer's PACT contracts | 404 | `AccountNotFound` |
+| `companyId` not found, but PACT did not answer for every phone number | 503 | `FinanceUnavailable` (it may be on an unanswered number) |
 | **Unmapped** customer (CRM, phone-only, no PACT contracts): summary | **200** | `mappingStatus: "NotMapped"` with `mappingDetail`, and no figures |
 | **Unmapped** customer: transactions | **422** | `CustomerNotMapped` |
-| PACT unreachable (the account cannot be confirmed) | 503 | `FinanceUnavailable` |
-| **EDSM error** (invalid source response, key rejected, 500, unreachable): summary | 200 | the company's `status` (e.g. `Unauthorized`, `InvalidResponse`, `Unavailable`) with `statusDetail`, and no figures for that company |
+| PACT unreachable, or answered only partly with no company found (the account cannot be confirmed) | 503 | `FinanceUnavailable` |
+| **Deadline** passed before PACT confirmed the accounts (§1.2) | 503 | `FinanceUnavailable` (detail names the deadline) |
+| **Deadline** passed before some companies were read: summary | 200 | those companies at `status: "DeadlineExceeded"`, no figures; `completeness: "Partial"` |
+| **Deadline** passed before EDSM answered: transactions | 503 | `FinanceUnavailable` |
+| Client disconnected | (none) | every PACT/EDSM call in flight is cancelled |
+| **EDSM error** (invalid source response, key rejected, 500, unreachable, its own 30 s timeout): summary | 200 | the company's `status` (e.g. `Unauthorized`, `InvalidResponse`, `Unavailable`) with `statusDetail`, no figures for that company, and `completeness: "Partial"` (or `NoFigures` if no company answered) |
 | **EDSM error**: transactions | 503 | `FinanceUnavailable` (detail names the EDSM outcome) |
 | Collections switched off | 503 | `CollectionsDisabled` |
 
@@ -858,7 +1080,9 @@ Authorization: Bearer {access_token}
   "mappingVerifiedAtUtc": null,
   "mappingSource": null,
   "companies": [],
-  "contractsWithoutCompany": []
+  "contractsWithoutCompany": [],
+  "completeness": "NoFigures",
+  "incompleteReasons": []
 }
 ```
 
@@ -1353,8 +1577,26 @@ Each request carries `Authorization: Bearer {TigerCS JWT}`:
 | `Genesys_UnmappedCrmCustomer_GetsNoFinancialData` | `crm:9001` gets a summary of `NotMapped`, history 422 `CustomerNotMapped`, and no PACT call |
 | `Genesys_WithoutAToken_Is401_AndWithoutFinancialRead_Is403`, `Genesys_AnInvalidBearerToken_Is401_OnBothRoutes`, `Genesys_AnUnlistedAccountWithoutFinancialRead_Is403_WithTheCode` | 401 and 403 |
 
-These tests prove TigerCS's routes and contracts. They do **not** prove
-TigerGroupWeb's forwarding, or anything about a real EDSM or UAT data.
+**Deadline, completeness and the inbound flow**:
+- `CollectionsReadDeadlineTests.cs` runs the service against fakes that wait
+  on the token.
+- `GenesysCollectionsFlowApiTests.cs` runs the real host.
+
+| Test | Asserts |
+|---|---|
+| `UnverifiedCustomer_HasNoPaymentData_UntilAnAgentVerifiesThemThroughPact` | Real directory and ticket creation: a PACT phone match and a Genesys-created ticket both leave the summary at 404. After the agent selects the PACT customer, the light summary is 200 `Complete`, and the transactions call for the chosen company and type returns 200 |
+| `SlowPactDiscovery_PastTheDeadline_Is503_AndCachesNothing` | Slow discovery returns 503, PACT sees the cancellation, and the next call rediscovers |
+| `MultipleCompanies_OneSlow_KeepsTheOthersFigures_AndMarksTheResponsePartial` | Company 4 keeps its figures. Company 25 is `DeadlineExceeded` with no fields, and the response is `Partial` |
+| `EdsmPerCallTimeout_…`, `EveryCompanyFailing_IsNoFigures_NeverComplete` | EDSM's own timeout gives `Unavailable` with no fields and a `Partial` response, or `NoFigures` when no company answered |
+| `PactPerCallTimeout_OnOneOfTwoNumbers_IsPartial_AndNotCached`, `…_WithNoContractsFound_Is503_NeverNotMapped` | A partial discovery is never cached and never reported as `NotMapped` |
+| `GenesysLightSummary_MakesNoTransactionCalls_AndIsComplete`, `PaymentTabSummary_StillLoadsAllThreeListsPerCompany` | `includeTransactions=false` makes no list calls. The Payment tab still loads all three lists |
+| `CallerCancellation_…` (service), `AClientDisconnect_CancelsTheEdsmCall` (host) | A disconnect propagates down to the EDSM and PACT calls |
+| `GenesysPrefix_UsesItsConfiguredDeadline_…`, `TheCallersHeader_ShortensTheDeadline`, `…_CannotLengthenTheDeadline` | The per-prefix default applies, and the header can only shorten it |
+| `Transactions_*` | 503 when the deadline passes; 503, not 404, for a company missing from a partial discovery; rows for each of `Paid`, `Due` and `Outstanding` |
+
+These tests prove TigerCS's routes, contracts and time limits against the
+Fixture provider. They do **not** prove anything about real EDSM or UAT data or
+timings. TigerGroupWeb's forwarding is tested in that repository (§9).
 
 ## 8. TigerCS configuration (financial reads only)
 
@@ -1366,6 +1608,8 @@ TigerGroupWeb's forwarding, or anything about a real EDSM or UAT data.
 | `CollectionsSource:Currency` | `AED` |
 | `Pact:Provider` | `Http` |
 | `PactApi:BaseUrl`, `PactApi:ApiKey` | the PACT/EDSM base URL; the key from the secret store |
+| `CollectionsSource:GenesysReadDeadlineSeconds` | `22` (overall budget for `/api/genesys/collections` reads; §1.2) |
+| `CollectionsSource:WebReadDeadlineSeconds` | `60` (the Payment tab's budget) |
 
 **Keep these off:**
 - `Collections:Channels:*` = `false`
@@ -1374,34 +1618,88 @@ TigerGroupWeb's forwarding, or anything about a real EDSM or UAT data.
 
 The UAT steps are in [`EDSM-UAT-Guide.md`](EDSM-UAT-Guide.md).
 
-## 9. TigerGroupWeb forwarding (pending)
+## 9. TigerGroupWeb forwarding
 
-TigerGroupWeb's source is not available to this work, so whether it forwards
-these routes is **unverified**, and public URLs are **pending**.
+TigerGroupWeb forwards the two `by-key` reads. This is **implemented and
+tested, not deployed**, in TigerGroupWeb's `GenesysController` and
+`TicketingGenesysService`.
 
-It must forward, as it does the other `api/genesys` routes:
+**Public URLs** (Genesys data actions):
+```
+GET https://tigergroup.ae/api/genesys/collections/customers/by-key/{customerKey}/payment-summary?includeTransactions=false
+GET https://tigergroup.ae/api/genesys/collections/customers/by-key/{customerKey}/payment-transactions?companyId={companyId}&type={Paid|Due|Outstanding}
+Authorization: Bearer {token from POST https://tigergroup.ae/api/genesys/oauth/token, scope=ticketing.genesys}
+X-Genesys-Flow-Timeout-Seconds: {the flow's Call Data Action timeout, e.g. 30}   (recommended)
+```
 
-| Method | Path (forward unchanged to TigerCS) |
-|---|---|
-| GET | `/api/genesys/collections/customers/by-key/{customerKey}/payment-summary` |
-| GET | `/api/genesys/collections/customers/by-key/{customerKey}/payment-transactions` |
-| GET | `/api/genesys/collections/reminders/candidates` |
-| POST | `/api/genesys/collections/reminders` |
-| POST | `/api/genesys/collections/reminders/{reminderId}/outcomes` |
-| GET | `/api/genesys/collections/customers/{crmCustomerId}/reminders` |
-| GET | `/api/genesys/collections/customers/{crmCustomerId}/outstanding`, `/payments` (existing clients only) |
+**What TigerGroupWeb does:**
+- **Path and query.** The `customerKey` segment is taken from the raw request
+  target and forwarded byte-for-byte (`ext%3APact%3A3001`, `ext%3aPact%3a3001`
+  and `ext:Pact:3001` all arrive as sent). The query string is forwarded
+  verbatim. A key that would change the downstream path (`%2F`, `%5C`, `%3F`,
+  `.`, `..`) is refused with 400, and TigerCS is not called.
+- **Authentication.** Genesys's bearer token is checked by TigerGroupWeb. It is
+  never forwarded: TigerGroupWeb signs in to TigerCS as the CS Agent service
+  account, and renews and retries once on a 401.
+- **Responses.** Status codes, bodies and `Content-Type` (including
+  `application/problem+json`) pass through unchanged. TigerGroupWeb never reads
+  or calculates amounts.
+- **Time budget** (§1.2):
+  - It is `Ticketing:CollectionsTimeoutSeconds` (default 27 s), or
+    `X-Genesys-Flow-Timeout-Seconds` − 2 s when that is shorter.
+  - The budget covers the TigerCS login and the retry.
+  - Each call to TigerCS carries `X-Collections-Deadline-Seconds` = what is
+    left − 3 s.
+  - When the budget is spent, TigerGroupWeb answers `504`. A Genesys
+    disconnect cancels the call to TigerCS.
 
-**Requirements:**
-- **Path and query.** Keep them byte-for-byte, including the **encoded**
-  `customerKey` (`ext%3APact%3A3001`). Do not decode `%3A` before forwarding.
-- **Headers.** Forward `Idempotency-Key` on `POST reminders` and
-  `POST …/outcomes`, and keep the `Content-Type: application/json` request
-  body unchanged.
-- **Authentication.** Authenticate to TigerCS as the CS Agent service account.
-  For outcomes and VoiceBot queueing, that account's employee ID must be in
-  `Collections:Authorization:IntegrationEmployeeIds`.
-- **Responses.** Pass status codes and bodies through unchanged, including
-  ProblemDetails (`400`, `403`, `404`, `409`, `422`, `503`) and `202`.
-- **Timeout.** Allow at least **35 s** for the financial reads. TigerCS's
-  EDSM client times out at 30 s, and a summary call makes one PACT lookup
-  per phone on a cache miss plus one EDSM call per company.
+The reminder routes (`reminders/candidates`, `POST reminders`, `…/outcomes`,
+`customers/{id}/reminders`) are **not** forwarded: reminder sending stays
+disabled.
+
+### 9.1 Verified through both running applications (2026-10-06)
+
+TigerGroupWeb (branch `genesys/collections-forwarding`) and TigerCS (this
+branch) ran on Kestrel together:
+- **Database:** an isolated LocalDB database, created with the EF migrations
+  and seeded by the Development seed, plus one PACT lookup source for CS.
+- **Accounts:** test accounts only; no development or UAT database or service
+  was used.
+- **Data:** **Fixture only.** Nothing here proves real EDSM data or real
+  EDSM/PACT timings.
+
+| Run | TigerCS sources | Result |
+|---|---|---|
+| A | built-in Mock PACT + Fixture EDSM | **27/27** |
+| B | real PACT/EDSM HTTP gateways → local stub serving the Fixture bodies, able to hold a call open | **20/20** |
+| C | TigerGroupWeb pointed at an endpoint that never answers (TigerCS silent) | **4/4** |
+
+**Run A:** authentication, mapping, payment responses, completeness.
+- **Authentication:** the Genesys token works; a wrong secret gets 401, a
+  missing token 401, and a TigerCS token presented to TigerGroupWeb 401.
+- **Mapping:**
+  - A PACT phone match alone returns `404`, passed through as
+    `application/problem+json`, and so does a Genesys-created ticket.
+  - After an agent selects the PACT customer, the light summary is `200`,
+    `Complete`, with source `Fixture`.
+- **Pass-through:** TigerGroupWeb's body equals TigerCS's own (timestamps
+  aside) for the summary and all six transaction lists (companies 4 and 25,
+  Paid, Due and Outstanding). The lowercase `%3a` key works.
+- **Errors:** `type=All` → 400; a company outside the contracts → 404; a
+  role without financial-read → 403.
+
+**Run B** (measured):
+
+| Case | Answer | Time | Held call cancelled after |
+|---|---|---|---|
+| 19 s flow, PACT never answers | 503 FinanceUnavailable | 14.4 s | 14.2 s |
+| healthy, over HTTP | 200 Complete | 0.16 s | n/a |
+| 30 s flow, company 25 never answers | 200 Partial, company 25 `DeadlineExceeded` | 22.0 s | 22.2 s |
+| 20 s flow, same | 200 Partial | 15.0 s | 15.3 s |
+| 19 s flow, same | 200 Partial | 14.0 s | 14.2 s |
+| no flow header, same | 200 Partial | 22.0 s | 22.3 s |
+| 19 s flow, transactions never answer | 503 FinanceUnavailable | 14.0 s | yes |
+| Genesys disconnects after 3 s | abandoned | 3 s | 3.3 s (not at 22 s) |
+
+**Run C:** 504 at 17.1 s (19 s flow) and at 27.0 s (30 s flow); the held
+TigerCS login was cancelled each time.

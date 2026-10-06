@@ -21,6 +21,12 @@ public enum PaymentPanelState
 
     Loaded,
 
+    /// <summary>
+    /// A CRM customer with no financial source: the per-account source is not integrated, and EDSM
+    /// has no verified mapping for this customer (the Api's NotMapped reason is shown).
+    /// </summary>
+    NotMapped,
+
     /// <summary>A PACT customer: EDSM's payment summary only — no instalments, transactions or reminders.</summary>
     EdsmSummary,
 
@@ -50,6 +56,19 @@ public sealed class CustomerPaymentPanel
     /// <summary>EDSM's payment summary, for <see cref="PaymentPanelState.EdsmSummary"/>.</summary>
     public CollectionsPaymentSummaryResponseDto? PaymentSummary { get; init; }
 
+    /// <summary>The EDSM company (paired with the PACT tenant) shown, chosen with the account selector.</summary>
+    public int? SelectedCompanyId { get; init; }
+
+    public CollectionsCompanyPaymentSummaryDto? SelectedCompany =>
+        PaymentSummary?.Companies.FirstOrDefault(c => c.CompanyId == SelectedCompanyId) ?? PaymentSummary?.Companies.FirstOrDefault();
+
+    /// <summary>An EDSM field as an amount card value: "AED 812,500.00" when read, otherwise why not.</summary>
+    public static string EdsmFieldAmount(CollectionsEdsmFieldDto? field, string currency) =>
+        field is { Status: "Provided", Raw: { } raw } ? $"{currency} {raw.Trim()}" : field is null ? "Not provided" : EdsmField(field);
+
+    public static string EdsmCompanyLabel(CollectionsCompanyPaymentSummaryDto c, string? tenantId) =>
+        $"{c.CompanyName ?? $"Company {c.CompanyId}"} · {(c.BusinessModel switch { "Owned" => "owned", "Rented" => "rented", _ => "unknown" })} · tenant {tenantId ?? "—"}";
+
     /// <summary>The PACT customer key prefix (<c>ext:Pact:{tenantID}</c>) — the only identity EDSM's summary can be resolved for.</summary>
     public const string PactKeyPrefix = "ext:Pact:";
 
@@ -60,18 +79,17 @@ public sealed class CustomerPaymentPanel
 
     /// <summary>
     /// An EDSM summary field exactly as far as it is known: EDSM's own formatted
-    /// string when it was read, or why there is none. Never "0.00" for a value
-    /// that was not provided; a blank late-fines value is explained per business model.
+    /// string when it was read, or a short label for why there is none. Never
+    /// "0.00" for a value that was not provided.
     /// </summary>
     public static string EdsmField(CollectionsEdsmFieldDto field) => field switch
     {
         { Status: "Provided", Raw: { } raw } => raw.Trim(),
-        { Meaning: "ZeroOrLess" } => "None above zero",
-        { Meaning: "NotComputedForRented" } => "Not computed for rented companies",
+        { Meaning: "ZeroOrLess" } => "None",
+        { Meaning: "NotComputedForRented" } => "Not computed",
         { Status: "Missing" } => "Not provided",
-        { Status: "Empty" } => "Blank in EDSM",
-        { Status: "FormatNotConfigured" } => "Not read (EDSM number format not configured)",
-        _ => "Not readable"
+        { Status: "Empty" } => "Blank",
+        _ => "Not read"
     };
 
     public static string EdsmStatusText(string status) => status switch
@@ -83,6 +101,7 @@ public sealed class CustomerPaymentPanel
         "InvalidResponse" => "EDSM's response could not be read",
         "Disabled" => "Not enabled",
         "NotMatchable" => "Cannot be matched",
+        "DeadlineExceeded" => "EDSM did not answer in time",
         _ => "EDSM is unavailable"
     };
     public CollectionsAccountDto? SelectedAccount { get; init; }
