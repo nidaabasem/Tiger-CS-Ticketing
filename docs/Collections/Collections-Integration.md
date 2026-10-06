@@ -403,18 +403,19 @@ forbidden, disabled, not a CRM customer, no accounts, and **unavailable**
 (no figures and a retry link, never zero).
 
 **PACT customers** (`ext:Pact:{tenantID}`) get the **EDSM view**, laid out
-like the account view:
+like the account view and showing data only (no definitions, calculation
+notes, cache or contract-verification text):
 - **Account selector:** a compact selector for the verified (company · tenant)
-  pairs, with the currency (configured), source and retrieval time. Below it,
-  a one-line delay notice: payments can take about 20 minutes to appear.
-- **Contracts:** the contracts the pair covers, with the note "one figure set
-  for this company and tenant, not a balance per unit".
-- **Amount cards:** **Paid · Due · Not yet due / Post-dated cheques · Late
-  fines · Total**, using EDSM's own strings with the configured currency. A
-  value that isn't available says why, e.g. "None above zero", "Not computed
-  for rented companies", "Not provided", or "Not read (EDSM number format not
-  configured)".
-- **Send Reminder:** shown disabled, with the reason.
+  pairs, with the currency (configured), source and retrieval time.
+- **Four amount cards:** **Due · Paid · Not yet due / Post-dated cheques ·
+  Total**, using EDSM's own strings with the configured currency; Due is
+  highlighted in gold when above zero. A value that isn't available shows a
+  short label instead of a figure, never "0.00": "Not provided", "None",
+  "Not computed", "Blank" or "Not read".
+- **Two side-by-side panels:** **Balance** (the contracts the pair covers,
+  Paid, Due, Not yet due / Post-dated cheques, Total) and **Late fines and
+  reminders** (Late fines, Due, Reminder "Not available", then a disabled
+  Channel select and a disabled Send Reminder button).
 - **Payment details:** one table, **# | Date | Status | Payment Type | Amount
   | Cheque Number**, built from EDSM's read-only Paid, Due and Outstanding
   lists (types 1–3) and ordered by date.
@@ -425,22 +426,24 @@ like the account view:
     5 Current contract amount). A missing id shows "Not provided", which is
     always the case for owned companies. It is never inferred from the
     status or the cheque number.
-  - The rented caveats are listed under the table. The EDSM due-installments
-    table appears when that read is enabled.
-- **Expandable "Definitions and source details":** the owned or rented field
-  definitions, EDSM's raw string for any value that wasn't read, the currency
-  and no-as-of-time notes, the tenant/company, the mapping confirmation and
-  the number format.
+  - A list EDSM did not return is noted in one line ("Outstanding: not
+    available."). The EDSM due-installments table appears when that read is
+    enabled.
+- **Incomplete or unavailable data** is flagged with a short label only:
+  "Incomplete balance." for a partial summary, and the EDSM status text
+  (e.g. "EDSM did not answer in time.") for a company with no figures. The
+  underlying reasons stay in the API response and the logs.
 
 **CRM customers** with no financial source show the explicit NotMapped
-message, with reminder history below it.
+message ("No payment figures for this customer."), with reminder history
+below it.
 
 EDSM view. **Fixture data** from the stand-in API, not real EDSM:
 
 | | |
 |---|---|
 | Owned company: amount cards, contracts, tables, disabled Send Reminder | ![](screenshots/16-edsm-owned-desktop.png) |
-| Rented company selected, definitions expanded | ![](screenshots/17-edsm-rented-details-desktop.png) |
+| Rented company selected | ![](screenshots/17-edsm-rented-details-desktop.png) |
 | Phone width | ![](screenshots/18-edsm-owned-mobile.png) |
 | CRM customer: explicit NotMapped | ![](screenshots/19-crm-not-mapped.png) |
 | EDSM/PACT unavailable | ![](screenshots/20-edsm-unavailable.png) |

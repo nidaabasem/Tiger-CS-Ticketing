@@ -291,7 +291,8 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         Assert.Contains("data-payment-state=\"NotMapped\"", html, StringComparison.Ordinal);
         Assert.Contains("data-payment-not-mapped", html, StringComparison.Ordinal);
-        Assert.Contains("no verified mapping from a CRM customer to a PACT tenant exists", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>No payment figures for this customer.</strong>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("no verified mapping from a CRM customer to a PACT tenant exists", html, StringComparison.Ordinal);
         Assert.DoesNotContain("temporarily unavailable", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-balance-unavailable", html, StringComparison.Ordinal);
         Assert.DoesNotContain("due now", html, StringComparison.Ordinal);
@@ -325,24 +326,32 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("data-edsm-company=\"4\" data-edsm-model=\"Owned\"", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-edsm-company=\"25\"", html, StringComparison.Ordinal);
         Assert.Contains("data-payment-account=\"4\"", html, StringComparison.Ordinal);
-        Assert.Contains("One figure set for this company and tenant, not a balance per unit.", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-contracts", html, StringComparison.Ordinal);
+        Assert.Contains("0304 &#xB7; Tiger Marina Residences (88001)", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("One figure set for this company and tenant", html, StringComparison.Ordinal);
 
-        // Amount cards: EDSM's own strings with the configured currency; unavailable values say why.
+        // Amount cards: EDSM's own strings with the configured currency; unavailable values get a short label.
         Assert.Contains("<strong>AED 1,250,000.00</strong>", html, StringComparison.Ordinal);
         Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<strong>Not provided</strong>"), html);
-        Assert.Matches(new Regex("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\">\\s*<strong>None above zero</strong>"), html);
+        Assert.Contains("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\"><dt>Late fines</dt><dd>None</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<span>Not yet due</span>", html, StringComparison.Ordinal);
+        // Four cards (Due, Paid, Not yet due, Total) and two side-by-side panels, as in the approved design.
+        Assert.Equal(4, Regex.Matches(html, "class=\"kpi-card[^\"]*\" data-edsm-field=").Count);
+        Assert.Contains("<div class=\"facts-section__title\">Balance</div>", html, StringComparison.Ordinal);
+        Assert.Contains("<div class=\"facts-section__title\">Late fines and reminders</div>", html, StringComparison.Ordinal);
         Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
 
-        // Brief delay notice stays visible; definitions and diagnostics are in the expandable section.
-        Assert.Contains("data-source-delay>New payments can take up to about 20 minutes to appear here.", html, StringComparison.Ordinal);
-        Assert.Contains("<summary>Definitions and source details</summary>", html, StringComparison.Ordinal);
-        var details = html[html.IndexOf("data-edsm-details", StringComparison.Ordinal)..];
-        Assert.Contains("Definition of Total.", details, StringComparison.Ordinal);
-        Assert.Contains("EDSM sent “1.500,00”", details, StringComparison.Ordinal);
-        Assert.Contains("EDSM sent “812.500,00”", details, StringComparison.Ordinal);
-        Assert.Contains("EDSM returns no as-of time", details, StringComparison.Ordinal);
-        Assert.Contains("data-mapping-verified=\"Cached\"", details, StringComparison.Ordinal);
+        // Data only: no delay notice, definitions, cache or mapping-verification notes, and no field explanations.
+        Assert.Contains("data-currency-configured>Currency <strong>AED</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("data-retrieved-at>Last updated <strong>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-source-delay", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Definitions and source details", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-details", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Definition of Total.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("EDSM sent", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("EDSM returns no", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-mapping-verified", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("caches each read", html, StringComparison.Ordinal);
 
         // Transactions and EDSM due-installments as tables; Send Reminder present but unavailable.
         // Unified Payment details: Status (source list, badge) and Payment Type (EDSM paymentTypeId) side by side.
@@ -354,8 +363,10 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Matches(new Regex("<td class=\"col-num\">3</td>\\s*<td>15 Dec 2026</td>\\s*<td><span class=\"badge badge-pay-pending\">Outstanding</span></td>"), table);
         Assert.DoesNotContain("<td>Cheque</td>", table, StringComparison.Ordinal);   // never inferred from a cheque number
         Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
-        Assert.Contains("whether a row is still unpaid is not confirmed", html, StringComparison.Ordinal);
-        Assert.Contains("<button type=\"button\" class=\"btn btn-sm\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("whether a row is still unpaid is not confirmed", html, StringComparison.Ordinal);
+        Assert.Contains("data-reminder-unavailable>Not available</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<select class=\"field-select\" id=\"edsmReminderChannel\" disabled aria-disabled=\"true\">", html, StringComparison.Ordinal);
+        Assert.Contains("<button type=\"button\" class=\"btn btn-gold\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("handler=SendReminder", html, StringComparison.Ordinal);
 
         Assert.DoesNotContain("/outstanding", requests, StringComparison.Ordinal);
@@ -364,19 +375,20 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     }
 
     [Fact]
-    public async Task APactCustomer_SelectingTheRentedCompany_ShowsItsOwnLabelsAndCaveats()
+    public async Task APactCustomer_SelectingTheRentedCompany_ShowsItsOwnLabels_WithoutCaveats()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?handler=PaymentPanel&account=25"));
 
         Assert.Contains("data-edsm-company=\"25\" data-edsm-model=\"Rented\"", html, StringComparison.Ordinal);
         Assert.Contains("<option value=\"25\" selected=\"selected\">", html, StringComparison.Ordinal);
         Assert.Contains("<strong>AED -500.00</strong>", html, StringComparison.Ordinal);        // rented due may be negative
-        Assert.Contains("<strong>Not computed for rented companies</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\"><dt>Late fines</dt><dd>Not computed</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<span>Post-dated cheques</span>", html, StringComparison.Ordinal);
-        Assert.Contains("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-caveat", html, StringComparison.Ordinal);
         Assert.Matches(new Regex("data-edsm-row-status=\"Paid\" data-edsm-payment-type-id=\"2\">[\\s\\S]*?badge-pay-ok\">Paid</span></td>\\s*<td>Cheque</td>"), html);
         Assert.Matches(new Regex("data-edsm-row-status=\"Due\" data-edsm-payment-type-id=\"3\">[\\s\\S]*?badge-pay-critical\">Due</span></td>\\s*<td>Fees</td>\\s*<td class=\"col-num\">AED 1,000.00</td>"), html);
-        Assert.Contains("data-edsm-list-unavailable=\"Outstanding\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-list-unavailable=\"Outstanding\">Outstanding: not available.</p>", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -385,19 +397,20 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?handler=PaymentPanel&account=7"));
 
         Assert.Contains("data-edsm-company=\"7\" data-edsm-model=\"Rented\" data-edsm-status=\"Unauthorized\"", html, StringComparison.Ordinal);
-        Assert.Contains("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>EDSM rejected TigerCS&#x27;s credentials.</strong>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("EDSM rejected the configured API key.", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task APartialSummary_IsFlaggedAsNotTheFullBalance_WithEachReason()
+    public async Task APartialSummary_IsFlaggedAsIncomplete_WithAShortLabel()
     {
         var html = await Ok(await Client().GetAsync("/Customers/ext:Pact:3001?tab=payment"));
 
         Assert.Contains("data-edsm-incomplete=\"Partial\"", html, StringComparison.Ordinal);
-        Assert.Contains("Incomplete: not the customer's full balance.", html, StringComparison.Ordinal);
-        Assert.Contains("Company 7 (Alsabeel Sharjah): no figures (Unauthorized).", html, StringComparison.Ordinal);
-        Assert.Contains("Company 25 (Hirmas Dubai): Outstanding transactions not read (Unavailable).", html, StringComparison.Ordinal);
+        Assert.Contains("<strong>Incomplete balance.</strong>", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Company 7 (Alsabeel Sharjah): no figures (Unauthorized).", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Company 25 (Hirmas Dubai): Outstanding transactions not read (Unavailable).", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -420,7 +433,8 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
         Assert.Contains("data-edsm-status=\"DeadlineExceeded\"", html, StringComparison.Ordinal);
         Assert.Contains("<strong>EDSM did not answer in time.</strong>", html, StringComparison.Ordinal);
-        Assert.Contains("No figures are shown for this account.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("No figures are shown for this account.", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("60 s deadline", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
         Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
     }
