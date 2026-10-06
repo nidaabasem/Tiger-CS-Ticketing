@@ -130,17 +130,25 @@ public class PactCustomerHttpGatewayTests
     // PactService.cs carried a custom NullableDateTimeConverter for exactly
     // this), and binding them as DateTime? made the ENTIRE 200 response
     // throw JsonException — a real, matched customer collapsed into
-    // InvalidResponse ("PACT unavailable"). The dates are consumed by
-    // nothing, so the wire DTO no longer binds them and every format below
-    // must parse to the same successful customer.
+    // InvalidResponse ("PACT unavailable"). contractEndDate is now bound
+    // through the tolerant PactContractDateJsonConverter: every format
+    // below must still parse to the same successful customer, AND yield
+    // the calendar date PACT wrote (null for an absent one).
     [Theory]
-    [InlineData("\"2025-01-01T00:00:00\"", "\"2026-01-01T00:00:00\"")] // ISO-8601
-    [InlineData("\"2025-01-01 00:00:00\"", "\"2026-01-01 00:00:00\"")] // SQL-style, space separator
-    [InlineData("\"\\/Date(1735689600000)\\/\"", "\"\\/Date(1767225600000)\\/\"")] // legacy ASP.NET epoch wrapper
-    [InlineData("\"01/01/2025\"", "\"01/01/2026\"")] // d/M/y display format
-    [InlineData("null", "null")]
-    public async Task SearchByMobileAsync_RealShapeRow_AnyContractDateFormat_StillReturnsTheCustomer(
-        string contractStartDate, string contractEndDate)
+    [InlineData("\"2025-01-01T00:00:00\"", "\"2026-01-01T00:00:00\"", "2026-01-01")] // ISO-8601
+    [InlineData("\"2025-01-01T00:00:00Z\"", "\"2026-03-15T23:59:59Z\"", "2026-03-15")] // ISO-8601, UTC designator — day kept as written
+    [InlineData("\"2025-01-01T00:00:00+04:00\"", "\"2026-03-15T00:00:00+04:00\"", "2026-03-15")] // ISO-8601 with Gulf offset
+    [InlineData("\"2025-01-01T00:00:00.000\"", "\"2026-01-01T00:00:00.123\"", "2026-01-01")] // ISO-8601, fractional seconds
+    [InlineData("\"2025-01-01\"", "\"2026-01-01\"", "2026-01-01")] // ISO-8601 date only
+    [InlineData("\"2025-01-01 00:00:00\"", "\"2026-01-01 00:00:00\"", "2026-01-01")] // SQL-style, space separator
+    [InlineData("\"\\/Date(1735689600000)\\/\"", "\"\\/Date(1767225600000)\\/\"", "2026-01-01")] // legacy ASP.NET epoch wrapper (2026-01-01T00:00Z → 04:00 Dubai)
+    [InlineData("\"\\/Date(1735689600000+0400)\\/\"", "\"\\/Date(1767225600000+0400)\\/\"", "2026-01-01")] // legacy wrapper with offset suffix
+    [InlineData("\"01/01/2025\"", "\"31/12/2026\"", "2026-12-31")] // d/M/y display format, day first
+    [InlineData("\"01/01/2025\"", "\"01/02/2026\"", "2026-02-01")] // d/M/y: 1 February, never 2 January
+    [InlineData("1735689600000", "1767225600000", "2026-01-01")] // bare epoch milliseconds as a JSON number
+    [InlineData("null", "null", null)]
+    public async Task SearchByMobileAsync_RealShapeRow_AnyContractDateFormat_StillReturnsTheCustomerWithTheParsedEndDate(
+        string contractStartDate, string contractEndDate, string? expectedEndDate)
     {
         var handler = new StubHttpMessageHandler((_, _) =>
             Task.FromResult(JsonResponse(HttpStatusCode.OK, RealShapeRowJson(contractStartDate, contractEndDate))));
@@ -157,6 +165,54 @@ public class PactCustomerHttpGatewayTests
         Assert.Equal("700", contract.ExternalUnitId);
         Assert.Equal("2304", contract.UnitNumber);
         Assert.Equal("TIGER 3", contract.ProjectName);
+        Assert.Equal(expectedEndDate is null ? null : DateOnly.Parse(expectedEndDate, System.Globalization.CultureInfo.InvariantCulture), contract.ContractEndDate);
+    }
+
+    // A malformed contractEndDate must never fail the lookup: the customer
+    // and every other field come back exactly as before, with the end date
+    // simply left null (which the lookup layer treats as "current").
+    [Theory]
+    [InlineData("\"not a date\"")]
+    [InlineData("\"\"")]
+    [InlineData("\"   \"")]
+    [InlineData("\"2026-13-45\"")] // impossible month/day
+    [InlineData("\"/Date(abc)/\"")]
+    [InlineData("true")]
+    [InlineData("12.5")] // a non-integer number
+    [InlineData("{ \"year\": 2026, \"month\": 1 }")] // an object
+    [InlineData("[2026, 1, 1]")] // an array
+    public async Task SearchByMobileAsync_RealShapeRow_MalformedContractEndDate_StillReturnsTheCustomerWithNoEndDate(string contractEndDate)
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(JsonResponse(HttpStatusCode.OK, RealShapeRowJson("\"2025-01-01T00:00:00\"", contractEndDate))));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("+971501234567");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        var customer = Assert.Single(result.Customers!);
+        Assert.Equal("7001", customer.PactCustomerId);
+        Assert.Equal("Fatima Noor", customer.DisplayName);
+        var contract = Assert.Single(customer.Contracts);
+        Assert.Equal("700", contract.ExternalUnitId);
+        Assert.Equal("88001", contract.ContractNumber);
+        Assert.Equal(3, contract.CompanyId);
+        Assert.Null(contract.ContractEndDate);
+    }
+
+    [Fact]
+    public async Task SearchByMobileAsync_RowWithoutContractEndDate_LeavesEndDateNull()
+    {
+        // SingleContractNoBuyerTypeJson carries no contractEndDate at all
+        // (and no buyer type, so the fallback endpoint is routed too).
+        var gateway = CreateGateway(RoutedHandler(
+            () => JsonResponse(HttpStatusCode.OK, SingleContractNoBuyerTypeJson),
+            () => JsonResponse(HttpStatusCode.NotFound, "{}")));
+
+        var result = await gateway.SearchByMobileAsync("+971500000002");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        Assert.Null(Assert.Single(Assert.Single(result.Customers!).Contracts).ContractEndDate);
     }
 
     [Fact]

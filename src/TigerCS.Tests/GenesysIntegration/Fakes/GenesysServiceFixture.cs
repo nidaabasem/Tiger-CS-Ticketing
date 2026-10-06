@@ -130,7 +130,8 @@ public sealed class GenesysServiceFixture
             Pact, Tasleeh,
             new CrmUnitLookupAppService(
                 new FakeCrmGateway(), new FakeUnitReferenceRepository(), new FakeContactReferenceRepository(),
-                new FakeCustomerVerificationUnitOfWork(), TimeProvider.System));
+                new FakeCustomerVerificationUnitOfWork(), TimeProvider.System),
+            TimeProvider.System);
         var customerSearch = new CustomerSearchAppService(
             new CrmBuyerLookupAppService(CrmBuyers, NullLogger<CrmBuyerLookupAppService>.Instance), customerLookup);
 

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TigerCS.Integrations.Modules.PactIntegration;
 
 /// <summary>
@@ -24,17 +26,20 @@ namespace TigerCS.Integrations.Modules.PactIntegration;
 /// </para>
 ///
 /// <para>
-/// <b><c>contractStartDate</c>/<c>contractEndDate</c> are deliberately NOT
-/// modeled either — as a hard bug fix, not just parsimony.</b> Nothing past
-/// the gateway consumes them, and binding them as <c>DateTime?</c> made the
-/// WHOLE 200 response unparseable whenever PACT emitted a non-ISO-8601 date
-/// (e.g. <c>"2025-01-01 00:00:00"</c> or legacy <c>"/Date(1735689600000)/"</c>
+/// <b><c>contractEndDate</c> is bound through
+/// <see cref="PactContractDateJsonConverter"/>, never as a bare
+/// <c>DateTime?</c> — as a hard bug-fix constraint, not just parsimony.</b>
+/// Binding it as <c>DateTime?</c> once made the WHOLE 200 response
+/// unparseable whenever PACT emitted a non-ISO-8601 date (e.g.
+/// <c>"2025-01-01 00:00:00"</c> or legacy <c>"/Date(1735689600000)/"</c>
 /// — the original PactService.cs needed a custom
 /// <c>NullableDateTimeConverter</c> for exactly this), collapsing a found
-/// customer into <c>InvalidResponse</c>/"PACT unavailable". Unmodeled, the
-/// deserializer skips them regardless of format. If a future feature needs
-/// these dates, bind them as <c>string</c> (or add a tolerant converter) —
-/// never as bare <c>DateTime?</c>.
+/// customer into <c>InvalidResponse</c>/"PACT unavailable". The tolerant
+/// converter reads every format PACT has been seen to use and yields
+/// <c>null</c> for anything else, so a malformed or missing date never
+/// fails the lookup. <c>contractStartDate</c> is still not modeled: nothing
+/// past the gateway consumes it. If it is ever needed, bind it the same
+/// way — never as bare <c>DateTime?</c>.
 /// </para>
 ///
 /// <para>
@@ -60,7 +65,8 @@ internal sealed record PactContractRowHttpDto(
     string? CustomerMobile,
     string? CustomerName,
     string? CustomerEmail,
-    int? CustomerBuyerType);
+    int? CustomerBuyerType,
+    [property: JsonConverter(typeof(PactContractDateJsonConverter))] DateOnly? ContractEndDate);
 
 /// <summary>
 /// The wire shape of <c>GET v1/contracts/{mobile}/customer-type</c>'s JSON

@@ -40,7 +40,7 @@ public class CustomerSearchAppServiceTests
             new FakeCrmGateway(), new FakeUnitReferenceRepository(), new FakeContactReferenceRepository(),
             new FakeCustomerVerificationUnitOfWork(), TimeProvider.System);
         var customerLookup = new CustomerLookupAppService(
-            intakeRecords, departmentSources, crmLookup, pact, tasleeh, crmUnitLookup);
+            intakeRecords, departmentSources, crmLookup, pact, tasleeh, crmUnitLookup, TimeProvider.System);
 
         return new Fixture(new CustomerSearchAppService(crmBuyerLookup, customerLookup), crmBuyerGateway, pact, tasleeh);
     }
