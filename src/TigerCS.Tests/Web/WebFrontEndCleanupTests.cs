@@ -113,7 +113,7 @@ public sealed class WebFrontEndCleanupTests
     {
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Request Type *", html);
+        Assert.Contains("Category *", html);
         Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
         Assert.Contains("category.Name", html);
     }

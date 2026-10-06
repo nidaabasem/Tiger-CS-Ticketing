@@ -480,13 +480,13 @@
                                     <option value="@department.DepartmentId">@department.Name</option>
                                 }
                             </select>
-                            <span class="field-hint">Narrows the request types below. The ticket routes to the team that owns the selected request type.</span>
+                            <span class="field-hint">Narrows the categories below. The ticket routes to the team that owns the selected category.</span>
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" asp-for="CreateStep.CategoryId">Request Type *</label>
+                            <label class="form-label" asp-for="CreateStep.CategoryId">Category *</label>
                             <select class="form-control" asp-for="CreateStep.CategoryId">
-                                <option value="">Select Request Type</option>
+                                <option value="">Select Category</option>
                                 @foreach (var group in Model.Categories.GroupBy(c => c.DepartmentName))
                                 {
                                     <optgroup label="@group.Key">
@@ -502,7 +502,7 @@
                         @if (Model.RequestTypeOptions.Count > 0)
                         {
                             <div class="form-group">
-                                <label class="form-label" asp-for="CreateStep.RequestTypeId">Handling Process</label>
+                                <label class="form-label" asp-for="CreateStep.RequestTypeId">Request Type</label>
                                 <select class="form-control" asp-for="CreateStep.RequestTypeId">
                                     <option value="">None — standard handling</option>
                                     @foreach (var group in Model.RequestTypeOptions.GroupBy(r => Model.DepartmentNameOf(r.DepartmentId)))
@@ -515,7 +515,7 @@
                                         </optgroup>
                                     }
                                 </select>
-                                <span class="field-hint">The configured process this request follows (e.g. Send Receipts). It sets the assignment, approvals and SLA, and must belong to the same department as the request type above.</span>
+                                <span class="field-hint">The configured request type this ticket follows (e.g. Send Receipts). It sets the assignment, approvals and SLA, and must belong to the same department as the category above.</span>
                             </div>
                         }
 
@@ -673,13 +673,13 @@
                         <dd>@if (Model.SummaryDepartmentName is { } deptName) { @deptName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
                     </div>
                     <div class="wizard-summary__row">
-                        <dt>Request Type</dt>
+                        <dt>Category</dt>
                         <dd>@if (Model.SelectedCategory is { } selectedCategory) { @selectedCategory.Name } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
                     </div>
                     @if (Model.SelectedRequestType is { } summaryRequestType)
                     {
                         <div class="wizard-summary__row">
-                            <dt>Handling Process</dt>
+                            <dt>Request Type</dt>
                             <dd>@summaryRequestType.Name</dd>
                         </div>
                     }
