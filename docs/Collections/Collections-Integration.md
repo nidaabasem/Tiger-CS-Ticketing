@@ -407,12 +407,15 @@ like the account view and showing data only (no definitions, calculation
 notes, cache or contract-verification text):
 - **Account selector:** a compact selector for the verified (company · tenant)
   pairs, with the currency (configured), source and retrieval time.
-- **Contracts:** the contracts the pair covers, as a one-line labelled value.
-- **Amount cards:** **Paid · Due · Not yet due / Post-dated cheques · Late
-  fines · Total**, using EDSM's own strings with the configured currency. A
-  value that isn't available shows a short label instead of a figure, never
-  "0.00": "Not provided", "None", "Not computed", "Blank" or "Not read".
-- **Send Reminder:** shown disabled, labelled "Not available."
+- **Four amount cards:** **Due · Paid · Not yet due / Post-dated cheques ·
+  Total**, using EDSM's own strings with the configured currency; Due is
+  highlighted in gold when above zero. A value that isn't available shows a
+  short label instead of a figure, never "0.00": "Not provided", "None",
+  "Not computed", "Blank" or "Not read".
+- **Two side-by-side panels:** **Balance** (the contracts the pair covers,
+  Paid, Due, Not yet due / Post-dated cheques, Total) and **Late fines and
+  reminders** (Late fines, Due, Reminder "Not available", then a disabled
+  Channel select and a disabled Send Reminder button).
 - **Payment details:** one table, **# | Date | Status | Payment Type | Amount
   | Cheque Number**, built from EDSM's read-only Paid, Due and Outstanding
   lists (types 1–3) and ordered by date.

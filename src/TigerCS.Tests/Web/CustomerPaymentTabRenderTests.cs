@@ -333,8 +333,12 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         // Amount cards: EDSM's own strings with the configured currency; unavailable values get a short label.
         Assert.Contains("<strong>AED 1,250,000.00</strong>", html, StringComparison.Ordinal);
         Assert.Matches(new Regex("data-edsm-field=\"paidAmount\" data-edsm-amount-status=\"Missing\">\\s*<strong>Not provided</strong>"), html);
-        Assert.Matches(new Regex("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\">\\s*<strong>None</strong>"), html);
+        Assert.Contains("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\"><dt>Late fines</dt><dd>None</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<span>Not yet due</span>", html, StringComparison.Ordinal);
+        // Four cards (Due, Paid, Not yet due, Total) and two side-by-side panels, as in the approved design.
+        Assert.Equal(4, Regex.Matches(html, "class=\"kpi-card[^\"]*\" data-edsm-field=").Count);
+        Assert.Contains("<div class=\"facts-section__title\">Balance</div>", html, StringComparison.Ordinal);
+        Assert.Contains("<div class=\"facts-section__title\">Late fines and reminders</div>", html, StringComparison.Ordinal);
         Assert.DoesNotContain(">AED 0.00<", html, StringComparison.Ordinal);
 
         // Data only: no delay notice, definitions, cache or mapping-verification notes, and no field explanations.
@@ -360,8 +364,9 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.DoesNotContain("<td>Cheque</td>", table, StringComparison.Ordinal);   // never inferred from a cheque number
         Assert.Contains("data-edsm-due-installments=\"Available\"", html, StringComparison.Ordinal);
         Assert.DoesNotContain("whether a row is still unpaid is not confirmed", html, StringComparison.Ordinal);
-        Assert.Contains("data-reminder-unavailable>Not available.</span>", html, StringComparison.Ordinal);
-        Assert.Contains("<button type=\"button\" class=\"btn btn-sm\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
+        Assert.Contains("data-reminder-unavailable>Not available</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<select class=\"field-select\" id=\"edsmReminderChannel\" disabled aria-disabled=\"true\">", html, StringComparison.Ordinal);
+        Assert.Contains("<button type=\"button\" class=\"btn btn-gold\" disabled aria-disabled=\"true\">Send Reminder</button>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("handler=SendReminder", html, StringComparison.Ordinal);
 
         Assert.DoesNotContain("/outstanding", requests, StringComparison.Ordinal);
@@ -377,7 +382,7 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("data-edsm-company=\"25\" data-edsm-model=\"Rented\"", html, StringComparison.Ordinal);
         Assert.Contains("<option value=\"25\" selected=\"selected\">", html, StringComparison.Ordinal);
         Assert.Contains("<strong>AED -500.00</strong>", html, StringComparison.Ordinal);        // rented due may be negative
-        Assert.Contains("<strong>Not computed</strong>", html, StringComparison.Ordinal);
+        Assert.Contains("data-edsm-field=\"lateFines\" data-edsm-amount-status=\"Empty\"><dt>Late fines</dt><dd>Not computed</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<span>Post-dated cheques</span>", html, StringComparison.Ordinal);
         Assert.DoesNotContain("Refunds appear in this list as positive payments.", html, StringComparison.Ordinal);
         Assert.DoesNotContain("data-edsm-caveat", html, StringComparison.Ordinal);

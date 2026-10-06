@@ -9,7 +9,7 @@
     string Amount(decimal? a) => a is { } v ? $"{currency} {v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}" : "—";
     TigerCS.Application.Modules.Collections.Dto.CollectionsEdsmFieldDto? Field(string key) => company?.Fields.FirstOrDefault(f => f.Key == key);
     var rented = company?.BusinessModel == "Rented";
-    var sourceLabel = summary?.Source == "Fixture" ? "Fixture (test data)" : summary?.Source == "Pact" ? "EDSM" : summary?.Source;
+    var sourceLabel = summary?.Source == "Fixture" ? "Fixture (Development/Testing only — not real data)" : summary?.Source == "Pact" ? "EDSM" : summary?.Source;
 }
 
 @if (summary is null)
@@ -66,14 +66,6 @@
         }
 
         <div class="edsm-company" data-edsm-company="@company.CompanyId" data-edsm-model="@company.BusinessModel" data-edsm-status="@company.Status">
-            @if (company.Contracts.Count > 0)
-            {
-                <p class="edsm-contracts" data-edsm-contracts>
-                    @(company.Contracts.Count == 1 ? "Contract" : "Contracts")
-                    <strong>@string.Join(", ", company.Contracts.Select(c => $"{c.UnitNumber ?? c.ExternalUnitId} · {c.ProjectName ?? "—"}" + (c.UnitType == "Parking" ? " (Parking)" : "") + (c.ContractNumber is null ? "" : $" ({c.ContractNumber})")))</strong>
-                </p>
-            }
-
             @if (company.Status != "Available")
             {
                 <div class="alert alert-error" role="alert" data-edsm-company-unavailable>
@@ -82,31 +74,62 @@
             }
             else
             {
+                var paid = Field("paidAmount");
                 var due = Field("dueAmount");
+                var outstanding = Field("outstandingAmount");
+                var fines = Field("lateFines");
+                var total = Field("totalAmount");
+                var outstandingLabel = rented ? "Post-dated cheques" : "Not yet due";
+                var dueAttention = due is { Status: "Provided", Value: > 0m };
+                string Css(TigerCS.Application.Modules.Collections.Dto.CollectionsEdsmFieldDto? f) => f is { Status: "Provided" } ? "" : "kpi-card--unavailable";
+
                 <section class="kpi-grid payment-kpis edsm-kpis" aria-label="Payment summary">
-                    @foreach (var (key, label, attention) in new[]
-                    {
-                        ("paidAmount", "Paid", false),
-                        ("dueAmount", "Due", due is { Status: "Provided", Value: > 0m }),
-                        ("outstandingAmount", rented ? "Post-dated cheques" : "Not yet due", false),
-                        ("lateFines", "Late fines", false),
-                        ("totalAmount", "Total", false),
-                    })
-                    {
-                        var field = Field(key);
-                        var read = field is { Status: "Provided" };
-                        <div class="kpi-card @(attention ? "kpi-card--attention" : "") @(read ? "" : "kpi-card--unavailable")" data-edsm-field="@key" data-edsm-amount-status="@field?.Status">
-                            <strong>@CustomerPaymentPanel.EdsmFieldAmount(field, currency)</strong>
-                            <span>@label</span>
-                        </div>
-                    }
+                    <div class="kpi-card @(dueAttention ? "kpi-card--attention" : "") @Css(due)" data-edsm-field="dueAmount" data-edsm-amount-status="@due?.Status">
+                        <strong>@CustomerPaymentPanel.EdsmFieldAmount(due, currency)</strong>
+                        <span>Due</span>
+                    </div>
+                    <div class="kpi-card @Css(paid)" data-edsm-field="paidAmount" data-edsm-amount-status="@paid?.Status">
+                        <strong>@CustomerPaymentPanel.EdsmFieldAmount(paid, currency)</strong>
+                        <span>Paid</span>
+                    </div>
+                    <div class="kpi-card @Css(outstanding)" data-edsm-field="outstandingAmount" data-edsm-amount-status="@outstanding?.Status">
+                        <strong>@CustomerPaymentPanel.EdsmFieldAmount(outstanding, currency)</strong>
+                        <span>@outstandingLabel</span>
+                    </div>
+                    <div class="kpi-card @Css(total)" data-edsm-field="totalAmount" data-edsm-amount-status="@total?.Status">
+                        <strong>@CustomerPaymentPanel.EdsmFieldAmount(total, currency)</strong>
+                        <span>Total</span>
+                    </div>
                 </section>
 
-                <div class="facts-panel facts-panel--flat edsm-reminder">
-                    <div class="facts-section__title">Payment reminder</div>
-                    <div class="edsm-reminder__row">
-                        <span class="field-hint" data-reminder-unavailable>Not available.</span>
-                        <button type="button" class="btn btn-sm" disabled aria-disabled="true">Send Reminder</button>
+                <div class="two-col">
+                    <div class="facts-panel facts-panel--flat">
+                        <div class="facts-section__title">Balance</div>
+                        <dl>
+                            @if (company.Contracts.Count > 0)
+                            {
+                                <div class="facts-row" data-edsm-contracts><dt>@(company.Contracts.Count == 1 ? "Contract" : "Contracts")</dt><dd>@string.Join(", ", company.Contracts.Select(c => $"{c.UnitNumber ?? c.ExternalUnitId} · {c.ProjectName ?? "—"}" + (c.UnitType == "Parking" ? " (Parking)" : "") + (c.ContractNumber is null ? "" : $" ({c.ContractNumber})")))</dd></div>
+                            }
+                            <div class="facts-row"><dt>Paid</dt><dd>@CustomerPaymentPanel.EdsmFieldAmount(paid, currency)</dd></div>
+                            <div class="facts-row"><dt>Due</dt><dd class="@(dueAttention ? "is-critical" : "")">@CustomerPaymentPanel.EdsmFieldAmount(due, currency)</dd></div>
+                            <div class="facts-row"><dt>@outstandingLabel</dt><dd>@CustomerPaymentPanel.EdsmFieldAmount(outstanding, currency)</dd></div>
+                            <div class="facts-row"><dt>Total</dt><dd>@CustomerPaymentPanel.EdsmFieldAmount(total, currency)</dd></div>
+                        </dl>
+                    </div>
+                    <div class="facts-panel facts-panel--flat edsm-reminder">
+                        <div class="facts-section__title">Late fines and reminders</div>
+                        <dl>
+                            <div class="facts-row" data-edsm-field="lateFines" data-edsm-amount-status="@fines?.Status"><dt>Late fines</dt><dd>@CustomerPaymentPanel.EdsmFieldAmount(fines, currency)</dd></div>
+                            <div class="facts-row"><dt>Due</dt><dd>@CustomerPaymentPanel.EdsmFieldAmount(due, currency)</dd></div>
+                            <div class="facts-row"><dt>Reminder</dt><dd data-reminder-unavailable>Not available</dd></div>
+                        </dl>
+                        <div class="edsm-reminder__actions">
+                            <div class="field-group">
+                                <label class="field-label" for="edsmReminderChannel">Channel</label>
+                                <select class="field-select" id="edsmReminderChannel" disabled aria-disabled="true"><option>Email</option></select>
+                            </div>
+                            <button type="button" class="btn btn-gold" disabled aria-disabled="true">Send Reminder</button>
+                        </div>
                     </div>
                 </div>
 
