@@ -528,7 +528,7 @@ public sealed class CollectionsUnavailableEndpointsTests
     [Fact]
     public async Task Disabled_Answers503CollectionsDisabled_OnEveryRoute()
     {
-        using var factory = new TigerCsApiFactory();
+        using var factory = new TigerCsApiFactory { ExtraConfiguration = new() { ["Collections:Enabled"] = "false" } };
         var client = await ClientAsync(factory);
 
         foreach (var response in new[]
