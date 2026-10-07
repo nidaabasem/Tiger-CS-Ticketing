@@ -1,5 +1,8 @@
 # Document copy API — chatbot asks CRM to send the customer a document
 
+> ## ⚠ PENDING REAL UAT VERIFICATION
+> Not complete until a real customer has completed verification, selected a unit and a document, and received exactly one email through the public Genesys route. Blocking CRM work and the exact contracts: [`CRM-Required-Contracts.md`](CRM-Required-Contracts.md). Exit criteria: §8 there.
+
 Status: **connected to Tiger CRM's `TicketingSystem/GetCustomerDocuments`; verified in automated tests against a stub
 of that contract. Not yet verified against real UAT CRM** — see [Open items](#open-items-for-uat).
 
@@ -59,9 +62,9 @@ Nothing is sent in any failure case. A failure after the send was claimed marks 
 | # | Item | Effect |
 |---|---|---|
 | 1 | **Real CRM never exercised from this build.** The sandbox that built this cannot reach the CRM host and holds no `Crm:SecretKey`. | Response shapes and the storage-retrieval mechanism are verified against the contract as written, not against UAT data. |
-| 2 | **How `fileUrl` is retrieved with auth.** The contract does not say how the file endpoint authenticates. TigerCS sends `X-SECRET-KEY` to the CRM origin. If CRM serves files differently (a different host, a token, or an endpoint by `attachmentId`), set `Crm:DocumentFileHosts` or adapt `CrmDocumentHttpGateway.DownloadAsync`. | First UAT run answers this. A 401/403 on download shows as `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED`; an HTML login page as `CRM_INVALID_RESPONSE`. |
+| 2 | **How `fileUrl` is retrieved with auth.** Not yet confirmed by CRM; the exact download contract TigerCS needs is in [`CRM-Required-Contracts.md` §6](CRM-Required-Contracts.md#6-file-download-contract-what-crmdocumenthttpgateway-does-with-each-fileurl). TigerCS sends `X-SECRET-KEY` to the CRM origin. If CRM serves files differently (a different host, a token, or an endpoint by `attachmentId`), set `Crm:DocumentFileHosts` or adapt `CrmDocumentHttpGateway.DownloadAsync`. | First UAT run answers this. A 401/403 on download shows as `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED`; an HTML login page as `CRM_INVALID_RESPONSE`. |
 | 3 | **Verified contact must carry a phone.** The CRM identity comes from the phone of the verified contact. | Sessions whose contact channel is an email cannot be resolved (`CRM_CUSTOMER_NOT_RESOLVED`). |
-| 4 | **Verification sessions over real CRM** still need CRM's unit/contact endpoints (`UnimplementedCrmHttpGateway`), and OTP issue/check lives outside TigerCS. | Chatbot sessions cannot be created in UAT until those exist. |
+| 4 | **Verification sessions over real CRM are blocked**: `ICrmGateway` is unimplemented for `Crm:Provider=Http`, so no unit/contact can be cached and no session created. In addition TigerCS does not itself check an OTP — a session labelled `Otp` is the caller's assertion. | Exact CRM contracts, the `GetBuyerByPhone` field mapping, the buyers-only alternative and the OTP gap: [`CRM-Required-Contracts.md`](CRM-Required-Contracts.md). |
 | 5 | **WhatsApp/SMS**: no integration → `501 DELIVERY_CHANNEL_NOT_INTEGRATED`. Email works. | |
 | 6 | **TigerGroupWeb proxy** must forward the route. | |
 
