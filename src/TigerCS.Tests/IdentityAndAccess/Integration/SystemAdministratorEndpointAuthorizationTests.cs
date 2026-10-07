@@ -183,6 +183,58 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     [Fact]
+    public async Task ListAssignableUsers_Returns200()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var (_, _, agentId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        var first = await _factory.CreateDepartmentAsync("Dir A " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var second = await _factory.CreateDepartmentAsync("Dir B " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        await _factory.AssignPrimaryDepartmentAsync(agentId, first);
+        await _factory.AssignDepartmentAsync(agentId, second);
+
+        var response = await client.GetAsync("/api/users/assignable");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var users = await response.Content.ReadFromJsonAsync<List<AssignableUserDto>>();
+        // One row per employee, carrying every department (primary first) and the roles.
+        var agent = Assert.Single(users!, u => u.EmployeeId == agentId);
+        Assert.Equal([Roles.CsAgent], agent.Roles);
+        Assert.Equal([first, second], agent.Departments.Select(d => d.DepartmentId));
+        Assert.True(agent.Departments.First().IsPrimary);
+    }
+
+    [Fact]
+    public async Task TransferTicket_WithAssignToEmployeeId_MovesAndAssignsInOneStep_AndRefusesAnOutsider()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+        var ticket = await CreateVerifiedTicketAsync(client, "Facilities");
+        var targetDepartmentId = await _factory.CreateDepartmentAsync("Leasing " + Guid.NewGuid(), Guid.NewGuid().ToString("N")[..8]);
+        var (_, _, insiderId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        await _factory.AssignPrimaryDepartmentAsync(insiderId, targetDepartmentId);
+        var (_, _, outsiderId) = await _factory.SeedEmployeeAsync(Roles.CsAgent);
+        await _factory.AssignPrimaryDepartmentAsync(outsiderId, ticket.CurrentDepartmentId);
+
+        // The assignee must belong to the RESULTING (target) department —
+        // a member of the source department only is refused, and nothing moves.
+        var refused = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/transfer",
+            new TransferTicketRequestDto(targetDepartmentId, "Needs Leasing", RowVersionOf(ticket), outsiderId));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        var unchanged = await (await client.GetAsync($"/api/tickets/{ticket.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(ticket.CurrentDepartmentId, unchanged!.CurrentDepartmentId);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/transfer",
+            new TransferTicketRequestDto(targetDepartmentId, "Needs Leasing", RowVersionOf(ticket), insiderId));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<TicketDetailDto>();
+        Assert.Equal(targetDepartmentId, updated!.CurrentDepartmentId);
+        Assert.Equal(insiderId, updated.CurrentOwnerEmployeeId);
+        Assert.Equal(ticket.OriginatingDepartmentId, updated.OriginatingDepartmentId);
+    }
+
+    [Fact]
     public async Task GetRoleCatalog_Returns200()
     {
         var (client, _) = await CreateAdministratorAsync();

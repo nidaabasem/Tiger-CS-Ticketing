@@ -2007,3 +2007,4 @@ a.badge:hover { text-decoration: underline; }
 .pending-help__list dt { font-weight: 600; white-space: nowrap; }
 .pending-help__list dd { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }
 @media (max-width: 720px) { .pending-help__list { grid-template-columns: 1fr; } .pending-help__list dd { margin-bottom: 6px; } }
+.field-hint--error { color: var(--color-critical); }

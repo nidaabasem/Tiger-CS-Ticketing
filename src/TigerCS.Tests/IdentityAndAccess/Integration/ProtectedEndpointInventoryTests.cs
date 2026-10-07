@@ -35,6 +35,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
     {
         ["POST /api/auth/logout"] = nameof(SystemAdministratorEndpointAuthorizationTests.Logout_Returns204),
         ["GET /api/users/me"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetOwnProfile_Returns200),
+        ["GET /api/users/assignable"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListAssignableUsers_Returns200),
         ["PATCH /api/users/{employeeId:guid}/activation"] = nameof(SystemAdministratorEndpointAuthorizationTests.SetUserActivation_Returns200),
         ["GET /api/roles"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetRoleCatalog_Returns200),
         ["GET /api/departments"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListDepartments_Returns200),

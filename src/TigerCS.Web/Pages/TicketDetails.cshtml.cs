@@ -93,6 +93,30 @@ public sealed class TicketDetailsModel(
     public IReadOnlyList<DepartmentUserDto> AssignableEmployees { get; private set; } = [];
 
     /// <summary>
+    /// How the current department's member list loaded. Only
+    /// <see cref="ApiOutcome.Success"/> with an empty list means "this
+    /// department has no active members"; anything else is a failed request
+    /// and is said so — never shown as an empty directory.
+    /// </summary>
+    public ApiOutcome AssignableEmployeesOutcome { get; private set; } = ApiOutcome.Unknown;
+
+    /// <summary>Whether the viewer may assign outside the ticket's department (CS Manager / override) and is therefore offered the whole directory.</summary>
+    public bool CanAssignAcrossDepartments { get; private set; }
+
+    /// <summary>The cross-department directory (loaded only for <see cref="CanAssignAcrossDepartments"/> viewers), one row per employee with all their departments.</summary>
+    public IReadOnlyList<AssignableUserDto> AssignableUsers { get; private set; } = [];
+
+    /// <summary>How the cross-department directory loaded — distinguishes "nobody" from "could not load" / "not permitted".</summary>
+    public ApiOutcome AssignableUsersOutcome { get; private set; } = ApiOutcome.Unknown;
+
+    /// <summary>
+    /// The departments the directory is grouped by for the assign control:
+    /// the ticket's current department first, then every other department
+    /// that has at least one assignable member, by name.
+    /// </summary>
+    public IReadOnlyList<(int DepartmentId, string Name, IReadOnlyList<AssignableUserDto> Members)> AssignableByDepartment { get; private set; } = [];
+
+    /// <summary>
     /// Whether the viewer holds transfer authority (the Api's own CS Manager
     /// role set, or the System Administrator override) — the only case in
     /// which a Transfer control, and any department to transfer to, is shown.
@@ -234,8 +258,64 @@ public sealed class TicketDetailsModel(
             return await ReloadWithErrorAsync("assign", "Could not read the ticket's current version. Reloading.", cancellationToken);
         }
 
-        var result = await ticketsApiClient.AssignAsync(id, new AssignTicketRequestDto(Assign.AssignedEmployeeId, rowVersion), cancellationToken);
-        return await HandleMutationAsync(result, "assign", "Ticket assigned.", cancellationToken);
+        // The selection is "employeeId|departmentId" — the (user, department)
+        // pair the viewer picked, because a user in several departments can be
+        // placed in any of them. Same department as the ticket → a plain
+        // Assign. Another department → transfer-and-assign, which needs a
+        // reason exactly like a standalone Transfer; the Api enforces that the
+        // assignee belongs to the target department.
+        if (!TryParseAssignTarget(Assign.Target, out var employeeId, out var departmentId))
+        {
+            return await ReloadWithErrorAsync("assign", "Choose who to assign the ticket to.", cancellationToken);
+        }
+
+        var current = await ticketsApiClient.GetByIdAsync(id, cancellationToken);
+        var currentDepartmentId = current.IsSuccess && current.Value is not null ? current.Value.CurrentDepartmentId : (int?)null;
+
+        if (departmentId is null || departmentId == currentDepartmentId)
+        {
+            var result = await ticketsApiClient.AssignAsync(id, new AssignTicketRequestDto(employeeId, rowVersion), cancellationToken);
+            return await HandleMutationAsync(result, "assign", "Ticket assigned.", cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(Assign.Reason))
+        {
+            return await ReloadWithErrorAsync(
+                "assign", "A reason is required when assigning to someone in another department (the ticket is transferred there).", cancellationToken);
+        }
+
+        var transferred = await ticketsApiClient.TransferAsync(
+            id, new TransferTicketRequestDto(departmentId.Value, Assign.Reason.Trim(), rowVersion, employeeId), cancellationToken);
+        return await HandleMutationAsync(transferred, "assign", "Ticket transferred and assigned.", cancellationToken);
+    }
+
+    /// <summary>Parses the assign control's "employeeId|departmentId" value (departmentId optional for the single-department control).</summary>
+    internal static bool TryParseAssignTarget(string? target, out Guid employeeId, out int? departmentId)
+    {
+        employeeId = Guid.Empty;
+        departmentId = null;
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return false;
+        }
+
+        var parts = target.Split('|', 2);
+        if (!Guid.TryParse(parts[0], out employeeId) || employeeId == Guid.Empty)
+        {
+            return false;
+        }
+
+        if (parts.Length == 2)
+        {
+            if (!int.TryParse(parts[1], out var parsed) || parsed <= 0)
+            {
+                return false;
+            }
+
+            departmentId = parsed;
+        }
+
+        return true;
     }
 
     public async Task<IActionResult> OnPostTransferAsync(long id, CancellationToken cancellationToken)
@@ -435,6 +515,36 @@ public sealed class TicketDetailsModel(
         return Page();
     }
 
+    /// <summary>
+    /// Groups the directory for the assign control: one group per department,
+    /// the ticket's own department first (even when empty, so the viewer sees
+    /// it has nobody), the rest by name. A user in several departments
+    /// appears under each of them — the viewer chooses the pair.
+    /// </summary>
+    internal static IReadOnlyList<(int DepartmentId, string Name, IReadOnlyList<AssignableUserDto> Members)> GroupAssignableByDepartment(
+        IReadOnlyList<AssignableUserDto> users, int currentDepartmentId, string? currentDepartmentName)
+    {
+        var groups = users
+            .SelectMany(u => u.Departments.Select(d => (Department: d, User: u)))
+            .GroupBy(x => x.Department.DepartmentId)
+            .Select(g => (
+                DepartmentId: g.Key,
+                Name: g.First().Department.Name,
+                Members: (IReadOnlyList<AssignableUserDto>)g.Select(x => x.User)
+                    .OrderBy(u => u.DisplayName, StringComparer.OrdinalIgnoreCase).ToList()))
+            .ToList();
+
+        if (groups.All(g => g.DepartmentId != currentDepartmentId))
+        {
+            groups.Add((currentDepartmentId, currentDepartmentName ?? $"Department #{currentDepartmentId}", []));
+        }
+
+        return groups
+            .OrderBy(g => g.DepartmentId == currentDepartmentId ? 0 : 1)
+            .ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static bool TryDecodeRowVersion(string? base64, out byte[] rowVersion)
     {
         rowVersion = [];
@@ -485,13 +595,20 @@ public sealed class TicketDetailsModel(
         var notesTask = ticketsApiClient.GetNotesAsync(TicketId, 1, 50, cancellationToken);
         var escalationsTask = slaApiClient.GetEscalationsAsync(TicketId, cancellationToken);
         var assignableTask = usersApiClient.GetDepartmentUsersAsync(Ticket.CurrentDepartmentId, 1, 100, cancellationToken);
+        // The whole directory is fetched only for viewers the Api lets assign
+        // across departments; for everyone else the endpoint would answer 403
+        // and the call is pointless.
+        CanAssignAcrossDepartments = TicketActions.CanAssignAcrossDepartments(Viewer?.Roles);
+        var assignableUsersTask = CanAssignAcrossDepartments
+            ? usersApiClient.GetAssignableUsersAsync(cancellationToken)
+            : Task.FromResult(ApiResult<IReadOnlyList<AssignableUserDto>>.Success([]));
         var customerHistoryTask = ticketsApiClient.GetCustomerHistoryAsync(TicketId, limit: 10, cancellationToken);
         var approvalsTask = ticketsApiClient.GetApprovalsAsync(TicketId, cancellationToken);
         var interactionsTask = ticketsApiClient.GetInteractionsAsync(TicketId, cancellationToken);
         var historyTask = ticketsApiClient.GetLifecycleHistoryAsync(TicketId, cancellationToken);
 
         await Task.WhenAll(
-            slaTask, notesTask, escalationsTask, assignableTask, customerHistoryTask, approvalsTask, interactionsTask,
+            slaTask, notesTask, escalationsTask, assignableTask, assignableUsersTask, customerHistoryTask, approvalsTask, interactionsTask,
             historyTask);
 
         Interactions = interactionsTask.Result.IsSuccess && interactionsTask.Result.Value is not null
@@ -504,6 +621,9 @@ public sealed class TicketDetailsModel(
         Notes = notesTask.Result.IsSuccess && notesTask.Result.Value is not null ? notesTask.Result.Value.Items : [];
         Escalations = escalationsTask.Result.IsSuccess && escalationsTask.Result.Value is not null ? escalationsTask.Result.Value : [];
         AssignableEmployees = assignableTask.Result.IsSuccess && assignableTask.Result.Value is not null ? [.. assignableTask.Result.Value.Items] : [];
+        AssignableEmployeesOutcome = assignableTask.Result.Outcome;
+        AssignableUsers = assignableUsersTask.Result.IsSuccess && assignableUsersTask.Result.Value is not null ? assignableUsersTask.Result.Value : [];
+        AssignableUsersOutcome = assignableUsersTask.Result.Outcome;
         CustomerHistory = customerHistoryTask.Result.IsSuccess ? customerHistoryTask.Result.Value : null;
 
         var originating = Interactions.FirstOrDefault(i => i.IsOriginatingInteraction) ?? Interactions.FirstOrDefault();
@@ -513,6 +633,7 @@ public sealed class TicketDetailsModel(
             ?? CustomerIdentity.FromTicketFacts(Ticket.CrmBuyerCustomerId, Ticket.CustomerVerificationSource, Ticket.ExternalCustomerId, CustomerPhone)?.Key;
 
         DepartmentName = nameResolver.TryGetDepartmentName(Ticket.CurrentDepartmentId);
+        AssignableByDepartment = GroupAssignableByDepartment(AssignableUsers, Ticket.CurrentDepartmentId, DepartmentName);
         OwnerName = Ticket.CurrentOwnerEmployeeId is Guid ownerId
             ? await nameResolver.ResolveOwnerNameAsync(Ticket.CurrentDepartmentId, ownerId, cancellationToken)
             : null;
@@ -530,7 +651,11 @@ public sealed class TicketDetailsModel(
 
         // Pre-fill the RowVersion the forms will post back, and default the
         // employee/status pickers so an untouched form still submits something valid.
-        Assign = new AssignInput { RowVersionBase64 = Ticket.RowVersion, AssignedEmployeeId = Ticket.CurrentOwnerEmployeeId ?? Guid.Empty };
+        Assign = new AssignInput
+        {
+            RowVersionBase64 = Ticket.RowVersion,
+            Target = Ticket.CurrentOwnerEmployeeId is Guid owner ? $"{owner}|{Ticket.CurrentDepartmentId}" : string.Empty,
+        };
         Transfer = new TransferInput { RowVersionBase64 = Ticket.RowVersion, TargetDepartmentId = TransferTargets.FirstOrDefault()?.DepartmentId ?? 0 };
         // Default the picker to a target it actually offers. The ticket's own
         // current status is never one of them (nothing transitions to itself),
@@ -846,8 +971,12 @@ public sealed class TicketDetailsModel(
 
     public sealed class AssignInput
     {
+        /// <summary>"employeeId|departmentId" — the (user, department) pair chosen in the assign control.</summary>
         [Required]
-        public Guid AssignedEmployeeId { get; set; }
+        public string Target { get; set; } = string.Empty;
+
+        /// <summary>Required only when the chosen department is not the ticket's current one (it becomes the transfer reason).</summary>
+        public string? Reason { get; set; }
         public string? RowVersionBase64 { get; set; }
     }
 

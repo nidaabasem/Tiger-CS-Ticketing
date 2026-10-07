@@ -170,6 +170,17 @@ public sealed class TicketAssignmentAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.TargetDepartmentInactive);
         }
 
+        // Transfer-and-assign: the explicit assignee must belong to the
+        // department the ticket is MOVING TO — the same "assignee belongs to
+        // the ticket's (resulting) department" rule AssignAsync enforces,
+        // checked against the target rather than the source, and checked
+        // before any write so a wrong choice changes nothing.
+        if (request.AssignToEmployeeId is { } assignee
+            && !await userDepartmentAssignmentRepository.ExistsAsync(assignee, request.TargetDepartmentId, cancellationToken))
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.EmployeeNotInDepartment);
+        }
+
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
         var previousDepartmentId = ticket.CurrentDepartmentId;
@@ -196,13 +207,41 @@ public sealed class TicketAssignmentAppService(
             afterValue: $"DepartmentId={request.TargetDepartmentId};Reason={request.Reason}",
             correlationId, cancellationToken);
 
-        // ...THEN re-evaluate the assignment automation against the new
-        // department + the ticket's request type. Every non-assignable case
-        // (no rule, rule targets someone outside department C, settings
-        // disable assignment) leaves the ticket in the NEW department's
-        // queue — audited, and never a randomly picked employee.
-        await autoAssignmentService.ApplyAsync(
-            ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
+        if (request.AssignToEmployeeId is { } explicitAssignee)
+        {
+            // Transfer-and-assign: the CS Manager named who takes it in the
+            // new department (validated above). Recorded exactly like a
+            // standalone Assign — a superseding TicketAssignment row in the
+            // NEW department plus an "Assign" audit entry under the transfer's
+            // correlation id — so history reads "transferred, then assigned"
+            // as one operation. The target department's automatic rules are
+            // deliberately not run: an explicit choice is not to be overridden
+            // by a rule.
+            var currentAssignment = await ticketAssignmentRepository.GetCurrentAsync(ticketId, cancellationToken);
+            currentAssignment?.MarkSuperseded();
+
+            ticket.AssignTo(explicitAssignee);
+
+            await ticketAssignmentRepository.AddAsync(
+                new TicketAssignment(ticketId, explicitAssignee, request.TargetDepartmentId, now, callerEmployeeId),
+                cancellationToken);
+
+            await auditWriter.WriteAsync(
+                callerEmployeeId, "Assign", "Ticket", ticketId.ToString(),
+                beforeValue: previousOwnerEmployeeId?.ToString() ?? "DepartmentQueue",
+                afterValue: $"{explicitAssignee};DepartmentId={request.TargetDepartmentId};ViaTransfer=true",
+                correlationId, cancellationToken);
+        }
+        else
+        {
+            // ...THEN re-evaluate the assignment automation against the new
+            // department + the ticket's request type. Every non-assignable case
+            // (no rule, rule targets someone outside department C, settings
+            // disable assignment) leaves the ticket in the NEW department's
+            // queue — audited, and never a randomly picked employee.
+            await autoAssignmentService.ApplyAsync(
+                ticket, now, correlationId, AutoAssignmentTrigger.DepartmentTransfer, cancellationToken);
+        }
 
         try
         {

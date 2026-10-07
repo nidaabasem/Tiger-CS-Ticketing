@@ -17,6 +17,7 @@ using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCsWeb::TigerCS.Web.Pages;
 using TigerCsWeb::TigerCS.Web.Models;
 
 namespace TigerCS.Tests.Web;
@@ -173,6 +174,52 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task TicketDetails_ForACsManager_OffersTheWholeDirectoryGroupedByDepartment_WithTheTicketsOwnDepartmentFirst()
+    {
+        using var client = Client();
+        client.DefaultRequestHeaders.Add("X-Test-Role", Roles.CsManager);
+
+        var html = await Ok(await client.GetAsync("/Tickets/5"));
+
+        Assert.Contains("<optgroup label=\"Customer Service (current department)\">", html, StringComparison.Ordinal);
+        Assert.Contains("<optgroup label=\"Collections\">", html, StringComparison.Ordinal);
+        // A person in several departments is offered under each one, with roles.
+        Assert.Contains("value=\"20000000-0000-0000-0000-000000000002|3\">Leasing Lina — CS Agent (also in Customer Service)", html, StringComparison.Ordinal);
+        Assert.Contains("value=\"20000000-0000-0000-0000-000000000002|2\">Leasing Lina — CS Agent (also in Collections)", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"Assign.Reason\"", html, StringComparison.Ordinal);
+        Assert.Contains("transfers the ticket to that department", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("No active members found in this department.", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TicketDetails_ForASupervisor_DistinguishesAFailedMemberLoadFromAnEmptyDepartment()
+    {
+        using var client = Client();
+        client.DefaultRequestHeaders.Add("X-Test-Role", Roles.CsSupervisor);
+
+        // Department 2: the fake Api answers the member list.
+        var ok = await Ok(await client.GetAsync("/Tickets/5"));
+        Assert.Contains("Test Agent — CS Agent", ok, StringComparison.Ordinal);
+        Assert.DoesNotContain("No active members found", ok, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be loaded", ok, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TicketDetails_CrossDepartmentAssignTarget_ParsesEmployeeAndDepartment()
+    {
+        Assert.True(TicketDetailsModel.TryParseAssignTarget("20000000-0000-0000-0000-000000000002|3", out var employee, out var department));
+        Assert.Equal(Guid.Parse("20000000-0000-0000-0000-000000000002"), employee);
+        Assert.Equal(3, department);
+
+        Assert.True(TicketDetailsModel.TryParseAssignTarget("20000000-0000-0000-0000-000000000002", out _, out var none));
+        Assert.Null(none);
+
+        Assert.False(TicketDetailsModel.TryParseAssignTarget("", out _, out _));
+        Assert.False(TicketDetailsModel.TryParseAssignTarget("not-a-guid|3", out _, out _));
+        Assert.False(TicketDetailsModel.TryParseAssignTarget($"{Guid.Empty}|3", out _, out _));
+    }
+
+    [Fact]
     public async Task SigningInAsANonCreatorRole_HidesTheNewTicketAction()
     {
         using var client = Client();
@@ -218,6 +265,14 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
                 "/api/users/me" => new CurrentUserResponseDto(ViewerId, "Test Agent", [Roles.CsAgent], [new DepartmentMembershipDto(2, "Customer Service", true)], true),
                 "/api/departments" => new[] { new DepartmentDto(2, "Customer Service"), new DepartmentDto(3, "Collections") },
                 "/api/departments/2/users" => new PagedResultDto<DepartmentUserDto>([new DepartmentUserDto(ViewerId, "Test Agent", true, [Roles.CsAgent])], 1, 100, 1),
+                "/api/departments/9/users" => new PagedResultDto<DepartmentUserDto>([], 1, 100, 0),
+                "/api/users/assignable" => new[]
+                {
+                    new AssignableUserDto(ViewerId, "Test Agent", [Roles.CsAgent], [new DepartmentMembershipDto(2, "Customer Service", true)]),
+                    new AssignableUserDto(Guid.Parse("20000000-0000-0000-0000-000000000002"), "Leasing Lina", [Roles.CsAgent],
+                        [new DepartmentMembershipDto(3, "Collections", true), new DepartmentMembershipDto(2, "Customer Service", false)]),
+                },
+                "/api/tickets/7" => Detail(7) with { CurrentDepartmentId = 9 },
                 "/api/channels" => new[] { new ChannelDto(3, "WhatsApp", "WHATSAPP", true, true, true, 2) },
                 "/api/tickets" => new TicketListResultDto([Ticket(5), Ticket(6)], query["ownerEmployeeId"] is not null ? 3 : query["ticketStatus"] == "Closed" ? 7 : 42, 1, 20),
                 "/api/tickets/5" => Detail(5),

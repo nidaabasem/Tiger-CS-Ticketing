@@ -27,4 +27,13 @@ public sealed class UsersApiClient(HttpClient httpClient, ILogger<UsersApiClient
 
         return GetAsync<PagedResultDto<DepartmentUserDto>>($"api/departments/{departmentId}/users?{query}", cancellationToken);
     }
+
+    /// <summary>
+    /// The cross-department assignee directory (<c>GET api/users/assignable</c>,
+    /// CS Manager and above): every active employee with roles and all their
+    /// department memberships. A failed call is reported as its outcome —
+    /// never flattened into an empty list.
+    /// </summary>
+    public Task<ApiResult<IReadOnlyList<AssignableUserDto>>> GetAssignableUsersAsync(CancellationToken cancellationToken) =>
+        GetAsync<IReadOnlyList<AssignableUserDto>>("api/users/assignable", cancellationToken);
 }

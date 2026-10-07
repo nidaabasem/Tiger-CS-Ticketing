@@ -30,6 +30,22 @@ public sealed record DepartmentUserDto(
     bool IsPrimary,
     IReadOnlyCollection<string> Roles);
 
+/// <summary>
+/// One employee in the cross-department assignee directory
+/// (<c>GET /api/users/assignable</c>): who they are, every role they hold
+/// and every department they belong to (primary first). Exactly one row per
+/// employee, however many departments or roles they have.
+/// </summary>
+/// <param name="EmployeeId">The employee.</param>
+/// <param name="DisplayName">Their display name.</param>
+/// <param name="Roles">Every role the employee holds, by name.</param>
+/// <param name="Departments">Every active department the employee is a member of, primary first.</param>
+public sealed record AssignableUserDto(
+    Guid EmployeeId,
+    string DisplayName,
+    IReadOnlyCollection<string> Roles,
+    IReadOnlyCollection<DepartmentMembershipDto> Departments);
+
 /// <summary>A single page of results.</summary>
 /// <typeparam name="T">The item type.</typeparam>
 /// <param name="Items">This page's items.</param>

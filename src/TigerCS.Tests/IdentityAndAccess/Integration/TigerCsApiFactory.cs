@@ -308,6 +308,16 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         return department.DepartmentId;
     }
 
+    /// <summary>Adds a NON-primary department membership (a user in several departments).</summary>
+    public async Task AssignDepartmentAsync(Guid employeeId, int departmentId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        db.UserDepartmentAssignments.Add(new UserDepartmentAssignment(
+            employeeId, departmentId, isPrimary: false, DateTime.UtcNow, assignedByEmployeeId: null));
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>Assigns an employee to a department (primary), replacing any existing primary assignment.</summary>
     public async Task AssignPrimaryDepartmentAsync(Guid employeeId, int departmentId)
     {

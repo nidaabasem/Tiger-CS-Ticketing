@@ -386,6 +386,65 @@ public class TicketAssignmentAppServiceTests
     }
 
     [Fact]
+    public async Task TransferAsync_WithAssignToEmployeeId_AssignsTheNamedMemberOfTheTargetDepartment_AndSkipsTheRules()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        ticket.ClassifyRequestType(requestTypeId: 10);
+        var previousOwner = Guid.NewGuid();
+        ticket.AssignTo(previousOwner);
+        var departmentC = f.Departments.AddDepartment("Leasing Customer Services", "LCS");
+
+        var sara = Guid.NewGuid();
+        var ahmed = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(sara, departmentC.DepartmentId, true, DateTime.UtcNow, null));
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(ahmed, departmentC.DepartmentId, true, DateTime.UtcNow, null));
+        // A rule that would pick Ahmed — the manager's explicit choice (Sara) wins.
+        f.Rules.Add(RequestTypeAssignmentRule.ForSpecificEmployee(10, ahmed));
+
+        var manager = Guid.NewGuid();
+        var result = await f.Service.TransferAsync(
+            manager, [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Leasing question", [], AssignToEmployeeId: sara));
+
+        Assert.Equal(TicketMutationOutcome.Success, result.Outcome);
+        Assert.Equal(departmentC.DepartmentId, ticket.CurrentDepartmentId);
+        Assert.Equal(2, ticket.OriginatingDepartmentId);
+        Assert.Equal(sara, ticket.CurrentOwnerEmployeeId);
+
+        var assignment = Assert.Single(f.Assignments.Added);
+        Assert.Equal(sara, assignment.AssignedEmployeeId);
+        Assert.Equal(departmentC.DepartmentId, assignment.AssignedDepartmentId);
+        Assert.Equal(manager, assignment.AssigningActorEmployeeId);
+
+        Assert.DoesNotContain(f.Audit.Entries, e => e.Action == "AutoAssign");
+        var transfer = Assert.Single(f.Audit.Entries, e => e.Action == "Transfer");
+        var assign = Assert.Single(f.Audit.Entries, e => e.Action == "Assign");
+        Assert.Equal(transfer.CorrelationId, assign.CorrelationId);
+        Assert.Contains("ViaTransfer=true", assign.AfterValue);
+    }
+
+    [Fact]
+    public async Task TransferAsync_WithAssignToEmployeeId_RefusesSomeoneOutsideTheTargetDepartment_AndChangesNothing()
+    {
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets, departmentId: 2);
+        var departmentC = f.Departments.AddDepartment("Leasing Customer Services", "LCS");
+        var sourceOnly = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(sourceOnly, 2, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.TransferAsync(
+            Guid.NewGuid(), [Roles.CsManager], ticket.TicketId,
+            new TransferTicketRequestDto(departmentC.DepartmentId, "Leasing question", [], AssignToEmployeeId: sourceOnly));
+
+        Assert.Equal(TicketMutationOutcome.EmployeeNotInDepartment, result.Outcome);
+        Assert.Equal(2, ticket.CurrentDepartmentId);
+        Assert.Null(ticket.CurrentOwnerEmployeeId);
+        Assert.Equal(0, f.UnitOfWork.SaveChangesCallCount);
+        Assert.Empty(f.Audit.Entries);
+    }
+
+    [Fact]
     public async Task TransferAsync_ChangesTheDepartmentBeforeReEvaluatingTheAssignment()
     {
         var f = CreateService();
