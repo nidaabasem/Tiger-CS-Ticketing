@@ -55,8 +55,8 @@ Projects requiring change/deployment: **Tiger CRM** (new route), **TigerGroupWeb
 | Chatbot inactivity closure (outcome **Cancelled**) | **Implemented; tested on fakes + SQLite only** | Merged here from `claude/admiring-brown-73jnmx`. Never run on SQL Server, Hangfire or a deployed host. Needs `BackgroundJobs__Enabled=true`. Config and PATCH payloads: `docs/Genesys/Chatbot-Inactivity-UAT-Configuration.md` |
 | Reopen of inactivity closures (CS Agent / Supervisor / Manager; SysAdmin override) | **Implemented; tested on fakes + SQLite only** | Only this closure; other Cancelled stay final; closure audit preserved. New migration `AddResolutionClosedForCustomerInactivity` |
 | Document-copy API | **BLOCKED for real UAT** | No CRM document source, no real verification/OTP path, no WhatsApp, no proxy route. Only Mock/recording-email tested — **not** end-to-end delivery. `docs/Genesys/CRM-Document-Operations-Requirements.md` |
-| TigerGroupWeb forwarding (unit-details, send-copy, `awaitingCustomerReply` PATCH) | **Not done** (source not accessible) | `docs/Genesys/TigerGroupWeb-Proxy-Change.md` |
-| Next payment via the chatbot | **Open** | Leading root cause from code: no live source behind it in UAT (`CollectionsSource:Provider=Unavailable`; summary has no dates). Not reproduced. `docs/Collections/Next-Payment-Investigation.md` |
+| TigerGroupWeb forwarding (unit-details, send-copy, `awaitingCustomerReply` PATCH, all Collections routes) | **Pending** — repository not accessible; the two `by-key` reads are "implemented and tested, not deployed" there per the Collections doc | Exact changes: `docs/Genesys/TigerGroupWeb-Proxy-Change.md` |
+| Next payment via the chatbot (PACT/EDSM payment-summary) | **Built, gated OFF; returns `Unavailable` until EDSM semantics are confirmed. Fixture-tested only; NOT validated on UAT** | `nextPayment` on the existing summary + Data Action 08; no company attested, `DueInstallmentsEnabled` untouched. `docs/Collections/Next-Payment.md`, `EDSM-Instalment-Semantics.md`. The reported failing conversation has **not** been reproduced (`Next-Payment-Investigation.md`) |
 
 ## Database
 

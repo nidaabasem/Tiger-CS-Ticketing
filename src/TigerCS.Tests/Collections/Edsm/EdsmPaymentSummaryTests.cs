@@ -551,6 +551,51 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
         Assert.Empty(_edsm.SummaryCalls);
     }
 
+    // ---- next payment on the summary contract (fixture tests; see CollectionsNextPaymentServiceTests) ----
+
+    [Fact]
+    public async Task ACrmCustomer_GetsAnExplicitNextPaymentUnavailable_WithNoGuessedTenantOrCompany()
+    {
+        _profiles.Add(Profile("crm:9001", 9001, null, null, Phone));
+
+        var dto = (await Service().GetAsync(_agent, "crm:9001")).Value!;
+
+        Assert.Equal("NotMapped", dto.MappingStatus);
+        Assert.Equal("Unavailable", dto.NextPayment!.Status);
+        Assert.Equal(["MappingNotAvailable"], dto.NextPayment.Reasons);
+        Assert.Empty(dto.NextPayment.Companies);
+        Assert.Empty(_edsm.DueCalls);
+    }
+
+    [Fact]
+    public async Task AMappedCustomer_ByDefault_HasNextPaymentUnavailable_AndDueInstallmentsIsNeverCalled()
+    {
+        SeedPactCustomer(Owned, Rented);
+
+        var dto = (await Service().GetAsync(_agent, PactKey)).Value!;
+
+        Assert.Equal("Mapped", dto.MappingStatus);
+        Assert.Equal("Unavailable", dto.NextPayment!.Status);
+        Assert.Equal(["FeatureDisabled"], dto.NextPayment.Reasons);
+        Assert.False(dto.NextPayment.IsComplete);
+        Assert.Empty(_edsm.DueCalls);                         // DueInstallmentsEnabled is off and stays off
+        Assert.Equal("Disabled", dto.Companies[0].DueInstallments!.Status);
+    }
+
+    [Fact]
+    public async Task EnabledWithoutConfirmedSemantics_NamesWhatIsMissing_PerMappedCompany_WithoutCallingEdsm()
+    {
+        SeedPactCustomer(Owned, Rented);
+        _edsmOptions.NextPayment.Enabled = true;
+
+        var next = (await Service().GetAsync(_agent, PactKey)).Value!.NextPayment!;
+
+        Assert.Equal("Unavailable", next.Status);
+        Assert.Equal([4, 25], next.Companies.Select(c => c.CompanyId));
+        Assert.All(next.Companies, c => Assert.Contains("UnpaidStatusValues", c.MissingSemantics));
+        Assert.Empty(_edsm.DueCalls);
+    }
+
     [Fact]
     public async Task ATenantPactNoLongerReturns_IsNotMapped_EvenThoughEdsmWouldAnswerWithZeros()
     {

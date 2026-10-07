@@ -1,5 +1,9 @@
 # Next payment via the chatbot — investigation (separate from the other items)
 
+> **Update:** the PACT/EDSM payment-summary path was chosen and built (gated, off by default): see `Next-Payment.md` and
+> `EDSM-Instalment-Semantics.md`. This page remains the investigation of the *reported* symptom, which has **not** been
+> reproduced; nothing below claims it has.
+
 **Status: root cause is established from code and shipped configuration; it is NOT yet validated against the reported
 failing conversation** — the original symptom report, a conversation id or Genesys flow log was not available in this
 session. Treat it as the leading explanation until reproduced on UAT.

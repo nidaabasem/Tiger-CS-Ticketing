@@ -28,7 +28,15 @@
         "availableDueRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'dueAmount')].raw",
         "availableOutstandingRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'outstandingAmount')].raw",
         "availableTotalRaw": "$.companies[?(@.status == 'Available')].fields[?(@.key == 'totalAmount')].raw",
-        "unavailableCompanyIds": "$.companies[?(@.status != 'Available')].companyId"
+        "unavailableCompanyIds": "$.companies[?(@.status != 'Available')].companyId",
+        "nextPaymentStatus": "$.nextPayment.status",
+        "nextPaymentReasons": "$.nextPayment.reasons",
+        "nextPaymentDetail": "$.nextPayment.detail",
+        "nextPaymentIsComplete": "$.nextPayment.isComplete",
+        "nextPaymentSearchedThrough": "$.nextPayment.searchedThrough",
+        "nextPaymentDate": "$.nextPayment.earliest.dueDate",
+        "nextPaymentAmountRaw": "$.nextPayment.earliest.amountRaw",
+        "nextPaymentCompanyId": "$.nextPayment.earliest.companyId"
       },
       "translationMapDefaults": {
         "mappingStatus": "\"\"",
@@ -43,9 +51,17 @@
         "availableDueRaw": "[]",
         "availableOutstandingRaw": "[]",
         "availableTotalRaw": "[]",
-        "unavailableCompanyIds": "[]"
+        "unavailableCompanyIds": "[]",
+        "nextPaymentStatus": "\"Unavailable\"",
+        "nextPaymentReasons": "[]",
+        "nextPaymentDetail": "\"\"",
+        "nextPaymentIsComplete": "false",
+        "nextPaymentSearchedThrough": "\"\"",
+        "nextPaymentDate": "\"\"",
+        "nextPaymentAmountRaw": "\"\"",
+        "nextPaymentCompanyId": "0"
       },
-      "successTemplate": "{\"mappingStatus\": ${mappingStatus}, \"completeness\": ${completeness}, \"incompleteReasons\": ${incompleteReasons}, \"currency\": ${currency}, \"maxSourceDelayMinutes\": ${maxSourceDelayMinutes}, \"availableCompanyIds\": ${availableCompanyIds}, \"availableCompanyNames\": ${availableCompanyNames}, \"availableBusinessModels\": ${availableBusinessModels}, \"availablePaidRaw\": ${availablePaidRaw}, \"availableDueRaw\": ${availableDueRaw}, \"availableOutstandingRaw\": ${availableOutstandingRaw}, \"availableTotalRaw\": ${availableTotalRaw}, \"unavailableCompanyIds\": ${unavailableCompanyIds}}"
+      "successTemplate": "{\"mappingStatus\": ${mappingStatus}, \"completeness\": ${completeness}, \"incompleteReasons\": ${incompleteReasons}, \"currency\": ${currency}, \"maxSourceDelayMinutes\": ${maxSourceDelayMinutes}, \"availableCompanyIds\": ${availableCompanyIds}, \"availableCompanyNames\": ${availableCompanyNames}, \"availableBusinessModels\": ${availableBusinessModels}, \"availablePaidRaw\": ${availablePaidRaw}, \"availableDueRaw\": ${availableDueRaw}, \"availableOutstandingRaw\": ${availableOutstandingRaw}, \"availableTotalRaw\": ${availableTotalRaw}, \"unavailableCompanyIds\": ${unavailableCompanyIds}, \\\"nextPaymentStatus\\\": ${nextPaymentStatus}, \\\"nextPaymentReasons\\\": ${nextPaymentReasons}, \\\"nextPaymentDetail\\\": ${nextPaymentDetail}, \\\"nextPaymentIsComplete\\\": ${nextPaymentIsComplete}, \\\"nextPaymentSearchedThrough\\\": ${nextPaymentSearchedThrough}, \\\"nextPaymentDate\\\": ${nextPaymentDate}, \\\"nextPaymentAmountRaw\\\": ${nextPaymentAmountRaw}, \\\"nextPaymentCompanyId\\\": ${nextPaymentCompanyId}}"
     }
   },
   "contract": {
@@ -153,6 +169,41 @@
               "type": "integer"
             },
             "description": "Companies without figures (EDSM error or deadline). Non-empty means not Complete."
+          },
+          "nextPaymentStatus": {
+            "type": "string",
+            "description": "Available, NoneWithinHorizon or Unavailable. Unavailable is NOT \"no payment\": read nextPaymentReasons. Never speak a date unless Available."
+          },
+          "nextPaymentReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why it is Unavailable or incomplete: FeatureDisabled, MappingNotAvailable, SemanticsNotConfirmed, CompanyNotSupported, TenantIdNotMatchable, SourceUnavailable, DeadlineExceeded, SearchIncomplete."
+          },
+          "nextPaymentDetail": {
+            "type": "string",
+            "description": "Plain-language explanation for the status; empty when Available and complete."
+          },
+          "nextPaymentIsComplete": {
+            "type": "boolean",
+            "description": "True only when every mapped company was answered. When false, say the date is the earliest among those that could be read."
+          },
+          "nextPaymentSearchedThrough": {
+            "type": "string",
+            "description": "yyyy-MM-dd: how far ahead EDSM was searched. NoneWithinHorizon means nothing through this date, not that nothing exists later."
+          },
+          "nextPaymentDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd of the next upcoming unpaid instalment (strictly after today); empty unless Available. Overdue is never here - see availableDueRaw."
+          },
+          "nextPaymentAmountRaw": {
+            "type": "string",
+            "description": "Amount still unpaid on that date, 2 decimals, in the response currency; empty unless Available."
+          },
+          "nextPaymentCompanyId": {
+            "type": "integer",
+            "description": "EDSM company the next payment belongs to; 0 unless Available."
           }
         }
       }

@@ -329,6 +329,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
         services.AddSingleton(sp => new PactAccountMappingCache(sp.GetService<TimeProvider>() ?? TimeProvider.System));
+        services.AddScoped<CollectionsNextPaymentService>();
         services.AddScoped<CollectionsPaymentSummaryAppService>();
         services.AddScoped<CollectionsReminderAppService>();
         services.AddScoped<CollectionsReminderOutcomeAppService>();
