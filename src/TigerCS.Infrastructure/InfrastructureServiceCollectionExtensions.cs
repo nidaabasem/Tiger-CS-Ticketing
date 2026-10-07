@@ -325,6 +325,10 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICollectionsUnitOfWork, CollectionsUnitOfWork>();
         services.AddScoped<CollectionsAuthorizationService>();
         services.AddScoped<CollectionsClock>();
+        services.Configure<PactReceivablesOptions>(configuration.GetSection(PactReceivablesOptions.SectionName));
+        services.AddScoped(sp => sp.GetRequiredService<IOptions<PactReceivablesOptions>>().Value);
+        services.AddScoped<IPactReceivablesSource, PactSqlReceivablesSource>();
+        services.AddScoped<PactReceivableCustomersAppService>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
