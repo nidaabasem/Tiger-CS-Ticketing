@@ -377,6 +377,42 @@ public class GenesysInquiryIngestionAppServiceTests
         Assert.Equal(leasing.Department.DepartmentId, Assert.Single(f.Tickets.All).OriginatingDepartmentId);
     }
 
+    [Theory]
+    [InlineData("id")]
+    [InlineData("code")]
+    [InlineData("queue")]
+    public async Task Ingest_RecordsWhichRoutingInputDecidedTheDepartment_OnTheAuditEntry(string via)
+    {
+        // A ticket that lands in an unexpected department (UAT: Genesys
+        // chats filed under Finance) must be traceable to the exact input
+        // that named it — the flow's explicit id or code, or the queue
+        // mapping — because the code never falls back to a department.
+        var f = new GenesysServiceFixture();
+        f.SeedGenesysDepartment("Customer Service", "CS");
+        var leasing = f.SeedGenesysDepartment("Leasing Customer Services", "LCS");
+        f.QueueMappings.Map("TH_CS_Leasing_WM-queue-id", leasing.Department.DepartmentId);
+
+        var inquiry = via switch
+        {
+            "id" => Inquiry("conv-src", GenesysChannel.WebsiteChat, departmentId: leasing.Department.DepartmentId),
+            "code" => Inquiry("conv-src", GenesysChannel.WebsiteChat, departmentCode: "lcs"),
+            _ => Inquiry("conv-src", GenesysChannel.WebsiteChat, queueId: "TH_CS_Leasing_WM-queue-id"),
+        };
+
+        var result = await f.Ingestion.IngestAsync(ServiceAccount, inquiry);
+
+        Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
+        var audit = Assert.Single(f.Audit.Entries, a => a.Action == "GenesysInquiryIngested");
+        var expectedSource = via switch
+        {
+            "id" => "DepartmentSource=ExplicitDepartmentId;ReceivedDepartmentId=" + leasing.Department.DepartmentId,
+            "code" => "DepartmentSource=ExplicitDepartmentCode;ReceivedDepartmentId=(none);ReceivedDepartmentCode=lcs",
+            _ => "DepartmentSource=QueueMapping;ReceivedDepartmentId=(none);ReceivedDepartmentCode=(none);QueueId=TH_CS_Leasing_WM-queue-id",
+        };
+        Assert.Contains(expectedSource, audit.AfterValue);
+        Assert.Contains("DepartmentCode=LCS;", audit.AfterValue);
+    }
+
     [Fact]
     public async Task Ingest_ExplicitSelectionWins_OverTheQueueMapping()
     {

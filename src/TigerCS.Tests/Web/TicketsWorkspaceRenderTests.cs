@@ -127,7 +127,10 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
     {
         var html = await Ok(await Client().GetAsync("/Tickets?view=pending&channelId=3"));
 
-        Assert.Contains("Start Handling", html, StringComparison.Ordinal);
+        Assert.Contains("Accept &amp; Start", html, StringComparison.Ordinal);
+        Assert.Contains("Complete Follow-up", html, StringComparison.Ordinal);
+        Assert.Contains("Cancel Follow-up", html, StringComparison.Ordinal);
+        Assert.Contains("What do these actions do?", html, StringComparison.Ordinal);
         Assert.Contains("&#x2B;971501234567", html, StringComparison.Ordinal);
         Assert.Contains("WhatsApp", html, StringComparison.Ordinal);
         Assert.Contains("action=\"/Tickets?view=pending&amp;channelId=3&amp;handler=Start\"", html, StringComparison.Ordinal);
