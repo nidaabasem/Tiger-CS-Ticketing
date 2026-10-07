@@ -81,17 +81,28 @@ public static class IntegrationsServiceCollectionExtensions
         });
 
         // Customer documents (contract / reservation form / unit layout /
-        // registration receipt) share the Crm:Provider switch: "Http" fails
-        // closed because Tiger CRM publishes no document operation;
+        // registration receipt) share the Crm:Provider switch: "Http" calls
+        // Tiger CRM's TicketingSystem/GetCustomerDocuments with Crm:SecretKey;
         // "Mock" serves labelled fixtures (Development/Testing only).
-        services.AddScoped<UnimplementedCrmDocumentGateway>();
+        services.AddHttpClient<CrmDocumentHttpGateway>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            {
+                client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        // The CRM credential must never follow a redirect to another host.
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<MockCrmDocumentGateway>();
         services.AddScoped<ICrmDocumentGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Http" => (ICrmDocumentGateway)sp.GetRequiredService<UnimplementedCrmDocumentGateway>(),
+                "Http" => (ICrmDocumentGateway)sp.GetRequiredService<CrmDocumentHttpGateway>(),
                 "Mock" => sp.GetRequiredService<MockCrmDocumentGateway>(),
                 _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
             };

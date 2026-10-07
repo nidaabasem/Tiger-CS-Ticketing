@@ -50,4 +50,15 @@ public sealed class CrmGatewayOptions
     /// docs/DEV-SETUP.md.
     /// </summary>
     public string? SecretKey { get; set; }
+
+    /// <summary>
+    /// Extra hosts (besides the <see cref="BaseUrl"/> host) from which CRM
+    /// document <c>fileUrl</c>s may be fetched with the CRM credential. Empty
+    /// by default: a <c>fileUrl</c> on any other host is refused rather than
+    /// sent the secret. Hostnames only, e.g. <c>files.tigergroup.ae</c>.
+    /// </summary>
+    public List<string> DocumentFileHosts { get; set; } = [];
+
+    /// <summary>Largest document body the gateway will read from CRM. Default 10 MB, the delivery limit.</summary>
+    public int MaxDocumentBytes { get; set; } = 10 * 1024 * 1024;
 }

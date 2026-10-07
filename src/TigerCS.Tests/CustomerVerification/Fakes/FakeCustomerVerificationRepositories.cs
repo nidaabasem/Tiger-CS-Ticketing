@@ -59,9 +59,9 @@ public sealed class FakeContactReferenceRepository : IContactReferenceRepository
     }
 
     /// <summary>Test setup helper — bypasses the CRM gateway to seed a cache row directly.</summary>
-    public ContactReference Seed(int unitReferenceId, string crmContactId, string displayName, ContactType type = ContactType.Owner)
+    public ContactReference Seed(int unitReferenceId, string crmContactId, string displayName, ContactType type = ContactType.Owner, string contactChannel = "channel@example.com")
     {
-        var contact = new ContactReference(crmContactId, unitReferenceId, displayName, "channel@example.com", type, null, DateTime.UtcNow);
+        var contact = new ContactReference(crmContactId, unitReferenceId, displayName, contactChannel, type, null, DateTime.UtcNow);
         typeof(ContactReference).GetProperty(nameof(ContactReference.ContactReferenceId))!.SetValue(contact, _nextId++);
         _contacts[contact.ContactReferenceId] = contact;
         return contact;
