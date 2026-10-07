@@ -91,6 +91,9 @@ Data action: `docs/Genesys/data-actions/11-send-document-copy.json`.
 `CrmDocuments:Enabled` ships **false**; set true for UAT. Same migration as above (table `CrmDocumentDeliveryRequests`,
 unique `(CallerEmployeeId, IdempotencyKey)`). Email needs `EmailNotifications:Enabled=true` + SMTP credentials.
 
+> ## ⚠ Document copies: PENDING REAL UAT VERIFICATION
+> Not complete until a customer has completed verification, selected a unit and a document, and received exactly one email through the public Genesys route. Blocked on CRM: verification-session endpoints and file-route authentication — see `docs/Genesys/CRM-Required-Contracts.md` (exit criteria §8).
+
 ### Tiger CRM connection (update)
 
 The document source is now Tiger CRM's `POST {Crm}/TicketingSystem/GetCustomerDocuments` (header `X-SECRET-KEY`, existing `Crm`

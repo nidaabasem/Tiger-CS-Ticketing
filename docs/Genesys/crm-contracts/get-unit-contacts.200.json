@@ -1,0 +1,21 @@
+{
+  "success": true,
+  "found": true,
+  "message": null,
+  "contacts": [
+    {
+      "crmContactId": "9001-1101",
+      "displayName": "Ahmed Ali",
+      "contactChannel": "+971501234567",
+      "contactType": "Owner",
+      "authorizedRepresentativeOfCrmContactId": null
+    },
+    {
+      "crmContactId": "9150-1101",
+      "displayName": "Property Management Co.",
+      "contactChannel": "+971507654321",
+      "contactType": "Representative",
+      "authorizedRepresentativeOfCrmContactId": "9001-1101"
+    }
+  ]
+}
