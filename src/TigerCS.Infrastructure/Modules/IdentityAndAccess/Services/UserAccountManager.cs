@@ -111,6 +111,99 @@ public sealed class UserAccountManager(UserManager<ApplicationUser> userManager,
             .ToListAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Implemented as <see cref="UserManager{TUser}.RemovePasswordAsync"/> +
+    /// <see cref="UserManager{TUser}.AddPasswordAsync"/> rather than the
+    /// token-based <c>GeneratePasswordResetTokenAsync</c>/<c>ResetPasswordAsync</c>
+    /// pair: the latter needs <c>AddDefaultTokenProviders()</c> (and a data-
+    /// protection token provider) which this solution does not register, and
+    /// the token exists to prove possession of an out-of-band link — a
+    /// System Administrator acting in-session has nothing to prove. Both are
+    /// supported Identity APIs; <c>AddPasswordAsync</c> runs the same
+    /// registered password validators <c>CreateAsync</c> does, so the policy
+    /// applies unchanged. The validators are run up front as well, before the
+    /// old hash is removed, so a policy failure leaves the current password in
+    /// place rather than an account with none.
+    /// </summary>
+    public async Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default)
+    {
+        var user = await userManager.FindByIdAsync(employeeId.ToString());
+        if (user is null)
+        {
+            return PasswordChangeResult.UserNotFound();
+        }
+
+        // Validate before touching the stored hash, so a policy failure leaves
+        // the current password in place.
+        foreach (var validator in userManager.PasswordValidators)
+        {
+            var validation = await validator.ValidateAsync(userManager, user, newPassword);
+            if (!validation.Succeeded)
+            {
+                return PasswordChangeResult.PolicyViolation(validation.Errors.Select(e => e.Description).ToList());
+            }
+        }
+
+        if (await userManager.HasPasswordAsync(user))
+        {
+            var removed = await userManager.RemovePasswordAsync(user);
+            if (!removed.Succeeded)
+            {
+                return PasswordChangeResult.PolicyViolation(removed.Errors.Select(e => e.Description).ToList());
+            }
+        }
+
+        var added = await userManager.AddPasswordAsync(user, newPassword);
+        if (!added.Succeeded)
+        {
+            return PasswordChangeResult.PolicyViolation(added.Errors.Select(e => e.Description).ToList());
+        }
+
+        // A reset is the recovery path for a locked-out user too: lift the
+        // lockout and forget the failed attempts, then rotate the stamp so
+        // every token issued under the old password stops working.
+        await userManager.SetLockoutEndDateAsync(user, null);
+        await userManager.ResetAccessFailedCountAsync(user);
+        await userManager.UpdateSecurityStampAsync(user);
+
+        return PasswordChangeResult.Success();
+    }
+
+    /// <summary>
+    /// <see cref="UserManager{TUser}.ChangePasswordAsync"/> verifies the current
+    /// password and runs the registered validators on the new one. Identity
+    /// reports a wrong current password as the <c>PasswordMismatch</c> error
+    /// code, which is mapped to <see cref="PasswordChangeOutcome.CurrentPasswordIncorrect"/>
+    /// so the caller learns exactly that and nothing else.
+    /// </summary>
+    public async Task<PasswordChangeResult> ChangePasswordAsync(
+        Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default)
+    {
+        var user = await userManager.FindByIdAsync(employeeId.ToString());
+        if (user is null)
+        {
+            return PasswordChangeResult.UserNotFound();
+        }
+
+        var result = await userManager.ChangePasswordAsync(user, currentPassword, newPassword);
+        if (!result.Succeeded)
+        {
+            var mismatch = userManager.ErrorDescriber.PasswordMismatch().Code;
+            return result.Errors.Any(e => e.Code == mismatch)
+                ? PasswordChangeResult.CurrentPasswordIncorrect()
+                : PasswordChangeResult.PolicyViolation(result.Errors.Select(e => e.Description).ToList());
+        }
+
+        await userManager.UpdateSecurityStampAsync(user);
+        return PasswordChangeResult.Success();
+    }
+
+    public async Task<string?> GetSecurityStampAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
+        await dbContext.Users.AsNoTracking()
+            .Where(u => u.Id == employeeId)
+            .Select(u => u.SecurityStamp)
+            .FirstOrDefaultAsync(cancellationToken);
+
     private async Task<UserAccountInfo> ToInfoAsync(ApplicationUser user) =>
         new(user.Id, user.UserName ?? string.Empty, user.Email, await userManager.IsLockedOutAsync(user));
 }

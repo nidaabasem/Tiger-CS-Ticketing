@@ -73,6 +73,24 @@ public class AdminUsersController(AdminUserAppService users) : AdminControllerBa
     public async Task<IActionResult> AddDepartment(Guid employeeId, [FromBody] AddDepartmentMembershipRequestDto request, CancellationToken cancellationToken) =>
         FromResult(await users.AddDepartmentAsync(CallerEmployeeId, employeeId, request, cancellationToken));
 
+    /// <summary>Resets the user's password (the "forgot my password" path, taken on the user's behalf).</summary>
+    /// <remarks>
+    /// Identity's password policy decides whether the new password is
+    /// acceptable (docs/DEV-SETUP.md §3). On success every session the user
+    /// had is invalidated — their next request with an old token is refused —
+    /// and any lockout is lifted, so they can sign in with the new password at
+    /// once. The password is never written to the audit trail or logs.
+    /// </remarks>
+    /// <response code="204">Password replaced; the user's existing sessions are invalid.</response>
+    /// <response code="404">No such employee.</response>
+    /// <response code="422">The new password violates the password policy; <c>errors</c> lists each reason.</response>
+    [HttpPost("{employeeId:guid}/password")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> ResetPassword(Guid employeeId, [FromBody] ResetUserPasswordRequestDto request, CancellationToken cancellationToken) =>
+        FromResult(await users.ResetPasswordAsync(CallerEmployeeId, employeeId, request, cancellationToken));
+
     /// <summary>Ends a department membership; the primary membership cannot be removed while others remain.</summary>
     [HttpDelete("{employeeId:guid}/departments/{departmentId:int}")]
     [ProducesResponseType<AdminUserDto>(StatusCodes.Status200OK)]

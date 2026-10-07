@@ -37,8 +37,11 @@ var apiBaseUrl = builder.Configuration.GetSection(TigerCsApiOptions.SectionName)
 builder.Services.AddTransient<BearerTokenHandler>();
 builder.Services.AddScoped<TicketNameResolver>();
 
-// AuthApiClient signs in/out — no bearer token to attach yet.
-builder.Services.AddHttpClient<AuthApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+// AuthApiClient signs in/out and changes the caller's own password. Login
+// and Screen Pop run before any session exists (the handler then attaches
+// nothing); logout and change-password run inside one and need the token.
+builder.Services.AddHttpClient<AuthApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
 
 // Every other client calls authenticated endpoints.
 builder.Services.AddHttpClient<TicketsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))

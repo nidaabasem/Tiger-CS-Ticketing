@@ -19,11 +19,15 @@ public sealed class LoginModel(AuthApiClient authApiClient) : PageModel
 
     public bool SessionExpired { get; private set; }
 
+    /// <summary>Set by the Change My Password page after a success: the old session was ended on purpose, not lost.</summary>
+    public bool PasswordChanged { get; private set; }
+
     public string? ReturnUrl { get; private set; }
 
-    public void OnGet(bool sessionExpired = false, string? returnUrl = null)
+    public void OnGet(bool sessionExpired = false, bool passwordChanged = false, string? returnUrl = null)
     {
         SessionExpired = sessionExpired;
+        PasswordChanged = passwordChanged;
         ReturnUrl = returnUrl;
     }
 

@@ -51,6 +51,10 @@ public sealed class AdminApiClient(HttpClient httpClient, ILogger<AdminApiClient
     public Task<ApiResult<AdminUserDto>> RemoveUserDepartmentAsync(Guid employeeId, int departmentId, CancellationToken ct) =>
         DeleteAsync<AdminUserDto>($"api/admin/users/{employeeId}/departments/{departmentId}", ct);
 
+    /// <summary>Administrative password reset — 204 on success; 422 carries Identity's policy reasons in <c>Detail</c>.</summary>
+    public Task<ApiResult> ResetUserPasswordAsync(Guid employeeId, ResetUserPasswordRequestDto request, CancellationToken ct) =>
+        PostAsync($"api/admin/users/{employeeId}/password", request, ct);
+
     public Task<ApiResult<IReadOnlyCollection<RoleDto>>> GetRolesAsync(CancellationToken ct) =>
         GetAsync<IReadOnlyCollection<RoleDto>>("api/roles", ct);
 

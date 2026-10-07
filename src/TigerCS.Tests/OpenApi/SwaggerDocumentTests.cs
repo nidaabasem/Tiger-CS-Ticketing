@@ -64,6 +64,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/auth/login",
         "POST /api/auth/screen-pop/redeem",
         "POST /api/auth/logout",
+        "POST /api/auth/change-password",
 
         "GET /api/users/me",
         "GET /api/users/assignable",
@@ -181,6 +182,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "PUT /api/admin/users/{employeeId}/roles",
         "POST /api/admin/users/{employeeId}/departments",
         "DELETE /api/admin/users/{employeeId}/departments/{departmentId}",
+        "POST /api/admin/users/{employeeId}/password",
         "GET /api/admin/departments",
         "GET /api/admin/departments/{departmentId}",
         "POST /api/admin/departments",

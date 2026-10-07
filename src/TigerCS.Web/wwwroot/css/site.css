@@ -311,6 +311,7 @@ table { border-collapse: collapse; width: 100%; }
   border-radius: var(--radius-sm); text-align: left; background: transparent; border: 0; cursor: pointer; font-size: 14px;
 }
 .menu-item:hover { background: var(--color-bg); }
+a.menu-item { color: inherit; text-decoration: none; }
 .menu-item strong { display: block; font-weight: 600; font-size: 14px; }
 .menu-item small { display: block; color: var(--color-text-secondary); font-size: 12.5px; margin-top: 1px; }
 .menu-divider { height: 1px; background: var(--color-border); margin: var(--space-2) 0; }

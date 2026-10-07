@@ -183,6 +183,35 @@ public sealed class AdministrationRenderTests : IDisposable
         Assert.Contains("identity__avatar--muted", withInactive, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The administrative "Reset password" panel exists for an existing user
+    /// only — never on the Add User form, where the initial password is set —
+    /// and states the policy beside the field, with both password entries
+    /// required and the optional reason that lands in the audit trail.
+    /// </summary>
+    [Fact]
+    public async Task UserEdit_OffersAResetPasswordPanel_ForAnExistingUserOnly()
+    {
+        var edit = await Ok(await GetAsync($"/Admin/Users/{AlmaId}"));
+
+        Assert.Contains("id=\"reset-password-title\">Reset password</h2>", edit, StringComparison.Ordinal);
+        Assert.Contains($"action=\"/Admin/Users/{AlmaId}?handler=ResetPassword\"", edit, StringComparison.Ordinal);
+        Assert.Contains("name=\"ResetPassword.NewPassword\"", edit, StringComparison.Ordinal);
+        Assert.Contains("name=\"ResetPassword.ConfirmPassword\"", edit, StringComparison.Ordinal);
+        Assert.Contains("name=\"ResetPassword.Reason\"", edit, StringComparison.Ordinal);
+        Assert.Contains("type=\"password\" required", edit, StringComparison.Ordinal);
+        Assert.Contains(UserEditModel.PasswordPolicyText, edit, StringComparison.Ordinal);
+        Assert.Contains(">Reset Password</button>", edit, StringComparison.Ordinal);
+        // The password never appears anywhere but the two input fields.
+        Assert.DoesNotContain("value=\"\" name=\"ResetPassword.NewPassword\"", edit, StringComparison.Ordinal);
+
+        var create = await Ok(await GetAsync("/Admin/Users/New"));
+        Assert.DoesNotContain("reset-password-title", create, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=ResetPassword", create, StringComparison.Ordinal);
+        // The same policy wording accompanies the initial password too.
+        Assert.Contains(UserEditModel.PasswordPolicyText, create, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Departments_ShowCodeNameMembersAndStatus_OnRowsThatOpen()
     {
