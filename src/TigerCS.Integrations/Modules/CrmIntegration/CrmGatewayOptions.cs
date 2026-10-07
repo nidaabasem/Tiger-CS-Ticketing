@@ -52,10 +52,12 @@ public sealed class CrmGatewayOptions
     public string? SecretKey { get; set; }
 
     /// <summary>
-    /// Extra hosts (besides the <see cref="BaseUrl"/> host) from which CRM
-    /// document <c>fileUrl</c>s may be fetched with the CRM credential. Empty
-    /// by default: a <c>fileUrl</c> on any other host is refused rather than
-    /// sent the secret. Hostnames only, e.g. <c>files.tigergroup.ae</c>.
+    /// Extra https hosts (besides the <see cref="BaseUrl"/> origin) from which
+    /// CRM document <c>fileUrl</c>s may be fetched. Empty by default: a
+    /// <c>fileUrl</c> on any other host is refused. <b>The CRM secret is never
+    /// sent to these hosts</b> — they are fetched anonymously (a storage host
+    /// with its own signed/unguessable URLs); only the CRM origin receives
+    /// <c>X-SECRET-KEY</c>. Hostnames only, e.g. <c>files.tigergroup.ae</c>.
     /// </summary>
     public List<string> DocumentFileHosts { get; set; } = [];
 

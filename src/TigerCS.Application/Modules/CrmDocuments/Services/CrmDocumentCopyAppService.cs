@@ -155,7 +155,12 @@ public sealed partial class CrmDocumentCopyAppService(
             && session.IsOwnedBy(callerEmployeeId)
             && session.Status is VerificationSessionStatus.Confirmed or VerificationSessionStatus.Consumed
             && session.ExpiresAtUtc > now
-            && options.IsAccepted(session.VerificationMethod);
+            && options.IsAccepted(session.VerificationMethod)
+            // Server-side proof: the session came out of a verified OTP challenge and carries the CRM customer and
+            // lead that challenge was bound to. An agent-asserted session — whatever method it names — never qualifies.
+            && session.ProofChallengeId is not null
+            && session.CrmBuyerCustomerId is not null
+            && session.CrmBuyerLeadId is not null;
 
         if (!verified)
         {
@@ -178,12 +183,21 @@ public sealed partial class CrmDocumentCopyAppService(
             return Mismatch(type, "The requested unit is not the unit this customer verified.");
         }
 
-        // ---- 4. Which CRM customer and lead? The verified contact's own phone, via the existing buyer lookup. ----
+        // ---- 4. The CRM customer and lead the proof was bound to — re-confirmed against CRM now ----
+        var boundCustomerId = session.CrmBuyerCustomerId!.Value;
+        var boundLeadId = session.CrmBuyerLeadId!.Value;
+
+        if (request.CrmLeadId is { } requestedLeadId && requestedLeadId != boundLeadId)
+        {
+            // The proof covers one unit. Another unit needs its own verification, even for the same customer.
+            return Mismatch(type, "The verification covers a different unit. Verify for the requested unit first.");
+        }
+
         if (!CustomerPhoneNumber.LooksLikeNumber(contact.ContactChannel)
             || CustomerPhoneNumber.Normalize(contact.ContactChannel).Length < 7)
         {
             return Fail(CrmDocumentCopyStatus.VerificationFailed, CrmDocumentCodes.CrmCustomerNotResolved,
-                "The verified contact has no phone number on record, so the CRM customer cannot be resolved. Nothing was sent.",
+                "The verified contact has no phone number on record, so the CRM customer cannot be re-confirmed. Nothing was sent.",
                 documentType: type.ToString());
         }
 
@@ -204,50 +218,17 @@ public sealed partial class CrmDocumentCopyAppService(
         }
 
         var buyer = lookup.Buyers![0];
-        var customerId = buyer.Customer.CustomerId;
 
-        // The lead: the customer's own unit — the one they verified on, or one they name.
-        CrmBuyerUnitDto? lead;
-        if (request.CrmLeadId is { } requestedLeadId)
+        // Same customer, and the bound lead still belongs to them: otherwise the proof no longer describes anyone CRM agrees with.
+        var lead = buyer.Customer.CustomerId == boundCustomerId
+            ? buyer.Units.FirstOrDefault(u => u.LeadId == boundLeadId)
+            : null;
+        if (lead is null)
         {
-            lead = buyer.Units.FirstOrDefault(u => u.LeadId == requestedLeadId);
-            if (lead is null)
-            {
-                return Mismatch(type, "That unit does not belong to the verified customer.");
-            }
+            return Mismatch(type, "The verified customer and unit no longer match CRM. Verify again.");
+        }
 
-            if (requestedUnitId is not null && !IsSameUnit(unit, lead))
-            {
-                return Mismatch(type, "The requested unit and lead do not describe the same unit.");
-            }
-        }
-        else
-        {
-            var verifiedUnitLeads = buyer.Units.Where(u => IsSameUnit(unit, u)).ToList();
-            if (verifiedUnitLeads.Count == 1)
-            {
-                lead = verifiedUnitLeads[0];
-            }
-            else if (verifiedUnitLeads.Count == 0 && buyer.Units.Count == 1)
-            {
-                lead = buyer.Units[0];
-            }
-            else
-            {
-                // The verified unit is not one lead (or not found among this customer's): ask which unit.
-                var candidates = verifiedUnitLeads.Count > 1 ? verifiedUnitLeads : buyer.Units.ToList();
-                return new CrmDocumentCopyResult(
-                    CrmDocumentCopyStatus.SelectionRequired, CrmDocumentCodes.SelectionRequired,
-                    "The customer has more than one unit. Ask which unit, then call again with its crmLeadId.",
-                    DocumentType: type.ToString(), ChoiceKind: "Unit",
-                    Choices: candidates
-                        .Select(u => new CrmDocumentChoice(
-                            u.LeadId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                            string.Join(" — ", new[] { u.ProjectName, u.UnitNumber }.Where(x => !string.IsNullOrWhiteSpace(x))),
-                            u.UnitNumber, null))
-                        .ToList());
-            }
-        }
+        var customerId = boundCustomerId;
 
         // ---- 5. Which document? Only ones CRM lists for this customer and lead. ----
         CrmDocumentListing listing;
@@ -515,23 +496,6 @@ public sealed partial class CrmDocumentCopyAppService(
         CrmDocumentSourceFailure.InvalidResponse or CrmDocumentSourceFailure.ReferenceRejected => CrmDocumentCodes.CrmInvalidResponse,
         _ => CrmDocumentCodes.DocumentSourceUnavailable
     };
-
-    /// <summary>
-    /// Whether a CRM buyer unit (<c>LeadID</c>) is the unit the customer
-    /// verified on: CRM's unit id when the cached reference carries it, else
-    /// the unit number within the same project.
-    /// </summary>
-    internal static bool IsSameUnit(UnitReference verified, CrmBuyerUnitDto candidate)
-    {
-        if (int.TryParse(verified.CrmUnitId, out var verifiedUnitId) && verifiedUnitId == candidate.UnitId)
-        {
-            return true;
-        }
-
-        return string.Equals(verified.UnitNumber?.Trim(), candidate.UnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
-            && (string.IsNullOrWhiteSpace(verified.PropertyName) || string.IsNullOrWhiteSpace(candidate.ProjectName)
-                || string.Equals(verified.PropertyName.Trim(), candidate.ProjectName.Trim(), StringComparison.OrdinalIgnoreCase));
-    }
 
     private static CrmDocumentCopyResult Mismatch(CrmDocumentType type, string message, CrmDocumentDeliveryRequest? claim = null) => Fail(
         CrmDocumentCopyStatus.OwnershipMismatch, CrmDocumentCodes.RecordOwnershipMismatch, message,

@@ -1,0 +1,73 @@
+{
+  "name": "TigerCS - Verify Code",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/verification/otp/verify",
+      "requestType": "POST",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"challengeId\": \"$esc.jsonString(${input.challengeId})\", \"code\": \"$esc.jsonString(${input.code})\"}"
+    },
+    "response": {
+      "translationMap": {
+        "status": "$.status",
+        "verificationSessionId": "$.session.verificationSessionId",
+        "unitNumber": "$.session.snapshotUnitNumber"
+      },
+      "translationMapDefaults": {
+        "verificationSessionId": "\"\"",
+        "unitNumber": "\"\""
+      },
+      "successTemplate": "{\"status\": ${status}, \"verificationSessionId\": ${verificationSessionId}, \"unitNumber\": ${unitNumber}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Verify Code",
+        "type": "object",
+        "required": [
+          "challengeId",
+          "code"
+        ],
+        "properties": {
+          "challengeId": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "The 6-digit code the customer received by email."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Verify Code result",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Verified."
+          },
+          "verificationSessionId": {
+            "type": "string",
+            "description": "Pass to TigerCS - Send Document Copy."
+          },
+          "unitNumber": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

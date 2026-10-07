@@ -78,6 +78,10 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/genesys/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
         ["PATCH /api/genesys/tickets/{ticketId:long}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
         ["POST /api/genesys/documents/send-copy"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysDocumentSendCopy_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/buyer-lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/otp/send"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/otp/resend"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/otp/verify"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
         ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
         ["POST /api/genesys/customers/unit-details"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerUnitDetails_AuthorizedThroughTheOverride),
         // Genesys agent identity mapping — the strict agent-action endpoint.

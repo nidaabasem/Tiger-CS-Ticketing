@@ -693,6 +693,35 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     /// <summary>
+    /// The chatbot buyer-verification endpoints sit behind the same
+    /// CustomerVerification policy as the other Genesys routes, so the System
+    /// Administrator override reaches them: each is authorized and answered by
+    /// the service (here, with the shipped switch still off) — never 401/403.
+    /// Functional behaviour: <c>GenesysDocumentsEndpointTests</c>.
+    /// </summary>
+    [Fact]
+    public async Task GenesysBuyerVerification_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var bodies = new Dictionary<string, object>
+        {
+            ["buyer-lookup"] = new { phoneNumber = "+971501234567" },
+            ["otp/send"] = new { phoneNumber = "+971501234567", crmUnitId = "1" },
+            ["otp/resend"] = new { challengeId = Guid.NewGuid() },
+            ["otp/verify"] = new { challengeId = Guid.NewGuid(), code = "123456" }
+        };
+
+        foreach (var (route, body) in bodies)
+        {
+            var response = await client.PostAsJsonAsync("/api/genesys/verification/" + route, body);
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Contains("DOCUMENT_COPY_DISABLED", await response.Content.ReadAsStringAsync());
+        }
+    }
+
+    /// <summary>
     /// The chatbot document-copy endpoint sits behind the same
     /// CustomerVerification policy as the other Genesys routes, so the System
     /// Administrator override reaches it: the request is authorized and

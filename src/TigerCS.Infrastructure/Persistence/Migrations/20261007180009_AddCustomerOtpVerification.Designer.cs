@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TigerCS.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using TigerCS.Infrastructure.Persistence;
 namespace TigerCS.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TigerCsDbContext))]
-    partial class TigerCsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261007180009_AddCustomerOtpVerification")]
+    partial class AddCustomerOtpVerification
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2166,11 +2169,6 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketResolutionId"));
-
-                    b.Property<bool>("ClosedForCustomerInactivity")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
 
                     b.Property<long?>("DuplicateOfTicketId")
                         .HasColumnType("bigint");

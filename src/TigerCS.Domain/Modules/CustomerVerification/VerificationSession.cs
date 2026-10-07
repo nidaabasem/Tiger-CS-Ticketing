@@ -70,6 +70,20 @@ public class VerificationSession
     /// </summary>
     public string? IdempotencyKey { get; private set; }
 
+    /// <summary>
+    /// The one-time-code challenge that <b>proved</b> this session, when it was
+    /// created by the server-side OTP flow. Null for every agent-confirmed
+    /// session. A session without it is only ever as strong as someone's
+    /// assertion; the chatbot document flow refuses such a session.
+    /// </summary>
+    public Guid? ProofChallengeId { get; private set; }
+
+    /// <summary>CRM's customer id the proof was bound to (OTP sessions only).</summary>
+    public int? CrmBuyerCustomerId { get; private set; }
+
+    /// <summary>CRM's lead id of the unit the proof was bound to (OTP sessions only) — the customer/unit/lead relationship, preserved.</summary>
+    public int? CrmBuyerLeadId { get; private set; }
+
     private VerificationSession() { }
 
     public VerificationSession(
@@ -116,6 +130,28 @@ public class VerificationSession
         ExpiresAtUtc = expiresAtUtc;
         IdempotencyKey = idempotencyKey;
         Status = VerificationSessionStatus.InProgress;
+    }
+
+    /// <summary>
+    /// Records the server-verified proof behind this session: the OTP challenge
+    /// and the CRM customer/lead it was bound to. Must be called before
+    /// <see cref="Confirm"/>; the only caller is the OTP verification service.
+    /// </summary>
+    public void AttachOtpProof(Guid challengeId, int crmCustomerId, int crmLeadId)
+    {
+        if (challengeId == Guid.Empty)
+        {
+            throw new ArgumentException("ChallengeId is required.", nameof(challengeId));
+        }
+
+        if (Status != VerificationSessionStatus.InProgress)
+        {
+            throw new VerificationSessionNotInProgressException(VerificationSessionId, Status);
+        }
+
+        ProofChallengeId = challengeId;
+        CrmBuyerCustomerId = crmCustomerId;
+        CrmBuyerLeadId = crmLeadId;
     }
 
     public bool IsOwnedBy(Guid employeeId) => AgentEmployeeId == employeeId;

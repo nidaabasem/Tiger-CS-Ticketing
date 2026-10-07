@@ -136,6 +136,22 @@ using (var crmStartupScope = app.Services.CreateScope())
     }
 }
 
+// The chatbot document-copy flow (email OTP verification + sending a customer's
+// documents) ships disabled. In Production it stays disabled until real UAT
+// verification has passed and someone sets CrmDocuments:AllowInProduction
+// deliberately — enabling it alone is not enough.
+using (var documentsStartupScope = app.Services.CreateScope())
+{
+    var documentOptions = documentsStartupScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions>();
+    if (documentOptions.Enabled && app.Environment.IsProduction() && !documentOptions.AllowInProduction)
+    {
+        throw new InvalidOperationException(
+            "CrmDocuments:Enabled is true in Production but CrmDocuments:AllowInProduction is not. Customer document delivery must stay "
+            + "disabled in Production until real UAT verification has passed (docs/Genesys/Document-Copy-API.md, Status). "
+            + "Set CrmDocuments:Enabled to false, or set AllowInProduction deliberately after sign-off.");
+    }
+}
+
 // Fail fast if fixture Collections balances would be served outside
 // Development/Testing — a sample balance shown to an agent, or read by the
 // voice bot, as if it were a customer's real debt is the one failure this

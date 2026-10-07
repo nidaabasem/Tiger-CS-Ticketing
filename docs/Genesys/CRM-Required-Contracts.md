@@ -3,6 +3,13 @@
 **Audience:** the CRM team. **Status:** specification only; nothing in this document is implemented on the CRM side.
 **Feature status:** the document-copy feature is **PENDING REAL UAT VERIFICATION** (see [§8](#8-status-and-exit-criteria)).
 
+> **Phase 1 decision (implemented): buyers requesting their own documents, built on `GetBuyerByPhone` alone.** TigerCS caches the
+> verification unit/contact from the buyer lookup (§5, "buyers-only"), verifies with a server-side **email OTP** to the address CRM
+> returns (§2 — no longer a gap on TigerCS's side), and uses `GetCustomerDocuments` + the file routes (§6). **The CRM team does not
+> need to build §4 (`GetUnit`, `SearchUnits`, `GetUnitContacts`) for this phase**; §4 remains the contract for tenants, representatives
+> and unit-number lookup later. What CRM still owes for Phase 1: the §7 confirmations (email/phone data quality, file-route
+> authentication) and, for real UAT, a buyer with a usable email.
+
 Every shape below was taken from the code TigerCS actually compiles against, and every JSON sample lives as a file in
 [`crm-contracts/`](crm-contracts/) that an automated test (`CrmContractSamplesTests`) deserialises into those C# types. No CRM database
 field is assumed: where CRM already returns a value via `GetBuyerByPhone` it is named; where it does not, that is stated and the
@@ -18,19 +25,17 @@ field is left optional or null.
 | `UnitReferences.CrmUnitId` and `ContactReferences.CrmContactId` are **globally unique** (nvarchar(64)); a contact row belongs to exactly one unit and its unit link is never changed after the first insert. A contact id reused across two units therefore fails session creation for the second unit (`UnitOrContactNotFound`). | `UnitReferenceConfiguration`, `ContactReferenceConfiguration`, `UpsertContactAsync` |
 | The document-copy flow resolves the CRM customer from the **verified contact's phone** (`contactChannel`) through the existing `GetBuyerByPhone`, then matches the verified unit to one of that customer's leads (by `unitId`, else unit number + project). | `CrmDocumentCopyAppService` |
 
-## 2. A gap CRM cannot close: nothing independently proves identity
+## 2. Identity proof — now built in TigerCS (Phase 1)
 
-`POST /api/verification-sessions` takes `confirmed: true` and `verificationMethod` (`Otp`, `AuthenticatedDigitalUser`, …) **from the
-caller**. TigerCS does not send, check or even see a one-time code; CRM would not either. Today a session labelled `Otp` is only the
-integration account's *assertion* that an OTP passed. The three CRM read operations below are necessary — without them there is nothing
-to verify against — but they are **not sufficient for real customer verification**.
+When this document was first written, `POST /api/verification-sessions` took `confirmed: true` and `verificationMethod` from the caller, so
+a session labelled `Otp` was only an assertion; neither TigerCS nor CRM checked a code. **That is closed for the chatbot document flow:**
+TigerCS now issues the code itself (`/api/genesys/verification/otp/send`), checks it on the server (`/otp/verify`), and creates the
+`Otp` session only from a verified challenge; the generic endpoint refuses `Otp`, and `send-copy` accepts only a session that carries the
+recorded proof. Requires no CRM endpoint: the code goes to `customer.email` from `GetBuyerByPhone`. Delivery is email only (SMTP);
+there is no SMS/WhatsApp sender.
 
-What would make it real (TigerCS-side work, **not** a CRM endpoint; not built yet): a server-side OTP challenge — TigerCS generates a
-code, delivers it to the contact's channel **as CRM holds it**, checks the code, and only then creates the session itself, so a caller
-can no longer mint an `Otp` session by assertion. Delivery today could only be **email** (SMTP exists; there is no SMS/WhatsApp
-sender). `GetBuyerByPhone` already returns `customer.email` and `customer.mobileNumber`, so this needs **no new CRM field** — only
-CRM's confirmation that those values are the customer's own, current contact details (§7). Until it exists, `CrmDocuments:Enabled`
-must stay `false` outside controlled UAT, and UAT results must say which party performed the OTP.
+What it still depends on is **CRM's data**: the proof is "the person can read the mailbox CRM holds", so the email on record must be
+the customer's own and current (§7 item 4). Details: [`Document-Copy-API.md`](Document-Copy-API.md).
 
 ## 3. Authentication, transport, conventions (all operations)
 
@@ -130,14 +135,14 @@ buyers-only (no CRM work; TigerCS builds the cache path) or full 4.1–4.3.
 **Request**
 * `GET <fileUrl resolved>` — no body, no cookies, no query added.
 * **Header `X-SECRET-KEY: <same shared secret>`.** This is the only credential TigerCS has; if the file route cannot validate it, downloads fail with 401/403.
-* `fileUrl` forms TigerCS accepts: absolute `https://…` on the **same scheme, host and port as `Crm:BaseUrl`**; root-relative `/Uploads/x.pdf`; relative `Uploads/x.pdf`; legacy `~/Uploads/x.pdf`. Everything else is refused **without sending the secret**: other hosts or ports, `http` when the base is `https`, protocol-relative `//host/…`, `file:`, `ftp:`, `javascript:`. A different file host is possible only if it is **https** and listed in TigerCS's `Crm:DocumentFileHosts` — tell us the host.
+* `fileUrl` forms TigerCS accepts: absolute `https://…` on the **same scheme, host and port as `Crm:BaseUrl`**; root-relative `/Uploads/x.pdf`; relative `Uploads/x.pdf`; legacy `~/Uploads/x.pdf`. Everything else is refused **without sending the secret**: other hosts or ports, `http` when the base is `https`, protocol-relative `//host/…`, `file:`, `ftp:`, `javascript:`. A different file host is possible only if it is **https** and listed in TigerCS's `Crm:DocumentFileHosts` — tell us the host. **TigerCS never sends `X-SECRET-KEY` to such a host** (it is not CRM); it is fetched without credentials, so it must serve the file by an unguessable or pre-signed URL. Only the CRM origin receives the secret.
 * Redirects are **not followed** (a redirect could carry the secret to another host).
 * The reference must stay valid for at least several minutes (TigerCS lists then downloads inside one request); it need not be permanent. It is never logged, stored or returned to Genesys.
 
 **Response**
 | Case | Required response | TigerCS result |
 |---|---|---|
-| File available | `200`, body = the **raw file bytes** (no JSON, no base64), `Content-Type` = real media type (`application/pdf`, `image/png`, `image/jpeg`; `application/octet-stream` tolerated and inferred from the name/URL extension). **Not `text/html`.** `Content-Length` recommended. ≤ 10 MB (`Crm:MaxDocumentBytes`). | Emailed as an attachment named from the attachment `name` (**include the extension in `name`**; `Content-Disposition` is not read). |
+| File available | `200`, body = the **raw file bytes** (no JSON, no base64). **Not `text/html`.** `Content-Length` recommended. ≤ 10 MB (`Crm:MaxDocumentBytes`). TigerCS decides the real type **from the bytes** (PDF, PNG, JPEG, GIF, WebP, TIFF; DOC/DOCX/BMP when a declared type or name agrees) and rejects anything it cannot establish as a document — so `Content-Type` and the name's extension are hints, not requirements. | Emailed as an attachment named from the attachment `name` (extension replaced by the true one: `Layout Plan` → `Layout Plan.png`). `Content-Disposition` filename is used only as a hint. |
 | File no longer exists | `404` | "document no longer available" — the send is marked failed, no email. |
 | Wrong/missing secret | `401` (never `302`/login HTML) | `CRM_AUTHENTICATION_FAILED` (502). |
 | Secret valid, not allowed | `403` | `CRM_ACCESS_DENIED` (502). |
@@ -165,7 +170,7 @@ buyers-only (no CRM work; TigerCS builds the cache path) or full 4.1–4.3.
 
 **The document-copy feature is PENDING REAL UAT VERIFICATION.** Everything below has been verified only against stubs and fixtures (3 000+ automated tests); nothing has run against real CRM, the real file routes, real SMTP, or the public Genesys route. It stays `CrmDocuments:Enabled=false` by default and must be described as pending until all of this has been observed in UAT and recorded in `docs/releases/UAT-Chatbot-Inactivity-And-Document-Copy.md`:
 
-1. A real UAT customer **completes verification** — a session is created through the public route, with the OTP check performed by a named party (§2).
+1. A real UAT customer **completes verification** through the public route — `buyer-lookup`, `otp/send`, the email arrives in their mailbox, `otp/verify` returns the session (the OTP is TigerCS's own, §2).
 2. They **select a unit** (a customer with ≥ 2 units, or the matched verified unit).
 3. They **select a document** (a lead with ≥ 2 documents → `SelectionRequired`, then the chosen `recordId`), or the single document is resolved.
 4. **Exactly one email** with the correct attachment reaches that customer's mailbox — via the public Genesys → TigerGroupWeb → TigerCS route (`POST /api/genesys/documents/send-copy`), with the retry of the same `Idempotency-Key` sending nothing more.

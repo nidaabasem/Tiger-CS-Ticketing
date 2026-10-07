@@ -143,6 +143,10 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // a ticket after creating it goes through the one PATCH.
         "POST /api/genesys/tickets",
         "POST /api/genesys/documents/send-copy",
+        "POST /api/genesys/verification/buyer-lookup",
+        "POST /api/genesys/verification/otp/send",
+        "POST /api/genesys/verification/otp/resend",
+        "POST /api/genesys/verification/otp/verify",
         "PATCH /api/genesys/tickets/{ticketId}",
         "GET /api/genesys/customers/lookup",
         // Verified customer's unit and project details for the chatbot/voicebot.
