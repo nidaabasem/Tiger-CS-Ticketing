@@ -73,8 +73,15 @@ public sealed class ReopenEligibilityService(
     /// lifecycle service uses one instant for the window check and for every
     /// row it writes in the same transaction, and a second clock read here
     /// would let those disagree.
+    ///
+    /// <para>
+    /// <paramref name="closedForCustomerInactivity"/> is read by the caller from
+    /// the ticket's current resolution. Only the direct-Reopen path passes it;
+    /// the Reopen Approval path does not, so approvals remain Resolved-only.
+    /// </para>
     /// </summary>
-    public async Task<ReopenEligibility> EvaluateAsync(Ticket ticket, DateTime nowUtc, CancellationToken cancellationToken = default)
+    public async Task<ReopenEligibility> EvaluateAsync(
+        Ticket ticket, DateTime nowUtc, CancellationToken cancellationToken = default, bool closedForCustomerInactivity = false)
     {
         ArgumentNullException.ThrowIfNull(ticket);
 
@@ -83,7 +90,7 @@ public sealed class ReopenEligibilityService(
             return ReopenEligibility.NotClosed;
         }
 
-        if (ticket.ResolutionOutcome != (byte)ResolutionOutcome.Resolved)
+        if (!ReopenPolicy.IsReopenableOutcome(ticket.ResolutionOutcome, closedForCustomerInactivity))
         {
             return ReopenEligibility.OutcomeNotReopenable;
         }

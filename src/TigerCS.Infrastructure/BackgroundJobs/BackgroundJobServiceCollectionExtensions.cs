@@ -36,6 +36,8 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<SlaSweepJob>();
         services.AddScoped<OutboxDispatchJob>();
         services.AddScoped<CollectionsReminderScheduleJob>();
+        // Holds only the scope factory; it opens one scope per candidate itself.
+        services.AddScoped<ChatbotInactivityCloseJob>();
 
         if (!options.Enabled)
         {
@@ -107,6 +109,31 @@ public static class BackgroundJobServiceCollectionExtensions
             OutboxDispatchJob.RecurringJobId,
             job => job.RunAsync(CancellationToken.None),
             $"*/{minutes} * * * *");
+    }
+
+    /// <summary>
+    /// Registers the recurring chatbot-inactivity closure. Runs every minute
+    /// (Hangfire's finest recurring granularity), so a ticket is closed within
+    /// about a minute of its customer-silence deadline passing. It reads the
+    /// persisted timers, so a restart or deploy loses nothing: the next run
+    /// closes whatever became due meanwhile. A no-op when
+    /// <c>BackgroundJobs:Enabled</c> is false — the timers are still recorded
+    /// and are honoured as soon as the job runs.
+    /// </summary>
+    public static void UseTigerCsRecurringChatbotInactivityClose(this IServiceProvider services, BackgroundJobOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!options.Enabled)
+        {
+            return;
+        }
+
+        services.GetRequiredService<IRecurringJobManager>().AddOrUpdate<ChatbotInactivityCloseJob>(
+            ChatbotInactivityCloseJob.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            "* * * * *");
     }
 
     /// <summary>

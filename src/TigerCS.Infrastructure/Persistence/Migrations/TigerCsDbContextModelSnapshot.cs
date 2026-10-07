@@ -595,6 +595,74 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("ContactReferences", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest", b =>
+                {
+                    b.Property<long>("CrmDocumentDeliveryRequestId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CrmDocumentDeliveryRequestId"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("CallerEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("Channel")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CrmRecordId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<byte>("DocumentType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("MaskedDestination")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("VerificationSessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("CrmDocumentDeliveryRequestId");
+
+                    b.HasIndex(new[] { "VerificationSessionId", "DocumentType", "CrmRecordId", "Channel", "Status" }, "IX_CrmDocumentDeliveryRequests_SessionDocument");
+
+                    b.HasIndex(new[] { "CallerEmployeeId", "IdempotencyKey" }, "UX_CrmDocumentDeliveryRequests_CallerKey")
+                        .IsUnique();
+
+                    b.ToTable("CrmDocumentDeliveryRequests", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.UnitReference", b =>
                 {
                     b.Property<int>("UnitReferenceId")
@@ -1733,6 +1801,13 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketInteractionId"));
 
+                    b.Property<Guid?>("AwaitingCustomerReplyReportedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("AwaitingCustomerReplySinceUtc")
+                        .IsConcurrencyToken()
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("CalledNumber")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
@@ -1794,6 +1869,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("HandledByUserId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("InactivityClosedAtUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime?>("InteractionStartedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -1809,6 +1887,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasKey("TicketInteractionId");
 
                     b.HasIndex("ChannelId");
+
+                    b.HasIndex(new[] { "AwaitingCustomerReplySinceUtc" }, "IX_TicketInteractions_AwaitingCustomerReplySinceUtc")
+                        .HasFilter("[AwaitingCustomerReplySinceUtc] IS NOT NULL");
 
                     b.HasIndex(new[] { "HandledByUserId" }, "IX_TicketInteractions_HandledByUserId");
 
@@ -1997,6 +2078,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketResolutionId"));
+
+                    b.Property<bool>("ClosedForCustomerInactivity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
 
                     b.Property<long?>("DuplicateOfTicketId")
                         .HasColumnType("bigint");
@@ -2764,6 +2850,15 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.CustomerVerification.UnitReference", null)
                         .WithMany("Contacts")
                         .HasForeignKey("UnitReferenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.CrmDocumentDeliveryRequest", b =>
+                {
+                    b.HasOne("TigerCS.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CallerEmployeeId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

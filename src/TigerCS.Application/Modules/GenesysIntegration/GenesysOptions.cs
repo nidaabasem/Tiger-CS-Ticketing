@@ -39,4 +39,21 @@ public sealed class GenesysOptions
     /// refuses to issue a launch rather than guess an address.
     /// </summary>
     public string? ScreenPopWebBaseUrl { get; set; }
+
+    /// <summary>The default for <see cref="CustomerInactivityTimeoutMinutes"/>: the business rule's "more than 5 minutes".</summary>
+    public const int DefaultCustomerInactivityTimeoutMinutes = 5;
+
+    /// <summary>
+    /// How long a chatbot may wait for the customer's reply before the
+    /// background job closes the ticket as an inactivity closure. Default 5;
+    /// the customer must be silent for <b>more than</b> this long. Zero or a
+    /// negative value switches the automatic closure off (the timer is still
+    /// recorded, nothing is closed). Set it under
+    /// <c>Genesys:CustomerInactivityTimeoutMinutes</c>.
+    /// </summary>
+    public int CustomerInactivityTimeoutMinutes { get; set; } = DefaultCustomerInactivityTimeoutMinutes;
+
+    /// <summary>The configured timeout, or null when automatic closure is switched off.</summary>
+    public TimeSpan? CustomerInactivityTimeout =>
+        CustomerInactivityTimeoutMinutes > 0 ? TimeSpan.FromMinutes(CustomerInactivityTimeoutMinutes) : null;
 }

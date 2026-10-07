@@ -1,0 +1,65 @@
+{
+  "name": "TigerCS - Awaiting Customer Reply",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/${input.ticketId}",
+      "requestType": "PATCH",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"awaitingCustomerReply\": ${input.awaiting}}"
+    },
+    "response": {
+      "translationMap": {
+        "outcome": "$.outcome",
+        "ticketStatus": "$.ticketStatus",
+        "awaitingCustomerReply": "$.awaitingCustomerReply",
+        "inactivityDeadlineUtc": "$.inactivityDeadlineUtc",
+        "note": "$.awaitingCustomerReplyNote"
+      },
+      "translationMapDefaults": {
+        "inactivityDeadlineUtc": "\"\"",
+        "note": "\"\""
+      },
+      "successTemplate": "{\"outcome\": ${outcome}, \"ticketStatus\": ${ticketStatus}, \"awaitingCustomerReply\": ${awaitingCustomerReply}, \"inactivityDeadlineUtc\": ${inactivityDeadlineUtc}, \"note\": ${note}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Awaiting Customer Reply",
+        "type": "object",
+        "required": ["ticketId", "conversationId", "awaiting"],
+        "properties": {
+          "ticketId": { "type": "string", "description": "Participant data TigerCsTicketId." },
+          "conversationId": { "type": "string", "description": "The conversation id." },
+          "awaiting": {
+            "type": "boolean",
+            "description": "true right after the chatbot sends a message that needs a reply (starts the 5-minute inactivity timer; repeating it never restarts it). false when the customer replies (cancels it). Call true again with the chatbot's next question."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Awaiting Customer Reply result",
+        "type": "object",
+        "properties": {
+          "outcome": { "type": "string", "description": "\"Applied\"." },
+          "ticketStatus": { "type": "string", "description": "The ticket status now." },
+          "awaitingCustomerReply": { "type": "boolean", "description": "Whether the inactivity timer is running after this call." },
+          "inactivityDeadlineUtc": { "type": "string", "description": "When the ticket becomes eligible for automatic closure, while the timer runs." },
+          "note": { "type": "string", "description": "Why a requested timer was not started (human follow-up pending, conversation ended, ticket owned or closed). Empty otherwise." }
+        }
+      }
+    }
+  },
+  "secure": false
+}

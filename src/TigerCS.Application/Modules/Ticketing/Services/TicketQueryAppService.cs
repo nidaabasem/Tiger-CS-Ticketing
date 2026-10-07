@@ -122,7 +122,8 @@ public sealed class TicketQueryAppService(
             ResolvedAtUtc = currentResolution?.ResolvedAtUtc,
             ClosedAtUtc = closedAt,
             IsReopenEligible = reopenPolicy.IsReopenEligible(
-                ticket.TicketStatus, ticket.ResolutionOutcome, closedAt, timeProvider.GetUtcNow().UtcDateTime)
+                ticket.TicketStatus, ticket.ResolutionOutcome, closedAt, timeProvider.GetUtcNow().UtcDateTime,
+                currentResolution?.ClosedForCustomerInactivity == true)
         };
 
         // Derived, never stored: the ticket's handoff state IS the state of

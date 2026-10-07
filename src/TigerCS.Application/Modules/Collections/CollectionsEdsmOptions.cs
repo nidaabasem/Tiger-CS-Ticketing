@@ -33,6 +33,9 @@ public sealed class CollectionsEdsmOptions
 
     public int DueInstallmentsLookaheadDays { get; set; } = 31;
 
+    /// <summary>The next-payment feature (<c>CollectionsSource:NextPayment</c>): off, and gated per company on confirmed EDSM semantics. Independent of <see cref="DueInstallmentsEnabled"/>.</summary>
+    public CollectionsNextPaymentOptions NextPayment { get; set; } = new();
+
     /// <summary>
     /// The longest a posted payment can take to appear (contract §8.3: 10-minute ledger
     /// cache + 10-minute summary cache in the source config; deployed values UNVERIFIED).

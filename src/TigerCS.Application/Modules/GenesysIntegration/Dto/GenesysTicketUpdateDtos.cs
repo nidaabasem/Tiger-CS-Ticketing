@@ -34,6 +34,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="StartedAtUtc">When the interaction started on the Genesys side — recorded only if the creating call did not supply it; never moves once known.</param>
 /// <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
+/// <param name="AwaitingCustomerReply">true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
     string? AgentId = null,
@@ -42,7 +43,8 @@ public sealed record GenesysTicketUpdateDto(
     GenesysHandoffUpdateDto? Handoff = null,
     DateTime? StartedAtUtc = null,
     GenesysRoutingUpdateDto? Routing = null,
-    GenesysCustomerConfirmationUpdateDto? CustomerConfirmation = null);
+    GenesysCustomerConfirmationUpdateDto? CustomerConfirmation = null,
+    bool? AwaitingCustomerReply = null);
 
 /// <summary>
 /// The customer's own statement, made during the interaction, that the issue
@@ -178,6 +180,9 @@ public enum GenesysTicketUpdateOutcome
 /// <param name="HandoffStatus">The pending human work's status, when there is any: WaitingForAgent, Assigned, InProgress, Completed or Cancelled. Null when this conversation never needed a human.</param>
 /// <param name="TicketAgentHandoffId">That work item's id, when there is one.</param>
 /// <param name="Detail">A human-readable explanation on a refusal.</param>
+/// <param name="AwaitingCustomerReply">Whether the inactivity timer is running after this update.</param>
+/// <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs.</param>
+/// <param name="AwaitingCustomerReplyNote">Why a requested timer was not started, when it was not.</param>
 public sealed record GenesysTicketUpdateResult(
     GenesysTicketUpdateOutcome Outcome,
     long? TicketId = null,
@@ -187,7 +192,10 @@ public sealed record GenesysTicketUpdateResult(
     int TranscriptMessageCount = 0,
     string? HandoffStatus = null,
     long? TicketAgentHandoffId = null,
-    string? Detail = null)
+    string? Detail = null,
+    bool AwaitingCustomerReply = false,
+    DateTime? InactivityDeadlineUtc = null,
+    string? AwaitingCustomerReplyNote = null)
 {
     public static GenesysTicketUpdateResult Failure(GenesysTicketUpdateOutcome outcome, string? detail = null) =>
         new(outcome, Detail: detail);

@@ -25,6 +25,16 @@ public class TicketResolution
     public DateTime ResolvedAtUtc { get; private set; }
     public bool IsCurrent { get; private set; }
 
+    /// <summary>
+    /// True only for the resolution written by the chatbot inactivity closure
+    /// (<see cref="ForCustomerInactivity"/>). Set by the server alone — no
+    /// request field reaches it — and per resolve cycle: a reopen archives
+    /// this row, and a later, manual Cancelled gets its own row with the flag
+    /// false. It is the single fact that lets a <b>Cancelled</b> ticket be
+    /// reopened (see <c>ReopenPolicy</c>); every other Cancelled ticket stays final.
+    /// </summary>
+    public bool ClosedForCustomerInactivity { get; private set; }
+
     private TicketResolution() { }
 
     /// <summary>
@@ -33,6 +43,17 @@ public class TicketResolution
     /// next resolve cycle creates a new row rather than reviving this one.
     /// </summary>
     public void Archive() => IsCurrent = false;
+
+    /// <summary>The resolution row of a chatbot inactivity closure: outcome Cancelled, flagged so the closure stays recognisable — and, uniquely among Cancelled tickets, reopenable.</summary>
+    public static TicketResolution ForCustomerInactivity(
+        long ticketId, string resolutionNote, Guid integrationEmployeeId, DateTime resolvedAtUtc)
+    {
+        var resolution = new TicketResolution(
+            ticketId, ResolutionOutcomeValue.Cancelled, resolutionNote, reasonCode: null, duplicateOfTicketId: null,
+            integrationEmployeeId, resolvedAtUtc);
+        resolution.ClosedForCustomerInactivity = true;
+        return resolution;
+    }
 
     public TicketResolution(
         long ticketId,

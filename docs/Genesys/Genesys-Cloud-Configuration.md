@@ -10,6 +10,8 @@ switching the integration on).
 |---|---|
 | `data-actions/00-custom-auth-request-config.json` | Request configuration for the auto-created **Custom Auth** action |
 | `data-actions/01-customer-lookup.json` … `07-customer-confirmed-resolved.json` | Data actions in Genesys' import format |
+| `data-actions/10-awaiting-customer-reply.json` | Chatbot inactivity timer — start/cancel (`awaitingCustomerReply`); see `docs/releases/UAT-Chatbot-Inactivity-And-Document-Copy.md` |
+| `data-actions/11-send-document-copy.json` | Chatbot asks for a copy of a contract / reservation form / unit layout / registration receipt; see `Document-Copy-API.md`. Blocked on Tiger CRM document endpoints |
 | `data-actions/08-collections-payment-summary.json`, `09-collections-payment-transactions.json` | Collections reads (§11a). Not yet imported or run in Genesys |
 | `TigerCS-Genesys.postman_collection.json` | End-to-end Postman run of every call below |
 | `../architecture/Genesys-API-Contracts.md` | The HTTP contracts in full |
@@ -41,6 +43,11 @@ Genesys Cloud ──OAuth2 client_credentials──▶ TigerGroupWeb  (https://t
 | 1 | Customer lookup | `GET /api/genesys/customers/lookup?phoneNumber={ANI}` | `TigerCS - Customer Lookup` |
 | 2 | Create / reuse interaction ticket | `POST /api/genesys/tickets` | `TigerCS - Create or Reuse Ticket` |
 | 3 | Conversation update | `PATCH /api/genesys/tickets/{ticketId}` | `TigerCS - Update Routing`, `TigerCS - End Conversation`, `TigerCS - Request Human Agent`, `TigerCS - Cancel Human Request`, `TigerCS - Customer Confirmed Resolved` |
+
+A fourth, read-only route serves the chatbot/voicebot — verified customer's unit and
+project details, `POST /api/genesys/customers/unit-details`, Data Action
+`TigerCS - Customer Unit Details` (`data-actions/12-…json`). See
+`Customer-Unit-Details-API.md`; TigerGroupWeb must forward this route too.
 
 Contract 3 is **one** endpoint. It has five data actions only because a
 Genesys data action has a fixed request template. Each variant sends just
@@ -410,6 +417,10 @@ Customer Service do that in TigerCS. Genesys never sends a ticket status.
 
 The JSON files are the source of truth. This is what each action exchanges
 with Architect.
+
+**TigerCS - Customer Unit Details** — see `Customer-Unit-Details-API.md`.
+Input: `customerReference`, `phoneNumber` (required), `unitId` (optional).
+Output: `mode`, `eligibleUnits`, unit/project fields, `handoverDateSource`, `detailsStatus`.
 
 **TigerCS - Customer Lookup**
 Input: `phoneNumber` (required).

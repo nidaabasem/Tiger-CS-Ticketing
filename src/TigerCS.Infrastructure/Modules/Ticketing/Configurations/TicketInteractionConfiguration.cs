@@ -50,6 +50,18 @@ public class TicketInteractionConfiguration : IEntityTypeConfiguration<TicketInt
         builder.Property(i => i.GenesysAgentUserId).HasMaxLength(TicketInteraction.GenesysAgentUserIdMaxLength);
         builder.Property(i => i.HandledByUserId);
 
+        // Chatbot inactivity timer. AwaitingCustomerReplySinceUtc is the
+        // persisted deadline source (survives restarts) AND a concurrency
+        // token: a customer reply that clears it while the timeout job is
+        // closing the ticket makes the job's UPDATE affect zero rows, so the
+        // reply wins the race and nothing is closed. The filtered index keeps
+        // the job's "who is due" scan to the handful of rows actually waiting.
+        builder.Property(i => i.AwaitingCustomerReplySinceUtc).IsConcurrencyToken();
+        builder.Property(i => i.AwaitingCustomerReplyReportedByEmployeeId);
+        builder.Property(i => i.InactivityClosedAtUtc);
+        builder.HasIndex(i => i.AwaitingCustomerReplySinceUtc, "IX_TicketInteractions_AwaitingCustomerReplySinceUtc")
+            .HasFilter("[AwaitingCustomerReplySinceUtc] IS NOT NULL");
+
         // Two distinct indexes over TicketId — both created via the
         // named-index overload, because an unnamed HasIndex on the same
         // column set would re-configure the first index rather than add a

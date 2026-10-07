@@ -45,6 +45,17 @@ public sealed class CrmProviderRegistrationTests
         Assert.IsNotType<MockCrmGateway>(phoneSearch);
     }
 
+    [Theory]
+    [InlineData("Http", typeof(CrmUnitDetailsHttpGateway))]
+    [InlineData("Mock", typeof(MockCrmUnitDetailsGateway))]
+    public void UnitDetails_HttpProviderCallsCrm_MockProviderIsTestOnly(string providerName, Type expected)
+    {
+        using var provider = BuildIntegrations(providerName);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType(expected, scope.ServiceProvider.GetRequiredService<ICrmUnitDetailsGateway>());
+    }
+
     [Fact]
     public void MockProvider_ResolvesOneMockCrmGateway_BehindBothPorts()
     {

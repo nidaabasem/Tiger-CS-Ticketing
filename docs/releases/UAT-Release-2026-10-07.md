@@ -22,16 +22,49 @@ commands on push.
 | 5 | CS Manager — empty Assign dropdown | Implemented, tested | Ticket Details → Assign: CS Manager gets the whole directory grouped by department (ticket's own department first; multi-department users under each; names, roles, departments); choosing another department = transfer-and-assign with a required reason (`POST api/tickets/{id}/transfer` with `assignToEmployeeId`); a failed/forbidden member-list call is shown as such, never as "No active members"; API `GET api/users/assignable` |
 | 6 | Dashboard layout | Implemented, tested | Filters + KPI cards → Volume by Channel, Volume by Request Type, Open Backlog Ageing, Priority → ticket table; existing responsive grid rules keep one column under 720 px |
 | 7 | Pending Interactions actions | Implemented, tested | Buttons: Open Ticket · Accept & Start · Complete Follow-up · Cancel Follow-up (reason required); "What do these actions do?" help block; "session ended" tooltip states the follow-up is not completed by it |
+| 8 | Chatbot/voicebot — verified customer's unit and project details | **Partially implemented** (Ticketing side only; CRM route and TigerGroupWeb forwarding outstanding — see Item 8) | API `POST /api/genesys/customers/unit-details` (Genesys service-account auth, same proxy pattern); `docs/Genesys/Customer-Unit-Details-API.md` (request, samples, errors, field sources); Data Action `docs/Genesys/data-actions/12-customer-unit-details.json` |
 
-Nothing in this release changes approved SLA durations, working hours,
-pause rules or request-type policy precedence, and nothing changes the
-Genesys routing rule (explicit `departmentId` → explicit `departmentCode` →
-queue mapping → 422).
+### Item 8 — status: **PARTIALLY IMPLEMENTED**
+
+| Piece | Status |
+|---|---|
+| Ticketing endpoint, ownership check, eligible-unit selection, error contract | Done; fixture-tested (2917 tests in the suite) |
+| Ticketing → CRM client (`CrmUnitDetailsHttpGateway`) | Done; **tested only against a stubbed HTTP handler** |
+| Tiger CRM `GET /TicketingSystem/GetUnitDetails` | **Not built.** CRM source/DB not accessible to the implementer |
+| CRM field-to-column mapping | **Not done** (needs the CRM schema) |
+| TigerGroupWeb forwards `POST /api/genesys/customers/unit-details` | **Not done.** TigerGroupWeb source not accessible |
+| Genesys Data Action `12-customer-unit-details.json` | Matches the Ticketing contract; not imported/tested in Genesys |
+| Verified against CRM UAT with an authorized customer | **Not done** — no network path to CRM from the build environment |
+
+Until the CRM route is deployed, UAT shows: unit id/number, floor, unit-type
+*code*, booking reference (CRM Lead id) and status, project id/name (all from
+the existing `GetBuyerByPhone`); everything else `null` with
+`detailsStatus: "NotAvailable"`. After the CRM route is deployed, no Ticketing
+change is needed if CRM uses the contract in
+`docs/Genesys/Customer-Unit-Details-API.md`; names that differ need a one-file
+change in `CrmUnitDetailsHttpContracts.cs`.
+
+Projects requiring change/deployment: **Tiger CRM** (new route), **TigerGroupWeb**
+(forward the route), **Tiger CS Ticketing** (this release), **Genesys Cloud**
+(import the Data Action).
+
+### Chatbot / voicebot and customer-service requirements — status for UAT
+
+| Requirement | Status | Detail |
+|---|---|---|
+| Chatbot inactivity closure (outcome **Cancelled**) | **Implemented; tested on fakes + SQLite only** | Merged here from `claude/admiring-brown-73jnmx`. Never run on SQL Server, Hangfire or a deployed host. Needs `BackgroundJobs__Enabled=true`. Config and PATCH payloads: `docs/Genesys/Chatbot-Inactivity-UAT-Configuration.md` |
+| Reopen of inactivity closures (CS Agent / Supervisor / Manager; SysAdmin override) | **Implemented; tested on fakes + SQLite only** | Only this closure; other Cancelled stay final; closure audit preserved. New migration `AddResolutionClosedForCustomerInactivity` |
+| Document-copy API | **BLOCKED for real UAT** | No CRM document source, no real verification/OTP path, no WhatsApp, no proxy route. Only Mock/recording-email tested — **not** end-to-end delivery. `docs/Genesys/CRM-Document-Operations-Requirements.md` |
+| TigerGroupWeb forwarding (unit-details, send-copy, `awaitingCustomerReply` PATCH, all Collections routes) | **Pending** — repository not accessible; the two `by-key` reads are "implemented and tested, not deployed" there per the Collections doc | Exact changes: `docs/Genesys/TigerGroupWeb-Proxy-Change.md` |
+| Next payment via the chatbot (PACT/EDSM payment-summary) | **Built, gated OFF; returns `Unavailable` until EDSM semantics are confirmed. Fixture-tested only; NOT validated on UAT** | `nextPayment` on the existing summary + Data Action 08; no company attested, `DueInstallmentsEnabled` untouched. `docs/Collections/Next-Payment.md`, `EDSM-Instalment-Semantics.md`. The reported failing conversation has **not** been reproduced (`Next-Payment-Investigation.md`) |
 
 ## Database
 
-**No new migration.** `dotnet ef migrations has-pending-model-changes`
-reports no model changes; the latest migration remains
+**Two additive migrations since the base release** (both idempotent scripts at the repository root,
+run in this order): `AddChatbotInactivityAndCrmDocumentCopies.sql` (timer columns, document-delivery table) and
+`AddResolutionClosedForCustomerInactivity.sql` (one `bit NOT NULL DEFAULT 0` column on `TicketResolutions`).
+`dotnet ef migrations has-pending-model-changes` reports no model changes after them. Items 1–7 above need
+neither. The base release's latest migration was
 `20261005072511_AddCollectionsReminders`. The UAT database must already be
 at that migration (idempotent script `AddCollectionsReminders.sql` at the
 repository root; `docs/Collections/Collections-Integration.md` §8 notes it
@@ -109,6 +142,15 @@ CS Agent and Call Center Agent
 - Dashboard: breakdown cards sit above the ticket table on desktop and phone.
 - Team Performance is not in the navigation and `/Reports/TeamPerformance`
   is refused.
+
+Chatbot/voicebot integration account (CS Agent service account)
+- `POST /api/genesys/customers/unit-details` with a known buyer's `crm:{id}` and
+  number, no `unitId` → `UnitSelectionRequired` listing that buyer's units.
+- Same call with a listed `unitId` → `UnitDetails`; `detailsStatus` is `NotAvailable`
+  until CRM deploys `GetUnitDetails`, then `Available` with the CRM-recorded fields.
+- Open: chatbot inactivity closure API; document-copy API (not implemented).
+- Same call with a `unitId` that belongs to a different buyer → `403 UNIT_NOT_ELIGIBLE`;
+  with another customer's `crm:` id → `403 CUSTOMER_NOT_VERIFIED`.
 
 ## Verified on UAT
 

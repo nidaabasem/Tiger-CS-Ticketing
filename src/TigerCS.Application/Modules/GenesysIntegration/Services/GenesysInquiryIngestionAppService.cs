@@ -471,6 +471,12 @@ public static class GenesysAuditActions
     /// <summary>The customer confirmed during the interaction that the issue is resolved. Record-only: the ticket status in before/after is the proof nothing moved.</summary>
     public const string CustomerConfirmedResolved = "GenesysCustomerConfirmedResolved";
 
+    /// <summary>The chatbot asked the customer something and TigerCS began waiting for the reply (inactivity timer started).</summary>
+    public const string CustomerReplyTimerStarted = "GenesysCustomerReplyTimerStarted";
+
+    /// <summary>The customer replied, or human follow-up was requested: the inactivity timer was cancelled.</summary>
+    public const string CustomerReplyTimerCancelled = "GenesysCustomerReplyTimerCancelled";
+
     /// <summary>A Genesys agent was resolved to a Ticketing user and recorded as the handler of an interaction.</summary>
     public const string InteractionHandlerRecorded = "GenesysInteractionHandlerRecorded";
 

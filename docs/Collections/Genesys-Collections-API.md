@@ -221,6 +221,12 @@ above.
 
 ## 3. `GET payment-summary`
 
+> **`nextPayment` (added).** The response also carries a `nextPayment` block — the next *upcoming* unpaid instalment, kept
+> separate from overdue amounts, or an explicit `Unavailable` / `NoneWithinHorizon` status with reasons. It is **off by default** and
+> returns a date only for a company whose EDSM semantics the EDSM owners have confirmed in configuration; today none is, so every real
+> response says `Unavailable`. Contract, selection rules, samples and the UAT protocol: [`Next-Payment.md`](Next-Payment.md); why the
+> meanings are not assumed: [`EDSM-Instalment-Semantics.md`](EDSM-Instalment-Semantics.md). Not validated against EDSM or UAT.
+
 ```
 GET /api/genesys/collections/customers/by-key/{customerKey}/payment-summary[?includeTransactions=false]
 Authorization: Bearer {access_token}

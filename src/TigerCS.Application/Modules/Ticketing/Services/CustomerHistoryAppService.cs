@@ -303,6 +303,8 @@ public sealed class CustomerHistoryAppService(
             ticket.VerificationStatus.ToString(),
             ticket.RequestSummary,
             resolvedAtUtc,
-            reopenPolicy.IsReopenEligible(ticket.TicketStatus, ticket.ResolutionOutcome, closedAtUtc, nowUtc));
+            reopenPolicy.IsReopenEligible(
+                ticket.TicketStatus, ticket.ResolutionOutcome, closedAtUtc, nowUtc,
+                resolution?.ClosedForCustomerInactivity == true));
     }
 }
