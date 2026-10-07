@@ -91,27 +91,41 @@ Data action: `docs/Genesys/data-actions/11-send-document-copy.json`.
 `CrmDocuments:Enabled` ships **false**; set true for UAT. Same migration as above (table `CrmDocumentDeliveryRequests`,
 unique `(CallerEmployeeId, IdempotencyKey)`). Email needs `EmailNotifications:Enabled=true` + SMTP credentials.
 
-### Missing document source / delivery integration — flagged
+### Tiger CRM connection (update)
 
-* **No document source exists.** Neither TigerCS nor the Tiger CRM contracts it uses store or generate contracts,
-  reservation forms, unit layouts or registration receipts. The port `ICrmDocumentGateway` is complete and tested; its only
-  `Crm:Provider=Http` implementation fails closed (503 `DOCUMENT_SOURCE_UNAVAILABLE`). **Against real CRM nothing can be sent
-  until Tiger CRM publishes the list/download operations** (exact shape in the contract doc).
-* **WhatsApp/SMS: no integration.** Answers 501 `DELIVERY_CHANNEL_NOT_INTEGRATED`. Email attachment works.
-* **Verification sessions over real CRM are also blocked** by the unpublished CRM unit/contact endpoints
-  (`UnimplementedCrmHttpGateway`), and OTP issuance/checking lives outside TigerCS.
-* **TigerGroupWeb must forward the new route** (and `PATCH` field `awaitingCustomerReply` is part of the existing route).
+The document source is now Tiger CRM's `POST {Crm}/TicketingSystem/GetCustomerDocuments` (header `X-SECRET-KEY`, existing `Crm`
+configuration) — see `docs/Genesys/Document-Copy-API.md` for the resolution flow, type mapping (Contract→`TigerContract`,
+ReservationForm, RegistrationReceipt, UnitLayout→`Layout`), and the CRM-status → answer table. The public API gained only the optional
+`crmLeadId` request field and `choiceKind` response field.
 
-### UAT steps (local/Mock only until the dependencies above exist)
+**UAT result: not verified on UAT.** The environment this was built in cannot reach the CRM host (the egress proxy resets the
+connection) and holds no `Crm:SecretKey`, so no real request was made. What *was* verified is in the Verification section.
 
-1. Run the API with `Crm:Provider=Mock` (Development), `CrmDocuments:Enabled=true`, `EmailNotifications:Provider=Recording`.
-2. As a CS Agent: `GET /api/crm/units/CRM-UNIT-1001`, `GET /api/crm/units/CRM-UNIT-1001/contacts`,
-   `POST /api/verification-sessions` (contact `CRM-CONTACT-2001`, `verificationMethod: "Otp"`).
-3. `send-copy` `ReservationForm` → `Sent`, masked address `a***@e***.com`. Repeat the identical request → `duplicate:true`, no second mail.
-4. `Contract` → `SelectionRequired` (two choices); repeat with `recordId` (new key) → `Sent`.
-5. `RegistrationReceipt` on unit 1001 → 404 `DOCUMENT_NOT_FOUND`. `recordId: "MOCK-CONTRACT-3"` → 403 `RECORD_OWNERSHIP_MISMATCH`.
-6. Session with `ManualAgentConfirmation` → 403 `VERIFICATION_FAILED`. `deliveryChannel: "WhatsApp"` → 501.
-7. Real UAT: with `Crm:Provider=Http` expect 503 `DOCUMENT_SOURCE_UNAVAILABLE` — that confirms the fail-closed behaviour.
+### Still open
+
+* **How `fileUrl` is fetched with auth** is not stated in the CRM contract; TigerCS sends `X-SECRET-KEY` to the CRM origin only
+  (relative / `~/` paths, or a host in `Crm:DocumentFileHosts`). The first UAT run settles it.
+* **The verified contact needs a phone** (CRM identity comes from the buyer lookup by that phone).
+* **Verification sessions over real CRM** still need CRM's unit/contact endpoints; OTP issue/check is outside TigerCS.
+* **WhatsApp/SMS**: no integration (501). **TigerGroupWeb** must forward the route.
+
+### UAT runbook (to run where CRM is reachable)
+
+Config: `Crm:BaseUrl`, `Crm:SecretKey` (existing), `CrmDocuments:Enabled=true`, `EmailNotifications:Enabled=true` + SMTP credentials,
+`Crm:Provider=Http`. Use a real UAT buyer (CRM customer with a phone, at least one unit/lead) and a mailbox you control as that
+customer's CRM email.
+
+1. Authenticate as the integration account; create a verification session for the buyer's unit/contact (`Otp`).
+2. `POST /api/genesys/documents/send-copy` with `Idempotency-Key: uat-1`, body `{"verificationSessionId":"…","documentType":"ReservationForm"}`.
+   Expect `200 Sent`, masked address, one email with the attachment. In the API log: one `GetCustomerDocuments` call, then one file fetch;
+   no `CRM_*` warnings.
+3. Repeat with the same key → `200`, `duplicate:true`, no second email, no new CRM call.
+4. Repeat for `Contract`, `RegistrationReceipt`, `UnitLayout` (Layout returns a record id `LAYOUT-{leadId}`). For a lead with several
+   documents expect `SelectionRequired`/`choiceKind:"Document"` first, then the chosen `recordId` with a new key.
+5. A customer with several units whose verified unit is not matched: expect `choiceKind:"Unit"`, then `crmLeadId`.
+6. Negative: another customer's `crmLeadId` → 403 `RECORD_OWNERSHIP_MISMATCH` and **no** CRM call; wrong `Crm:SecretKey` →
+   `502 CRM_AUTHENTICATION_FAILED`; a type with nothing on record → `404 DOCUMENT_NOT_FOUND`.
+7. Record the outcome of steps 2–6, especially whether the file fetch in step 2 succeeds (the open `fileUrl` question), in this document.
 
 ## Changed files
 
@@ -123,7 +137,7 @@ unique `(CallerEmployeeId, IdempotencyKey)`). Email needs `EmailNotifications:En
 
 **Document copy** — new `GenesysDocumentsController.cs`; `Application/Modules/CrmDocuments/*` (service, DTOs, options, ports, email channel sender);
 `CrmDocumentType.cs`, `CrmDocumentDeliveryRequest.cs`; `CrmDocumentDeliveryRequestConfiguration.cs`, `CrmDocumentDeliveryRepository.cs`, `TigerCsDbContext.cs`;
-`UnimplementedCrmDocumentGateway.cs`, `MockCrmDocumentGateway.cs`, `IntegrationsServiceCollectionExtensions.cs`; email attachments in `IEmailSender.cs`,
+`CrmDocumentHttpGateway.cs`, `MockCrmDocumentGateway.cs`, `IntegrationsServiceCollectionExtensions.cs`; email attachments in `IEmailSender.cs`,
 `SmtpEmailSender.cs`, `RecordingEmailSender.cs`.
 
 **Both** — migration `20261007093644_AddChatbotInactivityAndCrmDocumentCopies` (+ snapshot), `AddChatbotInactivityAndCrmDocumentCopies.sql`, `appsettings.json`, docs and two data-action JSON files.

@@ -1,25 +1,69 @@
 # Document copy API — chatbot asks CRM to send the customer a document
 
-Status: **implemented and tested in TigerCS; not usable end-to-end against real Tiger CRM yet** —
-see [Missing dependencies](#missing-dependencies-read-this-first).
+Status: **connected to Tiger CRM's `TicketingSystem/GetCustomerDocuments`; verified in automated tests against a stub
+of that contract. Not yet verified against real UAT CRM** — see [Open items](#open-items-for-uat).
 
 The chatbot can ask for a copy of one of four documents — **Contract, Reservation Form, Unit
-Layout, Registration Receipt** — to be sent to the customer. TigerCS verifies who the customer is,
-confirms the document is theirs, asks them to choose if there is more than one, and sends it to the
-email address CRM holds for them. The document is never returned to the caller.
+Layout, Registration Receipt** — to be sent to the customer. TigerCS verifies who the customer is, resolves
+their CRM customer and unit, asks CRM for the documents, asks the customer to choose if there is more than one, and
+emails the chosen file to the address CRM holds for them. The document is never returned to the caller.
 
-## Missing dependencies (read this first)
+## How a request is resolved
 
-| # | What is missing | Effect today | Who provides it |
-|---|---|---|---|
-| 1 | **Tiger CRM document operations.** Nothing in this repository or in the CRM contracts it integrates (`TicketingSystem/GetBuyerByPhone`, `Internal-CRM-API-Contract.md`) stores, generates or returns a contract, reservation form, unit layout or registration receipt. | With `Crm:Provider = Http` (UAT/Production) every request answers **503 `DOCUMENT_SOURCE_UNAVAILABLE`**. Nothing is sent, nothing is invented. | Tiger CRM: for each of the four types, (a) *list records for unit U and contact C* returning a record id, label, unit id, owner contact id, issue date, and the contact's email on record; (b) *get the file for record R* returning bytes, content type, file name and the owning unit/contact. TigerCS side: implement `ICrmDocumentGateway` (replace `UnimplementedCrmDocumentGateway`, `src/TigerCS.Integrations/Modules/CrmIntegration/`). |
-| 2 | **WhatsApp (and SMS) delivery.** TigerCS has an SMTP email sender only; Genesys is never called by TigerCS, so no WhatsApp/SMS send integration exists. | A request for `deliveryChannel: WhatsApp` answers **501 `DELIVERY_CHANNEL_NOT_INTEGRATED`**. Email works. | A WhatsApp send integration (Genesys Cloud outbound messaging or a WhatsApp Business provider) plus an `IDocumentDeliveryChannelSender` for it. If WhatsApp needs a *link* rather than an attachment, an authorized expiring-link download endpoint is also needed (not built — email attachment needs none). |
-| 3 | **OTP issue/verification.** The existing verification flow records that a method (`Otp`, `AuthenticatedDigitalUser`) was used; TigerCS does not itself send or check a one-time code. | The identity guarantee is exactly as strong as the integration account's assertion that the OTP passed. Mitigation built in: documents only ever go to the email CRM holds for the verified contact, never to a caller-supplied address. | Genesys Architect flow / OTP service performing the check before it creates the session. |
-| 4 | **Unit/contact lookup over real CRM.** `POST /api/verification-sessions` needs the unit and contact cached through `GET /api/crm/units/{id}/contacts`, which with `Crm:Provider = Http` also fails closed (`UnimplementedCrmHttpGateway`, "no published endpoint"). | In UAT/Production a verification session for the chatbot cannot be created yet, independent of this feature. | Tiger CRM: the unit and contact endpoints named in `Internal-CRM-API-Contract.md` §1.1–1.3. |
-| 5 | **TigerGroupWeb proxy route.** Genesys never calls TigerCS directly; TigerGroupWeb forwards `/api/genesys/*` routes. | The new route is unreachable from Genesys until TigerGroupWeb forwards it. | TigerGroupWeb owners (`TicketingGenesysService`). |
+1. **Verification** — `verificationSessionId` (existing flow): owned by the calling account, confirmed (or consumed),
+   unexpired, method `Otp`/`AuthenticatedDigitalUser`. Nothing else identifies the customer.
+2. **CRM customer** — the verified session's contact (as cached from CRM) supplies the phone number; the existing CRM
+   buyer lookup (`GetBuyerByPhone`) turns it into CRM's **`CustomerID`** and the customer's units with their **`LeadID`**s.
+   A contact with no phone, a phone that is not exactly one CRM buyer, or an ambiguous match releases nothing
+   (`403 CRM_CUSTOMER_NOT_RESOLVED`).
+3. **CRM lead (the selected unit)** — the lead of the unit the customer verified on; or `crmLeadId` if the caller names
+   one, which **must be one of that customer's own leads** (else `403 RECORD_OWNERSHIP_MISMATCH`, and CRM is not called).
+   If the verified unit is not one of the customer's leads and they have several, the answer is `SelectionRequired`
+   with `choiceKind: "Unit"`.
+4. **CRM documents** — `POST {Crm}/TicketingSystem/GetCustomerDocuments` with `X-SECRET-KEY` (`Crm:SecretKey`, the same
+   convention as the buyer lookup) and `{"CustomerID", "LeadID", "DocumentType"}`:
 
-Until 1, 4 and 5 exist the feature **can be exercised locally and in automated tests** (Mock CRM provider,
-recording email adapter) but **not against real UAT data**. Nothing has been deployed.
+   | Public `documentType` (unchanged) | CRM `DocumentType` | CRM source |
+   |---|---|---|
+   | `Contract` | `TigerContract` | attachment type 5 |
+   | `ReservationForm` | `ReservationForm` | attachment type 4 |
+   | `RegistrationReceipt` | `RegistrationReceipt` | attachment type 6 |
+   | `UnitLayout` | `Layout` | the unit's `unitplan` field (no `attachmentId`; record id `LAYOUT-{leadId}`) |
+
+   CRM's `customerId`/`leadId` in the answer must equal what was asked, or the answer is refused (`CRM_INVALID_RESPONSE`).
+5. **Selection** — `selectionRequired: true` (or more than one attachment) → `SelectionRequired` with `choiceKind: "Document"`;
+   nothing is fetched or sent. The chatbot calls again with the chosen `recordId` (the CRM `attachmentId`).
+6. **File** — `fileUrl` is a storage reference, never public and never exposed. It is fetched server-side with the CRM
+   credential, only from the configured CRM origin (relative and `~/` paths resolve against `Crm:BaseUrl`) or a host in
+   `Crm:DocumentFileHosts`; redirects are not followed; an HTML body is rejected.
+7. **Delivery** — email attachment to the customer's email **as returned by the CRM buyer lookup**; idempotency, audit
+   (`CrmDocumentCopySent`, with CRM customer/lead ids) and the delivery record are unchanged.
+
+## CRM responses and what Genesys sees
+
+| CRM answer | TigerCS answer |
+|---|---|
+| 200, for the asked customer/lead | listing handled as above |
+| 404 | `404 DOCUMENT_NOT_FOUND` (nothing on record) |
+| 400 | `502 CRM_REQUEST_REJECTED` — not retryable (a TigerCS/contract defect) |
+| 401 | `502 CRM_AUTHENTICATION_FAILED` — not retryable; `Crm:SecretKey` wrong/missing |
+| 403 | `502 CRM_ACCESS_DENIED` — not retryable |
+| 500, 503, other 5xx, timeout, unreachable | `503 DOCUMENT_SOURCE_UNAVAILABLE` — `retryable: true` |
+| 200 but not the contract / other customer / redirect / off-origin `fileUrl` | `502 CRM_INVALID_RESPONSE` |
+
+Nothing is sent in any failure case. A failure after the send was claimed marks the record Failed; a retry with the same
+`Idempotency-Key` tries again.
+
+## Open items for UAT
+
+| # | Item | Effect |
+|---|---|---|
+| 1 | **Real CRM never exercised from this build.** The sandbox that built this cannot reach the CRM host and holds no `Crm:SecretKey`. | Response shapes and the storage-retrieval mechanism are verified against the contract as written, not against UAT data. |
+| 2 | **How `fileUrl` is retrieved with auth.** The contract does not say how the file endpoint authenticates. TigerCS sends `X-SECRET-KEY` to the CRM origin. If CRM serves files differently (a different host, a token, or an endpoint by `attachmentId`), set `Crm:DocumentFileHosts` or adapt `CrmDocumentHttpGateway.DownloadAsync`. | First UAT run answers this. A 401/403 on download shows as `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED`; an HTML login page as `CRM_INVALID_RESPONSE`. |
+| 3 | **Verified contact must carry a phone.** The CRM identity comes from the phone of the verified contact. | Sessions whose contact channel is an email cannot be resolved (`CRM_CUSTOMER_NOT_RESOLVED`). |
+| 4 | **Verification sessions over real CRM** still need CRM's unit/contact endpoints (`UnimplementedCrmHttpGateway`), and OTP issue/check lives outside TigerCS. | Chatbot sessions cannot be created in UAT until those exist. |
+| 5 | **WhatsApp/SMS**: no integration → `501 DELIVERY_CHANNEL_NOT_INTEGRATED`. Email works. | |
+| 6 | **TigerGroupWeb proxy** must forward the route. | |
 
 ## The contract
 
@@ -51,7 +95,8 @@ endpoint and no document download endpoint. The same service account must own th
 | `verificationSessionId` | **yes** | Id of a **Confirmed** session from `POST /api/verification-sessions`, created by this same service account, method `Otp` or `AuthenticatedDigitalUser` (configurable: `CrmDocuments:AcceptedVerificationMethods`), not expired. This — not a phone number or customer id — is the only identity input. A session already consumed by ticket creation is still accepted until it expires. |
 | `documentType` | **yes** | `Contract`, `ReservationForm`, `UnitLayout` or `RegistrationReceipt` (case-insensitive; `Reservation Form`, `unit-layout` are accepted). |
 | `crmUnitId` | no | If sent it must equal the verified unit, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. Never used to look up another unit. |
-| `recordId` | no | The CRM record the customer chose after a `SelectionRequired` answer. Must be one of that customer's own records, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. |
+| `crmLeadId` | no | The CRM lead of the unit the customer chose (from a `choiceKind: "Unit"` selection). Must be one of the verified customer's own leads, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. Omitted → the verified unit. |
+| `recordId` | no | The document the customer chose after a `choiceKind: "Document"` answer (CRM's `attachmentId`). Must be one CRM just listed for that customer and lead, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. |
 | `deliveryChannel` | no | `Email` (default). `WhatsApp`/`Sms` → 501 (see above). |
 
 There is deliberately **no** phone, customer-id or destination-address field. The destination is the
@@ -64,12 +109,12 @@ customer's email on record in CRM.
 | `Sent` | 200 | The email was accepted for delivery. `duplicate: true` means this was a replay and nothing was sent again. |
 | `Queued` | 202 | An identical request is still being processed. Nothing new was sent. Repeat the call with the same key to get the result. |
 | `SelectionRequired` | 200 | More than one record matches. `choices` lists them. **Nothing was sent.** |
-| `DocumentUnavailable` | 404 / 503 | `DOCUMENT_NOT_FOUND` (customer has none) or `DOCUMENT_SOURCE_UNAVAILABLE` (CRM source missing/down). |
+| `DocumentUnavailable` | 404 / 502 / 503 | `DOCUMENT_NOT_FOUND`; `CRM_REQUEST_REJECTED` / `CRM_AUTHENTICATION_FAILED` / `CRM_ACCESS_DENIED` / `CRM_INVALID_RESPONSE` (502); `DOCUMENT_SOURCE_UNAVAILABLE` (503, retryable). |
 | `DeliveryFailed` | 502 / 501 / 422 | Found but not delivered: `DELIVERY_FAILED`, `DOCUMENT_TOO_LARGE`, `DELIVERY_CHANNEL_NOT_INTEGRATED`, `DELIVERY_DESTINATION_UNAVAILABLE`. `retryable` says whether to retry with the same key. |
-| (errors) | 400 / 403 / 409 / 503 | `INVALID_REQUEST`, `VERIFICATION_FAILED`, `RECORD_OWNERSHIP_MISMATCH`, `IDEMPOTENCY_KEY_REUSED`, `DOCUMENT_COPY_DISABLED`. |
+| (errors) | 400 / 403 / 409 / 503 | `INVALID_REQUEST`, `VERIFICATION_FAILED`, `CRM_CUSTOMER_NOT_RESOLVED`, `RECORD_OWNERSHIP_MISMATCH`, `IDEMPOTENCY_KEY_REUSED`, `DOCUMENT_COPY_DISABLED`. |
 
 Success bodies carry only: `status, code, message, documentType, recordId, deliveryChannel,
-maskedDestination, deliveryRequestId, duplicate, retryable, choices`. Error bodies are RFC 7807
+maskedDestination, deliveryRequestId, duplicate, retryable, choices, choiceKind`. Error bodies are RFC 7807
 `ProblemDetails` plus `code`, `outcome` and the relevant identifiers. The full email address, the
 phone number and the document are never in a response.
 
@@ -90,7 +135,7 @@ Contract, after the customer chose (new key):
 Idempotency-Key: conv-7f3a-contract-2
 
 { "verificationSessionId": "2f6c0b2e-5d0a-4c1b-9e43-8d6a1c5d7b90", "documentType": "Contract",
-  "recordId": "MOCK-CONTRACT-2" }
+  "recordId": "5002" }
 ```
 
 Reservation Form:
@@ -118,30 +163,30 @@ Registration Receipt:
 `200` — selection required (nothing sent):
 
 ```json
-{"status":"SelectionRequired","code":"SELECTION_REQUIRED","message":"More than one contract matches. Ask the customer which one, then call again with its recordId.","documentType":"Contract","recordId":null,"deliveryChannel":null,"maskedDestination":null,"deliveryRequestId":null,"duplicate":false,"retryable":null,"choices":[{"recordId":"MOCK-CONTRACT-1","label":"Sale and Purchase Agreement","unitNumber":"1204","issuedOn":"2025-03-01T00:00:00"},{"recordId":"MOCK-CONTRACT-2","label":"Addendum 1 to the Sale and Purchase Agreement","unitNumber":"1204","issuedOn":"2025-09-15T00:00:00"}]}
+{"status":"SelectionRequired","code":"SELECTION_REQUIRED","message":"More than one contract matches. Ask the customer which one, then call again with its recordId.","documentType":"Contract","recordId":null,"deliveryChannel":null,"maskedDestination":null,"deliveryRequestId":null,"duplicate":false,"retryable":null,"choices":[{"recordId":"5001","label":"Sale and Purchase Agreement.pdf","unitNumber":"1205","issuedOn":null},{"recordId":"5002","label":"Addendum 1.pdf","unitNumber":"1205","issuedOn":null}],"choiceKind":"Document"}
 ```
 
 `200` — sent:
 
 ```json
-{"status":"Sent","code":null,"message":"The document was sent to the customer's email on record.","documentType":"Contract","recordId":"MOCK-CONTRACT-2","deliveryChannel":"Email","maskedDestination":"a***@e***.com","deliveryRequestId":1,"duplicate":false,"retryable":null,"choices":null}
+{"status":"Sent","code":null,"message":"The document was sent to the customer's email on record.","documentType":"Contract","recordId":"5002","deliveryChannel":"Email","maskedDestination":"a***@e***.com","deliveryRequestId":1,"duplicate":false,"retryable":null,"choices":null,"choiceKind":null}
 ```
 
 `200` — replay of the same request (Genesys retry); nothing sent again:
 
 ```json
-{"status":"Sent","code":null,"message":"This document was already sent; nothing was sent again.","documentType":"Contract","recordId":"MOCK-CONTRACT-2","deliveryChannel":"Email","maskedDestination":"a***@e***.com","deliveryRequestId":1,"duplicate":true,"retryable":null,"choices":null}
+{"status":"Sent","code":null,"message":"This document was already sent; nothing was sent again.","documentType":"Contract","recordId":"5002","deliveryChannel":"Email","maskedDestination":"a***@e***.com","deliveryRequestId":1,"duplicate":true,"retryable":null,"choices":null,"choiceKind":null}
 ```
 
 `202` — identical request still in progress:
 
 ```json
-{"status":"Queued","code":"REQUEST_IN_PROGRESS","message":"An identical request is already being processed; nothing new was sent. Repeat the call with the same Idempotency-Key to get the result.","documentType":"Contract","recordId":"MOCK-CONTRACT-2","deliveryChannel":"Email","maskedDestination":"a***@e***.com","deliveryRequestId":1,"duplicate":true,"retryable":null,"choices":null}
+{"status":"Queued","code":"REQUEST_IN_PROGRESS","message":"An identical request is already being processed; nothing new was sent. Repeat the call with the same Idempotency-Key to get the result.","documentType":"Contract","recordId":"5002","deliveryChannel":"Email","maskedDestination":"a***@e***.com","deliveryRequestId":1,"duplicate":true,"retryable":null,"choices":null,"choiceKind":null}
 ```
 
 ### Sample error responses
 
-> The 400, 403, 404, 409 and 501 bodies below were captured from the running host; the 202, 502 and 503 bodies are built by the same code path and are asserted in the unit tests, but were not captured on the wire (their `traceId` is elided).
+> Bodies below are the shapes asserted by the integration tests (the host exercised over HTTP against a stub of CRM's contract); record ids are CRM `attachmentId`s. `traceId` is elided where shown as "…".
 
 `400` invalid request (missing session; also missing/invalid `Idempotency-Key`, unknown `documentType`/`deliveryChannel`):
 
@@ -169,16 +214,16 @@ Registration Receipt:
 {"type":"https://tigercs.internal/problems/document-not-found","title":"Document not found","status":404,"detail":"No registration receipt is on record for this customer and unit.","traceId":"00-c4eae77afbb164a6f9f0702f3483a790-38fa0b27807a55e5-00","code":"DOCUMENT_NOT_FOUND","outcome":"DocumentUnavailable","documentType":"RegistrationReceipt"}
 ```
 
-`503` document source unavailable (today's answer in UAT/Production — dependency 1):
+`503` document source unavailable (CRM unreachable, timeout, 500 or 503):
 
 ```json
-{"type":"https://tigercs.internal/problems/document-source-unavailable","title":"Document source unavailable","status":503,"detail":"CRM's document source is not available (no Tiger CRM document endpoint is integrated, or CRM cannot be reached). Nothing was sent.","traceId":"…","code":"DOCUMENT_SOURCE_UNAVAILABLE","outcome":"DocumentUnavailable","documentType":"Contract","retryable":true}
+{"type":"https://tigercs.internal/problems/document-source-unavailable","title":"Document source unavailable","status":503,"detail":"CRM's document source is unavailable right now. Nothing was sent; retry with the same Idempotency-Key.","traceId":"…","code":"DOCUMENT_SOURCE_UNAVAILABLE","outcome":"DocumentUnavailable","documentType":"Contract","retryable":true}
 ```
 
 `502` delivery failure (email transport/rejection; `retryable` distinguishes):
 
 ```json
-{"type":"https://tigercs.internal/problems/delivery-failed","title":"Document could not be delivered","status":502,"detail":"The document could not be delivered right now. Retry with the same Idempotency-Key.","traceId":"…","code":"DELIVERY_FAILED","outcome":"DeliveryFailed","documentType":"Contract","recordId":"MOCK-CONTRACT-2","deliveryChannel":"Email","deliveryRequestId":1,"retryable":true}
+{"type":"https://tigercs.internal/problems/delivery-failed","title":"Document could not be delivered","status":502,"detail":"The document could not be delivered right now. Retry with the same Idempotency-Key.","traceId":"…","code":"DELIVERY_FAILED","outcome":"DeliveryFailed","documentType":"Contract","recordId":"5002","deliveryChannel":"Email","deliveryRequestId":1,"retryable":true}
 ```
 
 `501` channel without an integration:
@@ -200,9 +245,10 @@ Also: `422 DELIVERY_DESTINATION_UNAVAILABLE` (CRM has no valid email for the cus
 
 * **Identity** — only `verificationSessionId`; checked for ownership by the calling account, confirmed
   status, expiry and an accepted method. Phone/customer-id are not request fields.
-* **Ownership** — CRM is asked for the verified unit + contact's records; the result is filtered again;
-  the fetched content is checked against the verified unit/contact before anything is sent. A named
-  `recordId` outside the customer's own list is never fetched.
+* **Ownership** — the customer and lead come from the verified contact's CRM buyer lookup, never the caller; a
+  `crmLeadId`/`recordId` outside the customer's own leads/just-listed documents is refused before anything is fetched; CRM's
+  answer must echo the same customer and lead; the file reference comes only from that listing and is fetched only from the
+  CRM origin.
 * **Selection** — several matches → `SelectionRequired`; nothing is sent until the customer's choice arrives.
 * **Duplicates** — a unique (caller, `Idempotency-Key`) row claims the send before anything is fetched;
   replays answer from it; a concurrent replay answers `Queued`; the same document/session/channel is
@@ -223,6 +269,8 @@ Also: `422 DELIVERY_DESTINATION_UNAVAILABLE` (CRM has no valid email for the cus
   "DuplicateSuppressionMinutes": 15
 }
 ```
+
+`Crm:BaseUrl` and `Crm:SecretKey` (existing settings) are required; optional `Crm:DocumentFileHosts` (extra https hosts the files may come from) and `Crm:MaxDocumentBytes`.
 
 Email delivery also requires `EmailNotifications:Enabled = true` with the `Smtp` provider configured
 (otherwise `DELIVERY_FAILED`, not retryable).

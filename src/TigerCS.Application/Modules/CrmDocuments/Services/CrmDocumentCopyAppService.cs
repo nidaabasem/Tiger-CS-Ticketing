@@ -6,6 +6,10 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.CustomerVerification.Services;
+using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Domain.Modules.CustomerVerification;
 
 namespace TigerCS.Application.Modules.CrmDocuments.Services;
@@ -25,12 +29,23 @@ namespace TigerCS.Application.Modules.CrmDocuments.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Ownership is enforced twice.</b> CRM is asked for the records of this
-/// verified unit and contact; whatever comes back is filtered again here, and
-/// the document fetched for sending is checked once more against the session
-/// before a byte leaves. A record id the caller names that is not in the
-/// customer's own list is an ownership mismatch — never fetched, so a guessed
-/// id cannot retrieve another customer's document.
+/// <b>Who CRM is asked about.</b> The verified session's contact (on record
+/// in CRM, never the caller) gives the phone for the existing CRM buyer
+/// lookup; that returns CRM's <c>CustomerID</c> and the customer's units with
+/// their <c>LeadID</c>s. The lead is the verified unit, or one the caller names
+/// that must be among <i>that customer's</i> units — anything else is an
+/// ownership mismatch and CRM is never asked. <c>GetCustomerDocuments</c> is
+/// then called with exactly that CustomerID/LeadID.
+/// </para>
+///
+/// <para>
+/// <b>Ownership is enforced at every step.</b> The lead belongs to the
+/// customer (above); CRM must echo that customer and lead back (the gateway
+/// refuses a response that does not); a <c>recordId</c> the caller names must
+/// be one CRM just listed for them — never fetched otherwise, so a guessed id
+/// cannot retrieve another customer's document; and the file is fetched with
+/// the server-side CRM credential from the reference in that same listing,
+/// never from anything the caller supplied.
 /// </para>
 ///
 /// <para>
@@ -61,6 +76,7 @@ public sealed partial class CrmDocumentCopyAppService(
     IUnitReferenceRepository unitRepository,
     IContactReferenceRepository contactRepository,
     ICrmDocumentGateway documentGateway,
+    CrmBuyerLookupAppService buyerLookup,
     ICrmDocumentDeliveryRepository deliveryRepository,
     IEnumerable<IDocumentDeliveryChannelSender> channelSenders,
     ICustomerVerificationUnitOfWork unitOfWork,
@@ -162,34 +178,95 @@ public sealed partial class CrmDocumentCopyAppService(
             return Mismatch(type, "The requested unit is not the unit this customer verified.");
         }
 
-        // ---- 4. Which record? Only ones this customer owns. ----
+        // ---- 4. Which CRM customer and lead? The verified contact's own phone, via the existing buyer lookup. ----
+        if (!CustomerPhoneNumber.LooksLikeNumber(contact.ContactChannel)
+            || CustomerPhoneNumber.Normalize(contact.ContactChannel).Length < 7)
+        {
+            return Fail(CrmDocumentCopyStatus.VerificationFailed, CrmDocumentCodes.CrmCustomerNotResolved,
+                "The verified contact has no phone number on record, so the CRM customer cannot be resolved. Nothing was sent.",
+                documentType: type.ToString());
+        }
+
+        var lookup = await buyerLookup.GetBuyerByPhoneAsync("+" + CustomerPhoneNumber.Normalize(contact.ContactChannel), cancellationToken);
+        switch (lookup.Outcome)
+        {
+            case CrmBuyerLookupOutcome.Success when lookup.Buyers is { Count: 1 }:
+                break;
+            case CrmBuyerLookupOutcome.NotFound:
+            case CrmBuyerLookupOutcome.AmbiguousCustomerMatch:
+            case CrmBuyerLookupOutcome.Success:
+                return Fail(CrmDocumentCopyStatus.VerificationFailed, CrmDocumentCodes.CrmCustomerNotResolved,
+                    "The verified contact is not a single CRM buyer, so no documents can be released. Nothing was sent.",
+                    documentType: type.ToString());
+            default:
+                logger.LogWarning("CRM buyer lookup {Outcome} while resolving a document request.", lookup.Outcome);
+                return SourceUnavailable(type);
+        }
+
+        var buyer = lookup.Buyers![0];
+        var customerId = buyer.Customer.CustomerId;
+
+        // The lead: the customer's own unit — the one they verified on, or one they name.
+        CrmBuyerUnitDto? lead;
+        if (request.CrmLeadId is { } requestedLeadId)
+        {
+            lead = buyer.Units.FirstOrDefault(u => u.LeadId == requestedLeadId);
+            if (lead is null)
+            {
+                return Mismatch(type, "That unit does not belong to the verified customer.");
+            }
+
+            if (requestedUnitId is not null && !IsSameUnit(unit, lead))
+            {
+                return Mismatch(type, "The requested unit and lead do not describe the same unit.");
+            }
+        }
+        else
+        {
+            var verifiedUnitLeads = buyer.Units.Where(u => IsSameUnit(unit, u)).ToList();
+            if (verifiedUnitLeads.Count == 1)
+            {
+                lead = verifiedUnitLeads[0];
+            }
+            else if (verifiedUnitLeads.Count == 0 && buyer.Units.Count == 1)
+            {
+                lead = buyer.Units[0];
+            }
+            else
+            {
+                // The verified unit is not one lead (or not found among this customer's): ask which unit.
+                var candidates = verifiedUnitLeads.Count > 1 ? verifiedUnitLeads : buyer.Units.ToList();
+                return new CrmDocumentCopyResult(
+                    CrmDocumentCopyStatus.SelectionRequired, CrmDocumentCodes.SelectionRequired,
+                    "The customer has more than one unit. Ask which unit, then call again with its crmLeadId.",
+                    DocumentType: type.ToString(), ChoiceKind: "Unit",
+                    Choices: candidates
+                        .Select(u => new CrmDocumentChoice(
+                            u.LeadId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            string.Join(" — ", new[] { u.ProjectName, u.UnitNumber }.Where(x => !string.IsNullOrWhiteSpace(x))),
+                            u.UnitNumber, null))
+                        .ToList());
+            }
+        }
+
+        // ---- 5. Which document? Only ones CRM lists for this customer and lead. ----
         CrmDocumentListing listing;
         try
         {
-            listing = await documentGateway.ListAsync(type, unit.CrmUnitId, contact.CrmContactId, cancellationToken);
+            listing = await documentGateway.ListAsync(type, customerId, lead.LeadId, cancellationToken);
         }
-        catch (CrmDocumentSourceUnavailableException ex)
+        catch (CrmDocumentSourceException ex)
         {
-            logger.LogWarning(ex, "CRM document source unavailable while listing {DocumentType}.", type);
-            return SourceUnavailable(type);
+            logger.LogWarning(ex, "CRM document listing failed ({Failure}) for a {DocumentType} request.", ex.Failure, type);
+            return SourceFailure(type, ex.Failure);
         }
 
-        var owned = listing.Records
-            .Where(r => Same(r.CrmUnitId, unit.CrmUnitId) && Same(r.OwnerCrmContactId, contact.CrmContactId))
-            .DistinctBy(r => r.RecordId, StringComparer.Ordinal)
-            .ToList();
-
-        if (owned.Count != listing.Records.Count)
-        {
-            logger.LogWarning(
-                "CRM returned {Dropped} {DocumentType} record(s) not owned by the verified unit/contact; they were dropped.",
-                listing.Records.Count - owned.Count, type);
-        }
+        var records = listing.Records.DistinctBy(r => r.RecordId, StringComparer.Ordinal).ToList();
 
         CrmDocumentRecord selected;
         if (requestedRecordId is not null)
         {
-            var match = owned.FirstOrDefault(r => string.Equals(r.RecordId, requestedRecordId, StringComparison.Ordinal));
+            var match = records.FirstOrDefault(r => string.Equals(r.RecordId, requestedRecordId, StringComparison.Ordinal));
             if (match is null)
             {
                 return Mismatch(type, "That record does not belong to the verified customer.");
@@ -197,22 +274,23 @@ public sealed partial class CrmDocumentCopyAppService(
 
             selected = match;
         }
-        else if (owned.Count == 0)
+        else if (records.Count == 0)
         {
             return Fail(CrmDocumentCopyStatus.DocumentUnavailable, CrmDocumentCodes.DocumentNotFound,
                 $"No {Describe(type)} is on record for this customer and unit.", documentType: type.ToString());
         }
-        else if (owned.Count > 1)
+        else if (listing.SelectionRequired || records.Count > 1)
         {
+            // CRM says (or the count shows) there is more than one: never pick one for the customer.
             return new CrmDocumentCopyResult(
                 CrmDocumentCopyStatus.SelectionRequired, CrmDocumentCodes.SelectionRequired,
                 $"More than one {Describe(type)} matches. Ask the customer which one, then call again with its recordId.",
-                DocumentType: type.ToString(),
-                Choices: owned.Select(r => new CrmDocumentChoice(r.RecordId, r.Label, r.UnitNumber ?? unit.UnitNumber, r.IssuedOn)).ToList());
+                DocumentType: type.ToString(), ChoiceKind: "Document",
+                Choices: records.Select(r => new CrmDocumentChoice(r.RecordId, r.Label, lead.UnitNumber, null)).ToList());
         }
         else
         {
-            selected = owned[0];
+            selected = records[0];
         }
 
         // A retried key is bound to the record it first claimed: if CRM's data
@@ -224,8 +302,8 @@ public sealed partial class CrmDocumentCopyAppService(
                 "This Idempotency-Key was already used for a different record. Use a new key for a new request.");
         }
 
-        // ---- 5. Where does it go? CRM's email for this contact — never the caller's. ----
-        var destination = listing.CustomerEmail?.Trim();
+        // ---- Where does it go? CRM's email for this customer — never the caller's. ----
+        var destination = buyer.Customer.Email?.Trim();
         if (string.IsNullOrEmpty(destination) || !EmailPattern().IsMatch(destination))
         {
             return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.DeliveryDestinationUnavailable,
@@ -271,33 +349,33 @@ public sealed partial class CrmDocumentCopyAppService(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        // ---- 8. Fetch, re-verify, send ----
+        // ---- 8. Fetch with the server-side CRM credential, then send ----
         CrmDocumentContent? content;
         try
         {
-            content = await documentGateway.GetContentAsync(type, selected.RecordId, cancellationToken);
+            content = await documentGateway.DownloadAsync(selected, cancellationToken);
         }
-        catch (CrmDocumentSourceUnavailableException ex)
+        catch (CrmDocumentSourceException ex)
         {
-            logger.LogWarning(ex, "CRM document source unavailable while fetching a {DocumentType}.", type);
-            await FinishFailedAsync(claim, CrmDocumentCodes.DocumentSourceUnavailable, cancellationToken);
-            return SourceUnavailable(type, claim);
+            logger.LogWarning(ex, "CRM document download failed ({Failure}) for a {DocumentType}.", ex.Failure, type);
+            var code = SourceFailureCode(ex.Failure);
+            await FinishFailedAsync(claim, code, cancellationToken);
+            return SourceFailure(type, ex.Failure, claim);
         }
 
         if (content is null)
         {
             await FinishFailedAsync(claim, CrmDocumentCodes.DocumentNotFound, cancellationToken);
             return Fail(CrmDocumentCopyStatus.DocumentUnavailable, CrmDocumentCodes.DocumentNotFound,
-                $"The {Describe(type)} is no longer available in CRM.", documentType: type.ToString(),
+                $"The {Describe(type)} file is no longer available in CRM.", documentType: type.ToString(),
                 recordId: selected.RecordId, deliveryRequestId: claim.CrmDocumentDeliveryRequestId);
         }
 
-        if (!Same(content.RecordId, selected.RecordId) || !Same(content.CrmUnitId, unit.CrmUnitId)
-            || !Same(content.OwnerCrmContactId, contact.CrmContactId))
+        if (!string.Equals(content.RecordId, selected.RecordId, StringComparison.Ordinal))
         {
-            logger.LogError("CRM returned content that does not match the selected, owned {DocumentType} record; nothing was sent.", type);
+            logger.LogError("CRM download returned content for a different record than the one selected; nothing was sent.");
             await FinishFailedAsync(claim, CrmDocumentCodes.RecordOwnershipMismatch, cancellationToken);
-            return Mismatch(type, "The document CRM returned does not belong to the verified customer. Nothing was sent.", claim);
+            return Mismatch(type, "The document CRM returned does not match the selected record. Nothing was sent.", claim);
         }
 
         if (content.Bytes.Length == 0 || content.Bytes.Length > options.MaxAttachmentBytes)
@@ -317,7 +395,7 @@ public sealed partial class CrmDocumentCopyAppService(
         {
             delivery = await sender.SendAsync(
                 new DocumentDeliveryMessage(
-                    destination, contact.DisplayName ?? string.Empty, type, content.FileName, content.ContentType,
+                    destination, buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, type, content.FileName, content.ContentType,
                     content.Bytes, Guid.NewGuid()),
                 cancellationToken);
         }
@@ -344,7 +422,7 @@ public sealed partial class CrmDocumentCopyAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "CrmDocumentCopySent", AuditEntityType, claim.CrmDocumentDeliveryRequestId.ToString(),
             beforeValue: null,
-            afterValue: $"DocumentType={type};RecordId={selected.RecordId};Channel={channel};Destination={masked};VerificationSessionId={sessionId}",
+            afterValue: $"DocumentType={type};CrmCustomerId={customerId};CrmLeadId={lead.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked};VerificationSessionId={sessionId}",
             Guid.NewGuid(), cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -409,10 +487,51 @@ public sealed partial class CrmDocumentCopyAppService(
         DocumentType: type.ToString(), RecordId: recordId, DeliveryChannel: channel.ToString(),
         MaskedDestination: masked, DeliveryRequestId: id, Duplicate: true);
 
-    private static CrmDocumentCopyResult SourceUnavailable(CrmDocumentType type, CrmDocumentDeliveryRequest? claim = null) => Fail(
-        CrmDocumentCopyStatus.DocumentUnavailable, CrmDocumentCodes.DocumentSourceUnavailable,
-        "CRM's document source is not available (no Tiger CRM document endpoint is integrated, or CRM cannot be reached). Nothing was sent.",
-        documentType: type.ToString(), retryable: true, deliveryRequestId: claim?.CrmDocumentDeliveryRequestId);
+    private static CrmDocumentCopyResult SourceUnavailable(CrmDocumentType type, CrmDocumentDeliveryRequest? claim = null) =>
+        SourceFailure(type, CrmDocumentSourceFailure.Unavailable, claim);
+
+    /// <summary>Each CRM failure has its own code; only the transient one is marked retryable.</summary>
+    private static CrmDocumentCopyResult SourceFailure(
+        CrmDocumentType type, CrmDocumentSourceFailure failure, CrmDocumentDeliveryRequest? claim = null) => Fail(
+        CrmDocumentCopyStatus.DocumentUnavailable,
+        SourceFailureCode(failure),
+        failure switch
+        {
+            CrmDocumentSourceFailure.RequestRejected => "CRM rejected the document request as malformed (400). Nothing was sent; this needs a TigerCS fix.",
+            CrmDocumentSourceFailure.AuthenticationFailed => "CRM rejected TigerCS's credential (401). Check Crm:SecretKey. Nothing was sent.",
+            CrmDocumentSourceFailure.AccessDenied => "CRM denied access to this customer's documents (403). Nothing was sent.",
+            CrmDocumentSourceFailure.InvalidResponse => "CRM returned a response that does not match its contract. Nothing was sent.",
+            CrmDocumentSourceFailure.ReferenceRejected => "CRM pointed at a file location TigerCS is not allowed to fetch with its credential. Nothing was sent.",
+            _ => "CRM's document source is unavailable right now. Nothing was sent; retry with the same Idempotency-Key."
+        },
+        documentType: type.ToString(), retryable: failure == CrmDocumentSourceFailure.Unavailable,
+        deliveryRequestId: claim?.CrmDocumentDeliveryRequestId);
+
+    private static string SourceFailureCode(CrmDocumentSourceFailure failure) => failure switch
+    {
+        CrmDocumentSourceFailure.RequestRejected => CrmDocumentCodes.CrmRequestRejected,
+        CrmDocumentSourceFailure.AuthenticationFailed => CrmDocumentCodes.CrmAuthenticationFailed,
+        CrmDocumentSourceFailure.AccessDenied => CrmDocumentCodes.CrmAccessDenied,
+        CrmDocumentSourceFailure.InvalidResponse or CrmDocumentSourceFailure.ReferenceRejected => CrmDocumentCodes.CrmInvalidResponse,
+        _ => CrmDocumentCodes.DocumentSourceUnavailable
+    };
+
+    /// <summary>
+    /// Whether a CRM buyer unit (<c>LeadID</c>) is the unit the customer
+    /// verified on: CRM's unit id when the cached reference carries it, else
+    /// the unit number within the same project.
+    /// </summary>
+    internal static bool IsSameUnit(UnitReference verified, CrmBuyerUnitDto candidate)
+    {
+        if (int.TryParse(verified.CrmUnitId, out var verifiedUnitId) && verifiedUnitId == candidate.UnitId)
+        {
+            return true;
+        }
+
+        return string.Equals(verified.UnitNumber?.Trim(), candidate.UnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(verified.PropertyName) || string.IsNullOrWhiteSpace(candidate.ProjectName)
+                || string.Equals(verified.PropertyName.Trim(), candidate.ProjectName.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
 
     private static CrmDocumentCopyResult Mismatch(CrmDocumentType type, string message, CrmDocumentDeliveryRequest? claim = null) => Fail(
         CrmDocumentCopyStatus.OwnershipMismatch, CrmDocumentCodes.RecordOwnershipMismatch, message,

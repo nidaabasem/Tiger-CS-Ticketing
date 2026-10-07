@@ -13,7 +13,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"verificationSessionId\": \"$esc.jsonString(${input.verificationSessionId})\", \"documentType\": \"$esc.jsonString(${input.documentType})\", \"crmUnitId\": \"$!esc.jsonString($input.crmUnitId)\", \"recordId\": \"$!esc.jsonString($input.recordId)\", \"deliveryChannel\": \"$!esc.jsonString($input.deliveryChannel)\"}"
+      "requestTemplate": "{\"verificationSessionId\": \"$esc.jsonString(${input.verificationSessionId})\", \"documentType\": \"$esc.jsonString(${input.documentType})\", \"crmUnitId\": \"$!esc.jsonString($input.crmUnitId)\", \"recordId\": \"$!esc.jsonString($input.recordId)\", \"crmLeadId\": \"$!esc.jsonString($input.crmLeadId)\", \"deliveryChannel\": \"$!esc.jsonString($input.deliveryChannel)\"}"
     },
     "response": {
       "translationMap": {
@@ -23,7 +23,8 @@
         "recordId": "$.recordId",
         "maskedDestination": "$.maskedDestination",
         "duplicate": "$.duplicate",
-        "choices": "$.choices"
+        "choices": "$.choices",
+        "choiceKind": "$.choiceKind"
       },
       "translationMapDefaults": {
         "code": "\"\"",
@@ -31,9 +32,10 @@
         "recordId": "\"\"",
         "maskedDestination": "\"\"",
         "duplicate": "false",
-        "choices": "[]"
+        "choices": "[]",
+        "choiceKind": "\"\\\"\\\"\""
       },
-      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"recordId\": ${recordId}, \"maskedDestination\": ${maskedDestination}, \"duplicate\": ${duplicate}, \"choices\": ${choices}}"
+      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"recordId\": ${recordId}, \"maskedDestination\": ${maskedDestination}, \"duplicate\": ${duplicate}, \"choices\": ${choices}, \"choiceKind\": ${choiceKind}}"
     }
   },
   "contract": {
@@ -42,14 +44,40 @@
         "$schema": "http://json-schema.org/draft-04/schema#",
         "title": "TigerCS - Send Document Copy",
         "type": "object",
-        "required": ["verificationSessionId", "documentType", "idempotencyKey"],
+        "required": [
+          "verificationSessionId",
+          "documentType",
+          "idempotencyKey"
+        ],
         "properties": {
-          "verificationSessionId": { "type": "string", "description": "The confirmed verification session (Otp or AuthenticatedDigitalUser) for this customer." },
-          "documentType": { "type": "string", "description": "Contract, ReservationForm, UnitLayout or RegistrationReceipt." },
-          "idempotencyKey": { "type": "string", "description": "Unique per request, REUSED on a retry of the same request (e.g. conversationId + documentType + attempt counter). Use a new key for the follow-up call that carries the customer's choice." },
-          "crmUnitId": { "type": "string", "description": "Optional. Must be the verified unit." },
-          "recordId": { "type": "string", "description": "Optional. The recordId the customer chose from a SelectionRequired answer." },
-          "deliveryChannel": { "type": "string", "description": "Optional. Email (default). WhatsApp and Sms have no integration yet." }
+          "verificationSessionId": {
+            "type": "string",
+            "description": "The confirmed verification session (Otp or AuthenticatedDigitalUser) for this customer."
+          },
+          "documentType": {
+            "type": "string",
+            "description": "Contract, ReservationForm, UnitLayout or RegistrationReceipt."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "Unique per request, REUSED on a retry of the same request (e.g. conversationId + documentType + attempt counter). Use a new key for the follow-up call that carries the customer's choice."
+          },
+          "crmUnitId": {
+            "type": "string",
+            "description": "Optional. Must be the verified unit."
+          },
+          "recordId": {
+            "type": "string",
+            "description": "Optional. The recordId (CRM attachmentId) the customer chose from a choiceKind=Document selection."
+          },
+          "deliveryChannel": {
+            "type": "string",
+            "description": "Optional. Email (default). WhatsApp and Sms have no integration yet."
+          },
+          "crmLeadId": {
+            "type": "string",
+            "description": "Optional. The CRM lead the customer chose from a choiceKind=Unit selection. Must be one of their own units."
+          }
         }
       }
     },
@@ -59,24 +87,52 @@
         "title": "TigerCS - Send Document Copy result",
         "type": "object",
         "properties": {
-          "status": { "type": "string", "description": "Sent, Queued or SelectionRequired. (Failures come back as error responses with a code.)" },
-          "code": { "type": "string" },
-          "message": { "type": "string" },
-          "recordId": { "type": "string" },
-          "maskedDestination": { "type": "string", "description": "Masked email the document went to - safe to read back to the customer." },
-          "duplicate": { "type": "boolean", "description": "true when this was a replay and nothing was sent again." },
+          "status": {
+            "type": "string",
+            "description": "Sent, Queued or SelectionRequired. (Failures come back as error responses with a code.)"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "recordId": {
+            "type": "string"
+          },
+          "maskedDestination": {
+            "type": "string",
+            "description": "Masked email the document went to - safe to read back to the customer."
+          },
+          "duplicate": {
+            "type": "boolean",
+            "description": "true when this was a replay and nothing was sent again."
+          },
           "choices": {
             "type": "array",
             "description": "On SelectionRequired: the records to offer the customer.",
             "items": {
               "type": "object",
               "properties": {
-                "recordId": { "type": "string" },
-                "label": { "type": "string" },
-                "unitNumber": { "type": "string" },
-                "issuedOn": { "type": "string" }
+                "recordId": {
+                  "type": "string",
+                  "description": "Document: CRM attachmentId. Unit: the CRM lead id."
+                },
+                "label": {
+                  "type": "string"
+                },
+                "unitNumber": {
+                  "type": "string"
+                },
+                "issuedOn": {
+                  "type": "string"
+                }
               }
             }
+          },
+          "choiceKind": {
+            "type": "string",
+            "description": "On SelectionRequired: Document (pass recordId back) or Unit (pass crmLeadId back)."
           }
         }
       }
