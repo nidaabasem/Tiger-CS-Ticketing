@@ -32,10 +32,13 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>Nothing here closes a ticket.</b> Ending a conversation finalizes the
+/// <b>Nothing in this call closes a ticket.</b> Ending a conversation finalizes the
 /// interaction and stores the transcript; the ticket carries on under the
 /// existing lifecycle. The response echoes the ticket's unchanged status to
-/// make that visible on every call.
+/// make that visible on every call. The one automatic closure — a chatbot
+/// that waited more than the configured time for a customer reply — happens
+/// later, in <c>ChatbotInactivityCloseAppService</c> driven by a background
+/// job; this call only starts or cancels the persisted timer it reads.
 /// </para>
 ///
 /// <para>
@@ -266,6 +269,8 @@ public sealed class GenesysTicketUpdateAppService(
             await RecordCustomerConfirmationAsync(callerEmployeeId, ticket, conversationId, confirmation, cancellationToken);
         }
 
+        var timerNote = await ApplyAwaitingCustomerReplyAsync(callerEmployeeId, ticket, interaction, request, cancellationToken);
+
         // The handoff state is reported on EVERY update, not only on one that
         // touched it. Genesys ending a conversation needs to see that the
         // pending human work is still outstanding — that is exactly the
@@ -288,8 +293,107 @@ public sealed class GenesysTicketUpdateAppService(
             interaction.IsEnded,
             transcriptCount,
             handoffStatus,
-            handoffId);
+            handoffId,
+            AwaitingCustomerReply: interaction.AwaitingCustomerReplySinceUtc is not null,
+            InactivityDeadlineUtc: InactivityDeadline(interaction),
+            AwaitingCustomerReplyNote: timerNote);
     }
+
+    private DateTime? InactivityDeadline(TicketInteraction interaction) =>
+        interaction.AwaitingCustomerReplySinceUtc is { } since && options.CustomerInactivityTimeout is { } timeout
+            ? since + timeout
+            : null;
+
+    /// <summary>
+    /// The chatbot inactivity timer's only writer on the request path.
+    ///
+    /// <para>
+    /// <b>Only an active chatbot exchange can be waiting.</b> A timer is
+    /// never started — and a running one is cancelled — when human follow-up
+    /// is outstanding or being requested in this same update (requested
+    /// handoff, bot connection failure, takeover), when a person already owns
+    /// the ticket, or when the ticket or conversation is over. Those are
+    /// exactly the cases the closing job re-checks again at fire time; doing
+    /// it here as well keeps the persisted state honest rather than relying
+    /// on the job alone.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Idempotent.</b> <c>awaitingCustomerReply: true</c> while a timer is
+    /// running changes nothing (<see cref="TicketInteraction.BeginAwaitingCustomerReply"/>),
+    /// so a redelivered webhook cannot restart it. Returns a note only when a
+    /// requested timer was deliberately not started.
+    /// </para>
+    /// </summary>
+    private async Task<string?> ApplyAwaitingCustomerReplyAsync(
+        Guid callerEmployeeId, Ticket ticket, TicketInteraction interaction, GenesysTicketUpdateDto request,
+        CancellationToken cancellationToken)
+    {
+        var humanFollowUp = request.Handoff is { Required: true }
+            || await handoffRepository.GetOpenByInteractionIdAsync(interaction.TicketInteractionId, cancellationToken) is not null;
+
+        string? note = null;
+        var start = false;
+
+        if (humanFollowUp)
+        {
+            // Never waiting on the customer while a human is requested.
+            if (request.AwaitingCustomerReply == true)
+            {
+                note = "Not started: human follow-up is requested or pending for this conversation.";
+            }
+        }
+        else if (request.AwaitingCustomerReply == true)
+        {
+            if (interaction.IsEnded)
+            {
+                note = "Not started: the conversation has ended.";
+            }
+            else if (ticket.TicketStatus == TicketStatus.Closed || interaction.InactivityClosedAtUtc is not null)
+            {
+                note = "Not started: the ticket is already closed.";
+            }
+            else if (ticket.CurrentOwnerEmployeeId is not null)
+            {
+                note = "Not started: a person owns the ticket.";
+            }
+            else
+            {
+                start = true;
+            }
+        }
+        else if (request.AwaitingCustomerReply is null)
+        {
+            return null;
+        }
+
+        var before = DescribeTimer(interaction);
+        var changed = start
+            ? interaction.BeginAwaitingCustomerReply(timeProvider.GetUtcNow().UtcDateTime, callerEmployeeId)
+            : interaction.CancelAwaitingCustomerReply();
+
+        if (!changed)
+        {
+            return note;
+        }
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await auditWriter.WriteAsync(
+            callerEmployeeId,
+            start ? GenesysAuditActions.CustomerReplyTimerStarted : GenesysAuditActions.CustomerReplyTimerCancelled,
+            GenesysAuditActions.ConversationEntityType,
+            interaction.GenesysConversationId!,
+            beforeValue: before,
+            afterValue: DescribeTimer(interaction),
+            correlationId: Guid.NewGuid(),
+            cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return note;
+    }
+
+    private static string DescribeTimer(TicketInteraction interaction) =>
+        $"TicketId={interaction.TicketId};AwaitingCustomerReplySinceUtc={interaction.AwaitingCustomerReplySinceUtc?.ToString("O") ?? "(none)"}";
 
     /// <summary>
     /// Applies a routing change (and a late start time) to the interaction,

@@ -138,6 +138,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // up, update. Nothing else on api/genesys: everything Genesys does to
         // a ticket after creating it goes through the one PATCH.
         "POST /api/genesys/tickets",
+        "POST /api/genesys/documents/send-copy",
         "PATCH /api/genesys/tickets/{ticketId}",
         "GET /api/genesys/customers/lookup",
         // Genesys agent identity mapping: the agent-action endpoint that

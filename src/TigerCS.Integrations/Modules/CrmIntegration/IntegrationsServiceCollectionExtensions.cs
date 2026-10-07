@@ -3,6 +3,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.CrmDocuments.Abstractions;
+using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.CustomerLookup;
 using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
@@ -77,6 +79,24 @@ public static class IntegrationsServiceCollectionExtensions
                 _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
             };
         });
+
+        // Customer documents (contract / reservation form / unit layout /
+        // registration receipt) share the Crm:Provider switch: "Http" fails
+        // closed because Tiger CRM publishes no document operation;
+        // "Mock" serves labelled fixtures (Development/Testing only).
+        services.AddScoped<UnimplementedCrmDocumentGateway>();
+        services.AddScoped<MockCrmDocumentGateway>();
+        services.AddScoped<ICrmDocumentGateway>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            return options.Provider switch
+            {
+                "Http" => (ICrmDocumentGateway)sp.GetRequiredService<UnimplementedCrmDocumentGateway>(),
+                "Mock" => sp.GetRequiredService<MockCrmDocumentGateway>(),
+                _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
+            };
+        });
+        services.AddScoped<IDocumentDeliveryChannelSender, EmailDocumentDeliveryChannelSender>();
 
         AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);

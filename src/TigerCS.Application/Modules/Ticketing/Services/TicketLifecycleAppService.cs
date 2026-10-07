@@ -687,6 +687,133 @@ public sealed class TicketLifecycleAppService(
     /// only narrows the existing status machine where configuration exists.
     /// </summary>
     /// <summary>
+    /// System closure for chatbot customer inactivity — the existing lifecycle
+    /// (Resolved before Closed, status history, resolution row, audit, Outbox
+    /// lifecycle event, pending-record resume) executed without a human
+    /// caller, because the customer simply stopped answering the chatbot.
+    ///
+    /// <para>
+    /// <b>No role check, and none is needed:</b> this is not reachable from
+    /// any controller. Its only caller is
+    /// <c>ChatbotInactivityCloseAppService</c>, which has already re-verified
+    /// the interaction (still waiting, not ended, no pending human work) and
+    /// supplies the integration account that reported the prompt as the
+    /// recorded actor. Status history is written with
+    /// <c>actorIsSystem: true</c>, so the timeline reads as an automated
+    /// action rather than as that account closing the ticket by hand.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Not "resolved".</b> The resolution outcome is
+    /// <see cref="ResolutionOutcome.Cancelled"/> and the note carries
+    /// <paramref name="reason"/>; the ticket was closed because the customer
+    /// went silent, not because the issue was confirmed fixed. Only
+    /// <c>TicketClosed</c> is enqueued for the customer — a "your request was
+    /// resolved" email would be false. SLA breach finalization is not run:
+    /// nothing was worked, and the ticket is Closed in the same step.
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="beforeCommit"/> runs after the ticket has been
+    /// validated and mutated and before the single SaveChanges, so the
+    /// caller's own change (clearing the interaction's timer) commits or rolls
+    /// back with the closure — and the interaction's concurrency token turns
+    /// a reply that raced the close into a rolled-back, no-op result.
+    /// </para>
+    /// </summary>
+    public async Task<TicketMutationResult> CloseForCustomerInactivityAsync(
+        Guid integrationEmployeeId,
+        long ticketId,
+        string reason,
+        Action<DateTime>? beforeCommit = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        var ticket = await ticketRepository.GetByIdAsync(ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotFound);
+        }
+
+        if (ticket.TicketStatus == TicketStatus.Closed)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        TicketStatus oldStatus;
+        try
+        {
+            oldStatus = ticket.CloseForCustomerInactivity();
+        }
+        catch (TicketClosedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
+        }
+        catch (TicketNotEligibleForResolutionException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.NotEligibleForResolution);
+        }
+
+        if (oldStatus is TicketStatus.PendingCustomer)
+        {
+            var openPending = await pendingRecordRepository.GetOpenAsync(ticketId, cancellationToken);
+            openPending?.Resume(integrationEmployeeId, now);
+        }
+
+        await ticketResolutionRepository.AddAsync(
+            new TicketResolution(
+                ticketId, ResolutionOutcome.Cancelled, reason, reasonCode: null, duplicateOfTicketId: null,
+                integrationEmployeeId, now),
+            cancellationToken);
+
+        var correlationId = Guid.NewGuid();
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.Resolved,
+                actorEmployeeId: null, actorIsSystem: true, note: reason, correlationId, now),
+            cancellationToken);
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.ResolutionOutcome, oldValue: null, (byte)ResolutionOutcome.Cancelled,
+                actorEmployeeId: null, actorIsSystem: true, note: reason, correlationId, now),
+            cancellationToken);
+        await statusHistoryRepository.AddAsync(
+            new TicketStatusHistory(
+                ticketId, TicketStatusDimension.TicketStatus, (byte)TicketStatus.Resolved, (byte)TicketStatus.Closed,
+                actorEmployeeId: null, actorIsSystem: true, note: reason, correlationId, now),
+            cancellationToken);
+
+        await auditWriter.WriteAsync(
+            integrationEmployeeId, "AutoCloseCustomerInactivity", "Ticket", ticketId.ToString(),
+            beforeValue: oldStatus.ToString(),
+            afterValue: $"{TicketStatus.Closed};ResolutionOutcome={ResolutionOutcome.Cancelled};Reason={reason}",
+            correlationId, cancellationToken);
+
+        await EnqueueLifecycleEventAsync(
+            OutboxEventTypes.TicketClosed, OutboxEventTypes.TicketClosedVersion,
+            ticket, integrationEmployeeId, correlationId, now, cancellationToken);
+
+        beforeCommit?.Invoke(now);
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (TicketConcurrentlyModifiedException)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
+    }
+
+    /// <summary>
     /// Records a customer-facing lifecycle event in the transactional Outbox
     /// (ADR-0013) — the same mechanism <c>TicketCreationAppService</c> uses
     /// for <c>TicketCreated</c>. Added to the caller's unit of work, so the

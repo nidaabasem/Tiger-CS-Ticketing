@@ -219,6 +219,17 @@ using (var backgroundJobScope = app.Services.CreateScope())
         .GetRequiredService<IOptions<BackgroundJobOptions>>().Value;
     app.Services.UseTigerCsRecurringSlaSweep(backgroundJobOptions);
 
+    // Chatbot inactivity closure — reads the persisted per-interaction timers,
+    // so it is safe across restarts. Also a no-op when BackgroundJobs:Enabled
+    // is false.
+    app.Services.UseTigerCsRecurringChatbotInactivityClose(backgroundJobOptions);
+    if (!backgroundJobOptions.Enabled)
+    {
+        app.Logger.LogWarning(
+            "BackgroundJobs:Enabled is false: Hangfire is not running, so chatbot customer-inactivity tickets will NOT be closed "
+            + "automatically (timers are still recorded and are honoured once the jobs are enabled).");
+    }
+
     // ADR-0013/ADR-0015 — the recurring Outbox dispatcher. Registered
     // alongside the sweep because both need live job storage. With
     // BackgroundJobs:Enabled false this is a no-op and Outbox rows simply

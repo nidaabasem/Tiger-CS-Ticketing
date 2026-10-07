@@ -61,6 +61,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     public DbSet<ContactReference> ContactReferences => Set<ContactReference>();
 
     public DbSet<VerificationSession> VerificationSessions => Set<VerificationSession>();
+    public DbSet<CrmDocumentDeliveryRequest> CrmDocumentDeliveryRequests => Set<CrmDocumentDeliveryRequest>();
 
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -159,6 +160,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new UnitReferenceConfiguration());
         builder.ApplyConfiguration(new ContactReferenceConfiguration());
         builder.ApplyConfiguration(new VerificationSessionConfiguration());
+        builder.ApplyConfiguration(new CrmDocumentDeliveryRequestConfiguration());
 
         builder.ApplyConfiguration(new AuditEntryConfiguration());
 

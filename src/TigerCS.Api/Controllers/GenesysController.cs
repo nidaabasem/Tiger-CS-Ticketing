@@ -225,7 +225,8 @@ public class GenesysController(
                     nameof(GenesysTicketUpdateOutcome.Applied), request.ConversationId,
                     result.TicketId!.Value, result.TicketNumber!, result.TicketStatus!,
                     result.ConversationEnded, result.TranscriptMessageCount,
-                    result.HandoffStatus, result.TicketAgentHandoffId)),
+                    result.HandoffStatus, result.TicketAgentHandoffId,
+                    result.AwaitingCustomerReply, result.InactivityDeadlineUtc, result.AwaitingCustomerReplyNote)),
 
             GenesysTicketUpdateOutcome.IntegrationDisabled => Problem(
                 type: "https://tigercs.internal/problems/genesys-integration-disabled",
