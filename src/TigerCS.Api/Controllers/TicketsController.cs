@@ -948,7 +948,7 @@ public class TicketsController(
         TicketMutationOutcome.EmployeeNotInDepartment => Problem(
             type: "https://tigercs.internal/problems/employee-not-in-department",
             title: "Employee not in department",
-            detail: "AssignedEmployeeId is not an active member of this ticket's current department.",
+            detail: "The assignee is not an active member of the ticket's resulting department (its current department for Assign; the target department for a transfer with assignToEmployeeId).",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
         TicketMutationOutcome.TargetDepartmentInactive => Problem(

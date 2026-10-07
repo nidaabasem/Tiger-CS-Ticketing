@@ -17,4 +17,14 @@ public sealed class AuthApiClient(HttpClient httpClient, ILogger<AuthApiClient> 
 
     public Task<ApiResult> LogoutAsync(CancellationToken cancellationToken) =>
         PostAsync("api/auth/logout", new { }, cancellationToken);
+
+    /// <summary>
+    /// Changes the signed-in user's own password — 204 on success, after which
+    /// the session's token is invalid and the user must sign in again; 422 with
+    /// the reason in <c>Detail</c> for a wrong current password or a policy
+    /// failure. Needs the bearer token, so this client carries
+    /// <c>BearerTokenHandler</c> like every authenticated client.
+    /// </summary>
+    public Task<ApiResult> ChangePasswordAsync(ChangePasswordRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync("api/auth/change-password", request, cancellationToken);
 }

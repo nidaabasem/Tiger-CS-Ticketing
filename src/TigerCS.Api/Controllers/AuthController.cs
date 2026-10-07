@@ -6,6 +6,7 @@ using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.GenesysIntegration.Services;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
+using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
 namespace TigerCS.Api.Controllers;
 
@@ -145,6 +146,74 @@ public class AuthController(
                 ScreenPopErrorCodes.TokenInvalid, "Invalid Screen Pop link",
                 "This Screen Pop link is not valid.", StatusCodes.Status401Unauthorized)
         };
+    }
+
+    /// <summary>Change the signed-in user's own password.</summary>
+    /// <remarks>
+    /// The account is the token's subject, never a client-supplied id. The
+    /// current password must verify and the new one must satisfy the password
+    /// policy (docs/DEV-SETUP.md §3). On success <b>every</b> session the user
+    /// had — including the one that made this call — is invalidated: sign in
+    /// again to obtain a fresh token.
+    /// </remarks>
+    /// <response code="204">Password changed; sign in again.</response>
+    /// <response code="400">A field was missing or blank.</response>
+    /// <response code="422">The current password did not verify (<c>CURRENT_PASSWORD_INCORRECT</c>), or the new password violates the policy (<c>errors</c> lists each reason).</response>
+    [HttpPost("change-password")]
+    [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequestDto request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword))
+        {
+            ModelState.AddModelError(nameof(request.CurrentPassword), "The current password is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            ModelState.AddModelError(nameof(request.NewPassword), "A new password is required.");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return ValidationProblem(ModelState);
+        }
+
+        var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (idValue is null || !Guid.TryParse(idValue, out var employeeId))
+        {
+            return Unauthorized();
+        }
+
+        var result = await authenticationAppService.ChangePasswordAsync(employeeId, request, cancellationToken);
+
+        switch (result.Outcome)
+        {
+            case ChangePasswordOutcome.Success:
+                return NoContent();
+            case ChangePasswordOutcome.NotFound:
+                return Unauthorized();
+            case ChangePasswordOutcome.CurrentPasswordIncorrect:
+                ModelState.AddModelError(nameof(request.CurrentPassword), "The current password is incorrect.");
+                return ValidationProblem(
+                    modelStateDictionary: ModelState,
+                    statusCode: StatusCodes.Status422UnprocessableEntity,
+                    title: "The current password is incorrect",
+                    type: "https://tigercs.internal/problems/current-password-incorrect");
+            default:
+                foreach (var error in result.Errors ?? ["The new password does not satisfy the password policy."])
+                {
+                    ModelState.AddModelError(nameof(request.NewPassword), error);
+                }
+
+                return ValidationProblem(
+                    modelStateDictionary: ModelState,
+                    statusCode: StatusCodes.Status422UnprocessableEntity,
+                    title: "The new password does not satisfy the password policy",
+                    type: "https://tigercs.internal/problems/password-policy-violation");
+        }
     }
 
     /// <summary>Sign out the current user.</summary>

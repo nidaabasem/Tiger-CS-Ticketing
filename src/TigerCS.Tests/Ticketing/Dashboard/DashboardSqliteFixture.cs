@@ -25,13 +25,14 @@ namespace TigerCS.Tests.Ticketing.Dashboard;
 /// </summary>
 public sealed class DashboardSqliteFixture : IDisposable
 {
-    /// <summary>Tickets.RowVersion is a SQL Server rowversion, which SQLite cannot generate — the SQLite schema gives it a default. Nothing under test changes.</summary>
+    /// <summary>Tickets.RowVersion and TicketAgentHandoffs.RowVersion are SQL Server rowversions, which SQLite cannot generate — the SQLite schema gives them a default. Nothing under test changes.</summary>
     private sealed class SqliteTigerCsDbContext(DbContextOptions<TigerCsDbContext> options) : TigerCsDbContext(options)
     {
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
             builder.Entity<Ticket>().Property(t => t.RowVersion).HasDefaultValueSql("X'0000000000000000'");
+            builder.Entity<TicketAgentHandoff>().Property(h => h.RowVersion).HasDefaultValueSql("X'0000000000000000'");
         }
     }
 

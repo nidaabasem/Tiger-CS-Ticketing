@@ -1,13 +1,17 @@
+using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 
 namespace TigerCS.Application.Modules.IdentityAndAccess.Services;
 
-/// <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
+/// <summary>MVP-API-Contracts.md §1.1/§1.2, plus the self-service password change.</summary>
 public sealed class AuthenticationAppService(
     IIdentityAuthenticator authenticator,
     ITokenService tokenService,
-    IUserDepartmentAssignmentRepository assignmentRepository)
+    IUserDepartmentAssignmentRepository assignmentRepository,
+    IUserAccountManager accountManager,
+    IIdentityUnitOfWork unitOfWork,
+    IAuditEntryWriter auditWriter)
 {
     public async Task<LoginResult> LoginAsync(LoginRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -22,7 +26,7 @@ public sealed class AuthenticationAppService(
             case CredentialCheckOutcome.Success:
             default:
                 var primary = await assignmentRepository.GetPrimaryAsync(check.EmployeeId, cancellationToken);
-                var token = tokenService.CreateAccessToken(check.EmployeeId, check.DisplayName, check.Roles ?? []);
+                var token = tokenService.CreateAccessToken(check.EmployeeId, check.DisplayName, check.Roles ?? [], check.SecurityStamp);
                 return LoginResult.Success(new LoginResponseDto(
                     token.AccessToken,
                     token.ExpiresAtUtc,
@@ -41,4 +45,42 @@ public sealed class AuthenticationAppService(
     /// Audit module (S-05, out of scope for this increment) exists.
     /// </summary>
     public Task LogoutAsync(Guid employeeId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    /// <summary>
+    /// Changes the caller's own password. Identity verifies the current
+    /// password and applies the password policy; a wrong current password is
+    /// reported as exactly that and nothing more. On success Identity rotates
+    /// the security stamp, which — because every token carries the stamp it
+    /// was issued under — invalidates every session the user had, including
+    /// the one that made this call: the client must sign in again.
+    /// Audited as <c>ChangeOwnPassword</c> without any secret.
+    /// </summary>
+    public async Task<ChangePasswordResult> ChangePasswordAsync(
+        Guid callerEmployeeId, ChangePasswordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return ChangePasswordResult.PolicyViolation(["A new password is required."]);
+        }
+
+        var result = await accountManager.ChangePasswordAsync(
+            callerEmployeeId, request.CurrentPassword ?? string.Empty, request.NewPassword, cancellationToken);
+
+        switch (result.Outcome)
+        {
+            case PasswordChangeOutcome.UserNotFound:
+                return ChangePasswordResult.NotFound();
+            case PasswordChangeOutcome.CurrentPasswordIncorrect:
+                return ChangePasswordResult.CurrentPasswordIncorrect();
+            case PasswordChangeOutcome.PolicyViolation:
+                return ChangePasswordResult.PolicyViolation(result.Errors);
+        }
+
+        await auditWriter.WriteAsync(
+            callerEmployeeId, "ChangeOwnPassword", "User", callerEmployeeId.ToString(),
+            beforeValue: null, afterValue: "SecurityStampRotated=true", Guid.NewGuid(), cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return ChangePasswordResult.Success();
+    }
 }

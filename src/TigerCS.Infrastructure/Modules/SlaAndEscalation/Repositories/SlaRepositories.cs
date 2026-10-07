@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
+using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Infrastructure.Persistence;
@@ -10,6 +11,9 @@ public sealed class SlaPolicyRepository(TigerCsDbContext dbContext) : ISlaPolicy
 {
     public Task<SlaPolicy?> GetByPriorityIdAsync(byte priorityId, CancellationToken cancellationToken = default) =>
         dbContext.SlaPolicies.FirstOrDefaultAsync(p => p.PriorityId == priorityId && p.IsActive, cancellationToken);
+
+    public async Task<IReadOnlyList<SlaPolicy>> ListAsync(CancellationToken cancellationToken = default) =>
+        await dbContext.SlaPolicies.AsNoTracking().OrderBy(p => p.PriorityId).ToListAsync(cancellationToken);
 }
 
 /// <summary>
@@ -54,6 +58,41 @@ public sealed class BusinessCalendarRepository(TigerCsDbContext dbContext) : IBu
             calendar.BusinessDayEndLocal,
             workingDays.Select(d => (DayOfWeek)d),
             holidays);
+    }
+
+    public async Task<SlaCalendarDto?> GetActiveDescriptionAsync(CancellationToken cancellationToken = default)
+    {
+        var calendar = await dbContext.BusinessCalendars
+            .AsNoTracking()
+            .Where(c => c.IsActive)
+            .OrderByDescending(c => c.EffectiveFromUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (calendar is null)
+        {
+            return null;
+        }
+
+        var workingDays = await dbContext.BusinessCalendarWorkingDays
+            .Where(d => d.BusinessCalendarId == calendar.BusinessCalendarId && d.IsWorkingDay)
+            .Select(d => d.DayOfWeek)
+            .ToListAsync(cancellationToken);
+
+        var holidays = await dbContext.Holidays
+            .Where(h => h.BusinessCalendarId == calendar.BusinessCalendarId)
+            .Select(h => h.HolidayDate)
+            .OrderBy(h => h)
+            .ToListAsync(cancellationToken);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        return new SlaCalendarDto(
+            calendar.Name,
+            calendar.BusinessDayStartLocal.ToString("HH:mm"),
+            calendar.BusinessDayEndLocal.ToString("HH:mm"),
+            calendar.TimeZone,
+            workingDays.OrderBy(d => d).Select(d => ((DayOfWeek)d).ToString()).ToList(),
+            holidays.Count,
+            holidays.Where(h => h >= today).Take(10).ToList());
     }
 
     /// <summary>

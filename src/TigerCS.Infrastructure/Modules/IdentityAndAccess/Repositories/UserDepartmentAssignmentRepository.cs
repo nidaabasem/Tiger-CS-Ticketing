@@ -38,6 +38,13 @@ public sealed class UserDepartmentAssignmentRepository(TigerCsDbContext dbContex
         return await query.ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<UserDepartmentAssignment>> ListActiveMembershipsAsync(CancellationToken cancellationToken = default) =>
+        await dbContext.UserDepartmentAssignments
+            .Include(a => a.Employee)
+            .Include(a => a.Department)
+            .Where(a => a.Employee.DeactivatedAtUtc == null && a.Department.IsActive)
+            .ToListAsync(cancellationToken);
+
     public async Task AddAsync(UserDepartmentAssignment assignment, CancellationToken cancellationToken = default) =>
         await dbContext.UserDepartmentAssignments.AddAsync(assignment, cancellationToken);
 

@@ -122,7 +122,7 @@ public sealed class GenesysInquiryIngestionAppService(
                 $"No active channel is configured under code '{GenesysChannelResolver.CodeFor(inquiry.Channel)}'.");
         }
 
-        var department = await ResolveDepartmentAsync(inquiry, cancellationToken);
+        var (department, departmentSource) = await ResolveDepartmentAsync(inquiry, cancellationToken);
         if (department is null)
         {
             return GenesysIngestionResult.Failure(
@@ -264,8 +264,18 @@ public sealed class GenesysInquiryIngestionAppService(
             beforeValue: null,
             afterValue:
                 $"TicketId={creation.Response.TicketId};TicketNumber={creation.Response.TicketNumber};"
-                + $"Channel={inquiry.Channel};DepartmentId={department.DepartmentId};"
-                + $"QueueId={inquiry.QueueId ?? "(none)"};CustomerLookup={lookup.Status};Classification=Unclassified;"
+                + $"Channel={inquiry.Channel};DepartmentId={department.DepartmentId};DepartmentCode={department.Code};"
+                // HOW the department was decided, with the raw routing inputs
+                // the caller sent — so a ticket that landed in an unexpected
+                // department can be traced to the exact input (an explicit
+                // code or id in the Genesys flow, or a queue mapping) without
+                // guessing. Finance, or any other department, is never a
+                // fallback: one of these three inputs named it.
+                + $"DepartmentSource={departmentSource};"
+                + $"ReceivedDepartmentId={(inquiry.DepartmentId?.ToString() ?? "(none)")};"
+                + $"ReceivedDepartmentCode={(string.IsNullOrWhiteSpace(inquiry.DepartmentCode) ? "(none)" : inquiry.DepartmentCode.Trim())};"
+                + $"QueueId={inquiry.QueueId ?? "(none)"};QueueName={inquiry.QueueName ?? "(none)"};"
+                + $"CustomerLookup={lookup.Status};Classification=Unclassified;"
                 + $"AgentMapping={DescribeAgentMapping(inquiry.AgentId, agent)}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
@@ -301,34 +311,37 @@ public sealed class GenesysInquiryIngestionAppService(
     /// department — an inquiry routed somewhere nobody configured is a
     /// configuration gap that must be visible.
     /// </summary>
-    private async Task<Department?> ResolveDepartmentAsync(GenesysInquiryDto inquiry, CancellationToken cancellationToken)
+    private async Task<(Department? Department, GenesysDepartmentSource Source)> ResolveDepartmentAsync(
+        GenesysInquiryDto inquiry, CancellationToken cancellationToken)
     {
         if (inquiry.DepartmentId is { } departmentId)
         {
             var selected = await departmentRepository.GetByIdAsync(departmentId, cancellationToken);
-            return selected is { IsActive: true } ? selected : null;
+            return (selected is { IsActive: true } ? selected : null, GenesysDepartmentSource.ExplicitDepartmentId);
         }
 
         if (!string.IsNullOrWhiteSpace(inquiry.DepartmentCode))
         {
             var code = inquiry.DepartmentCode.Trim();
             var all = await departmentRepository.ListAsync(activeOnly: true, cancellationToken);
-            return all.FirstOrDefault(d => string.Equals(d.Code, code, StringComparison.OrdinalIgnoreCase));
+            return (
+                all.FirstOrDefault(d => string.Equals(d.Code, code, StringComparison.OrdinalIgnoreCase)),
+                GenesysDepartmentSource.ExplicitDepartmentCode);
         }
 
         if (string.IsNullOrWhiteSpace(inquiry.QueueId))
         {
-            return null;
+            return (null, GenesysDepartmentSource.None);
         }
 
         var mapping = await queueMappingRepository.GetActiveByQueueIdAsync(inquiry.QueueId.Trim(), cancellationToken);
         if (mapping is null)
         {
-            return null;
+            return (null, GenesysDepartmentSource.None);
         }
 
         var mapped = await departmentRepository.GetByIdAsync(mapping.DepartmentId, cancellationToken);
-        return mapped is { IsActive: true } ? mapped : null;
+        return (mapped is { IsActive: true } ? mapped : null, GenesysDepartmentSource.QueueMapping);
     }
 
     /// <summary>
@@ -480,4 +493,19 @@ public static class GenesysAuditActions
 
     /// <summary>A valid, unexpired launch was consumed but refused, because the agent's mapping or account no longer allowed sign-in.</summary>
     public const string ScreenPopRefused = "GenesysScreenPopRefused";
+}
+
+/// <summary>
+/// Which routing input decided a Genesys ticket's department. Recorded on
+/// the ingestion audit entry so an unexpected department (a web chat that
+/// turned up in Finance, say) is traceable to the input that named it: the
+/// code resolves in exactly this order and never falls back to a default
+/// department, so the answer is always one of these three.
+/// </summary>
+public enum GenesysDepartmentSource
+{
+    None = 0,
+    ExplicitDepartmentId = 1,
+    ExplicitDepartmentCode = 2,
+    QueueMapping = 3
 }

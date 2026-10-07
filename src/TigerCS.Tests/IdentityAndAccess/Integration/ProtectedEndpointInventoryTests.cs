@@ -34,7 +34,9 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
     private static readonly Dictionary<string, string> CoveredByTest = new()
     {
         ["POST /api/auth/logout"] = nameof(SystemAdministratorEndpointAuthorizationTests.Logout_Returns204),
+        ["POST /api/auth/change-password"] = nameof(PasswordManagementEndpointsTests.ChangePassword_Success_Returns204_RejectsTheCallersOwnTokenAfterwards_AndAFreshLoginWorks),
         ["GET /api/users/me"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetOwnProfile_Returns200),
+        ["GET /api/users/assignable"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListAssignableUsers_Returns200),
         ["PATCH /api/users/{employeeId:guid}/activation"] = nameof(SystemAdministratorEndpointAuthorizationTests.SetUserActivation_Returns200),
         ["GET /api/roles"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetRoleCatalog_Returns200),
         ["GET /api/departments"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListDepartments_Returns200),
@@ -104,6 +106,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/pending-customer-interactions/{handoffId:long}/complete"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["POST /api/pending-customer-interactions/{handoffId:long}/cancel"] = nameof(SystemAdministratorEndpointAuthorizationTests.PendingCustomerInteractions_AuthorizedThroughTheOverride),
         ["GET /api/tickets/{ticketId:long}/interactions"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetTicketInteractions_Returns200),
+        ["GET /api/admin/sla/configuration"] = nameof(Administration.Integration.AdministrationEndpointsTests.Sla_Configuration_IsReadableByTheAdministrator),
         ["GET /api/admin/genesys/queue-mappings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappings_ThroughTheRealHost),
         ["POST /api/admin/genesys/queue-mappings"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappings_ThroughTheRealHost),
         ["PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.GenesysRouting_QueueMappings_ThroughTheRealHost),
@@ -116,6 +119,12 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/customers/profile/{customerKey}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetCustomerProfileByKey_Returns200),
         ["GET /api/dashboard"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboard_Returns200),
         ["GET /api/dashboard/overview"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboardOverview_Returns200),
+
+        // Reports (CS Manager tier) — covered by TeamPerformanceEndpointsTests
+        // (CS Manager / GM / Chairman succeed, CS Agent and the department
+        // roles are refused, the administrator passes through the override).
+        ["GET /api/reports/team-performance"] = nameof(Reporting.Integration.TeamPerformanceEndpointsTests.SystemAdministrator_IsAuthorizedOnBothEndpoints_ThroughTheOverride),
+        ["GET /api/reports/team-performance/records"] = nameof(Reporting.Integration.TeamPerformanceEndpointsTests.SystemAdministrator_IsAuthorizedOnBothEndpoints_ThroughTheOverride),
 
         // SLA and Escalation. Automatic Level 2 escalation on breach has no
         // row here because it has no endpoint: MVP-API-Contracts.md §5.7
@@ -138,6 +147,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["PUT /api/admin/users/{employeeId:guid}/roles"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
         ["POST /api/admin/users/{employeeId:guid}/departments"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
         ["DELETE /api/admin/users/{employeeId:guid}/departments/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["POST /api/admin/users/{employeeId:guid}/password"] = nameof(PasswordManagementEndpointsTests.AdminReset_GoodPassword_Returns204_InvalidatesEveryEarlierToken_LiftsLockout_AndAuditsWithoutTheSecret),
         ["GET /api/channels"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListChannels_Returns200),
         ["GET /api/admin/channels"] = nameof(Administration.Integration.AdministrationEndpointsTests.Channels_ListAddEditActivationAndDuplicateCode_ThroughTheRealHost),
         ["GET /api/admin/channels/{channelId:int:range(1,255)}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Channels_ListAddEditActivationAndDuplicateCode_ThroughTheRealHost),

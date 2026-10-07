@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
+using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 
@@ -27,8 +28,16 @@ public class DepartmentScopedAuthorizationTests : IClassFixture<TigerCsApiFactor
         using var scope = _factory.Services.CreateScope();
         var transformation = scope.ServiceProvider.GetRequiredService<IClaimsTransformation>();
 
+        // A real token also carries the account's security stamp, which the
+        // ActiveEmployeeRequirement gate compares on every request.
+        var stamp = await scope.ServiceProvider.GetRequiredService<IUserAccountManager>().GetSecurityStampAsync(employeeId);
+
         var identity = new ClaimsIdentity(
-            [new Claim(ClaimTypes.NameIdentifier, employeeId.ToString()), new Claim(ClaimTypes.Role, role)],
+            [
+                new Claim(ClaimTypes.NameIdentifier, employeeId.ToString()),
+                new Claim(ClaimTypes.Role, role),
+                new Claim(TigerCsTokenClaims.SecurityStamp, stamp ?? string.Empty)
+            ],
             "TestAuth");
         var principal = new ClaimsPrincipal(identity);
 

@@ -13,9 +13,33 @@ namespace TigerCS.Api.Controllers;
 [Tags(OpenApiTags.Users)]
 public class UsersController(
     UserProfileAppService userProfileAppService,
-    UserActivationAppService userActivationAppService)
+    UserActivationAppService userActivationAppService,
+    AssignableUserAppService assignableUserAppService)
     : ControllerBase
 {
+    /// <summary>
+    /// The cross-department assignee directory: every active employee with
+    /// their roles and all their department memberships. CS Manager (and
+    /// General Manager / Chairman-CEO, who share the policy) only — the roles
+    /// that may place a ticket outside its current department.
+    /// </summary>
+    /// <remarks>
+    /// Used by Ticket Details when the ticket's current department holds no
+    /// suitable assignee: choosing a user from another department transfers
+    /// the ticket to that department and assigns it in one operation
+    /// (<c>POST /api/tickets/{id}/transfer</c> with <c>assignToEmployeeId</c>).
+    /// The rule that the assignee belongs to the ticket's resulting
+    /// department is enforced there, not here.
+    /// </remarks>
+    /// <response code="200">Every active employee, ordered by display name, one row each.</response>
+    /// <response code="403">The caller may not assign across departments.</response>
+    [HttpGet("assignable")]
+    [Authorize(Policy = PolicyNames.CsManagerOrGeneralManager)]
+    [ProducesResponseType<IReadOnlyList<AssignableUserDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Assignable(CancellationToken cancellationToken) =>
+        Ok(await assignableUserAppService.ListAsync(cancellationToken));
+
     /// <summary>The signed-in user's own profile.</summary>
     /// <remarks>
     /// Resolved from the access token's subject claim, never from a

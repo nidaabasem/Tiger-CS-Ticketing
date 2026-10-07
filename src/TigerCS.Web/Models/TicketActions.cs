@@ -195,6 +195,17 @@ public static class TicketActions
     /// Api still refuses it — the acceptable direction.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Whether the viewer may place a ticket with someone OUTSIDE its current
+    /// department — the Api's <see cref="TicketRoleSets.AssignCrossDepartment"/>
+    /// (CS Manager) plus ADR-0024's override. Such a viewer is offered the
+    /// whole assignee directory and the transfer-and-assign path; everyone
+    /// else sees only the ticket's own department.
+    /// </summary>
+    public static bool CanAssignAcrossDepartments(IReadOnlyCollection<string>? viewerRoles) =>
+        viewerRoles is not null
+        && (viewerRoles.Any(TicketRoleSets.AssignCrossDepartment.Contains) || AuthorizationOverride.AppliesTo(viewerRoles));
+
     public static bool CanAssign(TicketActionContext? context) =>
         context is { } c
         && (c.OverrideApplies

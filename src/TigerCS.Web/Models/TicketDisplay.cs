@@ -289,6 +289,23 @@ public static class TicketDisplay
     /// field) — the countdown/overdue-by text here is computed from those,
     /// not invented.
     /// </summary>
+    /// <summary>A target expressed in minutes as people read it: "15 min", "4 h", "24 h", "3 days".</summary>
+    public static string FormatMinutes(int minutes)
+    {
+        if (minutes < 60)
+        {
+            return $"{minutes} min";
+        }
+
+        if (minutes % (24 * 60) == 0)
+        {
+            var days = minutes / (24 * 60);
+            return days == 1 ? "1 day" : $"{days} days";
+        }
+
+        return minutes % 60 == 0 ? $"{minutes / 60} h" : $"{minutes / 60} h {minutes % 60} min";
+    }
+
     public static (string Label, string CssKey) SlaBadgeText(TicketSlaSummaryResponseDto sla, DateTime nowUtc)
     {
         if (sla.SlaState == "Breached")

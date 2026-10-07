@@ -41,6 +41,7 @@ public abstract class AdminControllerBase : ControllerBase
             AdminOutcome.Success => NoContent(),
             AdminOutcome.NotFound => NotFound(),
             AdminOutcome.ValidationFailed => ValidationProblem(result.Errors),
+            AdminOutcome.PasswordPolicyViolation => PasswordPolicyProblem(result.Errors),
             AdminOutcome.Conflict => Problem(
                 type: "https://tigercs.internal/problems/administration-conflict",
                 title: "The change conflicts with current configuration",
@@ -58,5 +59,21 @@ public abstract class AdminControllerBase : ControllerBase
         }
 
         return ValidationProblem(modelState);
+    }
+
+    /// <summary>422 with Identity's own password-policy descriptions in the <c>errors</c> map — the shape every Web form already reads.</summary>
+    private IActionResult PasswordPolicyProblem(IReadOnlyList<string>? errors)
+    {
+        var modelState = new Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary();
+        foreach (var error in errors ?? ["The new password does not satisfy the password policy."])
+        {
+            modelState.AddModelError("NewPassword", error);
+        }
+
+        return ValidationProblem(
+            modelStateDictionary: modelState,
+            statusCode: StatusCodes.Status422UnprocessableEntity,
+            title: "The new password does not satisfy the password policy",
+            type: "https://tigercs.internal/problems/password-policy-violation");
     }
 }

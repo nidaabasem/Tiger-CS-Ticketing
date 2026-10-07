@@ -70,6 +70,7 @@
                             <div class="form-group">
                                 <label class="form-label" asp-for="Create.InitialPassword">Initial password *</label>
                                 <input class="form-control" asp-for="Create.InitialPassword" type="password" required aria-required="true" autocomplete="new-password" />
+                                <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" asp-for="Create.ConfirmPassword">Confirm password *</label>
@@ -272,6 +273,35 @@
                 {
                     <p class="panel__note">Reactivate the user before changing department membership.</p>
                 }
+            </section>
+
+            <section class="panel panel--tone admin-form-panel admin-grid__wide" aria-labelledby="reset-password-title">
+                <div class="panel__header">
+                    <h2 class="panel__title" id="reset-password-title">Reset password</h2>
+                    <span class="panel__hint">For a user who has forgotten theirs or is locked out</span>
+                </div>
+                <div class="panel__note panel__note--top">
+                    <p>Replaces the password without knowing the old one. The user is signed out everywhere and any sign-in lock is lifted, so they can sign in with the new password straight away. The password is never recorded; the reason is.</p>
+                </div>
+                <form method="post" asp-page-handler="ResetPassword" asp-route-id="@u.EmployeeId" class="admin-form" autocomplete="off">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" asp-for="ResetPassword.NewPassword">New password *</label>
+                            <input class="form-control" asp-for="ResetPassword.NewPassword" type="password" required aria-required="true" autocomplete="new-password" minlength="8" />
+                            <span class="field-hint">@UserEditModel.PasswordPolicyText</span>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" asp-for="ResetPassword.ConfirmPassword">Confirm new password *</label>
+                            <input class="form-control" asp-for="ResetPassword.ConfirmPassword" type="password" required aria-required="true" autocomplete="new-password" />
+                            <span class="field-hint">Both entries must match.</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" asp-for="ResetPassword.Reason">Reason</label>
+                        <input class="form-control" asp-for="ResetPassword.Reason" placeholder="Optional — recorded in the audit trail" />
+                    </div>
+                    <div class="form-actions"><button type="submit" class="btn btn-gold btn-sm">Reset Password</button></div>
+                </form>
             </section>
 
             <section class="panel admin-form-panel @(u.IsActive ? "panel--danger" : "") admin-grid__wide" aria-labelledby="status-title">

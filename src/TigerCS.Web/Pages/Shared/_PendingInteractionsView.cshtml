@@ -90,6 +90,24 @@
         </span>
     </div>
 
+    @* What each action does — the follow-up (human work) and the ticket have
+       separate lifecycles, and Genesys keeps the call or message itself. *@
+    <details class="pending-help">
+        <summary class="link-muted">What do these actions do?</summary>
+        <dl class="pending-help__list">
+            <dt>Open Ticket</dt>
+            <dd>View the ticket details: customer, units, transcript and history. Changes nothing.</dd>
+            <dt>Accept &amp; Start</dt>
+            <dd>Claims this interaction and the ticket for you. An <strong>Open</strong> ticket moves to <strong>In Progress</strong>. It is not recorded as a first response to the customer.</dd>
+            <dt>Complete Follow-up</dt>
+            <dd>Marks the human follow-up as done. The ticket is <strong>not</strong> resolved or closed — resolve it from Ticket Details when the request itself is finished.</dd>
+            <dt>Cancel Follow-up</dt>
+            <dd>Cancels the human follow-up with a required reason. The ticket stays as it is.</dd>
+            <dt>“Session ended”</dt>
+            <dd>The customer's live call or chat has ended in Genesys. The follow-up is still open until you complete or cancel it. Genesys remains responsible for the call or message itself.</dd>
+        </dl>
+    </details>
+
     @if (Model.PendingOutcome == ApiOutcome.Unauthorized)
     {
         <div class="error-state">
@@ -167,7 +185,7 @@
                             @if (h.InteractionEnded)
                             {
                                 @* The live session ended; the business case did not. *@
-                                <span class="text-secondary" title="The customer's live session has ended — the work is still actionable">· session ended</span>
+                                <span class="text-secondary" title="The customer's live call or chat ended in Genesys. The follow-up is NOT completed by that — complete or cancel it here.">· session ended</span>
                             }
                         </td>
                         <td>
@@ -187,27 +205,27 @@
                         <td class="col-actions">
                             @* Open Ticket first: the ticket carries the customer, the units, the
                                transcript and the history the agent needs before acting. *@
-                            <a class="btn btn-sm" href="/Tickets/@h.TicketId">Open Ticket</a>
+                            <a class="btn btn-sm" href="/Tickets/@h.TicketId" title="View the ticket details. Changes nothing.">Open Ticket</a>
                             @if (h.ResolvedAtUtc is null)
                             {
                                 @if (h.Status != "InProgress")
                                 {
                                     <form method="post" asp-page="/Tickets" asp-page-handler="Start" asp-all-route-data="@Model.PendingRouteValues" class="inline-form">
                                         <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
-                                        <button class="btn btn-sm btn-gold" type="submit">Start Handling</button>
+                                        <button class="btn btn-sm btn-gold" type="submit" title="Claim this interaction and the ticket for yourself; an Open ticket moves to In Progress. Not a first response.">Accept &amp; Start</button>
                                     </form>
                                 }
                                 <form method="post" asp-page="/Tickets" asp-page-handler="Complete" asp-all-route-data="@Model.PendingRouteValues" class="inline-form">
                                     <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
-                                    <button class="btn btn-sm" type="submit">Complete</button>
+                                    <button class="btn btn-sm" type="submit" title="Mark the human follow-up as done. The ticket is not resolved or closed.">Complete Follow-up</button>
                                 </form>
                                 <details class="inline-details">
-                                    <summary class="btn btn-sm btn-quiet">Cancel</summary>
+                                    <summary class="btn btn-sm btn-quiet" title="Cancel the human follow-up (reason required). The ticket stays as it is.">Cancel Follow-up</summary>
                                     <form method="post" asp-page="/Tickets" asp-page-handler="Cancel" asp-all-route-data="@Model.PendingRouteValues" class="inline-form inline-form--stacked">
                                         <input type="hidden" name="handoffId" value="@h.TicketAgentHandoffId" />
                                         <input class="field-input" type="text" name="reason" required
                                                placeholder="Why is this no longer needed?" aria-label="Cancellation reason" />
-                                        <button class="btn btn-sm" type="submit">Confirm cancel</button>
+                                        <button class="btn btn-sm" type="submit">Confirm cancel follow-up</button>
                                     </form>
                                 </details>
                             }

@@ -311,6 +311,7 @@ table { border-collapse: collapse; width: 100%; }
   border-radius: var(--radius-sm); text-align: left; background: transparent; border: 0; cursor: pointer; font-size: 14px;
 }
 .menu-item:hover { background: var(--color-bg); }
+a.menu-item { color: inherit; text-decoration: none; }
 .menu-item strong { display: block; font-weight: 600; font-size: 14px; }
 .menu-item small { display: block; color: var(--color-text-secondary); font-size: 12.5px; margin-top: 1px; }
 .menu-divider { height: 1px; background: var(--color-border); margin: var(--space-2) 0; }
@@ -1998,4 +1999,52 @@ a.badge:hover { text-decoration: underline; }
   .designer-steps, .version-card, .version-legend { padding-left: var(--space-4); padding-right: var(--space-4); }
   .form-actions { margin-left: calc(-1 * var(--space-4)); margin-right: calc(-1 * var(--space-4)); padding-left: var(--space-4); padding-right: var(--space-4); }
   .version-card::after { left: calc(var(--space-4) + 36px); }
+}
+
+/* Pending Interactions: the "what do these actions do?" help block. */
+.pending-help { margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+.pending-help > summary { cursor: pointer; }
+.pending-help__list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: var(--space-2) 0 0; padding: var(--space-3); border: 1px solid var(--color-border, #e3e3e3); border-radius: 8px; }
+.pending-help__list dt { font-weight: 600; white-space: nowrap; }
+.pending-help__list dd { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }
+@media (max-width: 720px) { .pending-help__list { grid-template-columns: 1fr; } .pending-help__list dd { margin-bottom: 6px; } }
+.field-hint--error { color: var(--color-critical); }
+
+/* SLA explanation (Ticket Details) and effective SLA configuration (Admin → Request Types). */
+.sla-explain__reason { margin: 0 0 var(--space-2); font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); padding: 8px 10px; border-left: 3px solid var(--color-warning, #d99a1e); background: var(--color-surface-muted, #faf8f2); border-radius: 0 6px 6px 0; }
+.sla-explain { margin-top: var(--space-2); font-size: 13px; }
+.sla-explain > summary { cursor: pointer; }
+.sla-explain__notes { margin: var(--space-2) 0 0; padding-left: 18px; color: var(--color-text-secondary); line-height: 1.5; }
+.sla-explain__notes li + li { margin-top: 4px; }
+.sla-effective { margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+.sla-effective > summary { cursor: pointer; }
+.sla-effective__rules { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: var(--space-2) 0 var(--space-3); }
+.sla-effective__rules dt { font-weight: 600; white-space: nowrap; }
+.sla-effective__rules dd { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }
+@media (max-width: 720px) { .sla-effective__rules { grid-template-columns: 1fr; } }
+/* ---------- Reports: Team Performance ----------
+   Built from the shared primitives (filter-bar, panel, data-table,
+   table-scroll, filter-disclosure); only the numeric cells, the totals row
+   and the help block need rules of their own. No inline styles anywhere —
+   "style-src 'self'" would drop them. */
+
+.report-table .cell-num { text-align: right; font-variant-numeric: tabular-nums; }
+.report-count { display: inline-block; min-width: 2.5ch; font-weight: 700; color: var(--color-info); text-decoration: none; }
+.report-count:hover { text-decoration: underline; }
+.report-count--critical { color: var(--color-critical); }
+.report-table tfoot td { font-weight: 700; background: var(--color-bg); border-top: 2px solid var(--color-border-strong); border-bottom: 0; }
+.report-load-state { padding: var(--space-6) var(--space-4); }
+.report-help { margin-top: var(--space-4); }
+.report-help__body { padding: var(--space-4) var(--space-5); margin-bottom: 0; }
+.report-help__list { display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; font-size: var(--text-sm); line-height: 1.55; }
+.report-help__list dt { font-weight: var(--weight-strong); color: var(--color-text); }
+.report-help__list dd { margin: 0; color: var(--color-text-secondary); }
+
+@media (max-width: 720px) {
+  .report-filters .field-group { flex: 1 1 45%; }
+  .report-filters .field-select, .report-filters .field-input { width: 100%; min-width: 0; }
+  .report-filters .filter-bar__submit { width: 100%; margin-left: 0; justify-content: flex-end; }
+  .report-help__list { grid-template-columns: 1fr; gap: var(--space-1) 0; }
+  .report-help__list dd { margin-bottom: var(--space-2); }
+  .report-help__body { padding: var(--space-3) var(--space-4); }
 }

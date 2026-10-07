@@ -24,26 +24,36 @@ public class GenesysScreenPopAppServiceTests
     {
         public List<(Guid EmployeeId, string DisplayName, IReadOnlyCollection<string> Roles)> Issued { get; } = [];
 
-        public IssuedToken CreateAccessToken(Guid employeeId, string displayName, IReadOnlyCollection<string> roles)
+        public List<string> Stamps { get; } = [];
+
+        public IssuedToken CreateAccessToken(Guid employeeId, string displayName, IReadOnlyCollection<string> roles, string securityStamp)
         {
             Issued.Add((employeeId, displayName, roles));
+            Stamps.Add(securityStamp);
             return new IssuedToken($"jwt-for-{employeeId}", IssuedAt.AddHours(2));
         }
     }
 
-    /// <summary>Only the lockout read is part of Screen Pop; nothing else on the port is used.</summary>
+    /// <summary>Only the lockout read and the security-stamp read are part of Screen Pop; nothing else on the port is used.</summary>
     private sealed class LockoutAccounts : IUserAccountManager
     {
+        public const string Stamp = "stamp-at-redeem";
+
         public HashSet<Guid> Locked { get; } = [];
 
         public Task<UserAccountInfo?> GetAccountAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
             Task.FromResult<UserAccountInfo?>(new UserAccountInfo(employeeId, $"user-{employeeId:N}", null, Locked.Contains(employeeId)));
+
+        public Task<string?> GetSecurityStampAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(Stamp);
 
         public Task<IReadOnlyDictionary<Guid, UserAccountInfo>> GetAccountsAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<UserAccountResult> CreateAccountAsync(string userName, string? email, string initialPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<UserAccountResult> UpdateEmailAsync(Guid employeeId, string? email, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<UserAccountResult> SetRolesAsync(Guid employeeId, IReadOnlyCollection<string> roleNames, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<Guid>> SearchAccountIdsAsync(string search, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PasswordChangeResult> ChangePasswordAsync(Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class Harness
@@ -258,6 +268,8 @@ public class GenesysScreenPopAppServiceTests
         Assert.Equal(userId, redeemed.Session!.EmployeeId);
         Assert.Equal("Layla", redeemed.Session.DisplayName);
         Assert.Equal($"jwt-for-{userId}", redeemed.Session.AccessToken);
+        // Bound to the account's current security stamp, like a password login's token.
+        Assert.Equal(LockoutAccounts.Stamp, Assert.Single(h.Tokens.Stamps));
         Assert.Equal("/Tickets", redeemed.TargetPath);
 
         // The ordinary session: the user's own roles, nothing added.

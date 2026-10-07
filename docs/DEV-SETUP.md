@@ -74,8 +74,12 @@ The password policy enforced at signup (Security-Architecture.md §1's
 placeholder, made concrete for this increment): minimum 8 characters, at
 least one digit, one lowercase, one uppercase, one non-alphanumeric
 character, and at least 4 unique characters — the same rule applies to the
-`DevAdmin:Password` value above. Lockout: 5 failed attempts locks the
-account for 15 minutes (Security-Architecture.md §13).
+`DevAdmin:Password` value above, to an administrator's password reset
+(`POST /api/admin/users/{employeeId}/password`) and to a user's own change
+(`POST /api/auth/change-password`); both answer `422` listing Identity's
+reasons when the new password falls short. Lockout: 5 failed attempts locks
+the account for 15 minutes (Security-Architecture.md §13); an
+administrator's reset lifts the lockout as well.
 
 These are **pilot defaults, not hardcoded final values** — override any of
 them via configuration without a code change:
@@ -487,7 +491,28 @@ refresh-token functionality unless already approved"). The one thing that
 *does* stop a token from working immediately, regardless of logout, is
 **deactivation** (`PATCH .../activation`) — see
 `Token_ReusedAfterDeactivation_IsRejectedOnEveryProtectedEndpoint` in
-`AuthEndpointsTests.cs`.
+`AuthEndpointsTests.cs` — and, since the password-management increment,
+**a password reset or change** (next paragraph).
+
+**Password changes end every session.** Each JWT carries an `sst` claim: the
+user's ASP.NET Core Identity *security stamp* at the moment the token was
+issued (`JwtTokenService`; the Screen Pop redeem path issues it the same
+way). `ActiveEmployeeHandler`, which already queries the database on every
+request to confirm the employee is still active, also compares that claim
+with the account's current stamp and refuses a token whose stamp is stale or
+missing — the same 403 a deactivated employee's token gets. Both
+`POST /api/admin/users/{employeeId}/password` (System Administrator reset:
+replaces the password, lifts any lockout, resets the failed-attempt count)
+and `POST /api/auth/change-password` (the caller's own change: current
+password verified, policy applied) rotate the stamp, so every token issued
+before the change — on every device — stops working at once, while a fresh
+`POST /api/auth/login` with the new password works immediately. There is
+still no revocation list; the stamp is the only state consulted, and it is
+state Identity maintains anyway. Both actions are audited
+(`AdminResetUserPassword` with the reason, `ChangeOwnPassword`) without the
+password ever being written to the audit trail, the logs or a response. The
+Web app's "Change my password" page (account menu) signs the cookie session
+out after a success and sends the user back to `/Login`.
 
 ## 7. SQL Server validation checklist
 
