@@ -1,5 +1,5 @@
 @{
-    // The primary workspace navigation. The former ticket-list
+    // The primary navigation: four workspaces. The former ticket-list
     // shortcuts are no longer top-level items — they are the views (tabs)
     // of the single Tickets workspace (see TicketsView), so every
     // ticket-related page (the list, Ticket Details, Customer Profile,
@@ -12,7 +12,10 @@
         ("customers", "Customers", "/Customers"),
         ("tickets", "Tickets", "/Tickets"),
     ];
-    if (currentUser is not null)
+    // Collections is not a top-level workspace for every signed-in user (the
+    // primary navigation is pinned to Dashboard/Customers/Tickets); the
+    // receivables list shows itself only while it is the open page.
+    if (currentUser is not null && active == "collections")
     {
         items = [.. items, ("collections", "Collections", "/Collections/Receivables")];
     }

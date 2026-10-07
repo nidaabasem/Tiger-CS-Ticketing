@@ -15,6 +15,13 @@ namespace TigerCS.Api.Controllers;
 [Tags(OpenApiTags.Collections)]
 public sealed class PactReceivablesController(PactReceivableCustomersAppService service) : ControllerBase
 {
+    /// <summary>Lists due and overdue PACT customers for companies 4 and 32, including customers without tickets.</summary>
+    /// <param name="companyId">Optional company filter; only 4 or 32 are accepted.</param>
+    /// <param name="status">Optional view: <c>all</c> (default), <c>due</c> or <c>overdue</c>.</param>
+    /// <param name="search">Optional free-text filter (customer name, unit or phone), up to 200 characters.</param>
+    /// <param name="page">One-based page number.</param>
+    /// <param name="pageSize">Page size, 1 to 100.</param>
+    /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet]
     [ProducesResponseType<PactReceivableCustomersDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
