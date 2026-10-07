@@ -45,7 +45,14 @@
                             }
                         </select>
                     </div>
-                    <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+                    @if (panel.Links.SelectorAction == "/Customers/Payments")
+                    {
+                        <button type="submit" class="btn btn-sm">Show</button>
+                    }
+                    else
+                    {
+                        <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+                    }
                 </form>
             }
             else

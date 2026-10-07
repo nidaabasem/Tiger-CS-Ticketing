@@ -178,7 +178,13 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
         CustomerHistoryQuery query, CancellationToken cancellationToken = default)
     {
         IQueryable<Ticket> filtered;
-        if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
+        if (query is { IncludeLinkedExternalIdentity: true, CrmBuyerCustomerId: { } linkedCrmId,
+            ExternalSource: { } linkedSource, ExternalCustomerId: { } linkedExternalId })
+        {
+            filtered = dbContext.Tickets.Where(t => t.CrmBuyerCustomerId == linkedCrmId
+                || (t.CustomerVerificationSource == linkedSource && t.ExternalCustomerId == linkedExternalId));
+        }
+        else if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
         {
             filtered = dbContext.Tickets.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
         }

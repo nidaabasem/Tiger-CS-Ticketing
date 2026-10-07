@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Seed;
@@ -495,6 +496,32 @@ public class NewRequestTypesImportTests
             Assert.Empty(second.CreatedDepartments);
             Assert.Equal(counts, await Counts(db));
         }
+    }
+
+    [Fact]
+    public async Task Import_creates_exact_request_type_routing_once_and_preserves_inactive_and_historical_categories()
+    {
+        await using var db = await CreateWithFacilitiesManagementAsync();
+        var cs = await db.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.CustomerServiceCode);
+        var inactive = new Category("General Inquiry", cs.DepartmentId, isActive: false);
+        var historical = new Category("Historic inquiry", cs.DepartmentId);
+        db.Categories.AddRange(inactive, historical);
+        await db.SaveChangesAsync();
+        var inactiveId = inactive.CategoryId;
+        var historicalId = historical.CategoryId;
+        await NewRequestTypesImporter.ImportAsync(db, Now);
+        var categories = await db.Categories.ToListAsync();
+        foreach (var requestType in await db.RequestTypes.Where(r => r.IsActive).ToListAsync())
+        {
+            Assert.Single(categories, c => c.DepartmentId == requestType.DepartmentId && c.Name == requestType.Name);
+        }
+        Assert.False((await db.Categories.SingleAsync(c => c.CategoryId == inactiveId)).IsActive);
+        Assert.Equal("Historic inquiry", (await db.Categories.SingleAsync(c => c.CategoryId == historicalId)).Name);
+        var before = categories.OrderBy(c => c.CategoryId).Select(c => $"{c.CategoryId}|{c.DepartmentId}|{c.Name}|{c.IsActive}").ToList();
+        await NewRequestTypesImporter.ImportAsync(db, Now.AddDays(1));
+        var after = (await db.Categories.OrderBy(c => c.CategoryId).ToListAsync())
+            .Select(c => $"{c.CategoryId}|{c.DepartmentId}|{c.Name}|{c.IsActive}").ToList();
+        Assert.Equal(before, after);
     }
 
     // ---- helpers ----------------------------------------------------------

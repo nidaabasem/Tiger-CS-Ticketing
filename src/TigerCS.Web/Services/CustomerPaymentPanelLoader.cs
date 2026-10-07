@@ -51,6 +51,11 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             return basePanel;
         }
 
+        if (options.LookupPhoneNumber is not null && state is PaymentPanelState.NoAccounts or PaymentPanelState.Unavailable)
+        {
+            return await LoadEdsmSummaryAsync(customerKey, accountId, notice, noticeIsError, options, cancellationToken);
+        }
+
         if (state == PaymentPanelState.Unavailable)
         {
             // No per-account source answered. Ask the EDSM service (the same one PACT
@@ -135,15 +140,30 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         };
     }
 
-    /// <summary>A PACT customer: EDSM's summary is all there is — never instalments, transactions or reminders.</summary>
+    public Task<CustomerPaymentPanel> LoadLookupAsync(
+        string phoneNumber, string customerKey, string? companyId, CancellationToken cancellationToken)
+    {
+        var hidden = new Dictionary<string, string> { ["phoneNumber"] = phoneNumber, ["customerKey"] = customerKey };
+        var href = $"/Customers/Payments?phoneNumber={Uri.EscapeDataString(phoneNumber)}&customerKey={Uri.EscapeDataString(customerKey)}";
+        var links = new PaymentPanelLinks("/Customers/Payments", hidden, "account",
+            account => account is null ? href : $"{href}&account={Uri.EscapeDataString(account)}", AutoSubmit: true);
+        return LoadEdsmSummaryAsync(customerKey, companyId, null, false,
+            new PaymentPanelOptions(links, AllowSending: false, LookupPhoneNumber: phoneNumber), cancellationToken);
+    }
+
+    /// <summary>Reads EDSM through the directory, or a freshly verified lookup before any ticket exists.</summary>
     private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(
         string customerKey, string? companyId, string? notice, bool noticeIsError, PaymentPanelOptions options, CancellationToken cancellationToken)
     {
-        var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
+        var summary = options.LookupPhoneNumber is { } phoneNumber
+            ? await collections.GetLookupPaymentSummaryAsync(phoneNumber, customerKey, cancellationToken)
+            : await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
         var state = summary.Outcome switch
         {
+            ApiOutcome.Success when summary.Value?.MappingStatus == "NotMapped" => PaymentPanelState.NotMapped,
             ApiOutcome.Success => PaymentPanelState.EdsmSummary,
             ApiOutcome.Forbidden => PaymentPanelState.Forbidden,
+            ApiOutcome.NotFound => PaymentPanelState.NoAccounts,
             ApiOutcome.ServiceUnavailable when summary.ProblemType?.EndsWith("/" + CustomerPaymentPanel.DisabledCode, StringComparison.Ordinal) == true
                 => PaymentPanelState.Disabled,
             ApiOutcome.ServiceUnavailable => PaymentPanelState.Unavailable,
@@ -174,7 +194,7 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         {
             CustomerKey = customerKey,
             State = state,
-            PaymentSummary = state == PaymentPanelState.EdsmSummary ? summary.Value : null,
+            PaymentSummary = state is PaymentPanelState.EdsmSummary or PaymentPanelState.NotMapped ? summary.Value : null,
             SelectedCompanyId = selectedCompanyId,
             ScopedByUnit = scopedByUnit,
             Notice = notice,

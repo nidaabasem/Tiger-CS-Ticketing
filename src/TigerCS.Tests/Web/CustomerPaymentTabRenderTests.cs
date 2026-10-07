@@ -67,6 +67,34 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         return html;
     }
 
+    [Fact]
+    public async Task PaymentsBeforeTicket_RenderThroughRazorWithoutReadingAnyCustomerProfile_AndKeepSelectorContext()
+    {
+        var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971500000002&customerKey=crm%3A9001&account=25"));
+        Assert.Contains("Payments &amp; Fines", html, StringComparison.Ordinal);
+        Assert.Contains("Not computed", html, StringComparison.Ordinal);
+        Assert.Contains("Cheque", html, StringComparison.Ordinal);
+        Assert.Contains("action=\"/Customers/Payments\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"phoneNumber\" value=\"971500000002\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"customerKey\" value=\"crm:9001\"", html, StringComparison.Ordinal);
+        Assert.Contains("Show</button>", html, StringComparison.Ordinal);
+        Assert.Single(_api.Requests);
+        Assert.Contains("/api/collections/customer-lookup/payment-summary?", _api.Requests.Single(), StringComparison.Ordinal);
+        Assert.Contains("customerKey=crm%3A9001", _api.Requests.Single(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("forbidden", "You don't have permission")]
+    [InlineData("unavailable", "Balance unavailable.")]
+    public async Task PreTicketPaymentErrors_ShowNoAmounts(string mode, string expected)
+    {
+        _api.Mode = mode;
+        var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971500000002&customerKey=ext%3APact%3A3001"));
+        Assert.Contains(expected, html, StringComparison.Ordinal);
+        Assert.DoesNotContain("AED 0.00", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
+    }
+
     private bool CollectionsCalled => _api.Requests.Any(r => r.Contains("/api/collections", StringComparison.Ordinal));
 
     [Fact]

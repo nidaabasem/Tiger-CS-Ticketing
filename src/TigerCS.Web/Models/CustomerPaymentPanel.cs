@@ -85,11 +85,13 @@ public sealed record PaymentPanelLinks(
 /// <param name="AllowSending">False hides the Send Reminder forms (a read-only view, e.g. before ticket submission). The Api still enforces the permission either way.</param>
 /// <param name="PreferredUnitNumber">For a CRM customer with several finance accounts and no explicit choice: pick the account whose unit number matches (trimmed, case-insensitive); otherwise selection is still required.</param>
 /// <param name="PreferredExternalUnitId">For a PACT customer with several EDSM companies and no explicit choice: pick the company whose contracts include this PACT unit id; otherwise the first company.</param>
+/// <param name="LookupPhoneNumber">A pre-ticket lookup context. The API verifies the selected identity and any CRM/PACT association again, without requiring a directory profile.</param>
 public sealed record PaymentPanelOptions(
     PaymentPanelLinks? Links = null,
     bool AllowSending = true,
     string? PreferredUnitNumber = null,
-    string? PreferredExternalUnitId = null);
+    string? PreferredExternalUnitId = null,
+    string? LookupPhoneNumber = null);
 
 public sealed class CustomerPaymentPanel
 {

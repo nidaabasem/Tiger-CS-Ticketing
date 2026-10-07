@@ -104,7 +104,7 @@ public static partial class PactContractDateParser
         // Anything below 10^11 cannot be a plausible millisecond epoch
         // (that is March 1973); PACT's dates are decades later, so a
         // small value is an epoch in seconds.
-        Math.Abs(epoch) < 100_000_000_000L ? FromEpochSeconds(epoch) : FromEpochMilliseconds(epoch);
+        epoch is > -100_000_000_000L and < 100_000_000_000L ? FromEpochSeconds(epoch) : FromEpochMilliseconds(epoch);
 
     private static DateOnly? FromEpochMilliseconds(long milliseconds)
     {

@@ -428,6 +428,16 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
     }
 
     [Fact]
+    public async Task ExpiredContractsStillEstablishHistoricalPaymentMapping()
+    {
+        SeedPactCustomer(Owned with { ContractEndDate = new DateOnly(2000, 1, 1) }, Rented with { ContractEndDate = new DateOnly(2001, 1, 1) });
+        var summary = (await Service().GetAsync(_agent, PactKey)).Value!;
+        Assert.Equal("Mapped", summary.MappingStatus);
+        Assert.Equal([4, 25], summary.Companies.Select(c => c.CompanyId));
+        Assert.Equal(2, summary.Companies.Sum(c => c.Contracts.Count));
+    }
+
+    [Fact]
     public async Task OnlyReadOnlyTransactionTypes_AreRequested()
     {
         SeedPactCustomer(Owned, Rented);

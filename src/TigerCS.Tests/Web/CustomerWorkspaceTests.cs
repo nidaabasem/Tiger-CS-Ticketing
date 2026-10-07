@@ -136,6 +136,21 @@ public sealed class CustomerWorkspaceTests
     }
 
     [Fact]
+    public async Task OnGet_VerifiedCrmAndExpiredPactTenant_ShareOneCardAndCombinedHistory()
+    {
+        var pact = new CustomerLookupCustomerDto("7001", "Sami Nasser", Phone.TrimStart('+'), null, "2",
+            [new CustomerLookupUnitDto("PU-1", "1506", "Nobles Tower", null, "Residential", null, null,
+                ContractEndDate: new DateOnly(2020, 1, 1), IsContractExpired: true, CompanyId: 4)]);
+        var search = CrmOnlySearchResult() with { ExternalSources = [CustomerLookupSourceResultDto.Found("Pact", [pact])] };
+        var (model, handler) = CreateCustomerLookupModel(RespondingWith(search, History(HistoryRow(1, "1506"))));
+        await model.OnGetAsync(Phone, customer: "crm:9001", unit: null, CancellationToken.None);
+        Assert.Equal("7001", Assert.Single(model.Candidates).LinkedPact!.ExternalCustomerId);
+        Assert.True(Assert.Single(model.Selected!.LinkedPact!.Units).IsContractExpired);
+        Assert.Contains(handler.Requests, r => r.RequestUri.Contains("/api/customers/lookup/ticket-history?"));
+        Assert.Single(model.FilteredTickets);
+    }
+
+    [Fact]
     public async Task OnGet_UnitFilter_NarrowsTheTicketList_ButAllUnitsRemainsTheDefault()
     {
         var (model, _) = CreateCustomerLookupModel(

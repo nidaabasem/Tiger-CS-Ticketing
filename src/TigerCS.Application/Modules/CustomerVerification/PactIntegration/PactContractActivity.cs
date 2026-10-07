@@ -23,9 +23,8 @@ namespace TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 /// </para>
 ///
 /// <para>
-/// Applied only by the customer lookup/list layer
-/// (<c>CustomerLookupAppService</c>'s PACT leg), so the New Ticket wizard
-/// and the Customer Workspace stop offering expired units — while the
+/// The lookup layer marks expired contracts but retains them. New Ticket
+/// applies this rule when offering selectable units, while the
 /// Collections account mapping (which needs every contract, expired or not,
 /// to resolve a tenant's EDSM accounts) and persisted ticket history keep
 /// reading the gateway unfiltered.

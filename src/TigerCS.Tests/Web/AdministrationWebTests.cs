@@ -214,13 +214,18 @@ public sealed class AdministrationWebTests
     }
 
     [Fact]
-    public void NewTicket_OffersTheRequestTypePicker_AsAnOptionalDropdownOnly()
+    public void NewTicket_OffersRequestCategoryAndDependentRequestTypePickers()
     {
         var html = View("NewTicket.cshtml");
 
-        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeId\"", html);
+        Assert.Contains("asp-for=\"CreateStep.DepartmentId\">Request Category *</label>", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.DepartmentId\" data-autosubmit>", html);
+        Assert.Contains("asp-for=\"CreateStep.RequestTypeChoice\">Request Type *</label>", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeChoice\" disabled=", html);
+        Assert.Contains("name=\"CreateStep.UseRequestCategoryPicker\" value=\"true\"", html);
         Assert.Contains("<input type=\"hidden\" asp-for=\"CreateStep.RequestTypeId\" />", html);
-        Assert.Contains("None — standard handling", html);
+        Assert.DoesNotContain("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeId\"", html);
+        Assert.DoesNotContain("None — standard handling", html);
         Assert.DoesNotContain("<input class=\"form-control\" asp-for=\"CreateStep.RequestTypeId\"", html);
     }
 }

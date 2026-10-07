@@ -74,3 +74,29 @@ requirements added); nothing else about them changes.
 | Conditional approvals (10 rows: CS-CMP-001, REG-NOC-001/002/003, COL-PAY-002, HO-NOC-001, LCS-TEN-001, LCS-EJR-001, BRK-COM-001, LEG-INQ-001) | **Business decision required.** No approval rule is specified, and no existing approval type matches supervisor / manager / authorized-approver approval. For BRK-COM-001 and LEG-INQ-001 the conditional approval is separate from the manual supporting step. | Administration → Request Type → Approvals, once the rule is defined. |
 | Reopen Approval on the new request types | Configured by its own script. | Run `ConfigureReopenApprovalRequirements.sql` after this import. |
 | Supporting-team departments and users (Admin Sales, Sales, Legal, HR) | Not required by any request type: their steps are manual. The script only reports whether the departments exist. | Administration → Departments / Users, if the business wants them in TigerCS. |
+
+## New Ticket request categories and types
+
+In New Ticket, the department group names (Customer Service, Collections,
+Facilities Management, Handover, etc.) are the selectable **Request Category**.
+The second, dependent **Request Type** picker shows that category's children,
+including the existing General Inquiry and Corrective Maintenance entries.
+It combines the old routing entries with the configured workflow request types;
+an exact name match within the same department appears once and retains both IDs.
+Selecting a configured type keeps its existing workflow, assignment, approvals
+and SLA. No workflow is invented for a legacy routing-only entry.
+
+The updated development importer and `ImportNewRequestTypes_UAT.sql` create an
+exact routing category for each active configured request type if missing.
+**Existing UAT databases must rerun the updated script** (dry run first, then
+`@CommitChanges = 1`) before using the new picker. The script only inserts missing
+routing rows; it never changes existing category IDs, historical tickets or
+operator deactivation. New or renamed request types added later also need an
+exact, active routing category of the same department and name. Missing or
+ambiguous routing blocks creation with a configuration message instead of
+silently choosing General Inquiry or another category.
+
+Changing Request Category clears a child outside the new category and preserves
+priority, customer request, customer identity and unit. Review and creation
+re-read the catalogs and resolve the child IDs on the server, so a posted type
+from another category cannot be used.

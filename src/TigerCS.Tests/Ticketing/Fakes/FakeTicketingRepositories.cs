@@ -286,7 +286,13 @@ public sealed class FakeTicketRepository : ITicketRepository
         SearchCustomerHistoryCallCount++;
 
         IEnumerable<Ticket> filtered;
-        if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
+        if (query is { IncludeLinkedExternalIdentity: true, CrmBuyerCustomerId: { } linkedCrmId,
+            ExternalSource: { } linkedSource, ExternalCustomerId: { } linkedExternalId })
+        {
+            filtered = _tickets.Values.Where(t => t.CrmBuyerCustomerId == linkedCrmId
+                || (t.CustomerVerificationSource == linkedSource && t.ExternalCustomerId == linkedExternalId));
+        }
+        else if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
         {
             filtered = _tickets.Values.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
         }

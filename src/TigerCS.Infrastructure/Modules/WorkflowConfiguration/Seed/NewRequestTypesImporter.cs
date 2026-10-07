@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
@@ -129,6 +130,24 @@ public static class NewRequestTypesImporter
 
             results.Add(result);
         }
+
+        // Intake presents Department as Request Category and its children as
+        // Request Types. Each configured child needs its own exact routing row;
+        // reusing an arbitrary category would misclassify the ticket history.
+        var routingCategories = await dbContext.Categories.ToListAsync(cancellationToken);
+        var activeTypes = await dbContext.RequestTypes.Where(r => r.IsActive).ToListAsync(cancellationToken);
+        foreach (var requestType in activeTypes)
+        {
+            if (routingCategories.Any(c => c.DepartmentId == requestType.DepartmentId
+                    && string.Equals(c.Name.Trim(), requestType.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+            var category = new Category(requestType.Name, requestType.DepartmentId);
+            dbContext.Categories.Add(category);
+            routingCategories.Add(category);
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         if (transaction is not null)
         {

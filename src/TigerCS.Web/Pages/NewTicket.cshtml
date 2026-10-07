@@ -196,7 +196,7 @@
                                                    intact — the unit chosen on Step 2 decides which one the ticket
                                                    persists. *@
                                                 <div class="candidate-card__meta" data-unified-identities>
-                                                    Same customer in Tiger CRM and PACT — linked by a shared unit.
+                                                    Same customer in Tiger CRM and PACT — customer details and unit verified.
                                                 </div>
                                             }
                                             @* Identity verified via the source(s) that matched it. *@
@@ -240,12 +240,17 @@
                                     }
 
                                     <div class="candidate-card__actions">
+                                        @if (candidate.Source is "Crm" or "Pact" && WorkspaceCustomerKey(candidate) is { } paymentKey)
+                                        {
+                                            <a class="btn btn-sm" target="_blank" rel="noopener"
+                                               href="/Customers/Payments?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber ?? "")&customerKey=@Uri.EscapeDataString(paymentKey)">Payments &amp; Fines</a>
+                                        }
                                         <a class="btn btn-gold" asp-page="/NewTicket"
                                            asp-all-route-data="@StepRoute(NewTicketModel.StepProperty, customerOverride: candidate.Key)">Use this customer</a>
                                         @if (WorkspaceCustomerKey(candidate) is { } workspaceKey && Model.PhoneNumber is not null)
                                         {
                                             <a class="btn btn-sm"
-                                               href="@(history is { TotalTickets: > 0 }
+                                               href="@(history is { TotalTickets: > 0 } && !candidate.IsUnified
                                                    ? $"/Customers/{Uri.EscapeDataString(workspaceKey)}"
                                                    : $"/Customers/Lookup?phoneNumber={Uri.EscapeDataString(Model.PhoneNumber)}&customer={Uri.EscapeDataString(workspaceKey)}")">View all tickets</a>
                                         }
@@ -353,7 +358,36 @@
                     {
                         var customerName = match.Customer.FullNameEnglish ?? match.Customer.FullNameArabic;
                         <div class="unit-list" aria-label="Units">
-                            @foreach (var unit in match.Units)
+                            @if (Model.LinkedPactCustomer is { } linkedPact)
+                            {
+                                @* PACT is primary: current PACT contracts come first. Matching CRM
+                                   units stay attached to the verified customer without duplicate choices. *@
+                                foreach (var pactUnit in Model.LinkedPactSelectableUnits)
+                                {
+                                    var packedPact = string.Join(':',
+                                        Uri.EscapeDataString("Pact"),
+                                        Uri.EscapeDataString(linkedPact.ExternalCustomerId),
+                                        Uri.EscapeDataString(pactUnit.ExternalUnitId),
+                                        Uri.EscapeDataString(linkedPact.DisplayName ?? customerName ?? string.Empty),
+                                        Uri.EscapeDataString(pactUnit.PropertyName ?? string.Empty),
+                                        Uri.EscapeDataString(pactUnit.UnitNumber ?? string.Empty),
+                                        Uri.EscapeDataString(linkedPact.Email ?? match.Customer.Email ?? string.Empty));
+                                    <div class="unit-option" data-unit-source="Pact">
+                                        <div>
+                                            <div class="unit-option__title">@(pactUnit.PropertyName ?? "Project")</div>
+                                            <div class="unit-option__meta">Unit @pactUnit.UnitNumber@(string.IsNullOrWhiteSpace(pactUnit.UnitType) ? "" : $" · {pactUnit.UnitType}") · Verified via PACT</div>
+                                        </div>
+                                        <form method="post" asp-page-handler="UseExternalUnit">
+                                            <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+                                            <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+                                            <input type="hidden" name="customer" value="@Model.CustomerKey" />
+                                            <input type="hidden" name="selectedExternalUnit" value="@packedPact" />
+                                            <button type="submit" class="btn btn-sm">Select</button>
+                                        </form>
+                                    </div>
+                                }
+                            }
+                            @foreach (var unit in Model.CrmOnlySelectableUnits)
                             {
                                 var statusLabel = unit.LeadStatusName ?? unit.LeadStatus.ToString();
                                 var packedValue = string.Join(':',
@@ -373,37 +407,6 @@
                                         <button type="submit" class="btn btn-sm">Select</button>
                                     </form>
                                 </div>
-                            }
-                            @if (Model.LinkedPactCustomer is { } linkedPact)
-                            {
-                                @* The unified card's PACT-only current contracts (no CRM unit matches
-                                   them): selecting one persists the PACT identity, exactly as a PACT
-                                   selection from a separate PACT card would. Expired contracts never
-                                   reach here — the lookup layer already dropped them. *@
-                                foreach (var pactUnit in Model.LinkedPactOnlyUnits)
-                                {
-                                    var packedPact = string.Join(':',
-                                        Uri.EscapeDataString("Pact"),
-                                        Uri.EscapeDataString(linkedPact.ExternalCustomerId),
-                                        Uri.EscapeDataString(pactUnit.ExternalUnitId),
-                                        Uri.EscapeDataString(linkedPact.DisplayName ?? customerName ?? string.Empty),
-                                        Uri.EscapeDataString(pactUnit.PropertyName ?? string.Empty),
-                                        Uri.EscapeDataString(pactUnit.UnitNumber ?? string.Empty),
-                                        Uri.EscapeDataString(linkedPact.Email ?? match.Customer.Email ?? string.Empty));
-                                    <div class="unit-option" data-unit-source="Pact">
-                                        <div>
-                                            <div class="unit-option__title">@(pactUnit.PropertyName ?? "Project")</div>
-                                            <div class="unit-option__meta">Unit @pactUnit.UnitNumber@(string.IsNullOrWhiteSpace(pactUnit.UnitType) ? "" : $" · {pactUnit.UnitType}") · PACT contract only</div>
-                                        </div>
-                                        <form method="post" asp-page-handler="UseExternalUnit">
-                                            <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
-                                            <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
-                                            <input type="hidden" name="customer" value="@Model.CustomerKey" />
-                                            <input type="hidden" name="selectedExternalUnit" value="@packedPact" />
-                                            <button type="submit" class="btn btn-sm">Select</button>
-                                        </form>
-                                    </div>
-                                }
                             }
                         </div>
                         <p class="wizard-quiet-action">
@@ -502,11 +505,9 @@
                         <div class="alert alert-error" role="alert"><span>@Model.DepartmentsErrorMessage</span></div>
                     }
 
-                    @if (Model.CategoriesErrorMessage is null && Model.Categories.Count == 0 && Model.CreateStep.DepartmentId is not null)
+                    @if (Model.RequestTypesErrorMessage is not null)
                     {
-                        <div class="alert alert-info" role="status">
-                            <span>No active categories are configured for this department.</span>
-                        </div>
+                        <div class="alert alert-error" role="alert"><span>@Model.RequestTypesErrorMessage</span></div>
                     }
 
                     <form method="post" asp-page-handler="IssueRefresh" id="new-ticket-form">
@@ -514,53 +515,34 @@
                         <input type="hidden" asp-for="CreateStep.ManualProjectName" />
                         <input type="hidden" asp-for="CreateStep.ManualUnitNumber" />
 
+                        <input type="hidden" name="CreateStep.UseRequestCategoryPicker" value="true" />
                         <div class="form-group">
-                            <label class="form-label" asp-for="CreateStep.DepartmentId">Department</label>
+                            <label class="form-label" asp-for="CreateStep.DepartmentId">Request Category *</label>
                             <select class="form-control" asp-for="CreateStep.DepartmentId" data-autosubmit>
-                                <option value="">All departments</option>
+                                <option value="">Select Request Category</option>
                                 @foreach (var department in Model.Departments)
                                 {
                                     <option value="@department.DepartmentId">@department.Name</option>
                                 }
                             </select>
-                            <span class="field-hint">Narrows the categories below. The ticket routes to the team that owns the selected category.</span>
+                            <span class="field-hint">Choose a request category to see its request types.</span>
+                            <noscript><button type="submit" class="btn btn-sm">Show request types</button></noscript>
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" asp-for="CreateStep.CategoryId">Category *</label>
-                            <select class="form-control" asp-for="CreateStep.CategoryId">
-                                <option value="">Select Category</option>
-                                @foreach (var group in Model.Categories.GroupBy(c => c.DepartmentName))
+                            <label class="form-label" asp-for="CreateStep.RequestTypeChoice">Request Type *</label>
+                            <select class="form-control" asp-for="CreateStep.RequestTypeChoice" disabled="@(Model.CreateStep.DepartmentId is null ? "disabled" : null)">
+                                <option value="">Select Request Type</option>
+                                @foreach (var requestType in Model.RequestTypeChoices)
                                 {
-                                    <optgroup label="@group.Key">
-                                        @foreach (var category in group)
-                                        {
-                                            <option value="@category.CategoryId">@category.Name</option>
-                                        }
-                                    </optgroup>
+                                    <option value="@requestType.Value">@requestType.Name</option>
                                 }
                             </select>
+                            @if (Model.CreateStep.DepartmentId is not null && Model.RequestTypesErrorMessage is null && Model.CategoriesErrorMessage is null && Model.RequestTypeChoices.Count == 0)
+                            {
+                                <span class="field-hint">No active request types are configured for this request category.</span>
+                            }
                         </div>
-
-                        @if (Model.RequestTypeOptions.Count > 0)
-                        {
-                            <div class="form-group">
-                                <label class="form-label" asp-for="CreateStep.RequestTypeId">Request Type</label>
-                                <select class="form-control" asp-for="CreateStep.RequestTypeId">
-                                    <option value="">None — standard handling</option>
-                                    @foreach (var group in Model.RequestTypeOptions.GroupBy(r => Model.DepartmentNameOf(r.DepartmentId)))
-                                    {
-                                        <optgroup label="@group.Key">
-                                            @foreach (var requestType in group)
-                                            {
-                                                <option value="@requestType.RequestTypeId">@requestType.Name</option>
-                                            }
-                                        </optgroup>
-                                    }
-                                </select>
-                                <span class="field-hint">The configured request type this ticket follows (e.g. Send Receipts). It sets the assignment, approvals and SLA, and must belong to the same department as the category above.</span>
-                            </div>
-                        }
 
                         <div class="form-group">
                             <label class="form-label" asp-for="CreateStep.PriorityId">Priority *</label>
@@ -601,7 +583,7 @@
 
                     <div class="review-banner" role="status">
                         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" /></svg>
-                        <span>You are about to create a <strong>@(Model.SelectedCategory?.Name ?? "new")</strong> ticket for <strong>@(Model.SummaryCustomerName ?? "a manually entered customer")</strong>@(Model.SummaryDepartmentName is { } bannerDept ? $", routed to {bannerDept}" : "").</span>
+                        <span>You are about to create a <strong>@(Model.SummaryRequestTypeName ?? "new")</strong> ticket for <strong>@(Model.SummaryCustomerName ?? "a manually entered customer")</strong>@(Model.SummaryDepartmentName is { } bannerDept ? $", routed to {bannerDept}" : "").</span>
                     </div>
 
                     <dl class="review-grid">
@@ -611,7 +593,7 @@
                                 <strong>@(Model.SummaryCustomerName ?? "—")</strong><br />
                                 @Model.PhoneNumber<br />
                                 @(Model.SummarySourceKey is { } srcKey && srcKey != "Manual"
-                                    ? $"Verified via {TicketDisplay.LookupSourceLabel(srcKey)}"
+                                    ? $"Verified via {Model.SummaryVerificationLabel}"
                                     : "Manual entry")
                                 <div class="review-block__edit"><a class="link-muted" asp-page="/NewTicket" asp-all-route-data="@StepRoute(NewTicketModel.StepCustomer, keepCustomer: false, keepUnit: false)">Change customer</a></div>
                             </dd>
@@ -627,7 +609,7 @@
                         <div class="review-block">
                             <dt>Request</dt>
                             <dd>
-                                <strong>@(Model.SelectedCategory?.Name ?? "—")</strong><br />
+                                <strong>@(Model.SummaryRequestTypeName ?? "—")</strong><br />
                                 @(Model.SummaryDepartmentName ?? "—")<br />
                                 @(Model.CreateStep.PriorityId is { } priorityId ? $"{TicketDisplay.PriorityLabel(priorityId)} Priority" : "—")
                             </dd>
@@ -643,6 +625,8 @@
                     <form method="post" asp-page-handler="Create">
                         @await Html.PartialAsync("_NewTicketWizardState", Model)
                         <input type="hidden" asp-for="CreateStep.DepartmentId" />
+                        <input type="hidden" asp-for="CreateStep.UseRequestCategoryPicker" />
+                        <input type="hidden" asp-for="CreateStep.RequestTypeChoice" />
                         <input type="hidden" asp-for="CreateStep.CategoryId" />
                         <input type="hidden" asp-for="CreateStep.RequestTypeId" />
                         <input type="hidden" asp-for="CreateStep.PriorityId" />
@@ -694,9 +678,9 @@
                     <div class="wizard-summary__row">
                         <dt>Verification</dt>
                         <dd>
-                            @if (Model.SummarySourceKey is { } sourceKey)
+                            @if (Model.SummaryVerificationLabel is { } verificationLabel)
                             {
-                                @(sourceKey == "Manual" ? "Manual entry" : TicketDisplay.LookupSourceLabel(sourceKey))
+                                @verificationLabel
                             }
                             else { <span class="wizard-summary__empty">Not selected yet</span> }
                         </dd>
@@ -714,20 +698,13 @@
                         <dd>@if (Model.SummaryUnitNumber is { } unitNo) { @unitNo } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
                     </div>
                     <div class="wizard-summary__row">
-                        <dt>Department</dt>
-                        <dd>@if (Model.SummaryDepartmentName is { } deptName) { @deptName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
+                        <dt>Request Category</dt>
+                        <dd>@if (Model.SummaryDepartmentName is { } categoryName) { @categoryName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
                     </div>
                     <div class="wizard-summary__row">
-                        <dt>Category</dt>
-                        <dd>@if (Model.SelectedCategory is { } selectedCategory) { @selectedCategory.Name } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
+                        <dt>Request Type</dt>
+                        <dd>@if (Model.SummaryRequestTypeName is { } typeName) { @typeName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
                     </div>
-                    @if (Model.SelectedRequestType is { } summaryRequestType)
-                    {
-                        <div class="wizard-summary__row">
-                            <dt>Request Type</dt>
-                            <dd>@summaryRequestType.Name</dd>
-                        </div>
-                    }
                     <div class="wizard-summary__row">
                         <dt>Priority</dt>
                         <dd>@if (Model.CreateStep.PriorityId is { } summaryPriority) { @TicketDisplay.PriorityLabel(summaryPriority) } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>

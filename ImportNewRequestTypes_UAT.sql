@@ -602,6 +602,18 @@ END;
 -- 5. Verification — 35/35 reconciliation, then hard checks.
 -------------------------------------------------------------------------------
 
+-- Exact child routing for New Ticket's Request Category -> Request Type picker.
+-- Additive and rerunnable: keep all existing categories, IDs and historical
+-- tickets, including deactivated categories. Never reactivate an existing row.
+INSERT INTO [Categories] ([Name], [DepartmentId], [ParentCategoryId], [IsActive])
+SELECT rt.[Name], rt.[DepartmentId], NULL, 1
+FROM [RequestTypes] rt
+WHERE rt.[IsActive] = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM [Categories] c WITH (UPDLOCK, HOLDLOCK)
+      WHERE c.[DepartmentId] = rt.[DepartmentId]
+        AND LTRIM(RTRIM(c.[Name])) = LTRIM(RTRIM(rt.[Name])));
+
 PRINT '=== RECONCILIATION (35 workbook rows) ===';
 
 SELECT

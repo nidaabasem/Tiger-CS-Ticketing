@@ -26,8 +26,9 @@ namespace TigerCS.Application.Modules.Collections.Services;
 /// <item>EDSM is asked only for those pairs: one summary per company, with that
 /// company's contracts listed.</item>
 /// </list>
-/// A CRM-identified customer is <c>NotMapped</c>: no verified CRM → PACT
-/// crosswalk exists (tickets store one identity or the other).
+/// Directory reads retain their stored identity. Pre-ticket lookup reads may
+/// associate CRM and PACT only through <c>CustomerIdentityLinker</c>'s fresh,
+/// unambiguous evidence; this is not a persisted CRM-to-PACT crosswalk.
 /// </para>
 ///
 /// <para>
@@ -74,10 +75,62 @@ public sealed class CollectionsPaymentSummaryAppService(
     {
         using var budget = new ReadBudget(deadline ?? edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
 
+        return await GetWithinBudgetAsync(caller, customerKey, includeTransactions, budget);
+    }
+
+    /// <summary>
+    /// Pre-ticket financial read. Requires a fresh server-side lookup and an explicit
+    /// financial grant; caller-supplied tenant/company mappings are never accepted.
+    /// Existing directory reads keep their department visibility checks.
+    /// </summary>
+    public async Task<CollectionsResult<CollectionsPaymentSummaryResponseDto>> GetForLookupAsync(
+        CollectionsCaller caller, string phoneNumber, string customerKey, CustomerSearchAppService search,
+        CancellationToken cancellationToken = default)
+    {
+        if (!options.Enabled) return Fail(CollectionsOutcome.Disabled);
+        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
+            return Fail(CollectionsOutcome.Forbidden);
+        if (string.IsNullOrWhiteSpace(phoneNumber) || !CustomerIdentity.TryParse(customerKey, out var identity)
+            || identity.Kind == CustomerIdentityKind.Phone) return Fail(CollectionsOutcome.InvalidRequest);
+        using var budget = new ReadBudget(edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
+        try
+        {
+            var lookup = await search.SearchByPhoneAsync(phoneNumber, budget.Token);
+            var buyer = identity.Kind == CustomerIdentityKind.Crm
+                ? lookup.CrmBuyers.SingleOrDefault(b => b.Customer.CustomerId == identity.CrmBuyerCustomerId) : null;
+            var pactSource = lookup.ExternalSources.FirstOrDefault(s => s.Source == PactSource);
+            var pactCustomer = buyer is not null
+                ? CustomerIdentityLinker.FindPactMatch(buyer, lookup.CrmBuyers, lookup.ExternalSources)
+                : identity.Kind == CustomerIdentityKind.External && identity.ExternalSource == PactSource
+                    ? pactSource?.Customers.SingleOrDefault(c => c.ExternalCustomerId == identity.ExternalCustomerId) : null;
+            if (buyer is null && pactCustomer is null)
+                return Fail(lookup.CrmStatus == "Failed" || pactSource?.Status == "Failed"
+                    ? CollectionsOutcome.FinanceUnavailable : CollectionsOutcome.AccountNotFound);
+            if (buyer is not null && pactCustomer is null && pactSource?.Status == "Failed")
+                return Fail(CollectionsOutcome.FinanceUnavailable);
+            var profile = new CustomerDirectoryProfileDto(customerKey, buyer is null ? "External" : "Crm",
+                buyer?.Customer.FullNameEnglish ?? pactCustomer?.DisplayName,
+                new[] { buyer?.Customer.MobileNumber, pactCustomer?.PhoneNumber, phoneNumber }
+                    .Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!).Distinct().ToList(), [],
+                pactCustomer is null ? "Crm" : PactSource, buyer?.Customer.CustomerId,
+                pactCustomer is null ? null : PactSource, pactCustomer?.ExternalCustomerId,
+                0, 0, clock.UtcNow, clock.UtcNow, 0, [], [], []);
+            return await GetWithinBudgetAsync(caller, customerKey, true, budget, profile);
+        }
+        catch (OperationCanceledException) when (budget.Expired)
+        {
+            return Fail(CollectionsOutcome.FinanceUnavailable, "The payment lookup deadline passed.");
+        }
+    }
+
+    private async Task<CollectionsResult<CollectionsPaymentSummaryResponseDto>> GetWithinBudgetAsync(
+        CollectionsCaller caller, string customerKey, bool includeTransactions, ReadBudget budget,
+        CustomerDirectoryProfileDto? verifiedLookupProfile = null)
+    {
         (Resolved? Value, (CollectionsOutcome Outcome, string? Detail)? Failure) resolution;
         try
         {
-            resolution = await ResolveAsync(caller, customerKey, budget.Token);
+            resolution = await ResolveAsync(caller, customerKey, budget.Token, verifiedLookupProfile);
         }
         catch (OperationCanceledException) when (budget.Expired)
         {
@@ -350,7 +403,8 @@ public sealed class CollectionsPaymentSummaryAppService(
     /// </list>
     /// </summary>
     private async Task<(Resolved? Value, (CollectionsOutcome Outcome, string? Detail)? Failure)> ResolveAsync(
-        CollectionsCaller caller, string customerKey, CancellationToken cancellationToken)
+        CollectionsCaller caller, string customerKey, CancellationToken cancellationToken,
+        CustomerDirectoryProfileDto? verifiedLookupProfile = null)
     {
         if (!options.Enabled)
         {
@@ -362,7 +416,9 @@ public sealed class CollectionsPaymentSummaryAppService(
             return (null, (CollectionsOutcome.Forbidden, "Viewing customer payments requires the Collections financial-read permission."));
         }
 
-        var profileResult = await directory.GetProfileAsync(caller.EmployeeId, caller.Roles, customerKey, cancellationToken);
+        var profileResult = verifiedLookupProfile is null
+            ? await directory.GetProfileAsync(caller.EmployeeId, caller.Roles, customerKey, cancellationToken)
+            : CustomerDirectoryProfileResult.Success(verifiedLookupProfile);
         switch (profileResult.Outcome)
         {
             case CustomerDirectoryProfileOutcome.InvalidKey:

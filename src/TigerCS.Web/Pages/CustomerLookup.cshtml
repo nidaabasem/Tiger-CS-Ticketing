@@ -89,7 +89,7 @@
                         <div>
                             <div class="candidate-card__name">@(candidate.DisplayName ?? "Unnamed customer")</div>
                             <div class="candidate-card__meta">
-                                @(candidate.PhoneNumber ?? Model.PhoneNumber) · Verified via @TicketDisplay.LookupSourceLabel(candidate.Source)
+                                @(candidate.PhoneNumber ?? Model.PhoneNumber) · Verified via @(candidate.LinkedPact is null ? TicketDisplay.LookupSourceLabel(candidate.Source) : "PACT + Tiger CRM")
                                 @if (candidate.Units.Count > 0)
                                 {
                                     <text> · @candidate.Units.Count unit@(candidate.Units.Count == 1 ? "" : "s")</text>
@@ -116,7 +116,7 @@
                     <div class="customer-summary__name">@(selected.DisplayName ?? "Unnamed customer")</div>
                     <div class="customer-summary__meta">
                         <span><strong>Phone:</strong> @(selected.PhoneNumber ?? Model.PhoneNumber)</span>
-                        <span><strong>Verified via:</strong> @TicketDisplay.LookupSourceLabel(selected.Source)</span>
+                        <span><strong>Verified via:</strong> @(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM")</span>
                         @if (!string.IsNullOrWhiteSpace(selected.Email))
                         {
                             <span><strong>Email:</strong> @selected.Email</span>
@@ -132,6 +132,10 @@
                     @if (Model.Candidates.Count > 1)
                     {
                         <a class="btn btn-sm" href="/Customers/Lookup?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber!)">Change customer</a>
+                    }
+                    @if (selected.Source is "Crm" or "Pact")
+                    {
+                        <a class="btn" target="_blank" rel="noopener" href="/Customers/Payments?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber!)&customerKey=@Uri.EscapeDataString(selected.Key)">Payments &amp; Fines</a>
                     }
                     <a class="btn btn-gold" href="@newTicketHref">+ New Ticket</a>
                 </div>
@@ -234,14 +238,14 @@
                         @if (selected.AllContractsExpired)
                         {
                             <div class="alert alert-info" role="status" data-all-contracts-expired>
-                                <span><strong>Every @TicketDisplay.LookupSourceLabel(selected.Source) contract for this customer has ended.</strong> Their tickets, payments and fines stay available here; a new ticket cannot be raised against an expired contract.</span>
+                                <span><strong>Every @(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM") contract for this customer has ended.</strong> Their tickets, payments and fines stay available here; a new ticket cannot be raised against an expired contract.</span>
                             </div>
                         }
                         @if (selected.Units.Count == 0)
                         {
                             <div class="empty-state">
                                 <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.8" /></svg>
-                                <p>@TicketDisplay.LookupSourceLabel(selected.Source) reports no units for this customer.</p>
+                                <p>@(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM") reports no units for this customer.</p>
                             </div>
                         }
                         else
@@ -303,7 +307,7 @@
                             <div class="facts-row"><dt>Phone</dt><dd>@(selected.PhoneNumber ?? Model.PhoneNumber)</dd></div>
                             <div class="facts-row"><dt>Email</dt><dd>@(string.IsNullOrWhiteSpace(selected.Email) ? "—" : selected.Email)</dd></div>
                             <div class="facts-row"><dt>Customer type</dt><dd>@(string.IsNullOrWhiteSpace(selected.CustomerType) ? "—" : selected.CustomerType)</dd></div>
-                            <div class="facts-row"><dt>Verification source</dt><dd>@TicketDisplay.LookupSourceLabel(selected.Source)</dd></div>
+                            <div class="facts-row"><dt>Verification source</dt><dd>@(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM")</dd></div>
                         </dl>
                     </section>
                 </div>

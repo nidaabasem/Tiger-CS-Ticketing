@@ -54,9 +54,8 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
     /// (7001), three contract rows, same tenantID — two CURRENT contracts
     /// (ending a year and two years from now, computed per run so the
     /// fixture never silently expires) and one contract that ended in 2020.
-    /// The lookup layer must show exactly the two current units and drop
-    /// the expired one; the row is still there so the end-to-end flow
-    /// proves the filter against the real wire shape and the real gateway.
+    /// The lookup retains all three contracts and flags the expired one;
+    /// New Ticket filters it when offering selectable units.
     /// </summary>
     private static readonly string KnownMobileContractsJson = $$"""
         {
@@ -161,17 +160,15 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         Assert.Equal("Found", pactSource.Status);
 
         // tenantID, name, project, unit numbers, unitID-based external ids,
-        // raw buyer-type code — and BOTH current units, nothing
-        // auto-selected; the contract that ended in 2020 (unit 702) is
-        // filtered out by the lookup layer, so it is neither counted nor
-        // listed.
+        // Raw identity and every contract are retained, including the
+        // expired contract as historical evidence. No unit is auto-selected.
         var customer = Assert.Single(pactSource.Customers);
         Assert.Equal("7001", customer.ExternalCustomerId);
         Assert.Equal("Fatima Noor", customer.DisplayName);
         Assert.Equal(KnownMobile, customer.PhoneNumber);
         Assert.Equal("fatima@example.test", customer.Email);
         Assert.Equal("2", customer.CustomerType);
-        Assert.Equal(2, customer.Units.Count);
+        Assert.Equal(3, customer.Units.Count);
         var marinaUnit = Assert.Single(customer.Units, u => u.ExternalUnitId == "700");
         Assert.Equal("2304", marinaUnit.UnitNumber);
         Assert.Equal("Tiger Marina Residences", marinaUnit.PropertyName);
@@ -179,7 +176,7 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
         var bayUnit = Assert.Single(customer.Units, u => u.ExternalUnitId == "701");
         Assert.Equal("1105", bayUnit.UnitNumber);
         Assert.Equal("Tiger Bay Towers", bayUnit.PropertyName);
-        Assert.DoesNotContain(customer.Units, u => u.ExternalUnitId == "702");
+        Assert.True(Assert.Single(customer.Units, u => u.ExternalUnitId == "702").IsContractExpired);
         // No local reference ids for PACT — display enrichment, never
         // linkable by id (so also never auto-linked to the ticket).
         Assert.All(customer.Units, u =>

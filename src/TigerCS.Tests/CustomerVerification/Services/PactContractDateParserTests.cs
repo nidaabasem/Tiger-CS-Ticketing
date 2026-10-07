@@ -55,6 +55,7 @@ public class PactContractDateParserTests
     [InlineData("/Date()/")]
     [InlineData("Date(1767225600000)")]
     [InlineData("1767225600000x")]
+    [InlineData("-9223372036854775808")]
     [InlineData("99999999999999999999")] // overflows long
     [InlineData("/Date(999999999999999999)/")] // out of DateTimeOffset's range
     public void TryParse_UnreadableValues_YieldNullNeverThrow(string? value)
@@ -80,6 +81,7 @@ public class PactContractDateParserTests
     [InlineData("\"2026-01-01T00:00:00\"", "2026-01-01")]
     [InlineData("1767225600000", "2026-01-01")]
     [InlineData("null", null)]
+    [InlineData("-9223372036854775808", null)]
     [InlineData("\"garbage\"", null)]
     [InlineData("true", null)]
     [InlineData("12.5", null)]

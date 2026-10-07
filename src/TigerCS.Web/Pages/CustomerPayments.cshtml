@@ -1,0 +1,12 @@
+@page "/Customers/Payments"
+@model TigerCS.Web.Pages.CustomerPaymentsModel
+@{
+    ViewData["Title"] = "Payments & Fines";
+    ViewData["ActiveNav"] = "customers";
+    Layout = "_Layout";
+}
+<div class="page">
+    <div class="page-header"><div><h1 class="page-title">Payments &amp; Fines</h1><p class="page-subtitle">@Model.PhoneNumber</p></div></div>
+    <section class="section-card"><partial name="_CustomerPaymentTab" model="Model.Panel" /></section>
+    <a class="btn" href="/Customers/Lookup?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber ?? "")&customer=@Uri.EscapeDataString(Model.CustomerKey ?? "")">Customer Workspace</a>
+</div>

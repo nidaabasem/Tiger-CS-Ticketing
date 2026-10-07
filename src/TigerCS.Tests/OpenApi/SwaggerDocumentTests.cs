@@ -109,6 +109,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/tickets/{ticketId}/customer-history",
         "GET /api/tickets/{ticketId}/customer-profile",
 
+        "GET /api/customers/lookup/ticket-history",
         "GET /api/customers/crm/{crmCustomerId}/ticket-history",
         "GET /api/customers/external/{source}/{externalCustomerId}/ticket-history",
         "GET /api/customers/search",
@@ -156,6 +157,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/collections/reminders",
         "POST /api/collections/reminders/{reminderId}/outcomes",
         "GET /api/collections/customers/{crmCustomerId}/reminders",
+        "GET /api/collections/customer-lookup/payment-summary",
         "GET /api/collections/customers/by-key/{customerKey}/payment-summary",
         "GET /api/collections/customers/by-key/{customerKey}/payment-transactions",
         "GET /api/genesys/collections/customers/by-key/{customerKey}/payment-summary",

@@ -6,6 +6,7 @@ using TigerCS.Web.Services.Api;
 using TigerCS.Web.Services.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddRazorPages(options =>
 {

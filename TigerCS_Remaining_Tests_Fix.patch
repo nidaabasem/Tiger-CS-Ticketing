@@ -1,0 +1,128 @@
+diff --git a/src/TigerCS.Api/Controllers/CustomerHistoryController.cs b/src/TigerCS.Api/Controllers/CustomerHistoryController.cs
+index a4cf371..214aaa8 100644
+--- a/src/TigerCS.Api/Controllers/CustomerHistoryController.cs
++++ b/src/TigerCS.Api/Controllers/CustomerHistoryController.cs
+@@ -120,6 +120,10 @@ public class CustomerHistoryController(
+         return Ok(result);
+     }
+ 
++    /// <summary>
++    /// Returns visible ticket history for a CRM customer found by phone, including
++    /// PACT history only when the customer identity and physical unit match.
++    /// </summary>
+     [HttpGet("lookup/ticket-history")]
+     [Authorize(Policy = PolicyNames.CustomerVerification)]
+     [ProducesResponseType<CustomerHistoryDto>(StatusCodes.Status200OK)]
+diff --git a/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs b/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs
+index 3c89802..892185c 100644
+--- a/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs
++++ b/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs
+@@ -44,6 +44,10 @@ public sealed class CollectionsController(
+     CollectionsReminderAppService reminders,
+     CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes)
+ {
++    /// <summary>
++    /// Returns the payment and fine summary for a verified lookup customer before
++    /// ticket creation, subject to the caller's financial read permissions.
++    /// </summary>
+     [HttpGet("customer-lookup/payment-summary")]
+     [Authorize(Policy = PolicyNames.CustomerVerification)]
+     [ProducesResponseType<CollectionsPaymentSummaryResponseDto>(StatusCodes.Status200OK)]
+diff --git a/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs b/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
+index e19ec21..e4f3e4e 100644
+--- a/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
++++ b/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
+@@ -109,6 +109,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
+         "GET /api/tickets/{ticketId}/customer-history",
+         "GET /api/tickets/{ticketId}/customer-profile",
+ 
++        "GET /api/customers/lookup/ticket-history",
+         "GET /api/customers/crm/{crmCustomerId}/ticket-history",
+         "GET /api/customers/external/{source}/{externalCustomerId}/ticket-history",
+         "GET /api/customers/search",
+@@ -156,6 +157,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
+         "POST /api/collections/reminders",
+         "POST /api/collections/reminders/{reminderId}/outcomes",
+         "GET /api/collections/customers/{crmCustomerId}/reminders",
++        "GET /api/collections/customer-lookup/payment-summary",
+         "GET /api/collections/customers/by-key/{customerKey}/payment-summary",
+         "GET /api/collections/customers/by-key/{customerKey}/payment-transactions",
+         "GET /api/genesys/collections/customers/by-key/{customerKey}/payment-summary",
+diff --git a/src/TigerCS.Tests/Web/AdministrationWebTests.cs b/src/TigerCS.Tests/Web/AdministrationWebTests.cs
+index 83791ff..d4b57a0 100644
+--- a/src/TigerCS.Tests/Web/AdministrationWebTests.cs
++++ b/src/TigerCS.Tests/Web/AdministrationWebTests.cs
+@@ -214,13 +214,18 @@ public sealed class AdministrationWebTests
+     }
+ 
+     [Fact]
+-    public void NewTicket_OffersTheRequestTypePicker_AsAnOptionalDropdownOnly()
++    public void NewTicket_OffersRequestCategoryAndDependentRequestTypePickers()
+     {
+         var html = View("NewTicket.cshtml");
+ 
+-        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeId\"", html);
++        Assert.Contains("asp-for=\"CreateStep.DepartmentId\">Request Category *</label>", html);
++        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.DepartmentId\" data-autosubmit>", html);
++        Assert.Contains("asp-for=\"CreateStep.RequestTypeChoice\">Request Type *</label>", html);
++        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeChoice\" disabled=", html);
++        Assert.Contains("name=\"CreateStep.UseRequestCategoryPicker\" value=\"true\"", html);
+         Assert.Contains("<input type=\"hidden\" asp-for=\"CreateStep.RequestTypeId\" />", html);
+-        Assert.Contains("None — standard handling", html);
++        Assert.DoesNotContain("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeId\"", html);
++        Assert.DoesNotContain("None — standard handling", html);
+         Assert.DoesNotContain("<input class=\"form-control\" asp-for=\"CreateStep.RequestTypeId\"", html);
+     }
+ }
+diff --git a/src/TigerCS.Tests/Web/NewTicketModelTests.cs b/src/TigerCS.Tests/Web/NewTicketModelTests.cs
+index 5679d27..4a3575e 100644
+--- a/src/TigerCS.Tests/Web/NewTicketModelTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketModelTests.cs
+@@ -1458,6 +1458,8 @@ public sealed class NewTicketModelTests
+         Assert.Equal(categoryId, body.RootElement.GetProperty("categoryId").GetInt32());
+         var actualType = body.RootElement.GetProperty("requestTypeId");
+         Assert.Equal(requestTypeId, actualType.ValueKind == JsonValueKind.Null ? null : (int?)actualType.GetInt32());
++        Assert.Equal("Tower", body.RootElement.GetProperty("manualProjectName").GetString());
++        Assert.Equal("101", body.RootElement.GetProperty("manualUnitNumber").GetString());
+         Assert.Equal("Collections", model.SummaryDepartmentName);
+     }
+ 
+diff --git a/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs b/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
+index 1aeaa6d..7ce47f2 100644
+--- a/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
+@@ -234,6 +234,8 @@ public sealed class NewTicketWizardHttpFlowTests
+         Assert.Equal(20, body.RootElement.GetProperty("categoryId").GetInt32());
+         Assert.Equal(200, body.RootElement.GetProperty("requestTypeId").GetInt32());
+         Assert.Equal("Please send receipts", body.RootElement.GetProperty("requestSummary").GetString());
++        Assert.Equal("Tower", body.RootElement.GetProperty("manualProjectName").GetString());
++        Assert.Equal("101", body.RootElement.GetProperty("manualUnitNumber").GetString());
+     }
+ 
+     /// <summary>Pulls the antiforgery token out of the rendered Search form, exactly as a browser would submit it.</summary>
+diff --git a/src/TigerCS.Web/Pages/NewTicket.cshtml.cs b/src/TigerCS.Web/Pages/NewTicket.cshtml.cs
+index 5cef47d..cf5d249 100644
+--- a/src/TigerCS.Web/Pages/NewTicket.cshtml.cs
++++ b/src/TigerCS.Web/Pages/NewTicket.cshtml.cs
+@@ -1245,8 +1245,8 @@ public sealed class NewTicketModel(
+         // mutually exclusive with a CRM Buyer match, exactly as the Api
+         // re-validates server-side.
+         var hasExternalSelection = !hasCrmBuyerMatch && ExternalSelection is not null;
+-        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName;
+-        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber;
++        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName ?? ManualProjectName;
++        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
+ 
+         var request = new CreateTicketRequestDto(
+             IntakeRecordId: intakeRecordId,
+@@ -1329,8 +1329,8 @@ public sealed class NewTicketModel(
+     private string? ValidateIssue()
+     {
+         var hasCrmBuyerMatch = CrmBuyerUnitId is not null;
+-        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName;
+-        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber;
++        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName ?? ManualProjectName;
++        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
+ 
+         if (!hasCrmBuyerMatch && (string.IsNullOrWhiteSpace(manualProject) || string.IsNullOrWhiteSpace(manualUnit)))
+         {

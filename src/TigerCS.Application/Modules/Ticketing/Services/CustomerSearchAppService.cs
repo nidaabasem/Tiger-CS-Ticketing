@@ -32,6 +32,7 @@ public sealed class CustomerSearchAppService(
         var crmTask = crmBuyerLookupAppService.GetBuyerByPhoneAsync(phoneNumber, cancellationToken);
         var externalTask = customerLookupAppService.SearchExternalSourcesByPhoneAsync(phoneNumber, cancellationToken);
 
+        await Task.WhenAll(crmTask, externalTask);
         var crmResult = await crmTask;
         var externalResults = await externalTask;
 

@@ -80,6 +80,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/genesys/agent-context"] = nameof(GenesysIntegration.Integration.GenesysAgentMappingEndpointsTests.MappedAgent_ResolvesToTheTicketingUser_AndRecordsInteractionOwnership),
         // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).
         ["POST /api/genesys/screen-pop"] = nameof(GenesysIntegration.Integration.GenesysScreenPopEndpointsTests.Issue_ReturnsAOneHourLaunchUrl_AndStoresOnlyTheHash),
+        ["GET /api/collections/customer-lookup/payment-summary"] = nameof(Collections.Edsm.EdsmPaymentSummaryApiTests.LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost),
+        ["GET /api/customers/lookup/ticket-history"] = nameof(Collections.Edsm.EdsmPaymentSummaryApiTests.LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost),
         // Collections — the explicit financial permissions, with the System Administrator override, on both prefixes.
         ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
         ["GET /api/genesys/collections/customers/{crmCustomerId}/payments"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),

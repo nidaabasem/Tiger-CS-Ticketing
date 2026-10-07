@@ -41,6 +41,11 @@ public sealed class CustomerHistoryApiClient(HttpClient httpClient, ILogger<Cust
             cancellationToken);
     }
 
+    public Task<ApiResult<CustomerHistoryDto>> GetByLinkedLookupAsync(
+        string phoneNumber, int crmCustomerId, int? limit, CancellationToken cancellationToken,
+        string? unitNumber = null, bool orderActiveFirst = false) =>
+        GetAsync<CustomerHistoryDto>($"api/customers/lookup/ticket-history?phoneNumber={Uri.EscapeDataString(phoneNumber)}&crmCustomerId={crmCustomerId}&{BuildHistoryQuery(limit, unitNumber, orderActiveFirst)}", cancellationToken);
+
     private static string BuildHistoryQuery(int? limit, string? unitNumber, bool orderActiveFirst)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);

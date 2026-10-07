@@ -20,6 +20,10 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetPaymentSummaryAsync(string customerKey, CancellationToken cancellationToken) =>
         GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customers/by-key/{Uri.EscapeDataString(customerKey)}/payment-summary", cancellationToken);
 
+    public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetLookupPaymentSummaryAsync(
+        string phoneNumber, string customerKey, CancellationToken cancellationToken) =>
+        GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customer-lookup/payment-summary?phoneNumber={Uri.EscapeDataString(phoneNumber)}&customerKey={Uri.EscapeDataString(customerKey)}", cancellationToken);
+
     public Task<ApiResult<CollectionsOutstandingResponseDto>> GetOutstandingAsync(long crmCustomerId, CancellationToken cancellationToken) =>
         GetAsync<CollectionsOutstandingResponseDto>($"{Base}/customers/{Id(crmCustomerId)}/outstanding?pageSize=100", cancellationToken);
 

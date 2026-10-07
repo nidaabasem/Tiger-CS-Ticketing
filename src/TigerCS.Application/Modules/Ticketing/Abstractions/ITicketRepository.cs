@@ -103,7 +103,8 @@ public sealed record CustomerHistoryQuery(
     string? ExternalSource = null,
     string? ExternalCustomerId = null,
     string? UnitNumber = null,
-    bool OrderActiveFirst = false);
+    bool OrderActiveFirst = false,
+    bool IncludeLinkedExternalIdentity = false);
 
 /// <summary>
 /// <see cref="Tickets"/> is the newest-first page (bounded by

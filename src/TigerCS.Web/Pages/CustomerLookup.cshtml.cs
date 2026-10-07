@@ -4,10 +4,11 @@ using TigerCS.Web.Models;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
 using TigerCS.Web.Services.Auth;
+using TigerCS.Application.Modules.Ticketing.Services;
 
 namespace TigerCS.Web.Pages;
 
-/// <summary>One unit/contract belonging to a search candidate — display snapshot only, no raw external ids. <paramref name="IsContractExpired"/> marks a PACT contract that has already ended: still listed here (the workspace serves historical tickets, payments and fines), never selectable for a new ticket.</summary>
+/// <summary>One unit/contract belonging to a search candidate — display snapshot only, no raw external ids.</summary>
 public sealed record CandidateUnit(
     string? UnitNumber, string? ProjectName, string? UnitType, int? FloorNumber,
     bool IsContractExpired = false, DateOnly? ContractEndDate = null);
@@ -28,7 +29,8 @@ public sealed record CustomerCandidate(
     string? CustomerType,
     int? CrmCustomerId,
     string? ExternalCustomerId,
-    IReadOnlyList<CandidateUnit> Units)
+    IReadOnlyList<CandidateUnit> Units,
+    CustomerLookupCustomerDto? LinkedPact = null)
 {
     /// <summary>How many of the candidate's units are expired PACT contracts — shown as a label, so the count never passes as current units.</summary>
     public int ExpiredUnitsCount => Units.Count(u => u.IsContractExpired);
@@ -107,7 +109,9 @@ public sealed class CustomerLookupModel(
         }
 
         var historyResult = Selected.CrmCustomerId is int crmCustomerId
-            ? await customersApiClient.GetByCrmCustomerIdAsync(crmCustomerId, limit: 50, cancellationToken)
+            ? Selected.LinkedPact is not null
+                ? await customersApiClient.GetByLinkedLookupAsync(PhoneNumber!, crmCustomerId, 50, cancellationToken)
+                : await customersApiClient.GetByCrmCustomerIdAsync(crmCustomerId, limit: 50, cancellationToken)
             : await customersApiClient.GetByExternalIdentityAsync(
                 Selected.Source, Selected.ExternalCustomerId!, limit: 50, cancellationToken);
 
@@ -143,26 +147,34 @@ public sealed class CustomerLookupModel(
     {
         var candidates = new List<CustomerCandidate>();
 
+        var linkedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var buyer in result.CrmBuyers)
         {
+            var pact = CustomerIdentityLinker.FindPactMatch(buyer, result.CrmBuyers, result.ExternalSources);
+            if (pact is not null) linkedIds.Add(pact.ExternalCustomerId);
             candidates.Add(new CustomerCandidate(
                 $"crm:{buyer.Customer.CustomerId}",
                 "Crm",
                 buyer.Customer.FullNameEnglish ?? buyer.Customer.FullNameArabic,
                 buyer.Customer.MobileNumber,
-                buyer.Customer.Email,
+                buyer.Customer.Email ?? pact?.Email,
                 buyer.Units.Select(u => u.CustomerTypeName).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)),
                 buyer.Customer.CustomerId,
                 ExternalCustomerId: null,
                 buyer.Units
                     .Select(u => new CandidateUnit(u.UnitNumber, u.ProjectName, UnitType: null, u.FloorNumber))
-                    .ToList()));
+                    .Concat((pact?.Units ?? []).Where(p => !buyer.Units.Any(c =>
+                        CustomerIdentityLinker.Same(c.UnitNumber, p.UnitNumber) && (CustomerIdentityLinker.Same(c.ProjectName, p.PropertyName)
+                            || CustomerIdentityLinker.Same(c.ProjectArabicName, p.PropertyName))))
+                        .Select(u => new CandidateUnit(u.UnitNumber, u.PropertyName, u.UnitType, null, u.IsContractExpired, u.ContractEndDate)))
+                    .Distinct().ToList(), pact));
         }
 
         foreach (var source in result.ExternalSources.Where(s => s.Status == "Found"))
         {
             foreach (var external in source.Customers)
             {
+                if (source.Source == "Pact" && linkedIds.Contains(external.ExternalCustomerId)) continue;
                 candidates.Add(new CustomerCandidate(
                     $"ext:{source.Source}:{Uri.EscapeDataString(external.ExternalCustomerId)}",
                     source.Source,

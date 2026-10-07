@@ -202,6 +202,20 @@ public sealed class CustomerHistoryAppService(
                 cancellationToken: cancellationToken));
     }
 
+    /// <summary>Called only after the lookup has verified the CRM/PACT association.</summary>
+    public async Task<CustomerHistoryDto> GetByLinkedIdentityAsync(
+        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles,
+        int crmCustomerId, string pactCustomerId, int? limit, string? unitNumber,
+        bool orderActiveFirst, CancellationToken cancellationToken)
+    {
+        var visible = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
+        var result = await ticketRepository.SearchCustomerHistoryAsync(new CustomerHistoryQuery(
+            visible, crmCustomerId, null, null, NormalizeLimit(limit), "Pact", pactCustomerId,
+            NormalizeUnitNumber(unitNumber), orderActiveFirst, IncludeLinkedExternalIdentity: true), cancellationToken);
+        return await ToDtoAsync("LinkedVerified", crmCustomerId, null, result,
+            externalSource: "Pact", externalCustomerId: pactCustomerId, cancellationToken: cancellationToken);
+    }
+
     private static int NormalizeLimit(int? limit) => limit is null or <= 0 || limit > MaxLimit ? DefaultLimit : limit.Value;
 
     private static string? NormalizeUnitNumber(string? unitNumber) =>

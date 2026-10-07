@@ -6,6 +6,7 @@ using TigerCS.Api.OpenApi;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
 
@@ -43,6 +44,25 @@ public sealed class CollectionsController(
     CollectionsReminderAppService reminders,
     CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes)
 {
+    /// <summary>
+    /// Returns the payment and fine summary for a verified lookup customer before
+    /// ticket creation, subject to the caller's financial read permissions.
+    /// </summary>
+    [HttpGet("customer-lookup/payment-summary")]
+    [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [ProducesResponseType<CollectionsPaymentSummaryResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> GetLookupPaymentSummary(
+        [FromQuery] string phoneNumber, [FromQuery] string customerKey,
+        [FromServices] CustomerSearchAppService search, CancellationToken cancellationToken)
+    {
+        if (Caller() is not { } caller) return Unauthorized();
+        return ToResponse(await PaymentSummaries.GetForLookupAsync(caller, phoneNumber, customerKey, search, cancellationToken));
+    }
+
     protected override CollectionsReadSurface Surface => CollectionsReadSurface.Web;
 }
 
@@ -335,7 +355,7 @@ public abstract class CollectionsControllerBase(
         return ToResponse(await queries.GetRemindersAsync(caller, id, accountId, cursor, pageSize, cancellationToken));
     }
 
-    private IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
+    protected IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
     {
         CollectionsOutcome.Success or CollectionsOutcome.Replayed => Ok(result.Value),
         CollectionsOutcome.Accepted => StatusCode(StatusCodes.Status202Accepted, result.Value),
@@ -385,6 +405,7 @@ public abstract class CollectionsControllerBase(
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
 
     /// <summary>Which prefix this controller serves; selects the read deadline's default.</summary>
+    protected CollectionsPaymentSummaryAppService PaymentSummaries => paymentSummaries;
     protected abstract CollectionsReadSurface Surface { get; }
 
     /// <summary>
@@ -401,7 +422,7 @@ public abstract class CollectionsControllerBase(
         return HttpContext.RequestServices.GetRequiredService<CollectionsEdsmOptions>().ReadDeadline(Surface, requested);
     }
 
-    private CollectionsCaller? Caller()
+    protected CollectionsCaller? Caller()
     {
         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (idValue is null || !Guid.TryParse(idValue, out var employeeId))

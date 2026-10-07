@@ -109,13 +109,16 @@ public sealed class WebFrontEndCleanupTests
     }
 
     [Fact]
-    public void NewTicketView_RendersACategoryDropdown_LabeledByName()
+    public void NewTicketView_RendersDependentRequestCategoryAndTypePickers()
     {
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("Category *", html);
-        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
-        Assert.Contains("category.Name", html);
+        Assert.Contains("Request Category *", html);
+        Assert.Contains("Request Type *", html);
+        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeChoice\"", html);
+        Assert.DoesNotContain("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
+        Assert.DoesNotContain("<optgroup", html);
+        Assert.Contains("requestType.Name", html);
     }
 
     [Fact]
@@ -123,7 +126,7 @@ public sealed class WebFrontEndCleanupTests
     {
         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
 
-        Assert.Contains("No active categories are configured for this department.", html);
+        Assert.Contains("No active request types are configured for this request category.", html);
         Assert.Contains("Model.CategoriesErrorMessage", html);
     }
 
@@ -156,7 +159,7 @@ public sealed class WebFrontEndCleanupTests
 
         // The redesign moves Department to the Issue step, narrowing the
         // Request Type list — still a real-name dropdown, never a typed id.
-        Assert.Contains(">Department</label>", html);
+        Assert.Contains(">Request Category *</label>", html);
         Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.DepartmentId\"", html);
         Assert.Contains("department.Name", html);
         Assert.Contains("department.DepartmentId", html);

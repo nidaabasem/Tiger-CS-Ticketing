@@ -3,6 +3,7 @@
 extern alias TigerCsWeb;
 
 using System.Net;
+using System.Text.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
@@ -15,6 +16,9 @@ using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
+using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Tests.Web.Fakes;
 
@@ -136,6 +140,103 @@ public sealed class NewTicketWizardHttpFlowTests
 
         return new HttpResponseMessage(HttpStatusCode.NotFound);
     });
+
+    [Fact]
+    public async Task MatchingCrmAndPact_RenderOneCardWithPaymentsLinkEvenWithoutPreviousTickets()
+    {
+        var original = CrmFoundApi();
+        var api = new FakeApiHandler((request, body) =>
+        {
+            if (request.RequestUri!.AbsolutePath == $"/api/intake-records/{IntakeId}/customer-lookup")
+                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(IntakeId, SearchedPhone,
+                    [CustomerLookupSourceResultDto.Found("Crm", []), CustomerLookupSourceResultDto.Found("Pact",
+                        [new CustomerLookupCustomerDto("3001", "Aisha Rahman", "+" + SearchedPhone, "aisha@example.com", "2",
+                            [new CustomerLookupUnitDto("999", "TB-1204", "Tiger Bay Towers", null, "Residential", null, null)])])]));
+            if (request.RequestUri.AbsolutePath == "/api/customers/lookup/ticket-history")
+                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerHistoryDto("LinkedVerified", 5001, null, "Aisha", 0, 0, 0, []));
+            return original.Respond(request, body);
+        });
+        using var factory = CreateFactory(api);
+        var response = await factory.CreateClient().GetAsync($"/NewTicket?intakeRecordId={IntakeId}&phoneNumber={SearchedPhone}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var html = await response.Content.ReadAsStringAsync();
+        Assert.Single(Regex.Matches(html, "candidate-card candidate-card--stack"));
+        Assert.Contains("PACT · Tiger CRM", WebUtility.HtmlDecode(html));
+        Assert.Contains("Payments &amp; Fines", html);
+        Assert.Contains("customerKey=crm%3A5001", html);
+
+        var property = await factory.CreateClient().GetAsync($"/NewTicket?step=property&customer=crm&intakeRecordId={IntakeId}&phoneNumber={SearchedPhone}");
+        Assert.Equal(HttpStatusCode.OK, property.StatusCode);
+        var propertyHtml = await property.Content.ReadAsStringAsync();
+        Assert.Contains("PACT · Tiger CRM", WebUtility.HtmlDecode(propertyHtml));
+        Assert.Single(Regex.Matches(propertyHtml, "data-unit-source=\"Pact\""));
+        Assert.DoesNotContain("data-unit-source=\"Crm\"", propertyHtml);
+        Assert.Contains("handler=UseExternalUnit", propertyHtml);
+    }
+
+    [Fact]
+    public async Task Issue_RequestCategoryThenType_RendersDependentChoices_AndCreatesWithBothRealIds()
+    {
+        var api = new FakeApiHandler((request, _) => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/departments" => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
+                new[] { new DepartmentDto(1, "Customer Service"), new DepartmentDto(2, "Collections") }),
+            "/api/categories" => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
+                new[] { new CategoryDto(10, "General Inquiry", 1, "Customer Service"), new CategoryDto(20, "Send Receipts", 2, "Collections") }),
+            "/api/request-types" => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
+                new[] { new RequestTypeOptionDto(100, "General Inquiry", 1, 3, true), new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }),
+            "/api/tickets" => FakeApiHandler.JsonResponse(HttpStatusCode.Created,
+                new TicketResponseDto(300, "TG-COL-20261006-0001", 2, 2, null, null, 20, 3,
+                    "Open", "Unverified", "None", "Running", "Please send receipts", DateTime.UtcNow, "AAAA")),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        });
+        using var factory = CreateFactory(api);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var response = await client.GetAsync("/NewTicket?step=issue&intakeRecordId=42&customer=manual&manualProjectName=Tower&manualUnitNumber=101");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var html = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Request Category *", html);
+        Assert.Contains("Request Type *", html);
+        Assert.DoesNotContain("<optgroup", html);
+        Assert.DoesNotContain("value=\"request-type:200\"", html);
+        var fields = new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = AntiforgeryToken(html),
+            ["intakeRecordId"] = "42", ["customer"] = "manual",
+            ["manualProjectName"] = "Tower", ["manualUnitNumber"] = "101",
+            ["CreateStep.UseRequestCategoryPicker"] = "true", ["CreateStep.DepartmentId"] = "2",
+            ["CreateStep.RequestTypeChoice"] = "request-type:100", ["CreateStep.PriorityId"] = "3",
+            ["CreateStep.RequestSummary"] = "Please send receipts"
+        };
+        var refreshed = await client.PostAsync("/NewTicket?handler=IssueRefresh", new FormUrlEncodedContent(fields));
+        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+        html = await refreshed.Content.ReadAsStringAsync();
+        Assert.Contains("value=\"request-type:200\"", html);
+        Assert.DoesNotContain("value=\"request-type:100\"", html);
+        Assert.DoesNotContain("value=\"category:20\"", html);
+        Assert.Contains("Please send receipts", html);
+        fields["__RequestVerificationToken"] = AntiforgeryToken(html);
+        fields["CreateStep.RequestTypeChoice"] = "request-type:200";
+        var review = await client.PostAsync("/NewTicket?handler=Review", new FormUrlEncodedContent(fields));
+        Assert.Equal(HttpStatusCode.OK, review.StatusCode);
+        html = await review.Content.ReadAsStringAsync();
+        Assert.Contains("Create Ticket", html);
+        Assert.Contains("<dt>Request Category</dt>", html);
+        Assert.Contains("<dt>Request Type</dt>", html);
+        Assert.Contains("Send Receipts", html);
+        Assert.Contains("CreateStep.RequestTypeChoice", html);
+        fields["__RequestVerificationToken"] = AntiforgeryToken(html);
+        fields["CreateStep.CategoryId"] = "999";
+        fields["CreateStep.RequestTypeId"] = "999";
+        var created = await client.PostAsync("/NewTicket?handler=Create", new FormUrlEncodedContent(fields));
+        Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
+        using var body = JsonDocument.Parse(Assert.Single(api.Requests, r => r.Method == HttpMethod.Post && r.RequestUri.EndsWith("/api/tickets", StringComparison.Ordinal)).Body!);
+        Assert.Equal(20, body.RootElement.GetProperty("categoryId").GetInt32());
+        Assert.Equal(200, body.RootElement.GetProperty("requestTypeId").GetInt32());
+        Assert.Equal("Please send receipts", body.RootElement.GetProperty("requestSummary").GetString());
+        Assert.Equal("Tower", body.RootElement.GetProperty("manualProjectName").GetString());
+        Assert.Equal("101", body.RootElement.GetProperty("manualUnitNumber").GetString());
+    }
 
     /// <summary>Pulls the antiforgery token out of the rendered Search form, exactly as a browser would submit it.</summary>
     private static string AntiforgeryToken(string html)

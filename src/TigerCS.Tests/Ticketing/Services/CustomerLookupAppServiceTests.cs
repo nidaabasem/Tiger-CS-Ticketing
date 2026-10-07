@@ -306,8 +306,8 @@ public class CustomerLookupAppServiceTests
     }
 
     // ---------------------------------------------------------------
-    // PACT contract expiry: contractEndDate before today's DUBAI date hides
-    // the contract; today or later keeps it. The clock below is
+    // PACT contract expiry: contractEndDate before today's DUBAI date flags
+    // the contract; selection filtering happens in New Ticket. The clock below is
     // 2026-10-05 21:30 UTC — still 5 October on a UTC server, but already
     // 6 October 01:30 in Dubai — so "today" for every test here is
     // 6 October, and a contract ending on 5 October counts as expired
@@ -317,6 +317,21 @@ public class CustomerLookupAppServiceTests
     private static readonly DateTime DubaiBoundaryUtc = new(2026, 10, 5, 21, 30, 0, DateTimeKind.Utc);
     private static readonly DateOnly DubaiToday = new(2026, 10, 6);
 
+    [Fact]
+    public async Task LookupRetainsDifferentCompaniesAndHistoricalContractsOnTheSameUnit()
+    {
+        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+        var expired = new PactContractDto("U-1", "OLD", "0304", "Tiger Marina", "Residential", 4, DubaiToday.AddDays(-1));
+        var current = expired with { ContractNumber = "NEW", CompanyId = 25, ContractEndDate = DubaiToday };
+        f.Pact.Seed(Phone, new PactCustomerMatchDto("TENANT", "Fatima Noor", Phone, null, "2", [expired, current, expired]));
+        var customer = Assert.Single(PactSource(await f.Service.SearchAsync(intakeRecordId)).Customers);
+        Assert.Equal(2, customer.Units.Count);
+        Assert.Equal([25, 4], customer.Units.Select(u => u.CompanyId));
+        Assert.False(customer.Units[0].IsContractExpired);
+        Assert.True(customer.Units[1].IsContractExpired);
+    }
+
     private static PactContractDto Contract(string unitId, DateOnly? endDate) =>
         new(unitId, $"CNT-{unitId}", unitId, "Tiger Marina Residences", "Residential", ContractEndDate: endDate);
 
@@ -324,7 +339,7 @@ public class CustomerLookupAppServiceTests
         Assert.Single(result.Response!.Sources, s => s.Source == "Pact");
 
     [Fact]
-    public async Task SearchAsync_PactContractEndedYesterdayInDubai_IsHiddenAndCustomerDropped()
+    public async Task SearchAsync_PactContractEndedYesterdayInDubai_RetainsIdentityAndFlagsExpiry()
     {
         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
@@ -334,11 +349,9 @@ public class CustomerLookupAppServiceTests
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
-        // The only contract expired on the Dubai calendar (UTC still says
-        // 5 October): nothing current remains, so no PACT card at all.
         var pactResult = PactSource(result);
-        Assert.Equal("NotFound", pactResult.Status);
-        Assert.Empty(pactResult.Customers);
+        Assert.Equal("Found", pactResult.Status);
+        Assert.True(Assert.Single(Assert.Single(pactResult.Customers).Units).IsContractExpired);
     }
 
     [Fact]
@@ -375,7 +388,7 @@ public class CustomerLookupAppServiceTests
     }
 
     [Fact]
-    public async Task SearchAsync_PactMixedActiveAndExpiredContracts_CountsAndListsOnlyActiveUnits()
+    public async Task SearchAsync_PactMixedActiveAndExpiredContracts_RetainsAllEvidenceAndFlagsExpiry()
     {
         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
@@ -399,14 +412,13 @@ public class CustomerLookupAppServiceTests
         Assert.Equal("Fatima Noor", customer.DisplayName);
         Assert.Equal("fatima@example.com", customer.Email);
         Assert.Equal("2", customer.CustomerType);
-        // The unit count the wizard card shows is Units.Count — filtered
-        // BEFORE the list is built, so expired units are not counted either.
-        Assert.Equal(2, customer.Units.Count);
-        Assert.Equal(["U-TODAY", "U-FUTURE"], customer.Units.Select(u => u.ExternalUnitId).ToArray());
+        Assert.Equal(4, customer.Units.Count);
+        Assert.Equal(["U-TODAY", "U-FUTURE"], customer.Units.Where(u => !u.IsContractExpired).Select(u => u.ExternalUnitId).ToArray());
+        Assert.Equal(2, customer.Units.Count(u => u.IsContractExpired));
     }
 
     [Fact]
-    public async Task SearchAsync_PactCustomerWithAllContractsExpired_IsDroppedWhileOtherCustomersRemain()
+    public async Task SearchAsync_PactCustomerWithAllContractsExpired_RemainsAlongsideCurrentCustomers()
     {
         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
@@ -421,13 +433,14 @@ public class CustomerLookupAppServiceTests
 
         var pactResult = PactSource(result);
         Assert.Equal("Found", pactResult.Status);
-        var customer = Assert.Single(pactResult.Customers);
-        Assert.Equal("PACT-CUST-CURRENT", customer.ExternalCustomerId);
+        Assert.Equal(2, pactResult.Customers.Count);
+        var customer = Assert.Single(pactResult.Customers, c => c.ExternalCustomerId == "PACT-CUST-CURRENT");
         Assert.Equal("U-3", Assert.Single(customer.Units).ExternalUnitId);
+        Assert.All(pactResult.Customers.Single(c => c.ExternalCustomerId == "PACT-CUST-EXPIRED").Units, u => Assert.True(u.IsContractExpired));
     }
 
     [Fact]
-    public async Task SearchAsync_PactEveryCustomerExpired_ReportsNotFoundNotFailed()
+    public async Task SearchAsync_PactEveryCustomerExpired_RetainsBothTenantsForHistoricalReads()
     {
         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
@@ -440,10 +453,10 @@ public class CustomerLookupAppServiceTests
 
         var result = await f.Service.SearchAsync(intakeRecordId);
 
-        // "Nothing current on file" is a NotFound, never a Failed source —
-        // the agent sees the normal not-found path, not a PACT outage.
         Assert.Equal(CustomerLookupOutcome.Success, result.Outcome);
-        Assert.Equal("NotFound", PactSource(result).Status);
+        Assert.Equal("Found", PactSource(result).Status);
+        Assert.Equal(2, PactSource(result).Customers.Count);
+        Assert.All(PactSource(result).Customers.SelectMany(c => c.Units), u => Assert.True(u.IsContractExpired));
     }
 
     [Fact]
@@ -461,7 +474,9 @@ public class CustomerLookupAppServiceTests
 
         var pactResult = PactSource(result);
         Assert.Equal("Found", pactResult.Status);
-        var unit = Assert.Single(Assert.Single(pactResult.Customers).Units);
+        var units = Assert.Single(pactResult.Customers).Units;
+        Assert.Equal(2, units.Count);
+        var unit = Assert.Single(units, u => !u.IsContractExpired);
         Assert.Equal("U-NO-DATE", unit.ExternalUnitId);
     }
 
@@ -481,12 +496,12 @@ public class CustomerLookupAppServiceTests
     }
 
     [Fact]
-    public async Task SearchExternalSourcesByPhoneAsync_WorkspaceLeg_KeepsExpiredContractsFlagged_WhileSearchAsyncExcludesThem()
+    public async Task SearchExternalSourcesByPhoneAsync_AndIntakeLookup_BothRetainHistoricalContracts()
     {
         // The same seeded PACT customer, through both legs: the Customer
         // Workspace search keeps the expired contract (labelled) so the
         // agent can reach historical tickets, payments and fines; the
-        // intake-anchored New Ticket lookup never offers it for selection.
+        // intake lookup retains the same evidence for New Ticket's selection view.
         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
         f.Pact.Seed(Phone, new PactCustomerMatchDto(
@@ -502,9 +517,7 @@ public class CustomerLookupAppServiceTests
         Assert.False(workspaceCustomer.Units.Single(u => u.ExternalUnitId == "U-FUTURE").IsContractExpired);
 
         var wizardCustomer = Assert.Single(PactSource(wizard).Customers);
-        var selectable = Assert.Single(wizardCustomer.Units);
-        Assert.Equal("U-FUTURE", selectable.ExternalUnitId);
-        Assert.False(selectable.IsContractExpired);
+        Assert.Equal(workspaceCustomer.Units, wizardCustomer.Units);
     }
 
     [Fact]
@@ -522,7 +535,8 @@ public class CustomerLookupAppServiceTests
         var workspacePact = Assert.Single(workspace, s => s.Source == "Pact");
         Assert.Equal("Found", workspacePact.Status);
         Assert.True(Assert.Single(Assert.Single(workspacePact.Customers).Units).IsContractExpired);
-        Assert.Equal("NotFound", PactSource(wizard).Status);
+        Assert.Equal("Found", PactSource(wizard).Status);
+        Assert.True(Assert.Single(Assert.Single(PactSource(wizard).Customers).Units).IsContractExpired);
     }
 
     [Fact]

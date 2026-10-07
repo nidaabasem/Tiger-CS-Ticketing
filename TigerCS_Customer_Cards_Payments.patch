@@ -1,0 +1,2825 @@
+diff --git a/ImportNewRequestTypes_UAT.sql b/ImportNewRequestTypes_UAT.sql
+index 12bb9f0..002ef79 100644
+--- a/ImportNewRequestTypes_UAT.sql
++++ b/ImportNewRequestTypes_UAT.sql
+@@ -602,6 +602,18 @@ END;
+ -- 5. Verification — 35/35 reconciliation, then hard checks.
+ -------------------------------------------------------------------------------
+ 
++-- Exact child routing for New Ticket's Request Category -> Request Type picker.
++-- Additive and rerunnable: keep all existing categories, IDs and historical
++-- tickets, including deactivated categories. Never reactivate an existing row.
++INSERT INTO [Categories] ([Name], [DepartmentId], [ParentCategoryId], [IsActive])
++SELECT rt.[Name], rt.[DepartmentId], NULL, 1
++FROM [RequestTypes] rt
++WHERE rt.[IsActive] = 1
++  AND NOT EXISTS (
++      SELECT 1 FROM [Categories] c WITH (UPDLOCK, HOLDLOCK)
++      WHERE c.[DepartmentId] = rt.[DepartmentId]
++        AND LTRIM(RTRIM(c.[Name])) = LTRIM(RTRIM(rt.[Name])));
++
+ PRINT '=== RECONCILIATION (35 workbook rows) ===';
+ 
+ SELECT
+diff --git a/docs/Customer-Card-Identity-and-PreTicket-Payments.md b/docs/Customer-Card-Identity-and-PreTicket-Payments.md
+new file mode 100644
+index 0000000..3c9298b
+--- /dev/null
++++ b/docs/Customer-Card-Identity-and-PreTicket-Payments.md
+@@ -0,0 +1,59 @@
++# Customer cards and payments after PR #70
++
++This follow-up is based on main commit `9f12f67a9fc2538a0c8201c726373162f081ce54` (merged PR #70), rather than the earlier pre-merge patch.
++
++## Review findings
++
++PR #70 retains expired-only PACT customers in Customer Workspace, but its intake lookup removes expired contracts before linking the New Ticket card. That can lose a CRM customer's historical PACT identity and tickets. Its payment panels call directory-backed Collections routes, which cannot resolve a customer with no persisted ticket/profile. The search card also lacks a Payments & Fines action. The date parser's `Math.Abs(long.MinValue)` can throw despite its tolerant-reader contract.
++
++## Follow-up behavior
++
++- Both lookup paths retain PACT contracts and company IDs, marking expiry. Only the New Ticket selection projection excludes contracts ending before Dubai's current calendar date. A renewal remains selectable because filtering precedes unit deduplication. Contracts ending today or without readable dates remain selectable.
++- A CRM/PACT association requires matching normalized source phones, matching customer name or email, and matching project plus unit number. Phone alone, a raw cross-system unit ID, or a shared unit without matching customer details cannot merge identities. Ambiguity keeps cards separate.
++- New Ticket keeps both stable identities and its existing deduplicated combined history. Customer Workspace uses the same association and a server-side SQL union with department visibility, counts before limits, and no repeated ticket rows. View all tickets on a merged card opens this combined workspace.
++- Payments & Fines is available directly on a search card before unit selection or ticket creation, via `/Customers/Payments`. Account changes and retry retain the selected customer and phone.
++- `/api/collections/customer-lookup/payment-summary` first checks the financial-read grant, then freshly verifies the selected identity. A CRM selection receives PACT/EDSM data only through the same verified association. Caller-supplied tenant/company mappings are not accepted. The existing summary service independently confirms all tenant/company pairs from unfiltered PACT contracts, including expired ones.
++- Existing EDSM UI shows source amounts, transactions and fines, including rented fines as **Not computed** and unavailable values as unavailable rather than zero. Inline wizard PACT panels use the pre-ticket endpoint; CRM panels can fall back to verified EDSM when no directory-backed finance account is available.
++- The parser handles the minimum signed epoch value without throwing. No schema migration or persistent identity crosswalk is introduced.
++
++## Verification priority
++
++The user clarified the priority on 6 October 2026: **PACT first, then Tiger CRM**. New Ticket sorts PACT candidates first, shows a verified merged card and summary as `PACT · Tiger CRM`, and offers current PACT units before additional CRM units. A shared physical unit appears once through its current PACT contract; if no current PACT contract exists for that unit, the independently eligible CRM unit remains available. Selecting the PACT row uses the existing PACT ticket-identity path. Both source identities and historical ticket reads remain available.
++
++For an existing CRM unit selection under a verified combined card, the primary inline payment panel reads the verified PACT tenant/company mapping; CRM finance appears afterward under its own customer ID. A customer without verified PACT linkage keeps its CRM verification. Displaying PACT never invents a mapping from the phone alone. The card's internal selection token remains stable for existing navigation.
++
++## Verification
++
++The merged PR #70 was verified through actual GitHub Actions logs: [CI run 37444409152](https://github.com/nidaabasem/Tiger-CS-Ticketing/actions/runs/37444409152). Release build succeeded with **0 warnings, 0 errors**. Tests: **2790 passed, 0 failed, 0 skipped**.
++
++Those results apply to the merged main commit, **not this follow-up**. This follow-up adds regression coverage for missing/ambiguous identity evidence, historical contracts and companies, renewal selection, zero selectable units, pre-ticket authorized/forbidden/disabled reads, unknown tenants, rented fines, SQL history visibility/counts, and actual Razor card/payment rendering. Existing scope tests now assert retained lookup evidence; selection tests assert expired units are excluded.
++
++`git diff --check` passes. Local `dotnet build src/TigerCS.slnx --configuration Release` and `dotnet test src/TigerCS.slnx --configuration Release` both stop with `dotnet: command not found` (exit 127). This follow-up has not yet been compiled or tested. Real CRM/PACT/EDSM UAT has not been performed.
++
++The user authorized publication of this follow-up on 6 October 2026. Publication remains blocked: CLI push has no GitHub credentials, and the connected GitHub integration rejects creating a Git tree with HTTP 403, `Resource not accessible by integration`. No remote follow-up branch or draft PR has been created, and follow-up CI has not started. Local branch: `fix/merged-customer-lookup`. Publication consent remains valid; repository content-write access is the remaining blocker.
++
++## Request category correction from the screenshots
++
++On 6 October 2026, the user requested the bold department group names as
++**Request Category**, with the remaining child entries as **Request Type**.
++New Ticket now has exactly those two dependent pickers. It retains legacy
++routing-only entries and configured workflow types, combines exact duplicate
++names within a department once, and resolves both IDs from fresh catalogs on
++Review/Create. Cross-category choices, unpublished workflows and missing or
++ambiguous routing cannot create a ticket. Category changes retain entered text,
++priority and the selected customer/unit, while clearing an invalid old child.
++The summary and review use the same category/type terminology.
++
++The importer and UAT SQL now add an exact missing routing row per active
++configured type, keeping all existing category IDs, inactive rows and historical
++tickets. An existing UAT database needs the updated import rerun before the new
++configured choices can be created. See `New-Request-Types-UAT-Import.md`.
++
++Additional regression coverage exercises the combined catalog, legacy fallback,
++same-name types in different categories, unpublished workflows, missing/ambiguous
++routing, reset on category change, hidden-ID tampering and real HTTP
++antiforgery/model-binding through refresh, review and creation. The importer
++regression checks idempotence and retained inactive/historical categories.
++Build and test attempts for this update also exit 127 because `dotnet` is absent;
++these tests are added but unrun. GitHub publication remains blocked as recorded
++above.
+diff --git a/docs/New-Request-Types-UAT-Import.md b/docs/New-Request-Types-UAT-Import.md
+index 712fd46..5fb97a9 100644
+--- a/docs/New-Request-Types-UAT-Import.md
++++ b/docs/New-Request-Types-UAT-Import.md
+@@ -74,3 +74,29 @@ requirements added); nothing else about them changes.
+ | Conditional approvals (10 rows: CS-CMP-001, REG-NOC-001/002/003, COL-PAY-002, HO-NOC-001, LCS-TEN-001, LCS-EJR-001, BRK-COM-001, LEG-INQ-001) | **Business decision required.** No approval rule is specified, and no existing approval type matches supervisor / manager / authorized-approver approval. For BRK-COM-001 and LEG-INQ-001 the conditional approval is separate from the manual supporting step. | Administration → Request Type → Approvals, once the rule is defined. |
+ | Reopen Approval on the new request types | Configured by its own script. | Run `ConfigureReopenApprovalRequirements.sql` after this import. |
+ | Supporting-team departments and users (Admin Sales, Sales, Legal, HR) | Not required by any request type: their steps are manual. The script only reports whether the departments exist. | Administration → Departments / Users, if the business wants them in TigerCS. |
++
++## New Ticket request categories and types
++
++In New Ticket, the department group names (Customer Service, Collections,
++Facilities Management, Handover, etc.) are the selectable **Request Category**.
++The second, dependent **Request Type** picker shows that category's children,
++including the existing General Inquiry and Corrective Maintenance entries.
++It combines the old routing entries with the configured workflow request types;
++an exact name match within the same department appears once and retains both IDs.
++Selecting a configured type keeps its existing workflow, assignment, approvals
++and SLA. No workflow is invented for a legacy routing-only entry.
++
++The updated development importer and `ImportNewRequestTypes_UAT.sql` create an
++exact routing category for each active configured request type if missing.
++**Existing UAT databases must rerun the updated script** (dry run first, then
++`@CommitChanges = 1`) before using the new picker. The script only inserts missing
++routing rows; it never changes existing category IDs, historical tickets or
++operator deactivation. New or renamed request types added later also need an
++exact, active routing category of the same department and name. Missing or
++ambiguous routing blocks creation with a configuration message instead of
++silently choosing General Inquiry or another category.
++
++Changing Request Category clears a child outside the new category and preserves
++priority, customer request, customer identity and unit. Review and creation
++re-read the catalogs and resolve the child IDs on the server, so a posted type
++from another category cannot be used.
+diff --git a/src/TigerCS.Api/Controllers/CustomerHistoryController.cs b/src/TigerCS.Api/Controllers/CustomerHistoryController.cs
+index 0eb24fa..a4cf371 100644
+--- a/src/TigerCS.Api/Controllers/CustomerHistoryController.cs
++++ b/src/TigerCS.Api/Controllers/CustomerHistoryController.cs
+@@ -120,6 +120,28 @@ public class CustomerHistoryController(
+         return Ok(result);
+     }
+ 
++    [HttpGet("lookup/ticket-history")]
++    [Authorize(Policy = PolicyNames.CustomerVerification)]
++    [ProducesResponseType<CustomerHistoryDto>(StatusCodes.Status200OK)]
++    [ProducesResponseType(StatusCodes.Status400BadRequest)]
++    [ProducesResponseType(StatusCodes.Status404NotFound)]
++    public async Task<IActionResult> GetLookupHistory(
++        [FromQuery] string phoneNumber, [FromQuery] int crmCustomerId, [FromQuery] int? limit,
++        [FromQuery] string? unitNumber, [FromQuery] bool orderActiveFirst, CancellationToken cancellationToken)
++    {
++        if (GetEmployeeId() is not { } employeeId) return Unauthorized();
++        if (string.IsNullOrWhiteSpace(phoneNumber) || crmCustomerId <= 0) return BadRequest();
++        var search = await customerSearchAppService.SearchByPhoneAsync(phoneNumber, cancellationToken);
++        var buyer = search.CrmBuyers.SingleOrDefault(b => b.Customer.CustomerId == crmCustomerId);
++        if (buyer is null) return NotFound();
++        var pact = CustomerIdentityLinker.FindPactMatch(buyer, search.CrmBuyers, search.ExternalSources);
++        return Ok(pact is null
++            ? await customerHistoryAppService.GetByCrmCustomerIdAsync(employeeId, GetRoles(), crmCustomerId,
++                limit: limit, unitNumber: unitNumber, orderActiveFirst: orderActiveFirst, cancellationToken: cancellationToken)
++            : await customerHistoryAppService.GetByLinkedIdentityAsync(employeeId, GetRoles(), crmCustomerId,
++                pact.ExternalCustomerId, limit, unitNumber, orderActiveFirst, cancellationToken));
++    }
++
+     private Guid? GetEmployeeId()
+     {
+         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+diff --git a/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs b/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs
+index 4b94672..3c89802 100644
+--- a/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs
++++ b/src/TigerCS.Api/Controllers/GenesysCollectionsController.cs
+@@ -6,6 +6,7 @@ using TigerCS.Api.OpenApi;
+ using TigerCS.Application.Modules.Collections;
+ using TigerCS.Application.Modules.Collections.Dto;
+ using TigerCS.Application.Modules.Collections.Services;
++using TigerCS.Application.Modules.Ticketing.Services;
+ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
+ using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
+ 
+@@ -43,6 +44,21 @@ public sealed class CollectionsController(
+     CollectionsReminderAppService reminders,
+     CollectionsReminderOutcomeAppService outcomes) : CollectionsControllerBase(queries, paymentSummaries, reminders, outcomes)
+ {
++    [HttpGet("customer-lookup/payment-summary")]
++    [Authorize(Policy = PolicyNames.CustomerVerification)]
++    [ProducesResponseType<CollectionsPaymentSummaryResponseDto>(StatusCodes.Status200OK)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
++    public async Task<IActionResult> GetLookupPaymentSummary(
++        [FromQuery] string phoneNumber, [FromQuery] string customerKey,
++        [FromServices] CustomerSearchAppService search, CancellationToken cancellationToken)
++    {
++        if (Caller() is not { } caller) return Unauthorized();
++        return ToResponse(await PaymentSummaries.GetForLookupAsync(caller, phoneNumber, customerKey, search, cancellationToken));
++    }
++
+     protected override CollectionsReadSurface Surface => CollectionsReadSurface.Web;
+ }
+ 
+@@ -335,7 +351,7 @@ public abstract class CollectionsControllerBase(
+         return ToResponse(await queries.GetRemindersAsync(caller, id, accountId, cursor, pageSize, cancellationToken));
+     }
+ 
+-    private IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
++    protected IActionResult ToResponse<T>(CollectionsResult<T> result) => result.Outcome switch
+     {
+         CollectionsOutcome.Success or CollectionsOutcome.Replayed => Ok(result.Value),
+         CollectionsOutcome.Accepted => StatusCode(StatusCodes.Status202Accepted, result.Value),
+@@ -385,6 +401,7 @@ public abstract class CollectionsControllerBase(
+         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
+ 
+     /// <summary>Which prefix this controller serves; selects the read deadline's default.</summary>
++    protected CollectionsPaymentSummaryAppService PaymentSummaries => paymentSummaries;
+     protected abstract CollectionsReadSurface Surface { get; }
+ 
+     /// <summary>
+@@ -401,7 +418,7 @@ public abstract class CollectionsControllerBase(
+         return HttpContext.RequestServices.GetRequiredService<CollectionsEdsmOptions>().ReadDeadline(Surface, requested);
+     }
+ 
+-    private CollectionsCaller? Caller()
++    protected CollectionsCaller? Caller()
+     {
+         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+         if (idValue is null || !Guid.TryParse(idValue, out var employeeId))
+diff --git a/src/TigerCS.Application/Modules/Collections/Services/CollectionsPaymentSummaryAppService.cs b/src/TigerCS.Application/Modules/Collections/Services/CollectionsPaymentSummaryAppService.cs
+index 502d09d..24f854f 100644
+--- a/src/TigerCS.Application/Modules/Collections/Services/CollectionsPaymentSummaryAppService.cs
++++ b/src/TigerCS.Application/Modules/Collections/Services/CollectionsPaymentSummaryAppService.cs
+@@ -26,8 +26,9 @@ namespace TigerCS.Application.Modules.Collections.Services;
+ /// <item>EDSM is asked only for those pairs: one summary per company, with that
+ /// company's contracts listed.</item>
+ /// </list>
+-/// A CRM-identified customer is <c>NotMapped</c>: no verified CRM → PACT
+-/// crosswalk exists (tickets store one identity or the other).
++/// Directory reads retain their stored identity. Pre-ticket lookup reads may
++/// associate CRM and PACT only through <c>CustomerIdentityLinker</c>'s fresh,
++/// unambiguous evidence; this is not a persisted CRM-to-PACT crosswalk.
+ /// </para>
+ ///
+ /// <para>
+@@ -74,10 +75,62 @@ public sealed class CollectionsPaymentSummaryAppService(
+     {
+         using var budget = new ReadBudget(deadline ?? edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
+ 
++        return await GetWithinBudgetAsync(caller, customerKey, includeTransactions, budget);
++    }
++
++    /// <summary>
++    /// Pre-ticket financial read. Requires a fresh server-side lookup and an explicit
++    /// financial grant; caller-supplied tenant/company mappings are never accepted.
++    /// Existing directory reads keep their department visibility checks.
++    /// </summary>
++    public async Task<CollectionsResult<CollectionsPaymentSummaryResponseDto>> GetForLookupAsync(
++        CollectionsCaller caller, string phoneNumber, string customerKey, CustomerSearchAppService search,
++        CancellationToken cancellationToken = default)
++    {
++        if (!options.Enabled) return Fail(CollectionsOutcome.Disabled);
++        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
++            return Fail(CollectionsOutcome.Forbidden);
++        if (string.IsNullOrWhiteSpace(phoneNumber) || !CustomerIdentity.TryParse(customerKey, out var identity)
++            || identity.Kind == CustomerIdentityKind.Phone) return Fail(CollectionsOutcome.InvalidRequest);
++        using var budget = new ReadBudget(edsmOptions.ReadDeadline(CollectionsReadSurface.Web), cancellationToken);
++        try
++        {
++            var lookup = await search.SearchByPhoneAsync(phoneNumber, budget.Token);
++            var buyer = identity.Kind == CustomerIdentityKind.Crm
++                ? lookup.CrmBuyers.SingleOrDefault(b => b.Customer.CustomerId == identity.CrmBuyerCustomerId) : null;
++            var pactSource = lookup.ExternalSources.FirstOrDefault(s => s.Source == PactSource);
++            var pactCustomer = buyer is not null
++                ? CustomerIdentityLinker.FindPactMatch(buyer, lookup.CrmBuyers, lookup.ExternalSources)
++                : identity.Kind == CustomerIdentityKind.External && identity.ExternalSource == PactSource
++                    ? pactSource?.Customers.SingleOrDefault(c => c.ExternalCustomerId == identity.ExternalCustomerId) : null;
++            if (buyer is null && pactCustomer is null)
++                return Fail(lookup.CrmStatus == "Failed" || pactSource?.Status == "Failed"
++                    ? CollectionsOutcome.FinanceUnavailable : CollectionsOutcome.AccountNotFound);
++            if (buyer is not null && pactCustomer is null && pactSource?.Status == "Failed")
++                return Fail(CollectionsOutcome.FinanceUnavailable);
++            var profile = new CustomerDirectoryProfileDto(customerKey, buyer is null ? "External" : "Crm",
++                buyer?.Customer.FullNameEnglish ?? pactCustomer?.DisplayName,
++                new[] { buyer?.Customer.MobileNumber, pactCustomer?.PhoneNumber, phoneNumber }
++                    .Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!).Distinct().ToList(), [],
++                pactCustomer is null ? "Crm" : PactSource, buyer?.Customer.CustomerId,
++                pactCustomer is null ? null : PactSource, pactCustomer?.ExternalCustomerId,
++                0, 0, clock.UtcNow, clock.UtcNow, 0, [], [], []);
++            return await GetWithinBudgetAsync(caller, customerKey, true, budget, profile);
++        }
++        catch (OperationCanceledException) when (budget.Expired)
++        {
++            return Fail(CollectionsOutcome.FinanceUnavailable, "The payment lookup deadline passed.");
++        }
++    }
++
++    private async Task<CollectionsResult<CollectionsPaymentSummaryResponseDto>> GetWithinBudgetAsync(
++        CollectionsCaller caller, string customerKey, bool includeTransactions, ReadBudget budget,
++        CustomerDirectoryProfileDto? verifiedLookupProfile = null)
++    {
+         (Resolved? Value, (CollectionsOutcome Outcome, string? Detail)? Failure) resolution;
+         try
+         {
+-            resolution = await ResolveAsync(caller, customerKey, budget.Token);
++            resolution = await ResolveAsync(caller, customerKey, budget.Token, verifiedLookupProfile);
+         }
+         catch (OperationCanceledException) when (budget.Expired)
+         {
+@@ -350,7 +403,8 @@ public sealed class CollectionsPaymentSummaryAppService(
+     /// </list>
+     /// </summary>
+     private async Task<(Resolved? Value, (CollectionsOutcome Outcome, string? Detail)? Failure)> ResolveAsync(
+-        CollectionsCaller caller, string customerKey, CancellationToken cancellationToken)
++        CollectionsCaller caller, string customerKey, CancellationToken cancellationToken,
++        CustomerDirectoryProfileDto? verifiedLookupProfile = null)
+     {
+         if (!options.Enabled)
+         {
+@@ -362,7 +416,9 @@ public sealed class CollectionsPaymentSummaryAppService(
+             return (null, (CollectionsOutcome.Forbidden, "Viewing customer payments requires the Collections financial-read permission."));
+         }
+ 
+-        var profileResult = await directory.GetProfileAsync(caller.EmployeeId, caller.Roles, customerKey, cancellationToken);
++        var profileResult = verifiedLookupProfile is null
++            ? await directory.GetProfileAsync(caller.EmployeeId, caller.Roles, customerKey, cancellationToken)
++            : CustomerDirectoryProfileResult.Success(verifiedLookupProfile);
+         switch (profileResult.Outcome)
+         {
+             case CustomerDirectoryProfileOutcome.InvalidKey:
+diff --git a/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/IPactCustomerLookupGateway.cs b/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/IPactCustomerLookupGateway.cs
+index 68001ab..7a6b059 100644
+--- a/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/IPactCustomerLookupGateway.cs
++++ b/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/IPactCustomerLookupGateway.cs
+@@ -115,7 +115,7 @@ public sealed record PactCustomerMatchDto(
+ /// <param name="ProjectName">The project/property the unit belongs to, when on file.</param>
+ /// <param name="UnitType">The unit type, when on file.</param>
+ /// <param name="CompanyId">PACT's <c>companyID</c> for the contract, when on file — with the tenant id, the key of EDSM's payment summary.</param>
+-/// <param name="ContractEndDate">PACT's <c>contractEndDate</c> as a calendar date, when PACT sent one in a format the gateway could read; null when absent or unparseable (the gateway never fails a lookup over a date — see <see cref="PactContractActivity"/> for how a null is treated). Carried for every consumer; only the customer lookup/list layer filters on it.</param>
++/// <param name="ContractEndDate">PACT's <c>contractEndDate</c> as a calendar date, when readable; null otherwise. Carried for every consumer. Lookup marks expiry; New Ticket excludes expired contracts from unit selection while retaining their historical identity and mapping.</param>
+ public sealed record PactContractDto(
+     string ExternalUnitId,
+     string? ContractNumber,
+diff --git a/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/PactContractActivity.cs b/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/PactContractActivity.cs
+index 3e3bd3e..37df68d 100644
+--- a/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/PactContractActivity.cs
++++ b/src/TigerCS.Application/Modules/CustomerVerification/PactIntegration/PactContractActivity.cs
+@@ -23,9 +23,8 @@ namespace TigerCS.Application.Modules.CustomerVerification.PactIntegration;
+ /// </para>
+ ///
+ /// <para>
+-/// Applied only by the customer lookup/list layer
+-/// (<c>CustomerLookupAppService</c>'s PACT leg), so the New Ticket wizard
+-/// and the Customer Workspace stop offering expired units — while the
++/// The lookup layer marks expired contracts but retains them. New Ticket
++/// applies this rule when offering selectable units, while the
+ /// Collections account mapping (which needs every contract, expired or not,
+ /// to resolve a tenant's EDSM accounts) and persisted ticket history keep
+ /// reading the gateway unfiltered.
+diff --git a/src/TigerCS.Application/Modules/Ticketing/Abstractions/ITicketRepository.cs b/src/TigerCS.Application/Modules/Ticketing/Abstractions/ITicketRepository.cs
+index e6e710f..ee0bce6 100644
+--- a/src/TigerCS.Application/Modules/Ticketing/Abstractions/ITicketRepository.cs
++++ b/src/TigerCS.Application/Modules/Ticketing/Abstractions/ITicketRepository.cs
+@@ -103,7 +103,8 @@ public sealed record CustomerHistoryQuery(
+     string? ExternalSource = null,
+     string? ExternalCustomerId = null,
+     string? UnitNumber = null,
+-    bool OrderActiveFirst = false);
++    bool OrderActiveFirst = false,
++    bool IncludeLinkedExternalIdentity = false);
+ 
+ /// <summary>
+ /// <see cref="Tickets"/> is the newest-first page (bounded by
+diff --git a/src/TigerCS.Application/Modules/Ticketing/Dto/CustomerLookupDtos.cs b/src/TigerCS.Application/Modules/Ticketing/Dto/CustomerLookupDtos.cs
+index 029a6a7..57d3e76 100644
+--- a/src/TigerCS.Application/Modules/Ticketing/Dto/CustomerLookupDtos.cs
++++ b/src/TigerCS.Application/Modules/Ticketing/Dto/CustomerLookupDtos.cs
+@@ -31,7 +31,8 @@ public enum CustomerLookupSourceStatus
+ /// <param name="UnitReferenceId">This system's local cache id for the unit, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+ /// <param name="ContactReferenceId">This system's local cache id for the specific customer/unit relationship, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+ /// <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
+-/// <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Only the Customer Workspace search ever returns such a unit (labelled, for historical tickets, payments and fines); the intake-anchored New Ticket lookup drops it before the unit is listed or counted, so it can never be selected for a new ticket.</param>
++/// <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Both lookup paths retain the contract for identity and historical reads; New Ticket excludes it from selectable units.</param>
++/// <param name="CompanyId">The PACT company associated with this contract, retained alongside the tenant for verified financial mapping.</param>
+ public sealed record CustomerLookupUnitDto(
+     string ExternalUnitId,
+     string? UnitNumber,
+@@ -41,7 +42,8 @@ public sealed record CustomerLookupUnitDto(
+     int? UnitReferenceId,
+     int? ContactReferenceId,
+     DateOnly? ContractEndDate = null,
+-    bool IsContractExpired = false);
++    bool IsContractExpired = false,
++    int? CompanyId = null);
+ 
+ /// <summary>
+ /// One matched customer inside a <see cref="CustomerLookupSourceResultDto"/>.
+diff --git a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerHistoryAppService.cs b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerHistoryAppService.cs
+index 0778831..1ebb175 100644
+--- a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerHistoryAppService.cs
++++ b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerHistoryAppService.cs
+@@ -202,6 +202,20 @@ public sealed class CustomerHistoryAppService(
+                 cancellationToken: cancellationToken));
+     }
+ 
++    /// <summary>Called only after the lookup has verified the CRM/PACT association.</summary>
++    public async Task<CustomerHistoryDto> GetByLinkedIdentityAsync(
++        Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles,
++        int crmCustomerId, string pactCustomerId, int? limit, string? unitNumber,
++        bool orderActiveFirst, CancellationToken cancellationToken)
++    {
++        var visible = await ticketQueryAppService.ResolveVisibleDepartmentIdsAsync(callerEmployeeId, callerRoles, cancellationToken);
++        var result = await ticketRepository.SearchCustomerHistoryAsync(new CustomerHistoryQuery(
++            visible, crmCustomerId, null, null, NormalizeLimit(limit), "Pact", pactCustomerId,
++            NormalizeUnitNumber(unitNumber), orderActiveFirst, IncludeLinkedExternalIdentity: true), cancellationToken);
++        return await ToDtoAsync("LinkedVerified", crmCustomerId, null, result,
++            externalSource: "Pact", externalCustomerId: pactCustomerId, cancellationToken: cancellationToken);
++    }
++
+     private static int NormalizeLimit(int? limit) => limit is null or <= 0 || limit > MaxLimit ? DefaultLimit : limit.Value;
+ 
+     private static string? NormalizeUnitNumber(string? unitNumber) =>
+diff --git a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerIdentityLinker.cs b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerIdentityLinker.cs
+new file mode 100644
+index 0000000..86552a9
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerIdentityLinker.cs
+@@ -0,0 +1,40 @@
++using TigerCS.Application.Modules.CustomerVerification.Dto;
++using TigerCS.Application.Modules.Ticketing.Dto;
++using TigerCS.Domain.Modules.Ticketing;
++
++namespace TigerCS.Application.Modules.Ticketing.Services;
++
++/// <summary>
++/// Conservative, lookup-scoped association. No fuzzy names, unit-id cross-system
++/// guesses, or phone-only joins. Missing evidence and ambiguous links stay separate.
++/// The original source records, tenant and every company/contract are retained.
++/// </summary>
++public static class CustomerIdentityLinker
++{
++    public static CustomerLookupCustomerDto? FindPactMatch(
++        CrmBuyerMatchDto buyer, IReadOnlyList<CrmBuyerMatchDto> buyers,
++        IReadOnlyList<CustomerLookupSourceResultDto> sources)
++    {
++        var pact = sources.Where(s => s.Source == "Pact" && s.Status == "Found")
++            .SelectMany(s => s.Customers).ToList();
++        var matches = pact.Where(p => Matches(buyer, p)).ToList();
++        return matches.Count == 1 && buyers.Count(b => Matches(b, matches[0])) == 1 ? matches[0] : null;
++    }
++
++    private static bool Matches(CrmBuyerMatchDto buyer, CustomerLookupCustomerDto pact)
++    {
++        var c = buyer.Customer;
++        if (!CustomerPhoneNumber.LooksLikeNumber(c.MobileNumber) || !CustomerPhoneNumber.LooksLikeNumber(pact.PhoneNumber)
++            || !CustomerPhoneNumber.AreSameNumber(c.MobileNumber, pact.PhoneNumber)) return false;
++        var samePerson = Same(c.Email, pact.Email)
++            || Same(c.FullNameEnglish, pact.DisplayName) || Same(c.FullNameArabic, pact.DisplayName);
++        return samePerson && buyer.Units.Any(crm => pact.Units.Any(p =>
++            Same(crm.UnitNumber, p.UnitNumber) && (Same(crm.ProjectName, p.PropertyName) || Same(crm.ProjectArabicName, p.PropertyName))));
++    }
++
++    public static bool Same(string? left, string? right) =>
++        !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right)
++        && string.Equals(Text(left), Text(right), StringComparison.OrdinalIgnoreCase);
++
++    public static string Text(string? value) => string.Join(' ', (value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
++}
+diff --git a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerLookupAppService.cs b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerLookupAppService.cs
+index 90bf659..e701b9e 100644
+--- a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerLookupAppService.cs
++++ b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerLookupAppService.cs
+@@ -52,21 +52,12 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
+ /// </para>
+ ///
+ /// <para>
+-/// <b>PACT contract expiry is applied here, and differently per caller.</b>
+-/// The intake-anchored <see cref="SearchAsync"/> (the New Ticket wizard's
+-/// selectable results) drops every PACT contract whose
+-/// <c>contractEndDate</c> falls before today's Dubai calendar date before
+-/// the customer's units are counted or listed, and drops a customer whose
+-/// every contract has expired (no card, nothing selectable). The Customer
+-/// Workspace's <see cref="SearchExternalSourcesByPhoneAsync"/> keeps every
+-/// contract and flags the expired ones
+-/// (<see cref="CustomerLookupUnitDto.IsContractExpired"/>), so an agent can
+-/// still find a customer whose contracts have all ended and reach their
+-/// historical tickets, payments and fines. The rule itself is
+-/// <see cref="PactContractActivity"/>; it lives in this lookup/list layer
+-/// and nowhere lower, so the Collections account mapping (which reads the
+-/// PACT gateway directly and needs every contract) and persisted ticket
+-/// history are untouched.
++/// <b>PACT contracts remain available for identity, history and Collections.</b>
++/// Both lookup paths retain expired contracts, flagged with
++/// <see cref="CustomerLookupUnitDto.IsContractExpired"/>. The New Ticket
++/// unit-selection view excludes expired contracts. Filtering the source
++/// result here would discard evidence linking CRM to a historical PACT
++/// tenant, and hide the tenant's historical tickets and financial mapping.
+ /// </para>
+ /// </summary>
+ public sealed class CustomerLookupAppService(
+@@ -119,7 +110,7 @@ public sealed class CustomerLookupAppService(
+     {
+         var tasks = new[]
+         {
+-            SearchPactAsync(phoneNumber, includeExpiredContracts: true, cancellationToken),
++            SearchPactAsync(phoneNumber, cancellationToken),
+             SearchTasleehAsync(phoneNumber, cancellationToken)
+         };
+         return await Task.WhenAll(tasks);
+@@ -129,7 +120,7 @@ public sealed class CustomerLookupAppService(
+         CustomerLookupSource source, string phoneNumber, CancellationToken cancellationToken) => source switch
+     {
+         CustomerLookupSource.Crm => SearchCrmAsync(phoneNumber, cancellationToken),
+-        CustomerLookupSource.Pact => SearchPactAsync(phoneNumber, includeExpiredContracts: false, cancellationToken),
++        CustomerLookupSource.Pact => SearchPactAsync(phoneNumber, cancellationToken),
+         CustomerLookupSource.Tasleeh => SearchTasleehAsync(phoneNumber, cancellationToken),
+         _ => throw new ArgumentOutOfRangeException(nameof(source), source, "Unknown customer lookup source.")
+     };
+@@ -228,25 +219,11 @@ public sealed class CustomerLookupAppService(
+     /// so every unit is display enrichment for the agent — all current
+     /// units are returned and none is ever auto-selected.
+     ///
+-    /// <para>
+-    /// With <paramref name="includeExpiredContracts"/> false (the New Ticket
+-    /// wizard's intake-anchored lookup), expired contracts (end date before
+-    /// today in Dubai — see <see cref="PactContractActivity"/>) are filtered
+-    /// out per customer BEFORE the unit list is built, so the card's unit
+-    /// count reflects only current contracts. A customer left with no
+-    /// current contract, having had at least one, is dropped — and when
+-    /// every matched customer is dropped the source reports NotFound,
+-    /// exactly as if PACT had no current customer on file. With it true
+-    /// (the Customer Workspace), every contract is returned and expired
+-    /// ones carry <see cref="CustomerLookupUnitDto.IsContractExpired"/>.
+-    /// Either way a customer PACT returned with no contracts at all is
+-    /// still shown (nothing expired; that is how PACT has always surfaced a
+-    /// contract-less tenant), and a contract with no readable end date is
+-    /// treated as current, never hidden.
+-    /// </para>
++    /// All contracts, including expired ones, remain available as identity
++    /// evidence and for historical reads. Selectability belongs to New Ticket.
+     /// </summary>
+     private async Task<CustomerLookupSourceResultDto> SearchPactAsync(
+-        string phoneNumber, bool includeExpiredContracts, CancellationToken cancellationToken)
++        string phoneNumber, CancellationToken cancellationToken)
+     {
+         var sourceName = CustomerLookupSource.Pact.ToString();
+ 
+@@ -267,9 +244,7 @@ public sealed class CustomerLookupAppService(
+                 Match: match,
+                 Contracts: match.Contracts
+                     .Select(contract => (Contract: contract, IsActive: PactContractActivity.IsActiveOn(contract, today)))
+-                    .Where(contract => includeExpiredContracts || contract.IsActive)
+                     .ToList()))
+-            .Where(current => current.Contracts.Count > 0 || current.Match.Contracts.Count == 0)
+             .ToList();
+         if (matches.Count == 0)
+         {
+@@ -283,13 +258,11 @@ public sealed class CustomerLookupAppService(
+                 current.Match.PhoneNumber,
+                 current.Match.Email,
+                 current.Match.CustomerType,
+-                // Distinct by ExternalUnitId for the same reason as the CRM
+-                // leg: a duplicate contract row for the same unit must never
+-                // surface as two units for the same customer. A current
+-                // contract wins over an expired one for the same unit.
++                // Preserve distinct contracts and companies for the tenant.
++                // The selection view deduplicates physical units after expiry filtering.
+                 current.Contracts
+                     .OrderByDescending(contract => contract.IsActive)
+-                    .DistinctBy(contract => contract.Contract.ExternalUnitId)
++                    .DistinctBy(contract => (contract.Contract.CompanyId, contract.Contract.ContractNumber, contract.Contract.ExternalUnitId))
+                     .Select(contract => new CustomerLookupUnitDto(
+                         contract.Contract.ExternalUnitId,
+                         contract.Contract.UnitNumber,
+@@ -299,7 +272,7 @@ public sealed class CustomerLookupAppService(
+                         UnitReferenceId: null,
+                         ContactReferenceId: null,
+                         contract.Contract.ContractEndDate,
+-                        IsContractExpired: !contract.IsActive))
++                        IsContractExpired: !contract.IsActive, CompanyId: contract.Contract.CompanyId))
+                     .ToList()))
+             .ToList();
+         return CustomerLookupSourceResultDto.Found(sourceName, customers);
+diff --git a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerSearchAppService.cs b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerSearchAppService.cs
+index 02eb30d..85e206b 100644
+--- a/src/TigerCS.Application/Modules/Ticketing/Services/CustomerSearchAppService.cs
++++ b/src/TigerCS.Application/Modules/Ticketing/Services/CustomerSearchAppService.cs
+@@ -32,6 +32,7 @@ public sealed class CustomerSearchAppService(
+         var crmTask = crmBuyerLookupAppService.GetBuyerByPhoneAsync(phoneNumber, cancellationToken);
+         var externalTask = customerLookupAppService.SearchExternalSourcesByPhoneAsync(phoneNumber, cancellationToken);
+ 
++        await Task.WhenAll(crmTask, externalTask);
+         var crmResult = await crmTask;
+         var externalResults = await externalTask;
+ 
+diff --git a/src/TigerCS.Infrastructure/Modules/Ticketing/Repositories/TicketRepository.cs b/src/TigerCS.Infrastructure/Modules/Ticketing/Repositories/TicketRepository.cs
+index 0085f61..60c7448 100644
+--- a/src/TigerCS.Infrastructure/Modules/Ticketing/Repositories/TicketRepository.cs
++++ b/src/TigerCS.Infrastructure/Modules/Ticketing/Repositories/TicketRepository.cs
+@@ -178,7 +178,13 @@ public sealed class TicketRepository(TigerCsDbContext dbContext) : ITicketReposi
+         CustomerHistoryQuery query, CancellationToken cancellationToken = default)
+     {
+         IQueryable<Ticket> filtered;
+-        if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
++        if (query is { IncludeLinkedExternalIdentity: true, CrmBuyerCustomerId: { } linkedCrmId,
++            ExternalSource: { } linkedSource, ExternalCustomerId: { } linkedExternalId })
++        {
++            filtered = dbContext.Tickets.Where(t => t.CrmBuyerCustomerId == linkedCrmId
++                || (t.CustomerVerificationSource == linkedSource && t.ExternalCustomerId == linkedExternalId));
++        }
++        else if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
+         {
+             filtered = dbContext.Tickets.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
+         }
+diff --git a/src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesImporter.cs b/src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesImporter.cs
+index 20deed1..24bb24d 100644
+--- a/src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesImporter.cs
++++ b/src/TigerCS.Infrastructure/Modules/WorkflowConfiguration/Seed/NewRequestTypesImporter.cs
+@@ -1,4 +1,5 @@
+ using Microsoft.EntityFrameworkCore;
++using TigerCS.Domain.Modules.ClassificationAndRouting;
+ using TigerCS.Domain.Modules.IdentityAndAccess;
+ using TigerCS.Domain.Modules.SlaAndEscalation;
+ using TigerCS.Domain.Modules.WorkflowConfiguration;
+@@ -130,6 +131,24 @@ public static class NewRequestTypesImporter
+             results.Add(result);
+         }
+ 
++        // Intake presents Department as Request Category and its children as
++        // Request Types. Each configured child needs its own exact routing row;
++        // reusing an arbitrary category would misclassify the ticket history.
++        var routingCategories = await dbContext.Categories.ToListAsync(cancellationToken);
++        var activeTypes = await dbContext.RequestTypes.Where(r => r.IsActive).ToListAsync(cancellationToken);
++        foreach (var requestType in activeTypes)
++        {
++            if (routingCategories.Any(c => c.DepartmentId == requestType.DepartmentId
++                    && string.Equals(c.Name.Trim(), requestType.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
++            {
++                continue;
++            }
++            var category = new Category(requestType.Name, requestType.DepartmentId);
++            dbContext.Categories.Add(category);
++            routingCategories.Add(category);
++        }
++        await dbContext.SaveChangesAsync(cancellationToken);
++
+         if (transaction is not null)
+         {
+             await transaction.CommitAsync(cancellationToken);
+diff --git a/src/TigerCS.Integrations/Modules/PactIntegration/PactContractDateParser.cs b/src/TigerCS.Integrations/Modules/PactIntegration/PactContractDateParser.cs
+index c3f68c2..cd9fb30 100644
+--- a/src/TigerCS.Integrations/Modules/PactIntegration/PactContractDateParser.cs
++++ b/src/TigerCS.Integrations/Modules/PactIntegration/PactContractDateParser.cs
+@@ -104,7 +104,7 @@ public static partial class PactContractDateParser
+         // Anything below 10^11 cannot be a plausible millisecond epoch
+         // (that is March 1973); PACT's dates are decades later, so a
+         // small value is an epoch in seconds.
+-        Math.Abs(epoch) < 100_000_000_000L ? FromEpochSeconds(epoch) : FromEpochMilliseconds(epoch);
++        epoch is > -100_000_000_000L and < 100_000_000_000L ? FromEpochSeconds(epoch) : FromEpochMilliseconds(epoch);
+ 
+     private static DateOnly? FromEpochMilliseconds(long milliseconds)
+     {
+diff --git a/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryApiTests.cs b/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryApiTests.cs
+index d6abe70..308b8e8 100644
+--- a/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryApiTests.cs
++++ b/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryApiTests.cs
+@@ -6,6 +6,9 @@ using TigerCS.Application.Modules.Collections;
+ using TigerCS.Application.Modules.Collections.Dto;
+ using TigerCS.Application.Modules.Collections.Services;
+ using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
++using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
++using TigerCS.Application.Modules.CustomerVerification.Dto;
++using TigerCS.Tests.CustomerVerification.Fakes;
+ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+ using TigerCS.Application.Modules.Ticketing.Dto;
+ using TigerCS.Domain.Modules.IdentityAndAccess;
+@@ -28,6 +31,9 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
+     private const string PactPhone = "+971500000002";   // MockPactGateway's fixture customer: companies 4 and 25
+ 
+     private readonly CountingPact _pact = new();
++    private readonly FakeCrmBuyerLookupGateway _crm = new();
++    private static CrmBuyerMatchDto LinkedBuyer => new(new CrmCustomerDto(9001, "Fatima Noor", null, "971500000002", null),
++        [new CrmBuyerUnitDto(1, 8, "Sold", 777, "0304", 1, 1, null, 9, "Tiger Marina Residences", null, 1, "Buyer")]);
+     private readonly TigerCsApiFactory _factory;
+ 
+     public EdsmPaymentSummaryApiTests()
+@@ -43,6 +49,7 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
+             ExtraServices = services =>
+             {
+                 services.AddScoped<ICollectionsCustomerProfiles, Profiles>();
++                services.AddSingleton<ICrmBuyerLookupGateway>(_crm);
+                 services.AddSingleton(_pact);
+                 services.AddScoped<IPactCustomerLookupGateway>(sp => sp.GetRequiredService<CountingPact>());
+             },
+@@ -253,6 +260,77 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
+         Assert.Equal(0, _pact.Calls);
+     }
+ 
++    private static string LookupUrl(string key) => $"/api/collections/customer-lookup/payment-summary?phoneNumber={Uri.EscapeDataString(PactPhone)}&customerKey={Uri.EscapeDataString(key)}";
++
++    [Theory]
++    [InlineData(Roles.SystemAdministrator)]
++    [InlineData(Roles.CsAgent)]
++    public async Task LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost(string role)
++    {
++        _crm.Returns(CrmBuyerLookupResult.Success([LinkedBuyer]));
++        var client = await ClientAsync(role);
++        var response = await client.GetAsync(LookupUrl("crm:9001"));
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var summary = (await response.Content.ReadFromJsonAsync<CollectionsPaymentSummaryResponseDto>())!;
++        Assert.Equal("crm:9001", summary.CustomerKey);
++        Assert.Equal("3001", summary.PactTenantId);
++        Assert.Equal("Mapped", summary.MappingStatus);
++        Assert.Equal([4, 25], summary.Companies.Select(c => c.CompanyId));
++        Assert.All(summary.Companies, c => Assert.Equal(3, c.Transactions.Count));
++        var fines = summary.Companies.Single(c => c.CompanyId == 25).Fields.Single(f => f.Key == "lateFines");
++        Assert.Equal("NotComputedForRented", fines.Meaning);
++        Assert.Null(fines.Value);
++        var history = await client.GetAsync($"/api/customers/lookup/ticket-history?phoneNumber={Uri.EscapeDataString(PactPhone)}&crmCustomerId=9001");
++        Assert.Equal(HttpStatusCode.OK, history.StatusCode);
++        Assert.Equal(0, (await history.Content.ReadFromJsonAsync<CustomerHistoryDto>())!.TotalTickets);
++    }
++
++    [Fact]
++    public async Task StandalonePactLookup_DoesNotRequireADirectoryProfile()
++    {
++        var client = await ClientAsync(Roles.CsAgent);
++        var response = await client.GetAsync(LookupUrl(PactKey));
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        Assert.Equal("Mapped", (await response.Content.ReadFromJsonAsync<CollectionsPaymentSummaryResponseDto>())!.MappingStatus);
++    }
++
++    [Fact]
++    public async Task UnknownTenant_IsNotAcceptedBecauseThePhoneMatchedSomeoneElse()
++    {
++        var client = await ClientAsync(Roles.CsAgent);
++        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(LookupUrl("ext:Pact:9999"))).StatusCode);
++    }
++
++    [Fact]
++    public async Task SamePhoneWithoutMatchingUnit_DoesNotExposePactFiguresOnCrmCustomer()
++    {
++        _crm.Returns(CrmBuyerLookupResult.Success([LinkedBuyer with { Units = [LinkedBuyer.Units[0] with { UnitNumber = "9999" }] }]));
++        var client = await ClientAsync(Roles.CsAgent);
++        var summary = (await client.GetFromJsonAsync<CollectionsPaymentSummaryResponseDto>(LookupUrl("crm:9001")))!;
++        Assert.Equal("NotMapped", summary.MappingStatus);
++        Assert.Empty(summary.Companies);
++    }
++
++    [Fact]
++    public async Task LookupRequiresFinancialGrant_EvenForAnAuthenticatedCustomerVerificationRole()
++    {
++        _factory.Services.GetRequiredService<CollectionsOptions>().Authorization.FinancialReadRoles.Clear();
++        _factory.Services.GetRequiredService<CollectionsOptions>().Authorization.ReminderSendRoles.Clear();
++        var client = await ClientAsync(Roles.CsAgent);
++        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(LookupUrl(PactKey))).StatusCode);
++        Assert.Equal(0, _pact.Calls);
++    }
++
++    [Fact]
++    public async Task LookupDisabledOrAnonymous_ReturnsNoFigures()
++    {
++        Assert.Equal(HttpStatusCode.Unauthorized, (await _factory.CreateClient().GetAsync(LookupUrl(PactKey))).StatusCode);
++        _factory.Services.GetRequiredService<CollectionsOptions>().Enabled = false;
++        var client = await ClientAsync(Roles.CsAgent);
++        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync(LookupUrl(PactKey))).StatusCode);
++        Assert.Equal(0, _pact.Calls);
++    }
++
+     private async Task<(HttpClient Client, Guid EmployeeId)> ClientWithIdAsync(string role)
+     {
+         var (username, password, employeeId) = await _factory.SeedEmployeeAsync(role);
+diff --git a/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryTests.cs b/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryTests.cs
+index ed91626..aafc94d 100644
+--- a/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryTests.cs
++++ b/src/TigerCS.Tests/Collections/Edsm/EdsmPaymentSummaryTests.cs
+@@ -427,6 +427,16 @@ public sealed class CollectionsPaymentSummaryAppServiceTests
+         Assert.All(owned.Transactions.SelectMany(t => t.Items), i => { Assert.Null(i.PaymentTypeId); Assert.Null(i.PaymentType); });
+     }
+ 
++    [Fact]
++    public async Task ExpiredContractsStillEstablishHistoricalPaymentMapping()
++    {
++        SeedPactCustomer(Owned with { ContractEndDate = new DateOnly(2000, 1, 1) }, Rented with { ContractEndDate = new DateOnly(2001, 1, 1) });
++        var summary = (await Service().GetAsync(_agent, PactKey)).Value!;
++        Assert.Equal("Mapped", summary.MappingStatus);
++        Assert.Equal([4, 25], summary.Companies.Select(c => c.CompanyId));
++        Assert.Equal(2, summary.Companies.Sum(c => c.Contracts.Count));
++    }
++
+     [Fact]
+     public async Task OnlyReadOnlyTransactionTypes_AreRequested()
+     {
+diff --git a/src/TigerCS.Tests/CustomerVerification/Services/PactContractDateParserTests.cs b/src/TigerCS.Tests/CustomerVerification/Services/PactContractDateParserTests.cs
+index 2b86048..8308048 100644
+--- a/src/TigerCS.Tests/CustomerVerification/Services/PactContractDateParserTests.cs
++++ b/src/TigerCS.Tests/CustomerVerification/Services/PactContractDateParserTests.cs
+@@ -55,6 +55,7 @@ public class PactContractDateParserTests
+     [InlineData("/Date()/")]
+     [InlineData("Date(1767225600000)")]
+     [InlineData("1767225600000x")]
++    [InlineData("-9223372036854775808")]
+     [InlineData("99999999999999999999")] // overflows long
+     [InlineData("/Date(999999999999999999)/")] // out of DateTimeOffset's range
+     public void TryParse_UnreadableValues_YieldNullNeverThrow(string? value)
+@@ -80,6 +81,7 @@ public class PactContractDateParserTests
+     [InlineData("\"2026-01-01T00:00:00\"", "2026-01-01")]
+     [InlineData("1767225600000", "2026-01-01")]
+     [InlineData("null", null)]
++    [InlineData("-9223372036854775808", null)]
+     [InlineData("\"garbage\"", null)]
+     [InlineData("true", null)]
+     [InlineData("12.5", null)]
+diff --git a/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs b/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
+index 3081ca2..b381dba 100644
+--- a/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
++++ b/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
+@@ -80,6 +80,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
+         ["POST /api/genesys/agent-context"] = nameof(GenesysIntegration.Integration.GenesysAgentMappingEndpointsTests.MappedAgent_ResolvesToTheTicketingUser_AndRecordsInteractionOwnership),
+         // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).
+         ["POST /api/genesys/screen-pop"] = nameof(GenesysIntegration.Integration.GenesysScreenPopEndpointsTests.Issue_ReturnsAOneHourLaunchUrl_AndStoresOnlyTheHash),
++        ["GET /api/collections/customer-lookup/payment-summary"] = nameof(Collections.Edsm.EdsmPaymentSummaryApiTests.LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost),
++        ["GET /api/customers/lookup/ticket-history"] = nameof(Collections.Edsm.EdsmPaymentSummaryApiTests.LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost),
+         // Collections — the explicit financial permissions, with the System Administrator override, on both prefixes.
+         ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+         ["GET /api/genesys/collections/customers/{crmCustomerId}/payments"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+diff --git a/src/TigerCS.Tests/Ticketing/Fakes/FakeTicketingRepositories.cs b/src/TigerCS.Tests/Ticketing/Fakes/FakeTicketingRepositories.cs
+index 9cf694e..5ebaa7e 100644
+--- a/src/TigerCS.Tests/Ticketing/Fakes/FakeTicketingRepositories.cs
++++ b/src/TigerCS.Tests/Ticketing/Fakes/FakeTicketingRepositories.cs
+@@ -286,7 +286,13 @@ public sealed class FakeTicketRepository : ITicketRepository
+         SearchCustomerHistoryCallCount++;
+ 
+         IEnumerable<Ticket> filtered;
+-        if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
++        if (query is { IncludeLinkedExternalIdentity: true, CrmBuyerCustomerId: { } linkedCrmId,
++            ExternalSource: { } linkedSource, ExternalCustomerId: { } linkedExternalId })
++        {
++            filtered = _tickets.Values.Where(t => t.CrmBuyerCustomerId == linkedCrmId
++                || (t.CustomerVerificationSource == linkedSource && t.ExternalCustomerId == linkedExternalId));
++        }
++        else if (query.CrmBuyerCustomerId is { } crmBuyerCustomerId)
+         {
+             filtered = _tickets.Values.Where(t => t.CrmBuyerCustomerId == crmBuyerCustomerId);
+         }
+diff --git a/src/TigerCS.Tests/Ticketing/Integration/CustomerDirectorySqliteTests.cs b/src/TigerCS.Tests/Ticketing/Integration/CustomerDirectorySqliteTests.cs
+index e2e76d1..4f97a4c 100644
+--- a/src/TigerCS.Tests/Ticketing/Integration/CustomerDirectorySqliteTests.cs
++++ b/src/TigerCS.Tests/Ticketing/Integration/CustomerDirectorySqliteTests.cs
+@@ -49,6 +49,23 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
+         return await Service(context).GetProfileAsync(caller ?? Guid.NewGuid(), roles ?? CrossDepartment, key);
+     }
+ 
++    [Fact]
++    public async Task LinkedHistoryUsesOneScopedSqlUnion_WithCountsOverTheWholeSetBeforeLimit()
++    {
++        using var context = _db.CreateContext();
++        var crm = AddCrmTicket(context, 9001, "Fatima", "0304");
++        var pact = AddExternalTicket(context, "Pact", "3001", "0304");
++        AddExternalTicket(context, "Pact", "9999", "0304");
++        AddCrmTicket(context, 9001, "Fatima", "0304", departmentId: _db.CollectionsId);
++        var result = await new TicketRepository(context).SearchCustomerHistoryAsync(new(
++            [_db.CustomerServiceId], 9001, null, null, 1, "Pact", "3001", IncludeLinkedExternalIdentity: true));
++        Assert.Equal(2, result.TotalCount);
++        Assert.Single(result.Tickets);
++        var all = await new TicketRepository(context).SearchCustomerHistoryAsync(new(
++            [_db.CustomerServiceId], 9001, null, null, 50, "Pact", "3001", IncludeLinkedExternalIdentity: true));
++        Assert.Equal(new[] { crm.TicketId, pact.TicketId }.Order(), all.Tickets.Select(t => t.TicketId).Order());
++    }
++
+     // ---- seeding ----
+ 
+     private Ticket AddCrmTicket(TigerCsDbContext context, int crmCustomerId, string name, string unit, string project = "Tiger Tower",
+diff --git a/src/TigerCS.Tests/Ticketing/Integration/PactHttpLookupEndToEndTests.cs b/src/TigerCS.Tests/Ticketing/Integration/PactHttpLookupEndToEndTests.cs
+index 57a843a..e153b08 100644
+--- a/src/TigerCS.Tests/Ticketing/Integration/PactHttpLookupEndToEndTests.cs
++++ b/src/TigerCS.Tests/Ticketing/Integration/PactHttpLookupEndToEndTests.cs
+@@ -54,9 +54,8 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
+     /// (7001), three contract rows, same tenantID — two CURRENT contracts
+     /// (ending a year and two years from now, computed per run so the
+     /// fixture never silently expires) and one contract that ended in 2020.
+-    /// The lookup layer must show exactly the two current units and drop
+-    /// the expired one; the row is still there so the end-to-end flow
+-    /// proves the filter against the real wire shape and the real gateway.
++    /// The lookup retains all three contracts and flags the expired one;
++    /// New Ticket filters it when offering selectable units.
+     /// </summary>
+     private static readonly string KnownMobileContractsJson = $$"""
+         {
+@@ -161,17 +160,15 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
+         Assert.Equal("Found", pactSource.Status);
+ 
+         // tenantID, name, project, unit numbers, unitID-based external ids,
+-        // raw buyer-type code — and BOTH current units, nothing
+-        // auto-selected; the contract that ended in 2020 (unit 702) is
+-        // filtered out by the lookup layer, so it is neither counted nor
+-        // listed.
++        // Raw identity and every contract are retained, including the
++        // expired contract as historical evidence. No unit is auto-selected.
+         var customer = Assert.Single(pactSource.Customers);
+         Assert.Equal("7001", customer.ExternalCustomerId);
+         Assert.Equal("Fatima Noor", customer.DisplayName);
+         Assert.Equal(KnownMobile, customer.PhoneNumber);
+         Assert.Equal("fatima@example.test", customer.Email);
+         Assert.Equal("2", customer.CustomerType);
+-        Assert.Equal(2, customer.Units.Count);
++        Assert.Equal(3, customer.Units.Count);
+         var marinaUnit = Assert.Single(customer.Units, u => u.ExternalUnitId == "700");
+         Assert.Equal("2304", marinaUnit.UnitNumber);
+         Assert.Equal("Tiger Marina Residences", marinaUnit.PropertyName);
+@@ -179,7 +176,7 @@ public sealed class PactHttpLookupEndToEndTests : IAsyncLifetime
+         var bayUnit = Assert.Single(customer.Units, u => u.ExternalUnitId == "701");
+         Assert.Equal("1105", bayUnit.UnitNumber);
+         Assert.Equal("Tiger Bay Towers", bayUnit.PropertyName);
+-        Assert.DoesNotContain(customer.Units, u => u.ExternalUnitId == "702");
++        Assert.True(Assert.Single(customer.Units, u => u.ExternalUnitId == "702").IsContractExpired);
+         // No local reference ids for PACT — display enrichment, never
+         // linkable by id (so also never auto-linked to the ticket).
+         Assert.All(customer.Units, u =>
+diff --git a/src/TigerCS.Tests/Ticketing/Services/CustomerIdentityLinkerTests.cs b/src/TigerCS.Tests/Ticketing/Services/CustomerIdentityLinkerTests.cs
+new file mode 100644
+index 0000000..a922f92
+--- /dev/null
++++ b/src/TigerCS.Tests/Ticketing/Services/CustomerIdentityLinkerTests.cs
+@@ -0,0 +1,49 @@
++using TigerCS.Application.Modules.CustomerVerification.Dto;
++using TigerCS.Application.Modules.Ticketing.Dto;
++using TigerCS.Application.Modules.Ticketing.Services;
++
++namespace TigerCS.Tests.Ticketing.Services;
++
++public sealed class CustomerIdentityLinkerTests
++{
++    private static CrmBuyerMatchDto Buyer(int id = 7) => new(
++        new CrmCustomerDto(id, "Fatima Noor", null, "+971500000002", "fatima@example.test"),
++        [new CrmBuyerUnitDto(1, 8, "Sold", 101, "0304", 1, 1, 3, 9, "Tiger Marina", null, 1, "Buyer")]);
++    private static CustomerLookupCustomerDto Pact(string id = "3001") => new(id, "Fatima Noor", "971500000002", "fatima@example.test", "2",
++        [new CustomerLookupUnitDto("9000", "0304", "Tiger Marina", null, "Residential", null, null, ContractEndDate: new DateOnly(2020, 1, 1), CompanyId: 25)]);
++    private static CustomerLookupCustomerDto? Link(CrmBuyerMatchDto buyer, params CustomerLookupCustomerDto[] pact) =>
++        CustomerIdentityLinker.FindPactMatch(buyer, [buyer], [CustomerLookupSourceResultDto.Found("Pact", pact)]);
++
++    [Fact]
++    public void ExactPersonAndPropertyUnit_WithNormalizedPhone_RetainsExpiredContracts()
++    {
++        var pact = Pact();
++        Assert.Same(pact, Link(Buyer(), pact));
++        Assert.Equal(new DateOnly(2020, 1, 1), Link(Buyer(), pact)!.Units.Single().ContractEndDate);
++        Assert.Equal(25, Link(Buyer(), pact)!.Units.Single().CompanyId);
++    }
++
++    [Fact]
++    public void PhoneAlone_IsNeverEnough() => Assert.Null(Link(Buyer(), Pact() with { DisplayName = "Another Person", Email = null }));
++
++    [Fact]
++    public void PersonAndPhoneWithoutTheSameUnit_IsNotEnough() => Assert.Null(Link(Buyer(), Pact() with { Units = [] }));
++
++    [Fact]
++    public void SameUnitNumberInADifferentProject_IsNotAMatch() => Assert.Null(Link(Buyer(), Pact() with
++        { Units = [Pact().Units[0] with { PropertyName = "Another Tower" }] }));
++
++    [Fact]
++    public void SameRawUnitIdWithoutDisplayEvidence_IsNotAMatch() => Assert.Null(Link(Buyer(), Pact() with
++        { Units = [Pact().Units[0] with { ExternalUnitId = "101", UnitNumber = null }] }));
++
++    [Fact]
++    public void TwoPactTenantsWithTheSameEvidence_StaySeparate() => Assert.Null(Link(Buyer(), Pact(), Pact("3002")));
++
++    [Fact]
++    public void TwoCrmCustomersMatchingOneTenant_StaySeparate() => Assert.Null(CustomerIdentityLinker.FindPactMatch(
++        Buyer(), [Buyer(), Buyer(8)], [CustomerLookupSourceResultDto.Found("Pact", [Pact()])]));
++
++    [Fact]
++    public void MissingPhone_IsNeverInferredFromTheSearch() => Assert.Null(Link(Buyer(), Pact() with { PhoneNumber = null }));
++}
+diff --git a/src/TigerCS.Tests/Ticketing/Services/CustomerLookupAppServiceTests.cs b/src/TigerCS.Tests/Ticketing/Services/CustomerLookupAppServiceTests.cs
+index 56e9a4c..b9dba18 100644
+--- a/src/TigerCS.Tests/Ticketing/Services/CustomerLookupAppServiceTests.cs
++++ b/src/TigerCS.Tests/Ticketing/Services/CustomerLookupAppServiceTests.cs
+@@ -306,8 +306,8 @@ public class CustomerLookupAppServiceTests
+     }
+ 
+     // ---------------------------------------------------------------
+-    // PACT contract expiry: contractEndDate before today's DUBAI date hides
+-    // the contract; today or later keeps it. The clock below is
++    // PACT contract expiry: contractEndDate before today's DUBAI date flags
++    // the contract; selection filtering happens in New Ticket. The clock below is
+     // 2026-10-05 21:30 UTC — still 5 October on a UTC server, but already
+     // 6 October 01:30 in Dubai — so "today" for every test here is
+     // 6 October, and a contract ending on 5 October counts as expired
+@@ -317,6 +317,21 @@ public class CustomerLookupAppServiceTests
+     private static readonly DateTime DubaiBoundaryUtc = new(2026, 10, 5, 21, 30, 0, DateTimeKind.Utc);
+     private static readonly DateOnly DubaiToday = new(2026, 10, 6);
+ 
++    [Fact]
++    public async Task LookupRetainsDifferentCompaniesAndHistoricalContractsOnTheSameUnit()
++    {
++        var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
++        var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
++        var expired = new PactContractDto("U-1", "OLD", "0304", "Tiger Marina", "Residential", 4, DubaiToday.AddDays(-1));
++        var current = expired with { ContractNumber = "NEW", CompanyId = 25, ContractEndDate = DubaiToday };
++        f.Pact.Seed(Phone, new PactCustomerMatchDto("TENANT", "Fatima Noor", Phone, null, "2", [expired, current, expired]));
++        var customer = Assert.Single(PactSource(await f.Service.SearchAsync(intakeRecordId)).Customers);
++        Assert.Equal(2, customer.Units.Count);
++        Assert.Equal([25, 4], customer.Units.Select(u => u.CompanyId));
++        Assert.False(customer.Units[0].IsContractExpired);
++        Assert.True(customer.Units[1].IsContractExpired);
++    }
++
+     private static PactContractDto Contract(string unitId, DateOnly? endDate) =>
+         new(unitId, $"CNT-{unitId}", unitId, "Tiger Marina Residences", "Residential", ContractEndDate: endDate);
+ 
+@@ -324,7 +339,7 @@ public class CustomerLookupAppServiceTests
+         Assert.Single(result.Response!.Sources, s => s.Source == "Pact");
+ 
+     [Fact]
+-    public async Task SearchAsync_PactContractEndedYesterdayInDubai_IsHiddenAndCustomerDropped()
++    public async Task SearchAsync_PactContractEndedYesterdayInDubai_RetainsIdentityAndFlagsExpiry()
+     {
+         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+@@ -334,11 +349,9 @@ public class CustomerLookupAppServiceTests
+ 
+         var result = await f.Service.SearchAsync(intakeRecordId);
+ 
+-        // The only contract expired on the Dubai calendar (UTC still says
+-        // 5 October): nothing current remains, so no PACT card at all.
+         var pactResult = PactSource(result);
+-        Assert.Equal("NotFound", pactResult.Status);
+-        Assert.Empty(pactResult.Customers);
++        Assert.Equal("Found", pactResult.Status);
++        Assert.True(Assert.Single(Assert.Single(pactResult.Customers).Units).IsContractExpired);
+     }
+ 
+     [Fact]
+@@ -375,7 +388,7 @@ public class CustomerLookupAppServiceTests
+     }
+ 
+     [Fact]
+-    public async Task SearchAsync_PactMixedActiveAndExpiredContracts_CountsAndListsOnlyActiveUnits()
++    public async Task SearchAsync_PactMixedActiveAndExpiredContracts_RetainsAllEvidenceAndFlagsExpiry()
+     {
+         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+@@ -399,14 +412,13 @@ public class CustomerLookupAppServiceTests
+         Assert.Equal("Fatima Noor", customer.DisplayName);
+         Assert.Equal("fatima@example.com", customer.Email);
+         Assert.Equal("2", customer.CustomerType);
+-        // The unit count the wizard card shows is Units.Count — filtered
+-        // BEFORE the list is built, so expired units are not counted either.
+-        Assert.Equal(2, customer.Units.Count);
+-        Assert.Equal(["U-TODAY", "U-FUTURE"], customer.Units.Select(u => u.ExternalUnitId).ToArray());
++        Assert.Equal(4, customer.Units.Count);
++        Assert.Equal(["U-TODAY", "U-FUTURE"], customer.Units.Where(u => !u.IsContractExpired).Select(u => u.ExternalUnitId).ToArray());
++        Assert.Equal(2, customer.Units.Count(u => u.IsContractExpired));
+     }
+ 
+     [Fact]
+-    public async Task SearchAsync_PactCustomerWithAllContractsExpired_IsDroppedWhileOtherCustomersRemain()
++    public async Task SearchAsync_PactCustomerWithAllContractsExpired_RemainsAlongsideCurrentCustomers()
+     {
+         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+@@ -421,13 +433,14 @@ public class CustomerLookupAppServiceTests
+ 
+         var pactResult = PactSource(result);
+         Assert.Equal("Found", pactResult.Status);
+-        var customer = Assert.Single(pactResult.Customers);
+-        Assert.Equal("PACT-CUST-CURRENT", customer.ExternalCustomerId);
++        Assert.Equal(2, pactResult.Customers.Count);
++        var customer = Assert.Single(pactResult.Customers, c => c.ExternalCustomerId == "PACT-CUST-CURRENT");
+         Assert.Equal("U-3", Assert.Single(customer.Units).ExternalUnitId);
++        Assert.All(pactResult.Customers.Single(c => c.ExternalCustomerId == "PACT-CUST-EXPIRED").Units, u => Assert.True(u.IsContractExpired));
+     }
+ 
+     [Fact]
+-    public async Task SearchAsync_PactEveryCustomerExpired_ReportsNotFoundNotFailed()
++    public async Task SearchAsync_PactEveryCustomerExpired_RetainsBothTenantsForHistoricalReads()
+     {
+         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+@@ -440,10 +453,10 @@ public class CustomerLookupAppServiceTests
+ 
+         var result = await f.Service.SearchAsync(intakeRecordId);
+ 
+-        // "Nothing current on file" is a NotFound, never a Failed source —
+-        // the agent sees the normal not-found path, not a PACT outage.
+         Assert.Equal(CustomerLookupOutcome.Success, result.Outcome);
+-        Assert.Equal("NotFound", PactSource(result).Status);
++        Assert.Equal("Found", PactSource(result).Status);
++        Assert.Equal(2, PactSource(result).Customers.Count);
++        Assert.All(PactSource(result).Customers.SelectMany(c => c.Units), u => Assert.True(u.IsContractExpired));
+     }
+ 
+     [Fact]
+@@ -461,7 +474,9 @@ public class CustomerLookupAppServiceTests
+ 
+         var pactResult = PactSource(result);
+         Assert.Equal("Found", pactResult.Status);
+-        var unit = Assert.Single(Assert.Single(pactResult.Customers).Units);
++        var units = Assert.Single(pactResult.Customers).Units;
++        Assert.Equal(2, units.Count);
++        var unit = Assert.Single(units, u => !u.IsContractExpired);
+         Assert.Equal("U-NO-DATE", unit.ExternalUnitId);
+     }
+ 
+@@ -481,12 +496,12 @@ public class CustomerLookupAppServiceTests
+     }
+ 
+     [Fact]
+-    public async Task SearchExternalSourcesByPhoneAsync_WorkspaceLeg_KeepsExpiredContractsFlagged_WhileSearchAsyncExcludesThem()
++    public async Task SearchExternalSourcesByPhoneAsync_AndIntakeLookup_BothRetainHistoricalContracts()
+     {
+         // The same seeded PACT customer, through both legs: the Customer
+         // Workspace search keeps the expired contract (labelled) so the
+         // agent can reach historical tickets, payments and fines; the
+-        // intake-anchored New Ticket lookup never offers it for selection.
++        // intake lookup retains the same evidence for New Ticket's selection view.
+         var f = CreateService(new FakeTimeProvider(DubaiBoundaryUtc));
+         var intakeRecordId = await SeedIntakeAsync(f.IntakeRecords);
+         f.Pact.Seed(Phone, new PactCustomerMatchDto(
+@@ -502,9 +517,7 @@ public class CustomerLookupAppServiceTests
+         Assert.False(workspaceCustomer.Units.Single(u => u.ExternalUnitId == "U-FUTURE").IsContractExpired);
+ 
+         var wizardCustomer = Assert.Single(PactSource(wizard).Customers);
+-        var selectable = Assert.Single(wizardCustomer.Units);
+-        Assert.Equal("U-FUTURE", selectable.ExternalUnitId);
+-        Assert.False(selectable.IsContractExpired);
++        Assert.Equal(workspaceCustomer.Units, wizardCustomer.Units);
+     }
+ 
+     [Fact]
+@@ -522,7 +535,8 @@ public class CustomerLookupAppServiceTests
+         var workspacePact = Assert.Single(workspace, s => s.Source == "Pact");
+         Assert.Equal("Found", workspacePact.Status);
+         Assert.True(Assert.Single(Assert.Single(workspacePact.Customers).Units).IsContractExpired);
+-        Assert.Equal("NotFound", PactSource(wizard).Status);
++        Assert.Equal("Found", PactSource(wizard).Status);
++        Assert.True(Assert.Single(Assert.Single(PactSource(wizard).Customers).Units).IsContractExpired);
+     }
+ 
+     [Fact]
+diff --git a/src/TigerCS.Tests/Web/CustomerPaymentTabRenderTests.cs b/src/TigerCS.Tests/Web/CustomerPaymentTabRenderTests.cs
+index 3349786..1f92a13 100644
+--- a/src/TigerCS.Tests/Web/CustomerPaymentTabRenderTests.cs
++++ b/src/TigerCS.Tests/Web/CustomerPaymentTabRenderTests.cs
+@@ -67,6 +67,34 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
+         return html;
+     }
+ 
++    [Fact]
++    public async Task PaymentsBeforeTicket_RenderThroughRazorWithoutReadingAnyCustomerProfile_AndKeepSelectorContext()
++    {
++        var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971500000002&customerKey=crm%3A9001&account=25"));
++        Assert.Contains("Payments &amp; Fines", html, StringComparison.Ordinal);
++        Assert.Contains("Not computed", html, StringComparison.Ordinal);
++        Assert.Contains("Cheque", html, StringComparison.Ordinal);
++        Assert.Contains("action=\"/Customers/Payments\"", html, StringComparison.Ordinal);
++        Assert.Contains("name=\"phoneNumber\" value=\"971500000002\"", html, StringComparison.Ordinal);
++        Assert.Contains("name=\"customerKey\" value=\"crm:9001\"", html, StringComparison.Ordinal);
++        Assert.Contains("Show</button>", html, StringComparison.Ordinal);
++        Assert.Single(_api.Requests);
++        Assert.Contains("/api/collections/customer-lookup/payment-summary?", _api.Requests.Single(), StringComparison.Ordinal);
++        Assert.Contains("customerKey=crm%3A9001", _api.Requests.Single(), StringComparison.Ordinal);
++    }
++
++    [Theory]
++    [InlineData("forbidden", "You don't have permission")]
++    [InlineData("unavailable", "Balance unavailable.")]
++    public async Task PreTicketPaymentErrors_ShowNoAmounts(string mode, string expected)
++    {
++        _api.Mode = mode;
++        var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971500000002&customerKey=ext%3APact%3A3001"));
++        Assert.Contains(expected, html, StringComparison.Ordinal);
++        Assert.DoesNotContain("AED 0.00", html, StringComparison.Ordinal);
++        Assert.DoesNotContain("data-edsm-field=", html, StringComparison.Ordinal);
++    }
++
+     private bool CollectionsCalled => _api.Requests.Any(r => r.Contains("/api/collections", StringComparison.Ordinal));
+ 
+     [Fact]
+diff --git a/src/TigerCS.Tests/Web/CustomerWorkspaceTests.cs b/src/TigerCS.Tests/Web/CustomerWorkspaceTests.cs
+index 2b01e0f..270c9c2 100644
+--- a/src/TigerCS.Tests/Web/CustomerWorkspaceTests.cs
++++ b/src/TigerCS.Tests/Web/CustomerWorkspaceTests.cs
+@@ -135,6 +135,21 @@ public sealed class CustomerWorkspaceTests
+         Assert.Equal(["1506", "1204"], model.FilteredTickets.Select(t => t.UnitNumber));
+     }
+ 
++    [Fact]
++    public async Task OnGet_VerifiedCrmAndExpiredPactTenant_ShareOneCardAndCombinedHistory()
++    {
++        var pact = new CustomerLookupCustomerDto("7001", "Sami Nasser", Phone.TrimStart('+'), null, "2",
++            [new CustomerLookupUnitDto("PU-1", "1506", "Nobles Tower", null, "Residential", null, null,
++                ContractEndDate: new DateOnly(2020, 1, 1), IsContractExpired: true, CompanyId: 4)]);
++        var search = CrmOnlySearchResult() with { ExternalSources = [CustomerLookupSourceResultDto.Found("Pact", [pact])] };
++        var (model, handler) = CreateCustomerLookupModel(RespondingWith(search, History(HistoryRow(1, "1506"))));
++        await model.OnGetAsync(Phone, customer: "crm:9001", unit: null, CancellationToken.None);
++        Assert.Equal("7001", Assert.Single(model.Candidates).LinkedPact!.ExternalCustomerId);
++        Assert.True(Assert.Single(model.Selected!.LinkedPact!.Units).IsContractExpired);
++        Assert.Contains(handler.Requests, r => r.RequestUri.Contains("/api/customers/lookup/ticket-history?"));
++        Assert.Single(model.FilteredTickets);
++    }
++
+     [Fact]
+     public async Task OnGet_UnitFilter_NarrowsTheTicketList_ButAllUnitsRemainsTheDefault()
+     {
+diff --git a/src/TigerCS.Tests/Web/NewTicketCustomerAwarenessTests.cs b/src/TigerCS.Tests/Web/NewTicketCustomerAwarenessTests.cs
+index c8fa2d5..8eaf313 100644
+--- a/src/TigerCS.Tests/Web/NewTicketCustomerAwarenessTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketCustomerAwarenessTests.cs
+@@ -117,7 +117,8 @@ public sealed class NewTicketCustomerAwarenessTests
+ 
+         Assert.Contains("candidate.Sources.Select(TicketDisplay.LookupSourceLabel)", html);
+         Assert.Contains("data-unified-identities", html);
+-        Assert.Contains("Model.LinkedPactOnlyUnits", html);
++        Assert.Contains("Model.LinkedPactSelectableUnits", html);
++        Assert.Contains("Model.CrmOnlySelectableUnits", html);
+         Assert.Contains("also on file in PACT", html);
+     }
+ 
+diff --git a/src/TigerCS.Tests/Web/NewTicketModelTests.cs b/src/TigerCS.Tests/Web/NewTicketModelTests.cs
+index bd6c0f3..5679d27 100644
+--- a/src/TigerCS.Tests/Web/NewTicketModelTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketModelTests.cs
+@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.AspNetCore.Mvc.RazorPages;
+ using Microsoft.Extensions.Logging.Abstractions;
+ using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
++using TigerCS.Application.Modules.Administration.Dto;
+ using TigerCS.Application.Modules.Collections.Dto;
+ using TigerCS.Application.Modules.CustomerVerification.Dto;
+ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+@@ -45,7 +46,8 @@ public sealed class NewTicketModelTests
+         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerHistoryResponder = null,
+         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerLookupResponder = null,
+         Func<HttpRequestMessage, string?, HttpResponseMessage>? channelsResponder = null,
+-        Func<HttpRequestMessage, string?, HttpResponseMessage>? collectionsResponder = null)
++        Func<HttpRequestMessage, string?, HttpResponseMessage>? collectionsResponder = null,
++        Func<HttpRequestMessage, string?, HttpResponseMessage>? requestTypesResponder = null)
+     {
+         var intakeHandler = new FakeApiHandler(intakeResponder ?? ((_, _) => throw new InvalidOperationException("Intake API not expected to be called.")));
+         var crmBuyerLookupHandler = new FakeApiHandler(crmBuyerLookupResponder ?? ((_, _) => throw new InvalidOperationException("CRM Buyer Lookup API not expected to be called.")));
+@@ -102,9 +104,15 @@ public sealed class NewTicketModelTests
+             new HttpClient(collectionsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CollectionsApiClient>.Instance);
+         LastCollectionsHandler = collectionsHandler;
+ 
++        var requestTypesHandler = new FakeApiHandler(requestTypesResponder ?? ((_, _) =>
++            FakeApiHandler.JsonResponse(HttpStatusCode.OK, Array.Empty<RequestTypeOptionDto>())));
++        var requestTypesClient = new RequestTypesApiClient(
++            new HttpClient(requestTypesHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<RequestTypesApiClient>.Instance);
++
+         var model = new NewTicketModel(
+             intakeClient, customerLookupClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient,
+-            channelsClient: channelsClient, paymentPanelLoader: new CustomerPaymentPanelLoader(collectionsClient));
++            channelsClient: channelsClient, requestTypesClient: requestTypesClient, paymentPanelLoader: new CustomerPaymentPanelLoader(collectionsClient),
++            timeProvider: new TigerCS.Tests.Notifications.Fakes.FakeTimeProvider(new DateTime(2026, 10, 5, 21, 30, 0, DateTimeKind.Utc)));
+         return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler, customerLookupHandler);
+     }
+ 
+@@ -467,6 +475,7 @@ public sealed class NewTicketModelTests
+         Assert.Equal(2, model.Candidates.Count);
+         Assert.Contains(model.Candidates, c => c.Key == "crm");
+         Assert.Contains(model.Candidates, c => c.Source == "Pact");
++        Assert.Equal(["Pact", "Crm"], model.Candidates.Select(c => c.PrimaryVerificationSource));
+     }
+ 
+     // ---------------------------------------------------------------
+@@ -517,7 +526,8 @@ public sealed class NewTicketModelTests
+         var candidate = Assert.Single(model.Candidates);
+         Assert.Equal("crm", candidate.Key);
+         Assert.True(candidate.IsUnified);
+-        Assert.Equal(["Crm", "Pact"], candidate.Sources);
++        Assert.Equal(["Pact", "Crm"], candidate.Sources);
++        Assert.Equal("Pact", candidate.PrimaryVerificationSource);
+         Assert.Equal("7001", candidate.LinkedPactCustomerId);
+         Assert.Equal("ext:Pact:7001", model.LinkedPactCustomerKey);
+         // The shared unit counts once; the PACT-only unit adds one.
+@@ -560,6 +570,70 @@ public sealed class NewTicketModelTests
+         Assert.Null(model.LinkedPactCustomer);
+     }
+ 
++    [Fact]
++    public async Task OnGetAsync_SameUnitButDifferentCustomerDetails_StaySeparate()
++    {
++        var (model, _, _, _, _, _, _, _) = CreateModel(
++            crmBuyerLookupResponder: CrmBuyersFound(
++                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
++            customerLookupResponder: CustomerLookupReturning(
++                CustomerLookupSourceResultDto.NotFound("Crm"),
++                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506() with { DisplayName = "Another Tenant", Email = null }])));
++        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990001");
++        Assert.Equal(2, model.Candidates.Count);
++        Assert.Null(model.LinkedPactCustomer);
++    }
++
++    [Fact]
++    public async Task OnGetAsync_ExpiredSharedContract_PreservesUnifiedIdentityAndHistory_ButOnlyCurrentPactUnitsAreSelectable()
++    {
++        var pact = PactCustomerLinkedToNoblesTower1506();
++        pact = pact with { Units = [pact.Units[0] with { ContractEndDate = new DateOnly(2026, 10, 5), IsContractExpired = true, CompanyId = 4 },
++            pact.Units[1] with { ContractEndDate = new DateOnly(2026, 10, 6), CompanyId = 25 }] };
++        var (model, _, _, _, _, _, histories, _) = CreateModel(
++            crmBuyerLookupResponder: CrmBuyersFound(
++                SingleUnitBuyer(5001, "Sami Nasser", "971509990001", 900, 100, 10, "1506", "Nobles Tower")),
++            customerLookupResponder: CustomerLookupReturning(
++                CustomerLookupSourceResultDto.NotFound("Crm"), CustomerLookupSourceResultDto.Found("Pact", [pact])));
++        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990001");
++        Assert.True(Assert.Single(model.Candidates).IsUnified);
++        Assert.Equal([4, 25], model.LinkedPactCustomer!.Units.Select(u => u.CompanyId));
++        Assert.Equal("701", Assert.Single(model.LinkedPactOnlyUnits).ExternalUnitId);
++        Assert.Equal("701", Assert.Single(Assert.Single(model.ExternalLookupSources.Single(s => s.Source == "Pact").Customers).Units).ExternalUnitId);
++        Assert.Contains(histories.Requests, r => r.RequestUri.Contains("/external/Pact/7001/ticket-history"));
++    }
++
++    [Fact]
++    public async Task OnGetAsync_RenewedContractOnSameUnit_FiltersBeforeDeduplicating()
++    {
++        var pact = PactCustomerWithTwoUnits();
++        pact = pact with { Units = [pact.Units[0] with { ContractEndDate = new DateOnly(2026, 10, 5) },
++            pact.Units[0] with { ContractEndDate = new DateOnly(2026, 10, 6) }, pact.Units[1] with { ContractEndDate = null }] };
++        var (model, _, _, _, _, _, _, _) = CreateModel(
++            crmBuyerLookupResponder: CrmBuyersFound(),
++            customerLookupResponder: CustomerLookupReturning(CustomerLookupSourceResultDto.NotFound("Crm"),
++                CustomerLookupSourceResultDto.Found("Pact", [pact])));
++        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990002");
++        Assert.Equal(2, Assert.Single(model.Candidates).UnitsCount);
++        Assert.Equal(new DateOnly(2026, 10, 6), model.ExternalLookupSources.Single(s => s.Source == "Pact").Customers[0].Units[0].ContractEndDate);
++    }
++
++    [Fact]
++    public async Task OnGetAsync_PactWithOnlyExpiredContracts_HasNoSelectableUnit_ButIdentityAndHistoryRemain()
++    {
++        var pact = PactCustomerWithTwoUnits();
++        pact = pact with { Units = pact.Units.Select(u => u with { ContractEndDate = new DateOnly(2026, 10, 5) }).ToList() };
++        var (model, _, _, _, _, _, histories, _) = CreateModel(
++            crmBuyerLookupResponder: CrmBuyersFound(),
++            customerLookupResponder: CustomerLookupReturning(CustomerLookupSourceResultDto.NotFound("Crm"),
++                CustomerLookupSourceResultDto.Found("Pact", [pact])));
++        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990002");
++        Assert.Equal(0, Assert.Single(model.Candidates).UnitsCount);
++        Assert.Equal("ext:Pact:7001", model.Candidates[0].Key);
++        Assert.Equal(2, model.CustomerLookup!.Sources.Single(s => s.Source == "Pact").Customers[0].Units.Count);
++        Assert.Contains(histories.Requests, r => r.RequestUri.Contains("/external/Pact/7001/ticket-history"));
++    }
++
+     [Fact]
+     public async Task OnGetAsync_UnifiedCard_OneHistoryReadFailing_StillShowsTheOtherIdentitysHistory()
+     {
+@@ -594,6 +668,9 @@ public sealed class NewTicketModelTests
+         Assert.NotNull(model.LinkedPactCustomer);
+         Assert.True(model.IsLinkedToPact(model.CrmBuyerMatch!.Units[0]));
+         Assert.Equal("2304", Assert.Single(model.LinkedPactOnlyUnits).UnitNumber);
++        Assert.Equal(2, model.LinkedPactSelectableUnits.Count);
++        Assert.Empty(model.CrmOnlySelectableUnits);
++        Assert.Equal("PACT · Tiger CRM", model.SummaryVerificationLabel);
+ 
+         // Selecting the PACT-only unit under the unified card persists the
+         // PACT identity, exactly as a PACT selection from its own card would.
+@@ -769,7 +846,7 @@ public sealed class NewTicketModelTests
+         Assert.Equal(PaymentPanelState.EdsmSummary, panel.State);
+         // Resolved by the same ext:Pact:{tenant} key the profile uses — the
+         // Api's verified tenant/company mapping, untouched.
+-        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customers/by-key/ext%3APact%3A7001/payment-summary"));
++        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customer-lookup/payment-summary?") && r.RequestUri.Contains("customerKey=ext%3APact%3A7001"));
+         Assert.Equal("7001", panel.PaymentSummary!.PactTenantId);
+         // Unit 701 belongs to company 25's contract: that company is scoped,
+         // and its availability state is shown as the source reported it.
+@@ -859,7 +936,7 @@ public sealed class NewTicketModelTests
+                 SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "2304", "Tiger Marina Residences")),
+             customerLookupResponder: CustomerLookupReturning(
+                 CustomerLookupSourceResultDto.NotFound("Crm"),
+-                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])),
++                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits() with { DisplayName = "Sami Nasser", PhoneNumber = "971509990001" }])),
+             collectionsResponder: CollectionsReturningFigures());
+         var collections = LastCollectionsHandler!;
+ 
+@@ -868,18 +945,20 @@ public sealed class NewTicketModelTests
+             crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Tiger Marina Residences", crmBuyerUnitNumber: "2304");
+ 
+         Assert.NotNull(model.LinkedPactCustomer);
+-        Assert.Equal("Crm", model.PaymentPanelSource);
+-        Assert.Equal(PaymentPanelState.SelectAccount, model.PaymentPanel!.State); // no CRM account holds unit 2304 — selection stays required
++        Assert.Equal("PACT · Tiger CRM", model.SummaryVerificationLabel);
++        Assert.Equal("Pact", model.PaymentPanelSource);
++        Assert.Equal(PaymentPanelState.EdsmSummary, model.PaymentPanel!.State);
+         var linked = Assert.IsType<CustomerPaymentPanel>(model.LinkedPaymentPanel);
+-        Assert.Equal("Pact", model.LinkedPaymentPanelSource);
+-        Assert.Equal(PaymentPanelState.EdsmSummary, linked.State);
+-        Assert.Equal("ext:Pact:7001", linked.CustomerKey);
++        Assert.Equal("Crm", model.LinkedPaymentPanelSource);
++        Assert.Equal(PaymentPanelState.SelectAccount, linked.State); // no CRM account holds unit 2304
++        Assert.Equal("ext:Pact:7001", model.PaymentPanel.CustomerKey);
+         // EDSM scoped to the company whose contract is the shared unit (700 → company 4).
+-        Assert.Equal(4, linked.SelectedCompanyId);
+-        Assert.True(linked.ScopedByUnit);
++        Assert.Equal(4, model.PaymentPanel.SelectedCompanyId);
++        Assert.True(model.PaymentPanel.ScopedByUnit);
++        Assert.Equal("paymentAccount", model.PaymentPanel.Links.AccountParameter);
+         Assert.Equal("linkedPaymentAccount", linked.Links.AccountParameter);
+         Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/customers/5001/outstanding"));
+-        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("by-key/ext%3APact%3A7001/payment-summary"));
++        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customer-lookup/payment-summary?") && r.RequestUri.Contains("customerKey=ext%3APact%3A7001"));
+     }
+ 
+     [Fact]
+@@ -1333,6 +1412,97 @@ public sealed class NewTicketModelTests
+         Assert.Null(model.CreateStep.CategoryId);
+     }
+ 
++    [Fact]
++    public async Task RequestCategoryChange_ClearsOldTypeAndPreservesEnteredDetails()
++    {
++        var (model, _, _, _, _, _, _, _) = CreateModel(
++            categoriesResponder: CategoriesReturning(new CategoryDto(20, "Send Receipts", 2, "Collections")),
++            requestTypesResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
++                new[] { new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }));
++        model.CreateStep = new NewTicketModel.CreateStepInput
++        {
++            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = "category:10",
++            CategoryId = 10, RequestTypeId = 100, PriorityId = 2, RequestSummary = "Keep this request"
++        };
++        model.ModelState.SetModelValue("CreateStep.RequestTypeChoice", "category:10", "category:10");
++        await model.OnPostIssueRefreshAsync(42, "+971501234567", "manual",
++            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
++        Assert.Null(model.CreateStep.RequestTypeChoice);
++        Assert.Null(model.CreateStep.CategoryId);
++        Assert.Null(model.CreateStep.RequestTypeId);
++        Assert.False(model.ModelState.ContainsKey("CreateStep.RequestTypeChoice"));
++        Assert.Equal((byte)2, model.CreateStep.PriorityId);
++        Assert.Equal("Keep this request", model.CreateStep.RequestSummary);
++    }
++
++    [Theory]
++    [InlineData("request-type:200", 20, 200)]
++    [InlineData("category:21", 21, null)]
++    public async Task RequestTypeChoice_ResolvesRealIdsOnCreation_IgnoringPostedHiddenIds(string choice, int categoryId, int? requestTypeId)
++    {
++        var (model, _, _, _, _, tickets, _, _) = CreateModel(
++            departmentsResponder: DepartmentsReturning(new DepartmentDto(2, "Collections")),
++            categoriesResponder: CategoriesReturning(new CategoryDto(20, "Send Receipts", 2, "Collections"),
++                new CategoryDto(21, "Other Payment Inquiry", 2, "Collections")),
++            requestTypesResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
++                new[] { new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }),
++            ticketsResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.BadGateway, new { detail = "Recorded" }));
++        model.CreateStep = new NewTicketModel.CreateStepInput
++        {
++            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = choice,
++            CategoryId = 999, RequestTypeId = 999, PriorityId = 3, RequestSummary = "Payment inquiry"
++        };
++        await model.OnPostCreateAsync(42, "+971501234567", "manual",
++            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
++        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
++        Assert.Equal(categoryId, body.RootElement.GetProperty("categoryId").GetInt32());
++        var actualType = body.RootElement.GetProperty("requestTypeId");
++        Assert.Equal(requestTypeId, actualType.ValueKind == JsonValueKind.Null ? null : (int?)actualType.GetInt32());
++        Assert.Equal("Collections", model.SummaryDepartmentName);
++    }
++
++    [Theory]
++    [InlineData("request-type:100", "Select a request type belonging")]
++    [InlineData("request-type:200", "Routing is not configured")]
++    public async Task RequestTypeFromAnotherCategoryOrWithoutRouting_BlocksCreation(string choice, string message)
++    {
++        var (model, _, _, _, _, tickets, _, _) = CreateModel(
++            departmentsResponder: DepartmentsReturning(new DepartmentDto(2, "Collections")),
++            categoriesResponder: CategoriesReturning(new CategoryDto(21, "Other Payment Inquiry", 2, "Collections")),
++            requestTypesResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
++                new[] { new RequestTypeOptionDto(100, "Send Receipts", 1, 3, true), new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }));
++        model.CreateStep = new NewTicketModel.CreateStepInput
++        {
++            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = choice,
++            CategoryId = 999, PriorityId = 3, RequestSummary = "Payment inquiry"
++        };
++        await model.OnPostCreateAsync(42, "+971501234567", "manual",
++            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
++        Assert.Empty(tickets.Requests);
++        Assert.Equal(NewTicketModel.StepIssue, model.Step);
++        Assert.StartsWith(message, model.ErrorMessage);
++    }
++
++    [Fact]
++    public async Task RequestTypeCatalogFailure_BlocksLegacyFallbackAndCreation()
++    {
++        var (model, _, _, _, _, tickets, _, _) = CreateModel(
++            departmentsResponder: DepartmentsReturning(new DepartmentDto(2, "Collections")),
++            categoriesResponder: CategoriesReturning(new CategoryDto(20, "Send Receipts", 2, "Collections")),
++            requestTypesResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway));
++        model.CreateStep = new NewTicketModel.CreateStepInput
++        {
++            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = "category:20",
++            PriorityId = 3, RequestSummary = "Payment inquiry"
++        };
++        await model.OnPostCreateAsync(42, "+971501234567", "manual",
++            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
++        Assert.Empty(tickets.Requests);
++        Assert.Empty(model.RequestTypeChoices);
++        Assert.Equal(NewTicketModel.StepIssue, model.Step);
++        Assert.Equal("Unable to load request categories and types. Please try again.", model.ErrorMessage);
++    }
++
+     // ---- Step 4: Review — validation happens before review, creation from review ----
+ 
+     [Fact]
+diff --git a/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs b/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs
+new file mode 100644
+index 0000000..96855c5
+--- /dev/null
++++ b/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs
+@@ -0,0 +1,57 @@
++extern alias TigerCsWeb;
++
++using TigerCS.Application.Modules.Administration.Dto;
++using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
++using TigerCsWeb::TigerCS.Web.Services;
++
++namespace TigerCS.Tests.Web;
++
++public sealed class NewTicketRequestTypePickerTests
++{
++    [Fact]
++    public void CategoryIsRequired_AndSameNameTypesRemainSeparateBetweenCategories()
++    {
++        CategoryDto[] routing = [new(10, "E-mail", 1, "Customer Service"), new(20, "E-mail", 2, "Collections")];
++        RequestTypeOptionDto[] types = [new(100, "E-mail", 1, 3, true), new(200, "E-mail", 2, 3, true)];
++        Assert.Empty(NewTicketRequestTypePicker.Build(null, routing, types));
++        var choice = Assert.Single(NewTicketRequestTypePicker.Build(2, routing, types));
++        Assert.Equal("request-type:200", choice.Value);
++        Assert.Equal(20, choice.CategoryId);
++        Assert.Equal(200, choice.RequestTypeId);
++    }
++
++    [Fact]
++    public void ExactNameMatchKeepsBothIdsOnce_AndLegacyTypesRemainAvailable()
++    {
++        var choices = NewTicketRequestTypePicker.Build(1,
++            [new(10, " General Inquiry ", 1, "Customer Service"), new(11, "Other Inquiry", 1, "Customer Service")],
++            [new(100, "general inquiry", 1, 3, true)]);
++        Assert.Equal(2, choices.Count);
++        var configured = Assert.Single(choices.Where(c => c.RequestTypeId == 100));
++        Assert.Equal(10, configured.CategoryId);
++        var legacy = Assert.Single(choices.Where(c => c.Value == "category:11"));
++        Assert.Null(legacy.RequestTypeId);
++        Assert.Equal(11, legacy.CategoryId);
++    }
++
++    [Fact]
++    public void UnpublishedWorkflowCannotBeBypassedThroughItsLegacyRoutingRow()
++    {
++        Assert.Empty(NewTicketRequestTypePicker.Build(2,
++            [new(20, "Send Receipts", 2, "Collections")],
++            [new(200, "Send Receipts", 2, 3, false)]));
++    }
++
++    [Fact]
++    public void MissingOrAmbiguousRoutingNeverChoosesAnUnrelatedCategory()
++    {
++        var missing = Assert.Single(NewTicketRequestTypePicker.Build(2,
++            [new(20, "Unrelated", 2, "Collections")],
++            [new(200, "Send Receipts", 2, 3, true)]).Where(c => c.RequestTypeId is not null));
++        Assert.Null(missing.CategoryId);
++        var ambiguous = Assert.Single(NewTicketRequestTypePicker.Build(2,
++            [new(20, "Send Receipts", 2, "Collections"), new(21, "send receipts", 2, "Collections")],
++            [new(200, "Send Receipts", 2, 3, true)]));
++        Assert.Null(ambiguous.CategoryId);
++    }
++}
+diff --git a/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs b/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
+index 7302e84..73a0767 100644
+--- a/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
+@@ -3,6 +3,7 @@
+ extern alias TigerCsWeb;
+ 
+ using System.Net;
++using System.Text.Json;
+ using System.Security.Claims;
+ using System.Text.Encodings.Web;
+ using System.Text.RegularExpressions;
+@@ -15,6 +16,9 @@ using Microsoft.Extensions.Http;
+ using Microsoft.Extensions.Logging;
+ using Microsoft.Extensions.Options;
+ using TigerCS.Application.Modules.CustomerVerification.Dto;
++using TigerCS.Application.Modules.Administration.Dto;
++using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
++using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+ using TigerCS.Application.Modules.Ticketing.Dto;
+ using TigerCS.Tests.Web.Fakes;
+ 
+@@ -137,6 +141,101 @@ public sealed class NewTicketWizardHttpFlowTests
+         return new HttpResponseMessage(HttpStatusCode.NotFound);
+     });
+ 
++    [Fact]
++    public async Task MatchingCrmAndPact_RenderOneCardWithPaymentsLinkEvenWithoutPreviousTickets()
++    {
++        var original = CrmFoundApi();
++        var api = new FakeApiHandler((request, body) =>
++        {
++            if (request.RequestUri!.AbsolutePath == $"/api/intake-records/{IntakeId}/customer-lookup")
++                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerLookupResultDto(IntakeId, SearchedPhone,
++                    [CustomerLookupSourceResultDto.Found("Crm", []), CustomerLookupSourceResultDto.Found("Pact",
++                        [new CustomerLookupCustomerDto("3001", "Aisha Rahman", "+" + SearchedPhone, "aisha@example.com", "2",
++                            [new CustomerLookupUnitDto("999", "TB-1204", "Tiger Bay Towers", null, "Residential", null, null)])])]));
++            if (request.RequestUri.AbsolutePath == "/api/customers/lookup/ticket-history")
++                return FakeApiHandler.JsonResponse(HttpStatusCode.OK, new CustomerHistoryDto("LinkedVerified", 5001, null, "Aisha", 0, 0, 0, []));
++            return original.Respond(request, body);
++        });
++        using var factory = CreateFactory(api);
++        var response = await factory.CreateClient().GetAsync($"/NewTicket?intakeRecordId={IntakeId}&phoneNumber={SearchedPhone}");
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var html = await response.Content.ReadAsStringAsync();
++        Assert.Equal(1, Regex.Matches(html, "candidate-card candidate-card--stack").Count);
++        Assert.Contains("PACT · Tiger CRM", WebUtility.HtmlDecode(html));
++        Assert.Contains("Payments &amp; Fines", html);
++        Assert.Contains("customerKey=crm%3A5001", html);
++
++        var property = await factory.CreateClient().GetAsync($"/NewTicket?step=property&customer=crm&intakeRecordId={IntakeId}&phoneNumber={SearchedPhone}");
++        Assert.Equal(HttpStatusCode.OK, property.StatusCode);
++        var propertyHtml = await property.Content.ReadAsStringAsync();
++        Assert.Contains("PACT · Tiger CRM", WebUtility.HtmlDecode(propertyHtml));
++        Assert.Equal(1, Regex.Matches(propertyHtml, "data-unit-source=\"Pact\"").Count);
++        Assert.DoesNotContain("data-unit-source=\"Crm\"", propertyHtml);
++        Assert.Contains("handler=UseExternalUnit", propertyHtml);
++    }
++
++    [Fact]
++    public async Task Issue_RequestCategoryThenType_RendersDependentChoices_AndCreatesWithBothRealIds()
++    {
++        var api = new FakeApiHandler((request, _) => request.RequestUri!.AbsolutePath switch
++        {
++            "/api/departments" => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
++                new[] { new DepartmentDto(1, "Customer Service"), new DepartmentDto(2, "Collections") }),
++            "/api/categories" => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
++                new[] { new CategoryDto(10, "General Inquiry", 1, "Customer Service"), new CategoryDto(20, "Send Receipts", 2, "Collections") }),
++            "/api/request-types" => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
++                new[] { new RequestTypeOptionDto(100, "General Inquiry", 1, 3, true), new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }),
++            "/api/tickets" => FakeApiHandler.JsonResponse(HttpStatusCode.Created,
++                new TicketResponseDto(300, "TG-COL-20261006-0001", 2, 2, null, null, 20, 3,
++                    "Open", "Unverified", "None", "Running", "Please send receipts", DateTime.UtcNow, "AAAA")),
++            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
++        });
++        using var factory = CreateFactory(api);
++        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
++        var response = await client.GetAsync("/NewTicket?step=issue&intakeRecordId=42&customer=manual&manualProjectName=Tower&manualUnitNumber=101");
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var html = await response.Content.ReadAsStringAsync();
++        Assert.Contains("Request Category *", html);
++        Assert.Contains("Request Type *", html);
++        Assert.DoesNotContain("<optgroup", html);
++        Assert.DoesNotContain("value=\"request-type:200\"", html);
++        var fields = new Dictionary<string, string>
++        {
++            ["__RequestVerificationToken"] = AntiforgeryToken(html),
++            ["intakeRecordId"] = "42", ["customer"] = "manual",
++            ["manualProjectName"] = "Tower", ["manualUnitNumber"] = "101",
++            ["CreateStep.UseRequestCategoryPicker"] = "true", ["CreateStep.DepartmentId"] = "2",
++            ["CreateStep.RequestTypeChoice"] = "request-type:100", ["CreateStep.PriorityId"] = "3",
++            ["CreateStep.RequestSummary"] = "Please send receipts"
++        };
++        var refreshed = await client.PostAsync("/NewTicket?handler=IssueRefresh", new FormUrlEncodedContent(fields));
++        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
++        html = await refreshed.Content.ReadAsStringAsync();
++        Assert.Contains("value=\"request-type:200\"", html);
++        Assert.DoesNotContain("value=\"request-type:100\"", html);
++        Assert.DoesNotContain("value=\"category:20\"", html);
++        Assert.Contains("Please send receipts", html);
++        fields["__RequestVerificationToken"] = AntiforgeryToken(html);
++        fields["CreateStep.RequestTypeChoice"] = "request-type:200";
++        var review = await client.PostAsync("/NewTicket?handler=Review", new FormUrlEncodedContent(fields));
++        Assert.Equal(HttpStatusCode.OK, review.StatusCode);
++        html = await review.Content.ReadAsStringAsync();
++        Assert.Contains("Create Ticket", html);
++        Assert.Contains("<dt>Request Category</dt>", html);
++        Assert.Contains("<dt>Request Type</dt>", html);
++        Assert.Contains("Send Receipts", html);
++        Assert.Contains("CreateStep.RequestTypeChoice", html);
++        fields["__RequestVerificationToken"] = AntiforgeryToken(html);
++        fields["CreateStep.CategoryId"] = "999";
++        fields["CreateStep.RequestTypeId"] = "999";
++        var created = await client.PostAsync("/NewTicket?handler=Create", new FormUrlEncodedContent(fields));
++        Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
++        using var body = JsonDocument.Parse(Assert.Single(api.Requests.Where(r => r.Method == HttpMethod.Post && r.RequestUri.EndsWith("/api/tickets", StringComparison.Ordinal))).Body!);
++        Assert.Equal(20, body.RootElement.GetProperty("categoryId").GetInt32());
++        Assert.Equal(200, body.RootElement.GetProperty("requestTypeId").GetInt32());
++        Assert.Equal("Please send receipts", body.RootElement.GetProperty("requestSummary").GetString());
++    }
++
+     /// <summary>Pulls the antiforgery token out of the rendered Search form, exactly as a browser would submit it.</summary>
+     private static string AntiforgeryToken(string html)
+     {
+diff --git a/src/TigerCS.Tests/Web/WebFrontEndCleanupTests.cs b/src/TigerCS.Tests/Web/WebFrontEndCleanupTests.cs
+index a2045f5..2a09e03 100644
+--- a/src/TigerCS.Tests/Web/WebFrontEndCleanupTests.cs
++++ b/src/TigerCS.Tests/Web/WebFrontEndCleanupTests.cs
+@@ -109,13 +109,16 @@ public sealed class WebFrontEndCleanupTests
+     }
+ 
+     [Fact]
+-    public void NewTicketView_RendersACategoryDropdown_LabeledByName()
++    public void NewTicketView_RendersDependentRequestCategoryAndTypePickers()
+     {
+         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+ 
+-        Assert.Contains("Category *", html);
+-        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
+-        Assert.Contains("category.Name", html);
++        Assert.Contains("Request Category *", html);
++        Assert.Contains("Request Type *", html);
++        Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.RequestTypeChoice\"", html);
++        Assert.DoesNotContain("<select class=\"form-control\" asp-for=\"CreateStep.CategoryId\"", html);
++        Assert.DoesNotContain("<optgroup", html);
++        Assert.Contains("requestType.Name", html);
+     }
+ 
+     [Fact]
+@@ -123,7 +126,7 @@ public sealed class WebFrontEndCleanupTests
+     {
+         var html = File.ReadAllText(SourceFile(Path.Combine("TigerCS.Web", "Pages", "NewTicket.cshtml")));
+ 
+-        Assert.Contains("No active categories are configured for this department.", html);
++        Assert.Contains("No active request types are configured for this request category.", html);
+         Assert.Contains("Model.CategoriesErrorMessage", html);
+     }
+ 
+@@ -156,7 +159,7 @@ public sealed class WebFrontEndCleanupTests
+ 
+         // The redesign moves Department to the Issue step, narrowing the
+         // Request Type list — still a real-name dropdown, never a typed id.
+-        Assert.Contains(">Department</label>", html);
++        Assert.Contains(">Request Category *</label>", html);
+         Assert.Contains("<select class=\"form-control\" asp-for=\"CreateStep.DepartmentId\"", html);
+         Assert.Contains("department.Name", html);
+         Assert.Contains("department.DepartmentId", html);
+diff --git a/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs b/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs
+index 3eca882..0bd4884 100644
+--- a/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs
++++ b/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs
+@@ -3,6 +3,7 @@ using System.Text.Json;
+ using System.Xml.Linq;
+ using Microsoft.EntityFrameworkCore;
+ using TigerCS.Domain.Modules.IdentityAndAccess;
++using TigerCS.Domain.Modules.ClassificationAndRouting;
+ using TigerCS.Domain.Modules.SlaAndEscalation;
+ using TigerCS.Domain.Modules.WorkflowConfiguration;
+ using TigerCS.Infrastructure.Modules.WorkflowConfiguration.Seed;
+@@ -497,6 +498,32 @@ public class NewRequestTypesImportTests
+         }
+     }
+ 
++    [Fact]
++    public async Task Import_creates_exact_request_type_routing_once_and_preserves_inactive_and_historical_categories()
++    {
++        await using var db = await CreateWithFacilitiesManagementAsync();
++        var cs = await db.Departments.SingleAsync(d => d.Code == WorkflowReferenceData.CustomerServiceCode);
++        var inactive = new Category("General Inquiry", cs.DepartmentId, isActive: false);
++        var historical = new Category("Historic inquiry", cs.DepartmentId);
++        db.Categories.AddRange(inactive, historical);
++        await db.SaveChangesAsync();
++        var inactiveId = inactive.CategoryId;
++        var historicalId = historical.CategoryId;
++        await NewRequestTypesImporter.ImportAsync(db, Now);
++        var categories = await db.Categories.ToListAsync();
++        foreach (var requestType in await db.RequestTypes.Where(r => r.IsActive).ToListAsync())
++        {
++            Assert.Single(categories.Where(c => c.DepartmentId == requestType.DepartmentId && c.Name == requestType.Name));
++        }
++        Assert.False((await db.Categories.SingleAsync(c => c.CategoryId == inactiveId)).IsActive);
++        Assert.Equal("Historic inquiry", (await db.Categories.SingleAsync(c => c.CategoryId == historicalId)).Name);
++        var before = categories.OrderBy(c => c.CategoryId).Select(c => $"{c.CategoryId}|{c.DepartmentId}|{c.Name}|{c.IsActive}").ToList();
++        await NewRequestTypesImporter.ImportAsync(db, Now.AddDays(1));
++        var after = (await db.Categories.OrderBy(c => c.CategoryId).ToListAsync())
++            .Select(c => $"{c.CategoryId}|{c.DepartmentId}|{c.Name}|{c.IsActive}").ToList();
++        Assert.Equal(before, after);
++    }
++
+     // ---- helpers ----------------------------------------------------------
+ 
+     private static async Task<TigerCsDbContext> CreateWithFacilitiesManagementAsync()
+diff --git a/src/TigerCS.Web/Models/CustomerPaymentPanel.cs b/src/TigerCS.Web/Models/CustomerPaymentPanel.cs
+index 7c8e11a..c4b36b4 100644
+--- a/src/TigerCS.Web/Models/CustomerPaymentPanel.cs
++++ b/src/TigerCS.Web/Models/CustomerPaymentPanel.cs
+@@ -85,11 +85,13 @@ public sealed record PaymentPanelLinks(
+ /// <param name="AllowSending">False hides the Send Reminder forms (a read-only view, e.g. before ticket submission). The Api still enforces the permission either way.</param>
+ /// <param name="PreferredUnitNumber">For a CRM customer with several finance accounts and no explicit choice: pick the account whose unit number matches (trimmed, case-insensitive); otherwise selection is still required.</param>
+ /// <param name="PreferredExternalUnitId">For a PACT customer with several EDSM companies and no explicit choice: pick the company whose contracts include this PACT unit id; otherwise the first company.</param>
++/// <param name="LookupPhoneNumber">A pre-ticket lookup context. The API verifies the selected identity and any CRM/PACT association again, without requiring a directory profile.</param>
+ public sealed record PaymentPanelOptions(
+     PaymentPanelLinks? Links = null,
+     bool AllowSending = true,
+     string? PreferredUnitNumber = null,
+-    string? PreferredExternalUnitId = null);
++    string? PreferredExternalUnitId = null,
++    string? LookupPhoneNumber = null);
+ 
+ public sealed class CustomerPaymentPanel
+ {
+diff --git a/src/TigerCS.Web/Pages/CustomerLookup.cshtml b/src/TigerCS.Web/Pages/CustomerLookup.cshtml
+index d72233f..1b0d716 100644
+--- a/src/TigerCS.Web/Pages/CustomerLookup.cshtml
++++ b/src/TigerCS.Web/Pages/CustomerLookup.cshtml
+@@ -89,7 +89,7 @@
+                         <div>
+                             <div class="candidate-card__name">@(candidate.DisplayName ?? "Unnamed customer")</div>
+                             <div class="candidate-card__meta">
+-                                @(candidate.PhoneNumber ?? Model.PhoneNumber) · Verified via @TicketDisplay.LookupSourceLabel(candidate.Source)
++                                @(candidate.PhoneNumber ?? Model.PhoneNumber) · Verified via @(candidate.LinkedPact is null ? TicketDisplay.LookupSourceLabel(candidate.Source) : "PACT + Tiger CRM")
+                                 @if (candidate.Units.Count > 0)
+                                 {
+                                     <text> · @candidate.Units.Count unit@(candidate.Units.Count == 1 ? "" : "s")</text>
+@@ -116,7 +116,7 @@
+                     <div class="customer-summary__name">@(selected.DisplayName ?? "Unnamed customer")</div>
+                     <div class="customer-summary__meta">
+                         <span><strong>Phone:</strong> @(selected.PhoneNumber ?? Model.PhoneNumber)</span>
+-                        <span><strong>Verified via:</strong> @TicketDisplay.LookupSourceLabel(selected.Source)</span>
++                        <span><strong>Verified via:</strong> @(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM")</span>
+                         @if (!string.IsNullOrWhiteSpace(selected.Email))
+                         {
+                             <span><strong>Email:</strong> @selected.Email</span>
+@@ -133,6 +133,10 @@
+                     {
+                         <a class="btn btn-sm" href="/Customers/Lookup?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber!)">Change customer</a>
+                     }
++                    @if (selected.Source is "Crm" or "Pact")
++                    {
++                        <a class="btn" target="_blank" rel="noopener" href="/Customers/Payments?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber!)&customerKey=@Uri.EscapeDataString(selected.Key)">Payments &amp; Fines</a>
++                    }
+                     <a class="btn btn-gold" href="@newTicketHref">+ New Ticket</a>
+                 </div>
+             </section>
+@@ -234,14 +238,14 @@
+                         @if (selected.AllContractsExpired)
+                         {
+                             <div class="alert alert-info" role="status" data-all-contracts-expired>
+-                                <span><strong>Every @TicketDisplay.LookupSourceLabel(selected.Source) contract for this customer has ended.</strong> Their tickets, payments and fines stay available here; a new ticket cannot be raised against an expired contract.</span>
++                                <span><strong>Every @(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM") contract for this customer has ended.</strong> Their tickets, payments and fines stay available here; a new ticket cannot be raised against an expired contract.</span>
+                             </div>
+                         }
+                         @if (selected.Units.Count == 0)
+                         {
+                             <div class="empty-state">
+                                 <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.8" /></svg>
+-                                <p>@TicketDisplay.LookupSourceLabel(selected.Source) reports no units for this customer.</p>
++                                <p>@(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM") reports no units for this customer.</p>
+                             </div>
+                         }
+                         else
+@@ -303,7 +307,7 @@
+                             <div class="facts-row"><dt>Phone</dt><dd>@(selected.PhoneNumber ?? Model.PhoneNumber)</dd></div>
+                             <div class="facts-row"><dt>Email</dt><dd>@(string.IsNullOrWhiteSpace(selected.Email) ? "—" : selected.Email)</dd></div>
+                             <div class="facts-row"><dt>Customer type</dt><dd>@(string.IsNullOrWhiteSpace(selected.CustomerType) ? "—" : selected.CustomerType)</dd></div>
+-                            <div class="facts-row"><dt>Verification source</dt><dd>@TicketDisplay.LookupSourceLabel(selected.Source)</dd></div>
++                            <div class="facts-row"><dt>Verification source</dt><dd>@(selected.LinkedPact is null ? TicketDisplay.LookupSourceLabel(selected.Source) : "PACT + Tiger CRM")</dd></div>
+                         </dl>
+                     </section>
+                 </div>
+diff --git a/src/TigerCS.Web/Pages/CustomerLookup.cshtml.cs b/src/TigerCS.Web/Pages/CustomerLookup.cshtml.cs
+index d12d600..7744f40 100644
+--- a/src/TigerCS.Web/Pages/CustomerLookup.cshtml.cs
++++ b/src/TigerCS.Web/Pages/CustomerLookup.cshtml.cs
+@@ -4,10 +4,11 @@ using TigerCS.Web.Models;
+ using TigerCS.Web.Services;
+ using TigerCS.Web.Services.Api;
+ using TigerCS.Web.Services.Auth;
++using TigerCS.Application.Modules.Ticketing.Services;
+ 
+ namespace TigerCS.Web.Pages;
+ 
+-/// <summary>One unit/contract belonging to a search candidate — display snapshot only, no raw external ids. <paramref name="IsContractExpired"/> marks a PACT contract that has already ended: still listed here (the workspace serves historical tickets, payments and fines), never selectable for a new ticket.</summary>
++/// <summary>One unit/contract belonging to a search candidate — display snapshot only, no raw external ids.</summary>
+ public sealed record CandidateUnit(
+     string? UnitNumber, string? ProjectName, string? UnitType, int? FloorNumber,
+     bool IsContractExpired = false, DateOnly? ContractEndDate = null);
+@@ -28,7 +29,8 @@ public sealed record CustomerCandidate(
+     string? CustomerType,
+     int? CrmCustomerId,
+     string? ExternalCustomerId,
+-    IReadOnlyList<CandidateUnit> Units)
++    IReadOnlyList<CandidateUnit> Units,
++    CustomerLookupCustomerDto? LinkedPact = null)
+ {
+     /// <summary>How many of the candidate's units are expired PACT contracts — shown as a label, so the count never passes as current units.</summary>
+     public int ExpiredUnitsCount => Units.Count(u => u.IsContractExpired);
+@@ -107,7 +109,9 @@ public sealed class CustomerLookupModel(
+         }
+ 
+         var historyResult = Selected.CrmCustomerId is int crmCustomerId
+-            ? await customersApiClient.GetByCrmCustomerIdAsync(crmCustomerId, limit: 50, cancellationToken)
++            ? Selected.LinkedPact is not null
++                ? await customersApiClient.GetByLinkedLookupAsync(PhoneNumber!, crmCustomerId, 50, cancellationToken)
++                : await customersApiClient.GetByCrmCustomerIdAsync(crmCustomerId, limit: 50, cancellationToken)
+             : await customersApiClient.GetByExternalIdentityAsync(
+                 Selected.Source, Selected.ExternalCustomerId!, limit: 50, cancellationToken);
+ 
+@@ -143,26 +147,34 @@ public sealed class CustomerLookupModel(
+     {
+         var candidates = new List<CustomerCandidate>();
+ 
++        var linkedIds = new HashSet<string>(StringComparer.Ordinal);
+         foreach (var buyer in result.CrmBuyers)
+         {
++            var pact = CustomerIdentityLinker.FindPactMatch(buyer, result.CrmBuyers, result.ExternalSources);
++            if (pact is not null) linkedIds.Add(pact.ExternalCustomerId);
+             candidates.Add(new CustomerCandidate(
+                 $"crm:{buyer.Customer.CustomerId}",
+                 "Crm",
+                 buyer.Customer.FullNameEnglish ?? buyer.Customer.FullNameArabic,
+                 buyer.Customer.MobileNumber,
+-                buyer.Customer.Email,
++                buyer.Customer.Email ?? pact?.Email,
+                 buyer.Units.Select(u => u.CustomerTypeName).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)),
+                 buyer.Customer.CustomerId,
+                 ExternalCustomerId: null,
+                 buyer.Units
+                     .Select(u => new CandidateUnit(u.UnitNumber, u.ProjectName, UnitType: null, u.FloorNumber))
+-                    .ToList()));
++                    .Concat((pact?.Units ?? []).Where(p => !buyer.Units.Any(c =>
++                        CustomerIdentityLinker.Same(c.UnitNumber, p.UnitNumber) && (CustomerIdentityLinker.Same(c.ProjectName, p.PropertyName)
++                            || CustomerIdentityLinker.Same(c.ProjectArabicName, p.PropertyName))))
++                        .Select(u => new CandidateUnit(u.UnitNumber, u.PropertyName, u.UnitType, null, u.IsContractExpired, u.ContractEndDate)))
++                    .Distinct().ToList(), pact));
+         }
+ 
+         foreach (var source in result.ExternalSources.Where(s => s.Status == "Found"))
+         {
+             foreach (var external in source.Customers)
+             {
++                if (source.Source == "Pact" && linkedIds.Contains(external.ExternalCustomerId)) continue;
+                 candidates.Add(new CustomerCandidate(
+                     $"ext:{source.Source}:{Uri.EscapeDataString(external.ExternalCustomerId)}",
+                     source.Source,
+diff --git a/src/TigerCS.Web/Pages/CustomerPayments.cshtml b/src/TigerCS.Web/Pages/CustomerPayments.cshtml
+new file mode 100644
+index 0000000..e830e4a
+--- /dev/null
++++ b/src/TigerCS.Web/Pages/CustomerPayments.cshtml
+@@ -0,0 +1,12 @@
++@page "/Customers/Payments"
++@model TigerCS.Web.Pages.CustomerPaymentsModel
++@{
++    ViewData["Title"] = "Payments & Fines";
++    ViewData["ActiveNav"] = "customers";
++    Layout = "_Layout";
++}
++<div class="page">
++    <div class="page-header"><div><h1 class="page-title">Payments &amp; Fines</h1><p class="page-subtitle">@Model.PhoneNumber</p></div></div>
++    <section class="section-card"><partial name="_CustomerPaymentTab" model="Model.Panel" /></section>
++    <a class="btn" href="/Customers/Lookup?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber ?? "")&customer=@Uri.EscapeDataString(Model.CustomerKey ?? "")">Customer Workspace</a>
++</div>
+diff --git a/src/TigerCS.Web/Pages/CustomerPayments.cshtml.cs b/src/TigerCS.Web/Pages/CustomerPayments.cshtml.cs
+new file mode 100644
+index 0000000..6bbfc5a
+--- /dev/null
++++ b/src/TigerCS.Web/Pages/CustomerPayments.cshtml.cs
+@@ -0,0 +1,19 @@
++using Microsoft.AspNetCore.Mvc.RazorPages;
++using TigerCS.Web.Models;
++using TigerCS.Web.Services;
++
++namespace TigerCS.Web.Pages;
++
++public sealed class CustomerPaymentsModel(CustomerPaymentPanelLoader loader) : PageModel
++{
++    public CustomerPaymentPanel Panel { get; private set; } = new() { CustomerKey = "", State = PaymentPanelState.Error };
++    public string? PhoneNumber { get; private set; }
++    public string? CustomerKey { get; private set; }
++    public async Task OnGetAsync(string? phoneNumber, string? customerKey, string? account, CancellationToken cancellationToken)
++    {
++        PhoneNumber = phoneNumber;
++        CustomerKey = customerKey;
++        if (!string.IsNullOrWhiteSpace(phoneNumber) && !string.IsNullOrWhiteSpace(customerKey))
++            Panel = await loader.LoadLookupAsync(phoneNumber, customerKey, account, cancellationToken);
++    }
++}
+diff --git a/src/TigerCS.Web/Pages/NewTicket.cshtml b/src/TigerCS.Web/Pages/NewTicket.cshtml
+index 6acf0ba..7e41f9b 100644
+--- a/src/TigerCS.Web/Pages/NewTicket.cshtml
++++ b/src/TigerCS.Web/Pages/NewTicket.cshtml
+@@ -196,7 +196,7 @@
+                                                    intact — the unit chosen on Step 2 decides which one the ticket
+                                                    persists. *@
+                                                 <div class="candidate-card__meta" data-unified-identities>
+-                                                    Same customer in Tiger CRM and PACT — linked by a shared unit.
++                                                    Same customer in Tiger CRM and PACT — customer details and unit verified.
+                                                 </div>
+                                             }
+                                             @* Identity verified via the source(s) that matched it. *@
+@@ -240,12 +240,17 @@
+                                     }
+ 
+                                     <div class="candidate-card__actions">
++                                        @if (candidate.Source is "Crm" or "Pact" && WorkspaceCustomerKey(candidate) is { } paymentKey)
++                                        {
++                                            <a class="btn btn-sm" target="_blank" rel="noopener"
++                                               href="/Customers/Payments?phoneNumber=@Uri.EscapeDataString(Model.PhoneNumber ?? "")&customerKey=@Uri.EscapeDataString(paymentKey)">Payments &amp; Fines</a>
++                                        }
+                                         <a class="btn btn-gold" asp-page="/NewTicket"
+                                            asp-all-route-data="@StepRoute(NewTicketModel.StepProperty, customerOverride: candidate.Key)">Use this customer</a>
+                                         @if (WorkspaceCustomerKey(candidate) is { } workspaceKey && Model.PhoneNumber is not null)
+                                         {
+                                             <a class="btn btn-sm"
+-                                               href="@(history is { TotalTickets: > 0 }
++                                               href="@(history is { TotalTickets: > 0 } && !candidate.IsUnified
+                                                    ? $"/Customers/{Uri.EscapeDataString(workspaceKey)}"
+                                                    : $"/Customers/Lookup?phoneNumber={Uri.EscapeDataString(Model.PhoneNumber)}&customer={Uri.EscapeDataString(workspaceKey)}")">View all tickets</a>
+                                         }
+@@ -353,34 +358,11 @@
+                     {
+                         var customerName = match.Customer.FullNameEnglish ?? match.Customer.FullNameArabic;
+                         <div class="unit-list" aria-label="Units">
+-                            @foreach (var unit in match.Units)
+-                            {
+-                                var statusLabel = unit.LeadStatusName ?? unit.LeadStatus.ToString();
+-                                var packedValue = string.Join(':',
+-                                    match.Customer.CustomerId, unit.LeadId, unit.UnitId, unit.ProjectId,
+-                                    Uri.EscapeDataString(customerName ?? string.Empty),
+-                                    Uri.EscapeDataString(unit.ProjectName ?? string.Empty),
+-                                    Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
+-                                <div class="unit-option" data-unit-source="Crm">
+-                                    <div>
+-                                        <div class="unit-option__title">@(unit.ProjectName ?? "Project")</div>
+-                                        <div class="unit-option__meta">Unit @unit.UnitNumber · @statusLabel@(Model.IsLinkedToPact(unit) ? " · also on file in PACT" : "")</div>
+-                                    </div>
+-                                    <form method="post" asp-page-handler="UseCrmBuyerUnit">
+-                                        <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+-                                        <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
+-                                        <input type="hidden" name="selectedCrmBuyerUnit" value="@packedValue" />
+-                                        <button type="submit" class="btn btn-sm">Select</button>
+-                                    </form>
+-                                </div>
+-                            }
+                             @if (Model.LinkedPactCustomer is { } linkedPact)
+                             {
+-                                @* The unified card's PACT-only current contracts (no CRM unit matches
+-                                   them): selecting one persists the PACT identity, exactly as a PACT
+-                                   selection from a separate PACT card would. Expired contracts never
+-                                   reach here — the lookup layer already dropped them. *@
+-                                foreach (var pactUnit in Model.LinkedPactOnlyUnits)
++                                @* PACT is primary: current PACT contracts come first. Matching CRM
++                                   units stay attached to the verified customer without duplicate choices. *@
++                                foreach (var pactUnit in Model.LinkedPactSelectableUnits)
+                                 {
+                                     var packedPact = string.Join(':',
+                                         Uri.EscapeDataString("Pact"),
+@@ -393,7 +375,7 @@
+                                     <div class="unit-option" data-unit-source="Pact">
+                                         <div>
+                                             <div class="unit-option__title">@(pactUnit.PropertyName ?? "Project")</div>
+-                                            <div class="unit-option__meta">Unit @pactUnit.UnitNumber@(string.IsNullOrWhiteSpace(pactUnit.UnitType) ? "" : $" · {pactUnit.UnitType}") · PACT contract only</div>
++                                            <div class="unit-option__meta">Unit @pactUnit.UnitNumber@(string.IsNullOrWhiteSpace(pactUnit.UnitType) ? "" : $" · {pactUnit.UnitType}") · Verified via PACT</div>
+                                         </div>
+                                         <form method="post" asp-page-handler="UseExternalUnit">
+                                             <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
+@@ -405,6 +387,27 @@
+                                     </div>
+                                 }
+                             }
++                            @foreach (var unit in Model.CrmOnlySelectableUnits)
++                            {
++                                var statusLabel = unit.LeadStatusName ?? unit.LeadStatus.ToString();
++                                var packedValue = string.Join(':',
++                                    match.Customer.CustomerId, unit.LeadId, unit.UnitId, unit.ProjectId,
++                                    Uri.EscapeDataString(customerName ?? string.Empty),
++                                    Uri.EscapeDataString(unit.ProjectName ?? string.Empty),
++                                    Uri.EscapeDataString(unit.UnitNumber ?? string.Empty));
++                                <div class="unit-option" data-unit-source="Crm">
++                                    <div>
++                                        <div class="unit-option__title">@(unit.ProjectName ?? "Project")</div>
++                                        <div class="unit-option__meta">Unit @unit.UnitNumber · @statusLabel@(Model.IsLinkedToPact(unit) ? " · also on file in PACT" : "")</div>
++                                    </div>
++                                    <form method="post" asp-page-handler="UseCrmBuyerUnit">
++                                        <input type="hidden" name="intakeRecordId" value="@Model.IntakeRecordId" />
++                                        <input type="hidden" name="phoneNumber" value="@Model.PhoneNumber" />
++                                        <input type="hidden" name="selectedCrmBuyerUnit" value="@packedValue" />
++                                        <button type="submit" class="btn btn-sm">Select</button>
++                                    </form>
++                                </div>
++                            }
+                         </div>
+                         <p class="wizard-quiet-action">
+                             Can't find the unit?
+@@ -502,11 +505,9 @@
+                         <div class="alert alert-error" role="alert"><span>@Model.DepartmentsErrorMessage</span></div>
+                     }
+ 
+-                    @if (Model.CategoriesErrorMessage is null && Model.Categories.Count == 0 && Model.CreateStep.DepartmentId is not null)
++                    @if (Model.RequestTypesErrorMessage is not null)
+                     {
+-                        <div class="alert alert-info" role="status">
+-                            <span>No active categories are configured for this department.</span>
+-                        </div>
++                        <div class="alert alert-error" role="alert"><span>@Model.RequestTypesErrorMessage</span></div>
+                     }
+ 
+                     <form method="post" asp-page-handler="IssueRefresh" id="new-ticket-form">
+@@ -514,54 +515,35 @@
+                         <input type="hidden" asp-for="CreateStep.ManualProjectName" />
+                         <input type="hidden" asp-for="CreateStep.ManualUnitNumber" />
+ 
++                        <input type="hidden" name="CreateStep.UseRequestCategoryPicker" value="true" />
+                         <div class="form-group">
+-                            <label class="form-label" asp-for="CreateStep.DepartmentId">Department</label>
++                            <label class="form-label" asp-for="CreateStep.DepartmentId">Request Category *</label>
+                             <select class="form-control" asp-for="CreateStep.DepartmentId" data-autosubmit>
+-                                <option value="">All departments</option>
++                                <option value="">Select Request Category</option>
+                                 @foreach (var department in Model.Departments)
+                                 {
+                                     <option value="@department.DepartmentId">@department.Name</option>
+                                 }
+                             </select>
+-                            <span class="field-hint">Narrows the categories below. The ticket routes to the team that owns the selected category.</span>
++                            <span class="field-hint">Choose a request category to see its request types.</span>
++                            <noscript><button type="submit" class="btn btn-sm">Show request types</button></noscript>
+                         </div>
+ 
+                         <div class="form-group">
+-                            <label class="form-label" asp-for="CreateStep.CategoryId">Category *</label>
+-                            <select class="form-control" asp-for="CreateStep.CategoryId">
+-                                <option value="">Select Category</option>
+-                                @foreach (var group in Model.Categories.GroupBy(c => c.DepartmentName))
++                            <label class="form-label" asp-for="CreateStep.RequestTypeChoice">Request Type *</label>
++                            <select class="form-control" asp-for="CreateStep.RequestTypeChoice" disabled="@(Model.CreateStep.DepartmentId is null ? "disabled" : null)">
++                                <option value="">Select Request Type</option>
++                                @foreach (var requestType in Model.RequestTypeChoices)
+                                 {
+-                                    <optgroup label="@group.Key">
+-                                        @foreach (var category in group)
+-                                        {
+-                                            <option value="@category.CategoryId">@category.Name</option>
+-                                        }
+-                                    </optgroup>
++                                    <option value="@requestType.Value">@requestType.Name</option>
+                                 }
+                             </select>
++                            @if (Model.CreateStep.DepartmentId is not null && Model.RequestTypesErrorMessage is null && Model.CategoriesErrorMessage is null && Model.RequestTypeChoices.Count == 0)
++                            {
++                                <span class="field-hint">No active request types are configured for this request category.</span>
++                            }
+                         </div>
+ 
+-                        @if (Model.RequestTypeOptions.Count > 0)
+-                        {
+-                            <div class="form-group">
+-                                <label class="form-label" asp-for="CreateStep.RequestTypeId">Request Type</label>
+-                                <select class="form-control" asp-for="CreateStep.RequestTypeId">
+-                                    <option value="">None — standard handling</option>
+-                                    @foreach (var group in Model.RequestTypeOptions.GroupBy(r => Model.DepartmentNameOf(r.DepartmentId)))
+-                                    {
+-                                        <optgroup label="@group.Key">
+-                                            @foreach (var requestType in group)
+-                                            {
+-                                                <option value="@requestType.RequestTypeId">@requestType.Name</option>
+-                                            }
+-                                        </optgroup>
+-                                    }
+-                                </select>
+-                                <span class="field-hint">The configured request type this ticket follows (e.g. Send Receipts). It sets the assignment, approvals and SLA, and must belong to the same department as the category above.</span>
+-                            </div>
+-                        }
+-
+                         <div class="form-group">
+                             <label class="form-label" asp-for="CreateStep.PriorityId">Priority *</label>
+                             <select class="form-control" asp-for="CreateStep.PriorityId">
+@@ -601,7 +583,7 @@
+ 
+                     <div class="review-banner" role="status">
+                         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" /></svg>
+-                        <span>You are about to create a <strong>@(Model.SelectedCategory?.Name ?? "new")</strong> ticket for <strong>@(Model.SummaryCustomerName ?? "a manually entered customer")</strong>@(Model.SummaryDepartmentName is { } bannerDept ? $", routed to {bannerDept}" : "").</span>
++                        <span>You are about to create a <strong>@(Model.SummaryRequestTypeName ?? "new")</strong> ticket for <strong>@(Model.SummaryCustomerName ?? "a manually entered customer")</strong>@(Model.SummaryDepartmentName is { } bannerDept ? $", routed to {bannerDept}" : "").</span>
+                     </div>
+ 
+                     <dl class="review-grid">
+@@ -611,7 +593,7 @@
+                                 <strong>@(Model.SummaryCustomerName ?? "—")</strong><br />
+                                 @Model.PhoneNumber<br />
+                                 @(Model.SummarySourceKey is { } srcKey && srcKey != "Manual"
+-                                    ? $"Verified via {TicketDisplay.LookupSourceLabel(srcKey)}"
++                                    ? $"Verified via {Model.SummaryVerificationLabel}"
+                                     : "Manual entry")
+                                 <div class="review-block__edit"><a class="link-muted" asp-page="/NewTicket" asp-all-route-data="@StepRoute(NewTicketModel.StepCustomer, keepCustomer: false, keepUnit: false)">Change customer</a></div>
+                             </dd>
+@@ -627,7 +609,7 @@
+                         <div class="review-block">
+                             <dt>Request</dt>
+                             <dd>
+-                                <strong>@(Model.SelectedCategory?.Name ?? "—")</strong><br />
++                                <strong>@(Model.SummaryRequestTypeName ?? "—")</strong><br />
+                                 @(Model.SummaryDepartmentName ?? "—")<br />
+                                 @(Model.CreateStep.PriorityId is { } priorityId ? $"{TicketDisplay.PriorityLabel(priorityId)} Priority" : "—")
+                             </dd>
+@@ -643,6 +625,8 @@
+                     <form method="post" asp-page-handler="Create">
+                         @await Html.PartialAsync("_NewTicketWizardState", Model)
+                         <input type="hidden" asp-for="CreateStep.DepartmentId" />
++                        <input type="hidden" asp-for="CreateStep.UseRequestCategoryPicker" />
++                        <input type="hidden" asp-for="CreateStep.RequestTypeChoice" />
+                         <input type="hidden" asp-for="CreateStep.CategoryId" />
+                         <input type="hidden" asp-for="CreateStep.RequestTypeId" />
+                         <input type="hidden" asp-for="CreateStep.PriorityId" />
+@@ -694,9 +678,9 @@
+                     <div class="wizard-summary__row">
+                         <dt>Verification</dt>
+                         <dd>
+-                            @if (Model.SummarySourceKey is { } sourceKey)
++                            @if (Model.SummaryVerificationLabel is { } verificationLabel)
+                             {
+-                                @(sourceKey == "Manual" ? "Manual entry" : TicketDisplay.LookupSourceLabel(sourceKey))
++                                @verificationLabel
+                             }
+                             else { <span class="wizard-summary__empty">Not selected yet</span> }
+                         </dd>
+@@ -714,20 +698,13 @@
+                         <dd>@if (Model.SummaryUnitNumber is { } unitNo) { @unitNo } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
+                     </div>
+                     <div class="wizard-summary__row">
+-                        <dt>Department</dt>
+-                        <dd>@if (Model.SummaryDepartmentName is { } deptName) { @deptName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
++                        <dt>Request Category</dt>
++                        <dd>@if (Model.SummaryDepartmentName is { } categoryName) { @categoryName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
+                     </div>
+                     <div class="wizard-summary__row">
+-                        <dt>Category</dt>
+-                        <dd>@if (Model.SelectedCategory is { } selectedCategory) { @selectedCategory.Name } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
++                        <dt>Request Type</dt>
++                        <dd>@if (Model.SummaryRequestTypeName is { } typeName) { @typeName } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
+                     </div>
+-                    @if (Model.SelectedRequestType is { } summaryRequestType)
+-                    {
+-                        <div class="wizard-summary__row">
+-                            <dt>Request Type</dt>
+-                            <dd>@summaryRequestType.Name</dd>
+-                        </div>
+-                    }
+                     <div class="wizard-summary__row">
+                         <dt>Priority</dt>
+                         <dd>@if (Model.CreateStep.PriorityId is { } summaryPriority) { @TicketDisplay.PriorityLabel(summaryPriority) } else { <span class="wizard-summary__empty">Not selected yet</span> }</dd>
+diff --git a/src/TigerCS.Web/Pages/NewTicket.cshtml.cs b/src/TigerCS.Web/Pages/NewTicket.cshtml.cs
+index 5d7dac4..5cef47d 100644
+--- a/src/TigerCS.Web/Pages/NewTicket.cshtml.cs
++++ b/src/TigerCS.Web/Pages/NewTicket.cshtml.cs
+@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.AspNetCore.Mvc.RazorPages;
+ using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
+ using TigerCS.Application.Modules.CustomerVerification.Dto;
++using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
+ using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+ using TigerCS.Application.Modules.Administration.Dto;
+ using TigerCS.Web.Models;
+ using TigerCS.Application.Modules.Ticketing.Dto;
++using TigerCS.Application.Modules.Ticketing.Services;
+ using TigerCS.Web.Services;
+ using TigerCS.Web.Services.Api;
+ 
+@@ -21,7 +23,7 @@ namespace TigerCS.Web.Pages;
+ ///
+ /// <para>
+ /// <b>A unified card</b> (<see cref="IsUnified"/>) is the CRM Buyer and a
+-/// PACT customer that a verified unit link proved to be the same person
++/// PACT customer that customer details and a unit match verified to be the same person
+ /// (see <see cref="NewTicketModel.LinkedPactCustomer"/>): <see cref="Key"/>
+ /// stays "crm", <see cref="Sources"/> names both, and
+ /// <see cref="LinkedPactCustomerId"/> keeps the PACT tenant id so both
+@@ -38,6 +40,8 @@ public sealed record NewTicketCandidate(
+     public IReadOnlyList<string> Sources { get; init; } = Sources ?? [Source];
+ 
+     public bool IsUnified => Sources.Count > 1;
++
++    public string PrimaryVerificationSource => Sources[0];
+ }
+ 
+ /// <summary>
+@@ -47,8 +51,8 @@ public sealed record NewTicketCandidate(
+ /// GET /api/intake-records/{id}/customer-lookup,
+ /// GET /api/crm/buyers?phoneNumber={phoneNumber}, GET /api/departments,
+ /// GET /api/categories, the customer-history/related-tickets reads, and
+-/// POST /api/tickets). The redesign is presentation and flow only: no
+-/// verification rule, identity rule, or creation rule changed.
++/// POST /api/tickets). The visible request taxonomy uses Request Category
++/// (department) and a dependent Request Type, preserving routing/workflow IDs.
+ ///
+ /// <para>
+ /// <b>Step 1 (Customer)</b> records the intake (channel + phone — the
+@@ -60,10 +64,9 @@ public sealed record NewTicketCandidate(
+ /// and PACT/Tasleeh units keep their packed-selection integrity (ids and
+ /// display text always travel together), manual entry stays the fallback —
+ /// and surfaces the existing related-tickets advisory for the selected
+-/// unit. <b>Step 3 (Issue)</b> chooses Department → Category (scoped to
+-/// the Department) → optional Request Type → Priority → the request
+-/// text. <b>Step 4 (Review)</b> shows a concise summary before the one
+-/// create action.
++/// unit. <b>Step 3 (Issue)</b> chooses Request Category → Request Type →
++/// Priority → the request text. <b>Step 4 (Review)</b> shows a concise summary
++/// before the one create action.
+ /// </para>
+ ///
+ /// <para>
+@@ -101,7 +104,8 @@ public sealed class NewTicketModel(
+     CustomerHistoryApiClient customerHistoryClient,
+     RequestTypesApiClient? requestTypesClient = null,
+     ChannelsApiClient? channelsClient = null,
+-    CustomerPaymentPanelLoader? paymentPanelLoader = null) : PageModel
++    CustomerPaymentPanelLoader? paymentPanelLoader = null,
++    TimeProvider? timeProvider = null) : PageModel
+ {
+     public const string StepCustomer = "customer";
+     public const string StepProperty = "property";
+@@ -212,8 +216,18 @@ public sealed class NewTicketModel(
+     /// fixture-backed (Crm:Provider=Mock) while Buyer Lookup is the real CRM
+     /// integration (see this type's remarks).
+     /// </summary>
++    private readonly DateOnly _selectionDate = PactContractActivity.TodayInDubai(timeProvider ?? TimeProvider.System);
++
++    private IReadOnlyList<CustomerLookupUnitDto> SelectablePactUnits(CustomerLookupCustomerDto customer) =>
++        customer.Units.Where(u => u.ContractEndDate is not { } end || end >= _selectionDate)
++            .DistinctBy(u => u.ExternalUnitId).ToList();
++
+     public IReadOnlyList<CustomerLookupSourceResultDto> ExternalLookupSources =>
+-        CustomerLookup?.Sources.Where(s => !string.Equals(s.Source, "Crm", StringComparison.Ordinal)).ToList() ?? [];
++        CustomerLookup?.Sources.Where(s => !string.Equals(s.Source, "Crm", StringComparison.Ordinal))
++            .Select(s => s.Source != "Pact" ? s : s with
++            {
++                Customers = s.Customers.Select(c => c with { Units = SelectablePactUnits(c) }).ToList()
++            }).ToList() ?? [];
+ 
+     /// <summary>True when the Department has zero lookup sources configured — nothing was searched (never a silent fall-back to "search everything"), and the agent continues with manual entry.</summary>
+     public bool NoLookupSourcesConfigured => CustomerLookup is { Sources.Count: 0 };
+@@ -253,6 +267,12 @@ public sealed class NewTicketModel(
+     /// <summary>The linked PACT customer's current units that no CRM unit matches — offered on Step 2 under the unified card, selectable through the external (PACT) path. Empty when there is no link.</summary>
+     public IReadOnlyList<CustomerLookupUnitDto> LinkedPactOnlyUnits { get; private set; } = [];
+ 
++    public IReadOnlyList<CustomerLookupUnitDto> LinkedPactSelectableUnits =>
++        LinkedPactCustomer is { } pact ? SelectablePactUnits(pact) : [];
++
++    public IReadOnlyList<CrmBuyerUnitDto> CrmOnlySelectableUnits =>
++        CrmBuyerMatch?.Units.Where(crm => !LinkedPactSelectableUnits.Any(pact => UnitsLink(crm, pact))).ToList() ?? [];
++
+     /// <summary>The PACT selection token of the linked customer ("ext:Pact:{tenant id}"), for the workspace hand-off and the card's identity line.</summary>
+     public string? LinkedPactCustomerKey =>
+         LinkedPactCustomer is { } linked ? $"ext:Pact:{Uri.EscapeDataString(linked.ExternalCustomerId)}" : null;
+@@ -268,10 +288,9 @@ public sealed class NewTicketModel(
+     /// is shared by every unit in it.
+     /// </summary>
+     public static bool UnitsLink(CrmBuyerUnitDto crmUnit, CustomerLookupUnitDto pactUnit) =>
+-        !string.IsNullOrWhiteSpace(crmUnit.UnitNumber)
+-        && !string.IsNullOrWhiteSpace(crmUnit.ProjectName)
+-        && string.Equals(crmUnit.UnitNumber.Trim(), pactUnit.UnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
+-        && string.Equals(crmUnit.ProjectName.Trim(), pactUnit.PropertyName?.Trim(), StringComparison.OrdinalIgnoreCase);
++        CustomerIdentityLinker.Same(crmUnit.UnitNumber, pactUnit.UnitNumber)
++        && (CustomerIdentityLinker.Same(crmUnit.ProjectName, pactUnit.PropertyName)
++            || CustomerIdentityLinker.Same(crmUnit.ProjectArabicName, pactUnit.PropertyName));
+ 
+     /// <summary>
+     /// The PACT/Tasleeh customer+unit the agent selected on Step 2, packed
+@@ -362,10 +381,13 @@ public sealed class NewTicketModel(
+     public string? LinkedPaymentAccount { get; private set; }
+ 
+     /// <summary>Which identity <see cref="PaymentPanel"/> describes — "Crm", "Pact", or another external source's name.</summary>
+-    public string? PaymentPanelSource => CrmBuyerCustomerId is not null ? "Crm" : ExternalSource;
++    public string? PaymentPanelSource => PaymentPanel is { State: PaymentPanelState.EdsmSummary }
++        || PaymentPanel is { CustomerKey: var key } && CustomerPaymentPanel.IsPactCustomer(key)
++            ? "Pact" : CrmBuyerCustomerId is not null ? "Crm" : ExternalSource;
+ 
+     /// <summary>Which identity <see cref="LinkedPaymentPanel"/> describes — the unified card's other half.</summary>
+-    public string? LinkedPaymentPanelSource => LinkedPaymentPanel is null ? null : CrmBuyerCustomerId is not null ? "Pact" : "Crm";
++    public string? LinkedPaymentPanelSource => LinkedPaymentPanel is null ? null
++        : CustomerPaymentPanel.IsPactCustomer(LinkedPaymentPanel.CustomerKey) ? "Pact" : "Crm";
+ 
+     // ---- Summary panel (the right-hand sticky panel) — selected display
+     // values only, never technical ids, with "Not selected yet" placeholders
+@@ -390,20 +412,38 @@ public sealed class NewTicketModel(
+             ? Uri.UnescapeDataString(key.Split(':', 3)[1])
+             : CustomerKey == "manual" ? "Manual" : null);
+ 
++    public string? SummaryVerificationLabel => SummarySourceKey switch
++    {
++        "Manual" => "Manual entry",
++        "Crm" when LinkedPactCustomer is not null
++            || PaymentPanel?.PaymentSummary is { MappingStatus: "Mapped", PactTenantId: not null } => "PACT · Tiger CRM",
++        "Pact" when LinkedPactCustomer is not null && CrmBuyerMatch is not null => "PACT · Tiger CRM",
++        { } source => TicketDisplay.LookupSourceLabel(source),
++        _ => null
++    };
++
+     public string? SummaryProjectName => CrmBuyerProjectName ?? ExternalProjectName ?? ManualProjectName;
+     public string? SummaryUnitNumber => CrmBuyerUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
+ 
+     /// <summary>
+     /// Administration / Workflow Designer phase — the configured request
+     /// types the Issue step may attach to the ticket, scoped to the selected
+-    /// Department (or every department when none is selected, grouped by
+-    /// department name). Choosing one is optional: it pins the ticket to
+-    /// the request type's active workflow version and drives its assignment,
+-    /// approvals and SLA. The Api re-validates that the request type belongs
+-    /// to the department the selected Category routes to.
++    /// Request Category (department). The child picker combines these with
++    /// legacy routing entries; a configured child pins the ticket to its
++    /// published workflow version and drives assignment, approvals and SLA.
++    /// The Api re-validates that the type belongs to the routed department.
+     /// </summary>
+     public IReadOnlyList<RequestTypeOptionDto> RequestTypeOptions { get; private set; } = [];
+ 
++    public string? RequestTypesErrorMessage { get; private set; }
++
++    public IReadOnlyList<NewTicketRequestTypeChoice> RequestTypeChoices =>
++        RequestTypesErrorMessage is null
++            ? NewTicketRequestTypePicker.Build(CreateStep.DepartmentId, Categories, RequestTypeOptions)
++            : [];
++
++    public string? SummaryRequestTypeName => SelectedRequestType?.Name ?? SelectedCategory?.Name;
++
+     public RequestTypeOptionDto? SelectedRequestType =>
+         CreateStep.RequestTypeId is { } requestTypeId ? RequestTypeOptions.FirstOrDefault(r => r.RequestTypeId == requestTypeId) : null;
+ 
+@@ -658,19 +698,13 @@ public sealed class NewTicketModel(
+ 
+         if (CrmBuyerMatch is { } match)
+         {
+-            // Unify with the one PACT customer a verified unit link proves
+-            // to be the same person. If several PACT customers link (a data
+-            // oddity), none is unified — the agent sees separate cards and
+-            // chooses, exactly as without the link.
+-            var linkedPact = ExternalLookupSources
+-                .Where(s => s.Status == "Found" && string.Equals(s.Source, "Pact", StringComparison.Ordinal))
+-                .SelectMany(s => s.Customers)
+-                .Where(pact => pact.Units.Any(pactUnit => match.Units.Any(crmUnit => UnitsLink(crmUnit, pactUnit))))
+-                .ToList();
+-            if (linkedPact.Count == 1)
++            // Keep every source record for identity evidence. Matching customer
++            // details, normalized phones and project/unit are all required;
++            // ambiguity keeps the cards separate.
++            LinkedPactCustomer = CustomerIdentityLinker.FindPactMatch(match, [match], CustomerLookup?.Sources ?? []);
++            if (LinkedPactCustomer is not null)
+             {
+-                LinkedPactCustomer = linkedPact[0];
+-                LinkedPactOnlyUnits = LinkedPactCustomer.Units
++                LinkedPactOnlyUnits = SelectablePactUnits(LinkedPactCustomer)
+                     .Where(pactUnit => !match.Units.Any(crmUnit => UnitsLink(crmUnit, pactUnit)))
+                     .ToList();
+             }
+@@ -682,7 +716,7 @@ public sealed class NewTicketModel(
+                 match.Customer.MobileNumber ?? PhoneNumber,
+                 match.Customer.Email ?? LinkedPactCustomer?.Email,
+                 match.Units.Count + LinkedPactOnlyUnits.Count,
+-                LinkedPactCustomer is null ? null : ["Crm", "Pact"],
++                LinkedPactCustomer is null ? null : ["Pact", "Crm"],
+                 LinkedPactCustomer?.ExternalCustomerId));
+         }
+ 
+@@ -708,7 +742,12 @@ public sealed class NewTicketModel(
+             }
+         }
+ 
+-        Candidates = candidates;
++        Candidates = candidates.OrderBy(c => c.PrimaryVerificationSource switch
++        {
++            "Pact" => 0,
++            "Crm" => 1,
++            _ => 2
++        }).ToList();
+         SelectedCandidate = CustomerKey is { } key ? candidates.FirstOrDefault(c => c.Key == key) : null;
+     }
+ 
+@@ -950,15 +989,17 @@ public sealed class NewTicketModel(
+         if (requestTypesClient is null)
+         {
+             RequestTypeOptions = [];
++            RequestTypesErrorMessage = "Unable to load request types. Please try again.";
+             return;
+         }
+ 
+-        // A failure here is tolerated: the picker is optional, so the wizard
+-        // still works with no request type rather than blocking the agent.
+         var result = await requestTypesClient.GetOptionsAsync(departmentId, cancellationToken);
+-        RequestTypeOptions = result.IsSuccess && result.Value is not null
+-            ? result.Value.Where(r => r.HasPublishedWorkflow).ToList()
+-            : [];
++        RequestTypesErrorMessage = result.IsSuccess && result.Value is not null
++            ? null
++            : result.Detail ?? DescribeFailure(result.Outcome, "Unable to load request types. Please try again.");
++        // Keep unpublished names so a legacy category with the same name cannot
++        // bypass an unavailable configured workflow in the combined picker.
++        RequestTypeOptions = result.IsSuccess && result.Value is not null ? result.Value : [];
+     }
+ 
+     /// <summary>
+@@ -994,6 +1035,19 @@ public sealed class NewTicketModel(
+             CreateStep.RequestTypeId = null;
+         }
+ 
++        if (CreateStep.UseRequestCategoryPicker)
++        {
++            CreateStep.CategoryId = null;
++            CreateStep.RequestTypeId = null;
++            if (RequestTypeChoices.All(c => c.Value != CreateStep.RequestTypeChoice))
++            {
++                CreateStep.RequestTypeChoice = null;
++                ModelState.Remove("CreateStep.RequestTypeChoice");
++            }
++            ModelState.Remove("CreateStep.CategoryId");
++            ModelState.Remove("CreateStep.RequestTypeId");
++        }
++
+         return Page();
+     }
+ 
+@@ -1016,17 +1070,22 @@ public sealed class NewTicketModel(
+             crmBuyerCustomerName, crmBuyerProjectName, crmBuyerUnitNumber,
+             externalSelection, manualProjectName, manualUnitNumber);
+ 
+-        if (ValidateIssue() is { } validationError)
++        var pickerError = await ResolveRequestTypeChoiceAsync(cancellationToken);
++        if ((pickerError ?? ValidateIssue()) is { } validationError)
+         {
+             ErrorMessage = validationError;
+-            await LoadIssueStepAsync(cancellationToken);
++            if (!CreateStep.UseRequestCategoryPicker)
++            {
++                await LoadIssueStepAsync(cancellationToken);
++            }
+             return Page();
+         }
+ 
+         Step = StepReview;
+-        // The review resolves the selected Category/Department to their
+-        // display names from the same directory the Issue step used.
+-        await LoadIssueStepAsync(cancellationToken);
++        if (!CreateStep.UseRequestCategoryPicker)
++        {
++            await LoadIssueStepAsync(cancellationToken);
++        }
+         await LoadReviewPaymentsAsync(cancellationToken);
+         return Page();
+     }
+@@ -1066,22 +1125,28 @@ public sealed class NewTicketModel(
+ 
+         if (CrmBuyerCustomerId is { } crmBuyerCustomerId)
+         {
+-            PaymentPanel = await paymentPanelLoader.LoadAsync(
+-                $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, PaymentAccount, null, false, cancellationToken,
+-                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber));
+-
+             if (LinkedPactCustomer is { } linked)
+             {
+-                // The PACT contract that IS the selected CRM unit, when the
+-                // link named one — EDSM is then scoped to its company.
++                // PACT is the primary financial source on a verified combined
++                // customer. Keep CRM finance available afterward under its own ID.
+                 var linkedUnit = linked.Units.FirstOrDefault(pactUnit =>
+                     string.Equals(pactUnit.UnitNumber?.Trim(), CrmBuyerUnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(pactUnit.PropertyName?.Trim(), CrmBuyerProjectName?.Trim(), StringComparison.OrdinalIgnoreCase));
++                PaymentPanel = await paymentPanelLoader.LoadAsync(
++                    LinkedPactCustomerKey!, null, PaymentAccount, null, false, cancellationToken,
++                    new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly,
++                        PreferredExternalUnitId: linkedUnit?.ExternalUnitId, LookupPhoneNumber: PhoneNumber));
+                 LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
+-                    LinkedPactCustomerKey!, null, LinkedPaymentAccount, null, false, cancellationToken,
+-                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: linkedUnit?.ExternalUnitId));
++                    $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, LinkedPaymentAccount, null, false, cancellationToken,
++                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber));
++            }
++            else
++            {
++                PaymentPanel = await paymentPanelLoader.LoadAsync(
++                    $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, PaymentAccount, null, false, cancellationToken,
++                    new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly,
++                        PreferredUnitNumber: CrmBuyerUnitNumber, LookupPhoneNumber: PhoneNumber));
+             }
+-
+             return;
+         }
+ 
+@@ -1089,7 +1154,7 @@ public sealed class NewTicketModel(
+         {
+             PaymentPanel = await paymentPanelLoader.LoadAsync(
+                 $"ext:{externalSource}:{Uri.EscapeDataString(externalCustomerId)}", null, PaymentAccount, null, false, cancellationToken,
+-                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: ExternalUnitId));
++                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: ExternalUnitId, LookupPhoneNumber: PhoneNumber));
+ 
+             if (LinkedPactCustomer is not null && CrmBuyerMatch is { } match
+                 && string.Equals(externalSource, "Pact", StringComparison.Ordinal)
+@@ -1097,7 +1162,7 @@ public sealed class NewTicketModel(
+             {
+                 LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
+                     $"crm:{match.Customer.CustomerId}", match.Customer.CustomerId, LinkedPaymentAccount, null, false, cancellationToken,
+-                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: ExternalUnitNumber));
++                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: ExternalUnitNumber, LookupPhoneNumber: PhoneNumber));
+             }
+         }
+     }
+@@ -1160,11 +1225,15 @@ public sealed class NewTicketModel(
+         // never manually typed in — but the request is still rejected here
+         // (rather than trusted) if somehow a value is missing. POST
+         // /api/tickets is the actual authority and re-validates everything.
+-        if (ValidateIssue() is { } validationError)
++        var pickerError = await ResolveRequestTypeChoiceAsync(cancellationToken);
++        if ((pickerError ?? ValidateIssue()) is { } validationError)
+         {
+             ErrorMessage = validationError;
+             Step = StepIssue;
+-            await LoadIssueStepAsync(cancellationToken);
++            if (!CreateStep.UseRequestCategoryPicker)
++            {
++                await LoadIssueStepAsync(cancellationToken);
++            }
+             return Page();
+         }
+ 
+@@ -1220,6 +1289,42 @@ public sealed class NewTicketModel(
+         });
+     }
+ 
++    private async Task<string?> ResolveRequestTypeChoiceAsync(CancellationToken cancellationToken)
++    {
++        // Older wizard posts remain compatible; the new form always sets this
++        // flag and resolves both IDs from fresh catalogs rather than hidden IDs.
++        if (!CreateStep.UseRequestCategoryPicker)
++        {
++            return null;
++        }
++
++        CreateStep.CategoryId = null;
++        CreateStep.RequestTypeId = null;
++        ModelState.Remove("CreateStep.CategoryId");
++        ModelState.Remove("CreateStep.RequestTypeId");
++        await LoadIssueStepAsync(cancellationToken);
++        if (DepartmentsErrorMessage is not null || CategoriesErrorMessage is not null || RequestTypesErrorMessage is not null)
++        {
++            return "Unable to load request categories and types. Please try again.";
++        }
++        if (CreateStep.DepartmentId is not { } departmentId || Departments.All(d => d.DepartmentId != departmentId))
++        {
++            return "Select a request category before continuing.";
++        }
++        var choice = RequestTypeChoices.FirstOrDefault(c => c.Value == CreateStep.RequestTypeChoice);
++        if (choice is null)
++        {
++            return "Select a request type belonging to the selected request category.";
++        }
++        if (choice.CategoryId is null)
++        {
++            return "Routing is not configured for this request type. Contact an administrator.";
++        }
++        CreateStep.CategoryId = choice.CategoryId;
++        CreateStep.RequestTypeId = choice.RequestTypeId;
++        return null;
++    }
++
+     /// <summary>The pre-create guards, shared by Review and Create: a property (verified or manual pair), a Category, a Priority, and the request text. The Api re-validates all of it.</summary>
+     private string? ValidateIssue()
+     {
+@@ -1431,9 +1536,15 @@ public sealed class NewTicketModel(
+ 
+     public sealed class CreateStepInput
+     {
+-        /// <summary>The Issue step's Department narrowing for the Category list — a real DepartmentId from the dropdown, never typed. The ticket's own department still derives from the selected Category server-side.</summary>
++        /// <summary>The visible Request Category uses the existing department ID.
++        /// Its selected child resolves the routing and workflow IDs server-side.</summary>
+         public int? DepartmentId { get; set; }
+ 
++        public bool UseRequestCategoryPicker { get; set; }
++
++        /// <summary>A server-resolved child selection, scoped to the selected Request Category.</summary>
++        public string? RequestTypeChoice { get; set; }
++
+         /// <summary>The real CategoryId of a dropdown selection ("Category") — never typed in by hand. Nullable so "nothing selected" is a distinct, validatable state rather than a fake id like 0.</summary>
+         [Required(ErrorMessage = "Select a category.")]
+         public int? CategoryId { get; set; }
+diff --git a/src/TigerCS.Web/Pages/Shared/_EdsmPaymentSummary.cshtml b/src/TigerCS.Web/Pages/Shared/_EdsmPaymentSummary.cshtml
+index 4631649..b6aa475 100644
+--- a/src/TigerCS.Web/Pages/Shared/_EdsmPaymentSummary.cshtml
++++ b/src/TigerCS.Web/Pages/Shared/_EdsmPaymentSummary.cshtml
+@@ -45,7 +45,14 @@
+                             }
+                         </select>
+                     </div>
+-                    <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
++                    @if (panel.Links.SelectorAction == "/Customers/Payments")
++                    {
++                        <button type="submit" class="btn btn-sm">Show</button>
++                    }
++                    else
++                    {
++                        <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
++                    }
+                 </form>
+             }
+             else
+diff --git a/src/TigerCS.Web/Program.cs b/src/TigerCS.Web/Program.cs
+index 8a140b8..4b89c31 100644
+--- a/src/TigerCS.Web/Program.cs
++++ b/src/TigerCS.Web/Program.cs
+@@ -6,6 +6,7 @@ using TigerCS.Web.Services.Api;
+ using TigerCS.Web.Services.Auth;
+ 
+ var builder = WebApplication.CreateBuilder(args);
++builder.Services.AddSingleton(TimeProvider.System);
+ 
+ builder.Services.AddRazorPages(options =>
+ {
+diff --git a/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs b/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
+index f120516..a24386c 100644
+--- a/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
++++ b/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
+@@ -20,6 +20,10 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
+     public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetPaymentSummaryAsync(string customerKey, CancellationToken cancellationToken) =>
+         GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customers/by-key/{Uri.EscapeDataString(customerKey)}/payment-summary", cancellationToken);
+ 
++    public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetLookupPaymentSummaryAsync(
++        string phoneNumber, string customerKey, CancellationToken cancellationToken) =>
++        GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customer-lookup/payment-summary?phoneNumber={Uri.EscapeDataString(phoneNumber)}&customerKey={Uri.EscapeDataString(customerKey)}", cancellationToken);
++
+     public Task<ApiResult<CollectionsOutstandingResponseDto>> GetOutstandingAsync(long crmCustomerId, CancellationToken cancellationToken) =>
+         GetAsync<CollectionsOutstandingResponseDto>($"{Base}/customers/{Id(crmCustomerId)}/outstanding?pageSize=100", cancellationToken);
+ 
+diff --git a/src/TigerCS.Web/Services/Api/CustomerHistoryApiClient.cs b/src/TigerCS.Web/Services/Api/CustomerHistoryApiClient.cs
+index 61c4fdc..a034dbb 100644
+--- a/src/TigerCS.Web/Services/Api/CustomerHistoryApiClient.cs
++++ b/src/TigerCS.Web/Services/Api/CustomerHistoryApiClient.cs
+@@ -41,6 +41,11 @@ public sealed class CustomerHistoryApiClient(HttpClient httpClient, ILogger<Cust
+             cancellationToken);
+     }
+ 
++    public Task<ApiResult<CustomerHistoryDto>> GetByLinkedLookupAsync(
++        string phoneNumber, int crmCustomerId, int? limit, CancellationToken cancellationToken,
++        string? unitNumber = null, bool orderActiveFirst = false) =>
++        GetAsync<CustomerHistoryDto>($"api/customers/lookup/ticket-history?phoneNumber={Uri.EscapeDataString(phoneNumber)}&crmCustomerId={crmCustomerId}&{BuildHistoryQuery(limit, unitNumber, orderActiveFirst)}", cancellationToken);
++
+     private static string BuildHistoryQuery(int? limit, string? unitNumber, bool orderActiveFirst)
+     {
+         var query = HttpUtility.ParseQueryString(string.Empty);
+diff --git a/src/TigerCS.Web/Services/CustomerPaymentPanelLoader.cs b/src/TigerCS.Web/Services/CustomerPaymentPanelLoader.cs
+index a9b0840..d4bdf67 100644
+--- a/src/TigerCS.Web/Services/CustomerPaymentPanelLoader.cs
++++ b/src/TigerCS.Web/Services/CustomerPaymentPanelLoader.cs
+@@ -51,6 +51,11 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
+             return basePanel;
+         }
+ 
++        if (options.LookupPhoneNumber is not null && state is PaymentPanelState.NoAccounts or PaymentPanelState.Unavailable)
++        {
++            return await LoadEdsmSummaryAsync(customerKey, accountId, notice, noticeIsError, options, cancellationToken);
++        }
++
+         if (state == PaymentPanelState.Unavailable)
+         {
+             // No per-account source answered. Ask the EDSM service (the same one PACT
+@@ -135,15 +140,30 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
+         };
+     }
+ 
+-    /// <summary>A PACT customer: EDSM's summary is all there is — never instalments, transactions or reminders.</summary>
++    public Task<CustomerPaymentPanel> LoadLookupAsync(
++        string phoneNumber, string customerKey, string? companyId, CancellationToken cancellationToken)
++    {
++        var hidden = new Dictionary<string, string> { ["phoneNumber"] = phoneNumber, ["customerKey"] = customerKey };
++        var href = $"/Customers/Payments?phoneNumber={Uri.EscapeDataString(phoneNumber)}&customerKey={Uri.EscapeDataString(customerKey)}";
++        var links = new PaymentPanelLinks("/Customers/Payments", hidden, "account",
++            account => account is null ? href : $"{href}&account={Uri.EscapeDataString(account)}", AutoSubmit: true);
++        return LoadEdsmSummaryAsync(customerKey, companyId, null, false,
++            new PaymentPanelOptions(links, AllowSending: false, LookupPhoneNumber: phoneNumber), cancellationToken);
++    }
++
++    /// <summary>Reads EDSM through the directory, or a freshly verified lookup before any ticket exists.</summary>
+     private async Task<CustomerPaymentPanel> LoadEdsmSummaryAsync(
+         string customerKey, string? companyId, string? notice, bool noticeIsError, PaymentPanelOptions options, CancellationToken cancellationToken)
+     {
+-        var summary = await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
++        var summary = options.LookupPhoneNumber is { } phoneNumber
++            ? await collections.GetLookupPaymentSummaryAsync(phoneNumber, customerKey, cancellationToken)
++            : await collections.GetPaymentSummaryAsync(customerKey, cancellationToken);
+         var state = summary.Outcome switch
+         {
++            ApiOutcome.Success when summary.Value?.MappingStatus == "NotMapped" => PaymentPanelState.NotMapped,
+             ApiOutcome.Success => PaymentPanelState.EdsmSummary,
+             ApiOutcome.Forbidden => PaymentPanelState.Forbidden,
++            ApiOutcome.NotFound => PaymentPanelState.NoAccounts,
+             ApiOutcome.ServiceUnavailable when summary.ProblemType?.EndsWith("/" + CustomerPaymentPanel.DisabledCode, StringComparison.Ordinal) == true
+                 => PaymentPanelState.Disabled,
+             ApiOutcome.ServiceUnavailable => PaymentPanelState.Unavailable,
+@@ -174,7 +194,7 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
+         {
+             CustomerKey = customerKey,
+             State = state,
+-            PaymentSummary = state == PaymentPanelState.EdsmSummary ? summary.Value : null,
++            PaymentSummary = state is PaymentPanelState.EdsmSummary or PaymentPanelState.NotMapped ? summary.Value : null,
+             SelectedCompanyId = selectedCompanyId,
+             ScopedByUnit = scopedByUnit,
+             Notice = notice,
+diff --git a/src/TigerCS.Web/Services/NewTicketRequestTypePicker.cs b/src/TigerCS.Web/Services/NewTicketRequestTypePicker.cs
+new file mode 100644
+index 0000000..1c91c75
+--- /dev/null
++++ b/src/TigerCS.Web/Services/NewTicketRequestTypePicker.cs
+@@ -0,0 +1,44 @@
++using TigerCS.Application.Modules.Administration.Dto;
++using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
++
++namespace TigerCS.Web.Services;
++
++/// <summary>The existing department groups are Request Categories in intake.
++/// A child retains its routing category and, when configured, its workflow request type.</summary>
++public sealed record NewTicketRequestTypeChoice(
++    string Value, string Name, int DepartmentId, int? CategoryId, int? RequestTypeId);
++
++public static class NewTicketRequestTypePicker
++{
++    public static IReadOnlyList<NewTicketRequestTypeChoice> Build(
++        int? departmentId, IEnumerable<CategoryDto> categories, IEnumerable<RequestTypeOptionDto> requestTypes)
++    {
++        if (departmentId is null)
++        {
++            return [];
++        }
++
++        var routing = categories.Where(c => c.DepartmentId == departmentId).ToList();
++        var configured = requestTypes.Where(r => r.DepartmentId == departmentId).ToList();
++        var choices = new List<NewTicketRequestTypeChoice>();
++        foreach (var requestType in configured.Where(r => r.HasPublishedWorkflow))
++        {
++            // Only an exact, unique mapping is accepted. Missing/inactive/ambiguous
++            // routing is a configuration error, never an arbitrary department category.
++            var matches = routing.Where(c => SameName(c.Name, requestType.Name)).ToList();
++            choices.Add(new($"request-type:{requestType.RequestTypeId}", requestType.Name,
++                requestType.DepartmentId, matches.Count == 1 ? matches[0].CategoryId : null, requestType.RequestTypeId));
++        }
++
++        foreach (var category in routing.Where(c => !configured.Any(r => SameName(r.Name, c.Name))))
++        {
++            choices.Add(new($"category:{category.CategoryId}", category.Name,
++                category.DepartmentId, category.CategoryId, null));
++        }
++
++        return choices.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ThenBy(c => c.Value).ToList();
++    }
++
++    private static bool SameName(string left, string right) =>
++        string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
++}

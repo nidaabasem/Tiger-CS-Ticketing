@@ -6,6 +6,9 @@ using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -28,6 +31,9 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
     private const string PactPhone = "+971500000002";   // MockPactGateway's fixture customer: companies 4 and 25
 
     private readonly CountingPact _pact = new();
+    private readonly FakeCrmBuyerLookupGateway _crm = new();
+    private static CrmBuyerMatchDto LinkedBuyer => new(new CrmCustomerDto(9001, "Fatima Noor", null, "971500000002", null),
+        [new CrmBuyerUnitDto(1, 8, "Sold", 777, "0304", 1, 1, null, 9, "Tiger Marina Residences", null, 1, "Buyer")]);
     private readonly TigerCsApiFactory _factory;
 
     public EdsmPaymentSummaryApiTests()
@@ -43,6 +49,7 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
             ExtraServices = services =>
             {
                 services.AddScoped<ICollectionsCustomerProfiles, Profiles>();
+                services.AddSingleton<ICrmBuyerLookupGateway>(_crm);
                 services.AddSingleton(_pact);
                 services.AddScoped<IPactCustomerLookupGateway>(sp => sp.GetRequiredService<CountingPact>());
             },
@@ -250,6 +257,77 @@ public sealed class EdsmPaymentSummaryApiTests : IDisposable
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Contains("\"code\":\"Forbidden\"", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(0, _pact.Calls);
+    }
+
+    private static string LookupUrl(string key) => $"/api/collections/customer-lookup/payment-summary?phoneNumber={Uri.EscapeDataString(PactPhone)}&customerKey={Uri.EscapeDataString(key)}";
+
+    [Theory]
+    [InlineData(Roles.SystemAdministrator)]
+    [InlineData(Roles.CsAgent)]
+    public async Task LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost(string role)
+    {
+        _crm.Returns(CrmBuyerLookupResult.Success([LinkedBuyer]));
+        var client = await ClientAsync(role);
+        var response = await client.GetAsync(LookupUrl("crm:9001"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summary = (await response.Content.ReadFromJsonAsync<CollectionsPaymentSummaryResponseDto>())!;
+        Assert.Equal("crm:9001", summary.CustomerKey);
+        Assert.Equal("3001", summary.PactTenantId);
+        Assert.Equal("Mapped", summary.MappingStatus);
+        Assert.Equal([4, 25], summary.Companies.Select(c => c.CompanyId));
+        Assert.All(summary.Companies, c => Assert.Equal(3, c.Transactions.Count));
+        var fines = summary.Companies.Single(c => c.CompanyId == 25).Fields.Single(f => f.Key == "lateFines");
+        Assert.Equal("NotComputedForRented", fines.Meaning);
+        Assert.Null(fines.Value);
+        var history = await client.GetAsync($"/api/customers/lookup/ticket-history?phoneNumber={Uri.EscapeDataString(PactPhone)}&crmCustomerId=9001");
+        Assert.Equal(HttpStatusCode.OK, history.StatusCode);
+        Assert.Equal(0, (await history.Content.ReadFromJsonAsync<CustomerHistoryDto>())!.TotalTickets);
+    }
+
+    [Fact]
+    public async Task StandalonePactLookup_DoesNotRequireADirectoryProfile()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+        var response = await client.GetAsync(LookupUrl(PactKey));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Mapped", (await response.Content.ReadFromJsonAsync<CollectionsPaymentSummaryResponseDto>())!.MappingStatus);
+    }
+
+    [Fact]
+    public async Task UnknownTenant_IsNotAcceptedBecauseThePhoneMatchedSomeoneElse()
+    {
+        var client = await ClientAsync(Roles.CsAgent);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(LookupUrl("ext:Pact:9999"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task SamePhoneWithoutMatchingUnit_DoesNotExposePactFiguresOnCrmCustomer()
+    {
+        _crm.Returns(CrmBuyerLookupResult.Success([LinkedBuyer with { Units = [LinkedBuyer.Units[0] with { UnitNumber = "9999" }] }]));
+        var client = await ClientAsync(Roles.CsAgent);
+        var summary = (await client.GetFromJsonAsync<CollectionsPaymentSummaryResponseDto>(LookupUrl("crm:9001")))!;
+        Assert.Equal("NotMapped", summary.MappingStatus);
+        Assert.Empty(summary.Companies);
+    }
+
+    [Fact]
+    public async Task LookupRequiresFinancialGrant_EvenForAnAuthenticatedCustomerVerificationRole()
+    {
+        _factory.Services.GetRequiredService<CollectionsOptions>().Authorization.FinancialReadRoles.Clear();
+        _factory.Services.GetRequiredService<CollectionsOptions>().Authorization.ReminderSendRoles.Clear();
+        var client = await ClientAsync(Roles.CsAgent);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(LookupUrl(PactKey))).StatusCode);
+        Assert.Equal(0, _pact.Calls);
+    }
+
+    [Fact]
+    public async Task LookupDisabledOrAnonymous_ReturnsNoFigures()
+    {
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _factory.CreateClient().GetAsync(LookupUrl(PactKey))).StatusCode);
+        _factory.Services.GetRequiredService<CollectionsOptions>().Enabled = false;
+        var client = await ClientAsync(Roles.CsAgent);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync(LookupUrl(PactKey))).StatusCode);
         Assert.Equal(0, _pact.Calls);
     }
 

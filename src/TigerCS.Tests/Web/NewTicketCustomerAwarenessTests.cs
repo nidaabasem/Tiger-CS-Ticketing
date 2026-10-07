@@ -117,7 +117,8 @@ public sealed class NewTicketCustomerAwarenessTests
 
         Assert.Contains("candidate.Sources.Select(TicketDisplay.LookupSourceLabel)", html);
         Assert.Contains("data-unified-identities", html);
-        Assert.Contains("Model.LinkedPactOnlyUnits", html);
+        Assert.Contains("Model.LinkedPactSelectableUnits", html);
+        Assert.Contains("Model.CrmOnlySelectableUnits", html);
         Assert.Contains("also on file in PACT", html);
     }
 

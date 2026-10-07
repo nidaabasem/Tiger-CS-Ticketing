@@ -49,6 +49,23 @@ public sealed class CustomerDirectorySqliteTests : IDisposable
         return await Service(context).GetProfileAsync(caller ?? Guid.NewGuid(), roles ?? CrossDepartment, key);
     }
 
+    [Fact]
+    public async Task LinkedHistoryUsesOneScopedSqlUnion_WithCountsOverTheWholeSetBeforeLimit()
+    {
+        using var context = _db.CreateContext();
+        var crm = AddCrmTicket(context, 9001, "Fatima", "0304");
+        var pact = AddExternalTicket(context, "Pact", "3001", "0304");
+        AddExternalTicket(context, "Pact", "9999", "0304");
+        AddCrmTicket(context, 9001, "Fatima", "0304", departmentId: _db.CollectionsId);
+        var result = await new TicketRepository(context).SearchCustomerHistoryAsync(new(
+            [_db.CustomerServiceId], 9001, null, null, 1, "Pact", "3001", IncludeLinkedExternalIdentity: true));
+        Assert.Equal(2, result.TotalCount);
+        Assert.Single(result.Tickets);
+        var all = await new TicketRepository(context).SearchCustomerHistoryAsync(new(
+            [_db.CustomerServiceId], 9001, null, null, 50, "Pact", "3001", IncludeLinkedExternalIdentity: true));
+        Assert.Equal(new[] { crm.TicketId, pact.TicketId }.Order(), all.Tickets.Select(t => t.TicketId).Order());
+    }
+
     // ---- seeding ----
 
     private Ticket AddCrmTicket(TigerCsDbContext context, int crmCustomerId, string name, string unit, string project = "Tiger Tower",

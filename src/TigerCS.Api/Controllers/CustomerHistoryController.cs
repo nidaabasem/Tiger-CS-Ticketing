@@ -120,6 +120,32 @@ public class CustomerHistoryController(
         return Ok(result);
     }
 
+    /// <summary>
+    /// Returns visible ticket history for a CRM customer found by phone, including
+    /// PACT history only when the customer identity and physical unit match.
+    /// </summary>
+    [HttpGet("lookup/ticket-history")]
+    [Authorize(Policy = PolicyNames.CustomerVerification)]
+    [ProducesResponseType<CustomerHistoryDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetLookupHistory(
+        [FromQuery] string phoneNumber, [FromQuery] int crmCustomerId, [FromQuery] int? limit,
+        [FromQuery] string? unitNumber, [FromQuery] bool orderActiveFirst, CancellationToken cancellationToken)
+    {
+        if (GetEmployeeId() is not { } employeeId) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(phoneNumber) || crmCustomerId <= 0) return BadRequest();
+        var search = await customerSearchAppService.SearchByPhoneAsync(phoneNumber, cancellationToken);
+        var buyer = search.CrmBuyers.SingleOrDefault(b => b.Customer.CustomerId == crmCustomerId);
+        if (buyer is null) return NotFound();
+        var pact = CustomerIdentityLinker.FindPactMatch(buyer, search.CrmBuyers, search.ExternalSources);
+        return Ok(pact is null
+            ? await customerHistoryAppService.GetByCrmCustomerIdAsync(employeeId, GetRoles(), crmCustomerId,
+                limit: limit, unitNumber: unitNumber, orderActiveFirst: orderActiveFirst, cancellationToken: cancellationToken)
+            : await customerHistoryAppService.GetByLinkedIdentityAsync(employeeId, GetRoles(), crmCustomerId,
+                pact.ExternalCustomerId, limit, unitNumber, orderActiveFirst, cancellationToken));
+    }
+
     private Guid? GetEmployeeId()
     {
         var idValue = User.FindFirstValue(ClaimTypes.NameIdentifier);

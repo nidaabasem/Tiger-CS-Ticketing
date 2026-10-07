@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.CustomerVerification.PactIntegration;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Application.Modules.Ticketing.Services;
 using TigerCS.Web.Services;
 using TigerCS.Web.Services.Api;
 
@@ -21,7 +23,7 @@ namespace TigerCS.Web.Pages;
 ///
 /// <para>
 /// <b>A unified card</b> (<see cref="IsUnified"/>) is the CRM Buyer and a
-/// PACT customer that a verified unit link proved to be the same person
+/// PACT customer that customer details and a unit match verified to be the same person
 /// (see <see cref="NewTicketModel.LinkedPactCustomer"/>): <see cref="Key"/>
 /// stays "crm", <see cref="Sources"/> names both, and
 /// <see cref="LinkedPactCustomerId"/> keeps the PACT tenant id so both
@@ -38,6 +40,8 @@ public sealed record NewTicketCandidate(
     public IReadOnlyList<string> Sources { get; init; } = Sources ?? [Source];
 
     public bool IsUnified => Sources.Count > 1;
+
+    public string PrimaryVerificationSource => Sources[0];
 }
 
 /// <summary>
@@ -47,8 +51,8 @@ public sealed record NewTicketCandidate(
 /// GET /api/intake-records/{id}/customer-lookup,
 /// GET /api/crm/buyers?phoneNumber={phoneNumber}, GET /api/departments,
 /// GET /api/categories, the customer-history/related-tickets reads, and
-/// POST /api/tickets). The redesign is presentation and flow only: no
-/// verification rule, identity rule, or creation rule changed.
+/// POST /api/tickets). The visible request taxonomy uses Request Category
+/// (department) and a dependent Request Type, preserving routing/workflow IDs.
 ///
 /// <para>
 /// <b>Step 1 (Customer)</b> records the intake (channel + phone — the
@@ -60,10 +64,9 @@ public sealed record NewTicketCandidate(
 /// and PACT/Tasleeh units keep their packed-selection integrity (ids and
 /// display text always travel together), manual entry stays the fallback —
 /// and surfaces the existing related-tickets advisory for the selected
-/// unit. <b>Step 3 (Issue)</b> chooses Department → Category (scoped to
-/// the Department) → optional Request Type → Priority → the request
-/// text. <b>Step 4 (Review)</b> shows a concise summary before the one
-/// create action.
+/// unit. <b>Step 3 (Issue)</b> chooses Request Category → Request Type →
+/// Priority → the request text. <b>Step 4 (Review)</b> shows a concise summary
+/// before the one create action.
 /// </para>
 ///
 /// <para>
@@ -101,7 +104,8 @@ public sealed class NewTicketModel(
     CustomerHistoryApiClient customerHistoryClient,
     RequestTypesApiClient? requestTypesClient = null,
     ChannelsApiClient? channelsClient = null,
-    CustomerPaymentPanelLoader? paymentPanelLoader = null) : PageModel
+    CustomerPaymentPanelLoader? paymentPanelLoader = null,
+    TimeProvider? timeProvider = null) : PageModel
 {
     public const string StepCustomer = "customer";
     public const string StepProperty = "property";
@@ -212,8 +216,18 @@ public sealed class NewTicketModel(
     /// fixture-backed (Crm:Provider=Mock) while Buyer Lookup is the real CRM
     /// integration (see this type's remarks).
     /// </summary>
+    private readonly DateOnly _selectionDate = PactContractActivity.TodayInDubai(timeProvider ?? TimeProvider.System);
+
+    private IReadOnlyList<CustomerLookupUnitDto> SelectablePactUnits(CustomerLookupCustomerDto customer) =>
+        customer.Units.Where(u => u.ContractEndDate is not { } end || end >= _selectionDate)
+            .DistinctBy(u => u.ExternalUnitId).ToList();
+
     public IReadOnlyList<CustomerLookupSourceResultDto> ExternalLookupSources =>
-        CustomerLookup?.Sources.Where(s => !string.Equals(s.Source, "Crm", StringComparison.Ordinal)).ToList() ?? [];
+        CustomerLookup?.Sources.Where(s => !string.Equals(s.Source, "Crm", StringComparison.Ordinal))
+            .Select(s => s.Source != "Pact" ? s : s with
+            {
+                Customers = s.Customers.Select(c => c with { Units = SelectablePactUnits(c) }).ToList()
+            }).ToList() ?? [];
 
     /// <summary>True when the Department has zero lookup sources configured — nothing was searched (never a silent fall-back to "search everything"), and the agent continues with manual entry.</summary>
     public bool NoLookupSourcesConfigured => CustomerLookup is { Sources.Count: 0 };
@@ -253,6 +267,12 @@ public sealed class NewTicketModel(
     /// <summary>The linked PACT customer's current units that no CRM unit matches — offered on Step 2 under the unified card, selectable through the external (PACT) path. Empty when there is no link.</summary>
     public IReadOnlyList<CustomerLookupUnitDto> LinkedPactOnlyUnits { get; private set; } = [];
 
+    public IReadOnlyList<CustomerLookupUnitDto> LinkedPactSelectableUnits =>
+        LinkedPactCustomer is { } pact ? SelectablePactUnits(pact) : [];
+
+    public IReadOnlyList<CrmBuyerUnitDto> CrmOnlySelectableUnits =>
+        CrmBuyerMatch?.Units.Where(crm => !LinkedPactSelectableUnits.Any(pact => UnitsLink(crm, pact))).ToList() ?? [];
+
     /// <summary>The PACT selection token of the linked customer ("ext:Pact:{tenant id}"), for the workspace hand-off and the card's identity line.</summary>
     public string? LinkedPactCustomerKey =>
         LinkedPactCustomer is { } linked ? $"ext:Pact:{Uri.EscapeDataString(linked.ExternalCustomerId)}" : null;
@@ -268,10 +288,9 @@ public sealed class NewTicketModel(
     /// is shared by every unit in it.
     /// </summary>
     public static bool UnitsLink(CrmBuyerUnitDto crmUnit, CustomerLookupUnitDto pactUnit) =>
-        !string.IsNullOrWhiteSpace(crmUnit.UnitNumber)
-        && !string.IsNullOrWhiteSpace(crmUnit.ProjectName)
-        && string.Equals(crmUnit.UnitNumber.Trim(), pactUnit.UnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
-        && string.Equals(crmUnit.ProjectName.Trim(), pactUnit.PropertyName?.Trim(), StringComparison.OrdinalIgnoreCase);
+        CustomerIdentityLinker.Same(crmUnit.UnitNumber, pactUnit.UnitNumber)
+        && (CustomerIdentityLinker.Same(crmUnit.ProjectName, pactUnit.PropertyName)
+            || CustomerIdentityLinker.Same(crmUnit.ProjectArabicName, pactUnit.PropertyName));
 
     /// <summary>
     /// The PACT/Tasleeh customer+unit the agent selected on Step 2, packed
@@ -362,10 +381,13 @@ public sealed class NewTicketModel(
     public string? LinkedPaymentAccount { get; private set; }
 
     /// <summary>Which identity <see cref="PaymentPanel"/> describes — "Crm", "Pact", or another external source's name.</summary>
-    public string? PaymentPanelSource => CrmBuyerCustomerId is not null ? "Crm" : ExternalSource;
+    public string? PaymentPanelSource => PaymentPanel is { State: PaymentPanelState.EdsmSummary }
+        || PaymentPanel is { CustomerKey: var key } && CustomerPaymentPanel.IsPactCustomer(key)
+            ? "Pact" : CrmBuyerCustomerId is not null ? "Crm" : ExternalSource;
 
     /// <summary>Which identity <see cref="LinkedPaymentPanel"/> describes — the unified card's other half.</summary>
-    public string? LinkedPaymentPanelSource => LinkedPaymentPanel is null ? null : CrmBuyerCustomerId is not null ? "Pact" : "Crm";
+    public string? LinkedPaymentPanelSource => LinkedPaymentPanel is null ? null
+        : CustomerPaymentPanel.IsPactCustomer(LinkedPaymentPanel.CustomerKey) ? "Pact" : "Crm";
 
     // ---- Summary panel (the right-hand sticky panel) — selected display
     // values only, never technical ids, with "Not selected yet" placeholders
@@ -390,19 +412,37 @@ public sealed class NewTicketModel(
             ? Uri.UnescapeDataString(key.Split(':', 3)[1])
             : CustomerKey == "manual" ? "Manual" : null);
 
+    public string? SummaryVerificationLabel => SummarySourceKey switch
+    {
+        "Manual" => "Manual entry",
+        "Crm" when LinkedPactCustomer is not null
+            || PaymentPanel?.PaymentSummary is { MappingStatus: "Mapped", PactTenantId: not null } => "PACT · Tiger CRM",
+        "Pact" when LinkedPactCustomer is not null && CrmBuyerMatch is not null => "PACT · Tiger CRM",
+        { } source => TicketDisplay.LookupSourceLabel(source),
+        _ => null
+    };
+
     public string? SummaryProjectName => CrmBuyerProjectName ?? ExternalProjectName ?? ManualProjectName;
     public string? SummaryUnitNumber => CrmBuyerUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
 
     /// <summary>
     /// Administration / Workflow Designer phase — the configured request
     /// types the Issue step may attach to the ticket, scoped to the selected
-    /// Department (or every department when none is selected, grouped by
-    /// department name). Choosing one is optional: it pins the ticket to
-    /// the request type's active workflow version and drives its assignment,
-    /// approvals and SLA. The Api re-validates that the request type belongs
-    /// to the department the selected Category routes to.
+    /// Request Category (department). The child picker combines these with
+    /// legacy routing entries; a configured child pins the ticket to its
+    /// published workflow version and drives assignment, approvals and SLA.
+    /// The Api re-validates that the type belongs to the routed department.
     /// </summary>
     public IReadOnlyList<RequestTypeOptionDto> RequestTypeOptions { get; private set; } = [];
+
+    public string? RequestTypesErrorMessage { get; private set; }
+
+    public IReadOnlyList<NewTicketRequestTypeChoice> RequestTypeChoices =>
+        RequestTypesErrorMessage is null
+            ? NewTicketRequestTypePicker.Build(CreateStep.DepartmentId, Categories, RequestTypeOptions)
+            : [];
+
+    public string? SummaryRequestTypeName => SelectedRequestType?.Name ?? SelectedCategory?.Name;
 
     public RequestTypeOptionDto? SelectedRequestType =>
         CreateStep.RequestTypeId is { } requestTypeId ? RequestTypeOptions.FirstOrDefault(r => r.RequestTypeId == requestTypeId) : null;
@@ -658,19 +698,13 @@ public sealed class NewTicketModel(
 
         if (CrmBuyerMatch is { } match)
         {
-            // Unify with the one PACT customer a verified unit link proves
-            // to be the same person. If several PACT customers link (a data
-            // oddity), none is unified — the agent sees separate cards and
-            // chooses, exactly as without the link.
-            var linkedPact = ExternalLookupSources
-                .Where(s => s.Status == "Found" && string.Equals(s.Source, "Pact", StringComparison.Ordinal))
-                .SelectMany(s => s.Customers)
-                .Where(pact => pact.Units.Any(pactUnit => match.Units.Any(crmUnit => UnitsLink(crmUnit, pactUnit))))
-                .ToList();
-            if (linkedPact.Count == 1)
+            // Keep every source record for identity evidence. Matching customer
+            // details, normalized phones and project/unit are all required;
+            // ambiguity keeps the cards separate.
+            LinkedPactCustomer = CustomerIdentityLinker.FindPactMatch(match, [match], CustomerLookup?.Sources ?? []);
+            if (LinkedPactCustomer is not null)
             {
-                LinkedPactCustomer = linkedPact[0];
-                LinkedPactOnlyUnits = LinkedPactCustomer.Units
+                LinkedPactOnlyUnits = SelectablePactUnits(LinkedPactCustomer)
                     .Where(pactUnit => !match.Units.Any(crmUnit => UnitsLink(crmUnit, pactUnit)))
                     .ToList();
             }
@@ -682,7 +716,7 @@ public sealed class NewTicketModel(
                 match.Customer.MobileNumber ?? PhoneNumber,
                 match.Customer.Email ?? LinkedPactCustomer?.Email,
                 match.Units.Count + LinkedPactOnlyUnits.Count,
-                LinkedPactCustomer is null ? null : ["Crm", "Pact"],
+                LinkedPactCustomer is null ? null : ["Pact", "Crm"],
                 LinkedPactCustomer?.ExternalCustomerId));
         }
 
@@ -708,7 +742,12 @@ public sealed class NewTicketModel(
             }
         }
 
-        Candidates = candidates;
+        Candidates = candidates.OrderBy(c => c.PrimaryVerificationSource switch
+        {
+            "Pact" => 0,
+            "Crm" => 1,
+            _ => 2
+        }).ToList();
         SelectedCandidate = CustomerKey is { } key ? candidates.FirstOrDefault(c => c.Key == key) : null;
     }
 
@@ -950,15 +989,17 @@ public sealed class NewTicketModel(
         if (requestTypesClient is null)
         {
             RequestTypeOptions = [];
+            RequestTypesErrorMessage = "Unable to load request types. Please try again.";
             return;
         }
 
-        // A failure here is tolerated: the picker is optional, so the wizard
-        // still works with no request type rather than blocking the agent.
         var result = await requestTypesClient.GetOptionsAsync(departmentId, cancellationToken);
-        RequestTypeOptions = result.IsSuccess && result.Value is not null
-            ? result.Value.Where(r => r.HasPublishedWorkflow).ToList()
-            : [];
+        RequestTypesErrorMessage = result.IsSuccess && result.Value is not null
+            ? null
+            : result.Detail ?? DescribeFailure(result.Outcome, "Unable to load request types. Please try again.");
+        // Keep unpublished names so a legacy category with the same name cannot
+        // bypass an unavailable configured workflow in the combined picker.
+        RequestTypeOptions = result.IsSuccess && result.Value is not null ? result.Value : [];
     }
 
     /// <summary>
@@ -994,6 +1035,19 @@ public sealed class NewTicketModel(
             CreateStep.RequestTypeId = null;
         }
 
+        if (CreateStep.UseRequestCategoryPicker)
+        {
+            CreateStep.CategoryId = null;
+            CreateStep.RequestTypeId = null;
+            if (RequestTypeChoices.All(c => c.Value != CreateStep.RequestTypeChoice))
+            {
+                CreateStep.RequestTypeChoice = null;
+                ModelState.Remove("CreateStep.RequestTypeChoice");
+            }
+            ModelState.Remove("CreateStep.CategoryId");
+            ModelState.Remove("CreateStep.RequestTypeId");
+        }
+
         return Page();
     }
 
@@ -1016,17 +1070,22 @@ public sealed class NewTicketModel(
             crmBuyerCustomerName, crmBuyerProjectName, crmBuyerUnitNumber,
             externalSelection, manualProjectName, manualUnitNumber);
 
-        if (ValidateIssue() is { } validationError)
+        var pickerError = await ResolveRequestTypeChoiceAsync(cancellationToken);
+        if ((pickerError ?? ValidateIssue()) is { } validationError)
         {
             ErrorMessage = validationError;
-            await LoadIssueStepAsync(cancellationToken);
+            if (!CreateStep.UseRequestCategoryPicker)
+            {
+                await LoadIssueStepAsync(cancellationToken);
+            }
             return Page();
         }
 
         Step = StepReview;
-        // The review resolves the selected Category/Department to their
-        // display names from the same directory the Issue step used.
-        await LoadIssueStepAsync(cancellationToken);
+        if (!CreateStep.UseRequestCategoryPicker)
+        {
+            await LoadIssueStepAsync(cancellationToken);
+        }
         await LoadReviewPaymentsAsync(cancellationToken);
         return Page();
     }
@@ -1066,22 +1125,28 @@ public sealed class NewTicketModel(
 
         if (CrmBuyerCustomerId is { } crmBuyerCustomerId)
         {
-            PaymentPanel = await paymentPanelLoader.LoadAsync(
-                $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, PaymentAccount, null, false, cancellationToken,
-                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber));
-
             if (LinkedPactCustomer is { } linked)
             {
-                // The PACT contract that IS the selected CRM unit, when the
-                // link named one — EDSM is then scoped to its company.
+                // PACT is the primary financial source on a verified combined
+                // customer. Keep CRM finance available afterward under its own ID.
                 var linkedUnit = linked.Units.FirstOrDefault(pactUnit =>
                     string.Equals(pactUnit.UnitNumber?.Trim(), CrmBuyerUnitNumber?.Trim(), StringComparison.OrdinalIgnoreCase)
                     && string.Equals(pactUnit.PropertyName?.Trim(), CrmBuyerProjectName?.Trim(), StringComparison.OrdinalIgnoreCase));
+                PaymentPanel = await paymentPanelLoader.LoadAsync(
+                    LinkedPactCustomerKey!, null, PaymentAccount, null, false, cancellationToken,
+                    new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly,
+                        PreferredExternalUnitId: linkedUnit?.ExternalUnitId, LookupPhoneNumber: PhoneNumber));
                 LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
-                    LinkedPactCustomerKey!, null, LinkedPaymentAccount, null, false, cancellationToken,
-                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: linkedUnit?.ExternalUnitId));
+                    $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, LinkedPaymentAccount, null, false, cancellationToken,
+                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber));
             }
-
+            else
+            {
+                PaymentPanel = await paymentPanelLoader.LoadAsync(
+                    $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, PaymentAccount, null, false, cancellationToken,
+                    new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly,
+                        PreferredUnitNumber: CrmBuyerUnitNumber, LookupPhoneNumber: PhoneNumber));
+            }
             return;
         }
 
@@ -1089,7 +1154,7 @@ public sealed class NewTicketModel(
         {
             PaymentPanel = await paymentPanelLoader.LoadAsync(
                 $"ext:{externalSource}:{Uri.EscapeDataString(externalCustomerId)}", null, PaymentAccount, null, false, cancellationToken,
-                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: ExternalUnitId));
+                new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly, PreferredExternalUnitId: ExternalUnitId, LookupPhoneNumber: PhoneNumber));
 
             if (LinkedPactCustomer is not null && CrmBuyerMatch is { } match
                 && string.Equals(externalSource, "Pact", StringComparison.Ordinal)
@@ -1097,7 +1162,7 @@ public sealed class NewTicketModel(
             {
                 LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
                     $"crm:{match.Customer.CustomerId}", match.Customer.CustomerId, LinkedPaymentAccount, null, false, cancellationToken,
-                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: ExternalUnitNumber));
+                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: ExternalUnitNumber, LookupPhoneNumber: PhoneNumber));
             }
         }
     }
@@ -1160,11 +1225,15 @@ public sealed class NewTicketModel(
         // never manually typed in — but the request is still rejected here
         // (rather than trusted) if somehow a value is missing. POST
         // /api/tickets is the actual authority and re-validates everything.
-        if (ValidateIssue() is { } validationError)
+        var pickerError = await ResolveRequestTypeChoiceAsync(cancellationToken);
+        if ((pickerError ?? ValidateIssue()) is { } validationError)
         {
             ErrorMessage = validationError;
             Step = StepIssue;
-            await LoadIssueStepAsync(cancellationToken);
+            if (!CreateStep.UseRequestCategoryPicker)
+            {
+                await LoadIssueStepAsync(cancellationToken);
+            }
             return Page();
         }
 
@@ -1176,8 +1245,8 @@ public sealed class NewTicketModel(
         // mutually exclusive with a CRM Buyer match, exactly as the Api
         // re-validates server-side.
         var hasExternalSelection = !hasCrmBuyerMatch && ExternalSelection is not null;
-        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName;
-        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber;
+        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName ?? ManualProjectName;
+        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
 
         var request = new CreateTicketRequestDto(
             IntakeRecordId: intakeRecordId,
@@ -1220,12 +1289,48 @@ public sealed class NewTicketModel(
         });
     }
 
+    private async Task<string?> ResolveRequestTypeChoiceAsync(CancellationToken cancellationToken)
+    {
+        // Older wizard posts remain compatible; the new form always sets this
+        // flag and resolves both IDs from fresh catalogs rather than hidden IDs.
+        if (!CreateStep.UseRequestCategoryPicker)
+        {
+            return null;
+        }
+
+        CreateStep.CategoryId = null;
+        CreateStep.RequestTypeId = null;
+        ModelState.Remove("CreateStep.CategoryId");
+        ModelState.Remove("CreateStep.RequestTypeId");
+        await LoadIssueStepAsync(cancellationToken);
+        if (DepartmentsErrorMessage is not null || CategoriesErrorMessage is not null || RequestTypesErrorMessage is not null)
+        {
+            return "Unable to load request categories and types. Please try again.";
+        }
+        if (CreateStep.DepartmentId is not { } departmentId || Departments.All(d => d.DepartmentId != departmentId))
+        {
+            return "Select a request category before continuing.";
+        }
+        var choice = RequestTypeChoices.FirstOrDefault(c => c.Value == CreateStep.RequestTypeChoice);
+        if (choice is null)
+        {
+            return "Select a request type belonging to the selected request category.";
+        }
+        if (choice.CategoryId is null)
+        {
+            return "Routing is not configured for this request type. Contact an administrator.";
+        }
+        CreateStep.CategoryId = choice.CategoryId;
+        CreateStep.RequestTypeId = choice.RequestTypeId;
+        return null;
+    }
+
     /// <summary>The pre-create guards, shared by Review and Create: a property (verified or manual pair), a Category, a Priority, and the request text. The Api re-validates all of it.</summary>
     private string? ValidateIssue()
     {
         var hasCrmBuyerMatch = CrmBuyerUnitId is not null;
-        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName;
-        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber;
+        var manualProject = CreateStep.ManualProjectName ?? ExternalProjectName ?? ManualProjectName;
+        var manualUnit = CreateStep.ManualUnitNumber ?? ExternalUnitNumber ?? ManualUnitNumber;
 
         if (!hasCrmBuyerMatch && (string.IsNullOrWhiteSpace(manualProject) || string.IsNullOrWhiteSpace(manualUnit)))
         {
@@ -1431,8 +1536,14 @@ public sealed class NewTicketModel(
 
     public sealed class CreateStepInput
     {
-        /// <summary>The Issue step's Department narrowing for the Category list — a real DepartmentId from the dropdown, never typed. The ticket's own department still derives from the selected Category server-side.</summary>
+        /// <summary>The visible Request Category uses the existing department ID.
+        /// Its selected child resolves the routing and workflow IDs server-side.</summary>
         public int? DepartmentId { get; set; }
+
+        public bool UseRequestCategoryPicker { get; set; }
+
+        /// <summary>A server-resolved child selection, scoped to the selected Request Category.</summary>
+        public string? RequestTypeChoice { get; set; }
 
         /// <summary>The real CategoryId of a dropdown selection ("Category") — never typed in by hand. Nullable so "nothing selected" is a distinct, validatable state rather than a fake id like 0.</summary>
         [Required(ErrorMessage = "Select a category.")]

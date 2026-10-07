@@ -1,0 +1,69 @@
+diff --git a/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs b/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs
+index 96855c5..8a50483 100644
+--- a/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketRequestTypePickerTests.cs
+@@ -27,9 +27,9 @@ public sealed class NewTicketRequestTypePickerTests
+             [new(10, " General Inquiry ", 1, "Customer Service"), new(11, "Other Inquiry", 1, "Customer Service")],
+             [new(100, "general inquiry", 1, 3, true)]);
+         Assert.Equal(2, choices.Count);
+-        var configured = Assert.Single(choices.Where(c => c.RequestTypeId == 100));
++        var configured = Assert.Single(choices, c => c.RequestTypeId == 100);
+         Assert.Equal(10, configured.CategoryId);
+-        var legacy = Assert.Single(choices.Where(c => c.Value == "category:11"));
++        var legacy = Assert.Single(choices, c => c.Value == "category:11");
+         Assert.Null(legacy.RequestTypeId);
+         Assert.Equal(11, legacy.CategoryId);
+     }
+@@ -47,7 +47,7 @@ public sealed class NewTicketRequestTypePickerTests
+     {
+         var missing = Assert.Single(NewTicketRequestTypePicker.Build(2,
+             [new(20, "Unrelated", 2, "Collections")],
+-            [new(200, "Send Receipts", 2, 3, true)]).Where(c => c.RequestTypeId is not null));
++            [new(200, "Send Receipts", 2, 3, true)]), c => c.RequestTypeId is not null);
+         Assert.Null(missing.CategoryId);
+         var ambiguous = Assert.Single(NewTicketRequestTypePicker.Build(2,
+             [new(20, "Send Receipts", 2, "Collections"), new(21, "send receipts", 2, "Collections")],
+diff --git a/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs b/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
+index 73a0767..1aeaa6d 100644
+--- a/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
++++ b/src/TigerCS.Tests/Web/NewTicketWizardHttpFlowTests.cs
+@@ -160,7 +160,7 @@ public sealed class NewTicketWizardHttpFlowTests
+         var response = await factory.CreateClient().GetAsync($"/NewTicket?intakeRecordId={IntakeId}&phoneNumber={SearchedPhone}");
+         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+         var html = await response.Content.ReadAsStringAsync();
+-        Assert.Equal(1, Regex.Matches(html, "candidate-card candidate-card--stack").Count);
++        Assert.Single(Regex.Matches(html, "candidate-card candidate-card--stack"));
+         Assert.Contains("PACT · Tiger CRM", WebUtility.HtmlDecode(html));
+         Assert.Contains("Payments &amp; Fines", html);
+         Assert.Contains("customerKey=crm%3A5001", html);
+@@ -169,7 +169,7 @@ public sealed class NewTicketWizardHttpFlowTests
+         Assert.Equal(HttpStatusCode.OK, property.StatusCode);
+         var propertyHtml = await property.Content.ReadAsStringAsync();
+         Assert.Contains("PACT · Tiger CRM", WebUtility.HtmlDecode(propertyHtml));
+-        Assert.Equal(1, Regex.Matches(propertyHtml, "data-unit-source=\"Pact\"").Count);
++        Assert.Single(Regex.Matches(propertyHtml, "data-unit-source=\"Pact\""));
+         Assert.DoesNotContain("data-unit-source=\"Crm\"", propertyHtml);
+         Assert.Contains("handler=UseExternalUnit", propertyHtml);
+     }
+@@ -230,7 +230,7 @@ public sealed class NewTicketWizardHttpFlowTests
+         fields["CreateStep.RequestTypeId"] = "999";
+         var created = await client.PostAsync("/NewTicket?handler=Create", new FormUrlEncodedContent(fields));
+         Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
+-        using var body = JsonDocument.Parse(Assert.Single(api.Requests.Where(r => r.Method == HttpMethod.Post && r.RequestUri.EndsWith("/api/tickets", StringComparison.Ordinal))).Body!);
++        using var body = JsonDocument.Parse(Assert.Single(api.Requests, r => r.Method == HttpMethod.Post && r.RequestUri.EndsWith("/api/tickets", StringComparison.Ordinal)).Body!);
+         Assert.Equal(20, body.RootElement.GetProperty("categoryId").GetInt32());
+         Assert.Equal(200, body.RootElement.GetProperty("requestTypeId").GetInt32());
+         Assert.Equal("Please send receipts", body.RootElement.GetProperty("requestSummary").GetString());
+diff --git a/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs b/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs
+index 0bd4884..699b386 100644
+--- a/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs
++++ b/src/TigerCS.Tests/WorkflowConfiguration/Services/NewRequestTypesImportTests.cs
+@@ -513,7 +513,7 @@ public class NewRequestTypesImportTests
+         var categories = await db.Categories.ToListAsync();
+         foreach (var requestType in await db.RequestTypes.Where(r => r.IsActive).ToListAsync())
+         {
+-            Assert.Single(categories.Where(c => c.DepartmentId == requestType.DepartmentId && c.Name == requestType.Name));
++            Assert.Single(categories, c => c.DepartmentId == requestType.DepartmentId && c.Name == requestType.Name);
+         }
+         Assert.False((await db.Categories.SingleAsync(c => c.CategoryId == inactiveId)).IsActive);
+         Assert.Equal("Historic inquiry", (await db.Categories.SingleAsync(c => c.CategoryId == historicalId)).Name);

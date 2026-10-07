@@ -317,7 +317,7 @@ table { border-collapse: collapse; width: 100%; }
 
 /* ---------- Page shell ---------- */
 
-.page { max-width: 1440px; margin: 0 auto; padding: var(--space-5); }
+.page { max-width: 90%; margin: 0 auto; padding: var(--space-5); }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-5); }
 .page-title { font-size: var(--text-2xl); font-weight: var(--weight-title); line-height: 1.15; letter-spacing: -0.024em; }
 
@@ -405,14 +405,14 @@ table { border-collapse: collapse; width: 100%; }
   color: var(--color-text-secondary); padding: var(--space-3) var(--space-4); background: var(--color-bg);
   border-bottom: 1px solid var(--color-border); white-space: nowrap;
 }
-.data-table td { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); vertical-align: middle; white-space: nowrap; }
+.data-table td { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); vertical-align: middle; white-space: wrap; }
 .data-table tbody tr { transition: background .12s ease; }
 .data-table tbody tr:hover { background: var(--color-bg); }
 .data-table tbody tr:last-child td { border-bottom: 0; }
 .data-table .cell-primary { font-weight: var(--weight-strong); }
 .data-table .cell-sub { color: var(--color-text-secondary); font-size: var(--text-xs); margin-top: 2px; }
 .data-table .col-subject { white-space: normal; min-width: 220px; }
-.ticket-id-link { font-weight: 700; color: var(--color-info); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ticket-id-link { font-weight: 700; color: var(--color-info); font-variant-numeric: tabular-nums; white-space: nowrap; display:block }
 .ticket-id-link:hover { text-decoration: underline; }
 .id-fallback { color: var(--color-text-secondary); font-style: italic; }
 

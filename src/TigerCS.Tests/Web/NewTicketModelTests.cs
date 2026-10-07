@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Logging.Abstractions;
 using TigerCS.Application.Modules.ClassificationAndRouting.Dto;
+using TigerCS.Application.Modules.Administration.Dto;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
@@ -45,7 +46,8 @@ public sealed class NewTicketModelTests
         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerHistoryResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? customerLookupResponder = null,
         Func<HttpRequestMessage, string?, HttpResponseMessage>? channelsResponder = null,
-        Func<HttpRequestMessage, string?, HttpResponseMessage>? collectionsResponder = null)
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? collectionsResponder = null,
+        Func<HttpRequestMessage, string?, HttpResponseMessage>? requestTypesResponder = null)
     {
         var intakeHandler = new FakeApiHandler(intakeResponder ?? ((_, _) => throw new InvalidOperationException("Intake API not expected to be called.")));
         var crmBuyerLookupHandler = new FakeApiHandler(crmBuyerLookupResponder ?? ((_, _) => throw new InvalidOperationException("CRM Buyer Lookup API not expected to be called.")));
@@ -102,9 +104,15 @@ public sealed class NewTicketModelTests
             new HttpClient(collectionsHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<CollectionsApiClient>.Instance);
         LastCollectionsHandler = collectionsHandler;
 
+        var requestTypesHandler = new FakeApiHandler(requestTypesResponder ?? ((_, _) =>
+            FakeApiHandler.JsonResponse(HttpStatusCode.OK, Array.Empty<RequestTypeOptionDto>())));
+        var requestTypesClient = new RequestTypesApiClient(
+            new HttpClient(requestTypesHandler) { BaseAddress = new Uri("http://localhost/") }, NullLogger<RequestTypesApiClient>.Instance);
+
         var model = new NewTicketModel(
             intakeClient, customerLookupClient, crmBuyerLookupClient, departmentsClient, categoriesClient, ticketsClient, customerHistoryClient,
-            channelsClient: channelsClient, paymentPanelLoader: new CustomerPaymentPanelLoader(collectionsClient));
+            channelsClient: channelsClient, requestTypesClient: requestTypesClient, paymentPanelLoader: new CustomerPaymentPanelLoader(collectionsClient),
+            timeProvider: new TigerCS.Tests.Notifications.Fakes.FakeTimeProvider(new DateTime(2026, 10, 5, 21, 30, 0, DateTimeKind.Utc)));
         return (model, intakeHandler, crmBuyerLookupHandler, departmentsHandler, categoriesHandler, ticketsHandler, customerHistoryHandler, customerLookupHandler);
     }
 
@@ -467,6 +475,7 @@ public sealed class NewTicketModelTests
         Assert.Equal(2, model.Candidates.Count);
         Assert.Contains(model.Candidates, c => c.Key == "crm");
         Assert.Contains(model.Candidates, c => c.Source == "Pact");
+        Assert.Equal(["Pact", "Crm"], model.Candidates.Select(c => c.PrimaryVerificationSource));
     }
 
     // ---------------------------------------------------------------
@@ -517,7 +526,8 @@ public sealed class NewTicketModelTests
         var candidate = Assert.Single(model.Candidates);
         Assert.Equal("crm", candidate.Key);
         Assert.True(candidate.IsUnified);
-        Assert.Equal(["Crm", "Pact"], candidate.Sources);
+        Assert.Equal(["Pact", "Crm"], candidate.Sources);
+        Assert.Equal("Pact", candidate.PrimaryVerificationSource);
         Assert.Equal("7001", candidate.LinkedPactCustomerId);
         Assert.Equal("ext:Pact:7001", model.LinkedPactCustomerKey);
         // The shared unit counts once; the PACT-only unit adds one.
@@ -561,6 +571,70 @@ public sealed class NewTicketModelTests
     }
 
     [Fact]
+    public async Task OnGetAsync_SameUnitButDifferentCustomerDetails_StaySeparate()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerLinkedToNoblesTower1506() with { DisplayName = "Another Tenant", Email = null }])));
+        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990001");
+        Assert.Equal(2, model.Candidates.Count);
+        Assert.Null(model.LinkedPactCustomer);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_ExpiredSharedContract_PreservesUnifiedIdentityAndHistory_ButOnlyCurrentPactUnitsAreSelectable()
+    {
+        var pact = PactCustomerLinkedToNoblesTower1506();
+        pact = pact with { Units = [pact.Units[0] with { ContractEndDate = new DateOnly(2026, 10, 5), IsContractExpired = true, CompanyId = 4 },
+            pact.Units[1] with { ContractEndDate = new DateOnly(2026, 10, 6), CompanyId = 25 }] };
+        var (model, _, _, _, _, _, histories, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(
+                SingleUnitBuyer(5001, "Sami Nasser", "971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            customerLookupResponder: CustomerLookupReturning(
+                CustomerLookupSourceResultDto.NotFound("Crm"), CustomerLookupSourceResultDto.Found("Pact", [pact])));
+        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990001");
+        Assert.True(Assert.Single(model.Candidates).IsUnified);
+        Assert.Equal([4, 25], model.LinkedPactCustomer!.Units.Select(u => u.CompanyId));
+        Assert.Equal("701", Assert.Single(model.LinkedPactOnlyUnits).ExternalUnitId);
+        Assert.Equal("701", Assert.Single(Assert.Single(model.ExternalLookupSources.Single(s => s.Source == "Pact").Customers).Units).ExternalUnitId);
+        Assert.Contains(histories.Requests, r => r.RequestUri.Contains("/external/Pact/7001/ticket-history"));
+    }
+
+    [Fact]
+    public async Task OnGetAsync_RenewedContractOnSameUnit_FiltersBeforeDeduplicating()
+    {
+        var pact = PactCustomerWithTwoUnits();
+        pact = pact with { Units = [pact.Units[0] with { ContractEndDate = new DateOnly(2026, 10, 5) },
+            pact.Units[0] with { ContractEndDate = new DateOnly(2026, 10, 6) }, pact.Units[1] with { ContractEndDate = null }] };
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(),
+            customerLookupResponder: CustomerLookupReturning(CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [pact])));
+        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990002");
+        Assert.Equal(2, Assert.Single(model.Candidates).UnitsCount);
+        Assert.Equal(new DateOnly(2026, 10, 6), model.ExternalLookupSources.Single(s => s.Source == "Pact").Customers[0].Units[0].ContractEndDate);
+    }
+
+    [Fact]
+    public async Task OnGetAsync_PactWithOnlyExpiredContracts_HasNoSelectableUnit_ButIdentityAndHistoryRemain()
+    {
+        var pact = PactCustomerWithTwoUnits();
+        pact = pact with { Units = pact.Units.Select(u => u with { ContractEndDate = new DateOnly(2026, 10, 5) }).ToList() };
+        var (model, _, _, _, _, _, histories, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(),
+            customerLookupResponder: CustomerLookupReturning(CustomerLookupSourceResultDto.NotFound("Crm"),
+                CustomerLookupSourceResultDto.Found("Pact", [pact])));
+        await GetAsync(model, intakeRecordId: 42, phoneNumber: "+971509990002");
+        Assert.Equal(0, Assert.Single(model.Candidates).UnitsCount);
+        Assert.Equal("ext:Pact:7001", model.Candidates[0].Key);
+        Assert.Equal(2, model.CustomerLookup!.Sources.Single(s => s.Source == "Pact").Customers[0].Units.Count);
+        Assert.Contains(histories.Requests, r => r.RequestUri.Contains("/external/Pact/7001/ticket-history"));
+    }
+
+    [Fact]
     public async Task OnGetAsync_UnifiedCard_OneHistoryReadFailing_StillShowsTheOtherIdentitysHistory()
     {
         var crmHistory = new CustomerHistoryDto("Verified", 5001, null, "Sami Nasser", 1, 1, 0, [Ticket(50, "Open")]);
@@ -594,6 +668,9 @@ public sealed class NewTicketModelTests
         Assert.NotNull(model.LinkedPactCustomer);
         Assert.True(model.IsLinkedToPact(model.CrmBuyerMatch!.Units[0]));
         Assert.Equal("2304", Assert.Single(model.LinkedPactOnlyUnits).UnitNumber);
+        Assert.Equal(2, model.LinkedPactSelectableUnits.Count);
+        Assert.Empty(model.CrmOnlySelectableUnits);
+        Assert.Equal("PACT · Tiger CRM", model.SummaryVerificationLabel);
 
         // Selecting the PACT-only unit under the unified card persists the
         // PACT identity, exactly as a PACT selection from its own card would.
@@ -769,7 +846,7 @@ public sealed class NewTicketModelTests
         Assert.Equal(PaymentPanelState.EdsmSummary, panel.State);
         // Resolved by the same ext:Pact:{tenant} key the profile uses — the
         // Api's verified tenant/company mapping, untouched.
-        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customers/by-key/ext%3APact%3A7001/payment-summary"));
+        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customer-lookup/payment-summary?") && r.RequestUri.Contains("customerKey=ext%3APact%3A7001"));
         Assert.Equal("7001", panel.PaymentSummary!.PactTenantId);
         // Unit 701 belongs to company 25's contract: that company is scoped,
         // and its availability state is shown as the source reported it.
@@ -859,7 +936,7 @@ public sealed class NewTicketModelTests
                 SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "2304", "Tiger Marina Residences")),
             customerLookupResponder: CustomerLookupReturning(
                 CustomerLookupSourceResultDto.NotFound("Crm"),
-                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits()])),
+                CustomerLookupSourceResultDto.Found("Pact", [PactCustomerWithTwoUnits() with { DisplayName = "Sami Nasser", PhoneNumber = "971509990001" }])),
             collectionsResponder: CollectionsReturningFigures());
         var collections = LastCollectionsHandler!;
 
@@ -868,18 +945,20 @@ public sealed class NewTicketModelTests
             crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Tiger Marina Residences", crmBuyerUnitNumber: "2304");
 
         Assert.NotNull(model.LinkedPactCustomer);
-        Assert.Equal("Crm", model.PaymentPanelSource);
-        Assert.Equal(PaymentPanelState.SelectAccount, model.PaymentPanel!.State); // no CRM account holds unit 2304 — selection stays required
+        Assert.Equal("PACT · Tiger CRM", model.SummaryVerificationLabel);
+        Assert.Equal("Pact", model.PaymentPanelSource);
+        Assert.Equal(PaymentPanelState.EdsmSummary, model.PaymentPanel!.State);
         var linked = Assert.IsType<CustomerPaymentPanel>(model.LinkedPaymentPanel);
-        Assert.Equal("Pact", model.LinkedPaymentPanelSource);
-        Assert.Equal(PaymentPanelState.EdsmSummary, linked.State);
-        Assert.Equal("ext:Pact:7001", linked.CustomerKey);
+        Assert.Equal("Crm", model.LinkedPaymentPanelSource);
+        Assert.Equal(PaymentPanelState.SelectAccount, linked.State); // no CRM account holds unit 2304
+        Assert.Equal("ext:Pact:7001", model.PaymentPanel.CustomerKey);
         // EDSM scoped to the company whose contract is the shared unit (700 → company 4).
-        Assert.Equal(4, linked.SelectedCompanyId);
-        Assert.True(linked.ScopedByUnit);
+        Assert.Equal(4, model.PaymentPanel.SelectedCompanyId);
+        Assert.True(model.PaymentPanel.ScopedByUnit);
+        Assert.Equal("paymentAccount", model.PaymentPanel.Links.AccountParameter);
         Assert.Equal("linkedPaymentAccount", linked.Links.AccountParameter);
         Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/customers/5001/outstanding"));
-        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("by-key/ext%3APact%3A7001/payment-summary"));
+        Assert.Contains(collections.Requests, r => r.RequestUri.Contains("/api/collections/customer-lookup/payment-summary?") && r.RequestUri.Contains("customerKey=ext%3APact%3A7001"));
     }
 
     [Fact]
@@ -1331,6 +1410,99 @@ public sealed class NewTicketModelTests
             "Tiger Tower A", "1204", CancellationToken.None);
 
         Assert.Null(model.CreateStep.CategoryId);
+    }
+
+    [Fact]
+    public async Task RequestCategoryChange_ClearsOldTypeAndPreservesEnteredDetails()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(20, "Send Receipts", 2, "Collections")),
+            requestTypesResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
+                new[] { new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }));
+        model.CreateStep = new NewTicketModel.CreateStepInput
+        {
+            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = "category:10",
+            CategoryId = 10, RequestTypeId = 100, PriorityId = 2, RequestSummary = "Keep this request"
+        };
+        model.ModelState.SetModelValue("CreateStep.RequestTypeChoice", "category:10", "category:10");
+        await model.OnPostIssueRefreshAsync(42, "+971501234567", "manual",
+            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
+        Assert.Null(model.CreateStep.RequestTypeChoice);
+        Assert.Null(model.CreateStep.CategoryId);
+        Assert.Null(model.CreateStep.RequestTypeId);
+        Assert.False(model.ModelState.ContainsKey("CreateStep.RequestTypeChoice"));
+        Assert.Equal((byte)2, model.CreateStep.PriorityId);
+        Assert.Equal("Keep this request", model.CreateStep.RequestSummary);
+    }
+
+    [Theory]
+    [InlineData("request-type:200", 20, 200)]
+    [InlineData("category:21", 21, null)]
+    public async Task RequestTypeChoice_ResolvesRealIdsOnCreation_IgnoringPostedHiddenIds(string choice, int categoryId, int? requestTypeId)
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            departmentsResponder: DepartmentsReturning(new DepartmentDto(2, "Collections")),
+            categoriesResponder: CategoriesReturning(new CategoryDto(20, "Send Receipts", 2, "Collections"),
+                new CategoryDto(21, "Other Payment Inquiry", 2, "Collections")),
+            requestTypesResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
+                new[] { new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }),
+            ticketsResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.BadGateway, new { detail = "Recorded" }));
+        model.CreateStep = new NewTicketModel.CreateStepInput
+        {
+            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = choice,
+            CategoryId = 999, RequestTypeId = 999, PriorityId = 3, RequestSummary = "Payment inquiry"
+        };
+        await model.OnPostCreateAsync(42, "+971501234567", "manual",
+            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
+        using var body = JsonDocument.Parse(Assert.Single(tickets.Requests).Body!);
+        Assert.Equal(categoryId, body.RootElement.GetProperty("categoryId").GetInt32());
+        var actualType = body.RootElement.GetProperty("requestTypeId");
+        Assert.Equal(requestTypeId, actualType.ValueKind == JsonValueKind.Null ? null : (int?)actualType.GetInt32());
+        Assert.Equal("Tower", body.RootElement.GetProperty("manualProjectName").GetString());
+        Assert.Equal("101", body.RootElement.GetProperty("manualUnitNumber").GetString());
+        Assert.Equal("Collections", model.SummaryDepartmentName);
+    }
+
+    [Theory]
+    [InlineData("request-type:100", "Select a request type belonging")]
+    [InlineData("request-type:200", "Routing is not configured")]
+    public async Task RequestTypeFromAnotherCategoryOrWithoutRouting_BlocksCreation(string choice, string message)
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            departmentsResponder: DepartmentsReturning(new DepartmentDto(2, "Collections")),
+            categoriesResponder: CategoriesReturning(new CategoryDto(21, "Other Payment Inquiry", 2, "Collections")),
+            requestTypesResponder: (_, _) => FakeApiHandler.JsonResponse(HttpStatusCode.OK,
+                new[] { new RequestTypeOptionDto(100, "Send Receipts", 1, 3, true), new RequestTypeOptionDto(200, "Send Receipts", 2, 3, true) }));
+        model.CreateStep = new NewTicketModel.CreateStepInput
+        {
+            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = choice,
+            CategoryId = 999, PriorityId = 3, RequestSummary = "Payment inquiry"
+        };
+        await model.OnPostCreateAsync(42, "+971501234567", "manual",
+            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
+        Assert.Empty(tickets.Requests);
+        Assert.Equal(NewTicketModel.StepIssue, model.Step);
+        Assert.StartsWith(message, model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task RequestTypeCatalogFailure_BlocksLegacyFallbackAndCreation()
+    {
+        var (model, _, _, _, _, tickets, _, _) = CreateModel(
+            departmentsResponder: DepartmentsReturning(new DepartmentDto(2, "Collections")),
+            categoriesResponder: CategoriesReturning(new CategoryDto(20, "Send Receipts", 2, "Collections")),
+            requestTypesResponder: (_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway));
+        model.CreateStep = new NewTicketModel.CreateStepInput
+        {
+            UseRequestCategoryPicker = true, DepartmentId = 2, RequestTypeChoice = "category:20",
+            PriorityId = 3, RequestSummary = "Payment inquiry"
+        };
+        await model.OnPostCreateAsync(42, "+971501234567", "manual",
+            null, null, null, null, null, null, null, null, "Tower", "101", CancellationToken.None);
+        Assert.Empty(tickets.Requests);
+        Assert.Empty(model.RequestTypeChoices);
+        Assert.Equal(NewTicketModel.StepIssue, model.Step);
+        Assert.Equal("Unable to load request categories and types. Please try again.", model.ErrorMessage);
     }
 
     // ---- Step 4: Review — validation happens before review, creation from review ----
