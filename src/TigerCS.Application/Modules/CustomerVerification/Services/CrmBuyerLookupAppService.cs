@@ -114,7 +114,10 @@ public sealed class CrmBuyerLookupAppService(ICrmBuyerLookupGateway gateway, ILo
         return entriesForOneCustomer[0] with { Units = mergedUnits };
     }
 
-    private static bool IsValidBuyerUnit(CrmBuyerUnitDto unit) => unit.CustomerType == BuyerCustomerType;
+    // UnitId 0 (or negative) is CRM's "no unit" placeholder, not a unit a
+    // customer can select, verify against or have details/documents for.
+    private static bool IsValidBuyerUnit(CrmBuyerUnitDto unit) =>
+        unit.CustomerType == BuyerCustomerType && unit.UnitId > 0;
 
     /// <summary>Security-Architecture.md §11's masking discipline, applied for the one diagnostic log line above — enough to correlate, never enough to identify.</summary>
     private static string Mask(string phoneNumber) =>
