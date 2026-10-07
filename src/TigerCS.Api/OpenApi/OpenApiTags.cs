@@ -34,6 +34,7 @@ public static class OpenApiTags
     public const string CustomerLookup = "Customer Lookup";
     public const string CustomerSearch = "Customer Search";
     public const string Dashboard = "Dashboard";
+    public const string Reports = "Reports";
     public const string Tickets = "Tickets";
     public const string CustomerHistory = "Customer History";
     public const string CustomerDirectory = "Customer Directory";
@@ -78,6 +79,10 @@ public static class OpenApiTags
         (Dashboard,
             "The operational dashboard: KPI counts and the Tickets Requiring Attention list, computed over the "
             + "caller's own visible-department scope."),
+        (Reports,
+            "Management reports. Team Performance: one row per active CS Agent (Call Center agents are CS Agents in the "
+            + "Call Center department) with Currently Assigned, Tickets Worked, Completed Follow-ups and SLA Breaches, "
+            + "plus the records behind any one count. CS Manager, General Manager and Chairman/CEO only."),
         (Tickets, "Ticket creation and ticket queries (queue and detail)."),
         (CustomerHistory,
             "Customer -> previous ticket history, sourced entirely from the Tickets table (never a live CRM call). "

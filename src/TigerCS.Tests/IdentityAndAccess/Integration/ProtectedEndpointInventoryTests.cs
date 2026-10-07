@@ -118,6 +118,12 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/dashboard"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboard_Returns200),
         ["GET /api/dashboard/overview"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetDashboardOverview_Returns200),
 
+        // Reports (CS Manager tier) — covered by TeamPerformanceEndpointsTests
+        // (CS Manager / GM / Chairman succeed, CS Agent and the department
+        // roles are refused, the administrator passes through the override).
+        ["GET /api/reports/team-performance"] = nameof(Reporting.Integration.TeamPerformanceEndpointsTests.SystemAdministrator_IsAuthorizedOnBothEndpoints_ThroughTheOverride),
+        ["GET /api/reports/team-performance/records"] = nameof(Reporting.Integration.TeamPerformanceEndpointsTests.SystemAdministrator_IsAuthorizedOnBothEndpoints_ThroughTheOverride),
+
         // SLA and Escalation. Automatic Level 2 escalation on breach has no
         // row here because it has no endpoint: MVP-API-Contracts.md §5.7
         // makes it system-triggered, raised inside the background-job

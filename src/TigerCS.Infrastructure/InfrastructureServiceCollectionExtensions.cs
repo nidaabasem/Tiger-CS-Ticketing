@@ -21,6 +21,8 @@ using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 using TigerCS.Application.Modules.Notifications;
+using TigerCS.Application.Modules.Reporting.Abstractions;
+using TigerCS.Application.Modules.Reporting.Services;
 using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Application.Modules.SlaAndEscalation.Services;
@@ -38,6 +40,7 @@ using TigerCS.Infrastructure.Modules.GenesysIntegration.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Repositories;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
+using TigerCS.Infrastructure.Modules.Reporting.Repositories;
 using TigerCS.Infrastructure.Modules.Notifications.Repositories;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Repositories;
 using TigerCS.Infrastructure.Modules.Ticketing.Repositories;
@@ -190,6 +193,12 @@ public static class InfrastructureServiceCollectionExtensions
         // here so a nonsensical value fails at startup, not mid-request.
         services.AddScoped<CustomerSearchAppService>();
         services.AddScoped<DashboardAppService>();
+
+        // Reports (CS Manager): the Team Performance report — a read-only
+        // aggregate over Identity role membership and the ticket history
+        // tables; the Api's CsManagerOrGeneralManager policy guards it.
+        services.AddScoped<ITeamPerformanceQueryRepository, TeamPerformanceQueryRepository>();
+        services.AddScoped<TeamPerformanceAppService>();
         var reopenWindowDays = configuration.GetValue("Ticketing:ReopenWindowDays", ReopenPolicy.DefaultWindowDays);
         if (reopenWindowDays < 1)
         {

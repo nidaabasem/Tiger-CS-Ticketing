@@ -52,6 +52,7 @@ public sealed class ApiClientConfigurationTests
     [InlineData(typeof(DepartmentsApiClient))]
     [InlineData(typeof(AdminApiClient))]
     [InlineData(typeof(RequestTypesApiClient))]
+    [InlineData(typeof(ReportsApiClient))]
     public void EveryTypedApiClient_ResolvesTheSameConfiguredBaseAddress_NeverAHardcodedOne(Type clientType)
     {
         using var factory = CreateFactory();
