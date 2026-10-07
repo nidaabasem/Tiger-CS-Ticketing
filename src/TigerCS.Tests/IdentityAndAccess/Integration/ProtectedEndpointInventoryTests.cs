@@ -83,6 +83,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).
         ["POST /api/genesys/screen-pop"] = nameof(GenesysIntegration.Integration.GenesysScreenPopEndpointsTests.Issue_ReturnsAOneHourLaunchUrl_AndStoresOnlyTheHash),
         // Collections — the explicit financial permissions, with the System Administrator override, on both prefixes.
+        ["GET /api/collections/receivables/customers"] = nameof(Collections.Integration.PactReceivablesEndpointTests.SystemAdministratorCanReadThroughCentralOverride_WithNoCustomerTicket),
         ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
         ["GET /api/genesys/collections/customers/{crmCustomerId}/payments"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
         ["GET /api/genesys/collections/reminders/candidates"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
