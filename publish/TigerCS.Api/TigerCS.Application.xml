@@ -133,6 +133,9 @@
         <member name="F:TigerCS.Application.Modules.Administration.Dto.AdminOutcome.Conflict">
             <summary>The request conflicts with current state (a duplicate name, a referenced record, an immutable version).</summary>
         </member>
+        <member name="F:TigerCS.Application.Modules.Administration.Dto.AdminOutcome.PasswordPolicyViolation">
+            <summary>A new password failed ASP.NET Core Identity's password validators; <c>Errors</c> lists their descriptions. The API answers 422.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.Administration.Dto.NamedReferenceDto">
             <summary>A name-resolved reference — the administration UI shows names, never raw ids, but keeps the id for links and forms.</summary>
         </member>
@@ -270,7 +273,8 @@
             Creates the Identity account AND the employee profile in one step. The
             initial password is validated by ASP.NET Core Identity's own password
             policy (the same path the development seed uses) — no custom password
-            handling exists, and there is no reset flow in this phase.
+            handling exists. An administrator can later replace a forgotten password
+            with <see cref="T:TigerCS.Application.Modules.Administration.Dto.ResetUserPasswordRequestDto"/>.
             </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Administration.Dto.CreateUserRequestDto.#ctor(System.String,System.String,System.String,System.Boolean,System.String,System.Collections.Generic.IReadOnlyList{System.String},System.Nullable{System.Int32})">
@@ -278,7 +282,22 @@
             Creates the Identity account AND the employee profile in one step. The
             initial password is validated by ASP.NET Core Identity's own password
             policy (the same path the development seed uses) — no custom password
-            handling exists, and there is no reset flow in this phase.
+            handling exists. An administrator can later replace a forgotten password
+            with <see cref="T:TigerCS.Application.Modules.Administration.Dto.ResetUserPasswordRequestDto"/>.
+            </summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Administration.Dto.ResetUserPasswordRequestDto">
+            <summary>
+            Administrative password reset (POST api/admin/users/{employeeId}/password).
+            The new password goes through Identity's password validators; the reason
+            is recorded in the audit trail. The password itself never is.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Administration.Dto.ResetUserPasswordRequestDto.#ctor(System.String,System.String)">
+            <summary>
+            Administrative password reset (POST api/admin/users/{employeeId}/password).
+            The new password goes through Identity's password validators; the reason
+            is recorded in the audit trail. The password itself never is.
             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Administration.Dto.WorkflowDesignerCatalogDto">
@@ -434,6 +453,18 @@
         </member>
         <member name="M:TigerCS.Application.Modules.Administration.Services.AdminUserAppService.SetActivationAsync(System.Guid,System.Guid,TigerCS.Application.Modules.Administration.Dto.SetActiveRequestDto,System.Threading.CancellationToken)">
             <summary>Activation/deactivation — delegated to the existing service so the last-active-administrator guard applies unchanged.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Administration.Services.AdminUserAppService.ResetPasswordAsync(System.Guid,System.Guid,TigerCS.Application.Modules.Administration.Dto.ResetUserPasswordRequestDto,System.Threading.CancellationToken)">
+            <summary>
+            Replaces a user's password without knowing the old one — the "forgot
+            my password" path, which only a System Administrator can take on
+            someone's behalf. Identity's validators decide whether the new password
+            is acceptable (<see cref="F:TigerCS.Application.Modules.Administration.Dto.AdminOutcome.PasswordPolicyViolation"/>
+            otherwise). On success the account's security stamp is rotated, so every
+            session the user had is invalidated, and any lockout is lifted so the
+            user can sign in with the new password immediately. Audited as
+            <c>AdminResetUserPassword</c> with the reason only — never the password.
+            </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Administration.Services.AdminWorkflowAppService">
             <summary>
@@ -2583,8 +2614,9 @@
             <param name="ProjectName">The project/property the unit belongs to, when on file.</param>
             <param name="UnitType">The unit type, when on file.</param>
             <param name="CompanyId">PACT's <c>companyID</c> for the contract, when on file — with the tenant id, the key of EDSM's payment summary.</param>
+            <param name="ContractEndDate">PACT's <c>contractEndDate</c> as a calendar date, when PACT sent one in a format the gateway could read; null when absent or unparseable (the gateway never fails a lookup over a date — see <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity"/> for how a null is treated). Carried for every consumer; only the customer lookup/list layer filters on it.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.#ctor(System.String,System.String,System.String,System.String,System.String,System.Nullable{System.Int32})">
+        <member name="M:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.#ctor(System.String,System.String,System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.DateOnly})">
             <summary>
             One contract/unit tied to a <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactCustomerMatchDto"/>. Display
             enrichment only: PACT has no UnitReference/ContactReference cache, so
@@ -2597,6 +2629,7 @@
             <param name="ProjectName">The project/property the unit belongs to, when on file.</param>
             <param name="UnitType">The unit type, when on file.</param>
             <param name="CompanyId">PACT's <c>companyID</c> for the contract, when on file — with the tenant id, the key of EDSM's payment summary.</param>
+            <param name="ContractEndDate">PACT's <c>contractEndDate</c> as a calendar date, when PACT sent one in a format the gateway could read; null when absent or unparseable (the gateway never fails a lookup over a date — see <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity"/> for how a null is treated). Carried for every consumer; only the customer lookup/list layer filters on it.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.ExternalUnitId">
             <summary>PACT's own identifier for the unit — its numeric <c>unitID</c>, as a string. Falls back to PACT's unit code, then unit number, only for a row PACT sent without a <c>unitID</c>; never derived from a contract id (a contract identifier is not a unit identifier — it is carried as <see cref="P:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.ContractNumber"/> instead).</summary>
@@ -2615,6 +2648,55 @@
         </member>
         <member name="P:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.CompanyId">
             <summary>PACT's <c>companyID</c> for the contract, when on file — with the tenant id, the key of EDSM's payment summary.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.ContractEndDate">
+            <summary>PACT's <c>contractEndDate</c> as a calendar date, when PACT sent one in a format the gateway could read; null when absent or unparseable (the gateway never fails a lookup over a date — see <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity"/> for how a null is treated). Carried for every consumer; only the customer lookup/list layer filters on it.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity">
+             <summary>
+             The one rule for whether a PACT contract is still current: a contract
+             whose <see cref="P:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto.ContractEndDate"/> falls before today's
+             Dubai calendar date has expired; one ending today or later is active.
+            
+             <para>
+             <b>"Today" is the Dubai calendar date, never the server's.</b> PACT's
+             dates are UAE business dates, and the API may run on a UTC host where,
+             between 20:00 and midnight UTC, the server date is still "yesterday" in
+             Dubai — a contract ending on that Dubai date must already count as
+             active-today, not as tomorrow's. <see cref="M:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity.TodayInDubai(System.TimeProvider)"/> is the
+             single place that conversion happens for PACT contract filtering.
+             </para>
+            
+             <para>
+             <b>A missing or unreadable date never hides a contract.</b> The gateway
+             leaves <c>ContractEndDate</c> null for an absent or malformed PACT value
+             (see <c>PactContractDateParser</c>); treating that as "expired" would
+             hide real, current contracts over a formatting quirk, so a null is
+             always active — the agent sees it exactly as before this rule existed.
+             </para>
+            
+             <para>
+             Applied only by the customer lookup/list layer
+             (<c>CustomerLookupAppService</c>'s PACT leg), so the New Ticket wizard
+             and the Customer Workspace stop offering expired units — while the
+             Collections account mapping (which needs every contract, expired or not,
+             to resolve a tenant's EDSM accounts) and persisted ticket history keep
+             reading the gateway unfiltered.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity.DubaiTimeZoneId">
+            <summary>IANA id of the UAE's time zone — the same id <c>CollectionsOptions.TimeZoneId</c> defaults to.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity.TodayInDubai(System.TimeProvider)">
+            <summary>Today's calendar date in Dubai, taken from <paramref name="timeProvider"/>'s UTC clock.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity.IsActiveOn(TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractDto,System.DateOnly)">
+            <summary>
+            True when the contract is still current on <paramref name="today"/>:
+            it ends today or later, or carries no readable end date at all.
+            Only an end date strictly before <paramref name="today"/> expires it.
+            </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.CustomerVerification.Services.CrmBuyerLookupAppService">
              <summary>
@@ -5352,6 +5434,15 @@
         <member name="F:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysAuditActions.ScreenPopRefused">
             <summary>A valid, unexpired launch was consumed but refused, because the agent's mapping or account no longer allowed sign-in.</summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysDepartmentSource">
+            <summary>
+            Which routing input decided a Genesys ticket's department. Recorded on
+            the ingestion audit entry so an unexpected department (a web chat that
+            turned up in Finance, say) is traceable to the input that named it: the
+            code resolves in exactly this order and never falls back to a default
+            department, so the answer is always one of these three.
+            </summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.GenesysIntegration.Services.GenesysScreenPopAppService">
              <summary>
              Genesys <b>Secure Screen Pop</b>: Genesys asks for a launch URL for one of
@@ -5544,6 +5635,22 @@
         <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IEmployeeRepository.IsReferencedByHistoryAsync(System.Guid,System.Threading.CancellationToken)">
             <summary>Whether any ticket, assignment, approval or audit row references this employee — the reason deactivation, never deletion, is the retirement path.</summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.CredentialCheckResult">
+            <summary>
+            The outcome of a credential check. On success it carries, besides the
+            identity and roles, the account's Identity security stamp at sign-in —
+            issued into the token's <c>sst</c> claim, so the token dies when the
+            stamp is rotated by a password reset or change.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.CredentialCheckResult.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Abstractions.CredentialCheckOutcome,System.Guid,System.String,System.Collections.Generic.IReadOnlyCollection{System.String},System.String)">
+            <summary>
+            The outcome of a credential check. On success it carries, besides the
+            identity and roles, the account's Identity security stamp at sign-in —
+            issued into the token's <c>sst</c> claim, so the token dies when the
+            stamp is rotated by a password reset or change.
+            </summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IIdentityAuthenticator">
             <summary>
             Verifies staff credentials and reports lockout, without exposing which
@@ -5552,10 +5659,29 @@
             Identity's UserManager/SignInManager.
             </summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.TigerCsTokenClaims">
+            <summary>The claim names TigerCS adds to its JWT beyond the standard subject/name/role claims.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.TigerCsTokenClaims.SecurityStamp">
+            <summary>
+            The user's ASP.NET Core Identity security stamp at the moment the token
+            was issued. Compared against the account's current stamp on every
+            request (<c>ActiveEmployeeHandler</c>), so rotating the stamp — which
+            every password reset or change does — invalidates every token issued
+            before it without a revocation list.
+            </summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.ITokenService">
             <summary>
             Issues the JWT bearer access token described in MVP-API-Contracts.md §1.1.
             No refresh token — none is specified in the approved API contract.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.ITokenService.CreateAccessToken(System.Guid,System.String,System.Collections.Generic.IReadOnlyCollection{System.String},System.String)">
+            <summary>
+            Issues the token for the employee. <paramref name="securityStamp"/> is
+            the account's Identity security stamp at issue time, carried as the
+            <see cref="F:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.TigerCsTokenClaims.SecurityStamp"/> claim.
             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.UserAccountInfo">
@@ -5569,6 +5695,32 @@
         </member>
         <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.UserAccountResult.#ctor(System.Boolean,System.Collections.Generic.IReadOnlyList{System.String},System.Guid)">
             <summary>Outcome of an Identity operation, in Identity's own error wording (password policy, duplicate user name, …).</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeOutcome">
+            <summary>How a password reset or change landed inside Identity.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeOutcome.UserNotFound">
+            <summary>No Identity account exists for the employee id.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeOutcome.CurrentPasswordIncorrect">
+            <summary>Self-service change only: the current password did not verify. Nothing else is revealed.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeOutcome.PolicyViolation">
+            <summary>The new password failed Identity's registered password validators; <c>Errors</c> carries their descriptions.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeResult">
+            <summary>
+            Outcome of a password reset/change. Carries Identity's validator wording
+            for a policy failure and nothing else — never the password, never a
+            reset token.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeResult.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Abstractions.PasswordChangeOutcome,System.Collections.Generic.IReadOnlyList{System.String})">
+            <summary>
+            Outcome of a password reset/change. Carries Identity's validator wording
+            for a policy failure and nothing else — never the password, never a
+            reset token.
+            </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserAccountManager">
             <summary>
@@ -5586,6 +5738,37 @@
         </member>
         <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserAccountManager.SearchAccountIdsAsync(System.String,System.Threading.CancellationToken)">
             <summary>Employee ids whose user name or email contains the search text (case-insensitive) — for the administration user search.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserAccountManager.ResetPasswordAsync(System.Guid,System.String,System.Threading.CancellationToken)">
+            <summary>
+            Administrative reset: replaces the password without knowing the old one
+            (Identity's validators decide whether the new one is acceptable), then
+            rotates the security stamp, clears the failed-attempt count and lifts
+            any lockout, so a locked-out user can sign in with the new password at
+            once — and every token issued before the reset stops working.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserAccountManager.ChangePasswordAsync(System.Guid,System.String,System.String,System.Threading.CancellationToken)">
+            <summary>
+            Self-service change: Identity verifies the current password and runs its
+            validators on the new one; on success the security stamp is rotated so
+            every previously issued token stops working.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserAccountManager.GetSecurityStampAsync(System.Guid,System.Threading.CancellationToken)">
+            <summary>
+            The account's current Identity security stamp — the value a JWT's
+            <c>sst</c> claim is compared against on every request — or null when
+            no account exists. Rotated by Identity on every credential change.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserDepartmentAssignmentRepository.ListActiveMembershipsAsync(System.Threading.CancellationToken)">
+            <summary>
+            Every membership of every ACTIVE employee in an ACTIVE department, with
+            the Employee and Department loaded — the cross-department assignee
+            directory a CS Manager chooses from. Deactivated employees and
+            deactivated departments are excluded at the source.
+            </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserDepartmentAssignmentRepository.Remove(TigerCS.Domain.Modules.IdentityAndAccess.UserDepartmentAssignment)">
             <summary>Ends a membership. Membership rows are not referenced by ticket history (assignments snapshot employee and department ids separately), so removal never breaks a historical record.</summary>
@@ -5650,6 +5833,31 @@
         </member>
         <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.LoginResponseDto.PrimaryDepartmentId">
             <summary>The employee's primary department, or null when they have no primary assignment.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordRequestDto">
+            <summary>Self-service password change for POST /api/auth/change-password — the caller is the token's subject, never a client-supplied id.</summary>
+            <param name="CurrentPassword">Required. Must verify against the caller's current password.</param>
+            <param name="NewPassword">Required. Must satisfy the password policy (docs/DEV-SETUP.md §3).</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordRequestDto.#ctor(System.String,System.String)">
+            <summary>Self-service password change for POST /api/auth/change-password — the caller is the token's subject, never a client-supplied id.</summary>
+            <param name="CurrentPassword">Required. Must verify against the caller's current password.</param>
+            <param name="NewPassword">Required. Must satisfy the password policy (docs/DEV-SETUP.md §3).</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordRequestDto.CurrentPassword">
+            <summary>Required. Must verify against the caller's current password.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordRequestDto.NewPassword">
+            <summary>Required. Must satisfy the password policy (docs/DEV-SETUP.md §3).</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordOutcome.NotFound">
+            <summary>The token's subject has no Identity account (or none can be resolved).</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordOutcome.CurrentPasswordIncorrect">
+            <summary>The current password did not verify. Nothing more is revealed.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordOutcome.PasswordPolicyViolation">
+            <summary>The new password failed the password policy; <c>Errors</c> lists Identity's reasons.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Dto.DepartmentDto">
             <summary>One entry in the Department directory. <c>GET /api/departments</c>.</summary>
@@ -5745,6 +5953,42 @@
         <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.DepartmentUserDto.Roles">
             <summary>Every role the member holds, by name.</summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Dto.AssignableUserDto">
+            <summary>
+            One employee in the cross-department assignee directory
+            (<c>GET /api/users/assignable</c>): who they are, every role they hold
+            and every department they belong to (primary first). Exactly one row per
+            employee, however many departments or roles they have.
+            </summary>
+            <param name="EmployeeId">The employee.</param>
+            <param name="DisplayName">Their display name.</param>
+            <param name="Roles">Every role the employee holds, by name.</param>
+            <param name="Departments">Every active department the employee is a member of, primary first.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Dto.AssignableUserDto.#ctor(System.Guid,System.String,System.Collections.Generic.IReadOnlyCollection{System.String},System.Collections.Generic.IReadOnlyCollection{TigerCS.Application.Modules.IdentityAndAccess.Dto.DepartmentMembershipDto})">
+            <summary>
+            One employee in the cross-department assignee directory
+            (<c>GET /api/users/assignable</c>): who they are, every role they hold
+            and every department they belong to (primary first). Exactly one row per
+            employee, however many departments or roles they have.
+            </summary>
+            <param name="EmployeeId">The employee.</param>
+            <param name="DisplayName">Their display name.</param>
+            <param name="Roles">Every role the employee holds, by name.</param>
+            <param name="Departments">Every active department the employee is a member of, primary first.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.AssignableUserDto.EmployeeId">
+            <summary>The employee.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.AssignableUserDto.DisplayName">
+            <summary>Their display name.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.AssignableUserDto.Roles">
+            <summary>Every role the employee holds, by name.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.AssignableUserDto.Departments">
+            <summary>Every active department the employee is a member of, primary first.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Dto.PagedResultDto`1">
             <summary>A single page of results.</summary>
             <typeparam name="T">The item type.</typeparam>
@@ -5836,11 +6080,57 @@
         <member name="P:TigerCS.Application.Modules.IdentityAndAccess.Dto.ActivationResponseDto.AffectedOpenTicketCount">
             <summary>How many of that employee's open tickets the change touches.</summary>
         </member>
-        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService">
-            <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Services.AssignableUserAppService">
+            <summary>
+            The cross-department assignee directory: every active employee who is a
+            member of at least one active department, with their roles and ALL their
+            department memberships (primary first). Backs
+            <c>GET /api/users/assignable</c>, which a CS Manager reads when the
+            ticket's current department holds nobody suitable and the ticket must be
+            transferred to the assignee's department and assigned in one step.
+            </summary>
+            <remarks>
+            <para>
+            One row per employee, however many departments they belong to — the
+            UI chooses the (employee, department) pair, and the assignment rule
+            ("the assignee belongs to the ticket's resulting department") is enforced
+            by <c>TicketAssignmentAppService</c>, never by this listing.
+            </para>
+            <para>
+            This is a directory, not an authorization decision: it lists who exists.
+            Whether the caller may assign at all is the endpoint's policy and the
+            assignment service's role gate.
+            </para>
+            </remarks>
         </member>
-        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IIdentityAuthenticator,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.ITokenService,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserDepartmentAssignmentRepository)">
-            <summary>MVP-API-Contracts.md §1.1/§1.2.</summary>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Services.AssignableUserAppService.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserDepartmentAssignmentRepository,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserRoleReader)">
+            <summary>
+            The cross-department assignee directory: every active employee who is a
+            member of at least one active department, with their roles and ALL their
+            department memberships (primary first). Backs
+            <c>GET /api/users/assignable</c>, which a CS Manager reads when the
+            ticket's current department holds nobody suitable and the ticket must be
+            transferred to the assignee's department and assigned in one step.
+            </summary>
+            <remarks>
+            <para>
+            One row per employee, however many departments they belong to — the
+            UI chooses the (employee, department) pair, and the assignment rule
+            ("the assignee belongs to the ticket's resulting department") is enforced
+            by <c>TicketAssignmentAppService</c>, never by this listing.
+            </para>
+            <para>
+            This is a directory, not an authorization decision: it lists who exists.
+            Whether the caller may assign at all is the endpoint's policy and the
+            assignment service's role gate.
+            </para>
+            </remarks>
+        </member>
+        <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService">
+            <summary>MVP-API-Contracts.md §1.1/§1.2, plus the self-service password change.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService.#ctor(TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IIdentityAuthenticator,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.ITokenService,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserDepartmentAssignmentRepository,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IUserAccountManager,TigerCS.Application.Modules.IdentityAndAccess.Abstractions.IIdentityUnitOfWork,TigerCS.Application.Abstractions.IAuditEntryWriter)">
+            <summary>MVP-API-Contracts.md §1.1/§1.2, plus the self-service password change.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService.LogoutAsync(System.Guid,System.Threading.CancellationToken)">
             <summary>
@@ -5849,6 +6139,17 @@
             none is invented here). Logout is a client-side token discard; this method
             exists as the seam for the audit entry the contract describes, once the
             Audit module (S-05, out of scope for this increment) exists.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.IdentityAndAccess.Services.AuthenticationAppService.ChangePasswordAsync(System.Guid,TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordRequestDto,System.Threading.CancellationToken)">
+            <summary>
+            Changes the caller's own password. Identity verifies the current
+            password and applies the password policy; a wrong current password is
+            reported as exactly that and nothing more. On success Identity rotates
+            the security stamp, which — because every token carries the stamp it
+            was issued under — invalidates every session the user had, including
+            the one that made this call: the client must sign in again.
+            Audited as <c>ChangeOwnPassword</c> without any secret.
             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.IdentityAndAccess.Services.DepartmentAssignmentService">
@@ -7006,6 +7307,420 @@
         <member name="P:TigerCS.Application.Modules.Notifications.Templates.CustomerEmailTicketModel.ResolutionMessage">
             <summary>The resolution note, only when configuration allows sharing it.</summary>
         </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Abstractions.ITeamPerformanceQueryRepository">
+            <summary>
+            The Team Performance report's reads. Every count is a set-based
+            aggregate computed in the database over the employee set the
+            application service hands in; the repository never decides who is
+            eligible — it answers "which employees hold these roles" and "what did
+            these employees do in this window".
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.ITeamPerformanceQueryRepository.GetEmployeesInRolesAsync(System.Collections.Generic.IReadOnlyCollection{System.String},System.Threading.CancellationToken)">
+            <summary>
+            Every ACTIVE employee (<c>Employees.DeactivatedAtUtc IS NULL</c>)
+            holding at least one of <paramref name="roleNames"/> in Identity
+            (<c>AspNetUserRoles</c>), with their department memberships. One
+            entry per employee however many roles or departments they hold.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.ITeamPerformanceQueryRepository.GetMetricsAsync(System.Collections.Generic.IReadOnlyCollection{System.Guid},System.DateTime,System.DateTime,System.Threading.CancellationToken)">
+            <summary>The four metrics for the given employees over [<paramref name="rangeStartUtc"/>, <paramref name="rangeEndUtc"/>). An employee absent from a dictionary has a count of zero.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.ITeamPerformanceQueryRepository.GetRecordsAsync(System.Guid,TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceMetric,System.DateTime,System.DateTime,System.Threading.CancellationToken)">
+            <summary>The records behind one employee's count, computed with exactly the predicate the count used.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceEmployeeRow">
+            <summary>One eligible employee with their department memberships (primary first).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceEmployeeRow.#ctor(System.Guid,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceDepartmentRow})">
+            <summary>One eligible employee with their department memberships (primary first).</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceDepartmentRow">
+            <summary>One department membership: id, display name, the department code (the Call Center department is recognised by its code) and whether it is the primary membership.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceDepartmentRow.#ctor(System.Int32,System.String,System.String,System.Boolean)">
+            <summary>One department membership: id, display name, the department code (the Call Center department is recognised by its code) and whether it is the primary membership.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceMetricsSnapshot">
+            <summary>The four metric counts keyed by employee. Missing key = zero.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceMetricsSnapshot.#ctor(System.Collections.Generic.IReadOnlyDictionary{System.Guid,System.Int32},System.Collections.Generic.IReadOnlyDictionary{System.Guid,System.Int32},System.Collections.Generic.IReadOnlyDictionary{System.Guid,System.Int32},System.Collections.Generic.IReadOnlyDictionary{System.Guid,System.Int32})">
+            <summary>The four metric counts keyed by employee. Missing key = zero.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceRecordRow">
+            <summary>One record row with the ticket's facts resolved in-query, plus the metric-specific instant (breach or completion time).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceRecordRow.#ctor(System.Int64,System.String,System.String,TigerCS.Domain.Modules.Ticketing.TicketStatus,System.Nullable{System.Byte},System.String,System.DateTime,System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+            <summary>One record row with the ticket's facts resolved in-query, plus the metric-specific instant (breach or completion time).</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto">
+            <summary>
+            The Team Performance report's filters, bound from the query string.
+            Every filter is optional. Dates are UTC calendar days (the same "UTC
+            day" convention the Dashboard uses) and default to the last 30 days
+            when both are omitted.
+            </summary>
+            <param name="DateFrom">First UTC calendar day of the period (inclusive).</param>
+            <param name="DateTo">Last UTC calendar day of the period (inclusive).</param>
+            <param name="EmployeeId">Narrow to one eligible employee.</param>
+            <param name="AgentType">Narrow to one agent type: <c>CS Agent</c> or <c>Call Center Agent</c> (see <see cref="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAgentTypes"/>).</param>
+            <param name="DepartmentId">Narrow to employees who are members of this department.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto.#ctor(System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.Nullable{System.Guid},System.String,System.Nullable{System.Int32})">
+            <summary>
+            The Team Performance report's filters, bound from the query string.
+            Every filter is optional. Dates are UTC calendar days (the same "UTC
+            day" convention the Dashboard uses) and default to the last 30 days
+            when both are omitted.
+            </summary>
+            <param name="DateFrom">First UTC calendar day of the period (inclusive).</param>
+            <param name="DateTo">Last UTC calendar day of the period (inclusive).</param>
+            <param name="EmployeeId">Narrow to one eligible employee.</param>
+            <param name="AgentType">Narrow to one agent type: <c>CS Agent</c> or <c>Call Center Agent</c> (see <see cref="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAgentTypes"/>).</param>
+            <param name="DepartmentId">Narrow to employees who are members of this department.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto.DateFrom">
+            <summary>First UTC calendar day of the period (inclusive).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto.DateTo">
+            <summary>Last UTC calendar day of the period (inclusive).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto.EmployeeId">
+            <summary>Narrow to one eligible employee.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto.AgentType">
+            <summary>Narrow to one agent type: <c>CS Agent</c> or <c>Call Center Agent</c> (see <see cref="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAgentTypes"/>).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto.DepartmentId">
+            <summary>Narrow to employees who are members of this department.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceReportDto">
+            <summary>
+            The Team Performance report: one row per eligible employee (active, in
+            the CS Agent role), sorted by display name, with the four metrics and a
+            totals row. Employees with no activity in the period are included with
+            zeros — a manager sees the whole team, never only the busy part of it.
+            </summary>
+            <param name="Filters">The filters as actually applied — including the defaulted period.</param>
+            <param name="Rows">One row per employee, sorted by display name; never a duplicate row for an employee with several roles or departments.</param>
+            <param name="Totals">The sum of every row shown (after filters).</param>
+            <param name="FilterOptions">The picker options: every eligible employee, the departments they belong to, and the two agent types.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceReportDto.#ctor(TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAppliedFiltersDto,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto},TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceTotalsDto,TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceFilterOptionsDto)">
+            <summary>
+            The Team Performance report: one row per eligible employee (active, in
+            the CS Agent role), sorted by display name, with the four metrics and a
+            totals row. Employees with no activity in the period are included with
+            zeros — a manager sees the whole team, never only the busy part of it.
+            </summary>
+            <param name="Filters">The filters as actually applied — including the defaulted period.</param>
+            <param name="Rows">One row per employee, sorted by display name; never a duplicate row for an employee with several roles or departments.</param>
+            <param name="Totals">The sum of every row shown (after filters).</param>
+            <param name="FilterOptions">The picker options: every eligible employee, the departments they belong to, and the two agent types.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceReportDto.Filters">
+            <summary>The filters as actually applied — including the defaulted period.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceReportDto.Rows">
+            <summary>One row per employee, sorted by display name; never a duplicate row for an employee with several roles or departments.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceReportDto.Totals">
+            <summary>The sum of every row shown (after filters).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceReportDto.FilterOptions">
+            <summary>The picker options: every eligible employee, the departments they belong to, and the two agent types.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAppliedFiltersDto">
+            <summary>The filters as applied, echoed back so the page can render the effective state (e.g. the defaulted period).</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAppliedFiltersDto.#ctor(System.DateOnly,System.DateOnly,System.Nullable{System.Guid},System.String,System.Nullable{System.Int32})">
+            <summary>The filters as applied, echoed back so the page can render the effective state (e.g. the defaulted period).</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto">
+            <summary>
+            One employee's row. The metric definitions are the business rules of
+            this report and are restated on the page's help block and in
+            <c>docs/Team-Performance-Report.md</c>.
+            </summary>
+            <param name="EmployeeId">The employee (AspNetUsers.Id / Employees.EmployeeId).</param>
+            <param name="DisplayName">The employee's display name.</param>
+            <param name="AgentType"><c>Call Center Agent</c> when the employee is a member of the Call Center department (code <c>CC</c>); otherwise <c>CS Agent</c>.</param>
+            <param name="Departments">The employee's department memberships, primary first.</param>
+            <param name="CurrentlyAssigned">Current state, not period-bound: tickets whose <c>CurrentOwnerEmployeeId</c> is this employee and whose status is not Closed.</param>
+            <param name="TicketsWorked">Distinct tickets on which the employee performed at least one recorded action within the period (assignment to them, a status change, a note, a resolution, a workflow event, or a customer follow-up assigned to or completed by them). Measured from history, not from current ownership.</param>
+            <param name="CompletedFollowUps">Customer follow-ups (<c>TicketAgentHandoffs</c>) assigned to the employee and completed within the period. Counts work items, not tickets.</param>
+            <param name="SlaBreaches">Distinct tickets whose SLA breach was recorded within the period while this employee held the ticket (the latest assignment at or before the breach). Each breach is attributed to at most one employee.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.#ctor(System.Guid,System.String,System.String,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceDepartmentDto},System.Int32,System.Int32,System.Int32,System.Int32)">
+            <summary>
+            One employee's row. The metric definitions are the business rules of
+            this report and are restated on the page's help block and in
+            <c>docs/Team-Performance-Report.md</c>.
+            </summary>
+            <param name="EmployeeId">The employee (AspNetUsers.Id / Employees.EmployeeId).</param>
+            <param name="DisplayName">The employee's display name.</param>
+            <param name="AgentType"><c>Call Center Agent</c> when the employee is a member of the Call Center department (code <c>CC</c>); otherwise <c>CS Agent</c>.</param>
+            <param name="Departments">The employee's department memberships, primary first.</param>
+            <param name="CurrentlyAssigned">Current state, not period-bound: tickets whose <c>CurrentOwnerEmployeeId</c> is this employee and whose status is not Closed.</param>
+            <param name="TicketsWorked">Distinct tickets on which the employee performed at least one recorded action within the period (assignment to them, a status change, a note, a resolution, a workflow event, or a customer follow-up assigned to or completed by them). Measured from history, not from current ownership.</param>
+            <param name="CompletedFollowUps">Customer follow-ups (<c>TicketAgentHandoffs</c>) assigned to the employee and completed within the period. Counts work items, not tickets.</param>
+            <param name="SlaBreaches">Distinct tickets whose SLA breach was recorded within the period while this employee held the ticket (the latest assignment at or before the breach). Each breach is attributed to at most one employee.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.EmployeeId">
+            <summary>The employee (AspNetUsers.Id / Employees.EmployeeId).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.DisplayName">
+            <summary>The employee's display name.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.AgentType">
+            <summary><c>Call Center Agent</c> when the employee is a member of the Call Center department (code <c>CC</c>); otherwise <c>CS Agent</c>.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.Departments">
+            <summary>The employee's department memberships, primary first.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.CurrentlyAssigned">
+            <summary>Current state, not period-bound: tickets whose <c>CurrentOwnerEmployeeId</c> is this employee and whose status is not Closed.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.TicketsWorked">
+            <summary>Distinct tickets on which the employee performed at least one recorded action within the period (assignment to them, a status change, a note, a resolution, a workflow event, or a customer follow-up assigned to or completed by them). Measured from history, not from current ownership.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.CompletedFollowUps">
+            <summary>Customer follow-ups (<c>TicketAgentHandoffs</c>) assigned to the employee and completed within the period. Counts work items, not tickets.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRowDto.SlaBreaches">
+            <summary>Distinct tickets whose SLA breach was recorded within the period while this employee held the ticket (the latest assignment at or before the breach). Each breach is attributed to at most one employee.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceDepartmentDto">
+            <summary>One department membership of an employee on the report.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceDepartmentDto.#ctor(System.Int32,System.String,System.Boolean)">
+            <summary>One department membership of an employee on the report.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceTotalsDto">
+            <summary>The totals row: every figure is the sum of the rows shown. Tickets worked and SLA breaches are summed per employee, so a ticket two agents both worked counts twice here — by design, this is the team's effort, not a ticket count.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceTotalsDto.#ctor(System.Int32,System.Int32,System.Int32,System.Int32,System.Int32)">
+            <summary>The totals row: every figure is the sum of the rows shown. Tickets worked and SLA breaches are summed per employee, so a ticket two agents both worked counts twice here — by design, this is the team's effort, not a ticket count.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceOptionDto">
+            <summary>A filter picker option; <see cref="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceOptionDto.GroupLabel"/> carries the employee's agent type on the employee picker.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceOptionDto.#ctor(System.String,System.String,System.String)">
+            <summary>A filter picker option; <see cref="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceOptionDto.GroupLabel"/> carries the employee's agent type on the employee picker.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceFilterOptionsDto">
+            <summary>The picker options — every eligible employee (not only the filtered ones), the departments any of them belongs to, and the fixed agent types.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceFilterOptionsDto.#ctor(System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceOptionDto},System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceOptionDto},System.Collections.Generic.IReadOnlyList{System.String})">
+            <summary>The picker options — every eligible employee (not only the filtered ones), the departments any of them belongs to, and the fixed agent types.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAgentTypes">
+            <summary>The two agent types the report distinguishes. Both hold the same Identity role (CS Agent); what tells them apart is Call Center department membership.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceAgentTypes.Normalize(System.String)">
+            <summary>Case-insensitive match to one of the known agent types, or null when the value is not one of them.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceMetric">
+            <summary>Which of the four counts a records request opens.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto">
+            <summary>
+            The records behind one count on the report, for one employee. The
+            period is interpreted exactly as on the report (UTC days, inclusive,
+            defaulted the same way), so the list always matches the number.
+            </summary>
+            <param name="EmployeeId">The employee whose count is being opened.</param>
+            <param name="Metric">One of CurrentlyAssigned, TicketsWorked, CompletedFollowUps, SlaBreaches.</param>
+            <param name="DateFrom">First UTC calendar day of the period (inclusive); ignored for CurrentlyAssigned.</param>
+            <param name="DateTo">Last UTC calendar day of the period (inclusive); ignored for CurrentlyAssigned.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto.#ctor(System.Guid,System.String,System.Nullable{System.DateOnly},System.Nullable{System.DateOnly})">
+            <summary>
+            The records behind one count on the report, for one employee. The
+            period is interpreted exactly as on the report (UTC days, inclusive,
+            defaulted the same way), so the list always matches the number.
+            </summary>
+            <param name="EmployeeId">The employee whose count is being opened.</param>
+            <param name="Metric">One of CurrentlyAssigned, TicketsWorked, CompletedFollowUps, SlaBreaches.</param>
+            <param name="DateFrom">First UTC calendar day of the period (inclusive); ignored for CurrentlyAssigned.</param>
+            <param name="DateTo">Last UTC calendar day of the period (inclusive); ignored for CurrentlyAssigned.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto.EmployeeId">
+            <summary>The employee whose count is being opened.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto.Metric">
+            <summary>One of CurrentlyAssigned, TicketsWorked, CompletedFollowUps, SlaBreaches.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto.DateFrom">
+            <summary>First UTC calendar day of the period (inclusive); ignored for CurrentlyAssigned.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto.DateTo">
+            <summary>Last UTC calendar day of the period (inclusive); ignored for CurrentlyAssigned.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsDto">
+            <summary>The records behind one count — the employee, the metric and the period they were computed for, and the ticket rows.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsDto.#ctor(System.Guid,System.String,System.String,System.String,System.DateOnly,System.DateOnly,System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto})">
+            <summary>The records behind one count — the employee, the metric and the period they were computed for, and the ticket rows.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto">
+            <summary>One record: the ticket's compact facts plus, for SLA breaches, when the breach was recorded and, for completed follow-ups, when the follow-up was completed.</summary>
+            <param name="TicketId">Links to Ticket Details.</param>
+            <param name="TicketNumber">The human-facing ticket number.</param>
+            <param name="RequestSummary">The ticket's one-line summary.</param>
+            <param name="TicketStatus">The ticket's current lifecycle status.</param>
+            <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified.</param>
+            <param name="DepartmentName">The department that currently holds the ticket.</param>
+            <param name="CreatedAtUtc">When the ticket was created.</param>
+            <param name="BreachedAtUtc">SlaBreaches only: when the breach was recorded (the earliest breach in the period for this ticket).</param>
+            <param name="CompletedAtUtc">CompletedFollowUps only: when the follow-up was completed.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.#ctor(System.Int64,System.String,System.String,System.String,System.Nullable{System.Byte},System.String,System.DateTime,System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+            <summary>One record: the ticket's compact facts plus, for SLA breaches, when the breach was recorded and, for completed follow-ups, when the follow-up was completed.</summary>
+            <param name="TicketId">Links to Ticket Details.</param>
+            <param name="TicketNumber">The human-facing ticket number.</param>
+            <param name="RequestSummary">The ticket's one-line summary.</param>
+            <param name="TicketStatus">The ticket's current lifecycle status.</param>
+            <param name="PriorityId">1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified.</param>
+            <param name="DepartmentName">The department that currently holds the ticket.</param>
+            <param name="CreatedAtUtc">When the ticket was created.</param>
+            <param name="BreachedAtUtc">SlaBreaches only: when the breach was recorded (the earliest breach in the period for this ticket).</param>
+            <param name="CompletedAtUtc">CompletedFollowUps only: when the follow-up was completed.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.TicketId">
+            <summary>Links to Ticket Details.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.TicketNumber">
+            <summary>The human-facing ticket number.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.RequestSummary">
+            <summary>The ticket's one-line summary.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.TicketStatus">
+            <summary>The ticket's current lifecycle status.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.PriorityId">
+            <summary>1=Critical, 2=High, 3=Medium, 4=Low, or null while Unclassified.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.DepartmentName">
+            <summary>The department that currently holds the ticket.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.CreatedAtUtc">
+            <summary>When the ticket was created.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.BreachedAtUtc">
+            <summary>SlaBreaches only: when the breach was recorded (the earliest breach in the period for this ticket).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordDto.CompletedAtUtc">
+            <summary>CompletedFollowUps only: when the follow-up was completed.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsOutcome">
+            <summary>How a records request landed — the controller maps each to a status code; no exception carries a business outcome.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsOutcome.UnknownMetric">
+            <summary>The metric name is not one of the four counts.</summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsOutcome.EmployeeNotEligible">
+            <summary>The employee is not an eligible (active, CS Agent) employee — the report never shows a row for them, so there are no records to open.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsResult">
+            <summary>The records call's result: the outcome and, on success, the records.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsResult.#ctor(TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsOutcome,TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsDto)">
+            <summary>The records call's result: the outcome and, on success, the records.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService">
+             <summary>
+             The CS Manager's Team Performance report: one row per eligible agent
+             with four counts, and the records behind any one count.
+            
+             <para>
+             <b>Who is on the report.</b> Every ACTIVE employee holding one of
+             <see cref="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.EligibleRoles"/> in Identity — today exactly the "CS Agent"
+             role. There is no separate "Call Center Agent" role: per
+             <c>docs/Genesys/Genesys-Cloud-Configuration.md</c> §4, call-centre agents
+             are CS Agents who belong to the Call Center department (code
+             <see cref="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.CallCenterDepartmentCode"/>). The report therefore derives an
+             <b>agent type</b> per employee from department membership rather than
+             from a role, and shows one row per employee however many roles or
+             departments they hold. Employees with no activity in the period are
+             included with zeros.
+             </para>
+            
+             <para>
+             <b>Period.</b> UTC calendar days, inclusive, defaulting to the last 30
+             days exactly as the Dashboard does
+             (<see cref="M:TigerCS.Application.Modules.Ticketing.Services.DashboardAppService.ResolvePeriod(System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.DateOnly)"/>). Currently Assigned is
+             the one current-state figure and ignores the period.
+             </para>
+            
+             <para>
+             Read-only: nothing here changes state, so no audit entry is written.
+             Authorization (CS Manager / General Manager / Chairman-CEO, plus the
+             System Administrator override) is the Api's policy, not decided here.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.#ctor(TigerCS.Application.Modules.Reporting.Abstractions.ITeamPerformanceQueryRepository,System.TimeProvider)">
+             <summary>
+             The CS Manager's Team Performance report: one row per eligible agent
+             with four counts, and the records behind any one count.
+            
+             <para>
+             <b>Who is on the report.</b> Every ACTIVE employee holding one of
+             <see cref="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.EligibleRoles"/> in Identity — today exactly the "CS Agent"
+             role. There is no separate "Call Center Agent" role: per
+             <c>docs/Genesys/Genesys-Cloud-Configuration.md</c> §4, call-centre agents
+             are CS Agents who belong to the Call Center department (code
+             <see cref="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.CallCenterDepartmentCode"/>). The report therefore derives an
+             <b>agent type</b> per employee from department membership rather than
+             from a role, and shows one row per employee however many roles or
+             departments they hold. Employees with no activity in the period are
+             included with zeros.
+             </para>
+            
+             <para>
+             <b>Period.</b> UTC calendar days, inclusive, defaulting to the last 30
+             days exactly as the Dashboard does
+             (<see cref="M:TigerCS.Application.Modules.Ticketing.Services.DashboardAppService.ResolvePeriod(System.Nullable{System.DateOnly},System.Nullable{System.DateOnly},System.DateOnly)"/>). Currently Assigned is
+             the one current-state figure and ignores the period.
+             </para>
+            
+             <para>
+             Read-only: nothing here changes state, so no audit entry is written.
+             Authorization (CS Manager / General Manager / Chairman-CEO, plus the
+             System Administrator override) is the Api's policy, not decided here.
+             </para>
+             </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.EligibleRoles">
+            <summary>
+            The Identity roles whose holders appear on the report. A single
+            place to extend (e.g. to add CS Supervisor) — deliberately only
+            "CS Agent" for now, because the report is about the agents a CS
+            Manager supervises, and supervisors are not measured on the same
+            four counts.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.CallCenterDepartmentCode">
+            <summary>
+            The Call Center department's code — the same code
+            <c>WorkflowReferenceData.CallCenterCode</c> seeds. Membership of the
+            department with this code is what makes a CS Agent a "Call Center
+            Agent" on this report; a rename of the department keeps the code,
+            so the classification survives it.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.AgentTypeOf(TigerCS.Application.Modules.Reporting.Abstractions.TeamPerformanceEmployeeRow)">
+            <summary>"Call Center Agent" when any membership is the department whose code is <see cref="F:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.CallCenterDepartmentCode"/>; otherwise "CS Agent".</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.RangeStartUtc(System.DateOnly)">
+            <summary>The inclusive start of the first period day, as a UTC instant.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService.RangeEndUtc(System.DateOnly)">
+            <summary>The exclusive end of the last period day: midnight of the day after, as a UTC instant.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.IIdempotencyRecordStore">
              <summary>
              ADR-0014's idempotency mechanism, over <c>IdempotencyRecords</c>
@@ -7077,6 +7792,9 @@
         <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ISlaPolicyRepository">
             <summary>Reads the seeded per-priority SLA targets (MVP-ERD.md §2.6). Reference data — never written by this module.</summary>
         </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ISlaPolicyRepository.ListAsync(System.Threading.CancellationToken)">
+            <summary>Every policy row, active or not, Critical first — the administrator's reference view of what the calculation applies.</summary>
+        </member>
         <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.IBusinessCalendarRepository">
             <summary>
             Loads the active business calendar already resolved into the exact shape
@@ -7086,6 +7804,9 @@
         </member>
         <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.IBusinessCalendarRepository.GetActiveSnapshotAsync(System.Threading.CancellationToken)">
             <summary>The single active calendar plus its seven working-day rows and every holiday date, or null if none is seeded.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.IBusinessCalendarRepository.GetActiveDescriptionAsync(System.Threading.CancellationToken)">
+            <summary>The same active calendar as plain reference data (name, hours, zone id, working days, holidays) for display — null if none is seeded.</summary>
         </member>
         <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ITicketSlaInstanceRepository.GetCurrentAsync(System.Int64,System.Threading.CancellationToken)">
             <summary>The ticket's current period — the one row with <c>PeriodEndAtUtc IS NULL</c> (MVP-ERD.md §2.15).</summary>
@@ -7138,8 +7859,9 @@
              <param name="CurrentPauseReason">Always null in this pilot — see this type's remarks.</param>
              <param name="TotalPausedMinutesThisPeriod">Always 0 in this pilot — see this type's remarks.</param>
              <param name="EscalationLevel">The ticket's current escalation level — an independent dimension, never derived from and never changing TicketStatus (ADR-0008/ADR-0011).</param>
+             <param name="Explanation">How the effective SLA was arrived at — or why there is none yet. Additive to the approved §5.1 shape; the fields above are unchanged.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Dto.TicketSlaSummaryResponseDto.#ctor(System.String,System.Nullable{System.DateTime},System.Boolean,System.Nullable{System.DateTime},System.Nullable{System.DateTime},System.Boolean,System.Boolean,System.String,System.Int32,System.String)">
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Dto.TicketSlaSummaryResponseDto.#ctor(System.String,System.Nullable{System.DateTime},System.Boolean,System.Nullable{System.DateTime},System.Nullable{System.DateTime},System.Boolean,System.Boolean,System.String,System.Int32,System.String,TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto)">
              <summary>
              The SLA panel for one ticket (MVP-API-Contracts.md §5.1).
             
@@ -7162,6 +7884,7 @@
              <param name="CurrentPauseReason">Always null in this pilot — see this type's remarks.</param>
              <param name="TotalPausedMinutesThisPeriod">Always 0 in this pilot — see this type's remarks.</param>
              <param name="EscalationLevel">The ticket's current escalation level — an independent dimension, never derived from and never changing TicketStatus (ADR-0008/ADR-0011).</param>
+             <param name="Explanation">How the effective SLA was arrived at — or why there is none yet. Additive to the approved §5.1 shape; the fields above are unchanged.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.TicketSlaSummaryResponseDto.SlaState">
             <summary>The ticket-level summary of both clocks: Running, Paused, Met, Breached, or NotApplicable.</summary>
@@ -7192,6 +7915,234 @@
         </member>
         <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.TicketSlaSummaryResponseDto.EscalationLevel">
             <summary>The ticket's current escalation level — an independent dimension, never derived from and never changing TicketStatus (ADR-0008/ADR-0011).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.TicketSlaSummaryResponseDto.Explanation">
+            <summary>How the effective SLA was arrived at — or why there is none yet. Additive to the approved §5.1 shape; the fields above are unchanged.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto">
+            <summary>
+            The effective SLA of one ticket, made legible: which policy applies and
+            why, what the targets are, on which clock, from when, and — when no SLA
+            is running — exactly why not. Every statement here is derived from what
+            the calculation actually does today (<c>SlaDueDateService</c>,
+            <c>TicketClassificationAppService</c>, <c>FirstHumanResponseRecorder</c>);
+            nothing is re-computed or re-decided in this projection.
+            </summary>
+            <param name="HasActivePeriod">True when an SLA period is open for the ticket (the clock has started).</param>
+            <param name="AppliedPriorityId">The priority the period was computed from (the period's own priority when one exists, else the ticket's).</param>
+            <param name="AppliedPriorityLabel">Critical / High / Medium / Low, or null when the ticket has no priority.</param>
+            <param name="PolicySource">Which configuration layer decided the targets. In this release: the per-priority SLA policy.</param>
+            <param name="FirstResponseTargetMinutes">The First Response target of the applied policy, in minutes.</param>
+            <param name="ResolutionTargetMinutes">The Resolution target of the applied policy, in minutes.</param>
+            <param name="ClockBasis">"24/7" or "Business hours".</param>
+            <param name="WarningThresholdPercent">Share of the target after which the ticket counts as at risk.</param>
+            <param name="Calendar">The business calendar in force (working hours, zone, working days, holidays) — only when the basis is business hours.</param>
+            <param name="ClockStartedAtUtc">When the current period's clock started (the period start), or null when none.</param>
+            <param name="PeriodReason">Why the current period exists: InitialCreation, Upgrade, Downgrade or Reopen.</param>
+            <param name="NotStartedReason">Plain-language reason there is no running SLA, or null when there is one.</param>
+            <param name="FirstResponseRule">What counts as the first human response — and what does not.</param>
+            <param name="PauseRule">How pausing works in this release.</param>
+            <param name="Notes">Further statements about how the figures were arrived at.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.#ctor(System.Boolean,System.Nullable{System.Byte},System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.String,System.Nullable{System.Decimal},TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto,System.Nullable{System.DateTime},System.String,System.String,System.String,System.String,System.Collections.Generic.IReadOnlyList{System.String})">
+            <summary>
+            The effective SLA of one ticket, made legible: which policy applies and
+            why, what the targets are, on which clock, from when, and — when no SLA
+            is running — exactly why not. Every statement here is derived from what
+            the calculation actually does today (<c>SlaDueDateService</c>,
+            <c>TicketClassificationAppService</c>, <c>FirstHumanResponseRecorder</c>);
+            nothing is re-computed or re-decided in this projection.
+            </summary>
+            <param name="HasActivePeriod">True when an SLA period is open for the ticket (the clock has started).</param>
+            <param name="AppliedPriorityId">The priority the period was computed from (the period's own priority when one exists, else the ticket's).</param>
+            <param name="AppliedPriorityLabel">Critical / High / Medium / Low, or null when the ticket has no priority.</param>
+            <param name="PolicySource">Which configuration layer decided the targets. In this release: the per-priority SLA policy.</param>
+            <param name="FirstResponseTargetMinutes">The First Response target of the applied policy, in minutes.</param>
+            <param name="ResolutionTargetMinutes">The Resolution target of the applied policy, in minutes.</param>
+            <param name="ClockBasis">"24/7" or "Business hours".</param>
+            <param name="WarningThresholdPercent">Share of the target after which the ticket counts as at risk.</param>
+            <param name="Calendar">The business calendar in force (working hours, zone, working days, holidays) — only when the basis is business hours.</param>
+            <param name="ClockStartedAtUtc">When the current period's clock started (the period start), or null when none.</param>
+            <param name="PeriodReason">Why the current period exists: InitialCreation, Upgrade, Downgrade or Reopen.</param>
+            <param name="NotStartedReason">Plain-language reason there is no running SLA, or null when there is one.</param>
+            <param name="FirstResponseRule">What counts as the first human response — and what does not.</param>
+            <param name="PauseRule">How pausing works in this release.</param>
+            <param name="Notes">Further statements about how the figures were arrived at.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.HasActivePeriod">
+            <summary>True when an SLA period is open for the ticket (the clock has started).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.AppliedPriorityId">
+            <summary>The priority the period was computed from (the period's own priority when one exists, else the ticket's).</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.AppliedPriorityLabel">
+            <summary>Critical / High / Medium / Low, or null when the ticket has no priority.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.PolicySource">
+            <summary>Which configuration layer decided the targets. In this release: the per-priority SLA policy.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.FirstResponseTargetMinutes">
+            <summary>The First Response target of the applied policy, in minutes.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.ResolutionTargetMinutes">
+            <summary>The Resolution target of the applied policy, in minutes.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.ClockBasis">
+            <summary>"24/7" or "Business hours".</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.WarningThresholdPercent">
+            <summary>Share of the target after which the ticket counts as at risk.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.Calendar">
+            <summary>The business calendar in force (working hours, zone, working days, holidays) — only when the basis is business hours.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.ClockStartedAtUtc">
+            <summary>When the current period's clock started (the period start), or null when none.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.PeriodReason">
+            <summary>Why the current period exists: InitialCreation, Upgrade, Downgrade or Reopen.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.NotStartedReason">
+            <summary>Plain-language reason there is no running SLA, or null when there is one.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.FirstResponseRule">
+            <summary>What counts as the first human response — and what does not.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.PauseRule">
+            <summary>How pausing works in this release.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaExplanationDto.Notes">
+            <summary>Further statements about how the figures were arrived at.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto">
+            <summary>The active business calendar, as configuration reference data (read-only in this release).</summary>
+            <param name="Name">The calendar's name.</param>
+            <param name="BusinessDayStartLocal">Start of the working day, local time ("08:00").</param>
+            <param name="BusinessDayEndLocal">End of the working day, local time ("18:00").</param>
+            <param name="TimeZoneId">IANA zone id, e.g. Asia/Dubai.</param>
+            <param name="WorkingDays">The working days of the week, in week order.</param>
+            <param name="HolidayCount">How many holiday dates are configured.</param>
+            <param name="UpcomingHolidays">The next configured holiday dates (at most ten), for the reader's orientation.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.#ctor(System.String,System.String,System.String,System.String,System.Collections.Generic.IReadOnlyList{System.String},System.Int32,System.Collections.Generic.IReadOnlyList{System.DateOnly})">
+            <summary>The active business calendar, as configuration reference data (read-only in this release).</summary>
+            <param name="Name">The calendar's name.</param>
+            <param name="BusinessDayStartLocal">Start of the working day, local time ("08:00").</param>
+            <param name="BusinessDayEndLocal">End of the working day, local time ("18:00").</param>
+            <param name="TimeZoneId">IANA zone id, e.g. Asia/Dubai.</param>
+            <param name="WorkingDays">The working days of the week, in week order.</param>
+            <param name="HolidayCount">How many holiday dates are configured.</param>
+            <param name="UpcomingHolidays">The next configured holiday dates (at most ten), for the reader's orientation.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.Name">
+            <summary>The calendar's name.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.BusinessDayStartLocal">
+            <summary>Start of the working day, local time ("08:00").</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.BusinessDayEndLocal">
+            <summary>End of the working day, local time ("18:00").</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.TimeZoneId">
+            <summary>IANA zone id, e.g. Asia/Dubai.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.WorkingDays">
+            <summary>The working days of the week, in week order.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.HolidayCount">
+            <summary>How many holiday dates are configured.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto.UpcomingHolidays">
+            <summary>The next configured holiday dates (at most ten), for the reader's orientation.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto">
+            <summary>One per-priority SLA policy row — the layer the calculation applies.</summary>
+            <param name="PriorityId">1 Critical … 4 Low.</param>
+            <param name="PriorityLabel">Critical / High / Medium / Low.</param>
+            <param name="FirstResponseTargetMinutes">First Response target, in minutes.</param>
+            <param name="ResolutionTargetMinutes">Resolution target, in minutes.</param>
+            <param name="ClockBasis">"24/7" or "Business hours".</param>
+            <param name="WarningThresholdPercent">At-risk threshold.</param>
+            <param name="IsActive">Whether the row is in force.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.#ctor(System.Byte,System.String,System.Int32,System.Int32,System.String,System.Decimal,System.Boolean)">
+            <summary>One per-priority SLA policy row — the layer the calculation applies.</summary>
+            <param name="PriorityId">1 Critical … 4 Low.</param>
+            <param name="PriorityLabel">Critical / High / Medium / Low.</param>
+            <param name="FirstResponseTargetMinutes">First Response target, in minutes.</param>
+            <param name="ResolutionTargetMinutes">Resolution target, in minutes.</param>
+            <param name="ClockBasis">"24/7" or "Business hours".</param>
+            <param name="WarningThresholdPercent">At-risk threshold.</param>
+            <param name="IsActive">Whether the row is in force.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.PriorityId">
+            <summary>1 Critical … 4 Low.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.PriorityLabel">
+            <summary>Critical / High / Medium / Low.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.FirstResponseTargetMinutes">
+            <summary>First Response target, in minutes.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.ResolutionTargetMinutes">
+            <summary>Resolution target, in minutes.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.ClockBasis">
+            <summary>"24/7" or "Business hours".</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.WarningThresholdPercent">
+            <summary>At-risk threshold.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto.IsActive">
+            <summary>Whether the row is in force.</summary>
+        </member>
+        <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto">
+            <summary>
+            The SLA configuration the calculation actually applies (System
+            Administrator reference view): the per-priority policies, the active
+            business calendar and the implementation facts an administrator needs to
+            read the request-type SLA values correctly. Read-only — the values are
+            seeded/approved reference data and are not edited from this release's UI.
+            </summary>
+            <param name="Policies">The per-priority policies, Critical first.</param>
+            <param name="Calendar">The active business calendar, or null when none is configured.</param>
+            <param name="ClockStartRule">When a ticket's SLA clock starts.</param>
+            <param name="PolicyPrecedence">Which configuration layer the calculation uses today.</param>
+            <param name="FirstResponseRule">What counts as the first human response.</param>
+            <param name="PauseRule">How pausing works in this release.</param>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.#ctor(System.Collections.Generic.IReadOnlyList{TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaPolicyDto},TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto,System.String,System.String,System.String,System.String)">
+            <summary>
+            The SLA configuration the calculation actually applies (System
+            Administrator reference view): the per-priority policies, the active
+            business calendar and the implementation facts an administrator needs to
+            read the request-type SLA values correctly. Read-only — the values are
+            seeded/approved reference data and are not edited from this release's UI.
+            </summary>
+            <param name="Policies">The per-priority policies, Critical first.</param>
+            <param name="Calendar">The active business calendar, or null when none is configured.</param>
+            <param name="ClockStartRule">When a ticket's SLA clock starts.</param>
+            <param name="PolicyPrecedence">Which configuration layer the calculation uses today.</param>
+            <param name="FirstResponseRule">What counts as the first human response.</param>
+            <param name="PauseRule">How pausing works in this release.</param>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.Policies">
+            <summary>The per-priority policies, Critical first.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.Calendar">
+            <summary>The active business calendar, or null when none is configured.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.ClockStartRule">
+            <summary>When a ticket's SLA clock starts.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.PolicyPrecedence">
+            <summary>Which configuration layer the calculation uses today.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.FirstResponseRule">
+            <summary>What counts as the first human response.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto.PauseRule">
+            <summary>How pausing works in this release.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.SlaAndEscalation.Dto.RecordFirstResponseRequestDto">
             <summary>Record that the First Human Response has occurred (MVP-API-Contracts.md §5.2, ISSUE-019).</summary>
@@ -7829,7 +8780,7 @@
              </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService.#ctor(TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ITicketSlaInstanceRepository,TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ITicketEscalationRepository,TigerCS.Application.Modules.Ticketing.Services.TicketQueryAppService)">
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService.#ctor(TigerCS.Application.Modules.Ticketing.Abstractions.ITicketRepository,TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ITicketSlaInstanceRepository,TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ITicketEscalationRepository,TigerCS.Application.Modules.Ticketing.Services.TicketQueryAppService,TigerCS.Application.Modules.SlaAndEscalation.Abstractions.ISlaPolicyRepository,TigerCS.Application.Modules.SlaAndEscalation.Abstractions.IBusinessCalendarRepository)">
              <summary>
              Read-side of the SLA and escalation module (MVP-API-Contracts.md
              §5.1/§5.9).
@@ -7845,6 +8796,22 @@
         </member>
         <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService.GetSummaryAsync(System.Guid,System.Collections.Generic.IReadOnlyCollection{System.String},System.Int64,System.Threading.CancellationToken)">
             <summary>MVP-API-Contracts.md §5.1 — the ticket detail screen's SLA panel.</summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService.GetConfigurationAsync(System.Threading.CancellationToken)">
+            <summary>
+            The System Administrator's reference view of the SLA configuration the
+            calculation applies, plus the implementation facts needed to read the
+            request-type SLA values correctly. Read-only.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService.BuildExplanation(TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance,TigerCS.Domain.Modules.SlaAndEscalation.SlaPolicy,TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaCalendarDto)">
+            <summary>
+            Why the ticket's SLA is what it is — derived from the ticket, its
+            current period and the policy the period was (or would be) computed
+            from. A ticket with no period gets the precise reason the clock has not
+            started, in the order the code itself checks: no classification/priority
+            first (the Genesys case), then CRM reconciliation, then a missing policy.
+            </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService.ToSummaryDto(TigerCS.Domain.Modules.Ticketing.Ticket,TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance)">
             <summary>The §5.1 response shape, built once here so every endpoint that returns an SLA summary returns the identical projection.</summary>
@@ -9483,8 +10450,10 @@
             <param name="UnitType">The unit type, when the source has one on file.</param>
             <param name="UnitReferenceId">This system's local cache id for the unit, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
             <param name="ContactReferenceId">This system's local cache id for the specific customer/unit relationship, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+            <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
+            <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Only the Customer Workspace search ever returns such a unit (labelled, for historical tickets, payments and fines); the intake-anchored New Ticket lookup drops it before the unit is listed or counted, so it can never be selected for a new ticket.</param>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.#ctor(System.String,System.String,System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32})">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.#ctor(System.String,System.String,System.String,System.String,System.String,System.Nullable{System.Int32},System.Nullable{System.Int32},System.Nullable{System.DateOnly},System.Boolean)">
             <summary>
             One unit associated with a matched customer, inside a
             <see cref="T:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupCustomerDto"/>. Business-rule change: a customer
@@ -9502,6 +10471,8 @@
             <param name="UnitType">The unit type, when the source has one on file.</param>
             <param name="UnitReferenceId">This system's local cache id for the unit, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
             <param name="ContactReferenceId">This system's local cache id for the specific customer/unit relationship, when the source has one (Crm only) — pass this to ticket creation to link it.</param>
+            <param name="ContractEndDate">The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</param>
+            <param name="IsContractExpired">True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Only the Customer Workspace search ever returns such a unit (labelled, for historical tickets, payments and fines); the intake-anchored New Ticket lookup drops it before the unit is listed or counted, so it can never be selected for a new ticket.</param>
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.ExternalUnitId">
             <summary>The source's own immutable identifier for the unit — for Crm, its CrmUnitId.</summary>
@@ -9523,6 +10494,12 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.ContactReferenceId">
             <summary>This system's local cache id for the specific customer/unit relationship, when the source has one (Crm only) — pass this to ticket creation to link it.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.ContractEndDate">
+            <summary>The contract's end date, when the source has a readable one on file (PACT only); null otherwise.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.IsContractExpired">
+            <summary>True when <paramref name="ContractEndDate"/> falls before today's Dubai calendar date. Only the Customer Workspace search ever returns such a unit (labelled, for historical tickets, payments and fines); the intake-anchored New Ticket lookup drops it before the unit is listed or counted, so it can never be selected for a new ticket.</summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupCustomerDto">
             <summary>
@@ -11896,12 +12873,30 @@
             <param name="TargetDepartmentId">Required. Must be an active department, and not the ticket's current one.</param>
             <param name="Reason">Required. Why the ticket is being transferred.</param>
             <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
+            <param name="AssignToEmployeeId">
+            Optional. Transfer-and-assign: once the ticket is in the target
+            department, assign it to this employee in the same operation. The employee
+            must be a member of the TARGET department (422 <c>employee-not-in-department</c>
+            otherwise, and nothing is changed). When supplied, the target department's
+            automatic assignment rules are not run — the explicit choice wins. When
+            omitted the existing behaviour applies: the owner is cleared and the
+            target department's rules decide.
+            </param>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.TransferTicketRequestDto.#ctor(System.Int32,System.String,System.Byte[])">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Dto.TransferTicketRequestDto.#ctor(System.Int32,System.String,System.Byte[],System.Nullable{System.Guid})">
             <summary>Transfer a ticket to another department (MVP-API-Contracts.md §3.6).</summary>
             <param name="TargetDepartmentId">Required. Must be an active department, and not the ticket's current one.</param>
             <param name="Reason">Required. Why the ticket is being transferred.</param>
             <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
+            <param name="AssignToEmployeeId">
+            Optional. Transfer-and-assign: once the ticket is in the target
+            department, assign it to this employee in the same operation. The employee
+            must be a member of the TARGET department (422 <c>employee-not-in-department</c>
+            otherwise, and nothing is changed). When supplied, the target department's
+            automatic assignment rules are not run — the explicit choice wins. When
+            omitted the existing behaviour applies: the owner is cleared and the
+            target department's rules decide.
+            </param>
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TransferTicketRequestDto.TargetDepartmentId">
             <summary>Required. Must be an active department, and not the ticket's current one.</summary>
@@ -11911,6 +12906,17 @@
         </member>
         <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TransferTicketRequestDto.RowVersion">
             <summary>Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</summary>
+        </member>
+        <member name="P:TigerCS.Application.Modules.Ticketing.Dto.TransferTicketRequestDto.AssignToEmployeeId">
+            <summary>
+            Optional. Transfer-and-assign: once the ticket is in the target
+            department, assign it to this employee in the same operation. The employee
+            must be a member of the TARGET department (422 <c>employee-not-in-department</c>
+            otherwise, and nothing is changed). When supplied, the target department's
+            automatic assignment rules are not run — the explicit choice wins. When
+            omitted the existing behaviour applies: the owner is cleared and the
+            target department's rules decide.
+            </summary>
         </member>
         <member name="F:TigerCS.Application.Modules.Ticketing.Dto.TicketMutationOutcome.TicketClosed">
             <summary>Closed-ticket immutability (PR correction): Assign/Transfer/ChangeStatus/Resolve/Close all reject once TicketStatus is Closed — no database changes are made.</summary>
@@ -12461,7 +13467,7 @@
              <para>
              <b>Sources are searched independently, in parallel, and never let one
              another's failure hide a result.</b> Each of <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchCrmAsync(System.String,System.Threading.CancellationToken)"/>/
-             <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchPactAsync(System.String,System.Threading.CancellationToken)"/>/<see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchTasleehAsync(System.String,System.Threading.CancellationToken)"/> catches
+             <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchPactAsync(System.String,System.Boolean,System.Threading.CancellationToken)"/>/<see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchTasleehAsync(System.String,System.Threading.CancellationToken)"/> catches
              only its own source's unavailable exception; a source that cannot be
              reached comes back <c>Failed</c>, a source that answers with nothing
              comes back <c>NotFound</c>, and both are returned alongside whatever the
@@ -12482,9 +13488,27 @@
              match from either is pure display enrichment, never linked to a Ticket by
              id (see <see cref="T:TigerCS.Application.Modules.CustomerVerification.CustomerLookup.ICrmCustomerLookupGateway"/>'s remarks).
              </para>
+            
+             <para>
+             <b>PACT contract expiry is applied here, and differently per caller.</b>
+             The intake-anchored <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchAsync(System.Int64,System.Threading.CancellationToken)"/> (the New Ticket wizard's
+             selectable results) drops every PACT contract whose
+             <c>contractEndDate</c> falls before today's Dubai calendar date before
+             the customer's units are counted or listed, and drops a customer whose
+             every contract has expired (no card, nothing selectable). The Customer
+             Workspace's <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchExternalSourcesByPhoneAsync(System.String,System.Threading.CancellationToken)"/> keeps every
+             contract and flags the expired ones
+             (<see cref="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.IsContractExpired"/>), so an agent can
+             still find a customer whose contracts have all ended and reach their
+             historical tickets, payments and fines. The rule itself is
+             <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity"/>; it lives in this lookup/list layer
+             and nowhere lower, so the Collections account mapping (which reads the
+             PACT gateway directly and needs every contract) and persisted ticket
+             history are untouched.
+             </para>
              </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.#ctor(TigerCS.Application.Modules.Ticketing.Abstractions.IIntakeRecordRepository,TigerCS.Application.Modules.Ticketing.Abstractions.IDepartmentCustomerLookupSourceRepository,TigerCS.Application.Modules.CustomerVerification.CustomerLookup.ICrmCustomerLookupGateway,TigerCS.Application.Modules.CustomerVerification.PactIntegration.IPactCustomerLookupGateway,TigerCS.Application.Modules.CustomerVerification.CustomerLookup.ITasleehGateway,TigerCS.Application.Modules.CustomerVerification.Services.CrmUnitLookupAppService)">
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.#ctor(TigerCS.Application.Modules.Ticketing.Abstractions.IIntakeRecordRepository,TigerCS.Application.Modules.Ticketing.Abstractions.IDepartmentCustomerLookupSourceRepository,TigerCS.Application.Modules.CustomerVerification.CustomerLookup.ICrmCustomerLookupGateway,TigerCS.Application.Modules.CustomerVerification.PactIntegration.IPactCustomerLookupGateway,TigerCS.Application.Modules.CustomerVerification.CustomerLookup.ITasleehGateway,TigerCS.Application.Modules.CustomerVerification.Services.CrmUnitLookupAppService,System.TimeProvider)">
              <summary>
              Business-rule change: searches CRM, PACT, and/or Tasleeh by the intake's
              phone number and returns whatever each searched source found — this is
@@ -12506,7 +13530,7 @@
              <para>
              <b>Sources are searched independently, in parallel, and never let one
              another's failure hide a result.</b> Each of <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchCrmAsync(System.String,System.Threading.CancellationToken)"/>/
-             <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchPactAsync(System.String,System.Threading.CancellationToken)"/>/<see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchTasleehAsync(System.String,System.Threading.CancellationToken)"/> catches
+             <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchPactAsync(System.String,System.Boolean,System.Threading.CancellationToken)"/>/<see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchTasleehAsync(System.String,System.Threading.CancellationToken)"/> catches
              only its own source's unavailable exception; a source that cannot be
              reached comes back <c>Failed</c>, a source that answers with nothing
              comes back <c>NotFound</c>, and both are returned alongside whatever the
@@ -12527,6 +13551,24 @@
              match from either is pure display enrichment, never linked to a Ticket by
              id (see <see cref="T:TigerCS.Application.Modules.CustomerVerification.CustomerLookup.ICrmCustomerLookupGateway"/>'s remarks).
              </para>
+            
+             <para>
+             <b>PACT contract expiry is applied here, and differently per caller.</b>
+             The intake-anchored <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchAsync(System.Int64,System.Threading.CancellationToken)"/> (the New Ticket wizard's
+             selectable results) drops every PACT contract whose
+             <c>contractEndDate</c> falls before today's Dubai calendar date before
+             the customer's units are counted or listed, and drops a customer whose
+             every contract has expired (no card, nothing selectable). The Customer
+             Workspace's <see cref="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchExternalSourcesByPhoneAsync(System.String,System.Threading.CancellationToken)"/> keeps every
+             contract and flags the expired ones
+             (<see cref="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.IsContractExpired"/>), so an agent can
+             still find a customer whose contracts have all ended and reach their
+             historical tickets, payments and fines. The rule itself is
+             <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity"/>; it lives in this lookup/list layer
+             and nowhere lower, so the Collections account mapping (which reads the
+             PACT gateway directly and needs every contract) and persisted ticket
+             history are untouched.
+             </para>
              </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchExternalSourcesByPhoneAsync(System.String,System.Threading.CancellationToken)">
@@ -12541,6 +13583,9 @@
             fixture-backed generic CRM leg here would only duplicate it. All
             department-source configuration stays intake-scoped: a pre-intake
             search has no department, so both external sources are always asked.
+            Expired PACT contracts are returned here, flagged — the workspace
+            must still find a customer whose contracts have all ended (see this
+            type's remarks).
             </summary>
         </member>
         <member name="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchCrmAsync(System.String,System.Threading.CancellationToken)">
@@ -12555,18 +13600,35 @@
             to ticket creation for that specific customer/unit relationship.
             </summary>
         </member>
-        <member name="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchPactAsync(System.String,System.Threading.CancellationToken)">
-            <summary>
-            PACT's outcome-wrapped port never throws (see
-            <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.IPactCustomerLookupGateway"/>'s remarks): NotFound maps to
-            a NotFound source entry, and every other non-Success outcome
-            (Unavailable, Unauthorized, InvalidResponse) collapses to Failed —
-            the same "reported, never blocking" treatment the throwing sources
-            get from their catch blocks. PACT contracts/units carry no local
-            UnitReferenceId/ContactReferenceId (no cache table exists for PACT),
-            so every unit is display enrichment for the agent — all of them are
-            returned and none is ever auto-selected.
-            </summary>
+        <member name="M:TigerCS.Application.Modules.Ticketing.Services.CustomerLookupAppService.SearchPactAsync(System.String,System.Boolean,System.Threading.CancellationToken)">
+             <summary>
+             PACT's outcome-wrapped port never throws (see
+             <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.IPactCustomerLookupGateway"/>'s remarks): NotFound maps to
+             a NotFound source entry, and every other non-Success outcome
+             (Unavailable, Unauthorized, InvalidResponse) collapses to Failed —
+             the same "reported, never blocking" treatment the throwing sources
+             get from their catch blocks. PACT contracts/units carry no local
+             UnitReferenceId/ContactReferenceId (no cache table exists for PACT),
+             so every unit is display enrichment for the agent — all current
+             units are returned and none is ever auto-selected.
+            
+             <para>
+             With <paramref name="includeExpiredContracts"/> false (the New Ticket
+             wizard's intake-anchored lookup), expired contracts (end date before
+             today in Dubai — see <see cref="T:TigerCS.Application.Modules.CustomerVerification.PactIntegration.PactContractActivity"/>) are filtered
+             out per customer BEFORE the unit list is built, so the card's unit
+             count reflects only current contracts. A customer left with no
+             current contract, having had at least one, is dropped — and when
+             every matched customer is dropped the source reports NotFound,
+             exactly as if PACT had no current customer on file. With it true
+             (the Customer Workspace), every contract is returned and expired
+             ones carry <see cref="P:TigerCS.Application.Modules.Ticketing.Dto.CustomerLookupUnitDto.IsContractExpired"/>.
+             Either way a customer PACT returned with no contracts at all is
+             still shown (nothing expired; that is how PACT has always surfaced a
+             contract-less tenant), and a contract with no readable end date is
+             treated as current, never hidden.
+             </para>
+             </summary>
         </member>
         <member name="T:TigerCS.Application.Modules.Ticketing.Services.CustomerProfileAppService">
              <summary>

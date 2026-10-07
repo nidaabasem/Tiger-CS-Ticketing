@@ -281,6 +281,510 @@
             <c>OriginatingDepartmentId</c> at creation (FR-CLS-01/FR-RTE-01).
             </summary>
         </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.AccountBalanceCalculator">
+             <summary>
+             Buckets the authoritative source's outstanding amounts by due date. This
+             is <b>not</b> a second balance calculation: it never allocates a payment,
+             never subtracts the payment history and never invents an amount. Every
+             figure is a sum of <see cref="P:TigerCS.Domain.Modules.Collections.FinancialInstalment.RemainingAmount"/> or
+             <see cref="P:TigerCS.Domain.Modules.Collections.FinancialCharge.Outstanding"/> values the source reported,
+             grouped by where their due date falls relative to <c>businessDate</c>
+             (a date in Asia/Dubai).
+            
+             <para>
+             When the source also reports its own unpaid-principal total, the schedule
+             is cross-checked against it. A disagreement is reported as
+             <see cref="F:TigerCS.Domain.Modules.Collections.BalanceConsistency.Mismatch"/> rather than resolved in either
+             direction: TigerCS shows the source's total and refuses reminders on that
+             account until the source is consistent again.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.AccountBalanceCalculator.UnpaidDueBefore(TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot,System.DateOnly)">
+            <summary>
+            The unpaid instalments that fell due strictly before <paramref name="cutoff"/>
+            — the reminder age test. Examined per instalment, never inferred from
+            the oldest unpaid date alone.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.AccountBalanceCalculator.UnpaidInMonth(TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot,System.DateOnly)">
+            <summary>The unpaid instalments due in <paramref name="businessDate"/>'s calendar month, whether already due or upcoming.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.BalanceConsistency.Consistent">
+            <summary>The schedule agrees with the source's own total (or the source reports no separate total).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.BalanceConsistency.Mismatch">
+            <summary>The schedule and the source's total disagree. Shown, flagged, and never reminded on.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.BalanceConsistency.InvalidSourceData">
+            <summary>The source returned values that cannot be right. No figure is shown.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.NextPayment">
+            <summary>The next instalment that still has principal remaining, due on or after the business date.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.NextPayment.#ctor(System.String,System.DateOnly,System.Decimal)">
+            <summary>The next instalment that still has principal remaining, due on or after the business date.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.AccountBalance">
+            <summary>An account's figures, all in <see cref="P:TigerCS.Domain.Modules.Collections.AccountBalance.Currency"/>, all derived only from what the source reported. Null — never zero — when the source data is invalid.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.AccountBalance.#ctor(System.String,System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.Decimal},System.Nullable{System.DateOnly},TigerCS.Domain.Modules.Collections.NextPayment,TigerCS.Domain.Modules.Collections.BalanceConsistency,System.Collections.Generic.IReadOnlyList{System.String})">
+            <summary>An account's figures, all in <see cref="P:TigerCS.Domain.Modules.Collections.AccountBalance.Currency"/>, all derived only from what the source reported. Null — never zero — when the source data is invalid.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderTrigger.Scheduled">
+            <summary>The designated scheduler queued it when the window opened.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderTrigger.User">
+            <summary>An authorized user queued it from the Payment tab.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderTrigger.Integration">
+            <summary>An integration (the Genesys outbound campaign) queued it.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsReminder">
+             <summary>
+             One queued payment reminder job: one account, one reminder type, one
+             cycle, one quoted amount, delivered on one or more channels.
+            
+             <para>
+             <b>Duplicate prevention is per channel</b>: each
+             <see cref="T:TigerCS.Domain.Modules.Collections.CollectionsReminderChannel"/> carries the key
+             account | type | cycle | channel, unique in the database, so no request,
+             idempotency key or concurrent scheduler can send the same channel twice in
+             a cycle. The amount quoted is persisted when queued (<see cref="P:TigerCS.Domain.Modules.Collections.CollectionsReminder.Amount"/>)
+             and never changes; the amount re-read immediately before each TigerCS
+             dispatch is stored on the channel.
+             </para>
+             </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.CollectionsReminder.InstalmentIds">
+            <summary>The qualifying instalments, comma-separated.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.CollectionsReminder.IdempotencyKey">
+            <summary>The caller's Idempotency-Key, when one was sent. Unique.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.CollectionsReminder.RequestHash">
+            <summary>SHA-256 of the canonical request, to tell a replay from a conflicting reuse of the key.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminder.BuildDeduplicationKey(System.String,TigerCS.Domain.Modules.Collections.ReminderType,System.String,TigerCS.Domain.Modules.Collections.ReminderChannel)">
+            <summary>account | type | cycle | channel — the duplicate-prevention identity of one channel's send.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminder.TryParsePublicId(System.String,System.Int64@)">
+            <summary>"REM-123" or "123" → 123.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsReminderChannel">
+             <summary>
+             One channel of a reminder job, with its own delivery state.
+            
+             <para>
+             <b>Ordered, never overwritten backwards.</b> An event older than the last
+             one applied is recorded but does not change the status; a delivered SMS or
+             an answered call is final; a suppressed channel accepts nothing. A Failed
+             or NoAnswer channel may be re-queued (retries affect failed channels only),
+             within the same de-duplication key.
+             </para>
+             </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderChannel.Apply(TigerCS.Domain.Modules.Collections.ChannelStatus,System.DateTime,System.String,System.String)">
+            <summary>Applies a delivery status reported at <paramref name="occurredAtUtc"/>. Returns whether the status moved.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderChannel.Suppress(System.String,System.DateTime)">
+            <summary>Revalidation found nothing left to remind about. Only a queued channel can be suppressed.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderChannel.Requeue(System.DateTime,System.Nullable{System.Guid})">
+            <summary>A retry of a failed channel in the same cycle — the same de-duplication key, a new attempt.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderChannel.RecordDispatch(TigerCS.Domain.Modules.Collections.ChannelStatus,System.DateTime,System.String,System.String)">
+            <summary>TigerCS's own dispatch result: the provider accepted (Sent) or permanently refused (Failed).</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent">
+            <summary>
+            One thing that happened to a reminder: a delivery event, a customer
+            response, or TigerCS's own queueing/dispatch. Idempotent on
+            (<see cref="P:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.CollectionsReminderId"/>, <see cref="P:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.ExternalEventId"/>) — a
+            unique index — so a redelivered callback is recognized and never recorded
+            twice.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.RequiresHumanFollowUp">
+            <summary>Human follow-up must stay outstanding: requested by the caller, or implied by the intent.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.VerificationFollowUpRequired">
+            <summary>"I already paid": the claim must be verified against the source. Nothing is posted.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.Reported(TigerCS.Domain.Modules.Collections.CollectionsReminder,System.String,System.String,System.String,TigerCS.Domain.Modules.Collections.ReminderChannel,System.Nullable{TigerCS.Domain.Modules.Collections.ChannelStatus},System.String,System.String,System.DateTime,System.DateTime,System.Nullable{System.Guid},System.Boolean,System.Nullable{TigerCS.Domain.Modules.Collections.CustomerIntent},System.Boolean,System.String)">
+            <summary>
+            An event reported by the channel (Genesys, the SMS/email provider):
+            a delivery status, a customer response, or both. A ticket is owed
+            exactly when the customer responded in a conversation.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.CollectionsReminderEvent.LinkTicket(System.Int64,System.String,System.Boolean,System.DateTime)">
+            <summary>Links the ticket. Idempotent for the same ticket; a different ticket for a linked event is refused.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot">
+             <summary>
+             One finance account (a sale contract / payment plan) exactly as the
+             authoritative financial source reported it. TigerCS never stores this and
+             never edits it: it is read from the source for every request and every
+             reminder decision, so a figure TigerCS shows is always the source's figure.
+            
+             <para>
+             <b>The source owns allocation.</b> Each instalment and charge carries the
+             amount the source itself still considers outstanding — after the source
+             has applied payments, partial payments, credits, waivers and reversals by
+             its own rules. TigerCS does not re-allocate payments against instalments
+             and does not subtract the payment history from anything: the history is
+             display only. That is what keeps an unverified payment proof (or a pending
+             bank transfer the source has not posted) from ever reducing a balance.
+             </para>
+             </summary>
+             <param name="AccountId">The source's stable finance account / contract identifier.</param>
+             <param name="CrmCustomerId">The Tiger CRM customer the account belongs to.</param>
+             <param name="UnitId">The Tiger CRM unit the account is for, when the source links one. A unit may have several accounts; they are never merged.</param>
+             <param name="TowerName">Display only.</param>
+             <param name="UnitNumber">Display only.</param>
+             <param name="Currency">ISO 4217 code. Every amount on the account is in this currency; amounts in different currencies are never summed.</param>
+             <param name="AsOfUtc">When the source computed these figures.</param>
+             <param name="ReportedOutstandingPrincipal">The source's own total of unpaid principal, when it reports one. Used to cross-check the instalment schedule; never replaced by a TigerCS figure.</param>
+             <param name="Instalments">The principal schedule.</param>
+             <param name="Charges">Penalties and fees. <c>null</c> = the source did not report charges (unknown — never "none"); an empty list = it reported none.</param>
+             <param name="Payments">Payment history. Display only — see the type remarks.</param>
+             <param name="AppliedCreditAmount">A credit the source has applied against the amount due now but not allocated to a specific instalment or charge. Subtracted once, from amount due now only. <c>null</c> = the source did not report one (unknown — never zero).</param>
+             <param name="CustomerPhone">The approved reminder contact number the source holds, when it holds one.</param>
+             <param name="CustomerEmail">The approved reminder contact email the source holds, when it holds one.</param>
+             <param name="CustomerName">Display only.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.#ctor(System.String,System.Int64,System.Nullable{System.Int64},System.String,System.String,System.String,System.DateTime,System.Nullable{System.Decimal},System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.FinancialInstalment},System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.FinancialCharge},System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.FinancialPayment},System.Nullable{System.Decimal},System.String,System.String,System.String)">
+             <summary>
+             One finance account (a sale contract / payment plan) exactly as the
+             authoritative financial source reported it. TigerCS never stores this and
+             never edits it: it is read from the source for every request and every
+             reminder decision, so a figure TigerCS shows is always the source's figure.
+            
+             <para>
+             <b>The source owns allocation.</b> Each instalment and charge carries the
+             amount the source itself still considers outstanding — after the source
+             has applied payments, partial payments, credits, waivers and reversals by
+             its own rules. TigerCS does not re-allocate payments against instalments
+             and does not subtract the payment history from anything: the history is
+             display only. That is what keeps an unverified payment proof (or a pending
+             bank transfer the source has not posted) from ever reducing a balance.
+             </para>
+             </summary>
+             <param name="AccountId">The source's stable finance account / contract identifier.</param>
+             <param name="CrmCustomerId">The Tiger CRM customer the account belongs to.</param>
+             <param name="UnitId">The Tiger CRM unit the account is for, when the source links one. A unit may have several accounts; they are never merged.</param>
+             <param name="TowerName">Display only.</param>
+             <param name="UnitNumber">Display only.</param>
+             <param name="Currency">ISO 4217 code. Every amount on the account is in this currency; amounts in different currencies are never summed.</param>
+             <param name="AsOfUtc">When the source computed these figures.</param>
+             <param name="ReportedOutstandingPrincipal">The source's own total of unpaid principal, when it reports one. Used to cross-check the instalment schedule; never replaced by a TigerCS figure.</param>
+             <param name="Instalments">The principal schedule.</param>
+             <param name="Charges">Penalties and fees. <c>null</c> = the source did not report charges (unknown — never "none"); an empty list = it reported none.</param>
+             <param name="Payments">Payment history. Display only — see the type remarks.</param>
+             <param name="AppliedCreditAmount">A credit the source has applied against the amount due now but not allocated to a specific instalment or charge. Subtracted once, from amount due now only. <c>null</c> = the source did not report one (unknown — never zero).</param>
+             <param name="CustomerPhone">The approved reminder contact number the source holds, when it holds one.</param>
+             <param name="CustomerEmail">The approved reminder contact email the source holds, when it holds one.</param>
+             <param name="CustomerName">Display only.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.AccountId">
+            <summary>The source's stable finance account / contract identifier.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.CrmCustomerId">
+            <summary>The Tiger CRM customer the account belongs to.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.UnitId">
+            <summary>The Tiger CRM unit the account is for, when the source links one. A unit may have several accounts; they are never merged.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.TowerName">
+            <summary>Display only.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.UnitNumber">
+            <summary>Display only.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.Currency">
+            <summary>ISO 4217 code. Every amount on the account is in this currency; amounts in different currencies are never summed.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.AsOfUtc">
+            <summary>When the source computed these figures.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.ReportedOutstandingPrincipal">
+            <summary>The source's own total of unpaid principal, when it reports one. Used to cross-check the instalment schedule; never replaced by a TigerCS figure.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.Instalments">
+            <summary>The principal schedule.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.Charges">
+            <summary>Penalties and fees. <c>null</c> = the source did not report charges (unknown — never "none"); an empty list = it reported none.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.Payments">
+            <summary>Payment history. Display only — see the type remarks.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.AppliedCreditAmount">
+            <summary>A credit the source has applied against the amount due now but not allocated to a specific instalment or charge. Subtracted once, from amount due now only. <c>null</c> = the source did not report one (unknown — never zero).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.CustomerPhone">
+            <summary>The approved reminder contact number the source holds, when it holds one.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.CustomerEmail">
+            <summary>The approved reminder contact email the source holds, when it holds one.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialAccountSnapshot.CustomerName">
+            <summary>Display only.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.FinancialInstalment">
+            <summary>One scheduled principal instalment.</summary>
+            <param name="InstalmentId">The source's identifier.</param>
+            <param name="DueDate">The contractual due date (a calendar date in the business time zone).</param>
+            <param name="ScheduledAmount">The scheduled principal.</param>
+            <param name="RemainingAmount">What the source says is still unpaid on it, after its own allocation of posted payments. Between 0 and <paramref name="ScheduledAmount"/>.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.FinancialInstalment.#ctor(System.String,System.DateOnly,System.Decimal,System.Decimal)">
+            <summary>One scheduled principal instalment.</summary>
+            <param name="InstalmentId">The source's identifier.</param>
+            <param name="DueDate">The contractual due date (a calendar date in the business time zone).</param>
+            <param name="ScheduledAmount">The scheduled principal.</param>
+            <param name="RemainingAmount">What the source says is still unpaid on it, after its own allocation of posted payments. Between 0 and <paramref name="ScheduledAmount"/>.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialInstalment.InstalmentId">
+            <summary>The source's identifier.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialInstalment.DueDate">
+            <summary>The contractual due date (a calendar date in the business time zone).</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialInstalment.ScheduledAmount">
+            <summary>The scheduled principal.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialInstalment.RemainingAmount">
+            <summary>What the source says is still unpaid on it, after its own allocation of posted payments. Between 0 and <paramref name="ScheduledAmount"/>.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.FinancialCharge">
+            <summary>A penalty or fee.</summary>
+            <param name="ChargeId">The source's identifier.</param>
+            <param name="Type">Penalty or fee — reported separately.</param>
+            <param name="Amount">The charged amount.</param>
+            <param name="Outstanding">What the source says is still unpaid, after waivers and payments.</param>
+            <param name="DueDate">When it is payable from. Null means payable now.</param>
+            <param name="IsPayable">False when the source has the charge on hold (disputed, pending waiver approval). A held charge is never in amount due now.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.FinancialCharge.#ctor(System.String,TigerCS.Domain.Modules.Collections.FinancialChargeType,System.Decimal,System.Decimal,System.Nullable{System.DateOnly},System.Boolean)">
+            <summary>A penalty or fee.</summary>
+            <param name="ChargeId">The source's identifier.</param>
+            <param name="Type">Penalty or fee — reported separately.</param>
+            <param name="Amount">The charged amount.</param>
+            <param name="Outstanding">What the source says is still unpaid, after waivers and payments.</param>
+            <param name="DueDate">When it is payable from. Null means payable now.</param>
+            <param name="IsPayable">False when the source has the charge on hold (disputed, pending waiver approval). A held charge is never in amount due now.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialCharge.ChargeId">
+            <summary>The source's identifier.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialCharge.Type">
+            <summary>Penalty or fee — reported separately.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialCharge.Amount">
+            <summary>The charged amount.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialCharge.Outstanding">
+            <summary>What the source says is still unpaid, after waivers and payments.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialCharge.DueDate">
+            <summary>When it is payable from. Null means payable now.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialCharge.IsPayable">
+            <summary>False when the source has the charge on hold (disputed, pending waiver approval). A held charge is never in amount due now.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.FinancialPayment">
+            <summary>A payment as the source records it.</summary>
+            <param name="PaymentId">The source's identifier.</param>
+            <param name="PaymentDate">The payment's value date.</param>
+            <param name="Amount">The amount.</param>
+            <param name="Method">"BankTransfer", "Cheque", … — display only.</param>
+            <param name="Status">Whether the source has posted it. Only posted payments are ever shown as payment history.</param>
+            <param name="ReceiptNumber">The source's receipt reference, when one was issued.</param>
+            <param name="ReceiptAvailable">True when the source reports that a receipt document exists. Downloading it still needs a verified document API.</param>
+            <param name="Allocations">How the source allocated the payment, including to other accounts when one receipt covers several units.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.FinancialPayment.#ctor(System.String,System.DateOnly,System.Decimal,System.String,TigerCS.Domain.Modules.Collections.FinancialPaymentStatus,System.String,System.Boolean,System.Collections.Generic.IReadOnlyList{TigerCS.Domain.Modules.Collections.FinancialPaymentAllocation})">
+            <summary>A payment as the source records it.</summary>
+            <param name="PaymentId">The source's identifier.</param>
+            <param name="PaymentDate">The payment's value date.</param>
+            <param name="Amount">The amount.</param>
+            <param name="Method">"BankTransfer", "Cheque", … — display only.</param>
+            <param name="Status">Whether the source has posted it. Only posted payments are ever shown as payment history.</param>
+            <param name="ReceiptNumber">The source's receipt reference, when one was issued.</param>
+            <param name="ReceiptAvailable">True when the source reports that a receipt document exists. Downloading it still needs a verified document API.</param>
+            <param name="Allocations">How the source allocated the payment, including to other accounts when one receipt covers several units.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.PaymentId">
+            <summary>The source's identifier.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.PaymentDate">
+            <summary>The payment's value date.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.Amount">
+            <summary>The amount.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.Method">
+            <summary>"BankTransfer", "Cheque", … — display only.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.Status">
+            <summary>Whether the source has posted it. Only posted payments are ever shown as payment history.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.ReceiptNumber">
+            <summary>The source's receipt reference, when one was issued.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.ReceiptAvailable">
+            <summary>True when the source reports that a receipt document exists. Downloading it still needs a verified document API.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPayment.Allocations">
+            <summary>How the source allocated the payment, including to other accounts when one receipt covers several units.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.FinancialPaymentAllocation">
+            <param name="InstalmentId">The instalment (or charge) the source applied the money to.</param>
+            <param name="Amount">The amount applied.</param>
+            <param name="AccountId">The account, when the allocation is to a different account than the payment's own.</param>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.FinancialPaymentAllocation.#ctor(System.String,System.Decimal,System.String)">
+            <param name="InstalmentId">The instalment (or charge) the source applied the money to.</param>
+            <param name="Amount">The amount applied.</param>
+            <param name="AccountId">The account, when the allocation is to a different account than the payment's own.</param>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPaymentAllocation.InstalmentId">
+            <summary>The instalment (or charge) the source applied the money to.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPaymentAllocation.Amount">
+            <summary>The amount applied.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.FinancialPaymentAllocation.AccountId">
+            <summary>The account, when the allocation is to a different account than the payment's own.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.FinancialPaymentStatus.Posted">
+            <summary>Posted by the source. Already reflected in the outstanding amounts the source reports.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.FinancialPaymentStatus.PendingVerification">
+            <summary>Proof submitted, or money received but not yet verified. Never shown as a payment, never reduces anything.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.FinancialPaymentStatus.Reversed">
+            <summary>Reversed (a bounced cheque, a recalled transfer).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.FinancialPaymentStatus.Rejected">
+            <summary>Rejected by verification.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.ReminderType">
+            <summary>
+            The three ordinary payment reminders the Collections FAQ describes. Legal
+            notices and legal case referrals are deliberately <b>not</b> members: they
+            need a separately approved workflow (docs/Collections/Collections-Legal-Requirements.md)
+            and can never be produced by reminder dispatch.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderType.OverdueMonthly">
+            <summary>1st–4th: unpaid principal overdue more than one month.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderType.CurrentMonth">
+            <summary>15th: the current month's unpaid payment.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderType.MonthEndFollowUp">
+            <summary>Three days before month end: the current month's payment is still unpaid.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderChannel.VoiceBot">
+            <summary>A Genesys outbound voice-bot call. Genesys places the call and reports each event back; TigerCS never dials.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.ChannelStatus">
+            <summary>
+            One channel's delivery state. Each channel has its own vocabulary — voice
+            is Answered / NoAnswer / Failed, SMS and email are Sent / Delivered /
+            Failed — and <b>a customer response is not a status</b>: an answered call
+            does not mean the customer responded.
+            </summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ChannelStatus.Suppressed">
+            <summary>Not sent: revalidation before dispatch found the account settled, ineligible or inconsistent.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.CustomerIntent">
+            <summary>What the customer said.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CustomerIntent.AlreadyPaid">
+            <summary>"I already paid." Opens a verification follow-up. Never posts a payment.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.CustomerIntent.AiDisconnected">
+            <summary>The AI lost the call or could not continue.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.TicketResult">
+            <summary>What happened to the ticket a reminder event may owe.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.TicketResult.NotRequired">
+            <summary>No customer response in a conversation, so no ticket is owed.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.TicketResult.Pending">
+            <summary>A ticket is owed and not yet linked — retried durably.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.TicketResult.Created">
+            <summary>A new ticket was created for the conversation.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.TicketResult.Reused">
+            <summary>The conversation already had a ticket; it was reused.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.OverdueAgeRule.CalendarMonth">
+            <summary>Due strictly before businessDate.AddMonths(-1) (month-end clamped: 31 Mar → 28/29 Feb).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.OverdueAgeRule.FixedDays">
+            <summary>Due strictly before businessDate minus <see cref="P:TigerCS.Domain.Modules.Collections.ReminderRuleSettings.OverdueFixedDays"/>.</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderSendFrequency.OncePerWindow">
+            <summary>At most one reminder per account, type and channel in each monthly window (failed deliveries may be retried).</summary>
+        </member>
+        <member name="F:TigerCS.Domain.Modules.Collections.ReminderSendFrequency.Daily">
+            <summary>At most one per account, type and channel per day while the window is open.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.ReminderRuleSettings">
+            <summary>
+            The open FAQ points as explicit settings. The defaults are the
+            specification's proposed drafts; automatic scheduling stays off until
+            Collections confirms them.
+            </summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.ReminderRuleSettings.MonthEndOffsetDays">
+            <summary>The follow-up runs on (last day of month − this): 28 Oct, 27 Nov, 25 Feb, 26 Feb in a leap year.</summary>
+        </member>
+        <member name="P:TigerCS.Domain.Modules.Collections.ReminderRuleSettings.IncludePenaltiesAndFees">
+            <summary>Draft: reminders quote qualifying principal only; penalties and fees are shown separately in balance enquiries.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.ReminderWindow">
+            <summary>A reminder window open on a business date, with the cycle key that de-duplicates sends inside it.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderWindow.#ctor(TigerCS.Domain.Modules.Collections.ReminderType,System.String)">
+            <summary>A reminder window open on a business date, with the cycle key that de-duplicates sends inside it.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.ReminderEligibility">
+            <summary>Whether an account qualifies for a reminder, for how much, why, and from which instalments.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderEligibility.#ctor(System.Boolean,System.Decimal,System.String,System.String,System.Collections.Generic.IReadOnlyList{System.String},System.Nullable{System.DateOnly},System.String)">
+            <summary>Whether an account qualifies for a reminder, for how much, why, and from which instalments.</summary>
+        </member>
+        <member name="T:TigerCS.Domain.Modules.Collections.ReminderPolicy">
+            <summary>
+            The FAQ's reminder calendar and eligibility, as pure functions of the
+            business date and the source's snapshot. Used identically by the
+            candidates list, the queue's revalidation, dispatch and the scheduler.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderPolicy.OpenWindows(System.DateOnly,TigerCS.Domain.Modules.Collections.ReminderRuleSettings)">
+            <summary>The windows open on <paramref name="businessDate"/>.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderPolicy.CycleKey(TigerCS.Domain.Modules.Collections.ReminderType,System.DateOnly,TigerCS.Domain.Modules.Collections.ReminderRuleSettings)">
+            <summary>"2026-10:OverdueMonthly" (once per window) or "2026-10-02:OverdueMonthly" (daily), in the Dubai calendar.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderPolicy.OverdueCutoff(System.DateOnly,TigerCS.Domain.Modules.Collections.ReminderRuleSettings)">
+            <summary>An instalment due strictly before this date is "overdue more than one month".</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderPolicy.IsValidDeliveryStatus(TigerCS.Domain.Modules.Collections.ReminderChannel,TigerCS.Domain.Modules.Collections.ChannelStatus)">
+            <summary>The delivery statuses a channel may report.</summary>
+        </member>
+        <member name="M:TigerCS.Domain.Modules.Collections.ReminderPolicy.IsSuccessTerminal(TigerCS.Domain.Modules.Collections.ChannelStatus)">
+            <summary>A delivery that reached the customer — final; nothing later moves it.</summary>
+        </member>
         <member name="T:TigerCS.Domain.Modules.CustomerVerification.ContactReference">
             <summary>
             CRM cache row for a unit's contacts (owner/tenant/representative) —

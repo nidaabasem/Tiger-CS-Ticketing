@@ -33,6 +33,9 @@
             <see cref="T:TigerCS.Application.Modules.Administration.Dto.AdminOutcome"/> to HTTP problem responses.
             </summary>
         </member>
+        <member name="M:TigerCS.Api.Controllers.AdminControllerBase.PasswordPolicyProblem(System.Collections.Generic.IReadOnlyList{System.String})">
+            <summary>422 with Identity's own password-policy descriptions in the <c>errors</c> map — the shape every Web form already reads.</summary>
+        </member>
         <member name="T:TigerCS.Api.Controllers.AdminDepartmentsController">
             <summary>Department administration — System Administrator only. Departments are deactivated, never deleted.</summary>
         </member>
@@ -131,6 +134,31 @@
         <member name="M:TigerCS.Api.Controllers.AdminRequestTypesController.SaveSlaPolicy(System.Int32,System.Byte,TigerCS.Application.Modules.Administration.Dto.SaveSlaPolicyRequestDto,System.Threading.CancellationToken)">
             <summary>Creates or edits the SLA row for one (request type, priority) pair — existing confirmed values only.</summary>
         </member>
+        <member name="T:TigerCS.Api.Controllers.AdminSlaController">
+            <summary>
+            SLA configuration reference — System Administrator only, read-only.
+            Shows the per-priority policies and the business calendar the due-date
+            calculation actually applies, with the implementation facts an
+            administrator needs to read the request-type SLA values correctly.
+            Approved durations, working hours, pause rules and policy precedence are
+            not editable here: they are seeded reference data and change only by a
+            reviewed data change.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminSlaController.#ctor(TigerCS.Application.Modules.SlaAndEscalation.Services.SlaQueryAppService)">
+            <summary>
+            SLA configuration reference — System Administrator only, read-only.
+            Shows the per-priority policies and the business calendar the due-date
+            calculation actually applies, with the implementation facts an
+            administrator needs to read the request-type SLA values correctly.
+            Approved durations, working hours, pause rules and policy precedence are
+            not editable here: they are seeded reference data and change only by a
+            reviewed data change.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminSlaController.GetConfiguration(System.Threading.CancellationToken)">
+            <summary>The effective SLA configuration: per-priority policies, the active business calendar and the clock/first-response/pause rules in force.</summary>
+        </member>
         <member name="T:TigerCS.Api.Controllers.AdminUsersController">
             <summary>User administration — System Administrator only. Users are deactivated, never deleted.</summary>
         </member>
@@ -157,6 +185,19 @@
         </member>
         <member name="M:TigerCS.Api.Controllers.AdminUsersController.AddDepartment(System.Guid,TigerCS.Application.Modules.Administration.Dto.AddDepartmentMembershipRequestDto,System.Threading.CancellationToken)">
             <summary>Adds a department membership using the existing membership model.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AdminUsersController.ResetPassword(System.Guid,TigerCS.Application.Modules.Administration.Dto.ResetUserPasswordRequestDto,System.Threading.CancellationToken)">
+            <summary>Resets the user's password (the "forgot my password" path, taken on the user's behalf).</summary>
+            <remarks>
+            Identity's password policy decides whether the new password is
+            acceptable (docs/DEV-SETUP.md §3). On success every session the user
+            had is invalidated — their next request with an old token is refused —
+            and any lockout is lifted, so they can sign in with the new password at
+            once. The password is never written to the audit trail or logs.
+            </remarks>
+            <response code="204">Password replaced; the user's existing sessions are invalid.</response>
+            <response code="404">No such employee.</response>
+            <response code="422">The new password violates the password policy; <c>errors</c> lists each reason.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.AdminUsersController.RemoveDepartment(System.Guid,System.Int32,System.Threading.CancellationToken)">
             <summary>Ends a department membership; the primary membership cannot be removed while others remain.</summary>
@@ -273,6 +314,19 @@
              <response code="401">The token is unknown (<c>SCREEN_POP_TOKEN_INVALID</c>), older than one hour (<c>SCREEN_POP_TOKEN_EXPIRED</c>), or already used (<c>SCREEN_POP_TOKEN_USED</c>).</response>
              <response code="403">The agent is no longer mapped (<c>GENESYS_AGENT_NOT_MAPPED</c>) or the mapped user is deactivated or locked out (<c>GENESYS_AGENT_INACTIVE</c>).</response>
              <response code="503">The Genesys integration is switched off.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.AuthController.ChangePassword(TigerCS.Application.Modules.IdentityAndAccess.Dto.ChangePasswordRequestDto,System.Threading.CancellationToken)">
+            <summary>Change the signed-in user's own password.</summary>
+            <remarks>
+            The account is the token's subject, never a client-supplied id. The
+            current password must verify and the new one must satisfy the password
+            policy (docs/DEV-SETUP.md §3). On success <b>every</b> session the user
+            had — including the one that made this call — is invalidated: sign in
+            again to obtain a fresh token.
+            </remarks>
+            <response code="204">Password changed; sign in again.</response>
+            <response code="400">A field was missing or blank.</response>
+            <response code="422">The current password did not verify (<c>CURRENT_PASSWORD_INCORRECT</c>), or the new password violates the policy (<c>errors</c> lists each reason).</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.AuthController.Logout(System.Threading.CancellationToken)">
             <summary>Sign out the current user.</summary>
@@ -2052,6 +2106,51 @@
             <response code="409">The work was already completed or cancelled.</response>
             <response code="422">No reason was given.</response>
         </member>
+        <member name="T:TigerCS.Api.Controllers.ReportsController">
+            <summary>
+            Management reports. Read-only, and restricted to the CS Manager tier
+            (<see cref="F:TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization.PolicyNames.CsManagerOrGeneralManager"/>: CS Manager, General
+            Manager, Chairman/CEO — plus System Administrator through the ADR-0024
+            override). A CS Agent or Department user receives 403; the report is
+            about agents, not for them. Nothing here is scoped by the caller's
+            departments: the roles that may open it already see every department.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.ReportsController.#ctor(TigerCS.Application.Modules.Reporting.Services.TeamPerformanceAppService)">
+            <summary>
+            Management reports. Read-only, and restricted to the CS Manager tier
+            (<see cref="F:TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization.PolicyNames.CsManagerOrGeneralManager"/>: CS Manager, General
+            Manager, Chairman/CEO — plus System Administrator through the ADR-0024
+            override). A CS Agent or Department user receives 403; the report is
+            about agents, not for them. Nothing here is scoped by the caller's
+            departments: the roles that may open it already see every department.
+            </summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.ReportsController.GetTeamPerformance(TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRequestDto,System.Threading.CancellationToken)">
+            <summary>The Team Performance report: one row per active CS Agent with Currently Assigned, Tickets Worked, Completed Follow-ups and SLA Breaches, a totals row and the picker options.</summary>
+            <remarks>
+            Eligible employees are the active holders of the CS Agent role; the
+            agent type is "Call Center Agent" for members of the Call Center
+            department (code CC) and "CS Agent" otherwise. Every filter is
+            optional. The period is UTC calendar days, inclusive, defaulting to
+            the last 30 days; Currently Assigned is current-state and ignores it.
+            Employees with no activity in the period are included with zeros.
+            </remarks>
+            <response code="200">The report.</response>
+            <response code="403">The caller is not a CS Manager, General Manager, Chairman/CEO or System Administrator.</response>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.ReportsController.GetTeamPerformanceRecords(TigerCS.Application.Modules.Reporting.Dto.TeamPerformanceRecordsRequestDto,System.Threading.CancellationToken)">
+            <summary>The records behind one count on the Team Performance report, for one employee: the ticket list, with the breach time for SLA Breaches and the completion time for Completed Follow-ups.</summary>
+            <remarks>
+            <c>metric</c> is one of CurrentlyAssigned, TicketsWorked,
+            CompletedFollowUps, SlaBreaches. The period is interpreted exactly as
+            on the report, so the list always matches the number it was opened
+            from.
+            </remarks>
+            <response code="200">The records.</response>
+            <response code="400">The metric is not one of the four counts.</response>
+            <response code="404">The employee is not on the report (not an active CS Agent).</response>
+        </member>
         <member name="T:TigerCS.Api.Controllers.RequestTypesController">
             <summary>The Request Type directory for operational users — what the New Ticket wizard's Request Type picker reads.</summary>
         </member>
@@ -2610,6 +2709,24 @@
         </member>
         <member name="M:TigerCS.Api.Controllers.TicketSlaController.GetRoles">
             <summary>The caller's roles, from the JWT's own validated role claims — never client-supplied.</summary>
+        </member>
+        <member name="M:TigerCS.Api.Controllers.UsersController.Assignable(System.Threading.CancellationToken)">
+            <summary>
+            The cross-department assignee directory: every active employee with
+            their roles and all their department memberships. CS Manager (and
+            General Manager / Chairman-CEO, who share the policy) only — the roles
+            that may place a ticket outside its current department.
+            </summary>
+            <remarks>
+            Used by Ticket Details when the ticket's current department holds no
+            suitable assignee: choosing a user from another department transfers
+            the ticket to that department and assigns it in one operation
+            (<c>POST /api/tickets/{id}/transfer</c> with <c>assignToEmployeeId</c>).
+            The rule that the assignee belongs to the ticket's resulting
+            department is enforced there, not here.
+            </remarks>
+            <response code="200">Every active employee, ordered by display name, one row each.</response>
+            <response code="403">The caller may not assign across departments.</response>
         </member>
         <member name="M:TigerCS.Api.Controllers.UsersController.Me(System.Threading.CancellationToken)">
             <summary>The signed-in user's own profile.</summary>
