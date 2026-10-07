@@ -22,6 +22,27 @@ commands on push.
 | 5 | CS Manager — empty Assign dropdown | Implemented, tested | Ticket Details → Assign: CS Manager gets the whole directory grouped by department (ticket's own department first; multi-department users under each; names, roles, departments); choosing another department = transfer-and-assign with a required reason (`POST api/tickets/{id}/transfer` with `assignToEmployeeId`); a failed/forbidden member-list call is shown as such, never as "No active members"; API `GET api/users/assignable` |
 | 6 | Dashboard layout | Implemented, tested | Filters + KPI cards → Volume by Channel, Volume by Request Type, Open Backlog Ageing, Priority → ticket table; existing responsive grid rules keep one column under 720 px |
 | 7 | Pending Interactions actions | Implemented, tested | Buttons: Open Ticket · Accept & Start · Complete Follow-up · Cancel Follow-up (reason required); "What do these actions do?" help block; "session ended" tooltip states the follow-up is not completed by it |
+| 8 | Chatbot/voicebot — verified customer's unit and project details | Implemented, tested. **CRM supplies only part of the fields today** (below) | API `POST /api/genesys/customers/unit-details` (Genesys service-account auth, same proxy pattern); `docs/Genesys/Customer-Unit-Details-API.md` (request, samples, errors, field sources); Data Action `docs/Genesys/data-actions/10-customer-unit-details.json` |
+
+### Item 8 — what UAT will and will not show
+
+* **Works now, from CRM's buyer lookup:** unit id/number, floor, unit-type *code*,
+  booking reference (CRM Lead id) and status, project id and name. Eligible-unit
+  list when no unit is selected; `403 UNIT_NOT_ELIGIBLE` / `CUSTOMER_NOT_VERIFIED`
+  for another customer's unit or customer; `409`/`502` for ambiguous/unavailable CRM.
+* **Returns `null` until CRM publishes the data:** tower, bedrooms, area and its
+  unit, parking, unit-type name, project address/status/description/amenities,
+  and expected/actual handover dates at unit and project level. The CRM schema
+  and `GetBuyerByPhone` carry none of these, so none were invented
+  (`ICrmUnitDetailsGateway` → `UnimplementedCrmUnitDetailsGateway`;
+  `detailsStatus: "NotAvailable"`). **Open dependency: CRM team to expose them.**
+* **TigerGroupWeb must forward the new route** before the Genesys Data Action
+  can reach it (the proxy forwards a fixed route list).
+* No migration and no new configuration key.
+
+Not part of this branch: the chatbot-timeout and document-copy APIs. They are
+not in this repository (no code or docs on any branch), so they are not
+described here; add their rows when that work lands.
 
 Nothing in this release changes approved SLA durations, working hours,
 pause rules or request-type policy precedence, and nothing changes the
@@ -109,6 +130,14 @@ CS Agent and Call Center Agent
 - Dashboard: breakdown cards sit above the ticket table on desktop and phone.
 - Team Performance is not in the navigation and `/Reports/TeamPerformance`
   is refused.
+
+Chatbot/voicebot integration account (CS Agent service account)
+- `POST /api/genesys/customers/unit-details` with a known buyer's `crm:{id}` and
+  number, no `unitId` → `UnitSelectionRequired` listing that buyer's units.
+- Same call with a listed `unitId` → `UnitDetails`; fields CRM does not hold are
+  `null` and `detailsStatus` is `NotAvailable`.
+- Same call with a `unitId` that belongs to a different buyer → `403 UNIT_NOT_ELIGIBLE`;
+  with another customer's `crm:` id → `403 CUSTOMER_NOT_VERIFIED`.
 
 ## Verified on UAT
 

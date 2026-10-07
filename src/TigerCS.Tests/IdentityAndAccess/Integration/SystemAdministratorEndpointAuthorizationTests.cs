@@ -679,6 +679,19 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(1, withContext.OpenTicketCount);
     }
 
+    /// <summary>The unit-details route honours the System Administrator override like the rest of the Genesys boundary; the ownership rules themselves are in <c>GenesysCustomerUnitDetailsEndpointTests</c>.</summary>
+    [Fact]
+    public async Task GenesysCustomerUnitDetails_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/genesys/customers/unit-details",
+            new GenesysCustomerUnitDetailsRequest("crm:9001", "tel:+971500000900"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     /// <summary>
     /// The AI-first journey, end to end through the real host: a website chat
     /// a bot could not finish, no agent available, and an agent picking the

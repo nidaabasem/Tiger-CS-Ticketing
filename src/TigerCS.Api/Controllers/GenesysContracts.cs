@@ -299,6 +299,18 @@ public sealed record GenesysScreenPopRequest(
     long? TicketId = null,
     string? CustomerPhone = null);
 
+/// <summary>
+/// The chatbot/voicebot's request for a verified customer's unit and project
+/// details (<c>POST /api/genesys/customers/unit-details</c>).
+/// </summary>
+/// <param name="CustomerReference">Required. The verified customer: <c>crm:{id}</c> or the plain CRM customer id (the lookup's <c>externalCustomerId</c>). Checked server-side against CRM — it is never trusted on its own.</param>
+/// <param name="PhoneNumber">Required. The verified number the customer was identified by (any <c>tel:</c>/+971/971 form). It is how CRM is asked which units the customer owns.</param>
+/// <param name="UnitId">Optional. The CRM unit id the customer selected, from a previous <c>UnitSelectionRequired</c> answer. When absent, the customer's eligible units are returned instead.</param>
+public sealed record GenesysCustomerUnitDetailsRequest(
+    string? CustomerReference,
+    string? PhoneNumber,
+    int? UnitId = null);
+
 /// <summary>An issued Screen Pop launch.</summary>
 /// <param name="LaunchUrl">Open this in any browser or WebView. It carries a one-time token (valid once, for one hour) and nothing else — no username, password or user data.</param>
 /// <param name="ExpiresAtUtc">When the launch stops being redeemable, in UTC.</param>

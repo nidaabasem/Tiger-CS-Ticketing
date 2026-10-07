@@ -42,6 +42,7 @@ public class GenesysController(
     GenesysInquiryIngestionAppService ingestionAppService,
     GenesysTicketUpdateAppService ticketUpdateAppService,
     GenesysCustomerLookupAppService customerLookupAppService,
+    GenesysCustomerUnitDetailsAppService unitDetailsAppService,
     GenesysAgentContextAppService agentContextAppService,
     GenesysScreenPopAppService screenPopAppService) : ControllerBase
 {
@@ -51,6 +52,10 @@ public class GenesysController(
         public const string AgentNotMapped = "GENESYS_AGENT_NOT_MAPPED";
         public const string AgentInactive = "GENESYS_AGENT_INACTIVE";
         public const string ScreenPopNotConfigured = "GENESYS_SCREEN_POP_NOT_CONFIGURED";
+        public const string CustomerNotVerified = "CUSTOMER_NOT_VERIFIED";
+        public const string UnitNotEligible = "UNIT_NOT_ELIGIBLE";
+        public const string CustomerAmbiguous = "CUSTOMER_AMBIGUOUS";
+        public const string CrmUnavailable = "CRM_UNAVAILABLE";
     }
 
     /// <summary>Create — or reuse — the one ticket for a Genesys conversation, on any channel.</summary>
@@ -360,6 +365,103 @@ public class GenesysController(
                 detail: "Genesys:Enabled is false — no Genesys request is processed while the integration is switched off.",
                 statusCode: StatusCodes.Status503ServiceUnavailable)
             : Ok(result);
+    }
+
+    /// <summary>The selected unit's and project's customer-facing details for a verified customer — or, with no unit selected, the customer's eligible units.</summary>
+    /// <remarks>
+    /// <b>Read-only; a POST only so the customer's number stays out of URLs and access logs.</b>
+    /// Authorization is decided server-side against CRM on every call: the
+    /// verified <c>phoneNumber</c> must resolve to the customer named by
+    /// <c>customerReference</c>, and <c>unitId</c> must be one of that
+    /// customer's own units. A unit id alone grants nothing, and a unit that
+    /// belongs to someone else is refused exactly like one that does not exist.
+    ///
+    /// <para>
+    /// Without <c>unitId</c> the answer is <c>mode: UnitSelectionRequired</c>
+    /// with <c>eligibleUnits</c> — the bot asks which one. With it, the answer
+    /// is <c>mode: UnitDetails</c>. Values CRM does not record are <c>null</c>;
+    /// unit-level and project-level handover dates are separate fields, and
+    /// <c>handoverDateSource</c> says which pair applies. No internal notes or
+    /// other customer data is ever returned.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The verified customer, the verified number, and optionally the selected unit.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <response code="200">Eligible units (no unitId), or the selected unit's and project's details.</response>
+    /// <response code="400">customerReference or phoneNumber missing/malformed, or unitId not positive.</response>
+    /// <response code="403">The customer is not the one CRM resolves for the verified number (<c>CUSTOMER_NOT_VERIFIED</c>), or the unit is not one of their units (<c>UNIT_NOT_ELIGIBLE</c>).</response>
+    /// <response code="409">CRM holds more than one customer for the number (<c>CUSTOMER_AMBIGUOUS</c>); nothing is disclosed.</response>
+    /// <response code="502">Tiger CRM could not be reached or answered unusably (<c>CRM_UNAVAILABLE</c>).</response>
+    /// <response code="503">The Genesys integration is switched off.</response>
+    [HttpPost("customers/unit-details")]
+    [ProducesResponseType<GenesysCustomerUnitDetailsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> GetCustomerUnitDetails(
+        [FromBody] GenesysCustomerUnitDetailsRequest request, CancellationToken cancellationToken)
+    {
+        if (GetEmployeeId() is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await unitDetailsAppService.GetAsync(
+            request.CustomerReference, request.PhoneNumber, request.UnitId, cancellationToken);
+
+        return result.Outcome switch
+        {
+            GenesysUnitDetailsOutcome.UnitDetails or GenesysUnitDetailsOutcome.UnitSelectionRequired => Ok(result.Response),
+
+            GenesysUnitDetailsOutcome.IntegrationDisabled => Problem(
+                type: "https://tigercs.internal/problems/genesys-integration-disabled",
+                title: "The Genesys integration is disabled",
+                detail: "Genesys:Enabled is false — no Genesys request is processed while the integration is switched off.",
+                statusCode: StatusCodes.Status503ServiceUnavailable),
+
+            GenesysUnitDetailsOutcome.CustomerReferenceInvalid => FieldProblem(
+                nameof(request.CustomerReference), "customerReference is required and must be a CRM customer (crm:{id} or the plain id)."),
+            GenesysUnitDetailsOutcome.PhoneNumberInvalid => FieldProblem(
+                nameof(request.PhoneNumber), "phoneNumber is required and must contain a number."),
+            GenesysUnitDetailsOutcome.UnitIdInvalid => FieldProblem(
+                nameof(request.UnitId), "unitId must be a positive CRM unit id."),
+
+            GenesysUnitDetailsOutcome.CustomerNotVerified => CodedProblem(
+                ErrorCodes.CustomerNotVerified,
+                type: "https://tigercs.internal/problems/genesys-customer-not-verified",
+                title: "The customer could not be verified",
+                detail: "The customer reference does not match a customer CRM holds for the verified number.",
+                statusCode: StatusCodes.Status403Forbidden),
+
+            GenesysUnitDetailsOutcome.UnitNotEligible => CodedProblem(
+                ErrorCodes.UnitNotEligible,
+                type: "https://tigercs.internal/problems/genesys-unit-not-eligible",
+                title: "The unit is not available to this customer",
+                detail: "The requested unit is not one of this customer's units.",
+                statusCode: StatusCodes.Status403Forbidden),
+
+            GenesysUnitDetailsOutcome.AmbiguousCustomer => CodedProblem(
+                ErrorCodes.CustomerAmbiguous,
+                type: "https://tigercs.internal/problems/genesys-customer-ambiguous",
+                title: "More than one customer matches the verified number",
+                detail: "CRM holds more than one customer for this number. Nothing was disclosed; hand over to an agent.",
+                statusCode: StatusCodes.Status409Conflict),
+
+            _ => CodedProblem(
+                ErrorCodes.CrmUnavailable,
+                type: "https://tigercs.internal/problems/crm-unavailable",
+                title: "CRM is currently unavailable",
+                detail: "Tiger CRM could not be reached or answered unusably.",
+                statusCode: StatusCodes.Status502BadGateway)
+        };
+    }
+
+    private IActionResult FieldProblem(string field, string message)
+    {
+        ModelState.AddModelError(field, message);
+        return ValidationProblem(ModelState);
     }
 
     /// <summary>Identify the Genesys agent working in Ticketing, and record them as the handler of the conversation's interaction.</summary>

@@ -298,6 +298,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GenesysAgentHandoffAppService>();
         services.AddScoped<GenesysTicketUpdateAppService>();
         services.AddScoped<GenesysCustomerLookupAppService>();
+        services.AddScoped<GenesysCustomerUnitDetailsAppService>();
 
         // Collections — balances read from the authoritative financial source
         // (ICollectionsFinancialSource, registered by AddTigerCsIntegrations),

@@ -1,0 +1,123 @@
+{
+  "name": "TigerCS - Customer Unit Details",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/customers/unit-details",
+      "requestType": "POST",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"customerReference\": ${input.customerReference}, \"phoneNumber\": ${input.phoneNumber}#if($input.unitId), \"unitId\": ${input.unitId}#end}"
+    },
+    "response": {
+      "translationMap": {
+        "mode": "$.mode",
+        "customerReference": "$.customerReference",
+        "eligibleUnits": "$.eligibleUnits",
+        "unitNumber": "$.unit.unitNumber",
+        "tower": "$.unit.tower",
+        "floor": "$.unit.floor",
+        "bedrooms": "$.unit.bedrooms",
+        "areaValue": "$.unit.area.value",
+        "areaUnit": "$.unit.area.unit",
+        "bookingReference": "$.unit.booking.reference",
+        "bookingStatus": "$.unit.booking.status",
+        "unitExpectedHandoverDate": "$.unit.expectedHandoverDate",
+        "unitActualHandoverDate": "$.unit.actualHandoverDate",
+        "projectName": "$.project.name",
+        "projectAddress": "$.project.address",
+        "projectStatus": "$.project.status",
+        "projectExpectedHandoverDate": "$.project.expectedHandoverDate",
+        "projectActualHandoverDate": "$.project.actualHandoverDate",
+        "handoverDateSource": "$.handoverDateSource",
+        "detailsStatus": "$.detailsStatus"
+      },
+      "translationMapDefaults": {
+        "mode": "\"\"",
+        "customerReference": "\"\"",
+        "eligibleUnits": "[]",
+        "unitNumber": "\"\"",
+        "tower": "\"\"",
+        "floor": "0",
+        "bedrooms": "0",
+        "areaValue": "0",
+        "areaUnit": "\"\"",
+        "bookingReference": "\"\"",
+        "bookingStatus": "\"\"",
+        "unitExpectedHandoverDate": "\"\"",
+        "unitActualHandoverDate": "\"\"",
+        "projectName": "\"\"",
+        "projectAddress": "\"\"",
+        "projectStatus": "\"\"",
+        "projectExpectedHandoverDate": "\"\"",
+        "projectActualHandoverDate": "\"\"",
+        "handoverDateSource": "\"\"",
+        "detailsStatus": "\"\""
+      },
+      "successTemplate": "{\"mode\": ${mode}, \"customerReference\": ${customerReference}, \"eligibleUnits\": ${eligibleUnits}, \"unitNumber\": ${unitNumber}, \"tower\": ${tower}, \"floor\": ${floor}, \"bedrooms\": ${bedrooms}, \"areaValue\": ${areaValue}, \"areaUnit\": ${areaUnit}, \"bookingReference\": ${bookingReference}, \"bookingStatus\": ${bookingStatus}, \"unitExpectedHandoverDate\": ${unitExpectedHandoverDate}, \"unitActualHandoverDate\": ${unitActualHandoverDate}, \"projectName\": ${projectName}, \"projectAddress\": ${projectAddress}, \"projectStatus\": ${projectStatus}, \"projectExpectedHandoverDate\": ${projectExpectedHandoverDate}, \"projectActualHandoverDate\": ${projectActualHandoverDate}, \"handoverDateSource\": ${handoverDateSource}, \"detailsStatus\": ${detailsStatus}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Customer Unit Details",
+        "type": "object",
+        "required": ["customerReference", "phoneNumber"],
+        "properties": {
+          "customerReference": {
+            "type": "string",
+            "description": "The verified CRM customer: crm:{id} or the plain id (the Customer Lookup's externalCustomerId)."
+          },
+          "phoneNumber": {
+            "type": "string",
+            "description": "The verified number the customer was identified by, e.g. tel:+971501234567."
+          },
+          "unitId": {
+            "type": "integer",
+            "description": "Optional. The CRM unit id the customer selected. Omit to receive eligibleUnits."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Customer Unit Details result",
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "description": "UnitSelectionRequired (ask which unit; see eligibleUnits) or UnitDetails." },
+          "customerReference": { "type": "string" },
+          "eligibleUnits": {
+            "type": "array",
+            "description": "unitId, unitNumber, projectId, projectName, floor, bookingStatus per unit. Empty in UnitDetails mode.",
+            "items": { "type": "object" }
+          },
+          "unitNumber": { "type": "string" },
+          "tower": { "type": "string", "description": "Empty when CRM does not record it." },
+          "floor": { "type": "integer" },
+          "bedrooms": { "type": "integer", "description": "0 also means not recorded - check detailsStatus." },
+          "areaValue": { "type": "number", "description": "0 also means not recorded." },
+          "areaUnit": { "type": "string" },
+          "bookingReference": { "type": "string" },
+          "bookingStatus": { "type": "string" },
+          "unitExpectedHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Unit-level." },
+          "unitActualHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Unit-level." },
+          "projectName": { "type": "string" },
+          "projectAddress": { "type": "string" },
+          "projectStatus": { "type": "string" },
+          "projectExpectedHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Project-level." },
+          "projectActualHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Project-level." },
+          "handoverDateSource": { "type": "string", "description": "Unit, Project or empty: which pair of dates applies." },
+          "detailsStatus": { "type": "string", "description": "Available, NotAvailable or Unavailable - why the optional values are empty." }
+        }
+      }
+    }
+  },
+  "secure": false
+}

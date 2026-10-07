@@ -140,6 +140,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/genesys/tickets",
         "PATCH /api/genesys/tickets/{ticketId}",
         "GET /api/genesys/customers/lookup",
+        // Verified customer's unit and project details for the chatbot/voicebot.
+        "POST /api/genesys/customers/unit-details",
         // Genesys agent identity mapping: the agent-action endpoint that
         // resolves a Genesys User ID to the Ticketing user and records
         // interaction ownership.

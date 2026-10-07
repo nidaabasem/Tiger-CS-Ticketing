@@ -42,6 +42,11 @@ Genesys Cloud ──OAuth2 client_credentials──▶ TigerGroupWeb  (https://t
 | 2 | Create / reuse interaction ticket | `POST /api/genesys/tickets` | `TigerCS - Create or Reuse Ticket` |
 | 3 | Conversation update | `PATCH /api/genesys/tickets/{ticketId}` | `TigerCS - Update Routing`, `TigerCS - End Conversation`, `TigerCS - Request Human Agent`, `TigerCS - Cancel Human Request`, `TigerCS - Customer Confirmed Resolved` |
 
+A fourth, read-only route serves the chatbot/voicebot — verified customer's unit and
+project details, `POST /api/genesys/customers/unit-details`, Data Action
+`TigerCS - Customer Unit Details` (`data-actions/10-…json`). See
+`Customer-Unit-Details-API.md`; TigerGroupWeb must forward this route too.
+
 Contract 3 is **one** endpoint. It has five data actions only because a
 Genesys data action has a fixed request template. Each variant sends just
 the part of the body it owns.
@@ -410,6 +415,10 @@ Customer Service do that in TigerCS. Genesys never sends a ticket status.
 
 The JSON files are the source of truth. This is what each action exchanges
 with Architect.
+
+**TigerCS - Customer Unit Details** — see `Customer-Unit-Details-API.md`.
+Input: `customerReference`, `phoneNumber` (required), `unitId` (optional).
+Output: `mode`, `eligibleUnits`, unit/project fields, `handoverDateSource`, `detailsStatus`.
 
 **TigerCS - Customer Lookup**
 Input: `phoneNumber` (required).

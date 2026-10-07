@@ -78,6 +78,22 @@ public static class IntegrationsServiceCollectionExtensions
             };
         });
 
+        // Customer-facing unit/project facts CRM's buyer lookup does not carry.
+        // Same switch: "Http" fails closed to NotAvailable (no endpoint exists),
+        // "Mock" serves fixture data.
+        services.AddScoped<MockCrmUnitDetailsGateway>();
+        services.AddScoped<UnimplementedCrmUnitDetailsGateway>();
+        services.AddScoped<ICrmUnitDetailsGateway>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            return options.Provider switch
+            {
+                "Http" => (ICrmUnitDetailsGateway)sp.GetRequiredService<UnimplementedCrmUnitDetailsGateway>(),
+                "Mock" => sp.GetRequiredService<MockCrmUnitDetailsGateway>(),
+                _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
+            };
+        });
+
         AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);
         AddEdsmCollections(services, configuration);
