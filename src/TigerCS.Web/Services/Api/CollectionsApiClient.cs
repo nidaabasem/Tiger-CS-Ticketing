@@ -16,6 +16,18 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     private const string Base = "api/collections";
     public const int PageSize = 50;
 
+    public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
+        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (companyId is { } company) query["companyId"] = Id(company);
+        if (!string.IsNullOrWhiteSpace(status)) query["status"] = status;
+        if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
+        query["page"] = Id(page);
+        query["pageSize"] = "25";
+        return GetAsync<PactReceivableCustomersDto>($"{Base}/receivables/customers?{query}", cancellationToken);
+    }
+
     /// <summary>EDSM's payment summary, resolved server-side from the customer key (PACT customers only).</summary>
     public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetPaymentSummaryAsync(string customerKey, CancellationToken cancellationToken) =>
         GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customers/by-key/{Uri.EscapeDataString(customerKey)}/payment-summary", cancellationToken);

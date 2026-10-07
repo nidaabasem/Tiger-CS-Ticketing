@@ -2048,3 +2048,33 @@ a.badge:hover { text-decoration: underline; }
   .report-help__list dd { margin-bottom: var(--space-2); }
   .report-help__body { padding: var(--space-3) var(--space-4); }
 }
+
+/* PACT receivables customer list */
+.receivables-eyebrow { font-size: .8rem; text-transform: uppercase; letter-spacing: .09em; margin: 0 0 .35rem; color: var(--color-text-secondary); }
+.receivables-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
+.receivables-metrics .panel { padding: 1.2rem; display: flex; flex-direction: column; gap: .6rem; }
+.receivables-metrics strong { font-size: 1.8rem; }
+.receivables-metrics span, .receivables-meta { color: var(--color-text-secondary); font-size: .85rem; }
+.receivables-table-wrap { overflow-x: auto; }
+.receivables-table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.receivables-table th, .receivables-table td { padding: 1rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-border); }
+.receivables-table th { background: var(--color-bg); white-space: nowrap; font-weight: 600; }
+.receivables-meta { display: block; margin-top: .35rem; overflow-wrap: anywhere; }
+.receivables-amount { display: block; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+.receivables-tag { display: inline-block; margin-top: .5rem; padding: .2rem .55rem; border-radius: 1rem; background: #fff4d6; color: #805617; font-size: .75rem; }
+.receivables-tag--overdue { background: #fde8e8; color: #a43232; }
+.receivables-details { min-width: 130px; }
+.receivables-details summary { color: #80641c; cursor: pointer; white-space: nowrap; }
+.receivables-details ul { padding-left: 1.1rem; min-width: 260px; }
+.receivables-details li { margin: .8rem 0; }
+.receivables-notice { background: #fff8e5; color: #765623; border: 1px solid #eedfaf; padding: .85rem; border-radius: .5rem; font-size: .85rem; margin: .8rem 0; }
+.receivables-pagination { display: flex; align-items: center; justify-content: space-between; padding: 1rem; gap: 1rem; }
+.receivables-pagination > div { display: flex; gap: .5rem; }
+.receivables-loading { font-size: .85rem; }
+@media (max-width: 700px) {
+    .receivables-metrics { grid-template-columns: 1fr; gap: .6rem; }
+    .receivables-metrics .panel { flex-direction: row; align-items: center; justify-content: space-between; }
+    .receivables-workspace .filter-bar { flex-wrap: wrap; }
+    .receivables-workspace .filter-bar > .field-group { min-width: 100%; }
+    .receivables-pagination { flex-wrap: wrap; }
+}
