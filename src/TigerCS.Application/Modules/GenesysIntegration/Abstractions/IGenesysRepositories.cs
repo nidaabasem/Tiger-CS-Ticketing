@@ -31,6 +31,17 @@ public interface IGenesysConversationRepository
     /// <summary>The interaction recorded for one Genesys conversation id, or null when the conversation was never ingested. The uniqueness this relies on is a database index, not a convention.</summary>
     Task<TicketInteraction?> GetByConversationIdAsync(string genesysConversationId, CancellationToken cancellationToken = default);
 
+    /// <summary>One interaction by its own id (tracked, so the caller can change it), or null.</summary>
+    Task<TicketInteraction?> GetByIdAsync(long ticketInteractionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ids of interactions that have been waiting on a customer reply since
+    /// before <paramref name="cutoffUtc"/> (exclusive), oldest first, at most
+    /// <paramref name="batchSize"/>. A candidate list only — the closing
+    /// service re-reads and re-checks each one before acting.
+    /// </summary>
+    Task<IReadOnlyList<long>> ListAwaitingReplyOlderThanAsync(DateTime cutoffUtc, int batchSize, CancellationToken cancellationToken = default);
+
     /// <summary>Every transcript message of one interaction, in <c>Sequence</c> order.</summary>
     Task<IReadOnlyList<TicketInteractionMessage>> ListMessagesAsync(long ticketInteractionId, CancellationToken cancellationToken = default);
 

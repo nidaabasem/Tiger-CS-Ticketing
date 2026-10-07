@@ -52,8 +52,11 @@ public sealed class CollectionsPaymentSummaryAppService(
     ICollectionsCustomerProfiles directory,
     IPactCustomerLookupGateway pact,
     IEdsmCollectionsGateway edsm,
-    PactAccountMappingCache mappingCache)
+    PactAccountMappingCache mappingCache,
+    CollectionsNextPaymentService? nextPaymentService = null)
 {
+    private readonly CollectionsNextPaymentService _nextPayment = nextPaymentService ?? new(edsmOptions, clock, edsm);
+
     public const string PactSource = "Pact";
     private const int MaxPhoneLookups = 5;
     private const decimal TotalTolerance = 0.03m;   // three independently rounded 2-dp strings
@@ -95,7 +98,12 @@ public sealed class CollectionsPaymentSummaryAppService(
         {
             var withoutCompany = r.Mapping is null ? [] : Distinct(r.Mapping).Where(c => c.CompanyId is null).Select(ToRef).ToList();
             return Ok(Response(r.Profile.CustomerKey, "NotMapped", notMapped, r.TenantKey, retrievedAt, [], withoutCompany, r.Mapping?.VerifiedAtUtc, r.MappingSource)
-                with { Completeness = CollectionsCompleteness.NoFigures, IncompleteReasons = [] });
+                with
+                {
+                    Completeness = CollectionsCompleteness.NoFigures,
+                    IncompleteReasons = [],
+                    NextPayment = CollectionsNextPaymentService.ForUnmapped(notMapped)
+                });
         }
 
         var distinct = Distinct(r.Mapping!);
@@ -118,9 +126,15 @@ public sealed class CollectionsPaymentSummaryAppService(
             ? CollectionsCompleteness.NoFigures
             : reasons.Count == 0 ? CollectionsCompleteness.Complete : CollectionsCompleteness.Partial;
 
+        // Next payment: separate from the summary figures above, gated on confirmed EDSM semantics.
+        // Asked about exactly the companies PACT confirmed for this tenant — never a guessed one.
+        var nextPayment = await _nextPayment.ResolveAsync(
+            distinct.Where(c => c.CompanyId is not null).Select(c => c.CompanyId!.Value).ToList(),
+            r.TenantId, budget.Token, () => budget.Expired);
+
         return Ok(Response(r.Profile.CustomerKey, "Mapped", null, r.TenantKey, retrievedAt, companies,
             withoutCompanyId, r.Mapping!.VerifiedAtUtc, r.MappingSource)
-            with { Completeness = completeness, IncompleteReasons = reasons });
+            with { Completeness = completeness, IncompleteReasons = reasons, NextPayment = nextPayment });
     }
 
     /// <summary>

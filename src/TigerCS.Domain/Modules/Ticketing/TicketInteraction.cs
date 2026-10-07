@@ -130,6 +130,26 @@ public class TicketInteraction
     /// <summary>Why the conversation ended, as reported (e.g. "AgentDisconnect", "CustomerDisconnect", "Timeout") — free text until the Genesys contract fixes an enumeration; null when not reported.</summary>
     public string? EndReason { get; private set; }
 
+    /// <summary>
+    /// Chatbot inactivity timer: when the chatbot asked the customer a
+    /// question and began waiting for the reply, as recorded by TigerCS (the
+    /// server clock, never a client-supplied time). Null whenever the
+    /// interaction is <b>not</b> waiting on the customer — the customer
+    /// replied, a human took over, the conversation ended, or it was never a
+    /// chatbot exchange. It is the persisted deadline source for the
+    /// background job, so the timeout survives restarts; it is also an EF
+    /// concurrency token, so a reply that clears it while the job is closing
+    /// the ticket makes the job's write lose rather than close a ticket the
+    /// customer just answered.
+    /// </summary>
+    public DateTime? AwaitingCustomerReplySinceUtc { get; private set; }
+
+    /// <summary>The integration account that reported the prompt. The inactivity closure is attributed to it in the audit trail and on the resolution row (which needs a real user) — the closure itself is flagged as a system action.</summary>
+    public Guid? AwaitingCustomerReplyReportedByEmployeeId { get; private set; }
+
+    /// <summary>When the inactivity timeout closed this interaction's ticket, or null. Write-once: it is what makes a repeated timeout run a no-op.</summary>
+    public DateTime? InactivityClosedAtUtc { get; private set; }
+
     /// <summary>When this row was recorded by Ticketing (creation/audit timestamp), as distinct from <see cref="InteractionStartedAtUtc"/> — Genesys' own clock.</summary>
     public DateTime CreatedAtUtc { get; private set; }
 
@@ -230,6 +250,67 @@ public class TicketInteraction
 
         EndedAtUtc = endedAtUtc;
         EndReason = Truncate(endReason, EndReasonMaxLength);
+
+        // An ended conversation is not waiting on anybody: the inactivity
+        // timer must never fire for it.
+        AwaitingCustomerReplySinceUtc = null;
+        AwaitingCustomerReplyReportedByEmployeeId = null;
+    }
+
+    /// <summary>
+    /// The chatbot sent a message that needs a customer reply: start the
+    /// inactivity timer. <b>Idempotent — a repeated delivery never restarts
+    /// the timer</b>: while the interaction is already waiting this returns
+    /// false and changes nothing, so a retried webhook cannot postpone the
+    /// deadline. A new timer starts only after
+    /// <see cref="CancelAwaitingCustomerReply"/> (the customer replied) and
+    /// the chatbot asks again. Refused (false) for an ended interaction or
+    /// one already closed by inactivity.
+    /// </summary>
+    public bool BeginAwaitingCustomerReply(DateTime nowUtc, Guid reportedByEmployeeId)
+    {
+        if (reportedByEmployeeId == Guid.Empty)
+        {
+            throw new ArgumentException("ReportedByEmployeeId must be a real integration account.", nameof(reportedByEmployeeId));
+        }
+
+        if (IsEnded || InactivityClosedAtUtc is not null || AwaitingCustomerReplySinceUtc is not null)
+        {
+            return false;
+        }
+
+        AwaitingCustomerReplySinceUtc = nowUtc;
+        AwaitingCustomerReplyReportedByEmployeeId = reportedByEmployeeId;
+        return true;
+    }
+
+    /// <summary>The customer replied, a human took over, or human follow-up was requested: stop waiting. Returns true when a timer was actually running.</summary>
+    public bool CancelAwaitingCustomerReply()
+    {
+        if (AwaitingCustomerReplySinceUtc is null)
+        {
+            return false;
+        }
+
+        AwaitingCustomerReplySinceUtc = null;
+        AwaitingCustomerReplyReportedByEmployeeId = null;
+        return true;
+    }
+
+    /// <summary>True when the timer has been running for strictly longer than <paramref name="timeout"/> at <paramref name="nowUtc"/> — "more than 5 minutes", not "5 minutes or more".</summary>
+    public bool IsInactivityTimeoutDue(DateTime nowUtc, TimeSpan timeout) =>
+        AwaitingCustomerReplySinceUtc is { } since && InactivityClosedAtUtc is null && nowUtc - since > timeout;
+
+    /// <summary>Records that the timeout closed the ticket and stops the timer. Write-once.</summary>
+    public void RecordInactivityClosure(DateTime nowUtc)
+    {
+        if (InactivityClosedAtUtc is not null)
+        {
+            return;
+        }
+
+        InactivityClosedAtUtc = nowUtc;
+        AwaitingCustomerReplySinceUtc = null;
     }
 
     /// <summary>

@@ -60,6 +60,19 @@ public sealed class GenesysConversationRepository(TigerCsDbContext dbContext) : 
             i => i.GenesysConversationId == value, cancellationToken);
     }
 
+    public Task<TicketInteraction?> GetByIdAsync(long ticketInteractionId, CancellationToken cancellationToken = default) =>
+        dbContext.TicketInteractions.FirstOrDefaultAsync(i => i.TicketInteractionId == ticketInteractionId, cancellationToken);
+
+    public async Task<IReadOnlyList<long>> ListAwaitingReplyOlderThanAsync(
+        DateTime cutoffUtc, int batchSize, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketInteractions
+            .AsNoTracking()
+            .Where(i => i.AwaitingCustomerReplySinceUtc != null && i.AwaitingCustomerReplySinceUtc < cutoffUtc)
+            .OrderBy(i => i.AwaitingCustomerReplySinceUtc)
+            .Select(i => i.TicketInteractionId)
+            .Take(batchSize)
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<TicketInteractionMessage>> ListMessagesAsync(
         long ticketInteractionId, CancellationToken cancellationToken = default) =>
         await dbContext.TicketInteractionMessages

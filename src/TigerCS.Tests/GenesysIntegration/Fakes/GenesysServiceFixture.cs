@@ -97,14 +97,32 @@ public sealed class GenesysServiceFixture
     /// <summary>The strict agent-action entry point (agent-context endpoint).</summary>
     public GenesysAgentContextAppService AgentContext { get; }
 
-    public GenesysServiceFixture(bool enabled = true)
+    /// <summary>Controllable clock shared by the update facade, the lifecycle service and the inactivity closer — advance it to cross the timeout.</summary>
+    public FakeTimeProvider Clock { get; } = new(DateTime.UtcNow);
+
+    /// <summary>The chatbot customer-inactivity closer (the background job's whole body).</summary>
+    public ChatbotInactivityCloseAppService InactivityClose { get; }
+
+    /// <summary>The REAL lifecycle service the closer calls — over the same ticket, status-history, audit and Outbox fakes.</summary>
+    public TicketLifecycleAppService Lifecycle { get; }
+
+    public FakeTicketResolutionRepository Resolutions { get; } = new();
+    public FakeTicketPendingRecordRepository PendingRecords { get; } = new();
+    public FakeOutboxWriter Outbox { get; } = new();
+
+    public GenesysServiceFixture(bool enabled = true, int? inactivityTimeoutMinutes = null)
     {
         Options = new GenesysOptions { Enabled = enabled };
+        if (inactivityTimeoutMinutes is { } minutes)
+        {
+            Options.CustomerInactivityTimeoutMinutes = minutes;
+        }
+
         Conversations = new FakeGenesysConversationRepository(Interactions);
         Handoffs.Tickets = Tickets;
         Handoffs.Interactions = Interactions;
 
-        var outbox = new FakeOutboxWriter();
+        var outbox = Outbox;
         UnitOfWork.OutboxWriter = outbox;
         var sla = new SlaServiceFixture(Tickets, statusHistory: StatusHistory, audit: Audit, unitOfWork: UnitOfWork);
         Sla = sla;
@@ -173,7 +191,21 @@ public sealed class GenesysServiceFixture
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(
             Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
-            WorkflowEvents, TimeProvider.System);
+            WorkflowEvents, Clock);
+
+        var requestTypes = new FakeRequestTypeRepository();
+        var workflowTemplates = new FakeWorkflowTemplateRepository();
+        var departmentSettings = new FakeDepartmentWorkflowSettingsRepository();
+        Lifecycle = new TicketLifecycleAppService(
+            Tickets, Resolutions, StatusHistory, DepartmentAssignments, UnitOfWork, Audit, sla.BreachProcessor, Clock,
+            PendingRecords, requestTypes, workflowTemplates, outbox, Departments, departmentSettings, WorkflowEvents,
+            new TicketAutoAssignmentService(
+                new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, DepartmentAssignments, TicketAssignments, Audit),
+            sla.DueDates,
+            new ReopenEligibilityService(StatusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
+
+        InactivityClose = new ChatbotInactivityCloseAppService(
+            Options, Conversations, Tickets, Handoffs, Lifecycle, UnitOfWork, Clock);
 
         AgentContext = new GenesysAgentContextAppService(
             Options, AgentResolution, Conversations, Tickets, UnitOfWork, Audit);

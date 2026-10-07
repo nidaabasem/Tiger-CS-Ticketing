@@ -307,7 +307,8 @@ public sealed record CollectionsPaymentSummaryResponseDto(
     IReadOnlyList<CollectionsCompanyPaymentSummaryDto> Companies,
     IReadOnlyList<CollectionsPactContractRefDto> ContractsWithoutCompany,
     string Completeness = CollectionsCompleteness.Complete,
-    IReadOnlyList<string>? IncompleteReasons = null);
+    IReadOnlyList<string>? IncompleteReasons = null,
+    CollectionsEdsmNextPaymentDto? NextPayment = null);
 
 /// <summary>Values of <see cref="CollectionsPaymentSummaryResponseDto.Completeness"/>.</summary>
 public static class CollectionsCompleteness
@@ -430,3 +431,77 @@ public sealed record CollectionsPaymentTransactionsResponseDto(
     DateTime MappingVerifiedAtUtc,
     string MappingSource,
     IReadOnlyList<CollectionsEdsmTransactionDto> Items);
+
+
+/// <summary>Values of <see cref="CollectionsEdsmNextPaymentDto.Status"/> and of each company's status.</summary>
+public static class CollectionsNextPaymentStatus
+{
+    /// <summary>An upcoming unpaid instalment was found (see <c>earliest</c>).</summary>
+    public const string Available = "Available";
+
+    /// <summary>The source was read and semantics are confirmed, and no unpaid instalment falls after today through <c>searchedThrough</c>. It does not say none exist later.</summary>
+    public const string NoneWithinHorizon = "NoneWithinHorizon";
+
+    /// <summary>No next payment can be stated. <c>reasons</c> says why. Never a zero and never "none".</summary>
+    public const string Unavailable = "Unavailable";
+}
+
+/// <summary>Machine-readable reasons a next payment is <c>Unavailable</c> (or its answer incomplete).</summary>
+public static class CollectionsNextPaymentReasons
+{
+    public const string FeatureDisabled = "FeatureDisabled";
+    public const string MappingNotAvailable = "MappingNotAvailable";
+    public const string SemanticsNotConfirmed = "SemanticsNotConfirmed";
+    public const string CompanyNotSupported = "CompanyNotSupported";
+    public const string TenantIdNotMatchable = "TenantIdNotMatchable";
+    public const string SourceUnavailable = "SourceUnavailable";
+    public const string DeadlineExceeded = "DeadlineExceeded";
+    public const string SearchIncomplete = "SearchIncomplete";
+}
+
+/// <summary>
+/// The next <i>upcoming</i> unpaid instalment, or an explicit reason there is none to state.
+/// <para>
+/// <b>Overdue is separate.</b> An instalment due today or earlier is never returned here; it is in
+/// the company's <c>dueAmount</c> (<c>overdueTreatment</c>). <b>Scope:</b> the earliest date across every
+/// unit of each mapped company's tenant; other units' later instalments are not listed.
+/// <b>Search:</b> forward in overlapping date windows from the business date through
+/// <c>searchedThrough</c> — no fixed 31-day look-ahead. <c>isComplete</c> is true only when every
+/// mapped company was answered (Available or NoneWithinHorizon).
+/// </para>
+/// </summary>
+public sealed record CollectionsEdsmNextPaymentDto(
+    string Status,
+    IReadOnlyList<string> Reasons,
+    string? Detail,
+    bool IsComplete,
+    DateOnly? SearchedFrom,
+    DateOnly? SearchedThrough,
+    CollectionsNextPaymentItemDto? Earliest,
+    IReadOnlyList<CollectionsNextPaymentCompanyDto> Companies,
+    string OverdueTreatment = CollectionsEdsmNextPaymentDto.OverdueNote)
+{
+    public const string OverdueNote =
+        "Instalments due today or earlier are never returned here; EDSM reports them in the company's dueAmount.";
+}
+
+/// <summary>One (company, tenant)'s next payment date. <c>amount</c> is the sum still unpaid on that date; <c>amountRaw</c> is the same, 2 dp text.</summary>
+public sealed record CollectionsNextPaymentItemDto(
+    int CompanyId,
+    long TenantId,
+    DateOnly DueDate,
+    decimal Amount,
+    string AmountRaw,
+    string Currency,
+    IReadOnlyList<CollectionsNextPaymentUnitDto> Units);
+
+public sealed record CollectionsNextPaymentUnitDto(long? UnitId, decimal Amount, int InstalmentCount);
+
+/// <summary>One company's answer. <c>missingSemantics</c> lists the confirmations still absent when <c>reasons</c> has <c>SemanticsNotConfirmed</c>.</summary>
+public sealed record CollectionsNextPaymentCompanyDto(
+    int CompanyId,
+    string Status,
+    IReadOnlyList<string> Reasons,
+    IReadOnlyList<string> MissingSemantics,
+    DateOnly? SearchedThrough,
+    CollectionsNextPaymentItemDto? Next);

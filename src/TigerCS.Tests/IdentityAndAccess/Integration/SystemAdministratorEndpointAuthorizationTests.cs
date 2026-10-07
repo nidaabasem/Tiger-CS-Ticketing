@@ -679,6 +679,43 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(1, withContext.OpenTicketCount);
     }
 
+    /// <summary>The unit-details route honours the System Administrator override like the rest of the Genesys boundary; the ownership rules themselves are in <c>GenesysCustomerUnitDetailsEndpointTests</c>.</summary>
+    [Fact]
+    public async Task GenesysCustomerUnitDetails_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/genesys/customers/unit-details",
+            new GenesysCustomerUnitDetailsRequest("crm:9001", "tel:+971500000900"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The chatbot document-copy endpoint sits behind the same
+    /// CustomerVerification policy as the other Genesys routes, so the System
+    /// Administrator override reaches it: the request is authorized and
+    /// answered by the service (here, with the shipped switch still off) —
+    /// never 401/403. The functional behaviour is covered by
+    /// <c>GenesysDocumentsEndpointTests</c>.
+    /// </summary>
+    [Fact]
+    public async Task GenesysDocumentSendCopy_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/genesys/documents/send-copy")
+        {
+            Content = JsonContent.Create(new { verificationSessionId = Guid.NewGuid(), documentType = "Contract" })
+        };
+        request.Headers.Add("Idempotency-Key", "sysadmin-" + Guid.NewGuid().ToString("N"));
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("DOCUMENT_COPY_DISABLED", await response.Content.ReadAsStringAsync());
+    }
+
     /// <summary>
     /// The AI-first journey, end to end through the real host: a website chat
     /// a bot could not finish, no agent available, and an agent picking the
