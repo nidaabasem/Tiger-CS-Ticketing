@@ -27,6 +27,8 @@
                     <div class="disclosure__panel__header">@currentUser.DisplayName</div>
                     <div class="menu-item"><small>@string.Join(", ", currentUser.Roles)</small></div>
                     <div class="menu-divider"></div>
+                    <a class="menu-item" href="/Account/ChangePassword">Change my password</a>
+                    <div class="menu-divider"></div>
                     <form method="post" asp-page="/Logout">
                         <button type="submit" class="menu-item"><strong>Sign out</strong></button>
                     </form>

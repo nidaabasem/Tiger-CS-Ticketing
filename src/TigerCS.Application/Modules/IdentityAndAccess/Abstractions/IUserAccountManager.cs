@@ -11,6 +11,39 @@ public sealed record UserAccountResult(bool Succeeded, IReadOnlyList<string> Err
     public static UserAccountResult Failure(IReadOnlyList<string> errors) => new(false, errors);
 }
 
+/// <summary>How a password reset or change landed inside Identity.</summary>
+public enum PasswordChangeOutcome
+{
+    Success,
+
+    /// <summary>No Identity account exists for the employee id.</summary>
+    UserNotFound,
+
+    /// <summary>Self-service change only: the current password did not verify. Nothing else is revealed.</summary>
+    CurrentPasswordIncorrect,
+
+    /// <summary>The new password failed Identity's registered password validators; <c>Errors</c> carries their descriptions.</summary>
+    PolicyViolation
+}
+
+/// <summary>
+/// Outcome of a password reset/change. Carries Identity's validator wording
+/// for a policy failure and nothing else — never the password, never a
+/// reset token.
+/// </summary>
+public sealed record PasswordChangeResult(PasswordChangeOutcome Outcome, IReadOnlyList<string> Errors)
+{
+    public bool Succeeded => Outcome == PasswordChangeOutcome.Success;
+
+    public static PasswordChangeResult Success() => new(PasswordChangeOutcome.Success, []);
+
+    public static PasswordChangeResult UserNotFound() => new(PasswordChangeOutcome.UserNotFound, []);
+
+    public static PasswordChangeResult CurrentPasswordIncorrect() => new(PasswordChangeOutcome.CurrentPasswordIncorrect, []);
+
+    public static PasswordChangeResult PolicyViolation(IReadOnlyList<string> errors) => new(PasswordChangeOutcome.PolicyViolation, errors);
+}
+
 /// <summary>
 /// The Administration phase's boundary to ASP.NET Core Identity. Every
 /// credential/role operation goes through Identity's own managers behind
@@ -33,4 +66,27 @@ public interface IUserAccountManager
 
     /// <summary>Employee ids whose user name or email contains the search text (case-insensitive) — for the administration user search.</summary>
     Task<IReadOnlyCollection<Guid>> SearchAccountIdsAsync(string search, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Administrative reset: replaces the password without knowing the old one
+    /// (Identity's validators decide whether the new one is acceptable), then
+    /// rotates the security stamp, clears the failed-attempt count and lifts
+    /// any lockout, so a locked-out user can sign in with the new password at
+    /// once — and every token issued before the reset stops working.
+    /// </summary>
+    Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Self-service change: Identity verifies the current password and runs its
+    /// validators on the new one; on success the security stamp is rotated so
+    /// every previously issued token stops working.
+    /// </summary>
+    Task<PasswordChangeResult> ChangePasswordAsync(Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The account's current Identity security stamp — the value a JWT's
+    /// <c>sst</c> claim is compared against on every request — or null when
+    /// no account exists. Rotated by Identity on every credential change.
+    /// </summary>
+    Task<string?> GetSecurityStampAsync(Guid employeeId, CancellationToken cancellationToken = default);
 }

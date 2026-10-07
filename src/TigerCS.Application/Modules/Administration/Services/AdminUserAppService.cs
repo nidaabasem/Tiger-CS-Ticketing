@@ -311,6 +311,49 @@ public sealed class AdminUserAppService(
         return AdminResult<AdminUserDto>.Success((await GetAsync(employeeId, cancellationToken))!);
     }
 
+    /// <summary>
+    /// Replaces a user's password without knowing the old one — the "forgot
+    /// my password" path, which only a System Administrator can take on
+    /// someone's behalf. Identity's validators decide whether the new password
+    /// is acceptable (<see cref="AdminOutcome.PasswordPolicyViolation"/>
+    /// otherwise). On success the account's security stamp is rotated, so every
+    /// session the user had is invalidated, and any lockout is lifted so the
+    /// user can sign in with the new password immediately. Audited as
+    /// <c>AdminResetUserPassword</c> with the reason only — never the password.
+    /// </summary>
+    public async Task<AdminResult> ResetPasswordAsync(
+        Guid actorEmployeeId, Guid employeeId, ResetUserPasswordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var employee = await employeeRepository.GetByIdAsync(employeeId, cancellationToken);
+        if (employee is null)
+        {
+            return AdminResult.NotFound();
+        }
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return AdminResult.PasswordPolicyViolation(["A new password is required."]);
+        }
+
+        var result = await accountManager.ResetPasswordAsync(employeeId, request.NewPassword, cancellationToken);
+        switch (result.Outcome)
+        {
+            case PasswordChangeOutcome.UserNotFound:
+                return AdminResult.NotFound();
+            case PasswordChangeOutcome.PolicyViolation:
+                return AdminResult.PasswordPolicyViolation(result.Errors);
+        }
+
+        await auditWriter.WriteAsync(
+            actorEmployeeId, "AdminResetUserPassword", "User", employeeId.ToString(),
+            beforeValue: null,
+            afterValue: $"Reason={request.Reason};LockoutCleared=true;SecurityStampRotated=true",
+            Guid.NewGuid(), cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return AdminResult.Success();
+    }
+
     private async Task<AdminUserDto> ToDtoAsync(Employee employee, UserAccountInfo? account, CancellationToken cancellationToken)
     {
         var roles = await roleReader.GetRolesAsync(employee.EmployeeId, cancellationToken);

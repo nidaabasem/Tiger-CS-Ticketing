@@ -95,6 +95,65 @@
     apply();
   });
 
+  // Customer Profile · Payment tab: its content is fetched the first time
+  // the tab is opened, so the profile itself never waits on the finance
+  // source, and fetched again when the account changes. Only the response
+  // to the LATEST request is applied: a slow answer for a previously
+  // selected account is discarded. Without JS every link and the account
+  // form load the page with the tab rendered server-side (?tab=payment).
+  // A payment account selector rendered outside the profile's fetched tab
+  // (the New Ticket wizard's Payments & Fines panel) reloads the page with
+  // its carried state on change; the <noscript> button covers the rest.
+  document.querySelectorAll("[data-payment-selector][data-autosubmit='true'] select").forEach(function (select) {
+    select.addEventListener("change", function () { select.form.submit(); });
+  });
+
+  document.querySelectorAll("[data-payment-src]").forEach(function (panel) {
+    var radio = document.getElementById("tab-payment");
+    if (!radio) return;
+    var latest = 0;
+
+    var load = function (account) {
+      var request = ++latest;
+      var url = panel.getAttribute("data-payment-src") + (account ? "&account=" + encodeURIComponent(account) : "");
+      var current = panel.querySelector(".payment-tab");
+      if (current) current.setAttribute("aria-busy", "true");
+      fetch(url, { credentials: "same-origin", headers: { "Accept": "text/html" } })
+        .then(function (response) {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.text();
+        })
+        .then(function (html) {
+          if (request !== latest) return; // a newer selection superseded this one
+          var tab = panel.querySelector(".payment-tab");
+          if (tab) tab.outerHTML = html;
+        })
+        .catch(function () {
+          if (request !== latest) return;
+          var tab = panel.querySelector(".payment-tab");
+          if (tab) {
+            tab.removeAttribute("aria-busy");
+            tab.insertAdjacentHTML("afterbegin", '<div class="alert alert-error" role="alert"><span>Payment details could not be loaded. Use Retry or reload the page.</span></div>');
+          }
+        });
+    };
+
+    panel.addEventListener("change", function (event) {
+      if (event.target && event.target.id === "paymentAccount") load(event.target.value);
+    });
+    panel.addEventListener("click", function (event) {
+      var link = event.target.closest && event.target.closest("[data-payment-account-link], [data-payment-retry]");
+      if (!link || !panel.contains(link)) return;
+      event.preventDefault();
+      var tab = panel.querySelector(".payment-tab");
+      load(link.getAttribute("data-payment-account-link") || (tab && tab.getAttribute("data-payment-account")) || "");
+    });
+
+    var deferred = function () { return panel.querySelector('[data-payment-state="Deferred"]'); };
+    radio.addEventListener("change", function () { if (radio.checked && deferred()) load(""); });
+    if (radio.checked && deferred()) load("");
+  });
+
   // Prevent duplicate submission: the FIRST submit of a form wins, and every
   // further submit while that one is still in flight is dropped. This covers
   // the double-click, the second Enter in a search box, and a filter control

@@ -12,6 +12,12 @@
         ("customers", "Customers", "/Customers"),
         ("tickets", "Tickets", "/Tickets"),
     ];
+    // Management reports: offered to the CS Manager tier only. Hiding the
+    // link is presentation; the Api's policy is what actually refuses.
+    if (ReportsPolicy.AppliesTo(currentUser))
+    {
+        items = [.. items, ("reports", "Team Performance", "/Reports/TeamPerformance")];
+    }
     if (AdministrationPolicy.AppliesTo(currentUser))
     {
         items = [.. items, ("admin", "Administration", "/Admin")];

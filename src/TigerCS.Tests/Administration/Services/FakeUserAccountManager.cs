@@ -3,10 +3,12 @@ using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 namespace TigerCS.Tests.Administration.Services;
 
 /// <summary>
-/// Stands in for ASP.NET Core Identity in service tests: accounts, roles
-/// and a minimal password policy (8+ characters), so the administration
-/// services can be exercised without the Identity store. Also serves as the
-/// role reader, exactly as Identity does for the real services.
+/// Stands in for ASP.NET Core Identity in service tests: accounts, roles,
+/// passwords with a minimal policy (8+ characters), lockout and the security
+/// stamp Identity rotates on every credential change — so the
+/// administration and authentication services can be exercised without the
+/// Identity store. Also serves as the role reader, exactly as Identity does
+/// for the real services.
 /// </summary>
 public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReader
 {
@@ -15,6 +17,9 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
         public required Guid Id { get; init; }
         public required string UserName { get; set; }
         public string? Email { get; set; }
+        public string Password { get; set; } = "Initial-Pass-1!";
+        public string SecurityStamp { get; set; } = Guid.NewGuid().ToString("N");
+        public bool IsLockedOut { get; set; }
         public List<string> Roles { get; } = [];
     }
 
@@ -28,13 +33,33 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
         return this;
     }
 
+    /// <summary>Test setup: the password the account currently has (what a self-service change must verify against).</summary>
+    public FakeUserAccountManager WithPassword(Guid employeeId, string password)
+    {
+        _accounts[employeeId].Password = password;
+        return this;
+    }
+
+    /// <summary>Test setup: puts the account in Identity's locked-out state.</summary>
+    public FakeUserAccountManager LockOut(Guid employeeId)
+    {
+        _accounts[employeeId].IsLockedOut = true;
+        return this;
+    }
+
+    public string PasswordOf(Guid employeeId) => _accounts[employeeId].Password;
+
+    public string SecurityStampOf(Guid employeeId) => _accounts[employeeId].SecurityStamp;
+
+    public bool IsLockedOut(Guid employeeId) => _accounts[employeeId].IsLockedOut;
+
     public Task<UserAccountInfo?> GetAccountAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_accounts.TryGetValue(employeeId, out var a) ? new UserAccountInfo(a.Id, a.UserName, a.Email, false) : null);
+        Task.FromResult(_accounts.TryGetValue(employeeId, out var a) ? new UserAccountInfo(a.Id, a.UserName, a.Email, a.IsLockedOut) : null);
 
     public Task<IReadOnlyDictionary<Guid, UserAccountInfo>> GetAccountsAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyDictionary<Guid, UserAccountInfo>>(_accounts.Values
             .Where(a => employeeIds.Contains(a.Id))
-            .ToDictionary(a => a.Id, a => new UserAccountInfo(a.Id, a.UserName, a.Email, false)));
+            .ToDictionary(a => a.Id, a => new UserAccountInfo(a.Id, a.UserName, a.Email, a.IsLockedOut)));
 
     public Task<UserAccountResult> CreateAccountAsync(string userName, string? email, string initialPassword, CancellationToken cancellationToken = default)
     {
@@ -49,7 +74,7 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
         }
 
         var id = Guid.NewGuid();
-        _accounts[id] = new Account { Id = id, UserName = userName, Email = email };
+        _accounts[id] = new Account { Id = id, UserName = userName, Email = email, Password = initialPassword };
         return Task.FromResult(UserAccountResult.Success(id));
     }
 
@@ -82,6 +107,49 @@ public sealed class FakeUserAccountManager : IUserAccountManager, IUserRoleReade
                 || (a.Email?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
             .Select(a => a.Id)
             .ToList());
+
+    public Task<PasswordChangeResult> ResetPasswordAsync(Guid employeeId, string newPassword, CancellationToken cancellationToken = default)
+    {
+        if (!_accounts.TryGetValue(employeeId, out var account))
+        {
+            return Task.FromResult(PasswordChangeResult.UserNotFound());
+        }
+
+        if (newPassword.Length < 8)
+        {
+            return Task.FromResult(PasswordChangeResult.PolicyViolation(["Passwords must be at least 8 characters."]));
+        }
+
+        account.Password = newPassword;
+        account.IsLockedOut = false;
+        account.SecurityStamp = Guid.NewGuid().ToString("N");
+        return Task.FromResult(PasswordChangeResult.Success());
+    }
+
+    public Task<PasswordChangeResult> ChangePasswordAsync(Guid employeeId, string currentPassword, string newPassword, CancellationToken cancellationToken = default)
+    {
+        if (!_accounts.TryGetValue(employeeId, out var account))
+        {
+            return Task.FromResult(PasswordChangeResult.UserNotFound());
+        }
+
+        if (!string.Equals(account.Password, currentPassword, StringComparison.Ordinal))
+        {
+            return Task.FromResult(PasswordChangeResult.CurrentPasswordIncorrect());
+        }
+
+        if (newPassword.Length < 8)
+        {
+            return Task.FromResult(PasswordChangeResult.PolicyViolation(["Passwords must be at least 8 characters."]));
+        }
+
+        account.Password = newPassword;
+        account.SecurityStamp = Guid.NewGuid().ToString("N");
+        return Task.FromResult(PasswordChangeResult.Success());
+    }
+
+    public Task<string?> GetSecurityStampAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_accounts.TryGetValue(employeeId, out var a) ? a.SecurityStamp : null);
 
     public Task<IReadOnlyCollection<string>> GetRolesAsync(Guid employeeId, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyCollection<string>>(_accounts.TryGetValue(employeeId, out var a) ? a.Roles.ToList() : []);

@@ -109,6 +109,10 @@ public sealed class FakeUserDepartmentAssignmentRepository : IUserDepartmentAssi
 
     public void Remove(UserDepartmentAssignment assignment) => Assignments.Remove(assignment);
 
+    public Task<IReadOnlyCollection<UserDepartmentAssignment>> ListActiveMembershipsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<UserDepartmentAssignment>>(
+            Assignments.Where(a => a.Employee is null || a.Employee.IsActive).ToList());
+
     public Task AddAsync(UserDepartmentAssignment assignment, CancellationToken cancellationToken = default)
     {
         Assignments.Add(assignment);

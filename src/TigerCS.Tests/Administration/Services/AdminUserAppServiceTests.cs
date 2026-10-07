@@ -156,6 +156,60 @@ public class AdminUserAppServiceTests
     }
 
     [Fact]
+    public async Task ResetPassword_replaces_the_password_lifts_lockout_rotates_the_stamp_and_audits_the_reason_only()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+        f.Accounts.WithPassword(id, "Forgotten-1!").LockOut(id);
+        var stampBefore = f.Accounts.SecurityStampOf(id);
+
+        var result = await f.Service.ResetPasswordAsync(Admin, id, new ResetUserPasswordRequestDto("Fresh-Pass-9!", "Forgot password"));
+
+        Assert.Equal(AdminOutcome.Success, result.Outcome);
+        Assert.Equal("Fresh-Pass-9!", f.Accounts.PasswordOf(id));
+        Assert.False(f.Accounts.IsLockedOut(id));
+        Assert.NotEqual(stampBefore, f.Accounts.SecurityStampOf(id));
+
+        var entry = Assert.Single(f.Audit.Entries, e => e.Action == "AdminResetUserPassword");
+        Assert.Equal(Admin, entry.ActorEmployeeId);
+        Assert.Equal("User", entry.EntityType);
+        Assert.Equal(id.ToString(), entry.EntityId);
+        Assert.Null(entry.BeforeValue);
+        Assert.Equal("Reason=Forgot password;LockoutCleared=true;SecurityStampRotated=true", entry.AfterValue);
+        Assert.DoesNotContain("Fresh-Pass-9!", entry.AfterValue);
+    }
+
+    [Fact]
+    public async Task ResetPassword_rejects_a_policy_failure_with_identitys_reasons_and_changes_nothing()
+    {
+        var f = Create();
+        var id = SeedUser(f, "Nour A", Roles.DepartmentEmployee);
+        f.Accounts.WithPassword(id, "Forgotten-1!");
+        var stampBefore = f.Accounts.SecurityStampOf(id);
+
+        var weak = await f.Service.ResetPasswordAsync(Admin, id, new ResetUserPasswordRequestDto("short", null));
+        var blank = await f.Service.ResetPasswordAsync(Admin, id, new ResetUserPasswordRequestDto("   ", null));
+
+        Assert.Equal(AdminOutcome.PasswordPolicyViolation, weak.Outcome);
+        Assert.Contains("Passwords must be at least 8 characters.", weak.Errors!);
+        Assert.Equal(AdminOutcome.PasswordPolicyViolation, blank.Outcome);
+        Assert.Equal("Forgotten-1!", f.Accounts.PasswordOf(id));
+        Assert.Equal(stampBefore, f.Accounts.SecurityStampOf(id));
+        Assert.DoesNotContain(f.Audit.Entries, e => e.Action == "AdminResetUserPassword");
+    }
+
+    [Fact]
+    public async Task ResetPassword_for_an_unknown_user_is_not_found()
+    {
+        var f = Create();
+
+        var result = await f.Service.ResetPasswordAsync(Admin, Guid.NewGuid(), new ResetUserPasswordRequestDto("Fresh-Pass-9!", null));
+
+        Assert.Equal(AdminOutcome.NotFound, result.Outcome);
+        Assert.Empty(f.Audit.Entries);
+    }
+
+    [Fact]
     public async Task Search_matches_display_name_user_name_and_email()
     {
         var f = Create();

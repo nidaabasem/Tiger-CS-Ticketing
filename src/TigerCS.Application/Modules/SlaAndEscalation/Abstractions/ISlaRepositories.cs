@@ -6,6 +6,9 @@ namespace TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 public interface ISlaPolicyRepository
 {
     Task<SlaPolicy?> GetByPriorityIdAsync(byte priorityId, CancellationToken cancellationToken = default);
+
+    /// <summary>Every policy row, active or not, Critical first — the administrator's reference view of what the calculation applies.</summary>
+    Task<IReadOnlyList<SlaPolicy>> ListAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -17,6 +20,9 @@ public interface IBusinessCalendarRepository
 {
     /// <summary>The single active calendar plus its seven working-day rows and every holiday date, or null if none is seeded.</summary>
     Task<BusinessCalendarSnapshot?> GetActiveSnapshotAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>The same active calendar as plain reference data (name, hours, zone id, working days, holidays) for display — null if none is seeded.</summary>
+    Task<Dto.SlaCalendarDto?> GetActiveDescriptionAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ITicketSlaInstanceRepository

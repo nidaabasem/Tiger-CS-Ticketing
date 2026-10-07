@@ -114,6 +114,54 @@ public sealed class ShellRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task Login_SaysSo_WhenThePasswordWasJustChanged()
+    {
+        var html = await Ok(await Client().GetAsync("/Login?passwordChanged=true"));
+
+        Assert.Contains("Your password was changed. Please sign in again.", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"alert alert-success\"", html, StringComparison.Ordinal);
+
+        var plain = await Ok(await Client().GetAsync("/Login"));
+        Assert.DoesNotContain("Your password was changed.", plain, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// "Change my password" is reachable from the account menu on every
+    /// signed-in screen and renders on the shared shell with the three
+    /// password fields, the policy beside the new one, and no inline style.
+    /// </summary>
+    [Fact]
+    public async Task ChangePassword_IsLinkedFromTheAccountMenu_AndRendersTheForm()
+    {
+        var dashboard = await Ok(await Client().GetAsync("/Dashboard"));
+        Assert.Contains("<a class=\"menu-item\" href=\"/Account/ChangePassword\">Change my password</a>", dashboard, StringComparison.Ordinal);
+
+        var html = await Ok(await Client().GetAsync("/Account/ChangePassword"));
+        Assert.Contains("<h1 class=\"page-title\">Change my password</h1>", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"panel admin-form-panel\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"Input.CurrentPassword\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"Input.NewPassword\"", html, StringComparison.Ordinal);
+        Assert.Contains("name=\"Input.ConfirmPassword\"", html, StringComparison.Ordinal);
+        Assert.Contains("autocomplete=\"current-password\"", html, StringComparison.Ordinal);
+        Assert.Contains("autocomplete=\"new-password\"", html, StringComparison.Ordinal);
+        Assert.Contains(TigerCsWeb::TigerCS.Web.Pages.Account.ChangePasswordModel.PasswordPolicyText, html, StringComparison.Ordinal);
+        Assert.Contains(">Change Password</button>", html, StringComparison.Ordinal);
+        Assert.Contains("Signed in as Test Agent", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("style=\"", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChangePassword_RequiresASignedInUser()
+    {
+        var anonymous = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        anonymous.DefaultRequestHeaders.Add("X-Test-Anonymous", "true");
+
+        var response = await anonymous.GetAsync("/Account/ChangePassword");
+
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task AccessDenied_UsesTheSameLayout()
     {
         var html = await Ok(await Client().GetAsync("/AccessDenied"));
@@ -285,6 +333,11 @@ public sealed class ShellRenderTests : IDisposable
     {
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
+            if (Request.Headers.ContainsKey("X-Test-Anonymous"))
+            {
+                return Task.FromResult(AuthenticateResult.NoResult());
+            }
+
             var role = Request.Headers.TryGetValue("X-Test-Role", out var header) ? header.ToString() : Roles.CsAgent;
             var identity = new ClaimsIdentity(
             [

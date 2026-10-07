@@ -201,7 +201,16 @@ public sealed record AssignTicketRequestDto(Guid AssignedEmployeeId, byte[] RowV
 /// <param name="TargetDepartmentId">Required. Must be an active department, and not the ticket's current one.</param>
 /// <param name="Reason">Required. Why the ticket is being transferred.</param>
 /// <param name="RowVersion">Required. The <c>rowVersion</c> from the ticket you read. A stale value is answered with 409.</param>
-public sealed record TransferTicketRequestDto(int TargetDepartmentId, string Reason, byte[] RowVersion);
+/// <param name="AssignToEmployeeId">
+/// Optional. Transfer-and-assign: once the ticket is in the target
+/// department, assign it to this employee in the same operation. The employee
+/// must be a member of the TARGET department (422 <c>employee-not-in-department</c>
+/// otherwise, and nothing is changed). When supplied, the target department's
+/// automatic assignment rules are not run — the explicit choice wins. When
+/// omitted the existing behaviour applies: the owner is cleared and the
+/// target department's rules decide.
+/// </param>
+public sealed record TransferTicketRequestDto(int TargetDepartmentId, string Reason, byte[] RowVersion, Guid? AssignToEmployeeId = null);
 
 public enum TicketMutationOutcome
 {

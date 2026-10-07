@@ -591,4 +591,20 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         // The queue id is the identity and never changes.
         Assert.Equal(queueId, afterUpdate.QueueId);
     }
+
+    [Fact]
+    public async Task Sla_Configuration_IsReadableByTheAdministrator()
+    {
+        var (admin, _) = await CreateClientAsync(Roles.SystemAdministrator);
+
+        var configuration = await ReadAsync<TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto>(
+            await admin.GetAsync("/api/admin/sla/configuration"));
+
+        // The four seeded per-priority policies, Critical first, and the rules the calculation applies.
+        Assert.Equal([1, 2, 3, 4], configuration.Policies.Select(p => (int)p.PriorityId));
+        Assert.Equal("24/7", configuration.Policies[0].ClockBasis);
+        Assert.Contains("classification", configuration.ClockStartRule, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Accept & Start", configuration.FirstResponseRule, StringComparison.Ordinal);
+        Assert.Contains("not implemented", configuration.PauseRule, StringComparison.Ordinal);
+    }
 }

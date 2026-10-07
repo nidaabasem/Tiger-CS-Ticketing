@@ -10,7 +10,10 @@ public enum AdminOutcome
     ValidationFailed,
 
     /// <summary>The request conflicts with current state (a duplicate name, a referenced record, an immutable version).</summary>
-    Conflict
+    Conflict,
+
+    /// <summary>A new password failed ASP.NET Core Identity's password validators; <c>Errors</c> lists their descriptions. The API answers 422.</summary>
+    PasswordPolicyViolation
 }
 
 public sealed record AdminResult<T>(AdminOutcome Outcome, T? Value = default, IReadOnlyList<string>? Errors = null)
@@ -39,6 +42,8 @@ public sealed record AdminResult(AdminOutcome Outcome, IReadOnlyList<string>? Er
     public static AdminResult Invalid(params string[] errors) => new(AdminOutcome.ValidationFailed, errors);
 
     public static AdminResult Conflict(params string[] errors) => new(AdminOutcome.Conflict, errors);
+
+    public static AdminResult PasswordPolicyViolation(IReadOnlyList<string> errors) => new(AdminOutcome.PasswordPolicyViolation, errors);
 }
 
 public sealed record SetActiveRequestDto(bool IsActive, string? Reason = null);

@@ -14,6 +14,14 @@ public interface IUserDepartmentAssignmentRepository
     Task<IReadOnlyCollection<UserDepartmentAssignment>> GetByDepartmentIdAsync(
         int departmentId, bool activeEmployeesOnly, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Every membership of every ACTIVE employee in an ACTIVE department, with
+    /// the Employee and Department loaded — the cross-department assignee
+    /// directory a CS Manager chooses from. Deactivated employees and
+    /// deactivated departments are excluded at the source.
+    /// </summary>
+    Task<IReadOnlyCollection<UserDepartmentAssignment>> ListActiveMembershipsAsync(CancellationToken cancellationToken = default);
+
     Task AddAsync(UserDepartmentAssignment assignment, CancellationToken cancellationToken = default);
 
     Task<UserDepartmentAssignment?> GetAsync(Guid employeeId, int departmentId, CancellationToken cancellationToken = default);

@@ -183,6 +183,35 @@ public sealed class AdministrationRenderTests : IDisposable
         Assert.Contains("identity__avatar--muted", withInactive, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The administrative "Reset password" panel exists for an existing user
+    /// only — never on the Add User form, where the initial password is set —
+    /// and states the policy beside the field, with both password entries
+    /// required and the optional reason that lands in the audit trail.
+    /// </summary>
+    [Fact]
+    public async Task UserEdit_OffersAResetPasswordPanel_ForAnExistingUserOnly()
+    {
+        var edit = await Ok(await GetAsync($"/Admin/Users/{AlmaId}"));
+
+        Assert.Contains("id=\"reset-password-title\">Reset password</h2>", edit, StringComparison.Ordinal);
+        Assert.Contains($"action=\"/Admin/Users/{AlmaId}?handler=ResetPassword\"", edit, StringComparison.Ordinal);
+        Assert.Contains("name=\"ResetPassword.NewPassword\"", edit, StringComparison.Ordinal);
+        Assert.Contains("name=\"ResetPassword.ConfirmPassword\"", edit, StringComparison.Ordinal);
+        Assert.Contains("name=\"ResetPassword.Reason\"", edit, StringComparison.Ordinal);
+        Assert.Contains("type=\"password\" required", edit, StringComparison.Ordinal);
+        Assert.Contains(UserEditModel.PasswordPolicyText, edit, StringComparison.Ordinal);
+        Assert.Contains(">Reset Password</button>", edit, StringComparison.Ordinal);
+        // The password never appears anywhere but the two input fields.
+        Assert.DoesNotContain("value=\"\" name=\"ResetPassword.NewPassword\"", edit, StringComparison.Ordinal);
+
+        var create = await Ok(await GetAsync("/Admin/Users/New"));
+        Assert.DoesNotContain("reset-password-title", create, StringComparison.Ordinal);
+        Assert.DoesNotContain("handler=ResetPassword", create, StringComparison.Ordinal);
+        // The same policy wording accompanies the initial password too.
+        Assert.Contains(UserEditModel.PasswordPolicyText, create, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Departments_ShowCodeNameMembersAndStatus_OnRowsThatOpen()
     {
@@ -218,6 +247,12 @@ public sealed class AdministrationRenderTests : IDisposable
         var edit = await Ok(await GetAsync("/Admin/RequestTypes/1"));
         Assert.Contains("approval requirement", edit, StringComparison.Ordinal);
         Assert.Contains("SLA value", edit, StringComparison.Ordinal);
+        // The effective configuration the calculation applies is explained next to the request-type rows.
+        Assert.Contains("How the SLA is applied to tickets (effective configuration)", edit, StringComparison.Ordinal);
+        Assert.Contains("Targets come from the per-priority SLA policy.", edit, StringComparison.Ordinal);
+        Assert.Contains("<td>15 min</td>", edit, StringComparison.Ordinal);
+        Assert.Contains("<td>1 day</td>", edit, StringComparison.Ordinal);
+        Assert.Contains("08:00–18:00 Asia/Dubai", edit, StringComparison.Ordinal);
         // Who decides is said as kind + name, not as one run-on sentence.
         Assert.Contains("class=\"target__kind\">Department</span>", edit, StringComparison.Ordinal);
         Assert.Contains("class=\"target__name\">Finance</span>", edit, StringComparison.Ordinal);
@@ -416,6 +451,11 @@ public sealed class AdministrationRenderTests : IDisposable
                 "api/admin/departments/2" => Json(FinanceDetail),
                 "api/admin/request-types" => Json(RequestTypes(includeInactive)),
                 "api/admin/request-types/1" => Json(SendReceipts),
+                "api/admin/sla/configuration" => Json(new TigerCS.Application.Modules.SlaAndEscalation.Dto.SlaConfigurationDto(
+                    [new(1, "Critical", 15, 240, "24/7", 50, true), new(2, "High", 60, 1440, "Business hours", 75, true)],
+                    new("Default", "08:00", "18:00", "Asia/Dubai", ["Sunday", "Monday"], 0, []),
+                    "The SLA clock starts at classification.", "Targets come from the per-priority SLA policy.",
+                    "First response is satisfied only by a recorded human response.", "Pause and resume are not implemented in this release.")),
                 "api/admin/workflows" => Json(Workflows(includeInactive)),
                 "api/admin/workflows/catalog" => Json(Catalog),
                 "api/admin/workflows/1" => Json(ReceiptsWorkflow),

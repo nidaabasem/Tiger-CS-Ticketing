@@ -209,7 +209,10 @@ public sealed class GenesysScreenPopAppService(
         var displayName = agent.DisplayName ?? agent.UserName ?? agent.GenesysUserId;
         var roles = resolution.Roles ?? [];
         var primary = await departmentAssignments.GetPrimaryAsync(agent.UserId, cancellationToken);
-        var issued = tokenService.CreateAccessToken(agent.UserId, displayName, roles);
+        // The stamp the token is bound to — the same binding a password login
+        // gets, so a Screen Pop session also ends when the password changes.
+        var securityStamp = await accountManager.GetSecurityStampAsync(agent.UserId, cancellationToken) ?? string.Empty;
+        var issued = tokenService.CreateAccessToken(agent.UserId, displayName, roles, securityStamp);
 
         return new GenesysScreenPopRedeemResult(
             GenesysScreenPopRedeemOutcome.SignedIn,

@@ -228,6 +228,15 @@
         var sideCards = Model.BreakdownCards.Where(c => sideTitles.Contains(c.Title)).ToList();
         var otherCards = Model.BreakdownCards.Where(c => !sideTitles.Contains(c.Title)).ToList();
 
+        @* ---- Operational breakdowns (Volume by Channel, Volume by Request Type, Open Backlog Ageing, Priority)
+             sit ABOVE the ticket table: filters and KPI cards → breakdown cards → ticket table. ---- *@
+        <section class="dash-grid" aria-label="Operational breakdown">
+            @foreach (var card in otherCards)
+            {
+                @await Html.PartialAsync("_DashboardBarCard", card)
+            }
+        </section>
+
         <section class="dash-main" aria-label="Tickets requiring attention">
             @* ---- Tickets requiring attention (Recent / Critical Tickets): breached, then due soon, then Critical/High, then newest. ---- *@
             <div class="panel">
@@ -331,12 +340,5 @@
             </div>
         </section>
 
-        @* ---- Operational breakdowns: label left, bar centre, count + percentage right. ---- *@
-        <section class="dash-grid" aria-label="Operational breakdown">
-            @foreach (var card in otherCards)
-            {
-                @await Html.PartialAsync("_DashboardBarCard", card)
-            }
-        </section>
     }
 </div>

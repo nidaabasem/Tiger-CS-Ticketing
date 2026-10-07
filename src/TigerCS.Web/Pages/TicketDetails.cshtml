@@ -107,19 +107,79 @@ else
                             <div class="disclosure__panel">
                                 <form method="post" asp-page-handler="Assign" class="action-form">
                                     <input type="hidden" asp-for="Assign.RowVersionBase64" />
-                                    <div class="field-group">
-                                        <label class="field-label" asp-for="Assign.AssignedEmployeeId">Assign to</label>
-                                        <select class="field-select" asp-for="Assign.AssignedEmployeeId">
-                                            @foreach (var member in Model.AssignableEmployees)
+                                    @if (Model.CanAssignAcrossDepartments)
+                                    {
+                                        @* CS Manager: the whole directory, grouped by department, the
+                                           ticket's own department first. Picking someone in another
+                                           department transfers the ticket there and assigns it in one
+                                           step (reason required) — the Api enforces that the assignee
+                                           belongs to the resulting department. *@
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Assign.Target">Assign to</label>
+                                            <select class="field-select" asp-for="Assign.Target" data-assign-current-department="@t.CurrentDepartmentId">
+                                                <option value="">— choose a person —</option>
+                                                @foreach (var group in Model.AssignableByDepartment)
+                                                {
+                                                    var isCurrent = group.DepartmentId == Model.Ticket.CurrentDepartmentId;
+                                                    <optgroup label="@group.Name@(isCurrent ? " (current department)" : "")">
+                                                        @if (group.Members.Count == 0)
+                                                        {
+                                                            <option value="" disabled>No active members</option>
+                                                        }
+                                                        @foreach (var member in group.Members)
+                                                        {
+                                                            var otherDepartments = member.Departments.Where(d => d.DepartmentId != group.DepartmentId).Select(d => d.Name).ToList();
+                                                            <option value="@member.EmployeeId|@group.DepartmentId">@member.DisplayName — @string.Join(", ", member.Roles)@(otherDepartments.Count > 0 ? $" (also in {string.Join(", ", otherDepartments)})" : "")</option>
+                                                        }
+                                                    </optgroup>
+                                                }
+                                            </select>
+                                            @if (Model.AssignableUsersOutcome == ApiOutcome.Forbidden)
                                             {
-                                                <option value="@member.EmployeeId">@member.DisplayName</option>
+                                                <span class="field-hint field-hint--error">You are not permitted to load the cross-department directory.</span>
                                             }
-                                        </select>
-                                        @if (Model.AssignableEmployees.Count == 0)
-                                        {
-                                            <span class="field-hint">No active members found in this department.</span>
-                                        }
-                                    </div>
+                                            else if (Model.AssignableUsersOutcome != ApiOutcome.Success)
+                                            {
+                                                <span class="field-hint field-hint--error">The assignee directory could not be loaded (@Model.AssignableUsersOutcome). Reload the page or try again later.</span>
+                                            }
+                                            else if (Model.AssignableUsers.Count == 0)
+                                            {
+                                                <span class="field-hint">No active employees are members of any department yet.</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="field-hint">Choosing someone in another department transfers the ticket to that department and assigns it to them. A person in several departments is listed under each.</span>
+                                            }
+                                        </div>
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Assign.Reason">Reason (required when the person is in another department)</label>
+                                            <textarea class="form-control" asp-for="Assign.Reason" rows="2" placeholder="Why the ticket moves to that department"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="Assign.Target">Assign to</label>
+                                            <select class="field-select" asp-for="Assign.Target">
+                                                @foreach (var member in Model.AssignableEmployees)
+                                                {
+                                                    <option value="@member.EmployeeId|@t.CurrentDepartmentId">@member.DisplayName — @string.Join(", ", member.Roles)</option>
+                                                }
+                                            </select>
+                                            @if (Model.AssignableEmployeesOutcome == ApiOutcome.Forbidden || Model.AssignableEmployeesOutcome == ApiOutcome.Unauthorized)
+                                            {
+                                                <span class="field-hint field-hint--error">You are not permitted to load this department's members.</span>
+                                            }
+                                            else if (Model.AssignableEmployeesOutcome != ApiOutcome.Success)
+                                            {
+                                                <span class="field-hint field-hint--error">The member list could not be loaded (@Model.AssignableEmployeesOutcome). Reload the page or try again later.</span>
+                                            }
+                                            else if (Model.AssignableEmployees.Count == 0)
+                                            {
+                                                <span class="field-hint">No active members found in this department.</span>
+                                            }
+                                        </div>
+                                    }
                                     <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Assign</button></div>
                                 </form>
                             </div>
@@ -463,12 +523,52 @@ else
                     }
                     else
                     {
+                        var sla = Model.Sla;
+                        var why = sla.Explanation;
+                        @if (why is { HasActivePeriod: false })
+                        {
+                            @* No clock is running — say exactly why, before any dashes. *@
+                            <p class="sla-explain__reason">@why.NotStartedReason</p>
+                        }
                         <dl>
-                            <div class="facts-row"><dt>First response due</dt><dd>@(Model.Sla.FirstResponseDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
-                            <div class="facts-row"><dt>First response</dt><dd class="@(Model.Sla.FirstResponseBreached ? "is-critical" : "")">@(Model.Sla.FirstHumanResponseAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? (Model.Sla.FirstResponseBreached ? "Breached" : "Pending"))</dd></div>
-                            <div class="facts-row"><dt>Resolution due</dt><dd>@(Model.Sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Resolution</dt><dd class="@(Model.Sla.ResolutionBreached ? "is-critical" : "")">@(Model.Sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(Model.Sla.SlaState))</dd></div>
+                            <div class="facts-row"><dt>SLA status</dt><dd>@TicketDisplay.SlaStateLabel(sla.SlaState)</dd></div>
+                            @if (why is not null)
+                            {
+                                <div class="facts-row"><dt>Applied priority</dt><dd>@(why.AppliedPriorityLabel ?? "Not set")</dd></div>
+                                <div class="facts-row"><dt>Policy</dt><dd>@(why.FirstResponseTargetMinutes is null ? "None" : why.PolicySource)</dd></div>
+                                @if (why.FirstResponseTargetMinutes is int fr && why.ResolutionTargetMinutes is int res)
+                                {
+                                    <div class="facts-row"><dt>Targets</dt><dd>First response @TicketDisplay.FormatMinutes(fr) · Resolution @TicketDisplay.FormatMinutes(res)</dd></div>
+                                }
+                                @if (why.ClockBasis is not null)
+                                {
+                                    <div class="facts-row"><dt>Clock</dt><dd>@why.ClockBasis@(why.Calendar is null ? "" : $" ({why.Calendar.BusinessDayStartLocal}–{why.Calendar.BusinessDayEndLocal} {why.Calendar.TimeZoneId})")</dd></div>
+                                }
+                                <div class="facts-row"><dt>Clock started</dt><dd>@(why.ClockStartedAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "Not started")</dd></div>
+                            }
+                            <div class="facts-row"><dt>First response due</dt><dd>@(sla.FirstResponseDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
+                            <div class="facts-row"><dt>First response</dt><dd class="@(sla.FirstResponseBreached ? "is-critical" : "")">@(sla.FirstHumanResponseAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? (sla.FirstResponseBreached ? "Breached" : why is { HasActivePeriod: false } ? "Not started" : "Pending"))</dd></div>
+                            <div class="facts-row"><dt>Resolution due</dt><dd>@(sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
+                            <div class="facts-row"><dt>Resolution</dt><dd class="@(sla.ResolutionBreached ? "is-critical" : "")">@(sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(sla.SlaState))</dd></div>
                         </dl>
+                        @if (why is not null)
+                        {
+                            <details class="sla-explain">
+                                <summary class="link-muted">How this SLA is calculated</summary>
+                                <ul class="sla-explain__notes">
+                                    @foreach (var note in why.Notes)
+                                    {
+                                        <li>@note</li>
+                                    }
+                                    @if (why.Calendar is { } cal)
+                                    {
+                                        <li>Business calendar “@cal.Name”: @cal.BusinessDayStartLocal–@cal.BusinessDayEndLocal (@cal.TimeZoneId), working days @string.Join(", ", cal.WorkingDays); @cal.HolidayCount holiday@(cal.HolidayCount == 1 ? "" : "s") configured.</li>
+                                    }
+                                    <li><strong>First response:</strong> @why.FirstResponseRule</li>
+                                    <li><strong>Pausing:</strong> @why.PauseRule</li>
+                                </ul>
+                            </details>
+                        }
                     }
                 </div>
                         </aside>

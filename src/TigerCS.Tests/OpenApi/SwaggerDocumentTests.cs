@@ -64,8 +64,10 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/auth/login",
         "POST /api/auth/screen-pop/redeem",
         "POST /api/auth/logout",
+        "POST /api/auth/change-password",
 
         "GET /api/users/me",
+        "GET /api/users/assignable",
         "PATCH /api/users/{employeeId}/activation",
 
         "GET /api/roles",
@@ -117,6 +119,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
 
         "GET /api/dashboard",
         "GET /api/dashboard/overview",
+        "GET /api/reports/team-performance",
+        "GET /api/reports/team-performance/records",
 
         // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
         // Automatic Level 2 escalation on breach has no entry here on
@@ -165,6 +169,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/pending-customer-interactions/{handoffId}/complete",
         "POST /api/pending-customer-interactions/{handoffId}/cancel",
         "GET /api/tickets/{ticketId}/interactions",
+        "GET /api/admin/sla/configuration",
         "GET /api/admin/genesys/queue-mappings",
         "POST /api/admin/genesys/queue-mappings",
         "PUT /api/admin/genesys/queue-mappings/{genesysQueueMappingId}",
@@ -179,6 +184,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "PUT /api/admin/users/{employeeId}/roles",
         "POST /api/admin/users/{employeeId}/departments",
         "DELETE /api/admin/users/{employeeId}/departments/{departmentId}",
+        "POST /api/admin/users/{employeeId}/password",
         "GET /api/admin/departments",
         "GET /api/admin/departments/{departmentId}",
         "POST /api/admin/departments",

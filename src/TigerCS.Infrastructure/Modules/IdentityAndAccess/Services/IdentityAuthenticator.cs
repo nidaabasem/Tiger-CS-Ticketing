@@ -46,6 +46,10 @@ public sealed class IdentityAuthenticator(
         }
 
         var roles = await userManager.GetRolesAsync(user);
-        return CredentialCheckResult.Success(employee.EmployeeId, employee.DisplayName, roles.ToList());
+        // The stamp the issued token is bound to: Identity rotates it on every
+        // password reset/change, and ActiveEmployeeHandler compares it on
+        // every request — see TigerCsTokenClaims.SecurityStamp.
+        var securityStamp = await userManager.GetSecurityStampAsync(user);
+        return CredentialCheckResult.Success(employee.EmployeeId, employee.DisplayName, roles.ToList(), securityStamp);
     }
 }
