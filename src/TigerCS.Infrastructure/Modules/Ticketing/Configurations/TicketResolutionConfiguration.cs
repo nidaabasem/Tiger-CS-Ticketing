@@ -19,6 +19,7 @@ public class TicketResolutionConfiguration : IEntityTypeConfiguration<TicketReso
         builder.Property(r => r.ResolutionNote).HasMaxLength(4000).IsRequired();
         builder.Property(r => r.ResolvedAtUtc).IsRequired();
         builder.Property(r => r.IsCurrent).IsRequired();
+        builder.Property(r => r.ClosedForCustomerInactivity).IsRequired().HasDefaultValue(false);
 
         // MVP-ERD.md §2.14: "Optional until first resolution; required
         // before Closed" — one current resolution per ticket.

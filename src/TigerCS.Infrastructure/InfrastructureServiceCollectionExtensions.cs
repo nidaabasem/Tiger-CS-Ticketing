@@ -12,6 +12,9 @@ using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Application.Modules.CrmDocuments;
+using TigerCS.Application.Modules.CrmDocuments.Abstractions;
+using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration;
@@ -153,6 +156,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IContactReferenceRepository, ContactReferenceRepository>();
         services.AddScoped<IVerificationSessionRepository, VerificationSessionRepository>();
         services.AddScoped<ICustomerVerificationUnitOfWork, CustomerVerificationUnitOfWork>();
+
+        // Chatbot "send me a copy of my document" — identity from the existing
+        // verification session, records from the CRM document gateway
+        // (registered by AddTigerCsIntegrations; fails closed until Tiger CRM
+        // publishes a document endpoint), delivery by the email channel
+        // sender. CrmDocuments:Enabled gates the endpoint.
+        services.Configure<CrmDocumentOptions>(configuration.GetSection(CrmDocumentOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<CrmDocumentOptions>>().Value);
+        services.AddScoped<ICrmDocumentDeliveryRepository, CrmDocumentDeliveryRepository>();
+        services.AddScoped<CrmDocumentCopyAppService>();
         services.AddScoped<CrmUnitLookupAppService>();
         services.AddScoped<CrmBuyerLookupAppService>();
         services.AddScoped<VerificationSessionAppService>();
@@ -297,6 +310,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GenesysConversationEndAppService>();
         services.AddScoped<GenesysAgentHandoffAppService>();
         services.AddScoped<GenesysTicketUpdateAppService>();
+        services.AddScoped<ChatbotInactivityCloseAppService>();
         services.AddScoped<GenesysCustomerLookupAppService>();
         services.AddScoped<GenesysCustomerUnitDetailsAppService>();
 

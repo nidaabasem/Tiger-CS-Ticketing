@@ -10,6 +10,8 @@ switching the integration on).
 |---|---|
 | `data-actions/00-custom-auth-request-config.json` | Request configuration for the auto-created **Custom Auth** action |
 | `data-actions/01-customer-lookup.json` … `07-customer-confirmed-resolved.json` | Data actions in Genesys' import format |
+| `data-actions/10-awaiting-customer-reply.json` | Chatbot inactivity timer — start/cancel (`awaitingCustomerReply`); see `docs/releases/UAT-Chatbot-Inactivity-And-Document-Copy.md` |
+| `data-actions/11-send-document-copy.json` | Chatbot asks for a copy of a contract / reservation form / unit layout / registration receipt; see `Document-Copy-API.md`. Blocked on Tiger CRM document endpoints |
 | `data-actions/08-collections-payment-summary.json`, `09-collections-payment-transactions.json` | Collections reads (§11a). Not yet imported or run in Genesys |
 | `TigerCS-Genesys.postman_collection.json` | End-to-end Postman run of every call below |
 | `../architecture/Genesys-API-Contracts.md` | The HTTP contracts in full |
@@ -44,7 +46,7 @@ Genesys Cloud ──OAuth2 client_credentials──▶ TigerGroupWeb  (https://t
 
 A fourth, read-only route serves the chatbot/voicebot — verified customer's unit and
 project details, `POST /api/genesys/customers/unit-details`, Data Action
-`TigerCS - Customer Unit Details` (`data-actions/10-…json`). See
+`TigerCS - Customer Unit Details` (`data-actions/12-…json`). See
 `Customer-Unit-Details-API.md`; TigerGroupWeb must forward this route too.
 
 Contract 3 is **one** endpoint. It has five data actions only because a

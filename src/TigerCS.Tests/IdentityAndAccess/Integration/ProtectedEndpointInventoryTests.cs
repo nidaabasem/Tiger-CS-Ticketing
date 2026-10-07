@@ -77,6 +77,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         // The three Genesys contracts.
         ["POST /api/genesys/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
         ["PATCH /api/genesys/tickets/{ticketId:long}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/documents/send-copy"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysDocumentSendCopy_AuthorizedThroughTheOverride),
         ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
         ["POST /api/genesys/customers/unit-details"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerUnitDetails_AuthorizedThroughTheOverride),
         // Genesys agent identity mapping — the strict agent-action endpoint.

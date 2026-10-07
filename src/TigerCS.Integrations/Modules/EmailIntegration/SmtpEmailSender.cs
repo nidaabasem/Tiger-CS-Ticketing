@@ -112,6 +112,12 @@ public sealed class SmtpEmailSender(
                 AlternateView.CreateAlternateViewFromString(message.HtmlBody, Encoding.UTF8, MediaTypeNames.Text.Html));
         }
 
+        foreach (var attachment in message.Attachments ?? [])
+        {
+            // MailMessage owns and disposes the stream with the message.
+            mail.Attachments.Add(new Attachment(new MemoryStream(attachment.Content), attachment.FileName, attachment.ContentType));
+        }
+
         return mail;
     }
 

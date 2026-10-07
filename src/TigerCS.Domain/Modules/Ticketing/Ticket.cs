@@ -723,6 +723,44 @@ public class Ticket
         DuplicateOfTicketId = outcome == ResolutionOutcomeValue.Duplicate ? duplicateOfTicketId : null;
     }
 
+    /// <summary>
+    /// Chatbot inactivity closure: the customer never answered the chatbot, so
+    /// the ticket is closed <b>without</b> anyone having worked or confirmed
+    /// it. The lifecycle still requires Resolved before Closed, so this
+    /// performs both transitions in one step and returns the status the ticket
+    /// held before — the caller writes the two history rows (old→Resolved,
+    /// Resolved→Closed) and the resolution row, with outcome
+    /// <see cref="ResolutionOutcomeValue.Cancelled"/>: the honest outcome,
+    /// because nothing here says the customer's issue was resolved.
+    ///
+    /// <para>
+    /// Deliberately narrower than <see cref="Resolve"/> in what it will
+    /// <i>not</i> do: a ticket with a human owner is refused
+    /// (<see cref="TicketNotEligibleForResolutionException"/>) — the human has
+    /// taken it, so a silent customer is theirs to follow up. It is the only
+    /// path that resolves an <see cref="TicketStatus.Open"/> ticket, because a
+    /// chatbot ticket nobody has been assigned cannot be moved to InProgress
+    /// (<see cref="ChangeStatus"/> requires an owner).
+    /// </para>
+    /// </summary>
+    public TicketStatus CloseForCustomerInactivity()
+    {
+        EnsureNotClosed();
+
+        if (TicketStatus is not (TicketStatus.Open or TicketStatus.InProgress or TicketStatus.PendingCustomer)
+            || CurrentOwnerEmployeeId is not null)
+        {
+            throw new TicketNotEligibleForResolutionException(TicketId, TicketStatus);
+        }
+
+        var previous = TicketStatus;
+        TicketStatus = TicketStatus.Resolved;
+        ResolutionOutcome = (byte)ResolutionOutcomeValue.Cancelled;
+        DuplicateOfTicketId = null;
+        TicketStatus = TicketStatus.Closed;
+        return previous;
+    }
+
     /// <summary>MVP-API-Contracts.md §3.10 — the final, CS-layer-only close, distinct from Resolve. Requires a current TicketResolutions row (enforced by the caller — this method only enforces the TicketStatus precondition).</summary>
     public void Close()
     {
@@ -786,14 +824,23 @@ public class Ticket
     /// </para>
     /// </summary>
     /// <param name="targetDepartmentId">The department that takes responsibility for the reopened work.</param>
-    public void Reopen(int targetDepartmentId)
+    /// <param name="closedForCustomerInactivity">
+    /// The one carve-out from the Resolved-only rule: the caller has read the
+    /// current resolution and it is the chatbot inactivity closure
+    /// (<see cref="TicketResolution.ClosedForCustomerInactivity"/>), so a
+    /// <b>Cancelled</b> outcome is reopenable for this closure — and only this
+    /// one. Rejected, Duplicate and every other Cancelled stay final.
+    /// </param>
+    public void Reopen(int targetDepartmentId, bool closedForCustomerInactivity = false)
     {
         if (TicketStatus is not TicketStatus.Closed)
         {
             throw new TicketNotEligibleForReopenException(TicketId, TicketStatus);
         }
 
-        if (ResolutionOutcome != (byte)ResolutionOutcomeValue.Resolved)
+        var reopenableOutcome = ResolutionOutcome == (byte)ResolutionOutcomeValue.Resolved
+            || (closedForCustomerInactivity && ResolutionOutcome == (byte)ResolutionOutcomeValue.Cancelled);
+        if (!reopenableOutcome)
         {
             throw new TicketResolutionOutcomeNotReopenableException(TicketId, ResolutionOutcome);
         }

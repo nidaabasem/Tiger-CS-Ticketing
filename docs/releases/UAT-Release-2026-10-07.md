@@ -22,7 +22,7 @@ commands on push.
 | 5 | CS Manager — empty Assign dropdown | Implemented, tested | Ticket Details → Assign: CS Manager gets the whole directory grouped by department (ticket's own department first; multi-department users under each; names, roles, departments); choosing another department = transfer-and-assign with a required reason (`POST api/tickets/{id}/transfer` with `assignToEmployeeId`); a failed/forbidden member-list call is shown as such, never as "No active members"; API `GET api/users/assignable` |
 | 6 | Dashboard layout | Implemented, tested | Filters + KPI cards → Volume by Channel, Volume by Request Type, Open Backlog Ageing, Priority → ticket table; existing responsive grid rules keep one column under 720 px |
 | 7 | Pending Interactions actions | Implemented, tested | Buttons: Open Ticket · Accept & Start · Complete Follow-up · Cancel Follow-up (reason required); "What do these actions do?" help block; "session ended" tooltip states the follow-up is not completed by it |
-| 8 | Chatbot/voicebot — verified customer's unit and project details | **Partially implemented** (Ticketing side only; CRM route and TigerGroupWeb forwarding outstanding — see Item 8) | API `POST /api/genesys/customers/unit-details` (Genesys service-account auth, same proxy pattern); `docs/Genesys/Customer-Unit-Details-API.md` (request, samples, errors, field sources); Data Action `docs/Genesys/data-actions/10-customer-unit-details.json` |
+| 8 | Chatbot/voicebot — verified customer's unit and project details | **Partially implemented** (Ticketing side only; CRM route and TigerGroupWeb forwarding outstanding — see Item 8) | API `POST /api/genesys/customers/unit-details` (Genesys service-account auth, same proxy pattern); `docs/Genesys/Customer-Unit-Details-API.md` (request, samples, errors, field sources); Data Action `docs/Genesys/data-actions/12-customer-unit-details.json` |
 
 ### Item 8 — status: **PARTIALLY IMPLEMENTED**
 
@@ -33,7 +33,7 @@ commands on push.
 | Tiger CRM `GET /TicketingSystem/GetUnitDetails` | **Not built.** CRM source/DB not accessible to the implementer |
 | CRM field-to-column mapping | **Not done** (needs the CRM schema) |
 | TigerGroupWeb forwards `POST /api/genesys/customers/unit-details` | **Not done.** TigerGroupWeb source not accessible |
-| Genesys Data Action `10-customer-unit-details.json` | Matches the Ticketing contract; not imported/tested in Genesys |
+| Genesys Data Action `12-customer-unit-details.json` | Matches the Ticketing contract; not imported/tested in Genesys |
 | Verified against CRM UAT with an authorized customer | **Not done** — no network path to CRM from the build environment |
 
 Until the CRM route is deployed, UAT shows: unit id/number, floor, unit-type
@@ -48,17 +48,23 @@ Projects requiring change/deployment: **Tiger CRM** (new route), **TigerGroupWeb
 (forward the route), **Tiger CS Ticketing** (this release), **Genesys Cloud**
 (import the Data Action).
 
-### Outstanding requirements — still open, visible here on purpose
+### Chatbot / voicebot and customer-service requirements — status for UAT
 
-| Requirement | Status |
-|---|---|
-| Chatbot inactivity closure (timeout) API | **Not implemented** — no code or design in this repository |
-| Document-copy API | **Not implemented** — no code or design in this repository |
+| Requirement | Status | Detail |
+|---|---|---|
+| Chatbot inactivity closure (outcome **Cancelled**) | **Implemented; tested on fakes + SQLite only** | Merged here from `claude/admiring-brown-73jnmx`. Never run on SQL Server, Hangfire or a deployed host. Needs `BackgroundJobs__Enabled=true`. Config and PATCH payloads: `docs/Genesys/Chatbot-Inactivity-UAT-Configuration.md` |
+| Reopen of inactivity closures (CS Agent / Supervisor / Manager; SysAdmin override) | **Implemented; tested on fakes + SQLite only** | Only this closure; other Cancelled stay final; closure audit preserved. New migration `AddResolutionClosedForCustomerInactivity` |
+| Document-copy API | **BLOCKED for real UAT** | No CRM document source, no real verification/OTP path, no WhatsApp, no proxy route. Only Mock/recording-email tested — **not** end-to-end delivery. `docs/Genesys/CRM-Document-Operations-Requirements.md` |
+| TigerGroupWeb forwarding (unit-details, send-copy, `awaitingCustomerReply` PATCH) | **Not done** (source not accessible) | `docs/Genesys/TigerGroupWeb-Proxy-Change.md` |
+| Next payment via the chatbot | **Open** | Leading root cause from code: no live source behind it in UAT (`CollectionsSource:Provider=Unavailable`; summary has no dates). Not reproduced. `docs/Collections/Next-Payment-Investigation.md` |
 
 ## Database
 
-**No new migration.** `dotnet ef migrations has-pending-model-changes`
-reports no model changes; the latest migration remains
+**Two additive migrations since the base release** (both idempotent scripts at the repository root,
+run in this order): `AddChatbotInactivityAndCrmDocumentCopies.sql` (timer columns, document-delivery table) and
+`AddResolutionClosedForCustomerInactivity.sql` (one `bit NOT NULL DEFAULT 0` column on `TicketResolutions`).
+`dotnet ef migrations has-pending-model-changes` reports no model changes after them. Items 1–7 above need
+neither. The base release's latest migration was
 `20261005072511_AddCollectionsReminders`. The UAT database must already be
 at that migration (idempotent script `AddCollectionsReminders.sql` at the
 repository root; `docs/Collections/Collections-Integration.md` §8 notes it

@@ -41,7 +41,13 @@ public interface IEmailSender
 /// <param name="Body">Rendered plain-text body — always present, so a client that cannot render HTML still gets the message.</param>
 /// <param name="CorrelationId">ADR-0014's correlation ID, propagated into provider calls so a delivery is traceable end-to-end.</param>
 /// <param name="HtmlBody">Optional rendered HTML alternative. Adapters that support multipart mail send both; the plain text is the fallback.</param>
-public sealed record EmailMessage(string ToAddress, string Subject, string Body, Guid CorrelationId, string? HtmlBody = null);
+/// <param name="Attachments">Optional files (customer document copies). Held in memory for the send only.</param>
+public sealed record EmailMessage(
+    string ToAddress, string Subject, string Body, Guid CorrelationId, string? HtmlBody = null,
+    IReadOnlyList<EmailAttachment>? Attachments = null);
+
+/// <summary>A file sent with an email — used for customer document copies. Held in memory only for the length of the send; never logged and never persisted by the sender.</summary>
+public sealed record EmailAttachment(string FileName, string ContentType, byte[] Content);
 
 /// <summary>Whether a send succeeded, may succeed later, or never will.</summary>
 public enum EmailSendOutcome

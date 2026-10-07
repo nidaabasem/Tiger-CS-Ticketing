@@ -134,6 +134,17 @@ public sealed record GenesysConversationEndResponse(
 /// <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
 /// <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
+/// <param name="AwaitingCustomerReply">
+/// Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
+/// something and is waiting for the reply: TigerCS starts a persistent timer
+/// (server clock). Repeating <c>true</c> while the timer runs changes nothing — a retried
+/// webhook never restarts it. <c>false</c> = the customer replied: the timer is cancelled.
+/// Send <c>true</c> again with the chatbot's next question to start a new one. If the customer
+/// stays silent for more than <c>Genesys:CustomerInactivityTimeoutMinutes</c> (default 5), a
+/// background job closes the ticket as a customer-inactivity closure — unless a human has been
+/// requested or assigned, or the conversation ended, in which case no timer runs.
+/// <b>Omit it</b> to leave the timer as it is.
+/// </param>
 public sealed record GenesysTicketUpdateRequest(
     string ConversationId,
     string? AgentId = null,
@@ -142,7 +153,8 @@ public sealed record GenesysTicketUpdateRequest(
     GenesysHandoffPart? Handoff = null,
     DateTime? StartedAtUtc = null,
     GenesysRoutingPart? Routing = null,
-    GenesysCustomerConfirmationPart? CustomerConfirmation = null);
+    GenesysCustomerConfirmationPart? CustomerConfirmation = null,
+    bool? AwaitingCustomerReply = null);
 
 /// <summary>
 /// The customer explicitly confirmed, during the interaction, that the issue
@@ -222,6 +234,9 @@ public sealed record GenesysHandoffPart(
 /// <param name="TranscriptMessageCount">How many transcript messages the interaction holds after this update.</param>
 /// <param name="HandoffStatus">The pending human work's status when there is any: WaitingForAgent, Assigned, InProgress, Completed or Cancelled. Null when this conversation never needed a human.</param>
 /// <param name="TicketAgentHandoffId">That work item's id, when there is one.</param>
+/// <param name="AwaitingCustomerReply">Whether the inactivity timer is running for this conversation after this update.</param>
+/// <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs; otherwise null.</param>
+/// <param name="AwaitingCustomerReplyNote">Why a requested timer was not started (e.g. human follow-up pending), when it was not.</param>
 public sealed record GenesysTicketUpdateResponse(
     string Outcome,
     string ConversationId,
@@ -231,7 +246,10 @@ public sealed record GenesysTicketUpdateResponse(
     bool ConversationEnded,
     int TranscriptMessageCount,
     string? HandoffStatus,
-    long? TicketAgentHandoffId);
+    long? TicketAgentHandoffId,
+    bool AwaitingCustomerReply = false,
+    DateTime? InactivityDeadlineUtc = null,
+    string? AwaitingCustomerReplyNote = null);
 
 /// <summary>
 /// The transport shape of a Genesys <b>agent action</b>: the Ticketing screen
@@ -434,7 +452,8 @@ internal static class GenesysContractMapper
             : new GenesysCustomerConfirmationUpdateDto(
                 request.CustomerConfirmation.ConfirmedResolved,
                 request.CustomerConfirmation.ConfirmedAtUtc,
-                Absent(request.CustomerConfirmation.Note)));
+                Absent(request.CustomerConfirmation.Note)),
+        request.AwaitingCustomerReply);
 
     internal static GenesysAgentContextDto Map(GenesysAgentContextRequest request) =>
         new(request.GenesysUserId, request.AgentEmail, request.ConversationId);
