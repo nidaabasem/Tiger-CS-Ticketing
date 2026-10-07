@@ -9,13 +9,12 @@ namespace TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 /// at unit and project level.
 ///
 /// <para>
-/// <b>No wire contract is invented here.</b> Tiger CRM publishes no endpoint
-/// for these facts, so the "Http" provider resolves
-/// <c>UnimplementedCrmUnitDetailsGateway</c>, which answers
-/// <see cref="CrmUnitDetailsOutcome.NotAvailable"/> — every enrichment value is
-/// then null in the API response, never a guess. Replace that class once the
-/// CRM team publishes the endpoint; the registration in
-/// <c>IntegrationsServiceCollectionExtensions</c> is the only wiring.
+/// Implemented by <c>CrmUnitDetailsHttpGateway</c> against CRM's
+/// <c>GET /TicketingSystem/GetUnitDetails</c>. That route is the contract the
+/// CRM team implements; until a CRM environment deploys it the gateway gets a
+/// 404 and answers <see cref="CrmUnitDetailsOutcome.NotAvailable"/>, so every
+/// enrichment value is null — never a guess. <c>Crm:Provider = "Mock"</c>
+/// (test host only) serves fixtures.
 /// </para>
 ///
 /// <para>

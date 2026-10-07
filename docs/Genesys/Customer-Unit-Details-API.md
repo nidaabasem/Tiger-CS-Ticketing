@@ -20,7 +20,7 @@ authenticates to TigerGroupWeb (OAuth client credentials, scope
 TigerCS service account, policy `CustomerVerification` (CS Agent / CS
 Supervisor). Genesys never holds TigerCS credentials.
 **TigerGroupWeb forwards a fixed list of routes, so it must be taught this
-route** (`POST /api/genesys/customers/unit-details`, body and response passed
+route (not done — its source was not accessible)** (`POST /api/genesys/customers/unit-details`, body and response passed
 through unchanged) before the Data Action `TigerCS - Customer Unit Details`
 can work. That change is outside this repository.
 
@@ -164,20 +164,58 @@ No field was invented for the rest.
 | `booking.reference` | buyer lookup `LeadId` — the CRM Lead the unit was sold/contracted through | real |
 | `booking.status` / `statusCode` | buyer lookup `LeadStatusName` / `LeadStatus` | real |
 | `project.projectId`, `name`, `arabicName` | buyer lookup | real |
-| `unit.tower`, `unitType.name`, `bedrooms`, `area` (+ unit), `parking`, unit-level handover dates | `ICrmUnitDetailsGateway` | **null** |
-| `project.address`, `status`, handover dates, `description`, `amenities` | `ICrmUnitDetailsGateway` | **null** |
+| `unit.tower`, `unitType.name`, `bedrooms`, `area` (+ unit), `parking`, unit-level handover dates | CRM `GetUnitDetails` (not yet built) | **null** until CRM deploys it |
+| `project.address`, `status`, handover dates, `description`, `amenities` | CRM `GetUnitDetails` (not yet built) | **null** until CRM deploys it |
 
-`ICrmUnitDetailsGateway` is the read-only port for the null rows. With
-`Crm:Provider = "Http"` (every real environment) it resolves
-`UnimplementedCrmUnitDetailsGateway`, which answers `NotAvailable`;
-`detailsStatus` then reads `NotAvailable` (or `Unavailable` if a future
-implementation cannot reach CRM). `Crm:Provider = "Mock"` (test host only)
-serves fixtures. **Needed from the CRM team:** an endpoint (or extension of
-`GetBuyerByPhone`) exposing the null rows, with its field names; then replace
-`UnimplementedCrmUnitDetailsGateway`. Nothing else changes. If CRM instead
-records those facts in PACT/Tasleeh, that is a mapping decision for the
-business — matching a CRM unit to a PACT contract by unit number is not done
-here because it would be a guess.
+## CRM contract (implemented by Tiger CRM — status: NOT YET BUILT OR VERIFIED)
+
+`ICrmUnitDetailsGateway` is the read-only port for the "ICrmUnitDetailsGateway"
+rows above. With `Crm:Provider = "Http"` (every real environment) it resolves
+`CrmUnitDetailsHttpGateway`, which calls the route below on the same
+`Crm:BaseUrl` with the same `X-SECRET-KEY` as `GetBuyerByPhone`. `Crm:Provider = "Mock"`
+(test host only) serves fixtures.
+
+```
+GET {Crm:BaseUrl}/TicketingSystem/GetUnitDetails?customerId={int}&unitId={int}
+X-SECRET-KEY: <Crm:SecretKey>
+```
+
+The CRM implementation **must itself check that `unitId` belongs to `customerId`**
+with CRM's existing Buyer rules (Lead Sold/Contract, CustomerType Buyer — the
+rules behind `GetBuyerByPhone`) and answer `404`/`found:false` otherwise. Ticketing
+checks too; CRM must not rely on that.
+
+```json
+{
+  "success": true, "found": true, "message": null,
+  "unit": {
+    "unitTypeName": "Apartment", "towerName": "Tower A", "bedrooms": 2,
+    "area": 1250.5, "areaUnit": "sqft",
+    "parking": [ { "number": "P-114", "level": "P1", "type": null } ],
+    "expectedHandoverDate": "2027-06-30", "actualHandoverDate": null,
+    "project": {
+      "address": "Dubai, UAE", "status": "Under construction",
+      "expectedHandoverDate": "2027-03-31", "actualHandoverDate": null,
+      "description": "A residential tower.", "amenities": ["Pool", "Gym"]
+    }
+  }
+}
+```
+
+Rules: every member is optional and `null` means *not recorded in CRM*; dates are
+ISO `yyyy-MM-dd` (an unreadable or pre-1900 value is read as not recorded);
+`parking` is `null` when unknown and `[]` only when CRM knows there is none;
+no internal notes, other customers or contacts may be returned. Ticketing maps
+statuses as: `200 found` → `Available`; `404`, `found:false` (and any CRM that has not
+deployed the route) → `NotAvailable`; timeout, 401, 400, 5xx, malformed body →
+`Unavailable`. In every non-`Available` case the API still answers `200` with
+CRM's buyer-lookup fields and `null` for the rest.
+
+**The member names above are a proposal.** The Tiger CRM source and database
+were not accessible when this was written, so no member has been bound to a
+real table/column. The CRM developer should bind each one (or correct the
+names here and in `CrmUnitDetailsHttpContracts.cs`) from the CRM schema; the
+field-to-source mapping is therefore still owed.
 
 ## Errors
 

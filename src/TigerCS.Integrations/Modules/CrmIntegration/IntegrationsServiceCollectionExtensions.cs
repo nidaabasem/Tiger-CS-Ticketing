@@ -79,16 +79,26 @@ public static class IntegrationsServiceCollectionExtensions
         });
 
         // Customer-facing unit/project facts CRM's buyer lookup does not carry.
-        // Same switch: "Http" fails closed to NotAvailable (no endpoint exists),
+        // "Http" calls CRM's GetUnitDetails route (CrmUnitDetailsHttpGateway; a CRM
+        // that has not deployed the route answers 404 -> NotAvailable -> nulls),
         // "Mock" serves fixture data.
         services.AddScoped<MockCrmUnitDetailsGateway>();
-        services.AddScoped<UnimplementedCrmUnitDetailsGateway>();
+        services.AddHttpClient<CrmUnitDetailsHttpGateway>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            {
+                client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
         services.AddScoped<ICrmUnitDetailsGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Http" => (ICrmUnitDetailsGateway)sp.GetRequiredService<UnimplementedCrmUnitDetailsGateway>(),
+                "Http" => (ICrmUnitDetailsGateway)sp.GetRequiredService<CrmUnitDetailsHttpGateway>(),
                 "Mock" => sp.GetRequiredService<MockCrmUnitDetailsGateway>(),
                 _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
             };
