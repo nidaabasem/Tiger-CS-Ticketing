@@ -23,6 +23,11 @@ builder.Services.AddRazorPages(options =>
     // the Web renders — every api/admin/* endpoint enforces the same policy
     // server-side, so hiding the pages is never the actual protection.
     options.Conventions.AuthorizeFolder("/Admin", AdministrationPolicy.Name);
+
+    // Reports: the CS Manager tier (CS Manager, General Manager, Chairman/
+    // CEO, System Administrator). Same principle as /Admin — the Api's
+    // CsManagerOrGeneralManager policy is the real protection.
+    options.Conventions.AuthorizeFolder("/Reports", ReportsPolicy.Name);
 });
 builder.Services.AddHttpContextAccessor();
 
@@ -72,6 +77,8 @@ builder.Services.AddHttpClient<DashboardApiClient>(client => client.BaseAddress 
     .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<AdminApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
+builder.Services.AddHttpClient<ReportsApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+    .AddHttpMessageHandler<BearerTokenHandler>();
 builder.Services.AddHttpClient<RequestTypesApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
     .AddHttpMessageHandler<BearerTokenHandler>();
 
@@ -95,7 +102,10 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     });
 
 builder.Services.AddAuthorization(options =>
-    options.AddPolicy(AdministrationPolicy.Name, policy => policy.RequireRole(AdministrationPolicy.RequiredRole)));
+{
+    options.AddPolicy(AdministrationPolicy.Name, policy => policy.RequireRole(AdministrationPolicy.RequiredRole));
+    options.AddPolicy(ReportsPolicy.Name, policy => policy.RequireRole(ReportsPolicy.AllowedRoles));
+});
 
 var app = builder.Build();
 

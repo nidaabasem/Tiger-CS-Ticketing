@@ -1,0 +1,280 @@
+@page "/Reports/TeamPerformance"
+@using System.Globalization
+@using TigerCS.Application.Modules.Reporting.Dto
+@model TigerCS.Web.Pages.Reports.TeamPerformanceModel
+@{
+    ViewData["Title"] = "Team Performance";
+    ViewData["ActiveNav"] = "reports";
+    Layout = "_Layout";
+    string DateValue(DateOnly? d) => d?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
+    var f = Model.Report?.Filters;
+    var options = Model.Report?.FilterOptions;
+}
+
+<div class="page report-workspace">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Team Performance</h1>
+            @if (Model.Report is not null)
+            {
+                <p class="page-subtitle">Activity for @Model.PeriodLabel · Currently Assigned reflects the open work each agent holds right now. Click a number to open its tickets.</p>
+            }
+        </div>
+        <div class="page-header__actions">
+            <a class="btn" href="/Dashboard">Dashboard</a>
+        </div>
+    </div>
+
+    @if (Model.Report is null)
+    {
+        <div class="panel">
+            <div class="@(Model.Outcome == ApiOutcome.Forbidden ? "empty-state" : "error-state") report-load-state">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+                @if (Model.Outcome == ApiOutcome.Forbidden)
+                {
+                    <p class="empty-state__title">No permission</p>
+                }
+                <p>@TeamPerformanceModel.LoadFailureMessage(Model.Outcome)</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        @* ---- Filters: a real GET form; the page keeps its state in the URL. ---- *@
+        <form class="filter-bar report-filters" id="teamPerformanceFilters" method="get" action="/Reports/TeamPerformance" aria-label="Team Performance filters">
+            <div class="field-group">
+                <label class="field-label" for="dateFrom">Date from</label>
+                <input class="field-input" type="date" id="dateFrom" name="dateFrom" value="@DateValue(Model.DateFrom ?? f!.DateFrom)" />
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="dateTo">Date to</label>
+                <input class="field-input" type="date" id="dateTo" name="dateTo" value="@DateValue(Model.DateTo ?? f!.DateTo)" />
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="employeeId">Employee</label>
+                <select class="field-select" id="employeeId" name="employeeId">
+                    <option value="">All employees</option>
+                    @foreach (var e in options!.Employees)
+                    {
+                        <option value="@e.Id" selected="@(Model.EmployeeId?.ToString() == e.Id)">@e.Label (@e.GroupLabel)</option>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="agentType">Role</label>
+                <select class="field-select" id="agentType" name="agentType">
+                    <option value="">All roles</option>
+                    @foreach (var t in options.AgentTypes)
+                    {
+                        <option value="@t" selected="@(string.Equals(Model.AgentType, t, StringComparison.OrdinalIgnoreCase))">@t</option>
+                    }
+                </select>
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="departmentId">Department</label>
+                <select class="field-select" id="departmentId" name="departmentId">
+                    <option value="">All departments</option>
+                    @foreach (var d in options.Departments)
+                    {
+                        <option value="@d.Id" selected="@(Model.DepartmentId?.ToString(CultureInfo.InvariantCulture) == d.Id)">@d.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-bar__submit">
+                <button type="submit" class="btn btn-sm">Apply</button>
+                @if (Model.HasFilters)
+                {
+                    <a class="btn btn-ghost btn-sm" href="/Reports/TeamPerformance">Clear</a>
+                }
+            </div>
+        </form>
+
+        @* ---- The report: one row per eligible agent, sorted by name, totals at the bottom. ---- *@
+        <div class="panel">
+            <div class="panel__header">
+                <div>
+                    <span class="panel__title">Agents</span>
+                    <div class="dash-card__subtitle">Active CS Agents and Call Center Agents · @Model.Report.Totals.Employees shown · period @Model.PeriodLabel</div>
+                </div>
+                @if (Model.Metric is not null)
+                {
+                    <a class="link-muted" href="@Model.ReportHref">Show all agents</a>
+                }
+            </div>
+            @if (Model.Report.Rows.Count == 0)
+            {
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8" /><path d="M4 20c1.8-3.2 4.5-5 8-5s6.2 1.8 8 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+                    <p class="empty-state__title">No agents match.</p>
+                    <p>No active employee in the CS Agent role matches these filters.</p>
+                </div>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="data-table report-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Employee</th>
+                                <th scope="col">Role</th>
+                                <th scope="col">Departments</th>
+                                <th scope="col" class="cell-num">Currently Assigned</th>
+                                <th scope="col" class="cell-num">Tickets Worked</th>
+                                <th scope="col" class="cell-num">Completed Follow-ups</th>
+                                <th scope="col" class="cell-num">SLA Breaches</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.Report.Rows)
+                            {
+                                <tr>
+                                    <td class="cell-primary">@row.DisplayName</td>
+                                    <td>@row.AgentType</td>
+                                    <td>@TeamPerformanceModel.DepartmentsText(row.Departments)</td>
+                                    <td class="cell-num"><a class="report-count" href="@Model.RecordsHref(row.EmployeeId, TeamPerformanceMetric.CurrentlyAssigned)" title="Open @row.DisplayName's currently assigned tickets">@row.CurrentlyAssigned</a></td>
+                                    <td class="cell-num"><a class="report-count" href="@Model.RecordsHref(row.EmployeeId, TeamPerformanceMetric.TicketsWorked)" title="Open the tickets @row.DisplayName worked in the period">@row.TicketsWorked</a></td>
+                                    <td class="cell-num"><a class="report-count" href="@Model.RecordsHref(row.EmployeeId, TeamPerformanceMetric.CompletedFollowUps)" title="Open the follow-ups @row.DisplayName completed in the period">@row.CompletedFollowUps</a></td>
+                                    <td class="cell-num"><a class="report-count @(row.SlaBreaches > 0 ? "report-count--critical" : "")" href="@Model.RecordsHref(row.EmployeeId, TeamPerformanceMetric.SlaBreaches)" title="Open the SLA breaches attributed to @row.DisplayName in the period">@row.SlaBreaches</a></td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr class="report-totals">
+                                <td>Total</td>
+                                <td>@Model.Report.Totals.Employees @(Model.Report.Totals.Employees == 1 ? "agent" : "agents")</td>
+                                <td></td>
+                                <td class="cell-num">@Model.Report.Totals.CurrentlyAssigned</td>
+                                <td class="cell-num">@Model.Report.Totals.TicketsWorked</td>
+                                <td class="cell-num">@Model.Report.Totals.CompletedFollowUps</td>
+                                <td class="cell-num">@Model.Report.Totals.SlaBreaches</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+        </div>
+
+        @* ---- Records: the tickets behind the count that was clicked. ---- *@
+        @if (Model.Metric is not null && Model.EmployeeId is not null)
+        {
+            <div class="panel" id="records">
+                <div class="panel__header">
+                    <div>
+                        <span class="panel__title">@TeamPerformanceModel.MetricLabel(Model.Metric)@if (Model.Records is not null) { <text> · @Model.Records.DisplayName</text> }</span>
+                        <div class="dash-card__subtitle">
+                            @if (Model.Records is not null)
+                            {
+                                if (string.Equals(Model.Records.Metric, nameof(TeamPerformanceMetric.CurrentlyAssigned), StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <text>Open tickets held right now — not limited by the period.</text>
+                                }
+                                else
+                                {
+                                    <text>Period @Model.Records.DateFrom.ToString("MMM d") – @Model.Records.DateTo.ToString("MMM d, yyyy") · @Model.Records.Records.Count @(Model.Records.Records.Count == 1 ? "record" : "records")</text>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <a class="link-muted" href="@Model.ReportHref">Close</a>
+                </div>
+                @if (Model.Records is null)
+                {
+                    <div class="error-state">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" stroke="currentColor" stroke-width="1.6" /></svg>
+                        <p>
+                            @(Model.RecordsOutcome switch
+                            {
+                                ApiOutcome.ValidationError => "That count is not one this report can open.",
+                                ApiOutcome.NotFound => "This employee is not on the report.",
+                                ApiOutcome.Forbidden => "You do not have permission to open these records.",
+                                _ => "The records could not be loaded right now."
+                            })
+                        </p>
+                    </div>
+                }
+                else if (Model.Records.Records.Count == 0)
+                {
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                        <p class="empty-state__title">Nothing to show.</p>
+                        <p>No records behind this count.</p>
+                    </div>
+                }
+                else
+                {
+                    var showBreach = string.Equals(Model.Records.Metric, nameof(TeamPerformanceMetric.SlaBreaches), StringComparison.OrdinalIgnoreCase);
+                    var showCompleted = string.Equals(Model.Records.Metric, nameof(TeamPerformanceMetric.CompletedFollowUps), StringComparison.OrdinalIgnoreCase);
+                    <div class="table-scroll">
+                        <table class="data-table data-table--clickable">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Ticket</th>
+                                    <th scope="col">Summary</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Priority</th>
+                                    <th scope="col">Department</th>
+                                    <th scope="col">Created</th>
+                                    @if (showBreach)
+                                    {
+                                        <th scope="col">Breached</th>
+                                    }
+                                    @if (showCompleted)
+                                    {
+                                        <th scope="col">Completed</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in Model.Records.Records)
+                                {
+                                    <tr class="is-link" data-href="/Tickets/@r.TicketId">
+                                        <td><a class="ticket-id-link" href="/Tickets/@r.TicketId">@r.TicketNumber</a></td>
+                                        <td class="col-subject">@r.RequestSummary</td>
+                                        <td><span class="badge badge-status-@TicketDisplay.TicketStatusCssKey(r.TicketStatus)"><span class="badge-dot"></span>@TicketDisplay.TicketStatusLabel(r.TicketStatus)</span></td>
+                                        <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(r.PriorityId)">@TicketDisplay.PriorityLabel(r.PriorityId)</span></td>
+                                        <td>@(string.IsNullOrWhiteSpace(r.DepartmentName) ? "—" : r.DepartmentName)</td>
+                                        <td class="text-secondary text-mono">@r.CreatedAtUtc.ToLocalTime().ToString("MMM d, HH:mm")</td>
+                                        @if (showBreach)
+                                        {
+                                            <td class="text-mono">@(r.BreachedAtUtc is DateTime breached ? breached.ToLocalTime().ToString("MMM d, HH:mm") : "—")</td>
+                                        }
+                                        @if (showCompleted)
+                                        {
+                                            <td class="text-mono">@(r.CompletedAtUtc is DateTime completed ? completed.ToLocalTime().ToString("MMM d, HH:mm") : "—")</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
+
+        @* ---- How the numbers are calculated: the same definitions as the Api's XML docs and docs/Team-Performance-Report.md. ---- *@
+        <details class="filter-disclosure report-help">
+            <summary>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+                How these numbers are calculated
+            </summary>
+            <div class="panel report-help__body">
+                <dl class="report-help__list">
+                    <dt>Who is listed</dt>
+                    <dd>Every active employee holding the <strong>CS Agent</strong> role. An agent who belongs to the <strong>Call Center</strong> department is shown as a <em>Call Center Agent</em>; every other CS Agent as a <em>CS Agent</em>. One row per employee, however many departments they belong to; agents with no activity in the period are still listed.</dd>
+                    <dt>Period</dt>
+                    <dd>UTC calendar days, inclusive. With no dates chosen, the last 30 days including today.</dd>
+                    <dt>Currently Assigned</dt>
+                    <dd>Tickets the agent holds right now (current owner) that are not Closed. Current state — the period does not apply.</dd>
+                    <dt>Tickets Worked</dt>
+                    <dd>Distinct tickets on which the agent did at least one recorded thing in the period: was assigned the ticket, changed its status or another lifecycle dimension, wrote a note, recorded a resolution, raised a workflow event, or was assigned / completed a customer follow-up. Measured from the ticket's history, not from who holds it now.</dd>
+                    <dt>Completed Follow-ups</dt>
+                    <dd>Customer follow-ups (pending customer interactions) assigned to the agent and completed in the period. Counts work items — a ticket with two completed follow-ups counts twice.</dd>
+                    <dt>SLA Breaches</dt>
+                    <dd>Distinct tickets whose SLA breach was recorded in the period while the agent held the ticket — the holder is the latest assignment at or before the moment of the breach, not whoever holds it now. Each breach is attributed to at most one agent; a breach on an unassigned ticket is attributed to nobody.</dd>
+                    <dt>Totals</dt>
+                    <dd>The sum of the rows shown. A ticket two agents both worked counts once for each of them.</dd>
+                </dl>
+            </div>
+        </details>
+    }
+</div>
