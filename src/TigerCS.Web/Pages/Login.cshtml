@@ -48,6 +48,14 @@
                 </div>
             }
 
+            @if (Model.PasswordChanged)
+            {
+                <div class="alert alert-success" role="status">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    <span>Your password was changed. Please sign in again.</span>
+                </div>
+            }
+
             @if (!string.IsNullOrEmpty(Model.ErrorMessage))
             {
                 <div class="alert alert-error" role="alert">

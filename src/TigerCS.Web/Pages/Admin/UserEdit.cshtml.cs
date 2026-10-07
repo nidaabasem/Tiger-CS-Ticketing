@@ -25,6 +25,11 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     [BindProperty] public RolesInput RolesForm { get; set; } = new();
     [BindProperty] public MembershipInput Membership { get; set; } = new();
     [BindProperty] public ActivationInput Activation { get; set; } = new();
+    [BindProperty] public ResetPasswordInput ResetPassword { get; set; } = new();
+
+    /// <summary>The policy stated beside every new-password field — the pilot defaults in docs/DEV-SETUP.md §3.</summary>
+    public const string PasswordPolicyText =
+        "At least 8 characters, with an uppercase letter, a lowercase letter, a digit and a symbol.";
 
     public async Task<IActionResult> OnGetAsync(Guid? id, CancellationToken cancellationToken)
     {
@@ -113,6 +118,39 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
         ApplyAsync(id, adminApi.RemoveUserDepartmentAsync(id, departmentId, cancellationToken),
             "Department membership removed.", "The department membership could not be removed.");
 
+    /// <summary>
+    /// Administrative password reset. The confirm-match check is the only
+    /// Web-side rule; the policy itself is the Api's (Identity's), whose 422
+    /// reasons are shown verbatim. Nothing about the password is logged or
+    /// kept — the redirect carries only the outcome message.
+    /// </summary>
+    public async Task<IActionResult> OnPostResetPasswordAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ResetPassword.NewPassword))
+        {
+            ErrorMessage = "Enter a new password.";
+        }
+        else if (ResetPassword.NewPassword != ResetPassword.ConfirmPassword)
+        {
+            ErrorMessage = "The two passwords do not match.";
+        }
+        else
+        {
+            var result = await adminApi.ResetUserPasswordAsync(
+                id, new ResetUserPasswordRequestDto(ResetPassword.NewPassword, ResetPassword.Reason), cancellationToken);
+            if (result.IsSuccess)
+            {
+                StatusMessage = "Password reset. The user's existing sessions have been signed out; they can sign in with the new password now.";
+            }
+            else
+            {
+                ErrorMessage = DescribeFailure(result, "The password could not be reset.");
+            }
+        }
+
+        return RedirectToPage("/Admin/UserEdit", new { id });
+    }
+
     private async Task<IActionResult> ApplyAsync(Guid id, Task<ApiResult<AdminUserDto>> call, string success, string failure)
     {
         var result = await call;
@@ -170,6 +208,13 @@ public sealed class UserEditModel(AdminApiClient adminApi, DepartmentsApiClient 
     public sealed class ActivationInput
     {
         public bool IsActive { get; set; }
+        public string? Reason { get; set; }
+    }
+
+    public sealed class ResetPasswordInput
+    {
+        [Required] public string NewPassword { get; set; } = string.Empty;
+        public string ConfirmPassword { get; set; } = string.Empty;
         public string? Reason { get; set; }
     }
 }

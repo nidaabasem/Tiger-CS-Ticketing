@@ -22,7 +22,8 @@ public sealed record AdminUserListDto(IReadOnlyList<AdminUserDto> Items, int Pag
 /// Creates the Identity account AND the employee profile in one step. The
 /// initial password is validated by ASP.NET Core Identity's own password
 /// policy (the same path the development seed uses) — no custom password
-/// handling exists, and there is no reset flow in this phase.
+/// handling exists. An administrator can later replace a forgotten password
+/// with <see cref="ResetUserPasswordRequestDto"/>.
 /// </summary>
 public sealed record CreateUserRequestDto(
     string UserName,
@@ -38,3 +39,10 @@ public sealed record UpdateUserProfileRequestDto(string DisplayName, string? Ema
 public sealed record SetUserRolesRequestDto(IReadOnlyList<string> Roles);
 
 public sealed record AddDepartmentMembershipRequestDto(int DepartmentId, bool IsPrimary);
+
+/// <summary>
+/// Administrative password reset (POST api/admin/users/{employeeId}/password).
+/// The new password goes through Identity's password validators; the reason
+/// is recorded in the audit trail. The password itself never is.
+/// </summary>
+public sealed record ResetUserPasswordRequestDto(string NewPassword, string? Reason);

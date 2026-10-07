@@ -34,6 +34,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
     private static readonly Dictionary<string, string> CoveredByTest = new()
     {
         ["POST /api/auth/logout"] = nameof(SystemAdministratorEndpointAuthorizationTests.Logout_Returns204),
+        ["POST /api/auth/change-password"] = nameof(PasswordManagementEndpointsTests.ChangePassword_Success_Returns204_RejectsTheCallersOwnTokenAfterwards_AndAFreshLoginWorks),
         ["GET /api/users/me"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetOwnProfile_Returns200),
         ["PATCH /api/users/{employeeId:guid}/activation"] = nameof(SystemAdministratorEndpointAuthorizationTests.SetUserActivation_Returns200),
         ["GET /api/roles"] = nameof(SystemAdministratorEndpointAuthorizationTests.GetRoleCatalog_Returns200),
@@ -136,6 +137,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["PUT /api/admin/users/{employeeId:guid}/roles"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
         ["POST /api/admin/users/{employeeId:guid}/departments"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
         ["DELETE /api/admin/users/{employeeId:guid}/departments/{departmentId:int}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Users_CreateListGetEditRolesMembershipAndDeactivate),
+        ["POST /api/admin/users/{employeeId:guid}/password"] = nameof(PasswordManagementEndpointsTests.AdminReset_GoodPassword_Returns204_InvalidatesEveryEarlierToken_LiftsLockout_AndAuditsWithoutTheSecret),
         ["GET /api/channels"] = nameof(SystemAdministratorEndpointAuthorizationTests.ListChannels_Returns200),
         ["GET /api/admin/channels"] = nameof(Administration.Integration.AdministrationEndpointsTests.Channels_ListAddEditActivationAndDuplicateCode_ThroughTheRealHost),
         ["GET /api/admin/channels/{channelId:int:range(1,255)}"] = nameof(Administration.Integration.AdministrationEndpointsTests.Channels_ListAddEditActivationAndDuplicateCode_ThroughTheRealHost),

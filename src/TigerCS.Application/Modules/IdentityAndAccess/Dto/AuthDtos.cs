@@ -33,3 +33,30 @@ public sealed record LoginResult(LoginOutcome Outcome, LoginResponseDto? Respons
     public static LoginResult InvalidCredentials() => new(LoginOutcome.InvalidCredentials);
     public static LoginResult Locked() => new(LoginOutcome.Locked);
 }
+
+/// <summary>Self-service password change for POST /api/auth/change-password — the caller is the token's subject, never a client-supplied id.</summary>
+/// <param name="CurrentPassword">Required. Must verify against the caller's current password.</param>
+/// <param name="NewPassword">Required. Must satisfy the password policy (docs/DEV-SETUP.md §3).</param>
+public sealed record ChangePasswordRequestDto(string CurrentPassword, string NewPassword);
+
+public enum ChangePasswordOutcome
+{
+    Success,
+
+    /// <summary>The token's subject has no Identity account (or none can be resolved).</summary>
+    NotFound,
+
+    /// <summary>The current password did not verify. Nothing more is revealed.</summary>
+    CurrentPasswordIncorrect,
+
+    /// <summary>The new password failed the password policy; <c>Errors</c> lists Identity's reasons.</summary>
+    PasswordPolicyViolation
+}
+
+public sealed record ChangePasswordResult(ChangePasswordOutcome Outcome, IReadOnlyList<string>? Errors = null)
+{
+    public static ChangePasswordResult Success() => new(ChangePasswordOutcome.Success);
+    public static ChangePasswordResult NotFound() => new(ChangePasswordOutcome.NotFound);
+    public static ChangePasswordResult CurrentPasswordIncorrect() => new(ChangePasswordOutcome.CurrentPasswordIncorrect);
+    public static ChangePasswordResult PolicyViolation(IReadOnlyList<string> errors) => new(ChangePasswordOutcome.PasswordPolicyViolation, errors);
+}
