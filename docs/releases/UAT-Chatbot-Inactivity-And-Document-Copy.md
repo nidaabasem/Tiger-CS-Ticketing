@@ -90,44 +90,54 @@ Data action: `docs/Genesys/data-actions/11-send-document-copy.json`.
 `CrmDocuments:Enabled` ships **false**; set true for UAT. Same migration as above (table `CrmDocumentDeliveryRequests`,
 unique `(CallerEmployeeId, IdempotencyKey)`). Email needs `EmailNotifications:Enabled=true` + SMTP credentials.
 
-> ## ⚠ Document copies: PENDING REAL UAT VERIFICATION
-> Not complete until a customer has completed verification, selected a unit and a document, and received exactly one email through the public Genesys route. Blocked on CRM: verification-session endpoints and file-route authentication — see `docs/Genesys/CRM-Required-Contracts.md` (exit criteria §8).
+> ## ⚠ Document copies: PENDING REAL UAT VERIFICATION — disabled in Production
+> Phase 1 (CRM buyers requesting their own documents) is built and passes 3 100+ automated tests, including the whole
+> lookup → unit → email OTP → session → document → download → one-email flow through the real host against a stub CRM.
+> **It has not been run against real CRM, the real file routes, real SMTP or the public Genesys route.** Complete only when a real
+> customer completes verification, selects a unit and a document and receives exactly one email through the public route
+> (exit criteria: `docs/Genesys/CRM-Required-Contracts.md` §8). `CrmDocuments:Enabled=false` ships; a Production host refuses to
+> start with it enabled unless `CrmDocuments:AllowInProduction=true` is also set.
 
-### Tiger CRM connection (update)
+### What Phase 1 delivers (see `docs/Genesys/Document-Copy-API.md`)
 
-The document source is now Tiger CRM's `POST {Crm}/TicketingSystem/GetCustomerDocuments` (header `X-SECRET-KEY`, existing `Crm`
-configuration) — see `docs/Genesys/Document-Copy-API.md` for the resolution flow, type mapping (Contract→`TigerContract`,
-ReservationForm, RegistrationReceipt, UnitLayout→`Layout`), and the CRM-status → answer table. The public API gained only the optional
-`crmLeadId` request field and `choiceKind` response field.
+* **Buyer lookup → cache:** the verification unit/contact cache is filled from the real `GetBuyerByPhone` (unit id as `CrmUnitId`,
+  contact id `"{customerId}-{unitId}"`, type `Buyer` — `customerType=1` is not read as Owner). Ambiguous customers and multiple units
+  are explicit results. Agent-desk, tenant and representative flows are unchanged.
+* **Email OTP:** code to the address CRM returns (no destination field anywhere); bound to integration account + CRM customer + unit/lead;
+  10-minute expiry, 5 attempts, 3 sends ≥ 60 s apart, 5 challenges/customer/hour, single use; stored only as a salted HMAC. `Otp` can no
+  longer be asserted on `POST /api/verification-sessions`; `send-copy` accepts only a session carrying the recorded proof.
+* **Delivery:** CRM `GetCustomerDocuments` → choices when `selectionRequired` → download with the CRM secret (CRM origin only; other
+  hosts fetched without it) → type/extension from the file's own bytes (an extension-less "Layout Plan" becomes `.png`/`.pdf` as it really is)
+  → one email; idempotency and delivery audit unchanged.
 
-**UAT result: not verified on UAT.** The environment this was built in cannot reach the CRM host (the egress proxy resets the
-connection) and holds no `Crm:SecretKey`, so no real request was made. What *was* verified is in the Verification section.
+### UAT result (this session)
 
-### Still open
+| Check | Result |
+|---|---|
+| Automated: full suite | **3 113 passed, 0 failed** (Release build, 0 warnings) |
+| Automated: whole flow through the real host over a stub CRM (happy path, wrong/locked/reused OTP, another account, another customer's lead, other unit, multiple documents, download 401/403/404/5xx/HTML/executable/off-host, idempotent retries) | passed |
+| Concurrency rules (single-use code, attempt budget, resend race, one session per challenge) on a real relational engine (SQLite, real EF model) | passed |
+| Real CRM `GetBuyerByPhone` / `GetCustomerDocuments` / file download | **not run** — `tigercrm.tigergroup.ae:8014` is unreachable from this environment and no `Crm:SecretKey` is available |
+| Real SMTP delivery of the code and the document | **not run** |
+| Public Genesys route | **not reachable**: unauthenticated POSTs to `tigergroup.ae` return `401` for the existing `/api/genesys/tickets` but `404` for `/api/genesys/verification/*` and `/documents/send-copy` (not deployed and/or not forwarded by TigerGroupWeb — this probe cannot tell which) |
+| File-route authentication | **unconfirmed** — run `docs/Genesys/uat/verify-crm-file-auth.sh` where CRM is reachable |
 
-* **How `fileUrl` is fetched with auth** is not stated in the CRM contract; TigerCS sends `X-SECRET-KEY` to the CRM origin only
-  (relative / `~/` paths, or a host in `Crm:DocumentFileHosts`). The first UAT run settles it.
-* **The verified contact needs a phone** (CRM identity comes from the buyer lookup by that phone).
-* **Verification sessions over real CRM** still need CRM's unit/contact endpoints; OTP issue/check is outside TigerCS.
-* **WhatsApp/SMS**: no integration (501). **TigerGroupWeb** must forward the route.
+### Remaining dependencies
 
-### UAT runbook (to run where CRM is reachable)
+1. **TigerGroupWeb** must forward `/api/genesys/verification/*` and `/api/genesys/documents/send-copy` (and the new build must be deployed).
+2. **File storage:** how the `Uploads` routes authenticate (public / cookie / secret header) — unknown; cookie auth cannot work. A separate file host is possible only as https in `Crm:DocumentFileHosts` and is fetched **without** the CRM secret.
+3. **CRM data:** buyer email must be the customer's own and current; `mobileNumber` must be findable by `GetBuyerByPhone?phoneNumber=+971…`; `unitNumber` non-empty.
+4. **Config:** `CrmDocuments:OtpCodePepper` (secret), `EmailNotifications:Enabled=true` + SMTP credentials, `Crm:SecretKey`, `BackgroundJobs:Enabled` (inactivity feature), both migrations applied.
 
-Config: `Crm:BaseUrl`, `Crm:SecretKey` (existing), `CrmDocuments:Enabled=true`, `EmailNotifications:Enabled=true` + SMTP credentials,
-`Crm:Provider=Http`. Use a real UAT buyer (CRM customer with a phone, at least one unit/lead) and a mailbox you control as that
-customer's CRM email.
+### UAT runbook (where CRM, SMTP and the public route are reachable)
 
-1. Authenticate as the integration account; create a verification session for the buyer's unit/contact (`Otp`).
-2. `POST /api/genesys/documents/send-copy` with `Idempotency-Key: uat-1`, body `{"verificationSessionId":"…","documentType":"ReservationForm"}`.
-   Expect `200 Sent`, masked address, one email with the attachment. In the API log: one `GetCustomerDocuments` call, then one file fetch;
-   no `CRM_*` warnings.
-3. Repeat with the same key → `200`, `duplicate:true`, no second email, no new CRM call.
-4. Repeat for `Contract`, `RegistrationReceipt`, `UnitLayout` (Layout returns a record id `LAYOUT-{leadId}`). For a lead with several
-   documents expect `SelectionRequired`/`choiceKind:"Document"` first, then the chosen `recordId` with a new key.
-5. A customer with several units whose verified unit is not matched: expect `choiceKind:"Unit"`, then `crmLeadId`.
-6. Negative: another customer's `crmLeadId` → 403 `RECORD_OWNERSHIP_MISMATCH` and **no** CRM call; wrong `Crm:SecretKey` →
-   `502 CRM_AUTHENTICATION_FAILED`; a type with nothing on record → `404 DOCUMENT_NOT_FOUND`.
-7. Record the outcome of steps 2–6, especially whether the file fetch in step 2 succeeds (the open `fileUrl` question), in this document.
+1. Apply `AddChatbotInactivityAndCrmDocumentCopies.sql` and `AddCustomerOtpVerification.sql`; set the §4 config; `CrmDocuments:Enabled=true` (UAT only).
+2. `uat/verify-crm-file-auth.sh Contract` (and `UnitLayout`) with a real buyer's `CRM_CUSTOMER_ID` / `CRM_LEAD_ID`: record the file-route behaviour with and without the secret.
+3. Through the **public** route as the integration account: `buyer-lookup` (the buyer's phone) → expect the real units and a masked email; `otp/send` with the chosen `crmUnitId` → the code arrives in the buyer's mailbox; `otp/verify` → `Verified` + `verificationSessionId`.
+4. `send-copy` `Contract` → if CRM lists several: `SelectionRequired` → choose → `Sent`; check the mailbox has **exactly one** document email with the right file and extension; repeat the identical call (same key and a new key) → `duplicate:true`, no second email.
+5. `UnitLayout` for a lead whose plan has no extension in its name → attachment gets the true extension.
+6. Negatives: wrong code (`OTP_INVALID`, attempts fall), 5 wrong codes (`OTP_LOCKED`), reuse (`OTP_ALREADY_USED`), expired code (wait 10 min), another customer's `crmLeadId` and the same customer's other unit (`RECORD_OWNERSHIP_MISMATCH`, no CRM document call in the log), wrong `Crm:SecretKey` (`CRM_AUTHENTICATION_FAILED`), a type with nothing on record (`DOCUMENT_NOT_FOUND`).
+7. Record every result here. **Only then** consider `CrmDocuments:AllowInProduction`.
 
 ## Changed files
 

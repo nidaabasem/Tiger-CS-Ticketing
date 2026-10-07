@@ -192,6 +192,11 @@ public class CrmDocumentHttpGatewayTests
 
     // ---- fileUrl is a storage reference, retrieved with the credential, on the CRM origin only ----
 
+    // File signatures the way real files start.
+    private static readonly byte[] PdfBytes = [.. "%PDF-1.7\n"u8, 1, 2, 3];
+    private static readonly byte[] PngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+    private static readonly byte[] JpegBytes = [0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, 0x4A, 0x46];
+
     private static StubHttpMessageHandler File(byte[] bytes, string contentType = "application/pdf", HttpStatusCode status = HttpStatusCode.OK) =>
         new((_, _) => Task.FromResult(new HttpResponseMessage(status)
         {
@@ -205,14 +210,14 @@ public class CrmDocumentHttpGatewayTests
     [InlineData("https://crm.example.test:8014/Uploads/a.pdf", "https://crm.example.test:8014/Uploads/a.pdf")]
     public async Task AReferenceOnTheCrmOrigin_IsFetchedWithTheSecret(string reference, string expectedUrl)
     {
-        var handler = File([1, 2, 3]);
+        var handler = File(PdfBytes);
 
         var content = await Gateway(handler).DownloadAsync(new CrmDocumentRecord("5001", "Contract", reference));
 
         Assert.Equal(expectedUrl, handler.LastRequest!.RequestUri!.ToString());
         Assert.Equal(HttpMethod.Get, handler.LastRequest.Method);
         Assert.Equal(Secret, handler.LastRequest.Headers.GetValues("X-SECRET-KEY").Single());
-        Assert.Equal([1, 2, 3], content!.Bytes);
+        Assert.Equal(PdfBytes, content!.Bytes);
         Assert.Equal("5001", content.RecordId);
     }
 
@@ -237,15 +242,37 @@ public class CrmDocumentHttpGatewayTests
     }
 
     [Fact]
-    public async Task AnAllowListedHttpsFileHost_IsFetched()
+    public async Task AnAllowListedHttpsFileHost_IsFetched_WithoutTheCrmSecret()
     {
-        var handler = File([7]);
+        var handler = File(PdfBytes);
 
         var content = await Gateway(handler, configure: o => o.DocumentFileHosts.Add("files.example.test"))
             .DownloadAsync(new CrmDocumentRecord("5001", "Contract", "https://files.example.test/a.pdf"));
 
         Assert.Equal("https://files.example.test/a.pdf", handler.LastRequest!.RequestUri!.ToString());
-        Assert.Equal([7], content!.Bytes);
+        Assert.False(handler.LastRequest.Headers.Contains("X-SECRET-KEY"), "the CRM secret must never reach a non-CRM host");
+        Assert.Equal(PdfBytes, content!.Bytes);
+    }
+
+    [Fact]
+    public async Task TheSecretIsSentOnlyToTheCrmOrigin_NeverToAnythingElse()
+    {
+        var crm = File(PdfBytes);
+        await Gateway(crm).DownloadAsync(new CrmDocumentRecord("1", "x", "/Uploads/a.pdf"));
+        Assert.Equal(Secret, crm.LastRequest!.Headers.GetValues("X-SECRET-KEY").Single());
+
+        // An unlisted external host is refused outright — not even requested.
+        var external = File(PdfBytes);
+        await Assert.ThrowsAsync<CrmDocumentSourceException>(
+            () => Gateway(external).DownloadAsync(new CrmDocumentRecord("1", "x", "https://files.example.test/a.pdf")));
+        Assert.Equal(0, external.CallCount);
+
+        // A listed host that is only http is also refused.
+        var plain = File(PdfBytes);
+        await Assert.ThrowsAsync<CrmDocumentSourceException>(
+            () => Gateway(plain, configure: o => o.DocumentFileHosts.Add("files.example.test"))
+                .DownloadAsync(new CrmDocumentRecord("1", "x", "http://files.example.test/a.pdf")));
+        Assert.Equal(0, plain.CallCount);
     }
 
     [Fact]
@@ -290,22 +317,103 @@ public class CrmDocumentHttpGatewayTests
     [Fact]
     public async Task ABodyLargerThanTheCap_IsReadOnlyToTheCapPlusOne()
     {
-        var content = await Gateway(File(new byte[5000]), configure: o => o.MaxDocumentBytes = 100)
+        var big = new byte[5000];
+        PdfBytes.CopyTo(big, 0);
+        var content = await Gateway(File(big), configure: o => o.MaxDocumentBytes = 100)
             .DownloadAsync(new CrmDocumentRecord("1", "x", "/a.pdf"));
 
         Assert.Equal(101, content!.Bytes.Length); // enough for the service to see "too large"
     }
 
-    [Theory]
-    [InlineData("Sale and Purchase Agreement.pdf", "/Uploads/1.pdf", "application/pdf", "Sale and Purchase Agreement.pdf")]
-    [InlineData("Contract", "/Uploads/1.pdf", "application/octet-stream", "Contract.pdf")]
-    [InlineData("../../etc/passwd", "/Uploads/1", "application/pdf", "passwd.pdf")]
-    [InlineData("a\"b;c\r\nd.pdf", "/x/1", "application/pdf", "a_b_c__d.pdf")]
-    [InlineData("", "/x/plan.png", "image/png", "document.png")]
-    public async Task TheAttachmentFileName_IsSanitisedAndGivenAnExtension(string label, string url, string contentType, string expected)
-    {
-        var content = await Gateway(File([1], contentType)).DownloadAsync(new CrmDocumentRecord("1", label, url));
+    // ---- the true extension comes from the file, not from a guess ----
 
-        Assert.Equal(expected, content!.FileName);
+    private static async Task<CrmDocumentContent> DownloadAsync(
+        byte[] bytes, string? declaredType, string label, string url = "/Uploads/1", string? disposition = null)
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            if (declaredType is not null)
+            {
+                response.Content.Headers.ContentType = new MediaTypeHeaderValue(declaredType);
+            }
+
+            if (disposition is not null)
+            {
+                response.Content.Headers.ContentDisposition = ContentDispositionHeaderValue.Parse(disposition);
+            }
+
+            return Task.FromResult(response);
+        });
+
+        return (await Gateway(handler).DownloadAsync(new CrmDocumentRecord("L1", label, url)))!;
+    }
+
+    [Fact]
+    public async Task ALayoutPlanWithNoExtension_GetsItsTrueExtensionFromTheFile_NotPdf()
+    {
+        // The current CRM Layout response names the file "Layout Plan" — no extension — and the storage path has none either.
+        var png = await DownloadAsync(PngBytes, "application/octet-stream", "Layout Plan");
+        Assert.Equal("Layout Plan.png", png.FileName);
+        Assert.Equal("image/png", png.ContentType);
+
+        var jpeg = await DownloadAsync(JpegBytes, declaredType: null, "Layout Plan");
+        Assert.Equal("Layout Plan.jpg", jpeg.FileName);
+        Assert.Equal("image/jpeg", jpeg.ContentType);
+
+        var pdf = await DownloadAsync(PdfBytes, "application/pdf", "Layout Plan");
+        Assert.Equal("Layout Plan.pdf", pdf.FileName);
+    }
+
+    [Fact]
+    public async Task TheBytesWin_OverAWrongDeclaredTypeAndAWrongNameExtension()
+    {
+        var content = await DownloadAsync(PngBytes, "application/pdf", "Layout Plan.pdf", url: "/Uploads/plan.pdf");
+
+        Assert.Equal("image/png", content.ContentType);
+        Assert.Equal("Layout Plan.png", content.FileName); // the stale ".pdf" is replaced, not kept
+    }
+
+    [Fact]
+    public async Task ContentDispositionAndTheUrlAreOnlyHints_ForFormatsTheSignatureCannotSettle()
+    {
+        // A .docx is a ZIP: the signature alone is ambiguous, so a declared type or name hint must agree.
+        var zip = new byte[] { (byte)'P', (byte)'K', 3, 4, 0, 0, 0, 0 };
+
+        var viaDeclared = await DownloadAsync(zip, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Brochure");
+        Assert.Equal("Brochure.docx", viaDeclared.FileName);
+
+        var viaDisposition = await DownloadAsync(zip, "application/octet-stream", "Brochure", disposition: "attachment; filename=\"brochure.docx\"");
+        Assert.Equal("Brochure.docx", viaDisposition.FileName);
+
+        // …and a ZIP with no such hint is not a document we will mail.
+        var ex = await Assert.ThrowsAsync<CrmDocumentSourceException>(() => DownloadAsync(zip, "application/octet-stream", "Brochure"));
+        Assert.Equal(CrmDocumentSourceFailure.InvalidResponse, ex.Failure);
+    }
+
+    [Theory]
+    [InlineData("MZ-executable", new byte[] { 0x4D, 0x5A, 0x90, 0x00, 3, 0, 0, 0 }, "application/octet-stream", "tool.exe")]
+    [InlineData("plain text", new byte[] { 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x0A }, "text/plain", "notes.txt")]
+    [InlineData("unknown blob that claims to be a pdf", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, "application/pdf", "Contract.pdf")]
+    [InlineData("empty", new byte[0], "application/pdf", "Contract.pdf")]
+    public async Task AFileThatIsNotAnAllowedDocument_IsRefused_NotMailedWithAMadeUpExtension(string _, byte[] bytes, string declared, string label)
+    {
+        var ex = await Assert.ThrowsAsync<CrmDocumentSourceException>(() => DownloadAsync(bytes, declared, label));
+
+        Assert.Equal(CrmDocumentSourceFailure.InvalidResponse, ex.Failure);
+    }
+
+    [Theory]
+    [InlineData("Sale and Purchase Agreement.pdf", "Sale and Purchase Agreement.pdf")]
+    [InlineData("Contract", "Contract.pdf")]
+    [InlineData("../../etc/passwd", "passwd.pdf")]
+    [InlineData("a\"b;c\r\nd.pdf", "a_b_c__d.pdf")]
+    [InlineData("", "document.pdf")]
+    [InlineData("Addendum.PDF", "Addendum.pdf")]
+    public async Task TheAttachmentFileName_IsSanitised_AndEndsWithTheResolvedExtension(string label, string expected)
+    {
+        var content = await DownloadAsync(PdfBytes, "application/pdf", label);
+
+        Assert.Equal(expected, content.FileName);
     }
 }

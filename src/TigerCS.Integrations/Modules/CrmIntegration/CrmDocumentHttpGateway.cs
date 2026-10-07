@@ -84,10 +84,13 @@ public sealed class CrmDocumentHttpGateway(
     public async Task<CrmDocumentContent?> DownloadAsync(CrmDocumentRecord record, CancellationToken cancellationToken = default)
     {
         var secretKey = RequireSecretKey();
-        var target = ResolveFileReference(record.FileReference);
+        var (target, isCrmOrigin) = ResolveFileReference(record.FileReference);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, target);
-        request.Headers.TryAddWithoutValidation(SecretHeaderName, secretKey);
+        if (isCrmOrigin)
+        {
+            request.Headers.TryAddWithoutValidation(SecretHeaderName, secretKey);
+        }
 
         using var response = await SendAsync(request, "document download", cancellationToken, HttpCompletionOption.ResponseHeadersRead);
 
@@ -101,8 +104,8 @@ public sealed class CrmDocumentHttpGateway(
             throw FailureFor(response.StatusCode, "document download");
         }
 
-        var mediaType = response.Content.Headers.ContentType?.MediaType;
-        if (string.Equals(mediaType, "text/html", StringComparison.OrdinalIgnoreCase))
+        var declared = response.Content.Headers.ContentType?.MediaType;
+        if (string.Equals(declared, "text/html", StringComparison.OrdinalIgnoreCase))
         {
             // A login or error page served with 200 is not a document.
             logger.LogWarning("CRM document download for record {RecordId} returned HTML instead of a file.", record.RecordId);
@@ -110,11 +113,22 @@ public sealed class CrmDocumentHttpGateway(
         }
 
         var bytes = await ReadBoundedAsync(response, options.Value.MaxDocumentBytes, cancellationToken);
-        var contentType = string.IsNullOrWhiteSpace(mediaType) || mediaType == "application/octet-stream"
-            ? ContentTypeFromName(target.AbsolutePath, record.Label)
-            : mediaType;
 
-        return new CrmDocumentContent(record.RecordId, bytes, contentType, FileNameFor(record.Label, target.AbsolutePath, contentType));
+        // The true type comes from the file itself (signature), corroborated by the declared type and the file-name
+        // metadata CRM gave us (Content-Disposition, storage path, attachment name). Never assumed to be a PDF.
+        var disposition = response.Content.Headers.ContentDisposition;
+        var detected = CrmDocumentFileType.Resolve(
+            bytes, declared, disposition?.FileNameStar ?? disposition?.FileName, target.AbsolutePath, record.Label);
+        if (detected is null)
+        {
+            logger.LogWarning(
+                "CRM document for record {RecordId} is not a recognised document type (declared {DeclaredType}); it was not sent.",
+                record.RecordId, declared ?? "none");
+            throw new CrmDocumentSourceException(
+                CrmDocumentSourceFailure.InvalidResponse, "The file's type could not be established as an allowed document type.");
+        }
+
+        return new CrmDocumentContent(record.RecordId, bytes, detected.MediaType, CrmDocumentFileType.FileName(record.Label, detected));
     }
 
     // ---- listing ----
@@ -195,7 +209,7 @@ public sealed class CrmDocumentHttpGateway(
     // ---- file reference ----
 
     /// <summary>The URI a stored <c>fileUrl</c> may be fetched from with the CRM credential, or a <see cref="CrmDocumentSourceFailure.ReferenceRejected"/>.</summary>
-    internal Uri ResolveFileReference(string fileReference)
+    internal (Uri Target, bool IsCrmOrigin) ResolveFileReference(string fileReference)
     {
         var baseAddress = httpClient.BaseAddress
             ?? throw new CrmDocumentSourceException(CrmDocumentSourceFailure.Unavailable, "Crm:BaseUrl is not configured.");
@@ -227,11 +241,13 @@ public sealed class CrmDocumentHttpGateway(
 
         if (!sameOrigin && !allowedHost)
         {
-            logger.LogWarning("CRM document reference points at host {Host}, which is not the configured CRM origin or an allowed file host; the credential was not sent.", target.Host);
+            logger.LogWarning("CRM document reference points at host {Host}, which is not the configured CRM origin or an allowed file host; nothing was fetched.", target.Host);
             throw Rejected();
         }
 
-        return target;
+        // The CRM secret goes to the CRM origin and nowhere else. An allow-listed storage host is fetched
+        // WITHOUT it: that host is not CRM, and the secret is not ours to hand it.
+        return (target, sameOrigin);
 
         static CrmDocumentSourceException Rejected() =>
             new(CrmDocumentSourceFailure.ReferenceRejected, "The document reference is not on the configured CRM origin.");
@@ -371,62 +387,4 @@ public sealed class CrmDocumentHttpGateway(
         CrmDocumentType.RegistrationReceipt => "Registration Receipt",
         _ => "Contract"
     };
-
-    private static string ContentTypeFromName(params string[] names)
-    {
-        foreach (var name in names)
-        {
-            var ext = Path.GetExtension(name ?? string.Empty).ToLowerInvariant();
-            switch (ext)
-            {
-                case ".pdf": return "application/pdf";
-                case ".png": return "image/png";
-                case ".jpg" or ".jpeg": return "image/jpeg";
-                case ".doc": return "application/msword";
-                case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-            }
-        }
-
-        return "application/octet-stream";
-    }
-
-    private static string FileNameFor(string label, string urlPath, string contentType)
-    {
-        var invalid = Path.GetInvalidFileNameChars().Concat(['"', ';', ',', '\r', '\n']).ToHashSet();
-        var cleaned = new StringBuilder();
-        foreach (var c in Path.GetFileName(label.Replace('\\', '/')))
-        {
-            cleaned.Append(invalid.Contains(c) ? '_' : c);
-        }
-
-        var name = cleaned.ToString().Trim().TrimEnd('.');
-        if (name.Length == 0)
-        {
-            name = "document";
-        }
-
-        if (name.Length > 120)
-        {
-            name = name[..120];
-        }
-
-        if (string.IsNullOrEmpty(Path.GetExtension(name)))
-        {
-            var ext = Path.GetExtension(urlPath);
-            if (string.IsNullOrEmpty(ext))
-            {
-                ext = contentType switch
-                {
-                    "application/pdf" => ".pdf",
-                    "image/png" => ".png",
-                    "image/jpeg" => ".jpg",
-                    _ => string.Empty
-                };
-            }
-
-            name += ext;
-        }
-
-        return name;
-    }
 }

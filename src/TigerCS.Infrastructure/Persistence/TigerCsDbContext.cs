@@ -62,6 +62,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<VerificationSession> VerificationSessions => Set<VerificationSession>();
     public DbSet<CrmDocumentDeliveryRequest> CrmDocumentDeliveryRequests => Set<CrmDocumentDeliveryRequest>();
+    public DbSet<CustomerOtpChallenge> CustomerOtpChallenges => Set<CustomerOtpChallenge>();
 
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -161,6 +162,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new ContactReferenceConfiguration());
         builder.ApplyConfiguration(new VerificationSessionConfiguration());
         builder.ApplyConfiguration(new CrmDocumentDeliveryRequestConfiguration());
+        builder.ApplyConfiguration(new CustomerOtpChallengeConfiguration());
 
         builder.ApplyConfiguration(new AuditEntryConfiguration());
 

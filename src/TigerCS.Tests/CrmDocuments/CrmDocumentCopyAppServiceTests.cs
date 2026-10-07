@@ -200,12 +200,13 @@ public class CrmDocumentCopyAppServiceTests
     }
 
     [Fact]
-    public async Task ALeadOfAnotherCustomer_IsAnOwnershipMismatch_AndCrmIsNeverAskedForDocuments()
+    public async Task ALeadOtherThanTheVerifiedOne_IsAnOwnershipMismatch_EvenForTheSameCustomer_AndCrmIsNeverAskedForDocuments()
     {
+        // The proof covers ONE unit. The customer's other unit (lead 12346) needs its own verification.
         var f = new DocumentServiceFixture();
-        f.Gateway.Add(9002, 22222, CrmDocumentType.Contract, "REC-THEIRS");
+        f.Gateway.Add(DocumentServiceFixture.CustomerId, DocumentServiceFixture.OtherLeadId, CrmDocumentType.Contract, "REC-OTHER");
 
-        var result = await Send(f, Req(f, leadId: 22222));
+        var result = await Send(f, Req(f, leadId: DocumentServiceFixture.OtherLeadId));
 
         Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
         Assert.Empty(f.Gateway.ListCalls);
@@ -226,18 +227,6 @@ public class CrmDocumentCopyAppServiceTests
     }
 
     [Fact]
-    public async Task OneOfTheCustomersOtherLeads_IsAllowed_AndCrmIsAskedForThatLead()
-    {
-        var f = new DocumentServiceFixture();
-        f.Gateway.Add(DocumentServiceFixture.CustomerId, DocumentServiceFixture.OtherLeadId, CrmDocumentType.RegistrationReceipt, "RCPT-9");
-
-        var result = await Send(f, Req(f, "RegistrationReceipt", leadId: DocumentServiceFixture.OtherLeadId));
-
-        Assert.Equal(CrmDocumentCopyStatus.Sent, result.Status);
-        Assert.Equal((CrmDocumentType.RegistrationReceipt, DocumentServiceFixture.CustomerId, DocumentServiceFixture.OtherLeadId), Assert.Single(f.Gateway.ListCalls));
-    }
-
-    [Fact]
     public async Task CrmIsAskedWithTheCustomerAndLeadFromTheVerifiedLookup_NeverFromTheCaller()
     {
         var f = new DocumentServiceFixture();
@@ -248,6 +237,73 @@ public class CrmDocumentCopyAppServiceTests
         Assert.Equal(DocumentServiceFixture.VerifiedPhone, f.Buyers.LastSearchedPhoneNumber);
         Assert.Equal((CrmDocumentType.Contract, 9001, 12345), Assert.Single(f.Gateway.ListCalls));
         Assert.Contains(f.Audit.Entries, e => e.Action == "CrmDocumentCopySent" && e.AfterValue!.Contains("CrmCustomerId=9001") && e.AfterValue.Contains("CrmLeadId=12345"));
+    }
+
+    // ---- server-side proof ----
+
+    [Theory]
+    [InlineData(VerificationMethod.Otp)]
+    [InlineData(VerificationMethod.AuthenticatedDigitalUser)]
+    [InlineData(VerificationMethod.ManualAgentConfirmation)]
+    public async Task ASessionWithoutTheServerRecordedProof_IsNeverEnough_WhateverMethodItNames(VerificationMethod method)
+    {
+        // An asserted "Otp" session — what the generic endpoint used to allow — carries no challenge and no CRM binding.
+        var f = new DocumentServiceFixture(method, serverProof: false);
+        f.Own("REC-1");
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.VerificationFailed, result.Status);
+        Assert.Equal(CrmDocumentCodes.VerificationFailed, result.Code);
+        Assert.Equal(0, f.Buyers.CallCount);
+        Assert.Empty(f.Gateway.ListCalls);
+        Assert.Empty(f.Email.Sent);
+    }
+
+    [Fact]
+    public async Task IfCrmNowSaysThePhoneBelongsToADifferentCustomer_TheProofNoLongerApplies()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Buyers.Returns(CrmBuyerLookupResult.Success(
+        [
+            new CrmBuyerMatchDto(
+                new CrmCustomerDto(7777, "Someone Else", null, DocumentServiceFixture.VerifiedPhone, "else@example.com"),
+                [DocumentServiceFixture.BuyerUnit(DocumentServiceFixture.LeadId, 77, "1204", "Tiger Tower A")])
+        ]));
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
+        Assert.Empty(f.Gateway.ListCalls);
+        Assert.Empty(f.Email.Sent);
+    }
+
+    [Fact]
+    public async Task IfTheBoundLeadIsNoLongerThisCustomersUnit_NothingIsReleased()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Buyers.Returns(CrmBuyerLookupResult.Success(
+        [
+            new CrmBuyerMatchDto(
+                new CrmCustomerDto(9001, "Ahmed", null, DocumentServiceFixture.VerifiedPhone, "customer@example.com"),
+                [DocumentServiceFixture.BuyerUnit(999, 99, "0001", "Elsewhere")])
+        ]));
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, (await Send(f, Req(f))).Status);
+        Assert.Empty(f.Gateway.ListCalls);
+    }
+
+    [Fact]
+    public async Task TheCustomerAndLeadCrmIsAskedAbout_AreTheOnesTheProofWasBoundTo()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        await Send(f, Req(f));
+
+        Assert.Equal((CrmDocumentType.Contract, 9001, 12345), Assert.Single(f.Gateway.ListCalls));
     }
 
     // ---- which CRM customer ----
@@ -298,54 +354,6 @@ public class CrmDocumentCopyAppServiceTests
         Assert.Equal(CrmDocumentCodes.DocumentSourceUnavailable, result.Code);
         Assert.Empty(f.Email.Sent);
     }
-
-    [Fact]
-    public async Task WhenTheVerifiedUnitIsNotOneOfTheCustomersLeads_TheCustomerIsAskedWhichUnit()
-    {
-        var f = new DocumentServiceFixture();
-        f.Buyers.Returns(CrmBuyerLookupResult.Success(
-        [
-            new CrmBuyerMatchDto(
-                new CrmCustomerDto(9001, "Ahmed", null, DocumentServiceFixture.VerifiedPhone, "customer@example.com"),
-                [DocumentServiceFixture.BuyerUnit(111, 1, "2001", "Tiger Sky"), DocumentServiceFixture.BuyerUnit(222, 2, "2002", "Tiger Sky")])
-        ]));
-
-        var result = await Send(f, Req(f));
-
-        Assert.Equal(CrmDocumentCopyStatus.SelectionRequired, result.Status);
-        Assert.Equal("Unit", result.ChoiceKind);
-        Assert.Equal(["111", "222"], result.Choices!.Select(c => c.RecordId).ToArray());
-        Assert.Empty(f.Gateway.ListCalls);
-        Assert.Empty(f.Email.Sent);
-    }
-
-    [Fact]
-    public async Task ASingleUnitCustomer_NeedsNoUnitSelection_EvenWhenTheNumbersDiffer()
-    {
-        var f = new DocumentServiceFixture();
-        f.Buyers.Returns(CrmBuyerLookupResult.Success(
-        [
-            new CrmBuyerMatchDto(
-                new CrmCustomerDto(9001, "Ahmed", null, DocumentServiceFixture.VerifiedPhone, "customer@example.com"),
-                [DocumentServiceFixture.BuyerUnit(555, 5, "9999", "Elsewhere")])
-        ]));
-        f.Gateway.Add(9001, 555, CrmDocumentType.Contract, "REC-5");
-
-        Assert.Equal(CrmDocumentCopyStatus.Sent, (await Send(f, Req(f))).Status);
-    }
-
-    [Fact]
-    public async Task TheRestatedUnitAndALeadForADifferentUnit_AreRefused()
-    {
-        var f = new DocumentServiceFixture();
-
-        var result = await Send(f, Req(f, unitId: "CRM-UNIT-1001", leadId: DocumentServiceFixture.OtherLeadId));
-
-        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
-        Assert.Empty(f.Gateway.ListCalls);
-    }
-
-    // ---- CRM's selectionRequired ----
 
     [Fact]
     public async Task WhenCrmSaysSelectionRequired_EvenForOneRecord_NothingIsSent()

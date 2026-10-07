@@ -135,6 +135,10 @@ public sealed class CommittingUnitOfWork(FakeCrmDocumentDeliveryRepository deliv
 {
     public Func<Task>? BeforeSave { get; set; }
 
+    public void DiscardPendingChanges()
+    {
+    }
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         if (BeforeSave is { } hook)
@@ -176,12 +180,12 @@ public sealed class DocumentServiceFixture
 
     public DocumentServiceFixture(
         VerificationMethod method = VerificationMethod.Otp, bool confirm = true, Guid? owner = null,
-        string contactChannel = VerifiedPhone, string? customerEmail = "customer@example.com")
+        string contactChannel = VerifiedPhone, string? customerEmail = "customer@example.com", bool serverProof = true)
     {
         UnitOfWork = new CommittingUnitOfWork(Deliveries);
         Unit = Units.Seed("CRM-UNIT-1001", "1204", "Tiger Tower A");
         Contact = Contacts.Seed(Unit.UnitReferenceId, "CRM-CONTACT-2001", "Ahmed Al-Farsi", contactChannel: contactChannel);
-        SessionId = AddSession(method, confirm, owner ?? Caller, Unit, Contact);
+        SessionId = AddSession(method, confirm, owner ?? Caller, Unit, Contact, serverProof: serverProof);
 
         // CRM knows the verified customer: customer 9001 with two units (leads 12345 = the verified 1204, and 12346 = 1403).
         Buyers.Returns(CrmBuyerLookupResult.Success(
@@ -200,13 +204,21 @@ public sealed class DocumentServiceFixture
     public static CrmBuyerUnitDto BuyerUnit(int leadId, int unitId, string unitNumber, string project) =>
         new(leadId, 8, "Sold", unitId, unitNumber, 3, 2, 12, 79, project, null, 1, "Buyer");
 
-    public Guid AddSession(VerificationMethod method, bool confirm, Guid owner, UnitReference unit, ContactReference contact, TimeSpan? lifetime = null)
+    /// <summary>A session as the OTP flow produces it (<paramref name="serverProof"/>: challenge + CRM customer/lead attached), or an agent-asserted one.</summary>
+    public Guid AddSession(
+        VerificationMethod method, bool confirm, Guid owner, UnitReference unit, ContactReference contact, TimeSpan? lifetime = null,
+        bool serverProof = true, int customerId = CustomerId, int leadId = LeadId)
     {
         var id = Guid.NewGuid();
         var now = Clock.GetUtcNow().UtcDateTime;
         var session = new VerificationSession(
             id, owner, unit.UnitReferenceId, contact.ContactReferenceId, unit.UnitNumber, unit.PropertyName, null, null,
             contact.DisplayName, contact.ContactChannel, now, now + (lifetime ?? TimeSpan.FromMinutes(30)), null);
+        if (serverProof)
+        {
+            session.AttachOtpProof(Guid.NewGuid(), customerId, leadId);
+        }
+
         if (confirm)
         {
             session.Confirm(now, method);

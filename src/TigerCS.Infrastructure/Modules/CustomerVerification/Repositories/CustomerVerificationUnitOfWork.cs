@@ -13,6 +13,11 @@ public sealed class CustomerVerificationUnitOfWork(TigerCsDbContext dbContext) :
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // A concurrency token (the OTP challenge's status / attempt / send counters) changed under us.
+            throw new ConcurrentWriteException(ex);
+        }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
             // Translated so the Application layer (VerificationSessionAppService's
@@ -53,6 +58,8 @@ public sealed class CustomerVerificationUnitOfWork(TigerCsDbContext dbContext) :
     /// existence/shape.
     /// </para>
     /// </summary>
+    public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
+
     private static bool IsUniqueConstraintViolation(DbUpdateException ex)
     {
         for (var inner = ex.InnerException; inner is not null; inner = inner.InnerException)

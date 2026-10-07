@@ -108,6 +108,10 @@ public sealed class FakeCustomerVerificationUnitOfWork : ICustomerVerificationUn
     /// <summary>Simulates a genuine, unrelated save failure (never a uniqueness violation) on the next SaveChangesAsync call only — must never be caught/recovered as if it were a duplicate-write race.</summary>
     public bool ThrowUnrelatedFailureOnce { get; set; }
 
+    public int DiscardCount { get; private set; }
+
+    public void DiscardPendingChanges() => DiscardCount++;
+
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveChangesCallCount++;

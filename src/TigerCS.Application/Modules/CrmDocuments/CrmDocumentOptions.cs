@@ -33,6 +33,34 @@ public sealed class CrmDocumentOptions
     /// <summary>The same document, session and channel is not sent again within this window even under a new idempotency key.</summary>
     public int DuplicateSuppressionMinutes { get; set; } = 15;
 
+    /// <summary>
+    /// Production guard. The chatbot document flow ships disabled and, in a
+    /// Production environment, refuses to start enabled unless this is set too:
+    /// turning it on there is a deliberate act made only after real UAT
+    /// verification passes (see docs/Genesys/Document-Copy-API.md §Status).
+    /// </summary>
+    public bool AllowInProduction { get; set; }
+
+    // ---- email one-time-code verification (CustomerOtpAppService) ----
+
+    /// <summary>How long a code is valid. Resending restarts it.</summary>
+    public int OtpLifetimeMinutes { get; set; } = 10;
+
+    /// <summary>Wrong codes allowed per code before the challenge locks for good.</summary>
+    public int OtpMaxAttempts { get; set; } = 5;
+
+    /// <summary>Codes sent per challenge, including the first.</summary>
+    public int OtpMaxSendsPerChallenge { get; set; } = 3;
+
+    /// <summary>Minimum seconds between two sends of one challenge.</summary>
+    public int OtpMinResendSeconds { get; set; } = 60;
+
+    /// <summary>Challenges started per CRM customer per hour, across every caller — the cap on how many emails anyone can make us send a customer.</summary>
+    public int OtpMaxChallengesPerCustomerPerHour { get; set; } = 5;
+
+    /// <summary>Server-side secret mixed into the stored code hash. Set it in configuration (user-secrets / environment), never commit it.</summary>
+    public string? OtpCodePepper { get; set; }
+
     public bool IsAccepted(VerificationMethod? method) =>
         method is { } m && AcceptedVerificationMethods.Contains(m.ToString(), StringComparer.Ordinal);
 }
