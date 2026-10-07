@@ -15,6 +15,7 @@ using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
+using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCsWeb::TigerCS.Web.Pages;
@@ -205,6 +206,19 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
     }
 
     [Fact]
+    public async Task TicketDetails_ExplainsWhyAnUnclassifiedTicketHasNoSla_AndThatStartHandlingIsNotAFirstResponse()
+    {
+        var html = await Ok(await Client().GetAsync("/Tickets/5"));
+
+        Assert.Contains("this ticket is unclassified", html, StringComparison.Ordinal);
+        Assert.Contains("classifies the ticket and sets its priority", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Clock started</dt><dd>Not started</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("How this SLA is calculated", html, StringComparison.Ordinal);
+        Assert.Contains("Accept &amp; Start / Start Handling) does NOT count", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("SLA data unavailable", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task TicketDetails_CrossDepartmentAssignTarget_ParsesEmployeeAndDepartment()
     {
         Assert.True(TicketDetailsModel.TryParseAssignTarget("20000000-0000-0000-0000-000000000002|3", out var employee, out var department));
@@ -276,7 +290,13 @@ public sealed class TicketsWorkspaceRenderTests : IDisposable
                 "/api/channels" => new[] { new ChannelDto(3, "WhatsApp", "WHATSAPP", true, true, true, 2) },
                 "/api/tickets" => new TicketListResultDto([Ticket(5), Ticket(6)], query["ownerEmployeeId"] is not null ? 3 : query["ticketStatus"] == "Closed" ? 7 : 42, 1, 20),
                 "/api/tickets/5" => Detail(5),
-                "/api/tickets/5/sla" or "/api/tickets/6/sla" => null,
+                "/api/tickets/5/sla" => new TicketSlaSummaryResponseDto(
+                    "NotApplicable", null, false, null, null, false, false, null, 0, "None",
+                    new SlaExplanationDto(false, null, null, "Per-priority SLA policy", null, null, null, null, null, null, null,
+                        "No SLA is running: this ticket is unclassified (no category and/or no priority). The SLA starts when an agent classifies the ticket and sets its priority.",
+                        "First response is satisfied only by a recorded human response. Accepting a pending interaction (Accept & Start / Start Handling) does NOT count.",
+                        "Pause and resume are not implemented in this release.", [])),
+                "/api/tickets/6/sla" => null,
                 "/api/pending-customer-interactions" => query["unassignedOnly"] is not null && query["pageSize"] == "1"
                     ? new AgentHandoffListResultDto([], 5, 1, 1)
                     : new AgentHandoffListResultDto([Handoff(1)], 1, 1, 20),

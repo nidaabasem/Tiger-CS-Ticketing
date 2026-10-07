@@ -421,6 +421,58 @@
                     <span class="panel__hint">One row per priority</span>
                 </div>
                 <p class="panel__note panel__note--top">Durations are stored exactly as approved (e.g. 10–12 days). Whether a day is a business day, and whether Pending pauses the clock, remain pending business decisions — “Not decided” keeps them undecided.</p>
+                @* How the SLA is actually applied today — so an administrator reading
+                   the request-type rows knows which figures drive the due times. Values
+                   are read-only reference data: durations, working hours, pause rules and
+                   precedence are not changed from this page. *@
+                <details class="sla-effective">
+                    <summary class="link-muted">How the SLA is applied to tickets (effective configuration)</summary>
+                    @if (Model.SlaConfiguration is null)
+                    {
+                        <p class="field-hint field-hint--error">The effective SLA configuration could not be loaded.</p>
+                    }
+                    else
+                    {
+                        var cfg = Model.SlaConfiguration;
+                        <dl class="sla-effective__rules">
+                            <dt>Which values apply</dt><dd>@cfg.PolicyPrecedence</dd>
+                            <dt>When the clock starts</dt><dd>@cfg.ClockStartRule</dd>
+                            <dt>First response</dt><dd>@cfg.FirstResponseRule</dd>
+                            <dt>Pausing</dt><dd>@cfg.PauseRule</dd>
+                            <dt>Business calendar</dt>
+                            <dd>
+                                @if (cfg.Calendar is null)
+                                {
+                                    <text>No active business calendar is configured.</text>
+                                }
+                                else
+                                {
+                                    <text>@cfg.Calendar.Name: @cfg.Calendar.BusinessDayStartLocal–@cfg.Calendar.BusinessDayEndLocal @cfg.Calendar.TimeZoneId, working days @string.Join(", ", cfg.Calendar.WorkingDays); @cfg.Calendar.HolidayCount holiday@(cfg.Calendar.HolidayCount == 1 ? "" : "s") configured.</text>
+                                }
+                            </dd>
+                        </dl>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr><th>Priority</th><th>First response target</th><th>Resolution target</th><th>Clock</th><th>Warning at</th><th>Status</th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var p in cfg.Policies)
+                                    {
+                                        <tr class="@(p.IsActive ? "" : "is-inactive")">
+                                            <td><span class="badge badge-priority-@TicketDisplay.PriorityCssKey(p.PriorityId)">@p.PriorityLabel</span></td>
+                                            <td>@TicketDisplay.FormatMinutes(p.FirstResponseTargetMinutes)</td>
+                                            <td>@TicketDisplay.FormatMinutes(p.ResolutionTargetMinutes)</td>
+                                            <td>@p.ClockBasis</td>
+                                            <td>@p.WarningThresholdPercent%</td>
+                                            <td>@await Html.PartialAsync("_StatusBadge", p.IsActive)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </details>
                 @if (r.SlaPolicies.Count == 0)
                 {
                     <div class="empty-state">

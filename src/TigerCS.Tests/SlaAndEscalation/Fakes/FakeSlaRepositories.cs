@@ -1,4 +1,5 @@
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
+using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Infrastructure.Modules.SlaAndEscalation.Seed;
 
@@ -22,6 +23,9 @@ public sealed class FakeSlaPolicyRepository : ISlaPolicyRepository
 
     public Task<SlaPolicy?> GetByPriorityIdAsync(byte priorityId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_policies.GetValueOrDefault(priorityId));
+
+    public Task<IReadOnlyList<SlaPolicy>> ListAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<SlaPolicy>>(_policies.Values.OrderBy(p => p.PriorityId).ToList());
 }
 
 /// <summary>Serves the approved default calendar (ISSUE-017 Option A) unless a test supplies another.</summary>
@@ -33,6 +37,23 @@ public sealed class FakeBusinessCalendarRepository : IBusinessCalendarRepository
 
     public Task<BusinessCalendarSnapshot?> GetActiveSnapshotAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(_snapshot);
+
+    public Task<SlaCalendarDto?> GetActiveDescriptionAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(_snapshot is null
+            ? null
+            : new SlaCalendarDto(
+                "Default", _snapshot.BusinessDayStartLocal.ToString("HH:mm"), _snapshot.BusinessDayEndLocal.ToString("HH:mm"),
+                _snapshot.TimeZone.Id,
+                Enum.GetValues<DayOfWeek>().Where(d => _snapshot.IsWorkingDate(NextDateOf(d))).Select(d => d.ToString()).ToList(),
+                0, []));
+
+    private static DateOnly NextDateOf(DayOfWeek day)
+    {
+        // A date far from any holiday the tests pass, so the day-of-week rule alone decides.
+        var date = new DateOnly(2030, 1, 6);
+        while (date.DayOfWeek != day) { date = date.AddDays(1); }
+        return date;
+    }
 }
 
 public sealed class FakeTicketSlaInstanceRepository : ITicketSlaInstanceRepository

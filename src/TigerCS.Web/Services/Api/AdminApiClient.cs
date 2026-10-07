@@ -1,6 +1,7 @@
 using System.Web;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Domain.Modules.WorkflowConfiguration;
 
@@ -123,6 +124,10 @@ public sealed class AdminApiClient(HttpClient httpClient, ILogger<AdminApiClient
         int requestTypeId, ApprovalType approvalType, SaveApprovalRequirementRequestDto request, CancellationToken ct) =>
         PutAsync<SaveApprovalRequirementRequestDto, AdminRequestTypeDetailDto>(
             $"api/admin/request-types/{requestTypeId}/approval-requirements/{approvalType}", request, ct);
+
+    /// <summary>The SLA configuration the calculation applies (per-priority policies, calendar, rules) — read-only reference for the administrator.</summary>
+    public Task<ApiResult<SlaConfigurationDto>> GetSlaConfigurationAsync(CancellationToken ct) =>
+        GetAsync<SlaConfigurationDto>("api/admin/sla/configuration", ct);
 
     public Task<ApiResult<AdminRequestTypeDetailDto>> SaveSlaPolicyAsync(int requestTypeId, byte priorityId, SaveSlaPolicyRequestDto request, CancellationToken ct) =>
         PutAsync<SaveSlaPolicyRequestDto, AdminRequestTypeDetailDto>($"api/admin/request-types/{requestTypeId}/sla-policies/{priorityId}", request, ct);

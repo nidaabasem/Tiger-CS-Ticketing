@@ -2008,3 +2008,16 @@ a.badge:hover { text-decoration: underline; }
 .pending-help__list dd { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }
 @media (max-width: 720px) { .pending-help__list { grid-template-columns: 1fr; } .pending-help__list dd { margin-bottom: 6px; } }
 .field-hint--error { color: var(--color-critical); }
+
+/* SLA explanation (Ticket Details) and effective SLA configuration (Admin → Request Types). */
+.sla-explain__reason { margin: 0 0 var(--space-2); font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); padding: 8px 10px; border-left: 3px solid var(--color-warning, #d99a1e); background: var(--color-surface-muted, #faf8f2); border-radius: 0 6px 6px 0; }
+.sla-explain { margin-top: var(--space-2); font-size: 13px; }
+.sla-explain > summary { cursor: pointer; }
+.sla-explain__notes { margin: var(--space-2) 0 0; padding-left: 18px; color: var(--color-text-secondary); line-height: 1.5; }
+.sla-explain__notes li + li { margin-top: 4px; }
+.sla-effective { margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+.sla-effective > summary { cursor: pointer; }
+.sla-effective__rules { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: var(--space-2) 0 var(--space-3); }
+.sla-effective__rules dt { font-weight: 600; white-space: nowrap; }
+.sla-effective__rules dd { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }
+@media (max-width: 720px) { .sla-effective__rules { grid-template-columns: 1fr; } }

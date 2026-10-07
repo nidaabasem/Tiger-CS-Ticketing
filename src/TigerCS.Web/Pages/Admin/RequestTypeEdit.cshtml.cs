@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using TigerCS.Application.Modules.Administration.Dto;
+using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
@@ -18,6 +19,9 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
     public AdminRequestTypeDetailDto? RequestType { get; private set; }
     public IReadOnlyCollection<DepartmentDto> Departments { get; private set; } = [];
     public IReadOnlyList<AdminWorkflowSummaryDto> Workflows { get; private set; } = [];
+
+    /// <summary>What the SLA calculation actually applies (per-priority policies, calendar, rules); null when it could not be loaded.</summary>
+    public SlaConfigurationDto? SlaConfiguration { get; private set; }
     public IReadOnlyList<DepartmentMemberDto> DepartmentMembers { get; private set; } = [];
     public IReadOnlyList<AdminUserDto> AllUsers { get; private set; } = [];
     public string? LoadError { get; private set; }
@@ -184,10 +188,12 @@ public sealed class RequestTypeEditModel(AdminApiClient adminApi, DepartmentsApi
         var departments = departmentsApi.GetDepartmentsAsync(activeOnly: false, cancellationToken);
         var workflows = adminApi.GetWorkflowsAsync(includeInactive: false, cancellationToken);
         var users = adminApi.GetUsersAsync(null, includeInactive: false, 1, 100, cancellationToken);
-        await Task.WhenAll(departments, workflows, users);
+        var slaConfiguration = adminApi.GetSlaConfigurationAsync(cancellationToken);
+        await Task.WhenAll(departments, workflows, users, slaConfiguration);
         Departments = departments.Result.IsSuccess ? departments.Result.Value ?? [] : [];
         Workflows = workflows.Result.IsSuccess ? workflows.Result.Value ?? [] : [];
         AllUsers = users.Result.IsSuccess ? users.Result.Value?.Items ?? [] : [];
+        SlaConfiguration = slaConfiguration.Result.IsSuccess ? slaConfiguration.Result.Value : null;
     }
 
     public sealed class DetailsInput

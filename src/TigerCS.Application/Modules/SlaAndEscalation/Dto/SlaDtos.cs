@@ -24,6 +24,7 @@ namespace TigerCS.Application.Modules.SlaAndEscalation.Dto;
 /// <param name="CurrentPauseReason">Always null in this pilot — see this type's remarks.</param>
 /// <param name="TotalPausedMinutesThisPeriod">Always 0 in this pilot — see this type's remarks.</param>
 /// <param name="EscalationLevel">The ticket's current escalation level — an independent dimension, never derived from and never changing TicketStatus (ADR-0008/ADR-0011).</param>
+/// <param name="Explanation">How the effective SLA was arrived at — or why there is none yet. Additive to the approved §5.1 shape; the fields above are unchanged.</param>
 public sealed record TicketSlaSummaryResponseDto(
     string SlaState,
     DateTime? FirstResponseDueAtUtc,
@@ -34,7 +35,103 @@ public sealed record TicketSlaSummaryResponseDto(
     bool IsCurrentlyPaused,
     string? CurrentPauseReason,
     int TotalPausedMinutesThisPeriod,
-    string EscalationLevel);
+    string EscalationLevel,
+    SlaExplanationDto? Explanation = null);
+
+/// <summary>
+/// The effective SLA of one ticket, made legible: which policy applies and
+/// why, what the targets are, on which clock, from when, and — when no SLA
+/// is running — exactly why not. Every statement here is derived from what
+/// the calculation actually does today (<c>SlaDueDateService</c>,
+/// <c>TicketClassificationAppService</c>, <c>FirstHumanResponseRecorder</c>);
+/// nothing is re-computed or re-decided in this projection.
+/// </summary>
+/// <param name="HasActivePeriod">True when an SLA period is open for the ticket (the clock has started).</param>
+/// <param name="AppliedPriorityId">The priority the period was computed from (the period's own priority when one exists, else the ticket's).</param>
+/// <param name="AppliedPriorityLabel">Critical / High / Medium / Low, or null when the ticket has no priority.</param>
+/// <param name="PolicySource">Which configuration layer decided the targets. In this release: the per-priority SLA policy.</param>
+/// <param name="FirstResponseTargetMinutes">The First Response target of the applied policy, in minutes.</param>
+/// <param name="ResolutionTargetMinutes">The Resolution target of the applied policy, in minutes.</param>
+/// <param name="ClockBasis">"24/7" or "Business hours".</param>
+/// <param name="WarningThresholdPercent">Share of the target after which the ticket counts as at risk.</param>
+/// <param name="Calendar">The business calendar in force (working hours, zone, working days, holidays) — only when the basis is business hours.</param>
+/// <param name="ClockStartedAtUtc">When the current period's clock started (the period start), or null when none.</param>
+/// <param name="PeriodReason">Why the current period exists: InitialCreation, Upgrade, Downgrade or Reopen.</param>
+/// <param name="NotStartedReason">Plain-language reason there is no running SLA, or null when there is one.</param>
+/// <param name="FirstResponseRule">What counts as the first human response — and what does not.</param>
+/// <param name="PauseRule">How pausing works in this release.</param>
+/// <param name="Notes">Further statements about how the figures were arrived at.</param>
+public sealed record SlaExplanationDto(
+    bool HasActivePeriod,
+    byte? AppliedPriorityId,
+    string? AppliedPriorityLabel,
+    string PolicySource,
+    int? FirstResponseTargetMinutes,
+    int? ResolutionTargetMinutes,
+    string? ClockBasis,
+    decimal? WarningThresholdPercent,
+    SlaCalendarDto? Calendar,
+    DateTime? ClockStartedAtUtc,
+    string? PeriodReason,
+    string? NotStartedReason,
+    string FirstResponseRule,
+    string PauseRule,
+    IReadOnlyList<string> Notes);
+
+/// <summary>The active business calendar, as configuration reference data (read-only in this release).</summary>
+/// <param name="Name">The calendar's name.</param>
+/// <param name="BusinessDayStartLocal">Start of the working day, local time ("08:00").</param>
+/// <param name="BusinessDayEndLocal">End of the working day, local time ("18:00").</param>
+/// <param name="TimeZoneId">IANA zone id, e.g. Asia/Dubai.</param>
+/// <param name="WorkingDays">The working days of the week, in week order.</param>
+/// <param name="HolidayCount">How many holiday dates are configured.</param>
+/// <param name="UpcomingHolidays">The next configured holiday dates (at most ten), for the reader's orientation.</param>
+public sealed record SlaCalendarDto(
+    string Name,
+    string BusinessDayStartLocal,
+    string BusinessDayEndLocal,
+    string TimeZoneId,
+    IReadOnlyList<string> WorkingDays,
+    int HolidayCount,
+    IReadOnlyList<DateOnly> UpcomingHolidays);
+
+/// <summary>One per-priority SLA policy row — the layer the calculation applies.</summary>
+/// <param name="PriorityId">1 Critical … 4 Low.</param>
+/// <param name="PriorityLabel">Critical / High / Medium / Low.</param>
+/// <param name="FirstResponseTargetMinutes">First Response target, in minutes.</param>
+/// <param name="ResolutionTargetMinutes">Resolution target, in minutes.</param>
+/// <param name="ClockBasis">"24/7" or "Business hours".</param>
+/// <param name="WarningThresholdPercent">At-risk threshold.</param>
+/// <param name="IsActive">Whether the row is in force.</param>
+public sealed record SlaPolicyDto(
+    byte PriorityId,
+    string PriorityLabel,
+    int FirstResponseTargetMinutes,
+    int ResolutionTargetMinutes,
+    string ClockBasis,
+    decimal WarningThresholdPercent,
+    bool IsActive);
+
+/// <summary>
+/// The SLA configuration the calculation actually applies (System
+/// Administrator reference view): the per-priority policies, the active
+/// business calendar and the implementation facts an administrator needs to
+/// read the request-type SLA values correctly. Read-only — the values are
+/// seeded/approved reference data and are not edited from this release's UI.
+/// </summary>
+/// <param name="Policies">The per-priority policies, Critical first.</param>
+/// <param name="Calendar">The active business calendar, or null when none is configured.</param>
+/// <param name="ClockStartRule">When a ticket's SLA clock starts.</param>
+/// <param name="PolicyPrecedence">Which configuration layer the calculation uses today.</param>
+/// <param name="FirstResponseRule">What counts as the first human response.</param>
+/// <param name="PauseRule">How pausing works in this release.</param>
+public sealed record SlaConfigurationDto(
+    IReadOnlyList<SlaPolicyDto> Policies,
+    SlaCalendarDto? Calendar,
+    string ClockStartRule,
+    string PolicyPrecedence,
+    string FirstResponseRule,
+    string PauseRule);
 
 // ---- First response (MVP-API-Contracts.md §5.2) ----
 

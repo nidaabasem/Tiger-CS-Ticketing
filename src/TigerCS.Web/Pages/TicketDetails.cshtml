@@ -523,12 +523,52 @@ else
                     }
                     else
                     {
+                        var sla = Model.Sla;
+                        var why = sla.Explanation;
+                        @if (why is { HasActivePeriod: false })
+                        {
+                            @* No clock is running — say exactly why, before any dashes. *@
+                            <p class="sla-explain__reason">@why.NotStartedReason</p>
+                        }
                         <dl>
-                            <div class="facts-row"><dt>First response due</dt><dd>@(Model.Sla.FirstResponseDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
-                            <div class="facts-row"><dt>First response</dt><dd class="@(Model.Sla.FirstResponseBreached ? "is-critical" : "")">@(Model.Sla.FirstHumanResponseAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? (Model.Sla.FirstResponseBreached ? "Breached" : "Pending"))</dd></div>
-                            <div class="facts-row"><dt>Resolution due</dt><dd>@(Model.Sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
-                            <div class="facts-row"><dt>Resolution</dt><dd class="@(Model.Sla.ResolutionBreached ? "is-critical" : "")">@(Model.Sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(Model.Sla.SlaState))</dd></div>
+                            <div class="facts-row"><dt>SLA status</dt><dd>@TicketDisplay.SlaStateLabel(sla.SlaState)</dd></div>
+                            @if (why is not null)
+                            {
+                                <div class="facts-row"><dt>Applied priority</dt><dd>@(why.AppliedPriorityLabel ?? "Not set")</dd></div>
+                                <div class="facts-row"><dt>Policy</dt><dd>@(why.FirstResponseTargetMinutes is null ? "None" : why.PolicySource)</dd></div>
+                                @if (why.FirstResponseTargetMinutes is int fr && why.ResolutionTargetMinutes is int res)
+                                {
+                                    <div class="facts-row"><dt>Targets</dt><dd>First response @TicketDisplay.FormatMinutes(fr) · Resolution @TicketDisplay.FormatMinutes(res)</dd></div>
+                                }
+                                @if (why.ClockBasis is not null)
+                                {
+                                    <div class="facts-row"><dt>Clock</dt><dd>@why.ClockBasis@(why.Calendar is null ? "" : $" ({why.Calendar.BusinessDayStartLocal}–{why.Calendar.BusinessDayEndLocal} {why.Calendar.TimeZoneId})")</dd></div>
+                                }
+                                <div class="facts-row"><dt>Clock started</dt><dd>@(why.ClockStartedAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "Not started")</dd></div>
+                            }
+                            <div class="facts-row"><dt>First response due</dt><dd>@(sla.FirstResponseDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
+                            <div class="facts-row"><dt>First response</dt><dd class="@(sla.FirstResponseBreached ? "is-critical" : "")">@(sla.FirstHumanResponseAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? (sla.FirstResponseBreached ? "Breached" : why is { HasActivePeriod: false } ? "Not started" : "Pending"))</dd></div>
+                            <div class="facts-row"><dt>Resolution due</dt><dd>@(sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
+                            <div class="facts-row"><dt>Resolution</dt><dd class="@(sla.ResolutionBreached ? "is-critical" : "")">@(sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(sla.SlaState))</dd></div>
                         </dl>
+                        @if (why is not null)
+                        {
+                            <details class="sla-explain">
+                                <summary class="link-muted">How this SLA is calculated</summary>
+                                <ul class="sla-explain__notes">
+                                    @foreach (var note in why.Notes)
+                                    {
+                                        <li>@note</li>
+                                    }
+                                    @if (why.Calendar is { } cal)
+                                    {
+                                        <li>Business calendar “@cal.Name”: @cal.BusinessDayStartLocal–@cal.BusinessDayEndLocal (@cal.TimeZoneId), working days @string.Join(", ", cal.WorkingDays); @cal.HolidayCount holiday@(cal.HolidayCount == 1 ? "" : "s") configured.</li>
+                                    }
+                                    <li><strong>First response:</strong> @why.FirstResponseRule</li>
+                                    <li><strong>Pausing:</strong> @why.PauseRule</li>
+                                </ul>
+                            </details>
+                        }
                     }
                 </div>
                         </aside>
