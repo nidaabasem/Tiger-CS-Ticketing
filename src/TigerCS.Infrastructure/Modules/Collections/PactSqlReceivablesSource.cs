@@ -11,13 +11,13 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 public sealed class PactSqlReceivablesSource(
     IConfiguration configuration, PactReceivablesOptions options, TimeProvider timeProvider) : IPactReceivablesSource
 {
-    public async Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
+    public async Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken)
     {
         var connectionString = configuration.GetConnectionString(options.ConnectionStringName);
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new PactReceivablesSourceException("The PACT report connection is not configured.");
 
-        var endDate = businessDate.ToDateTime(TimeOnly.MinValue).AddDays(1).AddMilliseconds(-3);
+        var endDate = throughDate.ToDateTime(TimeOnly.MinValue).AddDays(1).AddMilliseconds(-3);
         HashSet<(string UnitCode, DateTime DueDate)> downPayments = [];
         if (options.ApplyLegacyExclusions)
         {

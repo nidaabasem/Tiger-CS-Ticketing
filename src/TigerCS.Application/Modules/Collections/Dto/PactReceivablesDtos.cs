@@ -3,7 +3,7 @@ namespace TigerCS.Application.Modules.Collections.Dto;
 public sealed record PactReceivableInstalmentDto(
     int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
     string ChequeNumber, DateOnly DueDate, decimal RemainingAmount,
-    string PaymentStatus, string DueTiming, string SourceStatus);
+    string ReceivablesType, string PaymentStatus, string DueTiming, string SourceStatus);
 
 public sealed record PactReceivableCustomerDto(
     int CompanyId, string CompanyName, string TenantId, string FullName,
@@ -14,7 +14,7 @@ public sealed record PactReceivableCustomerDto(
     IReadOnlyList<PactReceivableInstalmentDto> Instalments);
 
 public sealed record PactReceivableCustomersDto(
-    DateOnly BusinessDate, DateTime ReadAtUtc, bool LegacyExclusionsApplied,
+    DateOnly BusinessDate, int ReportYear, int ReportMonth, DateOnly PeriodStart, DateOnly PeriodEnd, DateTime ReadAtUtc, bool LegacyExclusionsApplied,
     IReadOnlyList<int> CompanyIds, string Currency, string CurrencySource,
     int TotalCount, int DueCustomerCount, int OverdueCustomerCount,
     int Page, int PageSize, IReadOnlyList<PactReceivableCustomerDto> Items);

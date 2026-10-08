@@ -1,6 +1,6 @@
 # PACT Due & Overdue Customers
 
-TigerCS lists PACT customers with a positive outstanding instalment due today or earlier, even if they have no TigerCS ticket or customer-directory record. The supplied report procedures cover company **4 (Dubai)** and **32 (Sharjah)** only. This feature adds no Genesys route, reminder send, next-payment calculation, database migration or background job.
+TigerCS lists PACT apartments with a positive outstanding instalment that is Due in, or OverDue before, a selected reporting month, even if they have no TigerCS ticket or customer-directory record. The supplied report procedures cover company **4 (Dubai)** and **32 (Sharjah)** only. This feature adds no Genesys route, reminder send, next-payment calculation, database migration or background job.
 
 ## UI and API
 
@@ -9,14 +9,14 @@ TigerCS lists PACT customers with a positive outstanding instalment due today or
 - Existing Collections financial-read authorization is enforced before any external read; the central System Administrator override applies. Reporting User alone is insufficient.
 - `companyId`: omitted, `4`, or `32`; `status`: `all` (default), `due`, or `overdue`. Search matches name, tenant ID, mobile, email or unit. Page size is 1–100, default 25.
 - One customer per `(CompanyID, TenantID)`, with every returned unit/instalment under that customer. Equal tenant IDs across companies are separate accounts; there is no CRM identity guess.
-- Dubai business date is provided by the existing Collections clock. **Due** means today; **Overdue** means before today. Future dates and amounts <= 0 are excluded. `all` is the union, not a requirement to have both.
+- Reporting month: optional `year` + `month` (both or neither; default = current Dubai month). **Due** and **OverDue** follow the monthly rule below. Amounts <= 0 are excluded. `all` is the union, not a requirement to have both.
 - Count metrics reflect the selected filters before pagination. Pagination follows customer grouping, with overdue customers and oldest dates first.
 - Response fields include company, tenant ID, name, mobile, email, units, dates, overdue days, due/overdue amounts, source read time, configured currency and whether legacy exclusions were applied.
 - Disabled or failed sources return 503, never an empty/partial success. Invalid filters return 400, unauthorized callers 401/403. The UI has corresponding error/empty/loading states.
 
 ## Direct SQL source and amount limitation
 
-`PactSqlReceivablesSource` calls `dbo.p4AccountReceivables` and `dbo.p32AccountReceivables` in the configured `PACTRPT` database. It passes `@StartDate = 2000-01-01` (matching the supplied procedures' internal lower bound), an inclusive SQL datetime `@EndDate` at the end of the Dubai business date, and `@MinAmount = 0`. Positive balances below 1 AED therefore remain visible. Stored-procedure names and parameters are not caller-controlled. There is a shared request deadline and a source-row cap; either failure rejects the complete response.
+`PactSqlReceivablesSource` calls `dbo.p4AccountReceivables` and `dbo.p32AccountReceivables` in the configured `PACTRPT` database. It passes `@StartDate = 2000-01-01` (matching the supplied procedures' internal lower bound), an inclusive SQL datetime `@EndDate` at the end of the reporting month's last day, and `@MinAmount = 0`. Positive balances below 1 AED therefore remain visible. Stored-procedure names and parameters are not caller-controlled. There is a shared request deadline and a source-row cap; either failure rejects the complete response.
 
 The supplied definitions calculate `Amount` from their payment allocation as `abs(b.PlanFutureAmount - b.NewFutureAmount - PlanFutureAmount)`. Their final invoice-to-schedule join is by tenant tag alone. Several returned rows on one date may therefore be repeated allocations or legitimate instalments. The application preserves all rows, without `DISTINCT`. A due/overdue bucket containing multiple rows on a date has a **null total** and `AmountStatus = NeedsReview`; the UI displays **Review needed** and exposes the rows. An unambiguous bucket is summed as provided. This is a conservative report of those procedures, not independent proof that the underlying allocation is correct. Unit/voucher associations remain exactly as returned by PACT.
 
@@ -26,7 +26,13 @@ PACT returns no currency field. `Currency` defaults to AED and is marked `Curren
 
 - **Only business filter:** an apartment is listed when its Due amount > 0 **or** its Overdue amount > 0. There is no company, project, contract-expiry/status or fixed-date restriction (the former `2025-11-01` bound is gone); expired contracts stay visible while they owe money. The company dropdown is an optional user filter only.
 - **One row per apartment** = company + customer + unit (`UnitId`/`UnitCode`).
-- `DueAmount` = Σ `Amount` of rows with `DueDate` = business date; `OverdueAmount` = Σ `Amount` of rows with `DueDate` < business date. They are disjoint by date, so they cannot overlap; `TotalAmount` = Due + Overdue, and is null (`NeedsReview`) if either bucket has several rows on one date.
+- **Monthly definitions** (from EDSM `ReportServices.GetAccountReceivableTransactionsAsync(year, month)`, `ReceivablesTransactionTypeEnum` OverDue = 1, Due = 2): `targetFromDate` = first day of the month, `targetToDate` = last day. **OverDue** = `DueDate < targetFromDate`; **Due** = `targetFromDate <= DueDate <= targetToDate`. `DueAmount` = Σ `Amount` of Due rows; `OverdueAmount` = Σ of OverDue rows. The month's later days belong to Due even though they are still in the future.
+- The two buckets are disjoint by date, so they cannot overlap; `TotalAmount` = Due + Overdue, and is null (`NeedsReview`) if either bucket has several rows on one date.
+- TigerCS reads each report with `@EndDate` = end of the last day of the month, so in-month later instalments are included. EDSM itself requests 2022-01-01 – 2031-08-01 and leaves rows after the month as type 7 (Outstanding), which are neither Due nor OverDue; they are not listed here. **Unverified:** that the procedures treat `@EndDate` as an inclusive DueDate cut-off with no other effect on `Amount`.
+- **Three separate concepts per instalment:** `ReceivablesType` (Due / OverDue, relative to the reporting month), `DueTiming` (Due Today / Overdue / Upcoming, relative to today's Dubai date) and `PaymentStatus`. An instalment can be Upcoming by calendar date and still be in the month's DueAmount; one due earlier in the current month is Due by type but Overdue by timing.
+- The type is assigned in EDSM application code (`TypeId` starts as Outstanding for every row). It is not a procedure parameter or filter and is not mapped from the PACT `Status` column; the enum is not used for `PaymentStatus`.
+- **Classification precedence in EDSM:** rows are first set to Handover Issue (TP119/121/122/123 after cut-off dates, due on or before month end), then Legal (CRM legal-case units), then ChequesOverDue / ChequesDue (`GULF_CUSTOMERS`), and only the remaining rows become OverDue/Due. Those categories therefore *remove* amounts from the EDSM report's OverDue and Due columns. Here none of them is applied (requirement: no additional exclusions), so the TigerCS Due/Overdue amounts equal EDSM's Due+OverDue **plus** the Handover, Legal and cheque rows with the same dates. The EDSM report's `*` name and `SEPCIAL_CASES` removal and its booking/down-payment removal (only a `//TODO` there) are likewise not applied.
+- The EDSM comment "Map & Merge same UnitCode, DueDate" is followed by a plain `Select`; no merge or de-duplication occurs, so none is assumed. Rows are preserved and ambiguous same-date totals are flagged as above. EDSM takes `Amount` straight from the procedure result (`res.Amount`).
 - **PACT field verification (open):** `p4/p32AccountReceivables` return no column named `DueAmount` or `OverAmount`; the only amount is `Amount`, derived inside the procedure from the payment allocation (not the original instalment/cheque value). The procedure bodies are not in this repository, so that this is the *remaining* balance has to be confirmed against PACT before activation.
 - Legacy exclusions are **off by default** (`ApplyLegacyExclusions=false`). If re-enabled, `LegacyDownPaymentFromDate` must be configured; there is no built-in date.
 
@@ -36,13 +42,13 @@ Each instalment in an apartment's details shows its due date, the remaining unpa
 
 | Label | Source | Values |
 | --- | --- | --- |
-| Due timing | Due date vs. the Dubai business date only | Due Today (=), Overdue (<), Upcoming (>) |
+| Due timing | Due date vs. today's Dubai date only | Due Today (=), Overdue (<), Upcoming (>) |
 | Payment status | Original PACT `Status`, via the verified `SourceStatusMap` only | Unpaid, Partially Paid, Paid, **Unknown** |
 
 - A partially paid instalment that is late shows both labels (Partially Paid + Overdue).
 - Payment status is never inferred from the due date, and has nothing to do with ticket or contract status.
 - **Verification result:** the repository contains no definition or list of the values of the report's `Status` column (the only value in test data is a placeholder, `Installment`), and the procedures return the remainder only, not the original instalment amount, so Paid/Partially Paid cannot be derived from amounts either. **No mapping is therefore shipped**: every instalment currently shows payment status Unknown with the original value retained. Once each value is confirmed against PACT, add it under `CollectionsSource:PactReceivables:SourceStatusMap` (e.g. `"<value>": "PartiallyPaid"`; allowed targets Unpaid, PartiallyPaid, Paid; matching is case-insensitive). A value mapped to Paid while a positive remainder is owed is shown as Unknown.
-- Upcoming rows appear only if the source returns them (the reports are currently called with an end date of the business day, so normally none) and only for apartments already listed; they never affect inclusion or the due/overdue amounts. The inclusion rule is unchanged: DueAmount > 0 or OverdueAmount > 0.
+- The inclusion rule is unchanged: DueAmount > 0 or OverdueAmount > 0 (monthly amounts).
 
 ## Existing EDSM exclusions (legacy, disabled by default)
 

@@ -16,10 +16,12 @@ public sealed class PactReceivableCustomersTests
     {
         public List<PactReceivableInstalment> Items { get; } = [];
         public int Reads { get; private set; }
+        public DateOnly? ThroughDate { get; private set; }
         public Exception? Failure { get; set; }
         public Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
         {
             Reads++;
+            ThroughDate = businessDate;
             if (Failure is not null) throw Failure;
             return Task.FromResult(new PactReceivablesSnapshot(Items, Now, true));
         }
@@ -42,33 +44,96 @@ public sealed class PactReceivableCustomersTests
     }
 
     internal static PactReceivableInstalment Row(int day, decimal amount = 100m,
-        string tenant = "3001", int company = 4, string unit = "TP140-101", string voucher = "INV-1") =>
+        string tenant = "3001", int company = 4, string unit = "TP140-101", string voucher = "INV-1", int month = 10, int year = 2026) =>
         new(company, tenant, "Example Customer", "+971 50 000 3001", "example@example.test", 101,
-            unit, "", voucher, "", new DateTime(2026, 10, day), amount, "Installment");
+            unit, "", voucher, "", new DateTime(year, month, day), amount, "Installment");
 
     [Fact]
-    public async Task ListsCustomersWithoutTickets_UsesDubaiDate_ExcludesFutureAndSettled()
+    public async Task MonthlyDefinition_DueIsTheWholeMonthIncludingLaterDays_OverdueIsBeforeTheMonth()
+    {
+        var h = new Harness(); // business date 7 Oct 2026
+        h.Source.Items.AddRange([Row(6), Row(7, 0.25m), Row(8, 900m), Row(20, 50m, month: 9), Row(5, 0), Row(4, -20)]);
+        var report = (await h.Service.ListAsync(h.Agent)).Value!;
+        var customer = Assert.Single(report.Items);
+        Assert.Equal((2026, 10), (report.ReportYear, report.ReportMonth));
+        Assert.Equal((new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31)), (report.PeriodStart, report.PeriodEnd));
+        Assert.Equal(new DateOnly(2026, 10, 31), h.Source.ThroughDate);
+        Assert.Equal(1000.25m, customer.DueAmount);   // includes the 8 Oct row, which is Upcoming by calendar date
+        Assert.Equal(50m, customer.OverdueAmount);
+        Assert.Equal(1050.25m, customer.TotalAmount);
+        Assert.Equal(4, customer.Instalments.Count);
+        Assert.True(customer.HasDue && customer.HasOverdue);
+    }
+
+    [Fact]
+    public async Task MonthBoundaries_Sep30IsOverdue_Oct1AndOct31AreDue_Nov1IsOutside()
     {
         var h = new Harness();
-        h.Source.Items.AddRange([Row(6), Row(7, 0.25m), Row(8, 900m), Row(5, 0), Row(4, -20)]);
-        var result = await h.Service.ListAsync(h.Agent);
-        var report = result.Value!;
-        var customer = Assert.Single(report.Items);
-        Assert.Equal(new DateOnly(2026, 10, 7), report.BusinessDate);
-        Assert.True(customer.HasDue);
-        Assert.True(customer.HasOverdue);
-        Assert.Equal(0.25m, customer.DueAmount);
-        Assert.Equal(100m, customer.OverdueAmount);
-        Assert.Equal(1, customer.OverdueDays);
-        Assert.Equal(3, customer.Instalments.Count); // incl. the Upcoming detail row
-        Assert.Equal("Upcoming", customer.Instalments.Last().DueTiming);
+        h.Source.Items.AddRange([Row(30, 1m, unit: "A", month: 9), Row(1, 2m, unit: "B"), Row(31, 4m, unit: "C"), Row(1, 8m, unit: "D", month: 11)]);
+        var items = (await h.Service.ListAsync(h.Agent)).Value!.Items;
+        Assert.Equal(3, items.Count); // D is outside the month and, having no other row, is not listed
+        var a = items.Single(c => c.UnitCode == "A");
+        Assert.Equal((0m, 1m), (a.DueAmount, a.OverdueAmount));
+        Assert.Equal("OverDue", a.Instalments[0].ReceivablesType);
+        var b = items.Single(c => c.UnitCode == "B");
+        Assert.Equal((2m, 0m), (b.DueAmount, b.OverdueAmount));
+        var c31 = items.Single(c => c.UnitCode == "C");
+        Assert.Equal((4m, 0m, "Due", "Upcoming"), (c31.DueAmount, c31.OverdueAmount, c31.Instalments[0].ReceivablesType, c31.Instalments[0].DueTiming));
+    }
+
+    [Theory]
+    [InlineData(2026, 2, 28)]
+    [InlineData(2028, 2, 29)]
+    [InlineData(2026, 12, 31)]
+    [InlineData(2026, 4, 30)]
+    public async Task SelectedMonthEndIsPassedToTheSource_AndLastDayIsDue(int year, int month, int lastDay)
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(lastDay, 5m, month: month, year: year), Row(1, 7m, unit: "X", month: month % 12 + 1, year: month == 12 ? year + 1 : year)]);
+        var items = (await h.Service.ListAsync(h.Agent, year: year, month: month)).Value!.Items;
+        Assert.Equal(new DateOnly(year, month, lastDay), h.Source.ThroughDate);
+        var only = Assert.Single(items);
+        Assert.Equal(5m, only.DueAmount);
+    }
+
+    [Fact]
+    public async Task PastMonth_OverdueIsBeforeThatMonth_AndDailyTimingStaysIndependent()
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(31, 3m, month: 8), Row(1, 4m, month: 9), Row(30, 5m, month: 9)]);
+        var c = Assert.Single((await h.Service.ListAsync(h.Agent, year: 2026, month: 9)).Value!.Items);
+        Assert.Equal((4m + 5m, 3m, 12m), (c.DueAmount, c.OverdueAmount, c.TotalAmount));
+        // Relative to the real business date (7 Oct) all three are past dates: calendar timing is Overdue for each.
+        Assert.All(c.Instalments, i => Assert.Equal("Overdue", i.DueTiming));
+        Assert.Equal(["OverDue", "Due", "Due"], c.Instalments.Select(i => i.ReceivablesType));
+    }
+
+    [Theory]
+    [InlineData(2026, null)]
+    [InlineData(null, 5)]
+    [InlineData(2026, 13)]
+    [InlineData(2026, 0)]
+    [InlineData(1999, 5)]
+    public async Task InvalidReportingMonthIsRejectedWithoutReadingPact(int? year, int? month)
+    {
+        var h = new Harness();
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ListAsync(h.Agent, year: year, month: month)).Outcome);
+        Assert.Equal(0, h.Source.Reads);
+    }
+
+    [Fact]
+    public async Task ExcludedLegacyCategoriesAreNotRemoved_HandoverLegalAndChequeUnitsStayListed()
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(6, unit: "TP121-101", month: 9, year: 2026) with { FullName = "*Cancelled" }, Row(5, unit: "TP103-1")]);
+        Assert.Equal(2, (await h.Service.ListAsync(h.Agent)).Value!.TotalCount);
     }
 
     [Fact]
     public async Task EachApartmentIsItsOwnRow_WithSeparateDueOverdueAndTotal()
     {
         var h = new Harness();
-        h.Source.Items.AddRange([Row(7, 40m), Row(6, 60m), Row(5, 25m, unit: "TP140-202"), Row(8, 900m, unit: "TP140-303"), Row(6, 0m, unit: "TP140-404")]);
+        h.Source.Items.AddRange([Row(7, 40m), Row(6, 60m, month: 9), Row(5, 25m, unit: "TP140-202", month: 9), Row(5, 900m, unit: "TP140-303", month: 11), Row(6, 0m, unit: "TP140-404")]);
         var items = (await h.Service.ListAsync(h.Agent)).Value!.Items;
         Assert.Equal(2, items.Count);
         var a = items.Single(c => c.UnitCode == "TP140-101");
@@ -81,14 +146,16 @@ public sealed class PactReceivableCustomersTests
     public async Task AmbiguousBucketHasNoTotal_ButApartmentStaysVisible()
     {
         var h = new Harness();
-        h.Source.Items.AddRange([Row(6), Row(6, voucher: "INV-2")]);
+        h.Source.Items.AddRange([Row(6, month: 9), Row(6, voucher: "INV-2", month: 9)]);
         var c = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
         Assert.Null(c.OverdueAmount);
         Assert.Null(c.TotalAmount);
+        Assert.Equal("NeedsReview", c.AmountStatus);
+        Assert.Equal(2, c.Instalments.Count);
     }
 
     [Fact]
-    public async Task InstalmentsCarryTimingSeparatelyFromPaymentStatus_AndUnmappedStatusIsUnknown()
+    public async Task InstalmentsCarryTypeTimingAndPaymentStatusSeparately_AndUnmappedStatusIsUnknown()
     {
         var h = new Harness();
         h.SqlOptions.SourceStatusMap["Part"] = "PartiallyPaid";
@@ -99,20 +166,23 @@ public sealed class PactReceivableCustomersTests
             Row(4, voucher: "Y") with { SourceStatus = "Weird" }]);
         var c = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
         var by = c.Instalments.ToDictionary(i => i.DueDate.Day);
-        Assert.Equal(("PartiallyPaid", "Overdue"), (by[5].PaymentStatus, by[5].DueTiming));
+        Assert.Equal(("Due", "PartiallyPaid", "Overdue"), (by[5].ReceivablesType, by[5].PaymentStatus, by[5].DueTiming));
         Assert.Equal(("Unpaid", "DueToday"), (by[7].PaymentStatus, by[7].DueTiming));
-        Assert.Equal(("Unpaid", "Upcoming"), (by[9].PaymentStatus, by[9].DueTiming));
+        Assert.Equal(("Due", "Unpaid", "Upcoming"), (by[9].ReceivablesType, by[9].PaymentStatus, by[9].DueTiming));
         Assert.Equal("Unknown", by[6].PaymentStatus); // mapped Paid but a remainder is owed
         Assert.Equal(("Unknown", "Weird"), (by[4].PaymentStatus, by[4].SourceStatus));
-        Assert.Equal(100m, c.DueAmount); // upcoming row excluded from amounts
+        Assert.Equal(477m, c.DueAmount);
     }
 
-    [Fact]
-    public async Task UpcomingOnlyApartmentIsNotListed()
+    [Theory]
+    [InlineData("due", 1)]
+    [InlineData("overdue", 2)]
+    [InlineData("all", 3)]
+    public async Task DueAndOverdueAreAUnion_NotARequirementToHaveBoth(string status, int expected)
     {
         var h = new Harness();
-        h.Source.Items.Add(Row(9));
-        Assert.Empty((await h.Service.ListAsync(h.Agent)).Value!.Items);
+        h.Source.Items.AddRange([Row(7), Row(6, tenant: "3002", month: 9), Row(5, tenant: "3003", month: 9)]);
+        Assert.Equal(expected, (await h.Service.ListAsync(h.Agent, status: status)).Value!.TotalCount);
     }
 
     [Fact]
@@ -128,31 +198,8 @@ public sealed class PactReceivableCustomersTests
         Assert.Equal(3, first.TotalCount);
         Assert.Equal(2, first.Items.Count);
         Assert.Single(second.Items);
-        Assert.Equal(2, first.Items.Single(c => c.CompanyId == 4).Instalments.Count);
+        Assert.Equal(2, first.Items.Single(c => c.CompanyId == 4 && c.TenantId == "3001").Instalments.Count);
         Assert.Single(first.Items, c => c.CompanyId == 32 && c.TenantId == "3001");
-    }
-
-    [Fact]
-    public async Task RepeatedDueDatesNeverBecomeInflatedTotals_AndRawRowsArePreserved()
-    {
-        var h = new Harness();
-        h.Source.Items.AddRange([Row(6), Row(6, voucher: "INV-2"), Row(7)]);
-        var customer = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
-        Assert.Null(customer.OverdueAmount);
-        Assert.Equal(100m, customer.DueAmount);
-        Assert.Equal("NeedsReview", customer.AmountStatus);
-        Assert.Equal(3, customer.Instalments.Count);
-    }
-
-    [Theory]
-    [InlineData("due", 1)]
-    [InlineData("overdue", 2)]
-    [InlineData("all", 3)]
-    public async Task DueAndOverdueAreAUnion_NotARequirementToHaveBoth(string status, int expected)
-    {
-        var h = new Harness();
-        h.Source.Items.AddRange([Row(7), Row(6, tenant: "3002"), Row(5, tenant: "3003")]);
-        Assert.Equal(expected, (await h.Service.ListAsync(h.Agent, status: status)).Value!.TotalCount);
     }
 
     [Fact]
