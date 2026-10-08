@@ -21,6 +21,8 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     /// <param name="search">Optional free-text filter (customer name, unit or phone), up to 200 characters.</param>
     /// <param name="page">One-based page number.</param>
     /// <param name="pageSize">Page size, 1 to 100.</param>
+    /// <param name="year">Reporting year; supply together with <c>month</c>. Defaults to the current Dubai month when both are omitted.</param>
+    /// <param name="month">Reporting month, 1-12.</param>
     /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet]
     [ProducesResponseType<PactReceivableCustomersDto>(StatusCodes.Status200OK)]
@@ -29,12 +31,12 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> List([FromQuery] int? companyId, [FromQuery] string? status,
         [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25,
-        CancellationToken cancellationToken = default)
+        [FromQuery] int? year = null, [FromQuery] int? month = null, CancellationToken cancellationToken = default)
     {
         if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var employeeId)) return Unauthorized();
         var caller = new CollectionsCaller(employeeId, User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
             User.FindAll(TigerCsClaimTypes.DepartmentId).Select(c => int.TryParse(c.Value, out var d) ? d : (int?)null).OfType<int>().ToArray());
-        var result = await service.ListAsync(caller, companyId, status, search, page, pageSize, cancellationToken);
+        var result = await service.ListAsync(caller, companyId, status, search, page, pageSize, year, month, cancellationToken);
         if (result.IsSuccess) return Ok(result.Value);
         var (http, code) = result.Outcome switch
         {

@@ -20,7 +20,7 @@ public sealed class PactReceivablesEndpointTests
             Reads++;
             return Task.FromResult(new PactReceivablesSnapshot([
                 new PactReceivableInstalment(4, "3001", "PACT-only customer", "971500003001", "", 100,
-                    "TP140-100", "", "INV-100", "", businessDate.AddDays(-1).ToDateTime(TimeOnly.MinValue), 123m, "Installment")
+                    "TP140-100", "", "INV-100", "", businessDate.AddDays(-businessDate.Day).ToDateTime(TimeOnly.MinValue), 123m, "Installment")
             ], DateTime.UtcNow, true));
         }
     }

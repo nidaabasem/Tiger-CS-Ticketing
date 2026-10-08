@@ -33,9 +33,15 @@
             <label class="field-label" for="receivableStatus">Status</label>
             <select class="field-select" id="receivableStatus" name="status">
                 <option value="all" selected="@(Model.Status is null or "all")">Due &amp; Overdue</option>
-                <option value="due" selected="@(Model.Status == "due")">Due today</option>
+                <option value="due" selected="@(Model.Status == "due")">Due this month</option>
                 <option value="overdue" selected="@(Model.Status == "overdue")">Overdue</option>
             </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableMonth">Reporting month</label>
+            <input class="field-input" type="month" id="receivableMonth" data-month-input value="@(Model.Report is { } r0 ? $"{r0.ReportYear:0000}-{r0.ReportMonth:00}" : "")" />
+            <input type="hidden" name="year" value="@Model.Year" data-year-field />
+            <input type="hidden" name="month" value="@Model.Month" data-month-field />
         </div>
         <div class="filter-bar__submit">
             <button class="btn btn-gold" type="submit">Apply</button>
@@ -47,14 +53,18 @@
     @if (Model.Report is { } report)
     {
         <div class="receivables-metrics">
-            <div class="panel"><span>Customers in this list</span><strong>@report.TotalCount</strong></div>
-            <div class="panel"><span>With instalments due today</span><strong>@report.DueCustomerCount</strong></div>
-            <div class="panel"><span>With overdue instalments</span><strong>@report.OverdueCustomerCount</strong></div>
+            <div class="panel"><span>Apartments in this list</span><strong>@report.TotalCount</strong></div>
+            <div class="panel"><span>Due this month</span><strong>@report.DueCustomerCount</strong></div>
+            <div class="panel"><span>Overdue</span><strong>@report.OverdueCustomerCount</strong></div>
         </div>
-        <p class="text-secondary">As of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Customers are listed once per company.</p>
+        <p class="text-secondary">Reporting month @report.PeriodStart.ToString("MMM yyyy") (Due = due @report.PeriodStart.ToString("dd MMM")–@report.PeriodEnd.ToString("dd MMM yyyy"); Overdue = due before @report.PeriodStart.ToString("dd MMM yyyy")) · as of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Each row is one apartment.</p>
+        @if (report.PeriodEnd < report.BusinessDate || report.PeriodStart > report.BusinessDate)
+        {
+            <div class="receivables-notice" role="status">Amounts are the current remaining balances of instalments whose due dates fall in the selected period. They are not a historical balance as of that month.</div>
+        }
         @if (!report.LegacyExclusionsApplied)
         {
-            <div class="receivables-notice" role="status">This is the raw PACT list. The existing booking, down-payment and special-case exclusions have not been applied.</div>
+            <div class="receivables-notice" role="status">Every apartment with a positive due or overdue amount is listed. The legacy booking, down-payment and special-case exclusions are not applied.</div>
         }
         <div class="panel">
             @if (report.Items.Count == 0)
@@ -65,15 +75,16 @@
             {
                 <div class="receivables-table-wrap">
                     <table class="receivables-table">
-                        <thead><tr><th>Customer</th><th>Company / units</th><th>Due today</th><th>Overdue</th><th>Earliest due date</th><th>Instalments</th></tr></thead>
+                        <thead><tr><th>Customer</th><th>Company / apartment</th><th>Due (month)</th><th>Overdue (before month)</th><th>Total</th><th>Earliest due date</th><th>Instalments</th></tr></thead>
                         <tbody>
                         @foreach (var customer in report.Items)
                         {
                             <tr>
                                 <td><strong>@customer.FullName</strong><span class="receivables-meta">Customer ID @customer.TenantId</span><span class="receivables-meta">@customer.Mobile</span><span class="receivables-meta">@customer.Email</span></td>
-                                <td>@customer.CompanyName<span class="receivables-meta">@string.Join(", ", customer.Instalments.Select(i => i.UnitCode).Where(u => u.Length > 0).Distinct())</span></td>
-                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.DueAmount)</span>@if (customer.HasDue) { <span class="receivables-tag">Due today</span> }</td>
+                                <td>@customer.CompanyName<span class="receivables-meta">@(customer.UnitCode.Length > 0 ? customer.UnitCode : "No unit code")</span></td>
+                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.DueAmount)</span>@if (customer.HasDue) { <span class="receivables-tag">Due this month</span> }</td>
                                 <td><span class="receivables-amount">@ReceivablesModel.Money(customer.OverdueAmount)</span>@if (customer.HasOverdue) { <span class="receivables-tag receivables-tag--overdue">@customer.OverdueDays days overdue</span> }</td>
+                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.TotalAmount)</span></td>
                                 <td>@customer.EarliestDueDate.ToString("dd MMM yyyy")</td>
                                 <td>
                                     <details class="receivables-details">
@@ -85,7 +96,11 @@
                                         <ul>
                                         @foreach (var instalment in customer.Instalments)
                                         {
-                                            <li><strong>@instalment.UnitCode</strong> · @instalment.DueDate.ToString("dd MMM yyyy") · @ReceivablesModel.Money(instalment.Amount) @report.Currency<span class="receivables-meta">@instalment.Status · Voucher @instalment.VoucherNumber</span></li>
+                                            <li><strong>@instalment.UnitCode</strong> · Due @instalment.DueDate.ToString("dd MMM yyyy") · Remaining @ReceivablesModel.Money(instalment.RemainingAmount) @report.Currency
+                                                <span class="receivables-tag">@instalment.ReceivablesType</span>
+                                                <span class="receivables-tag">@ReceivablesModel.PaymentLabel(instalment.PaymentStatus)</span>
+                                                <span class="receivables-tag @(instalment.DueTiming == "Overdue" ? "receivables-tag--overdue" : "")">@ReceivablesModel.TimingLabel(instalment.DueTiming)</span>
+                                                <span class="receivables-meta">Voucher @instalment.VoucherNumber · Source status: @(instalment.SourceStatus.Length > 0 ? instalment.SourceStatus : "(none)")</span></li>
                                         }
                                         </ul>
                                     </details>

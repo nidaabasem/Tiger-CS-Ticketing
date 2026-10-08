@@ -2,7 +2,8 @@ namespace TigerCS.Application.Modules.Collections.Abstractions;
 
 public interface IPactReceivablesSource
 {
-    Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken);
+    /// <summary>Reads instalments due on or before the end of <paramref name="throughDate"/> (the reporting month's last day).</summary>
+    Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken);
 }
 
 public sealed record PactReceivableInstalment(

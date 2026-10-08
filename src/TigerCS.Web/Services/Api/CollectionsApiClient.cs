@@ -17,9 +17,11 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     public const int PageSize = 50;
 
     public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
-        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken)
+        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
+        if (year is { } y) query["year"] = Id(y);
+        if (month is { } m) query["month"] = Id(m);
         if (companyId is { } company) query["companyId"] = Id(company);
         if (!string.IsNullOrWhiteSpace(status)) query["status"] = status;
         if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
