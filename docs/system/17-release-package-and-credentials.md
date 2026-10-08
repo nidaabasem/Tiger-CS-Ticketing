@@ -37,7 +37,7 @@ Checked in the package: it contains the post-#72 types (`CollectionsCampaignAppS
 | 4 | `20261007180009_AddCustomerOtpVerification` | `AddCustomerOtpVerification.sql` | `CustomerOtpChallenges` |
 | 5 | `20261008184722_AddSlaPauseAndPriorityDowngrade` | `AddSlaPauseAndPriorityDowngrade.sql` | `TicketSlaPausePeriods`, `PriorityDowngradeRequests`, 6 columns on `TicketSlaInstances` |
 
-Checks: `SELECT MigrationId FROM __EFMigrationsHistory ORDER BY 1 DESC` shows #5 first; model drift check — *Local*: `dotnet ef migrations has-pending-model-changes` → "No changes" (run before and after generating #5); *CI*: the *DB Migration Validation* workflow applies all migrations to SQL Server and compares the exact table list (updated in this PR to 60 tables) — **result pending the PR run**; *UAT*: not run.
+Checks: `SELECT MigrationId FROM __EFMigrationsHistory ORDER BY 1 DESC` shows #5 first; model drift check — *Local*: `dotnet ef migrations has-pending-model-changes` → "No changes" (run before and after generating #5); *CI*: the *DB Migration Validation* workflow applies all migrations to SQL Server and compares the exact table list (updated in this PR to 60 tables) — **result: passed on PR #78 (run 37828357971)**; *UAT*: not run.
 
 ## 17.4 Configuration checklist
 
@@ -62,9 +62,9 @@ Procedure: create the new secret in the secret store → update the dependent sy
 
 | Claim | Local | CI | UAT |
 |---|---|---|---|
-| Solution builds; 3,7xx tests pass (exact count in the PR description) | ✔ | pending PR run | — |
+| Solution builds; 3,7xx tests pass (exact count in the PR description) | ✔ | ✔ `build-and-test` passed on PR #78 | — |
 | EF model has no drift vs migrations | ✔ | — | — |
-| Migrations apply to SQL Server and tables match | — | pending PR run (workflow updated) | — |
+| Migrations apply to SQL Server and tables match | — | ✔ `validate-migration` passed on PR #78 (run 37828357971) | — |
 | Data-action templates render valid JSON (string, null, Arabic, special characters) | ✔ (simulator, not Genesys's engine) | — | — |
 | Forwarding code against real TigerGroupWeb / Genesys | — | — | not run |
 | OTP e-mail, CRM document files, SMTP delivery | fakes only | — | not run |

@@ -11,7 +11,7 @@
 | Same after the first review fixes (PR #78, commit `aad2876`) | 3396 passed, 0 failed |
 | After SLA pause/request-type SLA, downgrade approval, read-only roles/service identity, Genesys contract + campaign tests, Tasleeh provider, migration `AddSlaPauseAndPriorityDowngrade` | **3779 passed, 0 failed** (needs `DOTNET_USE_POLLING_FILE_WATCHER=1` on hosts with a low inotify limit) |
 | `dotnet ef migrations has-pending-model-changes` | "No changes" before and after the new migration |
-| CI (GitHub Actions) on the updated PR | pending — see PR checks; the *DB Migration Validation* workflow (real SQL Server) was updated to expect 60 tables |
+| **CI** (GitHub Actions, PR #78 head `aad7860`, 2026‑10‑08): `build-and-test` ✔ (both push and PR runs), `validate-migration` ✔ — all migrations applied to a real SQL Server container as the idempotent script and the exact 60-table list matched | success (actions runs 37828357903, 37828349649, 37828357971) |
 | `dotnet build` (all projects) | succeeded |
 | Data action JSON | `08` was invalid after template rendering (fixed); all `successTemplate`s now render valid JSON with `null` substitutions (script in the PR description) |
 | SQL Server / Hangfire / migrations applied | **not run** (SQLite and fakes only) |
