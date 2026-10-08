@@ -60,6 +60,12 @@ public static class CollectionsCampaignPolicy
         return new(amount, earliest, qualifies ? "Qualifies" : "BelowThreshold");
     }
 
+    /// <summary>Default "To" of the due-date window: month end for the whole-month stages, otherwise the preview date.</summary>
+    public static DateOnly DefaultDateTo(CollectionsCampaignStage stage, DateOnly businessDate) =>
+        stage is CollectionsCampaignStage.CurrentMonthReminder or CollectionsCampaignStage.FollowUpReminder
+            ? new DateOnly(businessDate.Year, businessDate.Month, DateTime.DaysInMonth(businessDate.Year, businessDate.Month))
+            : businessDate;
+
     /// <summary>
     /// Flags (without changing eligibility) where the due-date window excludes instalments the confirmed stage rule would
     /// otherwise qualify. The window is an additional reviewer filter; the communication policy above is unchanged.

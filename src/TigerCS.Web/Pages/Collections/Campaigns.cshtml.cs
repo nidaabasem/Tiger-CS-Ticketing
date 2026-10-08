@@ -34,8 +34,7 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
         Report = result.IsSuccess ? result.Value : null;
         Error = result.Detail;
         BusinessDate ??= Report?.BusinessDate;
-        DateFrom ??= Report?.DateFrom;
-        DateTo ??= Report?.DateTo;
+        // DateFrom/DateTo stay as typed (blank = stage default), so changing the stage re-derives the default To date.
     }
 
     public async Task<IActionResult> OnGetExportAsync(string stage = "OverdueReminder", string mode = "review",

@@ -176,14 +176,43 @@ public sealed class CollectionsCampaignAppServiceTests
         Assert.Equal("500.00", fields[10]); Assert.Equal(22, fields.Length); Assert.Equal(new[] { "false", "false", "false" }, fields[19..]);
     }
 
-    [Fact]
-    public async Task DefaultWindowIsJanuaryFirstThroughPreviewDate_AndIsPushedToTheSource()
+    [Theory]
+    [InlineData("OverdueReminder", 2026, 10, 8, 2026, 10, 8)]
+    [InlineData("LegalNotice", 2026, 10, 8, 2026, 10, 8)]
+    [InlineData("LegalReferral", 2026, 10, 8, 2026, 10, 8)]
+    [InlineData("CurrentMonthReminder", 2026, 10, 8, 2026, 10, 31)]
+    [InlineData("FollowUpReminder", 2026, 10, 8, 2026, 10, 31)]
+    [InlineData("CurrentMonthReminder", 2026, 2, 14, 2026, 2, 28)]   // non-leap February
+    [InlineData("FollowUpReminder", 2028, 2, 3, 2028, 2, 29)]        // leap February
+    [InlineData("CurrentMonthReminder", 2026, 12, 31, 2026, 12, 31)] // year end
+    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From follows the preview year
+    public async Task DefaultWindowDependsOnTheStage_FromIsAlwaysJanuaryFirstOfThePreviewYear(
+        string stage, int y, int m, int d, int toY, int toM, int toD)
     {
-        var h = new Harness(); h.Source.Items.AddRange([Row(), Row(tenant: "3002") with { DueDate = new(2025, 12, 31) }]);
-        var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
-        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), new(2026, 10, 8), null), h.Source.LastRequest);
-        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(2026, 10, 8), report.DateTo);
-        Assert.Empty(report.Items); // Oct 10 is after To; the 2025 row is before From.
+        var h = new Harness();
+        var report = (await h.Service.PreviewAsync(h.Manager, stage, new(y, m, d))).Value!;
+        Assert.Equal(new PactReceivablesRequest(new(y, 1, 1), new(toY, toM, toD), null), h.Source.LastRequest);
+        Assert.Equal(new DateOnly(y, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(toY, toM, toD), report.DateTo);
+        Assert.Equal(new DateOnly(y, m, d), report.BusinessDate);
+    }
+
+    [Fact]
+    public async Task CurrentMonthDefaultKeepsUpcomingInstalments_OverdueDefaultNeverReadsThem()
+    {
+        var h = new Harness(); h.Source.Items.Add(Row(day: 25));
+        var current = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
+        Assert.Single(current.Items); Assert.Empty(current.RangeNotes!);
+        var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
+        Assert.Empty(overdue.Items);
+    }
+
+    [Fact]
+    public async Task EditedDatesOverrideTheStageDefaults_WithoutChangingEligibility()
+    {
+        var h = new Harness(); h.Source.Items.AddRange([Row(day: 25), Row(tenant: "3002", day: 5)]);
+        var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8),
+            dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 8))).Value!;
+        Assert.Equal("3002", Assert.Single(report.Items).TenantId);
         Assert.Contains(report.RangeNotes!, n => n.Contains("preview month"));
     }
 

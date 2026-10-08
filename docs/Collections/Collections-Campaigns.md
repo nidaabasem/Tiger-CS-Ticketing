@@ -125,23 +125,49 @@ files stay uncommitted.
 
 ## Due-date range (From date / To date)
 
-The page and API accept `dateFrom` and `dateTo` (instalment due dates, inclusive). Defaults: 1 January of the preview year
-and the preview date. They are sent to the PACT procedures as `@StartDate` / `@EndDate` and the company filter selects the
+The page and API accept `dateFrom` and `dateTo` (instalment due dates, inclusive); both are editable and a blank field uses
+the default. **From** defaults to 1 January of the preview year. **To** defaults to the **end of the preview date's month**
+for the whole-month stages (Current month, Follow-up) and to the **preview date** for Overdue, Legal notice and Legal
+referral. The dates are sent to the PACT procedures as `@StartDate` / `@EndDate` and the company filter selects the
 procedure(s) that run, so rows outside the window are never read. The **preview date stays separate**: it alone drives the
-schedule and stage eligibility.
+schedule and stage eligibility; the defaults do not change any eligibility rule.
 
 ### Stage-semantics conflict (flagged, eligibility NOT changed)
 
 * **Overdue reminder** is *scheduled* on day 1; the confirmed rule qualifies instalments due **before the preview date minus one
   calendar month**. It is not "day-1 overdue", and it is not "everything overdue since January". The label now says so and the
   response carries `RangeNotes` stating the cut-off and that instalments before *From date* are excluded.
-* **Current month / Follow-up** qualify the whole preview month **including upcoming dates**. With the requested default
-  *To = preview date* (e.g. 8 Oct), instalments due 9-31 Oct are excluded from the read, so the list is smaller than the
-  confirmed policy. The page shows a note; set *To date* to the month end to follow the policy. Decide whether the default
-  *To date* should instead be the end of the preview month for those stages before changing it.
+* **Current month / Follow-up** qualify the whole preview month **including upcoming dates**, so their default *To* is the
+  month end. If a user edits *To* to an earlier date, the list is narrower than the confirmed policy and the page shows a
+  note.
 * **Legal notice / referral** are likewise limited by the window (previous month; older than three months).
 
+## Enabling EmailNotifications and CrmDocuments
+
+Both are `false` in the committed `appsettings.json` (enabling email without a password fails startup validation by design).
+Enable per environment with environment variables or user-secrets, never in a committed file. API host, with `__` as the
+section separator:
+
+| Setting | Value |
+| --- | --- |
+| `EmailNotifications__Enabled` | `true` |
+| `EmailNotifications__Provider` | `Smtp` (committed default; `Recording` only in Development/Testing) |
+| `EmailNotifications__SmtpHost` / `SmtpPort` / `EnableSsl` | committed defaults `smtp.office365.com` / `587` / `true` |
+| `EmailNotifications__Username` / `FromEmail` | the sending mailbox (non-secret; committed values may be kept) |
+| `EmailNotifications__Password` | **secret, required when enabled**: user-secrets or environment only |
+| `CrmDocuments__Enabled` | `true`. Requires working email (the document copy is sent through `EmailNotifications`) and the CRM connection (`ConnectionStrings__CrmDatabase`, secret) |
+
+Local development: `dotnet user-secrets set "EmailNotifications:Password" "<value>"` in `src/TigerCS.Api`. Enabling the flag alone does not make
+document copies work with `Crm:Provider=Http`: the CRM document gateway is not implemented yet and requests answer 503
+`DOCUMENT_SOURCE_UNAVAILABLE` (see `docs/Genesys/Document-Copy-API.md`). With
+`CrmDocuments:Enabled=false` the document-copy API answers 503 `DOCUMENT_COPY_DISABLED`; see `docs/Genesys/Document-Copy-API.md`.
+
 ## Why the preview used to hang (root cause)
+
+> **Status: UNVERIFIED against real PACT.** The cause below is inferred from the code, the logs supplied and the existing
+> procedure review. Nobody has measured `p4AccountReceivables` for this call or reproduced the cancellation against real
+> PACT. Confirm with the new log lines (per-procedure elapsed ms, budget/caller cancellation) before treating it as proven.
+
 
 * `CollectionsCampaignAppService.PreviewAsync` always read **both** company procedures (`p4`, `p32`) and only then applied the
   `companyId` filter in memory. Company 32 finishing in ~874 ms (3,750 rows) says nothing about company 4: its procedure is

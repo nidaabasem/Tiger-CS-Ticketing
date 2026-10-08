@@ -35,10 +35,12 @@ public sealed class CollectionsCampaignAppService(
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a campaign stage, a date in 2000-2100, company 4 or 32, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
 
-        // Instalment due-date window. Defaults: 1 January of the preview year through the preview date.
-        // The preview date still alone drives stage scheduling/eligibility; the window only limits which instalments are read.
+        // Instalment due-date window. Defaults: 1 January of the preview year through the preview date, except the
+        // whole-month stages (current month, follow-up), which default to the end of the preview month so upcoming
+        // instalments of that month are not cut off. The preview date still alone drives stage scheduling/eligibility;
+        // the window only limits which instalments are read.
         var from = dateFrom ?? new DateOnly(date.Year, 1, 1);
-        var to = dateTo ?? date;
+        var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
         if (from > to || from.Year < 2000 || to.Year > 2100)
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
