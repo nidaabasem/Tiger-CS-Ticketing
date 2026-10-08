@@ -12,7 +12,7 @@ namespace TigerCS.Tests.Collections.Services;
 public sealed class CollectionsCampaignAppServiceTests
 {
     private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);
-    private sealed class Source : IPactReceivablesSource
+    internal sealed class Source : IPactReceivablesSource
     {
         public List<PactReceivableInstalment> Items { get; } = [];
         public int Reads { get; private set; }
@@ -36,7 +36,7 @@ public sealed class CollectionsCampaignAppServiceTests
         }
     }
 
-    private sealed class Harness
+    internal sealed class Harness
     {
         public Source Source { get; } = new();
         public CollectionsOptions Options { get; } = new() { Enabled = true };
@@ -50,7 +50,7 @@ public sealed class CollectionsCampaignAppServiceTests
             Source, NullLogger<CollectionsCampaignAppService>.Instance);
     }
 
-    private static PactReceivableInstalment Row(int day = 10, decimal amount = 500m, string tenant = "3001",
+    internal static PactReceivableInstalment Row(int day = 10, decimal amount = 500m, string tenant = "3001",
         int company = 4, int unit = 101) => new(company, tenant, "Example Customer", "971500003001", "example@example.test",
             unit, $"TP140-{unit}", "TP140", "INV-1", "", new(2026, 10, day), amount, "Installment");
 

@@ -22,6 +22,7 @@ Scope: tree at `31878f4` (base `a1cba71` + CRM document gateway + email OTP). Re
 * **Where:** `src/TigerCS.Application/Modules/Collections/Services/CollectionsCampaignAppService.cs:42` (`from = dateFrom ?? new DateOnly(date.Year, 1, 1)`), `:57` (pushed to the PACT procedure as `@StartDate`), `:89-90` (second filter). Policy cut-offs: `CollectionsCampaignPolicy.cs:280-285`.
 * **Failure scenario:** On 2027-02-01 the OverdueReminder stage qualifies instalments due before 2027-01-01, but the read starts at 2027-01-01, so the stage returns zero rows - every 2026 arrear is invisible. On 2027-03-01 only January 2027 can qualify. LegalNotice (previous month) returns nothing on 12/14 Jan; LegalReferral (older than 3 months) returns nothing from January to March. `RangeNotes` only prints a note; nothing fails. Nothing breaks in 2026 because the hard-coded `StartDate` default is also 2026-01-01.
 * **Fix (minimal):** default `from` to the earliest date any stage can need (e.g. `PactReceivablesOptions.StartDate`, not `1 Jan of date.Year`), or `min(configured StartDate, stage cut-off)`; add a unit test at 2027-02-01.
+* **Status: FIXED** - the default `from` is `PactReceivablesOptions.StartDate`; the remaining calendar-year fallback was removed and a window ending before `StartDate` is now rejected (see 10 section 8).
 * The receivables list has the same business cap by design (`PactReceivablesOptions.cs:23`, StartDate 2026-01-01): arrears before 2026 never appear (confirm this is intended).
 
 ## F-2 Secrets remain in git history - High
