@@ -45,3 +45,24 @@ document.addEventListener('DOMContentLoaded', function () {
         month.value = m ? String(parseInt(m[2], 10)) : '';
     });
 });
+
+// "Load missing data" form: one click starts the background load; the button is restored on any return to the page
+// (success redirect, failure, back/forward cache) so it can never stay disabled.
+(() => {
+    const restore = () => document.querySelectorAll('[data-load-form]').forEach(form => {
+        const button = form.querySelector('[data-load-button]');
+        const status = form.querySelector('.receivables-loading');
+        if (button) button.disabled = false;
+        if (status) status.hidden = true;
+    });
+    document.addEventListener('submit', event => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-load-form')) return;
+        const button = form.querySelector('[data-load-button]');
+        const status = form.querySelector('.receivables-loading');
+        if (button) button.disabled = true;
+        if (status) status.hidden = false;
+        window.setTimeout(restore, 30000);
+    });
+    window.addEventListener('pageshow', restore);
+})();

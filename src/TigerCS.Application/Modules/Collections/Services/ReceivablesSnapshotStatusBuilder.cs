@@ -7,7 +7,7 @@ public sealed record SnapshotCompanyRaw(
     int CompanyId, bool HasSnapshot, DateTime? LastSuccessUtc, DateTime? LastAttemptUtc, string? LastAttemptStatus,
     int? LastErrorNumber, int ConsecutiveFailures, int RowCount, DateOnly? CoverageFrom, DateOnly? CoverageThrough,
     int ExcludedInvalidUnitRows, decimal ExcludedInvalidUnitAmount, int ExcludedInvalidIdentityRows,
-    decimal ExcludedInvalidIdentityAmount, int ContradictoryStatusRows, int UnknownStatusRows);
+    decimal ExcludedInvalidIdentityAmount, int ContradictoryStatusRows, int UnknownStatusRows, bool RefreshInProgress = false);
 
 /// <summary>Freshness rules shared by the Receivables page, Campaigns and the export gate (pure, unit-tested).</summary>
 public static class ReceivablesSnapshotStatusBuilder
@@ -28,7 +28,7 @@ public static class ReceivablesSnapshotStatusBuilder
             raw.LastSuccessUtc, raw.LastAttemptUtc, string.IsNullOrWhiteSpace(raw.LastAttemptStatus) ? "Never" : raw.LastAttemptStatus!,
             raw.LastErrorNumber, raw.ConsecutiveFailures, raw.RowCount, raw.CoverageFrom, raw.CoverageThrough,
             raw.ExcludedInvalidUnitRows, raw.ExcludedInvalidUnitAmount, raw.ExcludedInvalidIdentityRows, raw.ExcludedInvalidIdentityAmount,
-            raw.ContradictoryStatusRows, raw.UnknownStatusRows, freshness, age);
+            raw.ContradictoryStatusRows, raw.UnknownStatusRows, freshness, age, raw.RefreshInProgress);
     }
 
     public static SnapshotStatusDto Build(IEnumerable<SnapshotCompanyRaw> companies, IEnumerable<UnmatchedTowerDto> unmatched,

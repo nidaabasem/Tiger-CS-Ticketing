@@ -15,6 +15,34 @@
         }
         · the page reads a local copy of PACT that is refreshed in the background (data older than @Model.MaxAgeMinutes minutes is stale).
     </p>
+    @if (!Model.RangeCovered)
+    {
+        <div class="receivables-notice receivables-notice--warning" role="alert" data-coverage-gap>
+            <strong>Additional data needs loading.</strong>
+            The selected dates (@Model.RequestedFrom?.ToString("dd MMM yyyy") to @Model.RequestedThrough?.ToString("dd MMM yyyy")) are only partly loaded, so this list is <strong>incomplete</strong>
+            &mdash; missing instalments are not zero receivables. Not loaded:
+            <ul>@foreach (var gap in Model.Gaps) { <li>@gap.CompanyName: @gap.From.ToString("dd MMM yyyy") to @gap.Through.ToString("dd MMM yyyy")</li> }</ul>
+            Campaign export is blocked until the whole range is loaded and fresh.
+            @if (Model.LoadInProgress)
+            {
+                <span data-load-running>A load is running now. Reload this page in a few minutes.</span>
+            }
+            else if (Model.RequestedFrom is { } gapFrom && Model.RequestedThrough is { } gapThrough)
+            {
+                <form method="post" asp-page-handler="LoadCoverage" class="snapshot-status__load" data-load-form>
+                    <input type="hidden" name="dateFrom" value="@gapFrom.ToString("yyyy-MM-dd")" />
+                    <input type="hidden" name="dateTo" value="@gapThrough.ToString("yyyy-MM-dd")" />
+                    <input type="hidden" name="returnUrl" value="@(ViewContext.HttpContext.Request.Path + ViewContext.HttpContext.Request.QueryString)" />
+                    <button class="btn btn-gold" type="submit" data-load-button>Load missing data</button>
+                    <span class="receivables-loading" role="status" hidden>Requesting…</span>
+                </form>
+            }
+        </div>
+    }
+    else if (Model.LoadInProgress)
+    {
+        <div class="receivables-notice" role="status" data-load-running>A data load is running in the background. Reload this page in a few minutes.</div>
+    }
     @if (!Model.IsFresh)
     {
         <div class="receivables-notice receivables-notice--warning" role="alert" data-snapshot-warning>

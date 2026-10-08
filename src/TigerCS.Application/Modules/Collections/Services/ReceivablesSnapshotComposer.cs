@@ -19,11 +19,17 @@ public static class ReceivablesSnapshotComposer
             throw new PactReceivablesSourceException(
                 "The receivables snapshot has not been loaded yet. The refresh has not completed successfully; this is not an empty result.");
 
-        // The requested window must be answerable from what was loaded; never silently truncate it.
-        var uncovered = loaded.FirstOrDefault(c => (c.CoverageFrom is { } f && f > from) || (c.CoverageThrough is { } t && t < through));
-        if (uncovered is not null)
-            throw new PactReceivablesSourceException(
-                $"The requested dates are outside the loaded snapshot coverage ({uncovered.CoverageFrom:yyyy-MM-dd} to {uncovered.CoverageThrough:yyyy-MM-dd}).");
+        // Coverage gaps: the part of the requested range outside a loaded company's coverage. It is REPORTED (never truncated
+        // silently and never presented as zero receivables); the rows that exist are still returned, flagged incomplete.
+        var gaps = new List<CoverageGapDto>();
+        foreach (var c in loaded)
+        {
+            if (c.CoverageFrom is not { } cf || c.CoverageThrough is not { } ct)
+            { gaps.Add(new CoverageGapDto(c.CompanyId, c.CompanyName, from, through)); continue; }
+            if (cf > from) gaps.Add(new CoverageGapDto(c.CompanyId, c.CompanyName, from, cf.AddDays(-1) < through ? cf.AddDays(-1) : through));
+            if (ct < through) gaps.Add(new CoverageGapDto(c.CompanyId, c.CompanyName, ct.AddDays(1) > from ? ct.AddDays(1) : from, through));
+        }
+        status = status with { RequestedFrom = from, RequestedThrough = through, CoverageGaps = gaps };
 
         // A company that was never loaded stays visible in Snapshot (Freshness = Missing) and makes IsFresh false, so the
         // page warns and exports are refused; the loaded company's rows are still returned. ReadAtUtc is the OLDEST success.

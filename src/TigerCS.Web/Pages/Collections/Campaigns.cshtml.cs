@@ -4,6 +4,8 @@ using System.Web;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Web.Services.Api;
 
 namespace TigerCS.Web.Pages.Collections;
@@ -27,8 +29,9 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
 
     public async Task OnGetAsync(string stage = "OverdueReminder", DateOnly? businessDate = null, int? towerId = null,
         string? search = null, [FromQuery(Name = "page")] int pageNumber = 1, CancellationToken cancellationToken = default,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, string? load = null)
     {
+        LoadNotice = CollectionsDisplay.NoticeText(load) is { Length: > 0 } text ? text : null;
         SetFilters(stage, businessDate, towerId, search, pageNumber, dateFrom, dateTo);
         if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return; }
         var towersTask = api.GetTowersAsync(cancellationToken);
@@ -66,6 +69,36 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
     private void SetFilters(string stage, DateOnly? date, int? tower, string? search, int page, DateOnly? from, DateOnly? to)
     { Stage = stage; BusinessDate = date; TowerId = tower; Search = search?.Trim(); PageNumber = page; DateFrom = from; DateTo = to; }
 
+    public string? LoadNotice { get; private set; }
+
+    /// <summary>Defaults the browser re-derives for UNEDITED dates: 1 Jan of the preview year; month end for current-month/follow-up, else the preview date.</summary>
+    public DateOnly DefaultFrom => new((BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday()).Year, 1, 1);
+    public DateOnly DefaultTo => CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage)
+        ? CollectionsCampaignPolicy.DefaultDateTo(stage, BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday())
+        : BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();
+
+    public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, CancellationToken cancellationToken = default)
+    {
+        var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken);
+        var target = !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl) ? returnUrl : "/Collections/Campaigns";
+        return LocalRedirect(CollectionsDisplay.WithNotice(target, CollectionsDisplay.NoticeCode(result)));
+    }
+
+    /// <summary>"Last 6 months": six calendar months before the preview date through the preview date (explicit, so it overrides the stage default).</summary>
+    public string LastSixMonthsUrl()
+    {
+        var preview = BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();
+        var (from, to) = CollectionsDateRanges.LastSixMonths(preview);
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        query["stage"] = Stage;
+        query["businessDate"] = preview.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
+        return $"/Collections/Campaigns?{query}";
+    }
+
     public string PageUrl(int page = 1, string? export = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
@@ -89,6 +122,7 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
         "ContradictoryPaymentStatus" => "Paid status conflicts with a remaining balance",
         "CurrencyNeedsReview" => "Currency must be AED",
         "AmountPrecisionNeedsReview" => "Amount precision needs review before quoting AED",
+        "CoverageIncomplete" => "The selected dates are not fully loaded; load the missing data",
         "StaleSource" => "Receivables data is stale or not fully loaded",
         "SourceReconciliationRequired" => "Financial source reconciliation required",
         "NoValidContact" => "No valid phone or email",

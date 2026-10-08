@@ -87,17 +87,17 @@ public sealed class ReceivablesSnapshotStatusTests
     }
 
     [Fact]
-    public void ComposeRejectsAWindowOutsideTheLoadedCoverage_InsteadOfTruncatingIt()
+    public void ComposeFlagsAWindowOutsideTheLoadedCoverage_InsteadOfTruncatingItOrFailing()
     {
         var narrow = FakeSnapshotSource.Healthy(4, Now) with { CoverageFrom = new DateOnly(2026, 6, 1) };
-        Assert.Throws<PactReceivablesSourceException>(() => ReceivablesSnapshotComposer.Compose(From, Through, [narrow], [], [], Now, 90));
+        Assert.False(ReceivablesSnapshotComposer.Compose(From, Through, [narrow], [], [], Now, 90).Snapshot!.RangeCovered);
         var early = FakeSnapshotSource.Healthy(4, Now) with { CoverageThrough = new DateOnly(2026, 9, 30) };
-        Assert.Throws<PactReceivablesSourceException>(() => ReceivablesSnapshotComposer.Compose(From, Through, [early], [], [], Now, 90));
+        Assert.False(ReceivablesSnapshotComposer.Compose(From, Through, [early], [], [], Now, 90).Snapshot!.RangeCovered);
     }
 
     private sealed class Refresher(ReceivablesRefreshResult result) : IReceivablesRefresher
     {
-        public Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken) => Task.FromResult(result);
+        public Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken, DateOnly? fromDate = null, DateOnly? throughDate = null) => Task.FromResult(result);
     }
 
     private static Task Run(string status, params ReceivablesRefreshCompanyResult[] companies) =>

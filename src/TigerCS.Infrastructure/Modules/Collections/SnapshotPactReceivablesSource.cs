@@ -75,7 +75,8 @@ public sealed class SnapshotPactReceivablesSource(
                     reader.GetInt32(reader.GetOrdinal("SnapshotRowCount")), Day(reader, "CoverageFromDate"), Day(reader, "CoverageThroughDate"),
                     reader.GetInt32(reader.GetOrdinal("ExcludedInvalidUnitRows")), reader.GetDecimal(reader.GetOrdinal("ExcludedInvalidUnitAmount")),
                     reader.GetInt32(reader.GetOrdinal("ExcludedInvalidIdentityRows")), reader.GetDecimal(reader.GetOrdinal("ExcludedInvalidIdentityAmount")),
-                    reader.GetInt32(reader.GetOrdinal("ContradictoryStatusRows")), reader.GetInt32(reader.GetOrdinal("UnknownStatusRows"))));
+                    reader.GetInt32(reader.GetOrdinal("ContradictoryStatusRows")), reader.GetInt32(reader.GetOrdinal("UnknownStatusRows")),
+                    reader.GetBoolean(reader.GetOrdinal("RefreshInProgress"))));
             await reader.NextResultAsync(cancellationToken);
             // 3 rows
             var limit = Math.Clamp(pactOptions.MaxSourceRows, 1, 1_000_000);
@@ -150,7 +151,8 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
     // Process-level guard: a second refresh in this process returns immediately. Other processes are stopped by the SQL application lock.
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
-    public async Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken)
+    public async Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken,
+        DateOnly? fromDate = null, DateOnly? throughDate = null)
     {
         if (companyId is not (null or 4 or 32)) throw new ArgumentOutOfRangeException(nameof(companyId));
         if (!await Gate.WaitAsync(0, cancellationToken))
@@ -165,8 +167,11 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
             { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(options.RefreshCommandTimeoutSeconds, 30, 7200) };
             command.Parameters.Add("@TriggerSource", SqlDbType.NVarChar, 50).Value = triggerSource.Length > 50 ? triggerSource[..50] : triggerSource;
             command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = (object?)companyId ?? DBNull.Value;
-            command.Parameters.Add("@SourceFromDate", SqlDbType.Date).Value = options.SourceFromDate.Date;
-            command.Parameters.Add("@SourceThroughDate", SqlDbType.Date).Value = options.SourceThroughDate.Date;
+            // The procedure unions this window with the coverage already published (@ExtendCoverage = 1), so an on-demand range
+            // load is kept by every later scheduled refresh.
+            command.Parameters.Add("@SourceFromDate", SqlDbType.Date).Value = (fromDate?.ToDateTime(TimeOnly.MinValue) ?? options.SourceFromDate).Date;
+            command.Parameters.Add("@SourceThroughDate", SqlDbType.Date).Value = (throughDate?.ToDateTime(TimeOnly.MinValue) ?? options.SourceThroughDate).Date;
+            command.Parameters.Add("@ExtendCoverage", SqlDbType.Bit).Value = true;
             command.Parameters.Add("@SourceMinAmount", SqlDbType.Int).Value = options.SourceMinAmount;
             command.Parameters.Add("@MaxRawRows", SqlDbType.Int).Value = options.MaxRawRows;
             command.Parameters.Add("@MaxShrinkPercent", SqlDbType.Int).Value = Math.Clamp(options.MaxShrinkPercent, 0, 100);

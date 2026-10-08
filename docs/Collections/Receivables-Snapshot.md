@@ -54,7 +54,7 @@ Pages -> API -> EXEC dbo.usp_Collections_GetReceivables (tower + window + Due/Ov
 Defaults: **From = 1 January of the preview/report year** (2026-01-01 for 2026). **To** = month end for *Current-month* and *Follow-up*
 stages and for the Receivables page (so Due and Overdue are both complete); for the other campaign stages the preview date. The inputs are
 pre-filled with the effective values; in Campaigns, unedited defaults follow stage/preview-date changes in the browser and edited dates are kept.
-With the default From, instalments due before 1 January of that year are **not listed** (the page says so); lower From to include them.
+1 January is **only the default From, never a minimum**: any From/To within 2000-2100 can be selected (e.g. across a year boundary). With the default From, instalments due before 1 January of that year are **not listed** (the page says so); lower From to include them.
 Customer totals are sums of the *listed* instalments.
 
 ## 3. Towers
@@ -83,6 +83,23 @@ is **not** a CRM project id. `V001` only reconciles it (see script header): it n
   `NeedsReview/StaleSource`, export links are hidden and the API refuses with 400 "not fresh enough to export". Export re-reads the same snapshot with
   the same tower/window/search as the preview and contains exactly those rows (all pages). A tower of a healthy company can still be exported while the other company is failing.
 * Choose `MaxAgeMinutes` > refresh interval + longest refresh duration (30 min cadence -> 90 min leaves room for two missed runs).
+
+## 4a. Custom ranges, "Last 6 months" and snapshot coverage
+
+* **Last 6 months** (button on both pages): From = six calendar months before the preview date, To = the preview date, both included
+  (`2026-03-15` -> `2025-09-15`..`2026-03-15`; a shorter target month clamps, `2026-08-31` -> `2026-02-28`). It is a plain link with explicit
+  dates, so it also overrides the stage default; the preview date is today (Dubai) on the Receivables page and the selected preview date on Campaigns.
+* **Coverage** = the due-date range each company's snapshot holds (`CoverageFromDate`..`CoverageThroughDate`, default 2000-01-01..2099-12-31). The page compares the
+  *requested* From/To with it. A part outside coverage is a **gap**: the page shows "Additional data needs loading" with the exact missing dates per company,
+  marks the list **incomplete** (the count is shown as `n+`; missing instalments are never presented as zero receivables), and nothing is truncated silently.
+* **Load missing data** (button, `POST /api/collections/receivables/coverage/load?dateFrom&dateTo`): starts a background job (Hangfire; in-process fallback when Hangfire is
+  off) that calls `usp_Collections_RefreshReceivables` for the requested range. The procedure *extends* each company's coverage (union with what is stored,
+  `@ExtendCoverage = 1`), so later scheduled refreshes keep it. It is single-flight (application lock); while it runs the pages show "a load is running"
+  (`RefreshInProgress`) instead of the button. Same permission as reading the list. If it fails the previous snapshot is unchanged and the failure shows in the status panel.
+* **Export** (review and Genesys) is blocked until the **whole requested range is covered AND every company in scope is fresh**; preview rows are `NeedsReview`
+  with `CoverageIncomplete` meanwhile. Due/Overdue rules, campaign stage eligibility and PACT's accounting are unchanged: only which instalments are fetched changes.
+* Cost: loading a very wide range means a long PACT call (the earlier measurement for company 4 was ~58 s for a filtered result). Narrow `SourceFromDate`
+  in configuration if the default 2000-2099 load is too heavy; any range outside it is then loaded on demand through the button.
 
 ## 5. Scheduling (SQL Server Agent is **not** used)
 
@@ -137,4 +154,5 @@ freshness gate, export == preview, script contracts, endpoints, render). The tow
 * Execution time and total row count of the unfiltered (`@MinAmount = 0`, wide window) call, which includes every paid instalment since 2000 (the earlier
   measurement for company 4 was ~58 s with a filtered result). If this is too slow or exceeds `MaxRawRows`, narrow `SourceFromDate` (and accept the coverage limit) or use the V2 procedures.
 * That `Amount`/`Status` semantics match the deployed definitions (they are taken from the reviewed older definitions) and the tower seed list vs real unit codes (e.g. 119).
+* The on-demand range load (SQL `@ExtendCoverage`, Hangfire enqueue) has only been exercised through fakes/static checks.
 * Real counts of excluded UnitID 0 / blank-identity rows and the unmatched-tower list.

@@ -35,21 +35,26 @@
         </div>
         <div class="field-group">
             <label class="field-label" for="campaignFrom">From date (instalment due)</label>
-            <input class="field-input" id="campaignFrom" name="dateFrom" type="date" data-campaign-from data-default="@Model.DateFrom?.ToString("yyyy-MM-dd")" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" />
+            <input class="field-input" id="campaignFrom" name="dateFrom" type="date" data-campaign-from data-default="@Model.DefaultFrom.ToString("yyyy-MM-dd")" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" />
         </div>
         <div class="field-group">
             <label class="field-label" for="campaignTo">To date (instalment due)</label>
-            <input class="field-input" id="campaignTo" name="dateTo" type="date" data-campaign-to data-default="@Model.DateTo?.ToString("yyyy-MM-dd")" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
+            <input class="field-input" id="campaignTo" name="dateTo" type="date" data-campaign-to data-default="@Model.DefaultTo.ToString("yyyy-MM-dd")" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
         </div>
         <partial name="_TowerPicker" model="@(new TowerPickerModel("campaignTower", Model.Towers, Model.TowerId, Model.TowersFailed))" />
         <div class="field-group filter-bar__search">
             <label class="field-label" for="campaignSearch">Customer or unit</label>
             <input class="field-input" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit" />
         </div>
+        <div class="field-group receivables-shortcuts">
+            <span class="field-label">Quick range</span>
+            <a class="btn btn-sm" href="@Model.LastSixMonthsUrl()" data-last-six-months>Last 6 months</a>
+        </div>
         <button class="btn btn-primary" type="submit">Preview list</button>
         <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>
         <span class="receivables-timeout" role="alert" hidden>The list is taking too long. The request was stopped; retry or choose one company.</span>
     </form>
+    @if (Model.LoadNotice is { } notice) { <div class="receivables-notice" role="status" data-load-notice>@notice</div> }
     @if (Model.Report is { } report)
     {
         <div class="panel">
@@ -66,9 +71,9 @@
                 { <p role="status">Legacy exclusions are active; this list does not contain every receivable.</p> }
                 @if (report.Stage == "LegalReferral")
                 { <p><strong>Internal Legal review only.</strong> These records are not a customer contact campaign.</p> }
-                @if (report.CanExportReview && report.Snapshot is { IsFresh: false })
+                @if (report.CanExportReview && report.Snapshot is { IsReady: false })
                 {
-                    <p role="alert" data-export-blocked><strong>Export is disabled:</strong> the receivables data is not fresh (maximum age @report.Snapshot.MaxAgeMinutes minutes, every company in scope must be loaded). @report.Snapshot.FreshnessProblem</p>
+                    <p role="alert" data-export-blocked><strong>Export is disabled:</strong> the receivables data must be fresh (maximum age @report.Snapshot.MaxAgeMinutes minutes), every company in scope loaded, and the whole From/To range covered. @report.Snapshot.ReadyProblem</p>
                 }
                 else if (report.CanExportReview)
                 {

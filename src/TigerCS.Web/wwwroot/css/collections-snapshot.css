@@ -18,3 +18,5 @@
 .tower-picker__option[aria-selected="true"], .tower-picker__option:hover { background: var(--color-info-tint); }
 .tower-picker__empty { padding: .5rem .75rem; color: var(--color-text-secondary); font-size: .85rem; }
 @media (max-width: 720px) { .tower-picker { min-width: 100%; } }
+.snapshot-status__load { display: flex; align-items: center; gap: .6rem; margin-top: .6rem; }
+.receivables-shortcuts { align-self: flex-end; }

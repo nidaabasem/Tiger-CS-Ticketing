@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.Administration.Services;
@@ -337,6 +338,8 @@ public static class InfrastructureServiceCollectionExtensions
             : sp.GetRequiredService<PactSqlReceivablesSource>());
         services.AddScoped<ICollectionsTowerCatalog, SqlCollectionsTowerCatalog>();
         services.AddScoped<IReceivablesRefresher, SqlReceivablesRefresher>();
+        // Hangfire replaces this in AddTigerCsBackgroundJobs when BackgroundJobs:Enabled is true.
+        services.TryAddScoped<IReceivablesRangeLoader, InProcessReceivablesRangeLoader>();
         services.AddScoped<PactReceivableCustomersAppService>();
         services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);

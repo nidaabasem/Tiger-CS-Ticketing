@@ -97,7 +97,7 @@ public sealed class CampaignSnapshotTests
         {
             var export = await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", mode, towerId: 1);
             Assert.Equal(CollectionsOutcome.InvalidRequest, export.Outcome);
-            Assert.Contains("not fresh enough to export", export.Detail);
+            Assert.Contains("not ready to export", export.Detail);
         }
     }
 

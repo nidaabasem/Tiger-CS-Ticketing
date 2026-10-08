@@ -21,6 +21,11 @@
         2 same without Status        3 same without ProjectCode        4 without ProjectCode and Status
     Every variant must already be in the procedure's column ORDER; an unknown order fails with a clear message and publishes nothing.
   * Overlap protection: a session-scoped application lock. A second concurrent call returns RunStatus = 'AlreadyRunning'.
+  * COVERAGE: @SourceFromDate/@SourceThroughDate is the due-date window requested from PACT. With @ExtendCoverage = 1 (default) the window used
+    for each company is the UNION of the request and the coverage already published for that company, so the scheduled refresh keeps a range
+    that was loaded on demand (the application's "Load missing data" action calls this procedure with the missing dates). Pass 0 to replace the
+    coverage with exactly the requested window. Pages compare the requested From/To with the stored coverage and show any gap; they never
+    treat an uncovered range as zero receivables.
   * Companies are processed independently; one failing company never blocks or rolls back the other.
 */
 CREATE OR ALTER PROCEDURE dbo.usp_Collections_RefreshReceivables
@@ -32,7 +37,8 @@ CREATE OR ALTER PROCEDURE dbo.usp_Collections_RefreshReceivables
     @MaxRawRows         int          = 1000000,
     @MaxShrinkPercent   int          = 60,
     @ShrinkGuardMinRows int          = 200,
-    @AllowLargeShrink   bit          = 0
+    @AllowLargeShrink   bit          = 0,
+    @ExtendCoverage     bit          = 1           -- 1 = never shrink a company's stored coverage (see below)
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -58,8 +64,7 @@ BEGIN
     END;
 
     DECLARE @RunId uniqueidentifier = NEWID(), @now datetime2(3) = SYSUTCDATETIME();
-    DECLARE @startDt datetime = CAST(@SourceFromDate AS datetime);
-    DECLARE @endDt   datetime = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, CAST(@SourceThroughDate AS datetime)));  -- 23:59:59.997
+    DECLARE @startDt datetime, @endDt datetime;
 
     BEGIN TRY
         -- We hold the lock, so any 'Running' row belongs to a crashed earlier attempt.
@@ -68,7 +73,7 @@ BEGIN
         VALUES (@RunId, @TriggerSource, @CompanyId, @now, 'Running');
 
         DECLARE @c int, @pref tinyint, @n int, @v tinyint, @ok bit, @sql nvarchar(max), @cols nvarchar(max), @proc nvarchar(400),
-                @errNo int, @errMsg nvarchar(4000), @statusPresent bit;
+                @errNo int, @errMsg nvarchar(4000), @statusPresent bit, @cFrom date, @cThrough date;
 
         DECLARE company_cursor CURSOR LOCAL FAST_FORWARD FOR
             SELECT v.CompanyId FROM (VALUES (4), (32)) v (CompanyId) WHERE @CompanyId IS NULL OR v.CompanyId = @CompanyId ORDER BY v.CompanyId;
@@ -81,7 +86,12 @@ BEGIN
 
             SET @proc = CONCAT(QUOTENAME(@LinkedServer), N'.', QUOTENAME(@RemoteDatabase), N'.', QUOTENAME(N'dbo'), N'.',
                                QUOTENAME(CONCAT(N'p', @c, N'AccountReceivables')));
-            SELECT @pref = ISNULL(ShapeVariant, 1) FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = @c;
+            SELECT @pref = ISNULL(ShapeVariant, 1),
+                   @cFrom = CASE WHEN @ExtendCoverage = 1 AND CoverageFromDate    IS NOT NULL AND CoverageFromDate    < @SourceFromDate    THEN CoverageFromDate    ELSE @SourceFromDate    END,
+                   @cThrough = CASE WHEN @ExtendCoverage = 1 AND CoverageThroughDate IS NOT NULL AND CoverageThroughDate > @SourceThroughDate THEN CoverageThroughDate ELSE @SourceThroughDate END
+              FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = @c;
+            SELECT @startDt = CAST(@cFrom AS datetime),
+                   @endDt   = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, CAST(@cThrough AS datetime)));   -- 23:59:59.997
             SELECT @n = 0, @ok = 0, @errNo = NULL, @errMsg = NULL, @v = NULL;
 
             WHILE @ok = 0 AND @n < 4
@@ -114,7 +124,7 @@ BEGIN
             IF @ok = 1
             BEGIN
                 EXEC dbo.usp_Collections_PublishReceivablesStaging
-                     @RunId = @RunId, @CompanyId = @c, @CoverageFromDate = @SourceFromDate, @CoverageThroughDate = @SourceThroughDate,
+                     @RunId = @RunId, @CompanyId = @c, @CoverageFromDate = @cFrom, @CoverageThroughDate = @cThrough,
                      @SourceMinAmount = @SourceMinAmount, @ShapeVariant = @v, @StatusColumnPresent = @statusPresent,
                      @MaxRawRows = @MaxRawRows, @MaxShrinkPercent = @MaxShrinkPercent,
                      @ShrinkGuardMinRows = @ShrinkGuardMinRows, @AllowLargeShrink = @AllowLargeShrink;

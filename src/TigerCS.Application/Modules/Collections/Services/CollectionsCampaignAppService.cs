@@ -41,7 +41,7 @@ public sealed class CollectionsCampaignAppService(
         // the window only limits which instalments are read.
         var from = dateFrom ?? new DateOnly(date.Year, 1, 1);
         var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
-        if (from > to || from.Year < 2000 || to.Year > 2100)
+        if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
 
@@ -133,6 +133,7 @@ public sealed class CollectionsCampaignAppService(
                     if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase))) reasons.Add("ContradictoryPaymentStatus");
                     if (sourceOptions.Currency != "AED") reasons.Add("CurrencyNeedsReview");
                     if (!fresh) reasons.Add("StaleSource");
+                    if (snapshot.Snapshot is { RangeCovered: false }) reasons.Add("CoverageIncomplete");
                     if (!campaignOptions.FinancialSourceValidated) reasons.Add("SourceReconciliationRequired");
                     if (selected != CollectionsCampaignStage.LegalReferral && phone.Length == 0 && email.Length == 0)
                         reasons.Add("NoValidContact");
@@ -194,9 +195,10 @@ public sealed class CollectionsCampaignAppService(
         var report = result.Value!;
         // Freshness requirement (both export modes): the snapshot of every company in scope must be loaded and no older than
         // ReceivablesSnapshotOptions.MaxAgeMinutes. A failed latest refresh is covered by the same rule because the age keeps growing.
-        if (report.Snapshot is { IsFresh: false } stale)
+        // The whole requested From/To range must also be covered by the snapshot, otherwise the file would silently omit receivables.
+        if (report.Snapshot is { IsReady: false } stale)
             return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest,
-                $"Receivables data is not fresh enough to export. {stale.FreshnessProblem} No file was created; wait for the next successful refresh and retry.");
+                $"Receivables data is not ready to export. {stale.ReadyProblem} No file was created; once the data is loaded and fresh, retry.");
         if (mode == "genesys" && (report.Stage == nameof(CollectionsCampaignStage.LegalReferral)
             || report.BusinessDate != report.LiveBusinessDate || !report.IsScheduledDate
             || report.Items.Any(c => c.Status != "Ready") || report.Items.Count == 0))

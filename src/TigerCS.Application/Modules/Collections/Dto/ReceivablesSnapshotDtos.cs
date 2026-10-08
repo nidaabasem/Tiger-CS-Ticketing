@@ -14,7 +14,7 @@ public sealed record SnapshotCompanyStatusDto(
     DateOnly? CoverageFrom, DateOnly? CoverageThrough,
     int ExcludedInvalidUnitRows, decimal ExcludedInvalidUnitAmount,
     int ExcludedInvalidIdentityRows, decimal ExcludedInvalidIdentityAmount,
-    int ContradictoryStatusRows, int UnknownStatusRows, string Freshness, int? AgeMinutes)
+    int ContradictoryStatusRows, int UnknownStatusRows, string Freshness, int? AgeMinutes, bool RefreshInProgress = false)
 {
     /// <summary>The newest refresh attempt failed; the previous snapshot (if any) is still being served.</summary>
     public bool LastRefreshFailed => LastAttemptStatus == "Failed";
@@ -23,9 +23,22 @@ public sealed record SnapshotCompanyStatusDto(
 /// <summary>Receivables with no active tower row: reported, never dropped, never given an invented tower name.</summary>
 public sealed record UnmatchedTowerDto(int CompanyId, string? TowerNumber, string Reason, long RowCount, decimal Amount);
 
+/// <summary>A part of the requested due-date range that the company's snapshot does not hold (it must be loaded, it is NOT zero receivables).</summary>
+public sealed record CoverageGapDto(int CompanyId, string CompanyName, DateOnly From, DateOnly Through);
+
 public sealed record SnapshotStatusDto(
-    IReadOnlyList<SnapshotCompanyStatusDto> Companies, IReadOnlyList<UnmatchedTowerDto> UnmatchedTowers, int MaxAgeMinutes)
+    IReadOnlyList<SnapshotCompanyStatusDto> Companies, IReadOnlyList<UnmatchedTowerDto> UnmatchedTowers, int MaxAgeMinutes,
+    DateOnly? RequestedFrom = null, DateOnly? RequestedThrough = null, IReadOnlyList<CoverageGapDto>? CoverageGaps = null)
 {
+    public IReadOnlyList<CoverageGapDto> Gaps => CoverageGaps ?? [];
+    /// <summary>The whole requested From/To range is inside the loaded coverage of every loaded company in scope.</summary>
+    public bool RangeCovered => Gaps.Count == 0;
+    public bool LoadInProgress => Companies.Any(c => c.RefreshInProgress);
+    /// <summary>Export / "this list is complete" requirement: fresh data AND the whole requested range covered.</summary>
+    public bool IsReady => IsFresh && RangeCovered;
+    public string? ReadyProblem => !IsFresh ? FreshnessProblem
+        : !RangeCovered ? $"The selected dates are not fully loaded ({string.Join("; ", Gaps.Select(g => $"{g.CompanyName}: {g.From:dd MMM yyyy} to {g.Through:dd MMM yyyy}"))}). Load the missing data first."
+        : null;
     /// <summary>Oldest successful refresh among the companies in scope (null when one was never loaded).</summary>
     public DateTime? OldestSuccessUtc => Companies.Any(c => !c.HasSnapshot) ? null : Companies.Min(c => c.LastSuccessUtc);
     public bool IsComplete => Companies.Count > 0 && Companies.All(c => c.HasSnapshot);
@@ -38,3 +51,6 @@ public sealed record SnapshotStatusDto(
             ? $"{stale.CompanyName} data is {stale.AgeMinutes} minutes old (limit {MaxAgeMinutes})."
             : null;
 }
+
+/// <summary>Result of asking for a background load of an uncovered due-date range.</summary>
+public sealed record ReceivablesRangeLoadDto(bool Accepted, bool AlreadyCovered, bool AlreadyRunning, string Message);

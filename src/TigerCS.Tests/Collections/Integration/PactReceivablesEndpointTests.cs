@@ -127,4 +127,56 @@ public sealed class PactReceivablesEndpointTests
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/collections/receivables/customers?towerId=404")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/collections/receivables/customers?dateFrom=2026-05-02&dateTo=2026-05-01")).StatusCode);
     }
+
+    private sealed class Loader : IReceivablesRangeLoader
+    {
+        public List<(DateOnly, DateOnly)> Requests { get; } = [];
+        public Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken) { Requests.Add((from, through)); return Task.FromResult(true); }
+    }
+
+    private sealed class GapSource(bool covered) : IPactReceivablesSource
+    {
+        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) => ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
+        public Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
+        {
+            var now = DateTime.UtcNow;
+            var company = new SnapshotCompanyStatusDto(4, "Tiger Group Dubai", true, now, now, "Succeeded", null, 0, 1, new DateOnly(2026, 1, 1), new DateOnly(2099, 12, 31), 0, 0m, 0, 0m, 0, 0, "Fresh", 0);
+            var status = new SnapshotStatusDto([company], [], 90, request.FromDate, request.ThroughDate,
+                covered ? [] : [new CoverageGapDto(4, "Tiger Group Dubai", request.FromDate!.Value, new DateOnly(2025, 12, 31))]);
+            return Task.FromResult(new PactReceivablesSnapshot([], now, false, status));
+        }
+    }
+
+    [Fact]
+    public async Task CoverageLoadEndpoint_StartsABackgroundLoad_OnlyForAuthorizedCallers_AndOnlyWhenNeeded()
+    {
+        var loader = new Loader();
+        var covered = false;
+        using var factory = new TigerCsApiFactory
+        {
+            ExtraConfiguration = new() { ["Collections:Enabled"] = "true", ["CollectionsSource:PactReceivables:Enabled"] = "true" },
+            ExtraServices = services =>
+            {
+                services.AddScoped<IReceivablesRangeLoader>(_ => loader);
+                services.AddScoped<IPactReceivablesSource>(_ => new GapSource(covered));
+            }
+        };
+        const string url = "/api/collections/receivables/coverage/load?dateFrom=2025-09-15&dateTo=2026-03-15";
+        using var anonymous = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync(url, null)).StatusCode);
+        using var reporter = await Client(factory, Roles.ReportingUser);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reporter.PostAsync(url, null)).StatusCode);
+        Assert.Empty(loader.Requests);
+        using var admin = await Client(factory, Roles.SystemAdministrator);
+        var accepted = await admin.PostAsync(url, null);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        Assert.True((await accepted.Content.ReadFromJsonAsync<ReceivablesRangeLoadDto>())!.Accepted);
+        Assert.Equal((new DateOnly(2025, 9, 15), new DateOnly(2026, 3, 15)), Assert.Single(loader.Requests));
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync("/api/collections/receivables/coverage/load?dateFrom=2026-03-15&dateTo=2025-09-15", null)).StatusCode);
+        covered = true;
+        var nothing = await admin.PostAsync(url, null);
+        Assert.Equal(HttpStatusCode.OK, nothing.StatusCode);
+        Assert.True((await nothing.Content.ReadFromJsonAsync<ReceivablesRangeLoadDto>())!.AlreadyCovered);
+        Assert.Single(loader.Requests);
+    }
 }

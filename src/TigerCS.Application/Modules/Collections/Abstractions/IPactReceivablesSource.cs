@@ -55,7 +55,8 @@ public sealed class PactReceivablesScopeException(string message) : Exception(me
 /// <summary>Runs one snapshot refresh (PACT -> staging -> validated publish). Overlap-safe; companies succeed or fail independently.</summary>
 public interface IReceivablesRefresher
 {
-    Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken);
+    Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken,
+        DateOnly? fromDate = null, DateOnly? throughDate = null);
 }
 
 public sealed record ReceivablesRefreshCompanyResult(
@@ -64,3 +65,12 @@ public sealed record ReceivablesRefreshCompanyResult(
 
 /// <remarks>Status is Succeeded, PartialFailure, Failed or AlreadyRunning.</remarks>
 public sealed record ReceivablesRefreshResult(Guid? RunId, string Status, string? Message, IReadOnlyList<ReceivablesRefreshCompanyResult> Companies);
+
+/// <summary>
+/// Starts a BACKGROUND load of a due-date range that the snapshot does not cover yet (the refresh procedure extends, never shrinks,
+/// each company's coverage). Returns immediately; the pages show progress through <c>SnapshotStatusDto.LoadInProgress</c>.
+/// </summary>
+public interface IReceivablesRangeLoader
+{
+    Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken);
+}

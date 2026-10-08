@@ -26,6 +26,12 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null) =>
         GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
 
+    /// <summary>Asks the API to load a due-date range the snapshot does not cover (background; returns immediately).</summary>
+    public Task<ApiResult<ReceivablesRangeLoadDto>> RequestCoverageLoadAsync(DateOnly from, DateOnly to, CancellationToken cancellationToken) =>
+        PostAsync<object, ReceivablesRangeLoadDto>(
+            $"{Base}/receivables/coverage/load?dateFrom={from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}&dateTo={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}",
+            new { }, cancellationToken);
+
     /// <summary>Active towers for the searchable tower dropdown (local table; no PACT call).</summary>
     public Task<ApiResult<List<CollectionsTowerDto>>> GetTowersAsync(CancellationToken cancellationToken) =>
         GetAsync<List<CollectionsTowerDto>>($"{Base}/receivables/towers", cancellationToken);

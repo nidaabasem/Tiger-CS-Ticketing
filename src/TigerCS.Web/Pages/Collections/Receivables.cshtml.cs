@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Web;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Web.Services.Api;
 
@@ -21,9 +23,12 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(Report.TotalCount / (double)Report.PageSize));
 
     /// <summary>Tower + From + To only: the company is resolved from the tower on the server, so there is no company filter here.</summary>
+    public string? LoadNotice { get; private set; }
+
     public async Task OnGetAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, string? status, string? search, int page = 1,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? load = null)
     {
+        LoadNotice = CollectionsDisplay.NoticeText(load) is { Length: > 0 } text ? text : null;
         TowerId = towerId;
         DateFrom = dateFrom;
         DateTo = dateTo;
@@ -44,6 +49,27 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     }
 
     public string? Error { get; private set; }
+
+    /// <summary>Starts the background load of the missing range, then returns to the same filtered page with a notice.</summary>
+    public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, CancellationToken cancellationToken = default)
+    {
+        var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken);
+        var target = !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl) ? returnUrl : "/Collections/Receivables";
+        return LocalRedirect(CollectionsDisplay.WithNotice(target, CollectionsDisplay.NoticeCode(result)));
+    }
+
+    /// <summary>"Last 6 months": six calendar months before the preview date (today, Dubai) through the preview date.</summary>
+    public string LastSixMonthsUrl()
+    {
+        var (from, to) = CollectionsDateRanges.LastSixMonths(Report?.BusinessDate ?? CollectionsDisplay.DubaiToday());
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
+        query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(Status)) query["status"] = Status;
+        if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
+        return $"/Collections/Receivables?{query}";
+    }
 
     public string PageUrl(int page)
     {

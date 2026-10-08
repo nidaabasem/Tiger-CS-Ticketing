@@ -2,6 +2,7 @@ using System.Data.Common;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Domain.Modules.Collections;
 
 namespace TigerCS.Application.Modules.Collections.Services;
 
@@ -12,8 +13,38 @@ public sealed class PactReceivableCustomersAppService(
     CollectionsClock clock,
     IPactReceivablesSource source,
     ILogger<PactReceivableCustomersAppService> logger,
-    ICollectionsTowerCatalog? towerCatalog = null)
+    ICollectionsTowerCatalog? towerCatalog = null,
+    IReceivablesRangeLoader? rangeLoader = null)
 {
+    /// <summary>
+    /// Asks for a background load of a due-date range the snapshot does not cover. Needs the same permission as reading the list;
+    /// it triggers work, not data exposure, and the refresh itself is single-flight (a repeated click cannot start a second load).
+    /// </summary>
+    public async Task<CollectionsResult<ReceivablesRangeLoadDto>> RequestLoadAsync(
+        CollectionsCaller caller, DateOnly from, DateOnly through, CancellationToken cancellationToken = default)
+    {
+        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
+            return CollectionsResult<ReceivablesRangeLoadDto>.Fail(CollectionsOutcome.Forbidden);
+        if (!collectionsOptions.Enabled || !sourceOptions.Enabled || rangeLoader is null)
+            return CollectionsResult<ReceivablesRangeLoadDto>.Fail(CollectionsOutcome.Disabled);
+        if (!CollectionsDateRanges.IsSupported(from, through))
+            return CollectionsResult<ReceivablesRangeLoadDto>.Fail(CollectionsOutcome.InvalidRequest,
+                "From date must not be after To date, and both must be within 2000-2100.");
+        try
+        {
+            var current = (await source.ReadAsync(new PactReceivablesRequest(from, through), cancellationToken)).Snapshot;
+            if (current is { IsReady: true })
+                return CollectionsResult<ReceivablesRangeLoadDto>.Ok(new(false, true, false, "The selected dates are already loaded and fresh."));
+            if (current is { LoadInProgress: true })
+                return CollectionsResult<ReceivablesRangeLoadDto>.Ok(new(false, false, true, "A load is already running. Reload this page in a few minutes."));
+        }
+        catch (PactReceivablesSourceException) { /* nothing loaded yet: a load is exactly what is needed */ }
+        var started = await rangeLoader.EnqueueAsync(from, through, cancellationToken);
+        return CollectionsResult<ReceivablesRangeLoadDto>.Ok(started
+            ? new(true, false, false, "Loading started in the background. Reload this page in a few minutes.")
+            : new(false, false, true, "A load is already running. Reload this page in a few minutes."));
+    }
+
     /// <summary>Active towers for the searchable dropdown (local table). Same authorization as the list itself.</summary>
     public async Task<CollectionsResult<IReadOnlyList<CollectionsTowerDto>>> ListTowersAsync(CollectionsCaller caller, CancellationToken cancellationToken = default)
     {
@@ -63,7 +94,7 @@ public sealed class PactReceivableCustomersAppService(
         // depends on the reporting month alone, so a window never turns a future instalment into an overdue one.
         var from = dateFrom ?? new DateOnly(reportYear, 1, 1);
         var to = dateTo ?? periodEnd;
-        if (from > to || from.Year < 2000 || to.Year > 2100)
+        if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

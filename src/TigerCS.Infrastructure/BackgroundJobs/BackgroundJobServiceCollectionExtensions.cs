@@ -37,6 +37,7 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<OutboxDispatchJob>();
         services.AddScoped<CollectionsReminderScheduleJob>();
         services.AddScoped<CollectionsReceivablesRefreshJob>();
+        services.AddScoped<CollectionsReceivablesRangeLoadJob>();
         // Holds only the scope factory; it opens one scope per candidate itself.
         services.AddScoped<ChatbotInactivityCloseJob>();
 
@@ -69,6 +70,7 @@ public static class BackgroundJobServiceCollectionExtensions
             }));
 
         services.AddHangfireServer();
+        services.AddScoped<TigerCS.Application.Modules.Collections.Abstractions.IReceivablesRangeLoader, HangfireReceivablesRangeLoader>();
         services.AddSingleton<ISlaDeadlineScheduler, HangfireSlaDeadlineScheduler>();
 
         return services;

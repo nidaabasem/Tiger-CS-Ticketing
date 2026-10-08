@@ -48,6 +48,17 @@ public sealed class SqlScriptContractTests
     }
 
     [Fact]
+    public void RefreshExtendsCoverageAndNeverShrinksItUnlessAskedTo_AndReadReportsALoadInProgress()
+    {
+        var refresh = Read("V005__usp_Collections_RefreshReceivables.sql");
+        Assert.Contains("@ExtendCoverage     bit          = 1", refresh);
+        Assert.Contains("CoverageFromDate    < @SourceFromDate    THEN CoverageFromDate", refresh);
+        Assert.Contains("CoverageThroughDate > @SourceThroughDate THEN CoverageThroughDate", refresh);
+        Assert.Contains("@CoverageFromDate = @cFrom, @CoverageThroughDate = @cThrough", refresh);   // the stored coverage is the window actually requested
+        Assert.Contains("RefreshInProgress", Read("V006__usp_Collections_GetReceivables.sql"));
+    }
+
+    [Fact]
     public void PublishValidatesBeforePublishingAndKeepsThePreviousSnapshotOnFailure()
     {
         var sql = Read("V004__usp_Collections_PublishReceivablesStaging.sql");

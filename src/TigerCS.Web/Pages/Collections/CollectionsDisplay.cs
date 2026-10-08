@@ -1,5 +1,6 @@
 using System.Globalization;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Web.Services.Api;
 
 namespace TigerCS.Web.Pages.Collections;
 
@@ -30,4 +31,26 @@ public static class CollectionsDisplay
     };
 
     public static string Money(decimal amount) => amount.ToString("N2", CultureInfo.InvariantCulture);
+
+    /// <summary>Today in Dubai (UTC+4, no DST): the preview date when a page has no report to take it from.</summary>
+    public static DateOnly DubaiToday() => DateOnly.FromDateTime(DateTime.UtcNow.AddHours(4));
+
+    public static string NoticeText(string? code) => code switch
+    {
+        "started" => "Loading the missing data in the background. Reload this page in a few minutes; the list stays marked incomplete until it finishes.",
+        "running" => "A load is already running. Reload this page in a few minutes.",
+        "covered" => "The selected dates are already loaded and fresh.",
+        "failed" => "The load could not be started. Retry, or ask an administrator to check the receivables refresh.",
+        _ => ""
+    };
+
+    /// <summary>The current local URL with the one-shot load notice replaced (open redirects are refused by the caller).</summary>
+    public static string WithNotice(string localUrl, string code)
+    {
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(localUrl, @"([?&])load=[^&]*&?", "$1").TrimEnd('?', '&');
+        return cleaned + (cleaned.Contains('?') ? "&" : "?") + "load=" + code;
+    }
+
+    public static string NoticeCode(ApiResult<ReceivablesRangeLoadDto> result) => !result.IsSuccess ? "failed"
+        : result.Value!.Accepted ? "started" : result.Value.AlreadyRunning ? "running" : result.Value.AlreadyCovered ? "covered" : "failed";
 }

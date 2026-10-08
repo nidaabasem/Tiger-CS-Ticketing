@@ -39,6 +39,10 @@
             <label class="field-label" for="receivableTo">To (instalment due, inclusive)</label>
             <input class="field-input" type="date" id="receivableTo" name="dateTo" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
         </div>
+        <div class="field-group receivables-shortcuts">
+            <span class="field-label">Quick range</span>
+            <a class="btn btn-sm" href="@Model.LastSixMonthsUrl()" data-last-six-months>Last 6 months</a>
+        </div>
         <div class="filter-bar__submit">
             <button class="btn btn-gold" type="submit">Apply</button>
             <a class="btn btn-ghost" href="/Collections/Receivables">Clear</a>
@@ -46,10 +50,11 @@
         <span class="receivables-loading" role="status" hidden>Loading customers…</span>
     </form>
 
+    @if (Model.LoadNotice is { } notice) { <div class="receivables-notice" role="status" data-load-notice>@notice</div> }
     @if (Model.Report is { } report)
     {
         <div class="receivables-metrics">
-            <div class="panel"><span>Apartments in this list</span><strong>@report.TotalCount</strong></div>
+            <div class="panel"><span>Apartments in this list@(report.Snapshot is { RangeCovered: false } ? " (incomplete: dates not fully loaded)" : "")</span><strong>@(report.TotalCount.ToString() + (report.Snapshot is { RangeCovered: false } ? "+" : ""))</strong></div>
             <div class="panel"><span>Due this month</span><strong>@report.DueCustomerCount</strong></div>
             <div class="panel"><span>Overdue</span><strong>@report.OverdueCustomerCount</strong></div>
         </div>

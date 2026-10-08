@@ -57,6 +57,24 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
         return result.IsSuccess ? Ok(result.Value) : Failure(result.Outcome, result.Detail);
     }
 
+    /// <summary>
+    /// Starts a background load of an instalment due-date range the snapshot does not cover. Returns 202 immediately; 200 when
+    /// nothing needs loading or a load is already running. Never blocks on PACT.
+    /// </summary>
+    [HttpPost("/api/collections/receivables/coverage/load")]
+    [ProducesResponseType<ReceivablesRangeLoadDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ReceivablesRangeLoadDto>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> LoadCoverage([FromQuery] DateOnly dateFrom, [FromQuery] DateOnly dateTo, CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null) return Unauthorized();
+        var result = await service.RequestLoadAsync(caller, dateFrom, dateTo, cancellationToken);
+        if (!result.IsSuccess) return Failure(result.Outcome, result.Detail);
+        return result.Value!.Accepted ? Accepted(result.Value) : Ok(result.Value);
+    }
+
     private CollectionsCaller? Caller() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var employeeId)
         ? new CollectionsCaller(employeeId, User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
             User.FindAll(TigerCsClaimTypes.DepartmentId).Select(c => int.TryParse(c.Value, out var d) ? d : (int?)null).OfType<int>().ToArray())

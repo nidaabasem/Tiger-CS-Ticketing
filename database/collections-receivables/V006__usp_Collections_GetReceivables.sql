@@ -6,7 +6,9 @@
 
   Result sets of GetReceivables (order is a contract with TigerCS.Infrastructure SnapshotPactReceivablesSource):
     1 scope      ScopeValid, TowerId, CompanyId, TowerNumber, TowerName   (ScopeValid = 0 for an unknown tower or a tower/company clash; nothing else is returned)
-    2 coverage   one row per company in scope, always present even if never loaded (HasSnapshot = 0 means "not loaded", NOT "empty")
+    2 coverage   one row per company in scope, always present even if never loaded (HasSnapshot = 0 means "not loaded", NOT "empty").
+                 CoverageFromDate/CoverageThroughDate = the due-date range the snapshot holds; the application compares it with the requested
+                 From/To and reports any gap. RefreshInProgress = a refresh/load is running now.
     3 rows       the filtered instalments
     4 unmatched  towers in scope that have receivables but no active CollectionsTowers row (reported, never dropped)
 
@@ -58,7 +60,10 @@ BEGIN
            ISNULL(st.SnapshotRowCount, 0) AS SnapshotRowCount, st.CoverageFromDate, st.CoverageThroughDate,
            ISNULL(st.ExcludedInvalidUnitRows, 0) AS ExcludedInvalidUnitRows, ISNULL(st.ExcludedInvalidUnitAmount, 0) AS ExcludedInvalidUnitAmount,
            ISNULL(st.ExcludedInvalidIdentityRows, 0) AS ExcludedInvalidIdentityRows, ISNULL(st.ExcludedInvalidIdentityAmount, 0) AS ExcludedInvalidIdentityAmount,
-           ISNULL(st.ContradictoryStatusRows, 0) AS ContradictoryStatusRows, ISNULL(st.UnknownStatusRows, 0) AS UnknownStatusRows
+           ISNULL(st.ContradictoryStatusRows, 0) AS ContradictoryStatusRows, ISNULL(st.UnknownStatusRows, 0) AS UnknownStatusRows,
+           CAST(CASE WHEN EXISTS (SELECT 1 FROM dbo.CollectionsReceivableRun r
+                                   WHERE r.Status = 'Running' AND r.StartedUtc > DATEADD(HOUR, -3, SYSUTCDATETIME())
+                                     AND (r.RequestedCompanyId IS NULL OR r.RequestedCompanyId = v.CompanyId)) THEN 1 ELSE 0 END AS bit) AS RefreshInProgress
       FROM (VALUES (4), (32)) v (CompanyId)
       LEFT JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = v.CompanyId
      WHERE @Scope IS NULL OR v.CompanyId = @Scope
