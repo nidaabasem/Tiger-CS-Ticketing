@@ -150,6 +150,16 @@ using (var documentsStartupScope = app.Services.CreateScope())
             + "disabled in Production until real UAT verification has passed (docs/Genesys/Document-Copy-API.md, Status). "
             + "Set CrmDocuments:Enabled to false, or set AllowInProduction deliberately after sign-off.");
     }
+
+    // The OTP code hash is keyed with CrmDocuments:OtpCodePepper. Without it the code falls back to a constant key
+    // that is public in the source, so refuse to run the OTP flow with it anywhere but Development/Testing.
+    if (documentOptions.Enabled && string.IsNullOrWhiteSpace(documentOptions.OtpCodePepper)
+        && !app.Environment.IsDevelopment() && !string.Equals(app.Environment.EnvironmentName, "Testing", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "CrmDocuments:Enabled is true but CrmDocuments:OtpCodePepper is empty. Set a random secret (environment variable "
+            + "CrmDocuments__OtpCodePepper) before enabling customer OTP verification outside Development.");
+    }
 }
 
 // Fail fast if fixture Collections balances would be served outside

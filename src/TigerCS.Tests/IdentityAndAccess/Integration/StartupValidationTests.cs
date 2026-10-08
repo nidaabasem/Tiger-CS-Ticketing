@@ -358,8 +358,21 @@ public class StartupValidationTests
         var approved = ProductionConfig();
         approved["CrmDocuments:Enabled"] = "true";
         approved["CrmDocuments:AllowInProduction"] = "true";
+        approved["CrmDocuments:OtpCodePepper"] = "test-pepper";
         using var factory = new ConfiguredFactory("Production", approved);
         Assert.NotNull(factory.Server);
+    }
+
+    [Fact]
+    public void UatEnvironment_WithCustomerDocumentsEnabledButNoOtpPepper_FailsAtStartup()
+    {
+        var config = ProductionConfig();
+        config["CrmDocuments:Enabled"] = "true";
+
+        using var factory = new ConfiguredFactory("Staging", config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("CrmDocuments:OtpCodePepper", ex.ToString());
     }
 
     [Fact]
@@ -367,6 +380,7 @@ public class StartupValidationTests
     {
         var config = ProductionConfig();
         config["CrmDocuments:Enabled"] = "true";
+        config["CrmDocuments:OtpCodePepper"] = "test-pepper";
 
         using var factory = new ConfiguredFactory("Staging", config);
 

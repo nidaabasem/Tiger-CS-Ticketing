@@ -444,6 +444,34 @@ public sealed class TicketDetailsModel(
         return await HandleMutationAsync(result, "reopen", "Ticket reopened — it is In Progress again.", cancellationToken);
     }
 
+    /// <summary>
+    /// Records the first human response on the ticket (Source = Manual). The server decides who may
+    /// (current owner, supervisory roles, Department Head of the ticket's department) and refuses a
+    /// second write, so this handler only relays and reports.
+    /// </summary>
+    public async Task<IActionResult> OnPostRecordFirstResponseAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        if (!TryDecodeRowVersion(Escalate.RowVersionBase64, out var rowVersion))
+        {
+            return await ReloadWithErrorAsync("sla", "Could not read the ticket's current version. Reloading.", cancellationToken);
+        }
+
+        var result = await slaApiClient.RecordFirstResponseAsync(
+            id, new RecordFirstResponseRequestDto("Manual", null, rowVersion), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            ActionSuccess = "First response recorded.";
+            return RedirectToPage(new { id });
+        }
+
+        ActionError = DescribeError(result.Outcome, result.Detail);
+        OpenSection = "sla";
+        await LoadAsync(cancellationToken);
+        return Page();
+    }
+
     public async Task<IActionResult> OnPostEscalateAsync(long id, CancellationToken cancellationToken)
     {
         TicketId = id;

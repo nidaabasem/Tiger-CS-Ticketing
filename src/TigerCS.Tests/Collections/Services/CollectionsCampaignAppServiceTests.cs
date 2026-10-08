@@ -185,14 +185,14 @@ public sealed class CollectionsCampaignAppServiceTests
     [InlineData("CurrentMonthReminder", 2026, 2, 14, 2026, 2, 28)]   // non-leap February
     [InlineData("FollowUpReminder", 2028, 2, 3, 2028, 2, 29)]        // leap February
     [InlineData("CurrentMonthReminder", 2026, 12, 31, 2026, 12, 31)] // year end
-    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From follows the preview year
-    public async Task DefaultWindowDependsOnTheStage_FromIsAlwaysJanuaryFirstOfThePreviewYear(
+    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From is the configured StartDate, NOT the preview year: Dec 2026 arrears must stay reachable in 2027
+    public async Task DefaultWindowDependsOnTheStage_FromIsTheConfiguredReceivablesStartDate(
         string stage, int y, int m, int d, int toY, int toM, int toD)
     {
         var h = new Harness();
         var report = (await h.Service.PreviewAsync(h.Manager, stage, new(y, m, d))).Value!;
-        Assert.Equal(new PactReceivablesRequest(new(y, 1, 1), new(toY, toM, toD), null), h.Source.LastRequest);
-        Assert.Equal(new DateOnly(y, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(toY, toM, toD), report.DateTo);
+        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), new(toY, toM, toD), null), h.Source.LastRequest);
+        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(toY, toM, toD), report.DateTo);
         Assert.Equal(new DateOnly(y, m, d), report.BusinessDate);
     }
 

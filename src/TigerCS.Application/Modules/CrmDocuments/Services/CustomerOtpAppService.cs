@@ -520,18 +520,15 @@ public sealed class CustomerOtpAppService(
     private static bool TryNormalizePhone(string? value, out string phone)
     {
         phone = string.Empty;
-        if (!CustomerPhoneNumber.LooksLikeNumber(value))
+        // Same rule as the Genesys lookups: "tel:+971…" is reduced to its number, "00" becomes "+", and a
+        // national-form number ("0501234567") is kept as its digits — no country is guessed.
+        var normalized = CustomerPhoneNumber.FromTelephonyAddress(value);
+        if (normalized is null || CustomerPhoneNumber.Normalize(normalized).Length is < 7 or > 15)
         {
             return false;
         }
 
-        var digits = CustomerPhoneNumber.Normalize(value);
-        if (digits.Length is < 7 or > 15)
-        {
-            return false;
-        }
-
-        phone = "+" + digits;
+        phone = normalized;
         return true;
     }
 

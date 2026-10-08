@@ -589,6 +589,33 @@ public class CustomerOtpAppServiceTests
     // --------------------------------------- no other way to mint an OTP session
 
     [Fact]
+    public async Task TheGenericSessionPath_RefusesOtp_AlsoWhenGivenAsItsNumericValue()
+    {
+        var f = new OtpServiceFixture();
+        var unit = f.Units.Seed("U1", "1", "P");
+        var contact = f.Contacts.Seed(unit.UnitReferenceId, "C1", "Someone");
+        var sessions = new VerificationSessionAppService(f.Sessions, f.Units, f.Contacts, f.UnitOfWork, f.Audit, f.Clock);
+
+        var numeric = await sessions.CreateAndConfirmAsync(
+            Caller, new CreateVerificationSessionRequestDto(unit.UnitReferenceId, contact.ContactReferenceId, true, ((int)VerificationMethod.Otp).ToString()), null);
+
+        Assert.Equal(VerificationSessionOutcome.OtpRequiresChallenge, numeric.Outcome);
+    }
+
+    [Theory]
+    [InlineData("tel:+971501234567")]
+    [InlineData("tel:+971501234567;phone-context=x")]
+    [InlineData("00971501234567")]
+    public async Task Lookup_AcceptsTelephonyAddressForms_AsTheSameNumber(string phone)
+    {
+        var f = new OtpServiceFixture();
+
+        var result = await f.Service.LookupAsync(phone);
+
+        Assert.Equal(CustomerOtpStatus.Found, result.Status);
+    }
+
+    [Fact]
     public async Task TheGenericSessionPath_RefusesOtp_AsAClaim()
     {
         var f = new OtpServiceFixture();

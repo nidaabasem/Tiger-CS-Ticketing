@@ -83,7 +83,8 @@ public sealed class VerificationSessionAppService(
         // Every other method (including the agent's ManualAgentConfirmation)
         // keeps its existing, agent-asserted behaviour — and none of those is
         // accepted by the chatbot document flow, which requires the proof.
-        if (string.Equals(request.VerificationMethod, nameof(VerificationMethod.Otp), StringComparison.Ordinal))
+        if (Enum.TryParse<VerificationMethod>(request.VerificationMethod, ignoreCase: true, out var requestedMethod)
+            && requestedMethod == VerificationMethod.Otp)
         {
             return VerificationSessionResult.OtpRequiresChallenge();
         }

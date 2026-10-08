@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"customerReference\": ${input.customerReference}, \"phoneNumber\": ${input.phoneNumber}#if($input.unitId), \"unitId\": ${input.unitId}#end}"
+      "requestTemplate": "{\"customerReference\": \"$esc.jsonString(${input.customerReference})\", \"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\"#if($input.unitId), \"unitId\": ${input.unitId}#end}"
     },
     "response": {
       "translationMap": {

@@ -239,9 +239,10 @@ public sealed class GenesysScreenPopAppService(
             return ($"{TicketsListPath}/{requested}", requested);
         }
 
-        if (!string.IsNullOrWhiteSpace(request.CustomerPhone))
+        // Genesys supplies ANI as a telephony address ("tel:+971…"); the lookup page searches by number.
+        if (TigerCS.Domain.Modules.Ticketing.CustomerPhoneNumber.FromTelephonyAddress(request.CustomerPhone) is { } screenPopPhone)
         {
-            var path = $"/Customers/Lookup?phoneNumber={Uri.EscapeDataString(request.CustomerPhone.Trim())}";
+            var path = $"/Customers/Lookup?phoneNumber={Uri.EscapeDataString(screenPopPhone)}";
             if (GenesysScreenPopLaunch.IsAppRelativePath(path))
             {
                 return (path, null);

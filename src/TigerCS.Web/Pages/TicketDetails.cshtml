@@ -551,6 +551,15 @@ else
                             <div class="facts-row"><dt>Resolution due</dt><dd>@(sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
                             <div class="facts-row"><dt>Resolution</dt><dd class="@(sla.ResolutionBreached ? "is-critical" : "")">@(sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(sla.SlaState))</dd></div>
                         </dl>
+                        @if (sla.FirstHumanResponseAtUtc is null && why is not { HasActivePeriod: false } && (Model.CanResolve || Model.CanEscalate))
+                        {
+                            @* First Response SLA stops only on a HUMAN response. Staff who answer the customer outside the
+                               Genesys transcript (phone, e-mail, walk-in) record it here; AI/automated replies never do. *@
+                            <form method="post" asp-page-handler="RecordFirstResponse" class="action-form">
+                                <input type="hidden" asp-for="Escalate.RowVersionBase64" />
+                                <button type="submit" class="btn btn-sm">Record first response</button>
+                            </form>
+                        }
                         @if (why is not null)
                         {
                             <details class="sla-explain">

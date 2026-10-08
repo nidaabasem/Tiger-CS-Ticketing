@@ -66,7 +66,8 @@ public class VerificationSessionsController(VerificationSessionAppService verifi
             return ValidationProblem(ModelState);
         }
 
-        if (!Enum.TryParse<VerificationMethod>(request.VerificationMethod, ignoreCase: false, out _))
+        // Names only: Enum.TryParse would also accept a numeric string such as "3".
+        if (!Enum.GetNames<VerificationMethod>().Contains(request.VerificationMethod, StringComparer.Ordinal))
         {
             ModelState.AddModelError(
                 nameof(request.VerificationMethod),
