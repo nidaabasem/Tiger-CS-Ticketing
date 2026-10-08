@@ -19,6 +19,8 @@ public sealed class PactReceivablesOptions
     /// must exceed this value or the browser-facing request expires first.
     /// </summary>
     public int RequestBudgetSeconds => Math.Clamp(CommandTimeoutSeconds, 1, 300) + 30;
+    /// <summary>Lower bound (instalment due date) passed to the PACT procedures as @StartDate.</summary>
+    public DateTime StartDate { get; set; } = new(2026, 1, 1);
     public int MaxSourceRows { get; set; } = 250000;
     public string Currency { get; set; } = "AED";
     /// <summary>Off by default: the list shows every apartment with a positive due or overdue amount.</summary>

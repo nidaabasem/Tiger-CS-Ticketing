@@ -85,7 +85,7 @@ public sealed class PactSqlReceivablesSource(
                 CommandType = CommandType.StoredProcedure,
                 CommandTimeout = Math.Clamp(options.CommandTimeoutSeconds, 1, 300)
             };
-            command.Parameters.Add("@StartDate", SqlDbType.DateTime).Value = new DateTime(2000, 1, 1);
+            command.Parameters.Add("@StartDate", SqlDbType.DateTime).Value = options.StartDate.Date;
             command.Parameters.Add("@EndDate", SqlDbType.DateTime).Value = endDate;
             // Include sub-dirham balances; only positive amounts survive in the service.
             command.Parameters.Add("@MinAmount", SqlDbType.Int).Value = 0;
@@ -125,7 +125,7 @@ public sealed class PactSqlReceivablesSource(
             throw;
         }
         logger.LogInformation("PACT receivables procedure {Procedure} (company {CompanyId}) returned {Rows} rows ({ZeroRows} with zero amount) in {ElapsedMs} ms; startDate={StartDate:O}, endDate={EndDate:O}, minAmount=0; build={Build}.",
-            procedure, company, rows.Count, zeroRows, Stopwatch.GetElapsedTime(started).TotalMilliseconds, new DateTime(2000, 1, 1), endDate, Build);
+            procedure, company, rows.Count, zeroRows, Stopwatch.GetElapsedTime(started).TotalMilliseconds, options.StartDate.Date, endDate, Build);
         return rows;
     }
 
