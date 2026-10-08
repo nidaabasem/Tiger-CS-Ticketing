@@ -85,7 +85,7 @@ public sealed class PactReceivablesRenderTests
             var today = new DateOnly(2026, 10, 7);
             var report = new PactReceivableCustomersDto(today, DateTime.UtcNow, true, [4, 32], "AED", "Configured",
                 1, 0, 1, 1, 25, [new PactReceivableCustomerDto(4, "Tiger Group Dubai", "3001", "PACT-only customer",
-                    "971500003001", "", false, true, 0, null, "NeedsReview", today.AddDays(-1), 1,
+                    "971500003001", "", 1, "TP140-101", "", false, true, 0, null, null, "NeedsReview", today.AddDays(-1), 1,
                     [new PactReceivableInstalmentDto(1, "TP140-101", "", "INV-1", "", today.AddDays(-1), 100, "Overdue")])]);
             return Task.FromResult(new HttpResponseMessage(status)
             {

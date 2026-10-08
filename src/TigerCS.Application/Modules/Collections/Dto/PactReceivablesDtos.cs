@@ -6,8 +6,9 @@ public sealed record PactReceivableInstalmentDto(
 
 public sealed record PactReceivableCustomerDto(
     int CompanyId, string CompanyName, string TenantId, string FullName,
-    string Mobile, string Email, bool HasDue, bool HasOverdue,
-    decimal? DueAmount, decimal? OverdueAmount, string AmountStatus,
+    string Mobile, string Email, int? UnitId, string UnitCode, string ProjectCode,
+    bool HasDue, bool HasOverdue,
+    decimal? DueAmount, decimal? OverdueAmount, decimal? TotalAmount, string AmountStatus,
     DateOnly EarliestDueDate, int OverdueDays,
     IReadOnlyList<PactReceivableInstalmentDto> Instalments);
 

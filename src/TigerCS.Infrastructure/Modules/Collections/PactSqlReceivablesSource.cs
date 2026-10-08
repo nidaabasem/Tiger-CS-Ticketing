@@ -22,6 +22,8 @@ public sealed class PactSqlReceivablesSource(
         if (options.ApplyLegacyExclusions)
         {
             // Do not silently remove the original CRM filter when migrating this function.
+            if (options.LegacyDownPaymentFromDate is null)
+                throw new PactReceivablesSourceException("The legacy down-payment start date has not been configured.");
             if (!options.SpecialCasesConfigured)
                 throw new PactReceivablesSourceException("The original special-case unit exclusions have not been configured.");
             downPayments = await ReadDownPaymentsAsync(cancellationToken);
@@ -94,7 +96,7 @@ public sealed class PactSqlReceivablesSource(
             CommandType = CommandType.Text,
             CommandTimeout = Math.Clamp(options.CommandTimeoutSeconds, 1, 300)
         };
-        command.Parameters.Add("@FromDate", SqlDbType.DateTime).Value = new DateTime(2025, 11, 1);
+        command.Parameters.Add("@FromDate", SqlDbType.DateTime).Value = options.LegacyDownPaymentFromDate!.Value;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var columns = Enumerable.Range(0, reader.FieldCount).ToDictionary(reader.GetName, x => x, StringComparer.OrdinalIgnoreCase);
         if (!columns.TryGetValue("UnitCode", out var unit) || !columns.TryGetValue("DueDate", out var date))

@@ -54,6 +54,8 @@ public sealed class PactReceivableCustomersAppService(
                 "PACT receivables could not be read. Please retry or contact support.");
         }
 
+        // The only business filter: a positive due-today or overdue remainder. No company, project,
+        // contract-status or date-window restriction beyond Due (= today) / Overdue (< today).
         var live = snapshot.Items.Where(r => r.Amount > 0 && DateOnly.FromDateTime(r.DueDate) <= today).ToList();
         if (live.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
@@ -62,7 +64,8 @@ public sealed class PactReceivableCustomersAppService(
         List<PactReceivableCustomerDto> customers;
         try
         {
-            customers = live.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
+            // One row per apartment: company + customer + unit.
+            customers = live.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Unit: r.UnitCode.Trim()))
                 .Select(g => Map(g.ToList(), today)).ToList();
         }
         catch (OverflowException)
@@ -85,6 +88,7 @@ public sealed class PactReceivableCustomersAppService(
         customers = customers.Where(c => view == "all" || (view == "due" ? c.HasDue : c.HasOverdue))
             .OrderByDescending(c => c.HasOverdue).ThenBy(c => c.EarliestDueDate)
             .ThenBy(c => c.FullName, StringComparer.OrdinalIgnoreCase).ThenBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
+            .ThenBy(c => c.UnitCode, StringComparer.Ordinal).ThenBy(c => c.UnitId)
             .ToList();
         return CollectionsResult<PactReceivableCustomersDto>.Ok(new PactReceivableCustomersDto(
             today, snapshot.ReadAtUtc, snapshot.LegacyExclusionsApplied, [4, 32], sourceOptions.Currency, "Configured",
@@ -108,11 +112,15 @@ public sealed class PactReceivableCustomersAppService(
             bucket.GroupBy(i => i.DueDate).Any(g => g.Count() > 1) ? null : bucket.Sum(i => i.Amount);
         var dueAmount = SumIfUnambiguous(due);
         var overdueAmount = SumIfUnambiguous(overdue);
+        // Due (DueDate = today) and Overdue (DueDate < today) are disjoint by date, so no source row
+        // can sit in both buckets; the total is therefore a plain sum, and only when both are known.
+        decimal? totalAmount = dueAmount is { } d && overdueAmount is { } o ? d + o : null;
         var earliest = items.Min(i => i.DueDate);
         return new PactReceivableCustomerDto(first.CompanyId,
             first.CompanyId == 4 ? "Tiger Group Dubai" : "Tiger Group Sharjah", first.TenantId.Trim(),
-            first.FullName, first.Mobile, first.Email, due.Count > 0, overdue.Count > 0,
-            dueAmount, overdueAmount, dueAmount is null || overdueAmount is null ? "NeedsReview" : "Provided",
+            first.FullName, first.Mobile, first.Email, first.UnitId, first.UnitCode.Trim(), first.ProjectCode,
+            due.Count > 0, overdue.Count > 0,
+            dueAmount, overdueAmount, totalAmount, dueAmount is null || overdueAmount is null ? "NeedsReview" : "Provided",
             earliest, today.DayNumber - earliest.DayNumber, items);
     }
 }

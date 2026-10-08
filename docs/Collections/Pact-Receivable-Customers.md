@@ -22,9 +22,17 @@ The supplied definitions calculate `Amount` from their payment allocation as `ab
 
 PACT returns no currency field. `Currency` defaults to AED and is marked `CurrencySource = Configured`; confirm this during environment setup.
 
-## Existing EDSM exclusions
+## Apartment list, filter and amounts
 
-With `ApplyLegacyExclusions = true` (default), the supplied function's filters are reproduced:
+- **Only business filter:** an apartment is listed when its Due amount > 0 **or** its Overdue amount > 0. There is no company, project, contract-expiry/status or fixed-date restriction (the former `2025-11-01` bound is gone); expired contracts stay visible while they owe money. The company dropdown is an optional user filter only.
+- **One row per apartment** = company + customer + unit (`UnitId`/`UnitCode`).
+- `DueAmount` = Σ `Amount` of rows with `DueDate` = business date; `OverdueAmount` = Σ `Amount` of rows with `DueDate` < business date. They are disjoint by date, so they cannot overlap; `TotalAmount` = Due + Overdue, and is null (`NeedsReview`) if either bucket has several rows on one date.
+- **PACT field verification (open):** `p4/p32AccountReceivables` return no column named `DueAmount` or `OverAmount`; the only amount is `Amount`, derived inside the procedure from the payment allocation (not the original instalment/cheque value). The procedure bodies are not in this repository, so that this is the *remaining* balance has to be confirmed against PACT before activation.
+- Legacy exclusions are **off by default** (`ApplyLegacyExclusions=false`). If re-enabled, `LegacyDownPaymentFromDate` must be configured; there is no built-in date.
+
+## Existing EDSM exclusions (legacy, disabled by default)
+
+With `ApplyLegacyExclusions = true`, the supplied function's filters are reproduced:
 
 | Exclusion | Matching rule |
 | --- | --- |
@@ -37,7 +45,7 @@ With `ApplyLegacyExclusions = true` (default), the supplied function's filters a
 | Names containing `*` | Entire row |
 | `Helper.SEPCIAL_CASES` | Entire UnitCode; the 50 active values supplied in `Pasted text(6).txt` are loaded in the API configuration |
 
-The supplied `GetHandoverAndDownPaymentPaymentsAsync` method executes only the Booking & Downpayment query: join `tblPayment` to `tblLead` by `LeadID`, require payment type 2 or 3, lead status != 6, and DueDate >= 2025-11-01. The unit key is `TRIM(TRIM(l.ProjectCode) + '-' + TRIM(l.UnitNumber))`. `p.Amount` is returned but does not participate in matching. There is **no upper date limit**: the supplied `TotDate` argument is unused. The Handover/After Handover branches and project filters are commented out and remain inactive. TigerCS executes this fixed query directly with a typed date parameter, so no new CRM stored procedure is needed.
+The supplied `GetHandoverAndDownPaymentPaymentsAsync` method executes only the Booking & Downpayment query: join `tblPayment` to `tblLead` by `LeadID`, require payment type 2 or 3, lead status != 6, and DueDate >= `LegacyDownPaymentFromDate` (previously hardcoded 2025-11-01). The unit key is `TRIM(TRIM(l.ProjectCode) + '-' + TRIM(l.UnitNumber))`. `p.Amount` is returned but does not participate in matching. There is **no upper date limit**: the supplied `TotDate` argument is unused. The Handover/After Handover branches and project filters are commented out and remain inactive. TigerCS executes this fixed query directly with a typed date parameter, so no new CRM stored procedure is needed.
 
 The commented TP119 condition remains inactive. String comparisons are case-sensitive; CRM keys retain the exact timestamp instead of silently reducing it to a date.
 

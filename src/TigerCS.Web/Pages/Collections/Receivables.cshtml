@@ -47,14 +47,14 @@
     @if (Model.Report is { } report)
     {
         <div class="receivables-metrics">
-            <div class="panel"><span>Customers in this list</span><strong>@report.TotalCount</strong></div>
-            <div class="panel"><span>With instalments due today</span><strong>@report.DueCustomerCount</strong></div>
-            <div class="panel"><span>With overdue instalments</span><strong>@report.OverdueCustomerCount</strong></div>
+            <div class="panel"><span>Apartments in this list</span><strong>@report.TotalCount</strong></div>
+            <div class="panel"><span>Due today</span><strong>@report.DueCustomerCount</strong></div>
+            <div class="panel"><span>Overdue</span><strong>@report.OverdueCustomerCount</strong></div>
         </div>
-        <p class="text-secondary">As of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Customers are listed once per company.</p>
+        <p class="text-secondary">As of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Each row is one apartment.</p>
         @if (!report.LegacyExclusionsApplied)
         {
-            <div class="receivables-notice" role="status">This is the raw PACT list. The existing booking, down-payment and special-case exclusions have not been applied.</div>
+            <div class="receivables-notice" role="status">Every apartment with a positive due or overdue amount is listed. The legacy booking, down-payment and special-case exclusions are not applied.</div>
         }
         <div class="panel">
             @if (report.Items.Count == 0)
@@ -65,15 +65,16 @@
             {
                 <div class="receivables-table-wrap">
                     <table class="receivables-table">
-                        <thead><tr><th>Customer</th><th>Company / units</th><th>Due today</th><th>Overdue</th><th>Earliest due date</th><th>Instalments</th></tr></thead>
+                        <thead><tr><th>Customer</th><th>Company / apartment</th><th>Due today</th><th>Overdue</th><th>Total</th><th>Earliest due date</th><th>Instalments</th></tr></thead>
                         <tbody>
                         @foreach (var customer in report.Items)
                         {
                             <tr>
                                 <td><strong>@customer.FullName</strong><span class="receivables-meta">Customer ID @customer.TenantId</span><span class="receivables-meta">@customer.Mobile</span><span class="receivables-meta">@customer.Email</span></td>
-                                <td>@customer.CompanyName<span class="receivables-meta">@string.Join(", ", customer.Instalments.Select(i => i.UnitCode).Where(u => u.Length > 0).Distinct())</span></td>
+                                <td>@customer.CompanyName<span class="receivables-meta">@(customer.UnitCode.Length > 0 ? customer.UnitCode : "No unit code")</span></td>
                                 <td><span class="receivables-amount">@ReceivablesModel.Money(customer.DueAmount)</span>@if (customer.HasDue) { <span class="receivables-tag">Due today</span> }</td>
                                 <td><span class="receivables-amount">@ReceivablesModel.Money(customer.OverdueAmount)</span>@if (customer.HasOverdue) { <span class="receivables-tag receivables-tag--overdue">@customer.OverdueDays days overdue</span> }</td>
+                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.TotalAmount)</span></td>
                                 <td>@customer.EarliestDueDate.ToString("dd MMM yyyy")</td>
                                 <td>
                                     <details class="receivables-details">

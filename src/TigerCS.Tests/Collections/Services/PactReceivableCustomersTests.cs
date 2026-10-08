@@ -64,6 +64,32 @@ public sealed class PactReceivableCustomersTests
     }
 
     [Fact]
+    public async Task EachApartmentIsItsOwnRow_WithSeparateDueOverdueAndTotal()
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(7, 40m), Row(6, 60m), Row(5, 25m, unit: "TP140-202"), Row(8, 900m, unit: "TP140-303"), Row(6, 0m, unit: "TP140-404")]);
+        var items = (await h.Service.ListAsync(h.Agent)).Value!.Items;
+        Assert.Equal(2, items.Count);
+        var a = items.Single(c => c.UnitCode == "TP140-101");
+        Assert.Equal((40m, 60m, 100m), (a.DueAmount, a.OverdueAmount, a.TotalAmount));
+        var b = items.Single(c => c.UnitCode == "TP140-202");
+        Assert.Equal((0m, 25m, 25m), (b.DueAmount, b.OverdueAmount, b.TotalAmount));
+    }
+
+    [Fact]
+    public async Task AmbiguousBucketHasNoTotal_ButApartmentStaysVisible()
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(6), Row(6, voucher: "INV-2")]);
+        var c = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
+        Assert.Null(c.OverdueAmount);
+        Assert.Null(c.TotalAmount);
+    }
+
+    [Fact]
+    public void LegacyExclusionsAreOffByDefault() => Assert.False(new PactReceivablesOptions().ApplyLegacyExclusions);
+
+    [Fact]
     public async Task CompanyAndTenantFormTheIdentity_AndPagingIsAfterCustomerGrouping()
     {
         var h = new Harness();
