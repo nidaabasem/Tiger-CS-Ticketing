@@ -16,6 +16,24 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     private const string Base = "api/collections";
     public const int PageSize = 50;
 
+    public Task<ApiResult<CollectionsCampaignPreviewDto>> GetCampaignPreviewAsync(string stage, DateOnly? businessDate,
+        int? companyId, string? search, int page, CancellationToken cancellationToken) =>
+        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search)}&page={Id(page)}", cancellationToken);
+
+    public Task<ApiResult<CollectionsCampaignExportDto>> GetCampaignExportAsync(string stage, string mode,
+        DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken) =>
+        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+
+    private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        query["stage"] = stage;
+        if (businessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (companyId is { } company) query["companyId"] = Id(company);
+        if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
+        return query.ToString()!;
+    }
+
     public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
         int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null)
     {

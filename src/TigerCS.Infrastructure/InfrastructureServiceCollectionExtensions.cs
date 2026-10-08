@@ -329,6 +329,9 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped(sp => sp.GetRequiredService<IOptions<PactReceivablesOptions>>().Value);
         services.AddScoped<IPactReceivablesSource, PactSqlReceivablesSource>();
         services.AddScoped<PactReceivableCustomersAppService>();
+        services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
+        services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);
+        services.AddScoped<CollectionsCampaignAppService>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
