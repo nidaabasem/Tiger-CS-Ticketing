@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.Collections;
@@ -140,6 +141,11 @@ public static class InfrastructureServiceCollectionExtensions
         // state and touches no scoped service; the other two are scoped
         // because they inject scoped repositories.
         services.AddSingleton<IAuthorizationHandler, SystemAdministratorOverrideHandler>();
+
+        services.Configure<ServiceIdentityOptions>(configuration.GetSection(ServiceIdentityOptions.SectionName));
+        services.AddSingleton<IServiceIdentityRegistry, ServiceIdentityRegistry>();
+        services.AddScoped<IAuthorizationHandler, ServiceIdentityRestrictionHandler>();
+        services.AddSingleton<IAuthorizationHandler, ReadOnlyCallerWriteGuardHandler>();
 
         services.AddScoped<AuthenticationAppService>();
         services.AddScoped<UserProfileAppService>();
@@ -397,7 +403,12 @@ public static class InfrastructureServiceCollectionExtensions
     public static AuthorizationOptions AddTigerCsAuthorizationPolicies(this AuthorizationOptions options)
     {
         AuthorizationPolicyBuilder Base() =>
-            new AuthorizationPolicyBuilder().RequireAuthenticatedUser().AddRequirements(new ActiveEmployeeRequirement());
+            new AuthorizationPolicyBuilder().RequireAuthenticatedUser().AddRequirements(
+                new ActiveEmployeeRequirement(),
+                // Confines configured service identities (the Genesys integration account) to the integration surface.
+                new ServiceIdentityRestrictionRequirement(),
+                // Chairman/CEO and Reporting User are read-only: no mutating method unless the endpoint documents otherwise.
+                new ReadOnlyCallerWriteGuardRequirement());
 
         options.DefaultPolicy = Base().Build();
 
@@ -429,14 +440,21 @@ public static class InfrastructureServiceCollectionExtensions
             .Build());
 
         options.AddPolicy(PolicyNames.SupervisorOrAbove, Base()
-            .RequireRole(Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo)
+            .RequireRole(Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager)
             .Build());
 
         options.AddPolicy(PolicyNames.DepartmentHeadOrAbove, Base()
-            .RequireRole(Roles.DepartmentHead, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo)
+            .RequireRole(Roles.DepartmentHead, Roles.CsManager, Roles.GeneralManager)
             .Build());
 
+        // Chairman/CEO is read-only by agreed decision: no operational policy admits it.
         options.AddPolicy(PolicyNames.CsManagerOrGeneralManager, Base()
+            .RequireRole(Roles.CsManager, Roles.GeneralManager)
+            .Build());
+
+        // Read access to reports (Team Performance): the management tier plus
+        // the read-only executive. A read policy only; nothing on it mutates.
+        options.AddPolicy(PolicyNames.ReportsRead, Base()
             .RequireRole(Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo)
             .Build());
 

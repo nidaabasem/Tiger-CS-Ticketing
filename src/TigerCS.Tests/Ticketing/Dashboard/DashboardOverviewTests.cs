@@ -474,6 +474,53 @@ public sealed class DashboardOverviewTests : IDisposable
         Assert.Equal(["Rana Registrar"], supervisor.FilterOptions.Agents.Select(o => o.Label).ToArray());
     }
 
+    [Theory]
+    [InlineData(Roles.CsManager)]
+    [InlineData(Roles.CsSupervisor)]
+    public async Task CsManagerAndSupervisor_AgentPicker_OffersCsAgentsAndCallCenterStaff_AcrossDepartments(string role)
+    {
+        // Agreed model: Call Center agents hold the CS Agent set. A cross-department caller is
+        // offered every active member of every department, so a Call Center agent appears beside
+        // the Customer Service agent and the other departments' staff.
+        var callCenterAgentId = Guid.NewGuid();
+        using (var context = _db.CreateContext())
+        {
+            var callCenter = new Department("Call Center", "CC");
+            context.Departments.Add(callCenter);
+            context.SaveChanges();
+            context.Users.Add(new TigerCS.Infrastructure.Identity.ApplicationUser
+            {
+                Id = callCenterAgentId,
+                UserName = $"user-{callCenterAgentId:N}",
+                NormalizedUserName = $"USER-{callCenterAgentId:N}",
+                Email = $"user-{callCenterAgentId:N}@example.test",
+                SecurityStamp = Guid.NewGuid().ToString()
+            });
+            context.Employees.Add(new Employee(callCenterAgentId, "Bilal Caller", isGeynessStaff: false, Now.AddDays(-60)));
+            context.SaveChanges();
+            context.UserDepartmentAssignments.Add(new UserDepartmentAssignment(callCenterAgentId, callCenter.DepartmentId, true, Now.AddDays(-50), null));
+            context.SaveChanges();
+        }
+
+        var overview = await OverviewAsync(Guid.NewGuid(), [role]);
+
+        var agents = overview.FilterOptions.Agents.Select(o => o.Label).ToArray();
+        Assert.Contains("Amal Agent", agents);
+        Assert.Contains("Bilal Caller", agents);
+        Assert.Contains("Hadi Head", agents);
+        Assert.Contains("Rana Registrar", agents);
+
+        // The picker follows the department filter: Call Center only offers its own people.
+        int callCenterId;
+        using (var context = _db.CreateContext())
+        {
+            callCenterId = context.Departments.Single(d => d.Code == "CC").DepartmentId;
+        }
+
+        var narrowed = await OverviewAsync(Guid.NewGuid(), [role], new DashboardOverviewRequestDto(DepartmentId: callCenterId));
+        Assert.Equal(["Bilal Caller"], narrowed.FilterOptions.Agents.Select(o => o.Label).ToArray());
+    }
+
     [Fact]
     public async Task OtherFilters_NarrowEveryWidget_ButNeverBypassScope()
     {

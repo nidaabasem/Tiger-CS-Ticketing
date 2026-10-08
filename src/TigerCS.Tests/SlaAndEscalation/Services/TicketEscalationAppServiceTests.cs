@@ -244,7 +244,6 @@ public class TicketEscalationAppServiceTests
     [InlineData(Roles.CsSupervisor)]
     [InlineData(Roles.CsManager)]
     [InlineData(Roles.GeneralManager)]
-    [InlineData(Roles.ChairmanCeo)]
     public async Task CsLayerAndAbove_MayEscalateWithoutDepartmentMembership(string role)
     {
         var h = await CreateAsync();
@@ -252,6 +251,21 @@ public class TicketEscalationAppServiceTests
         var result = await h.Service.EscalateAsync(Guid.NewGuid(), [role], h.Ticket.TicketId, Request());
 
         Assert.Equal(SlaOperationOutcome.Success, result.Outcome);
+    }
+
+    /// <summary>Chairman/CEO only receives Level 4; it initiates no escalation at any level.</summary>
+    [Theory]
+    [InlineData(Roles.ChairmanCeo, 1, nameof(EscalationTriggerType.ManualFlag))]
+    [InlineData(Roles.ChairmanCeo, 3, nameof(EscalationTriggerType.ManualFlag))]
+    [InlineData(Roles.ReportingUser, 1, nameof(EscalationTriggerType.ManualFlag))]
+    public async Task ReadOnlyRoles_MayNotEscalateAtAnyLevel(string role, byte level, string trigger)
+    {
+        var h = await CreateAsync();
+
+        var result = await h.Service.EscalateAsync(Guid.NewGuid(), [role], h.Ticket.TicketId, Request(level, trigger));
+
+        Assert.Equal(SlaOperationOutcome.Forbidden, result.Outcome);
+        Assert.Empty(h.Sla.Escalations.All);
     }
 
     /// <summary>Department-side roles are scoped to the ticket's own department.</summary>

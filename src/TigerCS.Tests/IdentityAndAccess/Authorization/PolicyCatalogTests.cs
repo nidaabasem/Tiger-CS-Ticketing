@@ -19,9 +19,11 @@ public class PolicyCatalogTests
         policy.Requirements.OfType<RolesAuthorizationRequirement>().SelectMany(r => r.AllowedRoles).ToList();
 
     [Theory]
-    [InlineData(PolicyNames.SupervisorOrAbove, new[] { Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo })]
-    [InlineData(PolicyNames.DepartmentHeadOrAbove, new[] { Roles.DepartmentHead, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo })]
-    [InlineData(PolicyNames.CsManagerOrGeneralManager, new[] { Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo })]
+    [InlineData(PolicyNames.SupervisorOrAbove, new[] { Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager })]
+    [InlineData(PolicyNames.DepartmentHeadOrAbove, new[] { Roles.DepartmentHead, Roles.CsManager, Roles.GeneralManager })]
+    // Chairman/CEO is read-only: it is admitted by the report READ policy only, never by an operational one.
+    [InlineData(PolicyNames.CsManagerOrGeneralManager, new[] { Roles.CsManager, Roles.GeneralManager })]
+    [InlineData(PolicyNames.ReportsRead, new[] { Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo })]
     [InlineData(PolicyNames.SystemAdministrator, new[] { Roles.SystemAdministrator })]
     public void NamedPolicy_HasExactlyTheExpectedRoleSet(string policyName, string[] expectedRoles)
     {

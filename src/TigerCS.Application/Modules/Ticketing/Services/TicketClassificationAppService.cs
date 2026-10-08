@@ -82,9 +82,10 @@ public sealed class TicketClassificationAppService(
         // work: the same department-scoped authority that governs status
         // changes, never a new privilege tier.
         var authorized = await AuthorizationGate.EvaluateAsync(callerRoles, async () =>
-            callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains)
+            !Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(callerRoles)
+            && (callerRoles.Any(TicketRoleSets.CrossDepartmentSupervisory.Contains)
             || callerRoles.Contains(Domain.Modules.IdentityAndAccess.Roles.CsAgent)
-            || await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken));
+            || await userDepartmentAssignmentRepository.ExistsAsync(callerEmployeeId, ticket.CurrentDepartmentId, cancellationToken)));
 
         if (!authorized)
         {

@@ -172,7 +172,7 @@ public sealed class TicketEscalationAppService(
                 return callerRoles.Any(SlaRoleSets.ManualLevel4Escalate.Contains);
             }
 
-            if (!callerRoles.Any(SlaRoleSets.ManualEscalate.Contains))
+            if (Roles.IsReadOnlyCaller(callerRoles) || !callerRoles.Any(SlaRoleSets.ManualEscalate.Contains))
             {
                 return false;
             }

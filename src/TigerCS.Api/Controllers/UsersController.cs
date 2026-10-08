@@ -20,7 +20,7 @@ public class UsersController(
     /// <summary>
     /// The cross-department assignee directory: every active employee with
     /// their roles and all their department memberships. CS Manager (and
-    /// General Manager / Chairman-CEO, who share the policy) only — the roles
+    /// General Manager, who shares the policy) only; Chairman/CEO is read-only and refused — the roles
     /// that may place a ticket outside its current department.
     /// </summary>
     /// <remarks>
@@ -47,6 +47,7 @@ public class UsersController(
     /// </remarks>
     /// <response code="200">The caller's employee id, display name, roles, and department memberships.</response>
     [HttpGet("me")]
+    [AllowServiceIdentity]
     [ProducesResponseType<CurrentUserResponseDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> Me(CancellationToken cancellationToken)
     {

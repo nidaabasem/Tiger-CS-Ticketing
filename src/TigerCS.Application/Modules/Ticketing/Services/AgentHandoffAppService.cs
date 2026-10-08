@@ -2,6 +2,7 @@ using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -158,7 +159,9 @@ public sealed class AgentHandoffAppService(
         // Same authority as every other action on this work list: ordinary
         // work in a department the caller can already see, carrying ADR-0024's
         // override through AuthorizationGate.
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(
+        // Read-only roles (Chairman/CEO, Reporting User) view the work list but never act on it.
+        if (Roles.IsReadOnlyCaller(callerRoles)
+            || !await ticketQueryAppService.CanViewDepartmentAsync(
                 callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken))
         {
             return AgentHandoffResult.Failure(AgentHandoffOutcome.Forbidden);
@@ -368,7 +371,9 @@ public sealed class AgentHandoffAppService(
         // Acting on pending work is ordinary work in a department you can
         // already see — the same authority the ticket queue grants, never a
         // new privilege tier.
-        if (!await ticketQueryAppService.CanViewDepartmentAsync(
+        // Read-only roles (Chairman/CEO, Reporting User) view the work list but never act on it.
+        if (Roles.IsReadOnlyCaller(callerRoles)
+            || !await ticketQueryAppService.CanViewDepartmentAsync(
                 callerEmployeeId, callerRoles, handoff.DepartmentId, cancellationToken))
         {
             return AgentHandoffResult.Failure(AgentHandoffOutcome.Forbidden);
