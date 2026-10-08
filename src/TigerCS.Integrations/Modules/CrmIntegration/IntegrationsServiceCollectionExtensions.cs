@@ -281,8 +281,11 @@ public static class IntegrationsServiceCollectionExtensions
             return options.Provider switch
             {
                 "Mock" => new MockTasleehGateway(),
+                // No approved Tasleeh contract exists yet. "Unavailable" reports Tasleeh as an unreachable source (the
+                // customer-search result shows it as Failed) instead of serving the Mock's fixture customer.
+                "Unavailable" => new UnavailableTasleehGateway(),
                 _ => throw new NotSupportedException(
-                    $"Tasleeh:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
+                    $"Tasleeh:Provider '{options.Provider}' is not supported. Only 'Mock' and 'Unavailable' are implemented at this " +
                     "pilot phase — no real Tasleeh endpoint details were available to build against. See " +
                     "MockTasleehGateway's own remarks: it must never be described as production-ready, and a " +
                     "real ITasleehGateway implementation is required before any other provider value can be used.")
