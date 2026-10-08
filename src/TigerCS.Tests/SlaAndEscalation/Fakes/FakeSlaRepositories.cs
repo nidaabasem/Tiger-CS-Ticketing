@@ -93,6 +93,35 @@ public sealed class FakeTicketSlaInstanceRepository : ITicketSlaInstanceReposito
     }
 }
 
+/// <summary>In-memory pause history with the real table's "at most one open pause per ticket" rule.</summary>
+public sealed class FakeTicketSlaPausePeriodRepository : ITicketSlaPausePeriodRepository
+{
+    private readonly List<TicketSlaPausePeriod> _pauses = [];
+    private long _nextId = 1;
+
+    public IReadOnlyList<TicketSlaPausePeriod> All => _pauses;
+
+    public Task<TicketSlaPausePeriod?> GetOpenAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_pauses.FirstOrDefault(p => p.TicketId == ticketId && p.IsOpen));
+
+    public Task<IReadOnlyList<TicketSlaPausePeriod>> ListByInstanceIdAsync(
+        long ticketSlaInstanceId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TicketSlaPausePeriod>>(
+            _pauses.Where(p => p.TicketSlaInstanceId == ticketSlaInstanceId).OrderBy(p => p.StartedAtUtc).ToList());
+
+    public Task AddAsync(TicketSlaPausePeriod pause, CancellationToken cancellationToken = default)
+    {
+        if (pause.IsOpen && _pauses.Any(p => p.TicketId == pause.TicketId && p.IsOpen))
+        {
+            throw new InvalidOperationException("The filtered unique index would reject a second open pause for the ticket.");
+        }
+
+        typeof(TicketSlaPausePeriod).GetProperty(nameof(TicketSlaPausePeriod.TicketSlaPausePeriodId))!.SetValue(pause, _nextId++);
+        _pauses.Add(pause);
+        return Task.CompletedTask;
+    }
+}
+
 public sealed class FakeTicketEscalationRepository : ITicketEscalationRepository
 {
     private readonly List<TicketEscalation> _escalations = [];

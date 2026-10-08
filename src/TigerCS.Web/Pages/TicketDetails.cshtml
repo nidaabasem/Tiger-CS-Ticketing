@@ -550,6 +550,18 @@ else
                             <div class="facts-row"><dt>First response</dt><dd class="@(sla.FirstResponseBreached ? "is-critical" : "")">@(sla.FirstHumanResponseAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? (sla.FirstResponseBreached ? "Breached" : why is { HasActivePeriod: false } ? "Not started" : "Pending"))</dd></div>
                             <div class="facts-row"><dt>Resolution due</dt><dd>@(sla.ResolutionDueAtUtc?.ToLocalTime().ToString("MMM d, HH:mm") ?? "—")</dd></div>
                             <div class="facts-row"><dt>Resolution</dt><dd class="@(sla.ResolutionBreached ? "is-critical" : "")">@(sla.ResolutionBreached ? "Breached" : TicketDisplay.SlaStateLabel(sla.SlaState))</dd></div>
+                            @if (sla.IsCurrentlyPaused)
+                            {
+                                <div class="facts-row"><dt>Resolution clock</dt><dd>Paused — @sla.CurrentPauseReason (first response is not paused)</dd></div>
+                            }
+                            @if (sla.TotalPausedMinutesThisPeriod > 0)
+                            {
+                                <div class="facts-row"><dt>Paused so far</dt><dd>@TicketDisplay.FormatMinutes(sla.TotalPausedMinutesThisPeriod)</dd></div>
+                            }
+                            @if (why?.RequestTypeSlaNote is { } requestTypeSlaNote)
+                            {
+                                <div class="facts-row"><dt>Request-type SLA</dt><dd>@requestTypeSlaNote</dd></div>
+                            }
                         </dl>
                         @if (sla.FirstHumanResponseAtUtc is null && why is not { HasActivePeriod: false } && (Model.CanResolve || Model.CanEscalate))
                         {

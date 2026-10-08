@@ -72,7 +72,8 @@ public class SlaExplanationTests
         Assert.Equal("InitialCreation", explanation.PeriodReason);
         Assert.NotNull(explanation.Calendar);
         Assert.Contains(explanation.Notes, n => n.Contains("08:00–18:00 (Asia/Dubai)", StringComparison.Ordinal));
-        Assert.Contains("not implemented", explanation.PauseRule, StringComparison.Ordinal);
+        Assert.Contains("pauses while a non-Critical ticket is Pending Customer", explanation.PauseRule, StringComparison.Ordinal);
+        Assert.DoesNotContain("not implemented", explanation.PauseRule, StringComparison.Ordinal);
     }
 
     [Fact]

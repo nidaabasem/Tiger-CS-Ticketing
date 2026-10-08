@@ -159,16 +159,41 @@ public sealed class TicketSlaInstanceRepository(TigerCsDbContext dbContext) : IT
             // A Closed ticket's SLA outcome is settled and immutable; a
             // ticket whose clock is not running (a provisional one awaiting
             // reconciliation) has no deadline to miss.
+            //
+            // Pause (ISSUE-018): only the Resolution clock pauses, so a
+            // ticket with an open pause is skipped for Resolution — its held
+            // deadline is not running out — but is still a First Response
+            // candidate (that clock never pauses). The open-pause row, not
+            // SlaState, is the test: SlaState turns Breached when the First
+            // Response clock breaches mid-pause, and the Resolution clock is
+            // still paused then.
             where ticket.TicketStatus != TicketStatus.Closed
-                  && ticket.SlaState != SlaState.Paused
                   && (deadlineType == SlaDeadlineType.FirstResponse
                       ? ticket.FirstHumanResponseAtUtc == null
-                      : ticket.TicketStatus != TicketStatus.Resolved)
+                      : ticket.TicketStatus != TicketStatus.Resolved
+                        && !dbContext.TicketSlaPausePeriods.Any(p => p.TicketId == ticket.TicketId && p.ResumedAtUtc == null))
             orderby instance.TicketSlaInstanceId
             select instance.TicketId;
 
         return await query.Take(maxResults).ToListAsync(cancellationToken);
     }
+}
+
+public sealed class TicketSlaPausePeriodRepository(TigerCsDbContext dbContext) : ITicketSlaPausePeriodRepository
+{
+    public Task<TicketSlaPausePeriod?> GetOpenAsync(long ticketId, CancellationToken cancellationToken = default) =>
+        dbContext.TicketSlaPausePeriods.FirstOrDefaultAsync(p => p.TicketId == ticketId && p.ResumedAtUtc == null, cancellationToken);
+
+    public async Task<IReadOnlyList<TicketSlaPausePeriod>> ListByInstanceIdAsync(
+        long ticketSlaInstanceId, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketSlaPausePeriods
+            .Where(p => p.TicketSlaInstanceId == ticketSlaInstanceId)
+            .OrderBy(p => p.StartedAtUtc)
+            .ThenBy(p => p.TicketSlaPausePeriodId)
+            .ToListAsync(cancellationToken);
+
+    public async Task AddAsync(TicketSlaPausePeriod pause, CancellationToken cancellationToken = default) =>
+        await dbContext.TicketSlaPausePeriods.AddAsync(pause, cancellationToken);
 }
 
 public sealed class TicketEscalationRepository(TigerCsDbContext dbContext) : ITicketEscalationRepository

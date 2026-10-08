@@ -26,7 +26,14 @@ public enum SlaBreachProcessingOutcome
     NoSlaPeriod,
 
     /// <summary>Closed-ticket immutability: a Closed ticket is settled and accepts no further SLA or escalation change.</summary>
-    TicketClosed
+    TicketClosed,
+
+    /// <summary>
+    /// A Resolution deadline check fired while the Resolution clock is paused
+    /// (ISSUE-018). Nothing is breached and nothing is written: the deadline
+    /// is held while paused and re-scheduled, extended, on resume.
+    /// </summary>
+    Paused
 }
 
 /// <summary>
@@ -64,7 +71,8 @@ public sealed class SlaBreachProcessor(
     ITicketResolutionRepository ticketResolutionRepository,
     ITicketStatusHistoryRepository statusHistoryRepository,
     IIdempotencyRecordStore idempotencyStore,
-    IAuditEntryWriter auditWriter)
+    IAuditEntryWriter auditWriter,
+    ITicketSlaPausePeriodRepository? pauseRepository = null)
 {
     /// <summary>
     /// Evaluates one deadline for one ticket and records a breach if there is
@@ -101,6 +109,18 @@ public sealed class SlaBreachProcessor(
         if (instance.IsBreached(deadlineType))
         {
             return SlaBreachProcessingOutcome.AlreadyProcessed;
+        }
+
+        // ISSUE-018: a Resolution check that fires while the clock is paused
+        // must not breach — the held deadline is not running out. The pause
+        // is closed (and the deadline extended and re-scheduled) when the
+        // ticket returns to work or is resolved, and the check runs again
+        // then. First Response never pauses, so it is never short-circuited.
+        if (deadlineType == SlaDeadlineType.Resolution
+            && pauseRepository is not null
+            && await pauseRepository.GetOpenAsync(ticket.TicketId, cancellationToken) is not null)
+        {
+            return SlaBreachProcessingOutcome.Paused;
         }
 
         var dueAtUtc = instance.DueAtUtcFor(deadlineType);
