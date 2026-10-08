@@ -27,11 +27,11 @@ Common assumptions: header `Authorization: ${authResponse.token_type} ${authResp
 | 05 | request-human-agent | same PATCH | `:207` | matches; live transfer not expressible |
 | 06 | cancel-human-request | same PATCH | `:207` | matches |
 | 07 | customer-confirmed-resolved | same PATCH | `:207` | matches |
-| 08 | collections-payment-summary | `GET .../collections/customers/by-key/{key}/payment-summary?includeTransactions=false` | `GenesysCollectionsController.cs:107` | **BROKEN success template (F-02)** |
+| 08 | collections-payment-summary | `GET .../collections/customers/by-key/{key}/payment-summary?includeTransactions=false` | `GenesysCollectionsController.cs:107` | success template fixed (was F-02); validated by `GenesysDataActionContractTests` |
 | 09 | collections-payment-transactions | `GET .../by-key/{key}/payment-transactions?companyId&type` | `:135` | matches |
 | 10 | awaiting-customer-reply | PATCH | `:207` | matches; null-field defaults |
 | 11 | send-document-copy | `POST /api/genesys/documents/send-copy` + `Idempotency-Key` | `GenesysDocumentsController.cs:69` | matches; stale description |
-| 12 | customer-unit-details | `POST /api/genesys/customers/unit-details` | `GenesysController.cs:397` | **unquoted strings (F-03)**, 0-defaults |
+| 12 | customer-unit-details | `POST /api/genesys/customers/unit-details` | `GenesysController.cs:397` | quoting already correct; not-recorded defaults changed from `0` to sentinels `-999` / `-1` / `-1` (F-03 closed) |
 | 13 | buyer-lookup | `POST /api/genesys/verification/buyer-lookup` | `GenesysVerificationController.cs` `buyer-lookup` | matches; `tel:` rejected (F-09) |
 | 14 | otp-send | `POST .../verification/otp/send` | `otp/send` | same |
 | 15 | otp-resend | `POST .../verification/otp/resend` | `otp/resend` | matches |
@@ -59,7 +59,7 @@ Not covered by any action (routes exist in code): `agent-context`, `screen-pop`,
 * Sample: `curl -X POST {TCS}/api/genesys/tickets -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -d '{"conversationId":"c-1","channel":"Phone","customerPhone":"tel:+971501234567","queueId":"Q1"}'` -> `201 {"outcome":"TicketCreated","conversationId":"c-1","ticketId":42,"ticketNumber":"..."}`; repeat -> `200 ... "AlreadyIngested"`.
 
 ### 03 / 04 / 05 / 06 / 07 / 10 PATCH actions
-Common: URL `/api/genesys/tickets/${input.ticketId}` - `{ticketId:long}`; an empty/non-numeric `ticketId` gives 404/405 before TigerCS logic. Body part names (`routing`, `ended`, `handoff`, `customerConfirmation`, `awaitingCustomerReply`) match `GenesysTicketUpdateRequest`. Outputs `outcome, ticketId, ticketNumber, ticketStatus, conversationEnded, handoffStatus, awaitingCustomerReply, inactivityDeadlineUtc, awaitingCustomerReplyNote` exist.
+Common: URL `/api/genesys/tickets/$esc.url(${input.ticketId})` (escaped so a flow value cannot leave the path) - `{ticketId:long}`; an empty/non-numeric `ticketId` gives 404/405 before TigerCS logic. Body part names (`routing`, `ended`, `handoff`, `customerConfirmation`, `awaitingCustomerReply`) match `GenesysTicketUpdateRequest`. Outputs `outcome, ticketId, ticketNumber, ticketStatus, conversationEnded, handoffStatus, awaitingCustomerReply, inactivityDeadlineUtc, awaitingCustomerReplyNote` exist.
 * **03**: always sends a `routing` object (blank fields ignored). OK.
 * **04**: sends only `endedAtUtc`, `endReason`; **no `transcript`** although the API stores one. A conversation ended by this action has `transcriptMessageCount 0`; a bot-only conversation then auto-raises a human-handoff (`AiConnectionLost`).
 * **05**: hard-codes `required:true, agentAvailable:false`; `trigger`, `mode`, `reason` are free input and must be one of the documented words (else 400 `genesys-invalid-handoff-trigger|mode`). `workItemId`, `assignedAgentId`, live transfer (`agentAvailable:true`) are not expressible.
@@ -74,7 +74,7 @@ Common: URL `/api/genesys/tickets/${input.ticketId}` - `{ticketId:long}`; an emp
 ### 08 Collections Payment Summary
 * URL/method/headers match; `customerKey` is `$esc.url`-encoded (`ext%3APact%3A3001`), ASP.NET decodes it. `includeTransactions=false` matches the query binding. Header `X-Genesys-Flow-Timeout-Seconds` is for the proxy `[ext]`; TigerCS reads `X-Collections-Deadline-Seconds` (`CollectionsEdsmOptions.cs`), so calling TigerCS directly with this action gives the default 22 s deadline. When `flowTimeoutSeconds` is empty the header is sent empty.
 * Response JSONPaths vs `CollectionsPaymentSummaryResponseDto`: `mappingStatus, completeness, incompleteReasons, currency, maxSourceDelayMinutes, companies[].{companyId,companyName,businessModel,status,fields[].{key,raw}}, nextPayment.{status,reasons,detail,isComplete,searchedThrough,earliest.{dueDate,amountRaw,companyId}}` all exist.
-* **DEFECT (F-02):** `config.response.successTemplate` (file line 64) contains `\\\"nextPaymentStatus\\\"` ... i.e. literal backslash-quote for the last eight keys, so the rendered body is not valid JSON; the flow receives a parse error exactly when all else succeeded.
+* **FIXED (was F-02) - historical description:** `config.response.successTemplate` (file line 64) contains `\\\"nextPaymentStatus\\\"` ... i.e. literal backslash-quote for the last eight keys, so the rendered body is not valid JSON; the flow receives a parse error exactly when all else succeeded.
 * Defaults: `nextPaymentStatus` defaults to `"Unavailable"`, `completeness` `"NoFigures"` - safe wording; `nextPaymentCompanyId` defaults to `0`.
 * Contract note: `customerKey` description says use it only when `verificationSource=Pact` and `matchedCustomerCount=1`; because the Genesys lookup does not reconcile CRM+PACT (F-10) a person in both systems never qualifies. A PACT person with no agent-verified ticket returns `404 AccountNotFound` (by design).
 * Sample: `curl -H "Authorization: Bearer $T" -H 'X-Collections-Deadline-Seconds: 20' "{TCS}/api/genesys/collections/customers/by-key/ext%3APact%3A3001/payment-summary?includeTransactions=false"`. Errors `{"code":"AccountNotFound"|"FinanceUnavailable"|"Forbidden"|"InvalidRequest",...}`.
@@ -92,7 +92,7 @@ Common: URL `/api/genesys/tickets/${input.ticketId}` - `{ticketId:long}`; an emp
 
 ### 12 Customer Unit Details
 * Route/method/body names match `GenesysCustomerUnitDetailsRequest`; output paths match `GenesysCustomerUnitDetailsResponse` (`mode, customerReference, eligibleUnits, unit.*, project.*, handoverDateSource, detailsStatus`).
-* **Defect (F-03):** `requestTemplate` renders `"customerReference": ${input.customerReference}` and `"phoneNumber": ${input.phoneNumber}` **without quotes** (every other file quotes strings with `\"$esc.jsonString(...)\"`). If Genesys substitutes the raw string (as it does elsewhere in these files) the body is invalid JSON (`crm:123`) -> 400 from the proxy/TigerCS. `[ext]` Genesys rendering unverified, but inconsistent with the other 15 files and with the documented request.
+* **FIXED (was F-03) - historical description:** `requestTemplate` renders `"customerReference": ${input.customerReference}` and `"phoneNumber": ${input.phoneNumber}` **without quotes** (every other file quotes strings with `\"$esc.jsonString(...)\"`). If Genesys substitutes the raw string (as it does elsewhere in these files) the body is invalid JSON (`crm:123`) -> 400 from the proxy/TigerCS. `[ext]` Genesys rendering unverified, but inconsistent with the other 15 files and with the documented request.
 * **Defaults contradict the API contract:** `floor`, `bedrooms`, `areaValue` default to `0` (file lines 46-48) whereas TigerCS returns `null` for "not recorded" and the API doc forbids defaulting; a bot can read "0 bedrooms / ground floor".
 * `unitId` is `integer`: `#if($input.unitId)` omits the field when unset; if a flow passes `""` the number binder returns 400 (uncoded). `0` is rejected: 400 `unitId must be a positive CRM unit id`.
 * Only a CRM buyer works: `customerReference` must be a CRM customer id (lookup `externalCustomerId` when `verificationSource=Crm`); a PACT tenant id gives 403 `CUSTOMER_NOT_VERIFIED`.

@@ -115,7 +115,7 @@ buyer-lookup and document gateways over a stub CRM); `traceId` is elided.
 ```
 `POST /api/verification-sessions` with `"verificationMethod": "Otp"` → `400 …/otp-requires-challenge`.
 
-Genesys data actions: `data-actions/12-buyer-lookup.json`, `13-otp-send.json`, `14-otp-resend.json`, `15-otp-verify.json`, then `11-send-document-copy.json`.
+Genesys data actions: `data-actions/13-buyer-lookup.json`, `14-otp-send.json`, `15-otp-resend.json`, `16-otp-verify.json`, then `11-send-document-copy.json`.
 
 ## The document contract
 

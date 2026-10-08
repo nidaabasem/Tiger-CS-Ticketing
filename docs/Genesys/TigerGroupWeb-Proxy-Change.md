@@ -5,6 +5,10 @@ separate repository that this session could not read or push to (the session is 
 `list_repos` shows no TigerGroupWeb). Everything below is the exact change to make there. **Nothing here was changed, built or
 tested in TigerGroupWeb.** Access needed to complete it: read + push on the TigerGroupWeb repository, and a UAT deployment of it.
 
+> **Implementation:** the complete forwarding patch (all 19 routes, including `verification/*`, `agent-context` and `screen-pop`), the
+> route table that the build checks against the controllers, and the acceptance script are in
+> [TigerGroupWeb-Forwarding-Implementation.md](TigerGroupWeb-Forwarding-Implementation.md). The rules below remain the specification.
+
 ## 1. Route inventory (Genesys-facing path = TigerCS path under `https://tigergroup.ae`)
 
 | # | Method + route | TigerCS state | TigerGroupWeb state (per `docs/Collections/Genesys-Collections-API.md` §9 / this task) | Change needed |

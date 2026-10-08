@@ -5,7 +5,7 @@
   "category": "TigerCS",
   "config": {
     "request": {
-      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/${input.ticketId}",
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/tickets/$esc.url(${input.ticketId})",
       "requestType": "PATCH",
       "headers": {
         "Authorization": "${authResponse.token_type} ${authResponse.access_token}",

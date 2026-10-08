@@ -1,3 +1,4 @@
+using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 
 namespace TigerCS.Api.Controllers;
@@ -416,7 +417,7 @@ internal static class GenesysContractMapper
             return true;
         }
 
-        return Enum.TryParse(name, ignoreCase: true, out channel) && Enum.IsDefined(channel);
+        return NamedEnum.TryParse(name, out channel);
     }
 
     internal static GenesysTicketUpdateDto Map(GenesysTicketUpdateRequest request) => new(

@@ -43,7 +43,12 @@ public sealed class CollectionsCampaignAppService(
         // Lower bound = the configured receivables StartDate (not 1 January of the preview year): overdue and legal
         // stages look back months, so a calendar-year floor would silently empty them from January onwards.
         var configuredStart = DateOnly.FromDateTime(sourceOptions.StartDate);
-        var from = dateFrom ?? (configuredStart <= to ? configuredStart : new DateOnly(date.Year, 1, 1));
+        if (dateFrom is null && configuredStart > to)
+            // No calendar-year fallback: instalments before the configured start date are out of scope, so a window that ends
+            // before it has nothing to read. (A hard-coded "1 January of the preview year" here would have read pre-StartDate rows.)
+            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
+                $"The window ends before the configured receivables start date ({configuredStart:yyyy-MM-dd}); nothing earlier is in scope. Choose a later preview date, or set From date explicitly.");
+        var from = dateFrom ?? configuredStart;
         if (from > to || from.Year < 2000 || to.Year > 2100)
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
