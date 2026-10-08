@@ -60,7 +60,8 @@ public sealed class PactReceivableCustomersTests
         Assert.Equal(0.25m, customer.DueAmount);
         Assert.Equal(100m, customer.OverdueAmount);
         Assert.Equal(1, customer.OverdueDays);
-        Assert.Equal(2, customer.Instalments.Count);
+        Assert.Equal(3, customer.Instalments.Count); // incl. the Upcoming detail row
+        Assert.Equal("Upcoming", customer.Instalments.Last().DueTiming);
     }
 
     [Fact]
@@ -84,6 +85,34 @@ public sealed class PactReceivableCustomersTests
         var c = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
         Assert.Null(c.OverdueAmount);
         Assert.Null(c.TotalAmount);
+    }
+
+    [Fact]
+    public async Task InstalmentsCarryTimingSeparatelyFromPaymentStatus_AndUnmappedStatusIsUnknown()
+    {
+        var h = new Harness();
+        h.SqlOptions.SourceStatusMap["Part"] = "PartiallyPaid";
+        h.SqlOptions.SourceStatusMap["Open"] = "Unpaid";
+        h.SqlOptions.SourceStatusMap["Closed"] = "Paid";
+        h.Source.Items.AddRange([Row(5) with { SourceStatus = "Part" }, Row(7) with { SourceStatus = "Open" },
+            Row(9, 77m) with { SourceStatus = "Open" }, Row(6, voucher: "X") with { SourceStatus = "Closed" },
+            Row(4, voucher: "Y") with { SourceStatus = "Weird" }]);
+        var c = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
+        var by = c.Instalments.ToDictionary(i => i.DueDate.Day);
+        Assert.Equal(("PartiallyPaid", "Overdue"), (by[5].PaymentStatus, by[5].DueTiming));
+        Assert.Equal(("Unpaid", "DueToday"), (by[7].PaymentStatus, by[7].DueTiming));
+        Assert.Equal(("Unpaid", "Upcoming"), (by[9].PaymentStatus, by[9].DueTiming));
+        Assert.Equal("Unknown", by[6].PaymentStatus); // mapped Paid but a remainder is owed
+        Assert.Equal(("Unknown", "Weird"), (by[4].PaymentStatus, by[4].SourceStatus));
+        Assert.Equal(100m, c.DueAmount); // upcoming row excluded from amounts
+    }
+
+    [Fact]
+    public async Task UpcomingOnlyApartmentIsNotListed()
+    {
+        var h = new Harness();
+        h.Source.Items.Add(Row(9));
+        Assert.Empty((await h.Service.ListAsync(h.Agent)).Value!.Items);
     }
 
     [Fact]

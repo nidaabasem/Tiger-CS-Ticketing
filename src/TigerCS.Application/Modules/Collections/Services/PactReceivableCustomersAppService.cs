@@ -56,7 +56,12 @@ public sealed class PactReceivableCustomersAppService(
 
         // The only business filter: a positive due-today or overdue remainder. No company, project,
         // contract-status or date-window restriction beyond Due (= today) / Overdue (< today).
-        var live = snapshot.Items.Where(r => r.Amount > 0 && DateOnly.FromDateTime(r.DueDate) <= today).ToList();
+        // Rows dated after today are kept only as "Upcoming" detail for apartments already included by
+        // a due/overdue row; they never affect inclusion or the due/overdue amounts.
+        var positive = snapshot.Items.Where(r => r.Amount > 0).ToList();
+        var included = positive.Where(r => DateOnly.FromDateTime(r.DueDate) <= today)
+            .Select(ApartmentKey).ToHashSet();
+        var live = positive.Where(r => included.Contains(ApartmentKey(r))).ToList();
         if (live.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                 "The source returned a receivable without a valid company/customer identity.");
@@ -66,7 +71,7 @@ public sealed class PactReceivableCustomersAppService(
         {
             // One row per apartment: company + customer + unit.
             customers = live.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Unit: r.UnitCode.Trim()))
-                .Select(g => Map(g.ToList(), today)).ToList();
+                .Select(g => Map(g.ToList(), today, sourceOptions.SourceStatusMap)).ToList();
         }
         catch (OverflowException)
         {
@@ -96,26 +101,48 @@ public sealed class PactReceivableCustomersAppService(
             page, pageSize, customers.Skip((page - 1) * pageSize).Take(pageSize).ToList()));
     }
 
-    private static PactReceivableCustomerDto Map(List<PactReceivableInstalment> rows, DateOnly today)
+    private static (int, string, int?, string) ApartmentKey(PactReceivableInstalment r) =>
+        (r.CompanyId, r.TenantId.Trim(), r.UnitId, r.UnitCode.Trim());
+
+    /// <summary>
+    /// Payment status comes only from the verified <c>SourceStatusMap</c>; it is never derived from the due date.
+    /// A mapped Paid with a positive remainder is contradictory and is treated as Unknown.
+    /// </summary>
+    public static string PaymentStatus(string? source, decimal remaining, IReadOnlyDictionary<string, string> map)
+    {
+        if (string.IsNullOrWhiteSpace(source) || !map.TryGetValue(source.Trim(), out var mapped)) return "Unknown";
+        return mapped.Trim().ToLowerInvariant() switch
+        {
+            "unpaid" => "Unpaid",
+            "partiallypaid" => "PartiallyPaid",
+            "paid" when remaining <= 0 => "Paid",
+            _ => "Unknown"
+        };
+    }
+
+    private static PactReceivableCustomerDto Map(List<PactReceivableInstalment> rows, DateOnly today,
+        IReadOnlyDictionary<string, string> statusMap)
     {
         var first = rows[0];
         var items = rows.OrderBy(r => r.DueDate).ThenBy(r => r.UnitCode, StringComparer.Ordinal)
             .Select(r => new PactReceivableInstalmentDto(r.UnitId, r.UnitCode, r.ProjectCode, r.VoucherNumber,
                 r.ChequeNumber, DateOnly.FromDateTime(r.DueDate), r.Amount,
-                DateOnly.FromDateTime(r.DueDate) < today ? "Overdue" : "Due")).ToList();
+                PaymentStatus(r.SourceStatus, r.Amount, statusMap),
+                DateOnly.FromDateTime(r.DueDate) is var d && d < today ? "Overdue" : d == today ? "DueToday" : "Upcoming",
+                r.SourceStatus ?? "")).ToList();
         // These SPs join invoice rows to payment terms by tenant only. Multiple returned
         // rows on one date can be duplicated allocations OR legitimate instalments.
         // Preserve the rows; never silently DISTINCT them or sum an ambiguous date.
-        var due = items.Where(i => i.Status == "Due").ToList();
-        var overdue = items.Where(i => i.Status == "Overdue").ToList();
+        var due = items.Where(i => i.DueTiming == "DueToday").ToList();
+        var overdue = items.Where(i => i.DueTiming == "Overdue").ToList();
         static decimal? SumIfUnambiguous(List<PactReceivableInstalmentDto> bucket) =>
-            bucket.GroupBy(i => i.DueDate).Any(g => g.Count() > 1) ? null : bucket.Sum(i => i.Amount);
+            bucket.GroupBy(i => i.DueDate).Any(g => g.Count() > 1) ? null : bucket.Sum(i => i.RemainingAmount);
         var dueAmount = SumIfUnambiguous(due);
         var overdueAmount = SumIfUnambiguous(overdue);
         // Due (DueDate = today) and Overdue (DueDate < today) are disjoint by date, so no source row
         // can sit in both buckets; the total is therefore a plain sum, and only when both are known.
         decimal? totalAmount = dueAmount is { } d && overdueAmount is { } o ? d + o : null;
-        var earliest = items.Min(i => i.DueDate);
+        var earliest = items.Where(i => i.DueTiming != "Upcoming").Min(i => i.DueDate);
         return new PactReceivableCustomerDto(first.CompanyId,
             first.CompanyId == 4 ? "Tiger Group Dubai" : "Tiger Group Sharjah", first.TenantId.Trim(),
             first.FullName, first.Mobile, first.Email, first.UnitId, first.UnitCode.Trim(), first.ProjectCode,

@@ -30,6 +30,20 @@ PACT returns no currency field. `Currency` defaults to AED and is marked `Curren
 - **PACT field verification (open):** `p4/p32AccountReceivables` return no column named `DueAmount` or `OverAmount`; the only amount is `Amount`, derived inside the procedure from the payment allocation (not the original instalment/cheque value). The procedure bodies are not in this repository, so that this is the *remaining* balance has to be confirmed against PACT before activation.
 - Legacy exclusions are **off by default** (`ApplyLegacyExclusions=false`). If re-enabled, `LegacyDownPaymentFromDate` must be configured; there is no built-in date.
 
+## Instalment status
+
+Each instalment in an apartment's details shows its due date, the remaining unpaid amount (`RemainingAmount`, the procedure's `Amount`), two separate labels, and the original PACT `Status` text.
+
+| Label | Source | Values |
+| --- | --- | --- |
+| Due timing | Due date vs. the Dubai business date only | Due Today (=), Overdue (<), Upcoming (>) |
+| Payment status | Original PACT `Status`, via the verified `SourceStatusMap` only | Unpaid, Partially Paid, Paid, **Unknown** |
+
+- A partially paid instalment that is late shows both labels (Partially Paid + Overdue).
+- Payment status is never inferred from the due date, and has nothing to do with ticket or contract status.
+- **Verification result:** the repository contains no definition or list of the values of the report's `Status` column (the only value in test data is a placeholder, `Installment`), and the procedures return the remainder only, not the original instalment amount, so Paid/Partially Paid cannot be derived from amounts either. **No mapping is therefore shipped**: every instalment currently shows payment status Unknown with the original value retained. Once each value is confirmed against PACT, add it under `CollectionsSource:PactReceivables:SourceStatusMap` (e.g. `"<value>": "PartiallyPaid"`; allowed targets Unpaid, PartiallyPaid, Paid; matching is case-insensitive). A value mapped to Paid while a positive remainder is owed is shown as Unknown.
+- Upcoming rows appear only if the source returns them (the reports are currently called with an end date of the business day, so normally none) and only for apartments already listed; they never affect inclusion or the due/overdue amounts. The inclusion rule is unchanged: DueAmount > 0 or OverdueAmount > 0.
+
 ## Existing EDSM exclusions (legacy, disabled by default)
 
 With `ApplyLegacyExclusions = true`, the supplied function's filters are reproduced:

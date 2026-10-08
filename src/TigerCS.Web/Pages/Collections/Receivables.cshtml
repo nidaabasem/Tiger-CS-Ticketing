@@ -86,7 +86,10 @@
                                         <ul>
                                         @foreach (var instalment in customer.Instalments)
                                         {
-                                            <li><strong>@instalment.UnitCode</strong> · @instalment.DueDate.ToString("dd MMM yyyy") · @ReceivablesModel.Money(instalment.Amount) @report.Currency<span class="receivables-meta">@instalment.Status · Voucher @instalment.VoucherNumber</span></li>
+                                            <li><strong>@instalment.UnitCode</strong> · Due @instalment.DueDate.ToString("dd MMM yyyy") · Remaining @ReceivablesModel.Money(instalment.RemainingAmount) @report.Currency
+                                                <span class="receivables-tag">@ReceivablesModel.PaymentLabel(instalment.PaymentStatus)</span>
+                                                <span class="receivables-tag @(instalment.DueTiming == "Overdue" ? "receivables-tag--overdue" : "")">@ReceivablesModel.TimingLabel(instalment.DueTiming)</span>
+                                                <span class="receivables-meta">Voucher @instalment.VoucherNumber · Source status: @(instalment.SourceStatus.Length > 0 ? instalment.SourceStatus : "(none)")</span></li>
                                         }
                                         </ul>
                                     </details>

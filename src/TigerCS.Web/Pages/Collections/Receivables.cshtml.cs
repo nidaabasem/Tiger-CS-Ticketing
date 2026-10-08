@@ -38,6 +38,16 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         return $"/Collections/Receivables?{query}";
     }
 
+    public static string PaymentLabel(string status) => status switch
+    {
+        "Unpaid" => "Unpaid", "PartiallyPaid" => "Partially Paid", "Paid" => "Paid", _ => "Unknown"
+    };
+
+    public static string TimingLabel(string timing) => timing switch
+    {
+        "DueToday" => "Due Today", "Overdue" => "Overdue", "Upcoming" => "Upcoming", _ => "Unknown"
+    };
+
     public static string Money(decimal? amount) => amount is { } value
         ? value.ToString("N2", CultureInfo.InvariantCulture) : "Review needed";
 }

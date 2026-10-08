@@ -18,4 +18,10 @@ public sealed class PactReceivablesOptions
     public bool SpecialCasesConfigured { get; set; }
     public List<string> SpecialCaseUnitCodes { get; set; } = [];
     public List<string> PdcExcludedUnitCodes { get; set; } = [];
+    /// <summary>
+    /// Verified mapping of the original PACT report <c>Status</c> value to a payment status
+    /// (Unpaid, PartiallyPaid or Paid). Empty until each value has been confirmed against PACT;
+    /// any unmapped value is shown as Unknown with the original text retained.
+    /// </summary>
+    public Dictionary<string, string> SourceStatusMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

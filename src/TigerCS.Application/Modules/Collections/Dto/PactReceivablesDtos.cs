@@ -2,7 +2,8 @@ namespace TigerCS.Application.Modules.Collections.Dto;
 
 public sealed record PactReceivableInstalmentDto(
     int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
-    string ChequeNumber, DateOnly DueDate, decimal Amount, string Status);
+    string ChequeNumber, DateOnly DueDate, decimal RemainingAmount,
+    string PaymentStatus, string DueTiming, string SourceStatus);
 
 public sealed record PactReceivableCustomerDto(
     int CompanyId, string CompanyName, string TenantId, string FullName,
