@@ -9,8 +9,8 @@
 | ID | Severity | Title | Status |
 |---|---|---|---|
 | F-01 | Medium | `POST /api/tickets` accepts CRM unit id `0` / any external unit id; wizard comment claims revalidation | Confirmed |
-| F-02 | High | Data action 08 success template renders invalid JSON | Confirmed |
-| F-03 | Medium | Data action 12: unquoted string substitutions and `0` defaults for "not recorded" | 0-defaults confirmed; unquoted rendering (ext, unverified) |
+| F-02 | High | Data action 08 success template renders invalid JSON | Confirmed; FIXED in the data-action file, guarded by `GenesysDataActionContractTests` |
+| F-03 | Medium | Data action 12: unquoted string substitutions and `0` defaults for "not recorded" | 0-defaults confirmed and FIXED (sentinels -999 / -1 / -1); quoting was already correct |
 | F-04 | Medium | Screen Pop `customerPhone` not normalised | Confirmed |
 | F-05 | Low | PATCH is not "validated before anything is written" | Confirmed |
 | F-06 | Medium | Transcript `sender` contract text says `Agent`; code rejects it | Confirmed |

@@ -507,6 +507,45 @@ public sealed partial class GenesysDataActionContractTests
         }
     }
 
+    /// <summary>A journey only works if what one action returns is something the next one accepts as input.</summary>
+    [Theory]
+    [InlineData("02", "ticketId", "03")]
+    [InlineData("02", "ticketId", "04")]
+    [InlineData("02", "ticketId", "05")]
+    [InlineData("02", "ticketId", "06")]
+    [InlineData("02", "ticketId", "07")]
+    [InlineData("13", "units", "14")]
+    [InlineData("14", "challengeId", "15")]
+    [InlineData("14", "challengeId", "16")]
+    [InlineData("15", "challengeId", "16")]
+    [InlineData("16", "verificationSessionId", "11")]
+    [InlineData("11", "recordId", "11")]
+    [InlineData("01", "externalCustomerId", "12")]
+    [InlineData("01", "externalCustomerId", "08")]
+    [InlineData("08", "availableCompanyIds", "09")]
+    [InlineData("12", "eligibleUnits", "12")]
+    public void JourneyHandOffs_ProducedByOneAction_AreDeclaredInputsOfTheNext(string from, string output, string to)
+    {
+        var producer = Load(Directory.GetFiles(DataActionsDirectory, from + "-*.json").Select(Path.GetFileName).Single()!);
+        var consumer = Load(Directory.GetFiles(DataActionsDirectory, to + "-*.json").Select(Path.GetFileName).Single()!);
+        var produced = producer.GetProperty("contract").GetProperty("output").GetProperty("successSchema").GetProperty("properties");
+        var inputs = consumer.GetProperty("contract").GetProperty("input").GetProperty("inputSchema").GetProperty("properties");
+
+        Assert.True(produced.TryGetProperty(output, out _), $"{from} does not declare output '{output}'");
+
+        // The consuming input name: same name, or the documented renames (OTP units pick -> crmUnitId, id -> customerReference/customerKey, list -> companyId/unitId).
+        var consumed = (from, output, to) switch
+        {
+            ("13", "units", "14") => "crmUnitId",
+            ("01", "externalCustomerId", "12") => "customerReference",
+            ("01", "externalCustomerId", "08") => "customerKey",
+            ("08", "availableCompanyIds", "09") => "companyId",
+            ("12", "eligibleUnits", "12") => "unitId",
+            _ => output
+        };
+        Assert.True(inputs.TryGetProperty(consumed, out _), $"{to} does not declare input '{consumed}' for the value {from} returns as '{output}'");
+    }
+
     // ------------------------------------------------------------------
     //  Helpers
     // ------------------------------------------------------------------
