@@ -59,4 +59,33 @@ public static class CollectionsCampaignPolicy
         };
         return new(amount, earliest, qualifies ? "Qualifies" : "BelowThreshold");
     }
+
+    /// <summary>
+    /// Flags (without changing eligibility) where the due-date window excludes instalments the confirmed stage rule would
+    /// otherwise qualify. The window is an additional reviewer filter; the communication policy above is unchanged.
+    /// </summary>
+    public static IReadOnlyList<string> RangeNotes(CollectionsCampaignStage stage, DateOnly businessDate, DateOnly from, DateOnly to)
+    {
+        var monthStart = new DateOnly(businessDate.Year, businessDate.Month, 1);
+        static string F(DateOnly d) => d.ToString("dd MMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+        var notes = new List<string>();
+        switch (stage)
+        {
+            case CollectionsCampaignStage.OverdueReminder:
+            case CollectionsCampaignStage.LegalReferral:
+                var cutoff = stage == CollectionsCampaignStage.OverdueReminder ? businessDate.AddMonths(-1) : businessDate.AddMonths(-3);
+                notes.Add($"Stage rule: instalments due before {F(cutoff)}. Instalments due before {F(from)} are excluded by the From date.");
+                if (to >= cutoff) notes.Add($"Instalments due on or after {F(cutoff)} do not qualify for this stage even though they are inside the date range.");
+                break;
+            case CollectionsCampaignStage.LegalNotice:
+                if (from > monthStart.AddMonths(-1) || to < monthStart.AddDays(-1))
+                    notes.Add("The date range does not cover the whole previous calendar month that this stage uses.");
+                break;
+            default:
+                if (from > monthStart || to < monthStart.AddMonths(1).AddDays(-1))
+                    notes.Add($"This stage includes the whole preview month ({F(monthStart)} to {F(monthStart.AddMonths(1).AddDays(-1))}, including upcoming dates); the date range excludes part of it.");
+                break;
+        }
+        return notes;
+    }
 }

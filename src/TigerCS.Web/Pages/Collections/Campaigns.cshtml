@@ -21,7 +21,7 @@
         <div class="field-group">
             <label class="field-label" for="campaignStage">Stage</label>
             <select class="field-select" id="campaignStage" name="stage">
-                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">Overdue reminder · day 1</option>
+                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">Overdue reminder · sent day 1 (overdue more than one month)</option>
                 <option value="CurrentMonthReminder" selected="@(Model.Stage.Equals("CurrentMonthReminder", StringComparison.OrdinalIgnoreCase))">Current month reminder · day 14</option>
                 <option value="FollowUpReminder" selected="@(Model.Stage.Equals("FollowUpReminder", StringComparison.OrdinalIgnoreCase))">Follow-up reminder · day 28</option>
                 <option value="LegalNotice" selected="@(Model.Stage.Equals("LegalNotice", StringComparison.OrdinalIgnoreCase))">Legal notice · days 12 and 14</option>
@@ -31,6 +31,14 @@
         <div class="field-group">
             <label class="field-label" for="campaignDate">Preview date</label>
             <input class="field-input" id="campaignDate" name="businessDate" type="date" min="2000-01-01" max="2100-12-31" value="@Model.BusinessDate?.ToString("yyyy-MM-dd")" />
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="campaignFrom">From date (instalment due)</label>
+            <input class="field-input" id="campaignFrom" name="dateFrom" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" />
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="campaignTo">To date (instalment due)</label>
+            <input class="field-input" id="campaignTo" name="dateTo" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
         </div>
         <div class="field-group">
             <label class="field-label" for="campaignCompany">Company</label>
@@ -46,6 +54,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Preview list</button>
         <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>
+        <span class="receivables-timeout" role="alert" hidden>The list is taking too long. The request was stopped; retry or choose one company.</span>
     </form>
     @if (Model.Report is { } report)
     {
@@ -53,6 +62,8 @@
             <div class="campaign-summary">
                 <p><strong>@report.TotalCount units</strong> · @report.ReadyCount ready · @report.ReviewCount need review</p>
                 <p>Scheduled: @string.Join(", ", report.ScheduledDates.Select(d => d.ToString("dd MMM yyyy"))) · Latest read: @report.ReadAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
+                <p>Instalments due @report.DateFrom.ToString("dd MMM yyyy") to @report.DateTo.ToString("dd MMM yyyy"). Preview date (@report.BusinessDate.ToString("dd MMM yyyy")) only decides stage eligibility and schedule.</p>
+                @foreach (var note in report.RangeNotes ?? []) { <p role="status">@note</p> }
                 <p>Amounts use current remaining balances. A different preview date changes eligibility, not the payment history. Supported source: PACT companies 4 and 32.</p>
                 @if (!report.FinancialSourceValidated)
                 { <p role="status">Review the financial source against PACT before exporting a list for a customer campaign.</p> }
@@ -99,7 +110,7 @@
     }
     else
     {
-        <div class="panel"><div class="error-state" role="alert">
+        <div class="panel"><div class="error-state" role="alert" data-campaign-error>
             @if (Model.Outcome == ApiOutcome.Forbidden)
             { <p>Your account does not have permission for this Collections operation.</p> }
             else if (Model.Outcome == ApiOutcome.Unauthorized)

@@ -13,6 +13,8 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
 {
     public string Stage { get; private set; } = "OverdueReminder";
     public DateOnly? BusinessDate { get; private set; }
+    public DateOnly? DateFrom { get; private set; }
+    public DateOnly? DateTo { get; private set; }
     public int? CompanyId { get; private set; }
     public string? Search { get; private set; }
     public int PageNumber { get; private set; } = 1;
@@ -22,24 +24,27 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
     public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(Report.TotalCount / (double)Report.PageSize));
 
     public async Task OnGetAsync(string stage = "OverdueReminder", DateOnly? businessDate = null, int? companyId = null,
-        string? search = null, [FromQuery(Name = "page")] int pageNumber = 1, CancellationToken cancellationToken = default)
+        string? search = null, [FromQuery(Name = "page")] int pageNumber = 1, CancellationToken cancellationToken = default,
+        DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
-        SetFilters(stage, businessDate, companyId, search, pageNumber);
+        SetFilters(stage, businessDate, companyId, search, pageNumber, dateFrom, dateTo);
         if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return; }
-        var result = await api.GetCampaignPreviewAsync(Stage, BusinessDate, CompanyId, Search, pageNumber, cancellationToken);
+        var result = await api.GetCampaignPreviewAsync(Stage, BusinessDate, CompanyId, Search, pageNumber, cancellationToken, DateFrom, DateTo);
         Outcome = result.Outcome;
         Report = result.IsSuccess ? result.Value : null;
         Error = result.Detail;
         BusinessDate ??= Report?.BusinessDate;
+        DateFrom ??= Report?.DateFrom;
+        DateTo ??= Report?.DateTo;
     }
 
     public async Task<IActionResult> OnGetExportAsync(string stage = "OverdueReminder", string mode = "review",
         DateOnly? businessDate = null, int? companyId = null, string? search = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
-        SetFilters(stage, businessDate, companyId, search, 1);
+        SetFilters(stage, businessDate, companyId, search, 1, dateFrom, dateTo);
         if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return Page(); }
-        var result = await api.GetCampaignExportAsync(Stage, mode, BusinessDate, CompanyId, Search, cancellationToken);
+        var result = await api.GetCampaignExportAsync(Stage, mode, BusinessDate, CompanyId, Search, cancellationToken, DateFrom, DateTo);
         if (result.IsSuccess && result.Value is { } file)
         {
             var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(file.Csv)).ToArray();
@@ -50,14 +55,16 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
         return Page();
     }
 
-    private void SetFilters(string stage, DateOnly? date, int? company, string? search, int page)
-    { Stage = stage; BusinessDate = date; CompanyId = company; Search = search?.Trim(); PageNumber = page; }
+    private void SetFilters(string stage, DateOnly? date, int? company, string? search, int page, DateOnly? from, DateOnly? to)
+    { Stage = stage; BusinessDate = date; CompanyId = company; Search = search?.Trim(); PageNumber = page; DateFrom = from; DateTo = to; }
 
     public string PageUrl(int page = 1, string? export = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         query["stage"] = Stage;
         if (BusinessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (DateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (DateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (CompanyId is { } company) query["companyId"] = company.ToString(CultureInfo.InvariantCulture);
         if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
         if (export is null) query["page"] = page.ToString(CultureInfo.InvariantCulture);
