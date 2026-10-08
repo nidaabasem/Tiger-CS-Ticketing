@@ -39,7 +39,7 @@ public sealed class PactReceivableCustomersAppService(
         var periodStart = new DateOnly(reportYear, reportMonth, 1);
         var periodEnd = new DateOnly(reportYear, reportMonth, DateTime.DaysInMonth(reportYear, reportMonth));
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(sourceOptions.CommandTimeoutSeconds, 1, 300)));
+        budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
         PactReceivablesSnapshot snapshot;
         try
         {
@@ -47,6 +47,7 @@ public sealed class PactReceivableCustomersAppService(
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            logger.LogWarning("PACT receivables read exceeded the {BudgetSeconds}s request budget.", sourceOptions.RequestBudgetSeconds);
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                 "The PACT receivables read timed out. Please retry.");
         }

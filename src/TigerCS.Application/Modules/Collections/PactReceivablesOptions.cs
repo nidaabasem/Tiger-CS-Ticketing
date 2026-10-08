@@ -5,8 +5,20 @@ public sealed class PactReceivablesOptions
 {
     public const string SectionName = "CollectionsSource:PactReceivables";
     public bool Enabled { get; set; }
+    /// <summary>
+    /// Optional suffix of the report procedures, e.g. "V2" selects dbo.p4AccountReceivablesV2 / dbo.p32AccountReceivablesV2
+    /// (review drafts in docs/Collections/pact-sql; not deployed). Empty uses the deployed originals. Letters/digits only.
+    /// </summary>
+    public string ProcedureSuffix { get; set; } = "";
     public string ConnectionStringName { get; set; } = "PACTRPT";
-    public int CommandTimeoutSeconds { get; set; } = 60;
+    public int CommandTimeoutSeconds { get; set; } = 120;
+    /// <summary>
+    /// Whole-request budget (API → SQL). The two company procedures run concurrently, so the slower one may use up to
+    /// <see cref="CommandTimeoutSeconds"/>; the shared deadline adds a margin so the SQL command timeout (reported as a
+    /// SQL timeout) always fires before the budget token (reported as "timed out"). The Web client's HttpClient timeout
+    /// must exceed this value or the browser-facing request expires first.
+    /// </summary>
+    public int RequestBudgetSeconds => Math.Clamp(CommandTimeoutSeconds, 1, 300) + 30;
     public int MaxSourceRows { get; set; } = 250000;
     public string Currency { get; set; } = "AED";
     /// <summary>Off by default: the list shows every apartment with a positive due or overdue amount.</summary>

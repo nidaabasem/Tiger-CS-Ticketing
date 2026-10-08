@@ -18,12 +18,14 @@ public sealed class PactReceivableCustomersTests
         public int Reads { get; private set; }
         public DateOnly? ThroughDate { get; private set; }
         public Exception? Failure { get; set; }
-        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
+        public Func<CancellationToken, Task>? Delay { get; set; }
+        public async Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
         {
             Reads++;
             ThroughDate = businessDate;
             if (Failure is not null) throw Failure;
-            return Task.FromResult(new PactReceivablesSnapshot(Items, Now, true));
+            if (Delay is not null) await Delay(cancellationToken);
+            return new PactReceivablesSnapshot(Items, Now, true);
         }
     }
 
@@ -213,6 +215,46 @@ public sealed class PactReceivableCustomersTests
         h.Source.Items.AddRange([Row(7), Row(6, tenant: "3002", month: 9), Row(5, tenant: "3003", month: 9)]);
         Assert.Equal(expected, (await h.Service.ListAsync(h.Agent, status: status)).Value!.TotalCount);
     }
+
+    [Theory]
+    [InlineData(120, 150)]
+    [InlineData(1, 31)]
+    [InlineData(999, 330)]   // command timeout is clamped to 300 s
+    public void RequestBudgetOutlivesTheSqlCommandTimeout(int commandTimeout, int expectedBudget)
+    {
+        var options = new PactReceivablesOptions { CommandTimeoutSeconds = commandTimeout };
+        Assert.Equal(expectedBudget, options.RequestBudgetSeconds);
+        // A slow procedure must hit the SQL command timeout (diagnosable) before the shared budget token cancels it.
+        Assert.True(options.RequestBudgetSeconds > Math.Clamp(commandTimeout, 1, 300));
+        Assert.Equal(120, new PactReceivablesOptions().CommandTimeoutSeconds);
+    }
+
+    [Fact]
+    public async Task BudgetCancellation_IsReportedAsUnavailable_ButCallerCancellationPropagates()
+    {
+        var h = new Harness();
+        h.Source.Delay = _ => throw new TaskCanceledException("budget elapsed");   // what ExecuteReaderAsync throws when the budget token fires
+        var result = await h.Service.ListAsync(h.Agent);
+        Assert.Equal(CollectionsOutcome.FinanceUnavailable, result.Outcome);
+        Assert.Contains("timed out", result.Detail);
+
+        using var caller = new CancellationTokenSource();
+        h.Source.Delay = async token => { caller.Cancel(); await Task.Delay(Timeout.Infinite, token); };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => h.Service.ListAsync(h.Agent, cancellationToken: caller.Token));
+    }
+
+    [Theory]
+    [InlineData(4, "", "dbo.p4AccountReceivables")]
+    [InlineData(32, "V2", "dbo.p32AccountReceivablesV2")]
+    public void ProcedureNamesAreAllowListed(int company, string suffix, string expected) =>
+        Assert.Equal(expected, PactSqlReceivablesSource.ProcedureName(company, suffix));
+
+    [Theory]
+    [InlineData(4, "V2; DROP TABLE x")]
+    [InlineData(4, "..x")]
+    [InlineData(7, "")]
+    public void InvalidProcedureConfigurationIsRejected(int company, string suffix) =>
+        Assert.Throws<PactReceivablesSourceException>(() => PactSqlReceivablesSource.ProcedureName(company, suffix));
 
     [Fact]
     public void LegacyExclusionsAreOffByDefault() => Assert.False(new PactReceivablesOptions().ApplyLegacyExclusions);

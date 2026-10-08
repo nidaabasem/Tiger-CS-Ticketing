@@ -94,7 +94,7 @@ The supplied CRM query and `Helper.SEPCIAL_CASES` list are now incorporated. Rem
 
 `ApplyLegacyExclusions = false` explicitly selects the raw PACT list and the UI identifies it. It is not the supplied filtered EDSM function and is not enabled in the shipped configuration.
 
-`CommandTimeoutSeconds` defaults to 60 (clamped 1–300), `MaxSourceRows` to 250000 (clamped 1–1000000). Every request reads both reports before filtering/pagination; large-source performance needs validation in the target environment. There is no cache or synchronization between independently read CRM and PACT databases.
+`CommandTimeoutSeconds` defaults to 120 (clamped 1–300; per procedure; the two company procedures run concurrently). The API request budget is `CommandTimeoutSeconds + 30` and the Web HTTP timeout for this API is 180 s: SQL timeout < API budget < Web timeout. Each procedure logs name, rows, zero rows, elapsed time and cancellation state. `ProcedureSuffix` (empty by default) can select the reviewed `…V2` procedures in `docs/Collections/pact-sql/` once deployed. See `pact-sql/Receivables-Source-Review.md` for the source review, `MaxSourceRows` to 250000 (clamped 1–1000000). Every request reads both reports before filtering/pagination; large-source performance needs validation in the target environment. There is no cache or synchronization between independently read CRM and PACT databases.
 
 ## Validation
 
