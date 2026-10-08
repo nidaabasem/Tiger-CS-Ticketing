@@ -104,12 +104,17 @@ public sealed class PactReceivableCustomersAppService(
     }
 
     /// <summary>
-    /// Payment status comes only from the verified <c>SourceStatusMap</c>; it is never derived from the due date.
-    /// A mapped Paid with a positive remainder is contradictory and is treated as Unknown.
+    /// Verified meaning of the report's <c>Status</c>: the procedures emit <c>Paid</c> when the remaining Amount is zero
+    /// and <c>Installment</c> otherwise. <c>Installment</c> does not distinguish unpaid from partially paid, so it is never
+    /// mapped (not even by configuration) and stays Unknown. Paid with a positive remainder is contradictory: Unknown.
+    /// Payment status is never derived from the due date or the amount.
     /// </summary>
     public static string PaymentStatus(string? source, decimal remaining, IReadOnlyDictionary<string, string> map)
     {
-        if (string.IsNullOrWhiteSpace(source) || !map.TryGetValue(source.Trim(), out var mapped)) return "Unknown";
+        var value = source?.Trim();
+        if (string.IsNullOrEmpty(value) || value.Equals("Installment", StringComparison.OrdinalIgnoreCase)) return "Unknown";
+        if (value.Equals("Paid", StringComparison.OrdinalIgnoreCase)) return remaining <= 0 ? "Paid" : "Unknown";
+        if (!map.TryGetValue(value, out var mapped)) return "Unknown";
         return mapped.Trim().ToLowerInvariant() switch
         {
             "unpaid" => "Unpaid",

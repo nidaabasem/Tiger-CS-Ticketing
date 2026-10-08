@@ -17,7 +17,7 @@ public sealed class PactSqlReceivablesSource(
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new PactReceivablesSourceException("The PACT report connection is not configured.");
 
-        var endDate = throughDate.ToDateTime(TimeOnly.MinValue).AddDays(1).AddMilliseconds(-3);
+        var endDate = EndOfDay(throughDate);
         HashSet<(string UnitCode, DateTime DueDate)> downPayments = [];
         if (options.ApplyLegacyExclusions)
         {
@@ -71,6 +71,12 @@ public sealed class PactSqlReceivablesSource(
             rows = ApplyExclusions(rows, downPayments, options).ToList();
         return new PactReceivablesSnapshot(rows, timeProvider.GetUtcNow().UtcDateTime, options.ApplyLegacyExclusions);
     }
+
+    /// <summary>
+    /// Last representable SQL <c>datetime</c> of the day (23:59:59.997). SQL Server datetime rounds to .000/.003/.007
+    /// steps, so .999 would round up to midnight of the next day and pull in its first instalments.
+    /// </summary>
+    public static DateTime EndOfDay(DateOnly day) => day.ToDateTime(TimeOnly.MinValue).AddDays(1).AddMilliseconds(-3);
 
     private async Task<HashSet<(string UnitCode, DateTime DueDate)>> ReadDownPaymentsAsync(CancellationToken cancellationToken)
     {

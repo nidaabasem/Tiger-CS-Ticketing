@@ -155,6 +155,35 @@ public sealed class PactReceivableCustomersTests
     }
 
     [Fact]
+    public async Task VerifiedStatusMeaning_PaidIsPaid_InstallmentIsNeverUnpaidOrPartiallyPaid()
+    {
+        var h = new Harness();
+        // Even an operator mapping must not turn "Installment" into a payment status: it cannot tell the two apart.
+        h.SqlOptions.SourceStatusMap["Installment"] = "Unpaid";
+        h.Source.Items.AddRange([Row(5) with { SourceStatus = "Installment" }, Row(6, voucher: "P") with { SourceStatus = "Paid" }]);
+        var c = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
+        Assert.All(c.Instalments, i => Assert.Equal("Unknown", i.PaymentStatus)); // Paid + positive remainder is contradictory
+        Assert.Equal(["Installment", "Paid"], c.Instalments.Select(i => i.SourceStatus));
+        Assert.Equal("Paid", PactReceivableCustomersAppService.PaymentStatus("Paid", 0m, new Dictionary<string, string>()));
+        Assert.Equal("Unknown", PactReceivableCustomersAppService.PaymentStatus("Installment", 10m, new Dictionary<string, string>()));
+    }
+
+    [Theory]
+    [InlineData(2026, 10, 31)]
+    [InlineData(2028, 2, 29)]
+    [InlineData(2026, 12, 31)]
+    public void SqlDatetimeEndDate_IsExactlyRepresentable_AndNeverReachesNextDay(int y, int m, int d)
+    {
+        var end = PactSqlReceivablesSource.EndOfDay(new DateOnly(y, m, d));
+        Assert.Equal(new DateTime(y, m, d, 23, 59, 59, 997), end);
+        Assert.Equal(end, new System.Data.SqlTypes.SqlDateTime(end).Value);            // survives SQL datetime rounding
+        var next = new DateTime(y, m, d).AddDays(1);
+        Assert.True(end < next);
+        Assert.Equal(next, new System.Data.SqlTypes.SqlDateTime(new DateTime(y, m, d, 23, 59, 59, 999)).Value); // .999 would round into the next day
+        Assert.True(new DateTime(y, m, d, 23, 59, 59, 997) <= end && next > end);      // a due date at 23:59:59.997 is in, next midnight is out
+    }
+
+    [Fact]
     public async Task InstalmentsCarryTypeTimingAndPaymentStatusSeparately_AndUnmappedStatusIsUnknown()
     {
         var h = new Harness();
