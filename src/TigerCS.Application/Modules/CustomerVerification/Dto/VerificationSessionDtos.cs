@@ -59,7 +59,10 @@ public enum VerificationSessionOutcome
     Success,
     UnitOrContactNotFound,
     NotFound,
-    Forbidden
+    Forbidden,
+
+    /// <summary>The caller asked for <c>Otp</c>. That method is a server-verified fact, never a claim: only the OTP challenge flow may create such a session.</summary>
+    OtpRequiresChallenge
 }
 
 public sealed record VerificationSessionResult(VerificationSessionOutcome Outcome, VerificationSessionResponseDto? Response = null)
@@ -69,4 +72,5 @@ public sealed record VerificationSessionResult(VerificationSessionOutcome Outcom
     public static VerificationSessionResult UnitOrContactNotFound() => new(VerificationSessionOutcome.UnitOrContactNotFound);
     public static VerificationSessionResult NotFound() => new(VerificationSessionOutcome.NotFound);
     public static VerificationSessionResult Forbidden() => new(VerificationSessionOutcome.Forbidden);
+    public static VerificationSessionResult OtpRequiresChallenge() => new(VerificationSessionOutcome.OtpRequiresChallenge);
 }

@@ -605,6 +605,7 @@ public class AdministrationEndpointsTests : IClassFixture<TigerCsApiFactory>
         Assert.Equal("24/7", configuration.Policies[0].ClockBasis);
         Assert.Contains("classification", configuration.ClockStartRule, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Accept & Start", configuration.FirstResponseRule, StringComparison.Ordinal);
-        Assert.Contains("not implemented", configuration.PauseRule, StringComparison.Ordinal);
+        Assert.Contains("Pending Customer", configuration.PauseRule, StringComparison.Ordinal);
+        Assert.DoesNotContain("not implemented", configuration.PauseRule, StringComparison.Ordinal);
     }
 }

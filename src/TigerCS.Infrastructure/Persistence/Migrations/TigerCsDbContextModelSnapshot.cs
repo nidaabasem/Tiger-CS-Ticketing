@@ -663,6 +663,81 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("CrmDocumentDeliveryRequests", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge", b =>
+                {
+                    b.Property<Guid>("CustomerOtpChallengeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CallerEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("ContactReferenceId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("CrmCustomerId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CrmLeadId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("FailedAttempts")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("LastSentAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("MaskedDestination")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<byte[]>("Salt")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("SendCount")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Status")
+                        .IsConcurrencyToken()
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("UnitReferenceId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("VerificationSessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("VerifiedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("CustomerOtpChallengeId");
+
+                    b.HasIndex("ContactReferenceId");
+
+                    b.HasIndex("UnitReferenceId");
+
+                    b.HasIndex(new[] { "CallerEmployeeId", "CrmCustomerId", "CrmLeadId", "Status" }, "IX_CustomerOtpChallenges_CallerLead");
+
+                    b.HasIndex(new[] { "CrmCustomerId", "CreatedAtUtc" }, "IX_CustomerOtpChallenges_Customer");
+
+                    b.ToTable("CustomerOtpChallenges", (string)null);
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.UnitReference", b =>
                 {
                     b.Property<int>("UnitReferenceId")
@@ -730,12 +805,21 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<int?>("CrmBuyerCustomerId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("CrmBuyerLeadId")
+                        .HasColumnType("int");
+
                     b.Property<DateTime>("ExpiresAtUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("IdempotencyKey")
                         .HasMaxLength(300)
                         .HasColumnType("nvarchar(300)");
+
+                    b.Property<Guid?>("ProofChallengeId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("SnapshotContactChannel")
                         .HasMaxLength(200)
@@ -780,6 +864,10 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasIndex("AgentEmployeeId", "IdempotencyKey")
                         .IsUnique()
                         .HasFilter("[IdempotencyKey] IS NOT NULL");
+
+                    b.HasIndex(new[] { "ProofChallengeId" }, "UX_VerificationSessions_ProofChallengeId")
+                        .IsUnique()
+                        .HasFilter("[ProofChallengeId] IS NOT NULL");
 
                     b.ToTable("VerificationSessions", (string)null);
                 });
@@ -1153,6 +1241,82 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.ToTable("Priorities", (string)null);
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest", b =>
+                {
+                    b.Property<long>("PriorityDowngradeRequestId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PriorityDowngradeRequestId"));
+
+                    b.Property<byte>("CurrentPriorityId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime?>("DecidedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("DecidedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("DecisionNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("RequestedByEmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("RequestedPriorityId")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PriorityDowngradeRequestId");
+
+                    b.HasIndex("CurrentPriorityId");
+
+                    b.HasIndex("DecidedByEmployeeId");
+
+                    b.HasIndex("RequestedByEmployeeId");
+
+                    b.HasIndex("RequestedPriorityId");
+
+                    b.HasIndex("TicketId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PriorityDowngradeRequests_OnePendingPerTicket")
+                        .HasFilter("[Status] = 1");
+
+                    b.HasIndex("Status", "ExpiresAtUtc")
+                        .HasDatabaseName("IX_PriorityDowngradeRequests_StatusExpiry");
+
+                    b.ToTable("PriorityDowngradeRequests", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PriorityDowngradeRequests_DecisionConsistent", "([Status] IN (2, 3) AND [DecidedByEmployeeId] IS NOT NULL AND [DecidedByEmployeeId] <> [RequestedByEmployeeId]) OR [Status] NOT IN (2, 3)");
+
+                            t.HasCheckConstraint("CK_PriorityDowngradeRequests_IsDowngrade", "[RequestedPriorityId] > [CurrentPriorityId]");
+                        });
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.SlaPolicy", b =>
                 {
                     b.Property<byte>("PriorityId")
@@ -1246,6 +1410,12 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketSlaInstanceId"));
 
+                    b.Property<int?>("AppliedFirstResponseTargetMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("AppliedResolutionTargetMinutes")
+                        .HasColumnType("int");
+
                     b.Property<Guid?>("ApprovedByEmployeeId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1258,6 +1428,9 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("FirstResponseDueAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<bool?>("PausesOnPendingCustomerOverride")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime?>("PeriodEndAtUtc")
                         .HasColumnType("datetime2");
 
@@ -1267,8 +1440,18 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<byte>("PriorityId")
                         .HasColumnType("tinyint");
 
+                    b.Property<string>("RequestTypeSlaNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int?>("RequestTypeSlaPolicyId")
+                        .HasColumnType("int");
+
                     b.Property<bool>("ResolutionBreached")
                         .HasColumnType("bit");
+
+                    b.Property<byte?>("ResolutionClockBasis")
+                        .HasColumnType("tinyint");
 
                     b.Property<DateTime>("ResolutionDueAtUtc")
                         .HasColumnType("datetime2");
@@ -1298,6 +1481,54 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_TicketSlaInstances_DowngradeRequiresApprover", "[ChangeReason] <> 3 OR [ApprovedByEmployeeId] IS NOT NULL");
 
                             t.HasCheckConstraint("CK_TicketSlaInstances_PeriodOrder", "[PeriodEndAtUtc] IS NULL OR [PeriodEndAtUtc] >= [PeriodStartAtUtc]");
+                        });
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod", b =>
+                {
+                    b.Property<long>("TicketSlaPausePeriodId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("TicketSlaPausePeriodId"));
+
+                    b.Property<bool>("EndedByResolution")
+                        .HasColumnType("bit");
+
+                    b.Property<byte>("Reason")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime?>("ResolutionDueAfterAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ResolutionDueBeforeAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("ResumedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("TicketId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TicketSlaInstanceId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TicketSlaPausePeriodId");
+
+                    b.HasIndex("TicketId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_TicketSlaPausePeriods_OneOpenPerTicket")
+                        .HasFilter("[ResumedAtUtc] IS NULL");
+
+                    b.HasIndex("TicketSlaInstanceId")
+                        .HasDatabaseName("IX_TicketSlaPausePeriods_Instance");
+
+                    b.ToTable("TicketSlaPausePeriods", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_TicketSlaPausePeriods_Order", "[ResumedAtUtc] IS NULL OR [ResumedAtUtc] >= [StartedAtUtc]");
                         });
                 });
 
@@ -2863,6 +3094,27 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.CustomerOtpChallenge", b =>
+                {
+                    b.HasOne("TigerCS.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CallerEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.CustomerVerification.ContactReference", null)
+                        .WithMany()
+                        .HasForeignKey("ContactReferenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.CustomerVerification.UnitReference", null)
+                        .WithMany()
+                        .HasForeignKey("UnitReferenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.CustomerVerification.VerificationSession", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.CustomerVerification.ContactReference", null)
@@ -2957,6 +3209,38 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.PriorityDowngradeRequest", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
+                        .WithMany()
+                        .HasForeignKey("CurrentPriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("DecidedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TigerCS.Domain.Modules.IdentityAndAccess.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedByEmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedPriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.SlaPolicy", b =>
                 {
                     b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.Priority", null)
@@ -2996,6 +3280,21 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
                         .WithMany()
                         .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaPausePeriod", b =>
+                {
+                    b.HasOne("TigerCS.Domain.Modules.Ticketing.Ticket", null)
+                        .WithMany()
+                        .HasForeignKey("TicketId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TigerCS.Domain.Modules.SlaAndEscalation.TicketSlaInstance", null)
+                        .WithMany()
+                        .HasForeignKey("TicketSlaInstanceId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

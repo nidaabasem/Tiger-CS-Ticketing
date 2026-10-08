@@ -12,7 +12,7 @@ namespace TigerCS.Tests.Collections.Services;
 public sealed class CollectionsCampaignAppServiceTests
 {
     private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);
-    private sealed class Source : IPactReceivablesSource
+    internal sealed class Source : IPactReceivablesSource
     {
         public List<PactReceivableInstalment> Items { get; } = [];
         public int Reads { get; private set; }
@@ -36,7 +36,7 @@ public sealed class CollectionsCampaignAppServiceTests
         }
     }
 
-    private sealed class Harness
+    internal sealed class Harness
     {
         public Source Source { get; } = new();
         public CollectionsOptions Options { get; } = new() { Enabled = true };
@@ -50,7 +50,7 @@ public sealed class CollectionsCampaignAppServiceTests
             Source, NullLogger<CollectionsCampaignAppService>.Instance);
     }
 
-    private static PactReceivableInstalment Row(int day = 10, decimal amount = 500m, string tenant = "3001",
+    internal static PactReceivableInstalment Row(int day = 10, decimal amount = 500m, string tenant = "3001",
         int company = 4, int unit = 101) => new(company, tenant, "Example Customer", "971500003001", "example@example.test",
             unit, $"TP140-{unit}", "TP140", "INV-1", "", new(2026, 10, day), amount, "Installment");
 
@@ -185,14 +185,14 @@ public sealed class CollectionsCampaignAppServiceTests
     [InlineData("CurrentMonthReminder", 2026, 2, 14, 2026, 2, 28)]   // non-leap February
     [InlineData("FollowUpReminder", 2028, 2, 3, 2028, 2, 29)]        // leap February
     [InlineData("CurrentMonthReminder", 2026, 12, 31, 2026, 12, 31)] // year end
-    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From follows the preview year
-    public async Task DefaultWindowDependsOnTheStage_FromIsAlwaysJanuaryFirstOfThePreviewYear(
+    [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From is the configured StartDate, NOT the preview year: Dec 2026 arrears must stay reachable in 2027
+    public async Task DefaultWindowDependsOnTheStage_FromIsTheConfiguredReceivablesStartDate(
         string stage, int y, int m, int d, int toY, int toM, int toD)
     {
         var h = new Harness();
         var report = (await h.Service.PreviewAsync(h.Manager, stage, new(y, m, d))).Value!;
-        Assert.Equal(new PactReceivablesRequest(new(y, 1, 1), new(toY, toM, toD), null), h.Source.LastRequest);
-        Assert.Equal(new DateOnly(y, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(toY, toM, toD), report.DateTo);
+        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), new(toY, toM, toD), null), h.Source.LastRequest);
+        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(toY, toM, toD), report.DateTo);
         Assert.Equal(new DateOnly(y, m, d), report.BusinessDate);
     }
 

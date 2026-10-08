@@ -287,6 +287,12 @@ public sealed class AdminWorkflowAppService(
                 return error;
             }
 
+            // Pending Third Party / Internal is retired: no new step of that kind (existing legacy steps stay editable).
+            if (WorkflowStepKinds.IsLegacyOnly(request.Kind))
+            {
+                return "The Pending Internal step type is retired and cannot be added to a workflow.";
+            }
+
             version.AppendStep(request.Name, request.Kind, request.IsOptional, request.ApprovalType);
             return null;
         });

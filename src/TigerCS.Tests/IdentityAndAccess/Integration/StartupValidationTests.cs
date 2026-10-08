@@ -321,6 +321,72 @@ public class StartupValidationTests
         Assert.True(factory.Services.GetRequiredService<CustomerNotificationPolicy>().Enabled);
     }
 
+    private static Dictionary<string, string?> ProductionConfig()
+    {
+        var config = ValidConfig();
+        config["Crm:Provider"] = "InternalCrmGateway";
+        config["EmailNotifications:Provider"] = "Smtp";
+        return config;
+    }
+
+    /// <summary>
+    /// Customer document delivery (email OTP + sending a customer's documents)
+    /// stays disabled in Production until real UAT verification passes:
+    /// enabling it there without the separate, deliberate AllowInProduction
+    /// switch refuses to start.
+    /// </summary>
+    [Fact]
+    public void ProductionEnvironment_WithCustomerDocumentsEnabledButNotApproved_FailsAtStartup()
+    {
+        var config = ProductionConfig();
+        config["CrmDocuments:Enabled"] = "true";
+
+        using var factory = new ConfiguredFactory("Production", config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("CrmDocuments:AllowInProduction", ex.ToString());
+    }
+
+    [Fact]
+    public void ProductionEnvironment_WithCustomerDocumentsDisabled_OrExplicitlyApproved_Starts()
+    {
+        using (var disabled = new ConfiguredFactory("Production", ProductionConfig()))
+        {
+            Assert.NotNull(disabled.Server);
+        }
+
+        var approved = ProductionConfig();
+        approved["CrmDocuments:Enabled"] = "true";
+        approved["CrmDocuments:AllowInProduction"] = "true";
+        approved["CrmDocuments:OtpCodePepper"] = "test-pepper";
+        using var factory = new ConfiguredFactory("Production", approved);
+        Assert.NotNull(factory.Server);
+    }
+
+    [Fact]
+    public void UatEnvironment_WithCustomerDocumentsEnabledButNoOtpPepper_FailsAtStartup()
+    {
+        var config = ProductionConfig();
+        config["CrmDocuments:Enabled"] = "true";
+
+        using var factory = new ConfiguredFactory("Staging", config);
+
+        var ex = Assert.ThrowsAny<Exception>(() => factory.Server);
+        Assert.Contains("CrmDocuments:OtpCodePepper", ex.ToString());
+    }
+
+    [Fact]
+    public void UatEnvironment_WithCustomerDocumentsEnabled_Starts()
+    {
+        var config = ProductionConfig();
+        config["CrmDocuments:Enabled"] = "true";
+        config["CrmDocuments:OtpCodePepper"] = "test-pepper";
+
+        using var factory = new ConfiguredFactory("Staging", config);
+
+        Assert.NotNull(factory.Server);
+    }
+
     [Fact]
     public void ProductionEnvironment_WithNonMockCrmProvider_StartsSuccessfully()
     {

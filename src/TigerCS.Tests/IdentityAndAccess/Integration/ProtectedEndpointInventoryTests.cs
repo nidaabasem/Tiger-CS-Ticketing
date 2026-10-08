@@ -78,6 +78,10 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/genesys/tickets"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
         ["PATCH /api/genesys/tickets/{ticketId:long}"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysEndpoints_AuthorizedThroughTheOverride),
         ["POST /api/genesys/documents/send-copy"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysDocumentSendCopy_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/buyer-lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/otp/send"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/otp/resend"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
+        ["POST /api/genesys/verification/otp/verify"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysBuyerVerification_AuthorizedThroughTheOverride),
         ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
         ["POST /api/genesys/customers/unit-details"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerUnitDetails_AuthorizedThroughTheOverride),
         // Genesys agent identity mapping — the strict agent-action endpoint.
@@ -139,6 +143,11 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/tickets/{ticketId:long}/sla/first-response"] = nameof(SystemAdministratorEndpointAuthorizationTests.RecordFirstResponse_Returns200),
         ["POST /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
         ["GET /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
+        ["POST /api/tickets/{ticketId:long}/sla/priority-downgrade-requests"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/tickets/{ticketId:long}/sla/priority-downgrade-requests"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/priority-downgrade-requests/pending"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["POST /api/priority-downgrade-requests/{requestId:long}/approve"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["POST /api/priority-downgrade-requests/{requestId:long}/reject"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
 
         // Administration / Workflow Designer phase — covered by
         // AdministrationEndpointsTests (System Administrator succeeds) and

@@ -1,0 +1,27 @@
+name: Release package
+
+# Builds the deployable package (Api + Web publish output, idempotent migration SQL, manifest with commit and sha256)
+# from the exact commit it runs on, after the full test suite and the EF model-drift check. Manual only: nothing is
+# deployed and nothing is published outside this workflow's run artifacts.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Install dotnet-ef
+        run: dotnet tool install --global dotnet-ef --version 10.0.*
+      - name: Build package
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          tools/build-release.sh artifacts/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tigercs-release-${{ github.sha }}
+          path: artifacts/release/*
+          retention-days: 30

@@ -1,5 +1,6 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 
@@ -32,7 +33,8 @@ public sealed class SlaDueDateService(
     IBusinessCalendarRepository businessCalendarRepository,
     ITicketSlaInstanceRepository slaInstanceRepository,
     ISlaDeadlineScheduler deadlineScheduler,
-    IAuditEntryWriter auditWriter)
+    IAuditEntryWriter auditWriter,
+    IRequestTypeSlaPolicyRepository? requestTypeSlaPolicyRepository = null)
 {
     /// <summary>
     /// Computes and stores the ticket's first SLA period.
@@ -60,11 +62,11 @@ public sealed class SlaDueDateService(
             ?? throw new InvalidOperationException(
                 $"Ticket {ticket.TicketId} has no priority — an SLA period may only be opened for a classified ticket.");
 
-        var (firstResponseDueAtUtc, resolutionDueAtUtc) =
-            await ComputeDueDatesAsync(priorityId, clockStartAtUtc, cancellationToken);
+        var computation = await ComputeAsync(priorityId, ticket.RequestTypeId, clockStartAtUtc, cancellationToken);
+        var (firstResponseDueAtUtc, resolutionDueAtUtc) = (computation.FirstResponseDueAtUtc, computation.ResolutionDueAtUtc);
 
         var instance = TicketSlaInstance.OpenInitialPeriod(
-            ticket.TicketId, priorityId, clockStartAtUtc, firstResponseDueAtUtc, resolutionDueAtUtc);
+            ticket.TicketId, priorityId, clockStartAtUtc, firstResponseDueAtUtc, resolutionDueAtUtc, computation.Applied);
 
         await slaInstanceRepository.AddAsync(instance, cancellationToken);
 
@@ -79,7 +81,8 @@ public sealed class SlaDueDateService(
             beforeValue: null,
             afterValue:
                 $"{{\"priorityId\":{priorityId},\"clockStartAtUtc\":\"{clockStartAtUtc:O}\","
-                + $"\"firstResponseDueAtUtc\":\"{firstResponseDueAtUtc:O}\",\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\"}}",
+                + $"\"firstResponseDueAtUtc\":\"{firstResponseDueAtUtc:O}\",\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\","
+                + PolicyAuditSuffix(computation.Applied),
             correlationId,
             cancellationToken);
 
@@ -147,7 +150,8 @@ public sealed class SlaDueDateService(
             return null;
         }
 
-        var (_, resolutionDueAtUtc) = await ComputeDueDatesAsync(priorityId, reopenedAtUtc, cancellationToken);
+        var computation = await ComputeAsync(priorityId, ticket.RequestTypeId, reopenedAtUtc, cancellationToken);
+        var resolutionDueAtUtc = computation.ResolutionDueAtUtc;
 
         // Order matters: the one-current-period-per-ticket filtered unique
         // index would reject the successor otherwise.
@@ -159,7 +163,8 @@ public sealed class SlaDueDateService(
             reopenedAtUtc,
             carriedFirstResponseDueAtUtc: current.FirstResponseDueAtUtc,
             carriedFirstResponseBreached: current.FirstResponseBreached,
-            resolutionDueAtUtc);
+            resolutionDueAtUtc,
+            computation.Applied);
 
         await slaInstanceRepository.AddAsync(cycle, cancellationToken);
 
@@ -179,7 +184,8 @@ public sealed class SlaDueDateService(
                 $"{{\"priorityId\":{priorityId},\"clockStartAtUtc\":\"{reopenedAtUtc:O}\","
                 + $"\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\","
                 + $"\"firstResponseDueAtUtc\":\"{cycle.FirstResponseDueAtUtc:O}\",\"firstResponseCarried\":true,"
-                + $"\"firstResponseBreached\":{(cycle.FirstResponseBreached ? "true" : "false")}}}",
+                + $"\"firstResponseBreached\":{(cycle.FirstResponseBreached ? "true" : "false")},"
+                + PolicyAuditSuffix(computation.Applied),
             correlationId,
             cancellationToken);
 
@@ -190,34 +196,199 @@ public sealed class SlaDueDateService(
         return cycle;
     }
 
+
+    /// <summary>The audit JSON tail recording which layer decided the targets and, when a request-type SLA was skipped, exactly why.</summary>
+    private static string PolicyAuditSuffix(AppliedSlaPolicy applied) =>
+        $"\"policySource\":\"{(applied.RequestTypeSlaPolicyId is null ? "Priority" : "RequestType")}\","
+        + $"\"requestTypeSlaPolicyId\":{(applied.RequestTypeSlaPolicyId is { } id ? id.ToString() : "null")},"
+        + $"\"resolutionClockBasis\":\"{applied.ResolutionClockBasis}\","
+        + $"\"requestTypeSlaNote\":{(applied.RequestTypeSlaNote is { } note ? $"\"{note.Replace("\"", "'")}\"" : "null")}}}";
+
     /// <summary>
-    /// The pair of due timestamps for one priority and clock-start moment.
-    /// Exposed separately from <see cref="OpenInitialPeriodAsync"/> so the
-    /// computation can be exercised — and reused by backlog S-14's priority
-    /// upgrade — without writing anything.
+    /// The SLA side of an <b>approved priority downgrade</b> (ISSUE-023
+    /// Option B; SLA-Architecture.md section 7): end the current period at the
+    /// approval moment and open a <see cref="SlaChangeReason.Downgrade"/>
+    /// successor under the new priority's policy.
+    ///
+    /// <para>
+    /// <b>Nothing recorded is removed.</b> The ended period keeps its breach
+    /// flags and its dates, so management reporting shows both the original
+    /// and the changed period. First Response is carried verbatim (never
+    /// restarted or loosened, as for a reopen). The Resolution deadline is
+    /// recomputed from the approval moment under the new policy, and is never
+    /// earlier than the deadline already in effect, so a downgrade can only
+    /// ever relax the future deadline and never create a tighter one.
+    /// </para>
+    ///
+    /// <para>
+    /// Everything fallible (the policy lookup) runs before any state is
+    /// touched, so a failure leaves the period unended. Participates in the
+    /// caller's transaction. Returns null, writing nothing, when the ticket
+    /// has no current period (provisional or unclassified): the SLA will be
+    /// opened later from the ticket's then-current priority.
+    /// </para>
+    /// </summary>
+    public async Task<TicketSlaInstance?> ReplaceCurrentPeriodForApprovedDowngradeAsync(
+        Ticket ticket,
+        byte newPriorityId,
+        DateTime approvedAtUtc,
+        Guid approverEmployeeId,
+        Guid correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+
+        var current = await slaInstanceRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
+        if (current is null)
+        {
+            return null;
+        }
+
+        var (_, computedResolutionDueAtUtc) = await ComputeDueDatesAsync(newPriorityId, approvedAtUtc, cancellationToken);
+
+        // Conservative floor: never earlier than the deadline already in
+        // effect (an already-passed one is below the approval moment, so it
+        // never wins).
+        var resolutionDueAtUtc = computedResolutionDueAtUtc < current.ResolutionDueAtUtc
+            ? current.ResolutionDueAtUtc
+            : computedResolutionDueAtUtc;
+
+        current.EndPeriod(approvedAtUtc);
+
+        var period = TicketSlaInstance.OpenDowngradePeriod(
+            ticket.TicketId,
+            newPriorityId,
+            approvedAtUtc,
+            carriedFirstResponseDueAtUtc: current.FirstResponseDueAtUtc,
+            carriedFirstResponseBreached: current.FirstResponseBreached,
+            resolutionDueAtUtc,
+            approverEmployeeId);
+
+        await slaInstanceRepository.AddAsync(period, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            approverEmployeeId,
+            "ComputeSlaDueDates",
+            nameof(TicketSlaInstance),
+            ticket.TicketId.ToString(),
+            beforeValue:
+                $"{{\"changeReason\":\"{SlaChangeReason.Downgrade}\",\"endedPriorityId\":{current.PriorityId},"
+                + $"\"endedPeriodStartAtUtc\":\"{current.PeriodStartAtUtc:O}\","
+                + $"\"endedResolutionDueAtUtc\":\"{current.ResolutionDueAtUtc:O}\","
+                + $"\"endedFirstResponseBreached\":{(current.FirstResponseBreached ? "true" : "false")},"
+                + $"\"endedResolutionBreached\":{(current.ResolutionBreached ? "true" : "false")}}}",
+            afterValue:
+                $"{{\"priorityId\":{newPriorityId},\"clockStartAtUtc\":\"{approvedAtUtc:O}\","
+                + $"\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\","
+                + $"\"firstResponseDueAtUtc\":\"{period.FirstResponseDueAtUtc:O}\",\"firstResponseCarried\":true,"
+                + $"\"firstResponseBreached\":{(period.FirstResponseBreached ? "true" : "false")}}}",
+            correlationId,
+            cancellationToken);
+
+        deadlineScheduler.ScheduleDeadlineCheck(ticket.TicketId, SlaDeadlineType.Resolution, resolutionDueAtUtc);
+
+        return period;
+    }
+
+    /// <summary>
+    /// The pair of due timestamps for one priority and clock-start moment,
+    /// from the per-priority policy alone. Kept for callers that have no
+    /// request type; <see cref="ComputeAsync"/> is the full computation.
     /// </summary>
     public async Task<(DateTime FirstResponseDueAtUtc, DateTime ResolutionDueAtUtc)> ComputeDueDatesAsync(
         byte priorityId, DateTime clockStartAtUtc, CancellationToken cancellationToken = default)
+    {
+        var computation = await ComputeAsync(priorityId, requestTypeId: null, clockStartAtUtc, cancellationToken);
+        return (computation.FirstResponseDueAtUtc, computation.ResolutionDueAtUtc);
+    }
+
+    /// <summary>
+    /// The full due-date computation: the per-priority policy, overridden per
+    /// deadline by the request-type SLA row <b>only where
+    /// <see cref="RequestTypeSlaEnforcement"/> says it is unambiguous</b>.
+    /// Where it is not, the priority policy applies and the exact reason is
+    /// returned in <see cref="AppliedSlaPolicy.RequestTypeSlaNote"/>.
+    /// Writes nothing.
+    /// </summary>
+    public async Task<SlaDueDateComputation> ComputeAsync(
+        byte priorityId, int? requestTypeId, DateTime clockStartAtUtc, CancellationToken cancellationToken = default)
     {
         var policy = await slaPolicyRepository.GetByPriorityIdAsync(priorityId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"No SlaPolicy is seeded for PriorityId {priorityId}. MVP-ERD.md §2.6 requires exactly one policy row per priority.");
 
+        var requestTypePolicy = requestTypeId is { } rtId && requestTypeSlaPolicyRepository is not null
+            ? await requestTypeSlaPolicyRepository.GetActiveAsync(rtId, priorityId, cancellationToken)
+            : null;
+
         // Loaded only when a tier actually needs it: SLA-Architecture.md §3
         // has Critical bypass the calendar entirely, and a Critical ticket
         // must keep working even if calendar reference data is missing.
-        var calendar = policy.ClockBasis == SlaClockBasis.BusinessHours
+        var calendarNeeded = policy.ClockBasis == SlaClockBasis.BusinessHours
+                             || requestTypePolicy?.ClockBasis == SlaClockBasis.BusinessHours;
+        var calendar = calendarNeeded
             ? await businessCalendarRepository.GetActiveSnapshotAsync(cancellationToken)
-                ?? throw new InvalidOperationException(
-                    "No active BusinessCalendar is seeded. A business-hours SLA tier cannot be computed without one (ADR-0010).")
             : null;
 
-        var firstResponseDueAtUtc = SlaDueDateCalculator.ComputeDueAtUtc(
-            clockStartAtUtc, policy.TargetMinutesFor(SlaDeadlineType.FirstResponse), policy.ClockBasis, calendar);
+        if (policy.ClockBasis == SlaClockBasis.BusinessHours && calendar is null)
+        {
+            throw new InvalidOperationException(
+                "No active BusinessCalendar is seeded. A business-hours SLA tier cannot be computed without one (ADR-0010).");
+        }
 
-        var resolutionDueAtUtc = SlaDueDateCalculator.ComputeDueAtUtc(
-            clockStartAtUtc, policy.TargetMinutesFor(SlaDeadlineType.Resolution), policy.ClockBasis, calendar);
+        var evaluation = RequestTypeSlaEnforcement.Evaluate(requestTypePolicy, calendar?.BusinessDayLength);
 
-        return (firstResponseDueAtUtc, resolutionDueAtUtc);
+        DateTime firstResponseDueAtUtc;
+        int firstResponseMinutes;
+        if (evaluation is { IsApplied: true, FirstResponse: { } requestTypeFirstResponse })
+        {
+            firstResponseDueAtUtc = SlaDueDateCalculator.ComputeDueAtUtc(
+                clockStartAtUtc, requestTypeFirstResponse, evaluation.ClockBasis!.Value, calendar);
+            firstResponseMinutes = (int)Math.Round(requestTypeFirstResponse.TotalMinutes);
+        }
+        else
+        {
+            firstResponseDueAtUtc = SlaDueDateCalculator.ComputeDueAtUtc(
+                clockStartAtUtc, policy.TargetMinutesFor(SlaDeadlineType.FirstResponse), policy.ClockBasis, calendar);
+            firstResponseMinutes = policy.FirstResponseTargetMinutes;
+        }
+
+        DateTime resolutionDueAtUtc;
+        int resolutionMinutes;
+        SlaClockBasis resolutionBasis;
+        if (evaluation.IsApplied)
+        {
+            resolutionBasis = evaluation.ClockBasis!.Value;
+
+            // IsImmediate: due = the clock start. Documented in
+            // RequestTypeSlaEnforcement — already due, not a fabricated zero.
+            resolutionDueAtUtc = evaluation.ResolutionIsImmediate
+                ? AsUtc(clockStartAtUtc)
+                : SlaDueDateCalculator.ComputeDueAtUtc(clockStartAtUtc, evaluation.Resolution!.Value, resolutionBasis, calendar);
+            resolutionMinutes = (int)Math.Round(evaluation.Resolution!.Value.TotalMinutes);
+        }
+        else
+        {
+            resolutionBasis = policy.ClockBasis;
+            resolutionDueAtUtc = SlaDueDateCalculator.ComputeDueAtUtc(
+                clockStartAtUtc, policy.TargetMinutesFor(SlaDeadlineType.Resolution), policy.ClockBasis, calendar);
+            resolutionMinutes = policy.ResolutionTargetMinutes;
+        }
+
+        var applied = new AppliedSlaPolicy(
+            resolutionBasis,
+            evaluation.IsApplied ? evaluation.PolicyId : null,
+            evaluation.PausesOnPendingCustomerOverride,
+            evaluation.Reason,
+            firstResponseMinutes,
+            resolutionMinutes);
+
+        return new SlaDueDateComputation(firstResponseDueAtUtc, resolutionDueAtUtc, applied);
     }
+
+    private static DateTime AsUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Utc ? value : DateTime.SpecifyKind(value, DateTimeKind.Utc);
 }
+
+/// <summary>The result of <see cref="SlaDueDateService.ComputeAsync"/>: both due timestamps and the snapshot of which policy produced them.</summary>
+public sealed record SlaDueDateComputation(DateTime FirstResponseDueAtUtc, DateTime ResolutionDueAtUtc, AppliedSlaPolicy Applied);

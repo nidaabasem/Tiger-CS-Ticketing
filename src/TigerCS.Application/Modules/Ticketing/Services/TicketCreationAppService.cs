@@ -115,6 +115,13 @@ public sealed class TicketCreationAppService(
             return TicketCreationResult.Failure(TicketCreationOutcome.CrmBuyerReferenceMismatch);
         }
 
+        // Unit 0 is a CRM/PACT placeholder, never a real unit: refuse it here even though the lookups already
+        // drop it, because this endpoint is also reachable without the wizard.
+        if (hasCrmBuyerMatch && request.CrmBuyerUnitId <= 0)
+        {
+            return TicketCreationResult.Failure(TicketCreationOutcome.CrmBuyerReferenceMismatch);
+        }
+
         var hasManualProjectUnit = !string.IsNullOrWhiteSpace(request.ManualProjectName)
             || !string.IsNullOrWhiteSpace(request.ManualUnitNumber);
         if (hasCrmBuyerMatch && hasManualProjectUnit)

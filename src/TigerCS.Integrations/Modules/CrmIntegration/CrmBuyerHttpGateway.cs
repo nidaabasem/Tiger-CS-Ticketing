@@ -135,7 +135,12 @@ public sealed class CrmBuyerHttpGateway(
             return CrmBuyerLookupResult.NotFound(payload.Message);
         }
 
-        var buyers = payload.Buyers.Select(MapBuyer).ToList();
+        // A buyer without a customer node is unusable; a missing units list means "no units", not a crash.
+        var buyers = payload.Buyers.Where(b => b?.Customer is not null).Select(MapBuyer).ToList();
+        if (buyers.Count == 0)
+        {
+            return CrmBuyerLookupResult.NotFound(payload.Message);
+        }
         return CrmBuyerLookupResult.Success(buyers, payload.Message);
     }
 
@@ -146,7 +151,7 @@ public sealed class CrmBuyerHttpGateway(
             buyer.Customer.FullNameArabic,
             buyer.Customer.MobileNumber,
             buyer.Customer.Email),
-        buyer.Units.Select(unit => new CrmBuyerUnitDto(
+        (buyer.Units ?? []).Select(unit => new CrmBuyerUnitDto(
             unit.LeadId,
             unit.LeadStatus,
             unit.LeadStatusName,

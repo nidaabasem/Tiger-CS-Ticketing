@@ -53,6 +53,26 @@ public class TicketSlaInstance
     /// <summary>Required only for <see cref="SlaChangeReason.Downgrade"/>, which no pilot code path can produce (MVP-Implementation-Backlog.md §0 hard-disables downgrades). Never client-supplied on any endpoint (Finding DR-05).</summary>
     public Guid? ApprovedByEmployeeId { get; private set; }
 
+    // ---- The policy that produced this period's due timestamps (snapshot).
+    // All null on a period opened before pause/resume and request-type SLA
+    // enforcement existed: those fall back to the per-priority policy's basis.
+
+    /// <summary>The basis the Resolution due timestamp was computed on. Null = legacy row; use the priority policy's basis.</summary>
+    public SlaClockBasis? ResolutionClockBasis { get; private set; }
+
+    /// <summary>The request-type SLA row that governed the due dates; null when the per-priority policy did.</summary>
+    public int? RequestTypeSlaPolicyId { get; private set; }
+
+    /// <summary>The request type's explicit Pending Customer pause flag at the time the period opened. Null = inherit the approved global rule.</summary>
+    public bool? PausesOnPendingCustomerOverride { get; private set; }
+
+    /// <summary>Exact reason a configured request-type SLA was not applied, or null.</summary>
+    public string? RequestTypeSlaNote { get; private set; }
+
+    public int? AppliedFirstResponseTargetMinutes { get; private set; }
+
+    public int? AppliedResolutionTargetMinutes { get; private set; }
+
     private TicketSlaInstance() { }
 
     private TicketSlaInstance(
@@ -83,7 +103,8 @@ public class TicketSlaInstance
         byte priorityId,
         DateTime clockStartAtUtc,
         DateTime firstResponseDueAtUtc,
-        DateTime resolutionDueAtUtc)
+        DateTime resolutionDueAtUtc,
+        AppliedSlaPolicy? applied = null)
     {
         if (firstResponseDueAtUtc < clockStartAtUtc)
         {
@@ -95,8 +116,10 @@ public class TicketSlaInstance
             throw new ArgumentException("ResolutionDueAtUtc cannot precede the clock-start moment.", nameof(resolutionDueAtUtc));
         }
 
-        return new TicketSlaInstance(
+        var instance = new TicketSlaInstance(
             ticketId, priorityId, clockStartAtUtc, firstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.InitialCreation);
+        instance.Apply(applied);
+        return instance;
     }
 
     /// <summary>
@@ -123,13 +146,15 @@ public class TicketSlaInstance
     /// <param name="carriedFirstResponseDueAtUtc">The predecessor period's First Response deadline, copied unchanged.</param>
     /// <param name="carriedFirstResponseBreached">The predecessor period's First Response breach flag, copied unchanged.</param>
     /// <param name="resolutionDueAtUtc">The newly computed Resolution deadline for this cycle.</param>
+    /// <param name="applied">Snapshot of the policy that produced the deadline, or null for none.</param>
     public static TicketSlaInstance OpenReopenCycle(
         long ticketId,
         byte priorityId,
         DateTime reopenedAtUtc,
         DateTime carriedFirstResponseDueAtUtc,
         bool carriedFirstResponseBreached,
-        DateTime resolutionDueAtUtc)
+        DateTime resolutionDueAtUtc,
+        AppliedSlaPolicy? applied = null)
     {
         if (resolutionDueAtUtc < reopenedAtUtc)
         {
@@ -137,10 +162,91 @@ public class TicketSlaInstance
                 "ResolutionDueAtUtc cannot precede the reopen moment.", nameof(resolutionDueAtUtc));
         }
 
-        return new TicketSlaInstance(
+        var cycle = new TicketSlaInstance(
             ticketId, priorityId, reopenedAtUtc, carriedFirstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.Reopen)
         {
             FirstResponseBreached = carriedFirstResponseBreached
+        };
+        cycle.Apply(applied);
+        return cycle;
+    }
+
+    private void Apply(AppliedSlaPolicy? applied)
+    {
+        if (applied is null)
+        {
+            return;
+        }
+
+        ResolutionClockBasis = applied.ResolutionClockBasis;
+        RequestTypeSlaPolicyId = applied.RequestTypeSlaPolicyId;
+        PausesOnPendingCustomerOverride = applied.PausesOnPendingCustomerOverride;
+        RequestTypeSlaNote = applied.RequestTypeSlaNote;
+        AppliedFirstResponseTargetMinutes = applied.AppliedFirstResponseTargetMinutes;
+        AppliedResolutionTargetMinutes = applied.AppliedResolutionTargetMinutes;
+    }
+
+    /// <summary>
+    /// Moves the Resolution deadline later by a closed pause (SLA-Architecture.md
+    /// §8). Only ever later: a pause cannot shorten a deadline. Refused after a
+    /// Resolution breach so a recorded breach is never made to look like it
+    /// never happened. First Response is never moved.
+    /// </summary>
+    public void ExtendResolutionDue(DateTime newResolutionDueAtUtc)
+    {
+        if (newResolutionDueAtUtc < ResolutionDueAtUtc)
+        {
+            throw new ArgumentException("A pause can only extend the Resolution deadline, never shorten it.", nameof(newResolutionDueAtUtc));
+        }
+
+        if (ResolutionBreached && newResolutionDueAtUtc != ResolutionDueAtUtc)
+        {
+            throw new InvalidOperationException(
+                $"TicketSlaInstance {TicketSlaInstanceId} has already breached Resolution — its deadline is part of the permanent record.");
+        }
+
+        ResolutionDueAtUtc = newResolutionDueAtUtc;
+    }
+
+    /// <summary>
+    /// Opens the successor period of an <b>approved priority downgrade</b>
+    /// (ISSUE-023 Option B; SLA-Architecture.md section 7). The approver is
+    /// recorded on the row (<see cref="ApprovedByEmployeeId"/>, copied from
+    /// the request's decider, never client-supplied: Finding DR-05).
+    ///
+    /// <para>
+    /// As with <see cref="OpenReopenCycle"/>, First Response is carried
+    /// verbatim (due timestamp and breach flag), so a downgrade can never
+    /// restart, loosen or erase the first-response result. The Resolution
+    /// deadline is the newly computed one; the predecessor's breach flags stay
+    /// on the predecessor row, untouched.
+    /// </para>
+    /// </summary>
+    public static TicketSlaInstance OpenDowngradePeriod(
+        long ticketId,
+        byte priorityId,
+        DateTime approvedAtUtc,
+        DateTime carriedFirstResponseDueAtUtc,
+        bool carriedFirstResponseBreached,
+        DateTime resolutionDueAtUtc,
+        Guid approvedByEmployeeId)
+    {
+        if (approvedByEmployeeId == Guid.Empty)
+        {
+            throw new ArgumentException("A Downgrade period requires the approving employee.", nameof(approvedByEmployeeId));
+        }
+
+        if (resolutionDueAtUtc < approvedAtUtc)
+        {
+            throw new ArgumentException(
+                "ResolutionDueAtUtc cannot precede the approval moment.", nameof(resolutionDueAtUtc));
+        }
+
+        return new TicketSlaInstance(
+            ticketId, priorityId, approvedAtUtc, carriedFirstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.Downgrade)
+        {
+            FirstResponseBreached = carriedFirstResponseBreached,
+            ApprovedByEmployeeId = approvedByEmployeeId
         };
     }
 

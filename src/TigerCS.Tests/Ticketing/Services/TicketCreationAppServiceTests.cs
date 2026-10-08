@@ -287,6 +287,26 @@ public class TicketCreationAppServiceTests
         Assert.Empty(f.Tickets.All);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task CreateAsync_CrmBuyerUnitIdIsThePlaceholderZero_ReturnsCrmBuyerReferenceMismatch(int unitId)
+    {
+        var f = CreateService();
+        var department = f.Departments.AddDepartment("Customer Service", "CS");
+        var category = f.Categories.Seed(department.DepartmentId);
+        var (intake, agentId) = await SeedIntakeAsync(f.IntakeRecords, isUnitRelated: false, rawUnitNumberEntered: null);
+
+        var result = await f.Service.CreateAsync(
+            agentId,
+            new CreateTicketRequestDto(
+                intake.IntakeRecordId, null, null, category.CategoryId, (byte)PriorityLevel.High, "x",
+                CrmBuyerCustomerId: 5001, CrmBuyerLeadId: 901, CrmBuyerUnitId: unitId, CrmBuyerProjectId: 7));
+
+        Assert.Equal(TicketCreationOutcome.CrmBuyerReferenceMismatch, result.Outcome);
+        Assert.Empty(f.Tickets.All);
+    }
+
     [Fact]
     public async Task CreateAsync_CrmBuyerMatchAndManualProjectUnitBothSupplied_Rejected()
     {

@@ -276,6 +276,9 @@ public enum TicketMutationOutcome
     /// <summary>Classification: the ticket already carries a category. Re-categorising an existing ticket is a different operation, not built in this phase.</summary>
     AlreadyClassified,
 
+    /// <summary>MVP-API-Contracts.md section 3.4: a priority decrease on an already-classified ticket is never a bare write; it must go through an approved downgrade request (403, <c>downgrade-requires-approval</c>).</summary>
+    DowngradeRequiresApproval,
+
     /// <summary>Classification: the selected category was not found, or is deactivated.</summary>
     CategoryNotFound,
 

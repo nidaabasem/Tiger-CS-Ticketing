@@ -3,59 +3,66 @@ using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
+using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Tests.Notifications.Fakes;
 
 namespace TigerCS.Tests.CrmDocuments;
 
-/// <summary>A scriptable Tiger CRM document source — what CRM returns, and what it was asked.</summary>
+/// <summary>A scriptable Tiger CRM document source — what CRM returns for (customer, lead, type), and what it was asked.</summary>
 public sealed class FakeCrmDocumentGateway : ICrmDocumentGateway
 {
-    public List<CrmDocumentRecord> Records { get; } = [];
+    private sealed record Row(int CustomerId, int LeadId, CrmDocumentType Type, CrmDocumentRecord Record);
 
-    /// <summary>The document type each record belongs to (default Contract).</summary>
-    public Dictionary<string, CrmDocumentType> TypeByRecord { get; } = [];
+    private readonly List<Row> _rows = [];
 
-    private CrmDocumentType TypeOf(CrmDocumentRecord r) => TypeByRecord.GetValueOrDefault(r.RecordId, CrmDocumentType.Contract);
     public Dictionary<string, CrmDocumentContent?> Contents { get; } = [];
-    public string? CustomerEmail { get; set; } = "customer@example.com";
-    public bool Unavailable { get; set; }
-    public bool ReturnEverythingUnfiltered { get; set; }
-    public List<(CrmDocumentType Type, string UnitId, string ContactId)> ListCalls { get; } = [];
-    public List<string> ContentCalls { get; } = [];
 
-    public Task<CrmDocumentListing> ListAsync(CrmDocumentType type, string crmUnitId, string crmContactId, CancellationToken cancellationToken = default)
+    /// <summary>CRM's own "selectionRequired" flag, forced on even for a single record.</summary>
+    public bool ForceSelectionRequired { get; set; }
+
+    public CrmDocumentSourceFailure? ListFailure { get; set; }
+    public CrmDocumentSourceFailure? DownloadFailure { get; set; }
+
+    public List<(CrmDocumentType Type, int CustomerId, int LeadId)> ListCalls { get; } = [];
+    public List<string> DownloadCalls { get; } = [];
+
+    public CrmDocumentRecord Add(int customerId, int leadId, CrmDocumentType type, string recordId, string name = "Sale and Purchase Agreement")
     {
-        ListCalls.Add((type, crmUnitId, crmContactId));
-        if (Unavailable)
-        {
-            throw new CrmDocumentSourceUnavailableException("CRM down");
-        }
-
-        var rows = ReturnEverythingUnfiltered
-            ? Records.Where(r => TypeOf(r) == type).ToList()
-            : Records.Where(r => TypeOf(r) == type && r.CrmUnitId == crmUnitId && r.OwnerCrmContactId == crmContactId).ToList();
-        return Task.FromResult(new CrmDocumentListing(rows, CustomerEmail));
+        var record = new CrmDocumentRecord(recordId, name, $"files/{recordId}.pdf");
+        _rows.Add(new Row(customerId, leadId, type, record));
+        return record;
     }
 
-    public Task<CrmDocumentContent?> GetContentAsync(CrmDocumentType type, string recordId, CancellationToken cancellationToken = default)
+    public Task<CrmDocumentListing> ListAsync(CrmDocumentType type, int customerId, int leadId, CancellationToken cancellationToken = default)
     {
-        ContentCalls.Add(recordId);
-        if (Unavailable)
+        ListCalls.Add((type, customerId, leadId));
+        if (ListFailure is { } failure)
         {
-            throw new CrmDocumentSourceUnavailableException("CRM down");
+            throw new CrmDocumentSourceException(failure, "scripted");
         }
 
-        if (Contents.TryGetValue(recordId, out var content))
+        var rows = _rows.Where(r => r.CustomerId == customerId && r.LeadId == leadId && r.Type == type).Select(r => r.Record).ToList();
+        return Task.FromResult(new CrmDocumentListing(customerId, leadId, ForceSelectionRequired || rows.Count > 1, rows));
+    }
+
+    public Task<CrmDocumentContent?> DownloadAsync(CrmDocumentRecord record, CancellationToken cancellationToken = default)
+    {
+        DownloadCalls.Add(record.RecordId);
+        if (DownloadFailure is { } failure)
         {
-            return Task.FromResult(content);
+            throw new CrmDocumentSourceException(failure, "scripted");
         }
 
-        var record = Records.FirstOrDefault(r => r.RecordId == recordId);
-        return Task.FromResult<CrmDocumentContent?>(record is null
-            ? null
-            : new CrmDocumentContent(record.RecordId, record.CrmUnitId, record.OwnerCrmContactId, [1, 2, 3], "application/pdf", $"{record.RecordId}.pdf"));
+        if (Contents.TryGetValue(record.RecordId, out var scripted))
+        {
+            return Task.FromResult(scripted);
+        }
+
+        return Task.FromResult<CrmDocumentContent?>(new CrmDocumentContent(record.RecordId, [1, 2, 3], "application/pdf", $"{record.RecordId}.pdf"));
     }
 }
 
@@ -128,6 +135,10 @@ public sealed class CommittingUnitOfWork(FakeCrmDocumentDeliveryRepository deliv
 {
     public Func<Task>? BeforeSave { get; set; }
 
+    public void DiscardPendingChanges()
+    {
+    }
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         if (BeforeSave is { } hook)
@@ -144,11 +155,18 @@ public sealed class DocumentServiceFixture
 {
     public static readonly Guid Caller = Guid.NewGuid();
 
+    /// <summary>The verified customer's CRM ids (the example ids from CRM's contract).</summary>
+    public const int CustomerId = 9001;
+    public const int LeadId = 12345;
+    public const int OtherLeadId = 12346;
+    public const string VerifiedPhone = "+971501234567";
+
     public CrmDocumentOptions Options { get; } = new() { Enabled = true };
     public FakeVerificationSessionRepository Sessions { get; } = new();
     public FakeUnitReferenceRepository Units { get; } = new();
     public FakeContactReferenceRepository Contacts { get; } = new();
     public FakeCrmDocumentGateway Gateway { get; } = new();
+    public FakeCrmBuyerLookupGateway Buyers { get; } = new();
     public FakeCrmDocumentDeliveryRepository Deliveries { get; } = new();
     public FakeDocumentChannelSender Email { get; } = new();
     public CommittingUnitOfWork UnitOfWork { get; }
@@ -160,25 +178,47 @@ public sealed class DocumentServiceFixture
     public ContactReference Contact { get; }
     public Guid SessionId { get; }
 
-    public DocumentServiceFixture(VerificationMethod method = VerificationMethod.Otp, bool confirm = true, Guid? owner = null)
+    public DocumentServiceFixture(
+        VerificationMethod method = VerificationMethod.Otp, bool confirm = true, Guid? owner = null,
+        string contactChannel = VerifiedPhone, string? customerEmail = "customer@example.com", bool serverProof = true)
     {
         UnitOfWork = new CommittingUnitOfWork(Deliveries);
         Unit = Units.Seed("CRM-UNIT-1001", "1204", "Tiger Tower A");
-        Contact = Contacts.Seed(Unit.UnitReferenceId, "CRM-CONTACT-2001", "Ahmed Al-Farsi");
-        SessionId = AddSession(method, confirm, owner ?? Caller, Unit, Contact);
+        Contact = Contacts.Seed(Unit.UnitReferenceId, "CRM-CONTACT-2001", "Ahmed Al-Farsi", contactChannel: contactChannel);
+        SessionId = AddSession(method, confirm, owner ?? Caller, Unit, Contact, serverProof: serverProof);
+
+        // CRM knows the verified customer: customer 9001 with two units (leads 12345 = the verified 1204, and 12346 = 1403).
+        Buyers.Returns(CrmBuyerLookupResult.Success(
+        [
+            new CrmBuyerMatchDto(
+                new CrmCustomerDto(CustomerId, "Ahmed Al-Farsi", null, VerifiedPhone, customerEmail),
+                [BuyerUnit(LeadId, 77, "1204", "Tiger Tower A"), BuyerUnit(OtherLeadId, 78, "1403", "Tiger Tower A")])
+        ]));
 
         Service = new CrmDocumentCopyAppService(
-            Options, Sessions, Units, Contacts, Gateway, Deliveries, [Email], UnitOfWork, Audit, Clock,
-            NullLogger<CrmDocumentCopyAppService>.Instance);
+            Options, Sessions, Units, Contacts, Gateway,
+            new CrmBuyerLookupAppService(Buyers, NullLogger<CrmBuyerLookupAppService>.Instance),
+            Deliveries, [Email], UnitOfWork, Audit, Clock, NullLogger<CrmDocumentCopyAppService>.Instance);
     }
 
-    public Guid AddSession(VerificationMethod method, bool confirm, Guid owner, UnitReference unit, ContactReference contact, TimeSpan? lifetime = null)
+    public static CrmBuyerUnitDto BuyerUnit(int leadId, int unitId, string unitNumber, string project) =>
+        new(leadId, 8, "Sold", unitId, unitNumber, 3, 2, 12, 79, project, null, 1, "Buyer");
+
+    /// <summary>A session as the OTP flow produces it (<paramref name="serverProof"/>: challenge + CRM customer/lead attached), or an agent-asserted one.</summary>
+    public Guid AddSession(
+        VerificationMethod method, bool confirm, Guid owner, UnitReference unit, ContactReference contact, TimeSpan? lifetime = null,
+        bool serverProof = true, int customerId = CustomerId, int leadId = LeadId)
     {
         var id = Guid.NewGuid();
         var now = Clock.GetUtcNow().UtcDateTime;
         var session = new VerificationSession(
             id, owner, unit.UnitReferenceId, contact.ContactReferenceId, unit.UnitNumber, unit.PropertyName, null, null,
             contact.DisplayName, contact.ContactChannel, now, now + (lifetime ?? TimeSpan.FromMinutes(30)), null);
+        if (serverProof)
+        {
+            session.AttachOtpProof(Guid.NewGuid(), customerId, leadId);
+        }
+
         if (confirm)
         {
             session.Confirm(now, method);
@@ -188,13 +228,7 @@ public sealed class DocumentServiceFixture
         return id;
     }
 
+    /// <summary>A document CRM lists for the verified customer's verified unit (lead 12345).</summary>
     public CrmDocumentRecord Own(string recordId, string label = "Sale and Purchase Agreement", CrmDocumentType type = CrmDocumentType.Contract) =>
-        Add(new CrmDocumentRecord(recordId, label, Unit.CrmUnitId, Contact.CrmContactId, Unit.UnitNumber, new DateTime(2025, 3, 1)), type);
-
-    public CrmDocumentRecord Add(CrmDocumentRecord record, CrmDocumentType type = CrmDocumentType.Contract)
-    {
-        Gateway.Records.Add(record);
-        Gateway.TypeByRecord[record.RecordId] = type;
-        return record;
-    }
+        Gateway.Add(CustomerId, LeadId, type, recordId, label);
 }

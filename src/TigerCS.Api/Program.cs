@@ -81,6 +81,12 @@ builder.Services.Configure<DashboardOptions>(
     builder.Configuration.GetSection(DashboardOptions.SectionName));
 builder.Services.AddScoped(sp => sp.GetRequiredService<IOptions<DashboardOptions>>().Value);
 
+// Priority-downgrade request lifetime (SlaAndEscalation:PriorityDowngrade:ExpiryHours,
+// default 7 days). Only the expiry window is configurable; who may decide is not.
+builder.Services.Configure<TigerCS.Application.Modules.SlaAndEscalation.Services.PriorityDowngradeOptions>(
+    builder.Configuration.GetSection(TigerCS.Application.Modules.SlaAndEscalation.Services.PriorityDowngradeOptions.SectionName));
+builder.Services.AddScoped(sp => sp.GetRequiredService<IOptions<TigerCS.Application.Modules.SlaAndEscalation.Services.PriorityDowngradeOptions>>().Value);
+
 builder.Services.AddAuthorization(options => options.AddTigerCsAuthorizationPolicies());
 
 var app = builder.Build();
@@ -133,6 +139,32 @@ using (var crmStartupScope = app.Services.CreateScope())
             "never production-ready (see its own remarks) and may only run in " +
             $"{string.Join("/", CrmGatewaySafety.MockAllowedEnvironments)}. Set Crm:Provider to \"Http\" — the " +
             "standard for every real environment — before deploying to this environment.");
+    }
+}
+
+// The chatbot document-copy flow (email OTP verification + sending a customer's
+// documents) ships disabled. In Production it stays disabled until real UAT
+// verification has passed and someone sets CrmDocuments:AllowInProduction
+// deliberately — enabling it alone is not enough.
+using (var documentsStartupScope = app.Services.CreateScope())
+{
+    var documentOptions = documentsStartupScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.CrmDocuments.CrmDocumentOptions>();
+    if (documentOptions.Enabled && app.Environment.IsProduction() && !documentOptions.AllowInProduction)
+    {
+        throw new InvalidOperationException(
+            "CrmDocuments:Enabled is true in Production but CrmDocuments:AllowInProduction is not. Customer document delivery must stay "
+            + "disabled in Production until real UAT verification has passed (docs/Genesys/Document-Copy-API.md, Status). "
+            + "Set CrmDocuments:Enabled to false, or set AllowInProduction deliberately after sign-off.");
+    }
+
+    // The OTP code hash is keyed with CrmDocuments:OtpCodePepper. Without it the code falls back to a constant key
+    // that is public in the source, so refuse to run the OTP flow with it anywhere but Development/Testing.
+    if (documentOptions.Enabled && string.IsNullOrWhiteSpace(documentOptions.OtpCodePepper)
+        && !app.Environment.IsDevelopment() && !string.Equals(app.Environment.EnvironmentName, "Testing", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "CrmDocuments:Enabled is true but CrmDocuments:OtpCodePepper is empty. Set a random secret (environment variable "
+            + "CrmDocuments__OtpCodePepper) before enabling customer OTP verification outside Development.");
     }
 }
 

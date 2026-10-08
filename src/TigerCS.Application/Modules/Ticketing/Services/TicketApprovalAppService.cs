@@ -608,6 +608,11 @@ public sealed class TicketApprovalAppService(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
         AuthorizationGate.EvaluateAsync(callerRoles, async () =>
         {
+            if (Roles.IsReadOnlyCaller(callerRoles))
+            {
+                return false;
+            }
+
             if (ticket.CurrentOwnerEmployeeId == callerEmployeeId)
             {
                 return true;
@@ -659,7 +664,7 @@ public sealed class TicketApprovalAppService(
     /// <summary>The target-snapshot gate — see this type's remarks on the provisional, fail-safe rules per target kind.</summary>
     private Task<bool> IsAuthorizedApproverAsync(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, TicketApproval approval, CancellationToken cancellationToken) =>
-        AuthorizationGate.EvaluateAsync(callerRoles, async () => approval.TargetKind switch
+        AuthorizationGate.EvaluateAsync(callerRoles, async () => !Roles.IsReadOnlyCaller(callerRoles) && approval.TargetKind switch
         {
             ApprovalTargetKind.Employee => approval.TargetEmployeeId == callerEmployeeId,
 

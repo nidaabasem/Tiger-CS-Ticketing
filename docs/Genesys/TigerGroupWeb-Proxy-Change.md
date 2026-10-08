@@ -5,6 +5,10 @@ separate repository that this session could not read or push to (the session is 
 `list_repos` shows no TigerGroupWeb). Everything below is the exact change to make there. **Nothing here was changed, built or
 tested in TigerGroupWeb.** Access needed to complete it: read + push on the TigerGroupWeb repository, and a UAT deployment of it.
 
+> **Implementation:** the complete forwarding patch (all 19 routes, including `verification/*`, `agent-context` and `screen-pop`), the
+> route table that the build checks against the controllers, and the acceptance script are in
+> [TigerGroupWeb-Forwarding-Implementation.md](TigerGroupWeb-Forwarding-Implementation.md). The rules below remain the specification.
+
 ## 1. Route inventory (Genesys-facing path = TigerCS path under `https://tigergroup.ae`)
 
 | # | Method + route | TigerCS state | TigerGroupWeb state (per `docs/Collections/Genesys-Collections-API.md` §9 / this task) | Change needed |
@@ -19,6 +23,8 @@ tested in TigerGroupWeb.** Access needed to complete it: read + push on the Tige
 | 8 | `GET /api/genesys/collections/customers/{crmCustomerId}/reminders` | implemented | **not forwarded** | Add forwarding |
 | 9 | `POST /api/genesys/customers/unit-details` | implemented (this branch) | not forwarded | **Add** |
 | 10 | `POST /api/genesys/documents/send-copy` (`Idempotency-Key`) | implemented (merged branch); **blocked for real UAT** (no CRM document source) | not forwarded | **Add** (forwarding alone does not unblock the feature) |
+| 12 | `POST /api/genesys/verification/buyer-lookup`, `…/otp/send`, `…/otp/resend`, `…/otp/verify` (data actions 13–16) | implemented (review branch); needs `CrmDocuments:Enabled`, SMTP, `OtpCodePepper` | not forwarded (unverified) | **Add**; pass `Retry-After` and `application/problem+json` through unchanged (rules 4 and 6) |
+| 13 | `POST /api/genesys/agent-context`, `POST /api/genesys/screen-pop` (agent/staff only — **never** customer auth) | implemented | unknown | Verify; keep separate from customer verification |
 | 11 | `PATCH /api/genesys/tickets/{ticketId}` (body `awaitingCustomerReply`) | implemented (merged branch) | forwards the existing PATCH | **Verify** the body is forwarded as-is (§2 rule 4) |
 
 ## 2. Rules — identical to the already-implemented `by-key` forwarding (§9 of the Collections API doc)

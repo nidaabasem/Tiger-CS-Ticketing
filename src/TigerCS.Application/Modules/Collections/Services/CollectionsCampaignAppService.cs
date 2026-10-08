@@ -35,12 +35,20 @@ public sealed class CollectionsCampaignAppService(
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a campaign stage, a date in 2000-2100, company 4 or 32, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
 
-        // Instalment due-date window. Defaults: 1 January of the preview year through the preview date, except the
+        // Instalment due-date window. Defaults: the configured receivables StartDate through the preview date, except the
         // whole-month stages (current month, follow-up), which default to the end of the preview month so upcoming
         // instalments of that month are not cut off. The preview date still alone drives stage scheduling/eligibility;
         // the window only limits which instalments are read.
-        var from = dateFrom ?? new DateOnly(date.Year, 1, 1);
         var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
+        // Lower bound = the configured receivables StartDate (not 1 January of the preview year): overdue and legal
+        // stages look back months, so a calendar-year floor would silently empty them from January onwards.
+        var configuredStart = DateOnly.FromDateTime(sourceOptions.StartDate);
+        if (dateFrom is null && configuredStart > to)
+            // No calendar-year fallback: instalments before the configured start date are out of scope, so a window that ends
+            // before it has nothing to read. (A hard-coded "1 January of the preview year" here would have read pre-StartDate rows.)
+            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
+                $"The window ends before the configured receivables start date ({configuredStart:yyyy-MM-dd}); nothing earlier is in scope. Choose a later preview date, or set From date explicitly.");
+        var from = dateFrom ?? configuredStart;
         if (from > to || from.Year < 2000 || to.Year > 2100)
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");

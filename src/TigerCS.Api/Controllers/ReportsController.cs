@@ -9,7 +9,7 @@ namespace TigerCS.Api.Controllers;
 
 /// <summary>
 /// Management reports. Read-only, and restricted to the CS Manager tier
-/// (<see cref="PolicyNames.CsManagerOrGeneralManager"/>: CS Manager, General
+/// (<see cref="PolicyNames.ReportsRead"/>: CS Manager, General
 /// Manager, Chairman/CEO — plus System Administrator through the ADR-0024
 /// override). A CS Agent or Department user receives 403; the report is
 /// about agents, not for them. Nothing here is scoped by the caller's
@@ -17,7 +17,7 @@ namespace TigerCS.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/reports")]
-[Authorize(Policy = PolicyNames.CsManagerOrGeneralManager)]
+[Authorize(Policy = PolicyNames.ReportsRead)]
 [Tags(OpenApiTags.Reports)]
 public class ReportsController(TeamPerformanceAppService teamPerformanceAppService) : ControllerBase
 {

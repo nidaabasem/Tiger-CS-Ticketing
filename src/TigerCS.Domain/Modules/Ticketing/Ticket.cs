@@ -590,6 +590,45 @@ public class Ticket
         PriorityId = priorityId;
     }
 
+    /// <summary>
+    /// Changes an already-classified ticket's priority.
+    ///
+    /// <para>
+    /// <b>A bare priority decrease is never permitted</b> (ISSUE-023
+    /// Option B; MVP-API-Contracts.md §3.4/§5.6): a downgrade takes effect
+    /// only through an approved <c>PriorityDowngradeRequest</c>, so this
+    /// throws <see cref="PriorityDowngradeRequiresApprovalException"/> unless
+    /// <paramref name="downgradeApproved"/> is true, which only the approval
+    /// service passes, inside the same transaction that replaces the SLA
+    /// period. Priority ids rise as urgency falls (1=Critical ... 4=Low), so
+    /// a "decrease" in priority is a numerically larger id.
+    /// </para>
+    ///
+    /// <para>This method does not touch the SLA period; the caller owns that.</para>
+    /// </summary>
+    public void ChangePriority(byte newPriorityId, bool downgradeApproved = false)
+    {
+        EnsureNotClosed();
+
+        if (PriorityId is not { } current)
+        {
+            throw new InvalidOperationException(
+                $"Ticket {TicketId} has no priority yet; set it with Classify, which is not a downgrade.");
+        }
+
+        if (newPriorityId == current)
+        {
+            throw new ArgumentException("The new priority equals the current priority.", nameof(newPriorityId));
+        }
+
+        if (newPriorityId > current && !downgradeApproved)
+        {
+            throw new PriorityDowngradeRequiresApprovalException(TicketId, current, newPriorityId);
+        }
+
+        PriorityId = newPriorityId;
+    }
+
     public void ClassifyRequestType(int requestTypeId)
     {
         if (RequestTypeId is not null)
@@ -1038,6 +1077,43 @@ public class Ticket
         {
             SlaState = SlaState.Running;
         }
+    }
+
+    /// <summary>
+    /// SLA pause (ISSUE-018): <see cref="SlaState.Running"/> becomes
+    /// <see cref="SlaState.Paused"/>. Narrow like <see cref="StartSlaClock"/>:
+    /// a Breached, Met or NotApplicable ticket is left alone, so a pause can
+    /// never hide a recorded breach. The pause row itself is the application
+    /// service's job.
+    /// </summary>
+    /// <returns>True when this call changed the state.</returns>
+    public bool PauseSla()
+    {
+        if (SlaState != SlaState.Running)
+        {
+            return false;
+        }
+
+        SlaState = SlaState.Paused;
+        return true;
+    }
+
+    /// <summary>
+    /// SLA resume: <see cref="SlaState.Paused"/> becomes
+    /// <see cref="SlaState.Running"/>; every other state (notably a sticky
+    /// Breached recorded during the pause by the First Response clock) is
+    /// left as it is.
+    /// </summary>
+    /// <returns>True when this call changed the state.</returns>
+    public bool ResumeSla()
+    {
+        if (SlaState != SlaState.Paused)
+        {
+            return false;
+        }
+
+        SlaState = SlaState.Running;
+        return true;
     }
 
     /// <summary>Closed-ticket immutability (PR correction): every mutating method above calls this first — a Closed ticket accepts no further Assign/Transfer/ChangeStatus/Resolve/Close.</summary>

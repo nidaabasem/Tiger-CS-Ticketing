@@ -134,6 +134,11 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/sla/first-response",
         "POST /api/tickets/{ticketId}/escalations",
         "GET /api/tickets/{ticketId}/escalations",
+        "POST /api/tickets/{ticketId}/sla/priority-downgrade-requests",
+        "GET /api/tickets/{ticketId}/sla/priority-downgrade-requests",
+        "GET /api/priority-downgrade-requests/pending",
+        "POST /api/priority-downgrade-requests/{requestId}/approve",
+        "POST /api/priority-downgrade-requests/{requestId}/reject",
 
         // Genesys integration phase 1 — the inbound boundary (one normalized
         // ingestion endpoint every channel converges on, plus conversation
@@ -143,6 +148,10 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // a ticket after creating it goes through the one PATCH.
         "POST /api/genesys/tickets",
         "POST /api/genesys/documents/send-copy",
+        "POST /api/genesys/verification/buyer-lookup",
+        "POST /api/genesys/verification/otp/send",
+        "POST /api/genesys/verification/otp/resend",
+        "POST /api/genesys/verification/otp/verify",
         "PATCH /api/genesys/tickets/{ticketId}",
         "GET /api/genesys/customers/lookup",
         // Verified customer's unit and project details for the chatbot/voicebot.

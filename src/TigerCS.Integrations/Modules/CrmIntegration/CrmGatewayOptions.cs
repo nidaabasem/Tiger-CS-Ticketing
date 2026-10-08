@@ -50,4 +50,17 @@ public sealed class CrmGatewayOptions
     /// docs/DEV-SETUP.md.
     /// </summary>
     public string? SecretKey { get; set; }
+
+    /// <summary>
+    /// Extra https hosts (besides the <see cref="BaseUrl"/> origin) from which
+    /// CRM document <c>fileUrl</c>s may be fetched. Empty by default: a
+    /// <c>fileUrl</c> on any other host is refused. <b>The CRM secret is never
+    /// sent to these hosts</b> — they are fetched anonymously (a storage host
+    /// with its own signed/unguessable URLs); only the CRM origin receives
+    /// <c>X-SECRET-KEY</c>. Hostnames only, e.g. <c>files.tigergroup.ae</c>.
+    /// </summary>
+    public List<string> DocumentFileHosts { get; set; } = [];
+
+    /// <summary>Largest document body the gateway will read from CRM. Default 10 MB, the delivery limit.</summary>
+    public int MaxDocumentBytes { get; set; } = 10 * 1024 * 1024;
 }
