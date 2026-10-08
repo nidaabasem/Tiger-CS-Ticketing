@@ -234,6 +234,11 @@ public sealed class PactCustomerHttpGateway(
 
     private static IReadOnlyList<PactContractDto> MapContracts(IEnumerable<PactContractRowHttpDto> rows) =>
         rows
+            // PACT unitID 0 (or negative) is a "no unit" placeholder, never a
+            // selectable unit: excluded here so it cannot reach unit
+            // selection, verification or Collections. A row whose unitID is
+            // absent still falls back to unitCode/unitNumber below.
+            .Where(row => row.UnitID is null or > 0)
             .Select(row => new
             {
                 Row = row,

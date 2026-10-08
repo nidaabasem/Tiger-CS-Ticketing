@@ -116,6 +116,28 @@ public class GenesysInquiryIngestionAppServiceTests
     }
 
     [Fact]
+    public async Task Ingest_SameCustomerNewConversation_CreatesANewTicket_AndNeverTouchesTheEarlierOne()
+    {
+        // Pins the current behaviour for "the customer contacts us again after
+        // an inactivity closure": a new conversation is a new ticket. The
+        // earlier ticket is neither reopened nor altered here — reopening an
+        // inactivity closure stays a human decision under the existing Reopen
+        // permissions and window (POST /api/tickets/{id}/reopen).
+        var f = new GenesysServiceFixture();
+        var (department, _) = f.SeedGenesysDepartment("Customer Service", "CS");
+        f.QueueMappings.Map("queue-cs", department.DepartmentId);
+
+        var first = await f.Ingestion.IngestAsync(ServiceAccount, Inquiry("conv-first", queueId: "queue-cs"));
+        var statusBefore = first.Ticket!.TicketStatus;
+        var second = await f.Ingestion.IngestAsync(ServiceAccount, Inquiry("conv-second", queueId: "queue-cs"));
+
+        Assert.Equal(GenesysIngestionOutcome.TicketCreated, second.Outcome);
+        Assert.Equal(2, f.Tickets.All.Count());
+        Assert.NotEqual(first.Ticket.TicketId, second.Ticket!.TicketId);
+        Assert.Equal(statusBefore.ToString(), f.Tickets.All.Single(t => t.TicketId == first.Ticket.TicketId).TicketStatus.ToString());
+    }
+
+    [Fact]
     public async Task Ingest_ConcurrentDuplicate_LosesTheDatabaseRace_AndStillYieldsOneTicket()
     {
         // The read-side check cannot protect against two deliveries that both

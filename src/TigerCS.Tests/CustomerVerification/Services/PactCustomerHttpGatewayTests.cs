@@ -445,6 +445,29 @@ public class PactCustomerHttpGatewayTests
     }
 
     [Fact]
+    public async Task SearchByMobileAsync_RowWithUnitIdZero_IsExcludedEvenWhenItHasADisplayCode()
+    {
+        // PACT unitID 0 is a "no unit" placeholder: it must never surface as a
+        // selectable unit "0", nor be rescued by its display code.
+        const string json = """
+            {
+              "data": [
+                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P0", "unitID": 0, "unitCode": "X-0", "unitType": null, "unitNumber": "0", "unitStatus": null, "contractID": 99, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 },
+                { "tenantID": 7001, "companyID": 3, "projectCode": null, "projectName": "P2", "unitID": 41230, "unitCode": null, "unitType": null, "unitNumber": null, "unitStatus": null, "contractID": 88001, "customerMobile": "1", "customerName": "Fatima Noor", "customerEmail": null, "customerBuyerType": 2 }
+              ]
+            }
+            """;
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, json)));
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.SearchByMobileAsync("1");
+
+        Assert.Equal(PactCustomerLookupOutcome.Success, result.Outcome);
+        var contract = Assert.Single(Assert.Single(result.Customers!).Contracts);
+        Assert.Equal("41230", contract.ExternalUnitId);
+    }
+
+    [Fact]
     public async Task SearchByMobileAsync_RowWithNoUnitIdentifiers_IsDroppedNotFabricated()
     {
         // First row carries no unitID/unitCode/unitNumber at all — its

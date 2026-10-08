@@ -48,6 +48,31 @@ public class CrmBuyerLookupAppServiceTests
         Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
     }
 
+    [Fact]
+    public async Task GetBuyerByPhoneAsync_UnitIdZero_IsExcludedAndOnlyRealUnitsRemain()
+    {
+        var gateway = new FakeCrmBuyerLookupGateway().Returns(
+            CrmBuyerLookupResult.Success([new CrmBuyerMatchDto(Customer(), [Unit(unitId: 0), Unit(unitId: 500)])]));
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
+
+        var result = await service.GetBuyerByPhoneAsync("+971500000000");
+
+        Assert.Equal(CrmBuyerLookupOutcome.Success, result.Outcome);
+        Assert.Equal(500, Assert.Single(result.Buyers!.Single().Units).UnitId);
+    }
+
+    [Fact]
+    public async Task GetBuyerByPhoneAsync_OnlyUnitIdZero_IsNotFound()
+    {
+        var gateway = new FakeCrmBuyerLookupGateway().Returns(
+            CrmBuyerLookupResult.Success([new CrmBuyerMatchDto(Customer(), [Unit(unitId: 0)])]));
+        var service = new CrmBuyerLookupAppService(gateway, NullLogger<CrmBuyerLookupAppService>.Instance);
+
+        var result = await service.GetBuyerByPhoneAsync("+971500000000");
+
+        Assert.Equal(CrmBuyerLookupOutcome.NotFound, result.Outcome);
+    }
+
     // ---- Lead status: CRM's own endpoint is the source of truth (real CRM Lead
     // status codes, e.g. 4 = "Contract", are not a small, stable set Ticketing
     // can safely hard-code) — this service must never re-filter by LeadStatus. ----
