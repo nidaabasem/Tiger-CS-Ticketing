@@ -518,7 +518,7 @@ public sealed partial class CrmDocumentCopyAppService(
     {
         // "Reservation Form", "reservation-form", "UnitLayout" all name one type.
         var normalized = new string((value ?? string.Empty).Where(char.IsLetter).ToArray());
-        return Enum.TryParse(normalized, ignoreCase: true, out type) && Enum.IsDefined(type);
+        return NamedEnum.TryParse(normalized, out type);
     }
 
     private static bool TryParseChannel(string? value, out DocumentDeliveryChannel channel)
@@ -529,7 +529,7 @@ public sealed partial class CrmDocumentCopyAppService(
             return true;
         }
 
-        return Enum.TryParse(value.Trim(), ignoreCase: true, out channel) && Enum.IsDefined(channel);
+        return NamedEnum.TryParse(value, out channel);
     }
 
     private static string Describe(CrmDocumentType type) => type switch
