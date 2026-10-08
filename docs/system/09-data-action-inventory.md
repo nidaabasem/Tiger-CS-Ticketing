@@ -122,3 +122,10 @@ Common: URL `/api/genesys/tickets/$esc.url(${input.ticketId})` (escaped so a flo
 | OTP + documents | 13-16, 11 | - |
 | collections summary / transactions | 08, 09 | reminders, candidates, outcomes, outstanding, payments |
 | agent context / screen pop | none | both |
+
+## Changes after the contract-test pass
+* Actions 03–07 and 10: `ticketId` in the URL is now escaped with `$esc.url`.
+* Action 11: `choiceKind` default renders empty (was the literal `""`).
+* Action 12 (unit details): numeric fields that TigerCS returns as null are exposed to Architect as sentinels — floor `-999`, bedrooms `-1`, area `-1` — because a Genesys integer cannot be null and `0` is a valid floor. Flows must test `detailsStatus` / the sentinel before speaking a value.
+* Actions 13–16 (buyer lookup, OTP send/resend/verify): numbering fixed; references updated.
+* Every file is rendered by `GenesysDataActionContractTests` (see [16](16-uat-checklist.md)); this proves the templates against a simulator, not against Genesys Cloud itself.

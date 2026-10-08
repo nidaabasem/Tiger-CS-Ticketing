@@ -20,6 +20,8 @@ Maintained set describing the **Tiger customer‑service system** (this reposito
 | 14 | Troubleshooting | [14-troubleshooting.md](14-troubleshooting.md) |
 | 15 | **Requirements traceability matrix** and outstanding decisions | [15-requirements-traceability-matrix.md](15-requirements-traceability-matrix.md) |
 | 16 | UAT checklist and validation evidence | [16-uat-checklist.md](16-uat-checklist.md) |
+| 17 | Release package, stale artifacts, credential rotation, migration/config checklist | [17-release-package-and-credentials.md](17-release-package-and-credentials.md) |
+| 18 | Remaining work by blocker type, owner, next action | [18-remaining-blockers.md](18-remaining-blockers.md) |
 
 Audit findings backing the matrix: [identity & lifecycle](audit-findings-identity-lifecycle.md) · [Genesys & customers](audit-findings-genesys-customers.md) · [collections & services](audit-findings-collections-services.md).
 

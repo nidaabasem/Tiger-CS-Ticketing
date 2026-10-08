@@ -164,6 +164,17 @@ Sample: `POST /api/verification-sessions` `{"unitReferenceId":12,"contactReferen
 | POST | `.../escalations` | `{level*:1-4, triggerType*: ManualFlag\|ManualLevel4, note?, rowVersion*}` (Level 4 requires ManualLevel4 and CS Manager/GM) | 201 `TicketEscalationResponseDto` | 400; 403; 404; 409; 422 escalation-level-not-an-advance / -trigger-mismatch / ticket-closed |
 | GET | `.../escalations` | - | 200 list | 403, 404 |
 
+### PriorityDowngradeRequestsController (policy AuthenticatedStaff; decisions DepartmentHeadOrAbove + service-level checks)
+| Method | Route | Body | Success | Errors |
+|---|---|---|---|---|
+| POST | `/api/tickets/{ticketId:long}/sla/priority-downgrade-requests` | `{newPriorityId*, reason*}` | 201 request (`Status: Pending`, `ExpiresAtUtc`); ticket priority/SLA unchanged | 400; 403; 404; 409 downgrade-request-already-pending; 422 not a decrease |
+| GET | `/api/tickets/{ticketId:long}/sla/priority-downgrade-requests` | – | 200 history | 403, 404 |
+| GET | `/api/priority-downgrade-requests/pending` | – | 200 inbox for the caller's decidable requests | 403 |
+| POST | `/api/priority-downgrade-requests/{requestId:long}/approve` | `{rowVersion}` | 200 request + new SLA period (`ChangeReason=Downgrade`) | 403 (not Dept Head of current dept / self-approval); 404; 409 not-pending / stale priority / concurrency; 410 expired; 422 ticket final |
+| POST | `/api/priority-downgrade-requests/{requestId:long}/reject` | `{decisionNote*}` | 200 request (`Rejected`), priority unchanged | 400; 403; 404; 409 |
+
+A priority decrease through any other route returns 403 `downgrade-requires-approval`. Service-identity accounts (see [03 §10](03-roles-and-permissions.md)) receive 403 on every route in this controller.
+
 ### PendingCustomerInteractionsController - `api/pending-customer-interactions` (AuthenticatedStaff; department rule inside `AgentHandoffAppService`)
 | Method | Route | Params | Success | Errors |
 |---|---|---|---|---|

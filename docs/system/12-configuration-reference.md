@@ -44,6 +44,9 @@
 | `Collections:Channels:{VoiceBot,Sms,Email}Enabled` | `false` | reminder sending off |
 | `Collections:BusinessRulesConfirmed` | `false` | |
 | `Collections:Authorization:IntegrationEmployeeIds` | `[]` | add the Genesys service account's employee id for reminder outcomes |
+| `Authorization:ServiceIdentity:EmployeeIds` | `[]` | **list the Genesys/TigerGroupWeb service account here** (restricts it to integration routes, hides it from human lists) |
+| `SlaAndEscalation:PriorityDowngrade:ExpiryHours` | `168` | how long a downgrade request stays decidable |
+| `Tasleeh:Provider` | `Mock` | set `Unavailable` in UAT/production: no approved Tasleeh contract exists, `Mock` serves a fixture customer |
 
 ## 12.3 Web app (`TigerCS.Web/appsettings.json`)
 

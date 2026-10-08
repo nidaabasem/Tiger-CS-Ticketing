@@ -8,7 +8,10 @@
 |---|---|
 | `dotnet test src/TigerCS.slnx` on `main` `a1cba71` | 3216 passed, 0 failed |
 | Same after cherry‑picking the CRM‑documents/OTP commits | 3389 passed, 0 failed |
-| Same after review fixes + new tests (this PR) | **3396 passed, 0 failed** |
+| Same after the first review fixes (PR #78, commit `aad2876`) | 3396 passed, 0 failed |
+| After SLA pause/request-type SLA, downgrade approval, read-only roles/service identity, Genesys contract + campaign tests, Tasleeh provider, migration `AddSlaPauseAndPriorityDowngrade` | **3779 passed, 0 failed** (needs `DOTNET_USE_POLLING_FILE_WATCHER=1` on hosts with a low inotify limit) |
+| `dotnet ef migrations has-pending-model-changes` | "No changes" before and after the new migration |
+| CI (GitHub Actions) on the updated PR | pending — see PR checks; the *DB Migration Validation* workflow (real SQL Server) was updated to expect 60 tables |
 | `dotnet build` (all projects) | succeeded |
 | Data action JSON | `08` was invalid after template rendering (fixed); all `successTemplate`s now render valid JSON with `null` substitutions (script in the PR description) |
 | SQL Server / Hangfire / migrations applied | **not run** (SQLite and fakes only) |
@@ -37,4 +40,8 @@
 | 17 | Receivables & campaigns | PACTRPT creds | open Receivables, Campaigns (each stage) | lists render; Review CSV downloads; Genesys CSV refused while unvalidated | ☐ |
 | 18 | Notifications | SMTP | create/resolve/close/reopen | one e‑mail per event, no duplicates | ☐ |
 | 19 | Team Performance | CS Manager | open report | CS Agents + Call Center staff listed | ☐ |
+| 20a | Pause / resume | non-Critical ticket | InProgress → PendingCustomer → InProgress; read SLA panel | paused state shown while pending; Resolution due moved by paused time; Critical never pauses | ☐ |
+| 20b | Downgrade approval | ticket with priority High; Dept Head user | agent requests downgrade; check ticket; Dept Head approves | unchanged while pending; after approval new priority + new SLA period; prior breach flag kept; requester cannot approve | ☐ |
+| 20c | Chairman/CEO read-only | CEO user | open ticket, try status/notes/escalate/assign via UI and API | no controls; API 403; reports readable | ☐ |
+| 20d | Service identity | Genesys service account listed in `Authorization:ServiceIdentity` | call `/api/dashboard`, `/api/reports/*`, `/api/admin/*` | 403; Genesys routes still work | ☐ |
 | 20 | Reminders | — | **do not run** until D10 cleared | dry‑run candidates only | ☐ |
