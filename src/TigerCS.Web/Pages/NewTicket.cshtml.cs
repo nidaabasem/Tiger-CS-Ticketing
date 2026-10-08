@@ -732,6 +732,10 @@ public sealed class NewTicketModel(
                     continue;
                 }
 
+                if (string.Equals(source.Source, "Pact", StringComparison.Ordinal) && external.Units.Count == 0)
+                {
+                    continue;
+                }
                 candidates.Add(new NewTicketCandidate(
                     $"ext:{Uri.EscapeDataString(source.Source)}:{Uri.EscapeDataString(external.ExternalCustomerId)}",
                     source.Source,
