@@ -62,7 +62,7 @@
             <div class="campaign-summary">
                 <p><strong>@report.TotalCount units</strong> · @report.ReadyCount ready · @report.ReviewCount need review</p>
                 <p>Scheduled: @string.Join(", ", report.ScheduledDates.Select(d => d.ToString("dd MMM yyyy"))) · Latest read: @report.ReadAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
-                <p>Instalments due @report.DateFrom.ToString("dd MMM yyyy") to @report.DateTo.ToString("dd MMM yyyy"). Preview date (@report.BusinessDate.ToString("dd MMM yyyy")) only decides stage eligibility and schedule.</p>
+                <p>Instalments due @report.DateFrom?.ToString("dd MMM yyyy") to @report.DateTo?.ToString("dd MMM yyyy"). Preview date (@report.BusinessDate.ToString("dd MMM yyyy")) only decides stage eligibility and schedule.</p>
                 @foreach (var note in report.RangeNotes ?? []) { <p role="status">@note</p> }
                 <p>Amounts use current remaining balances. A different preview date changes eligibility, not the payment history. Supported source: PACT companies 4 and 32.</p>
                 @if (!report.FinancialSourceValidated)
