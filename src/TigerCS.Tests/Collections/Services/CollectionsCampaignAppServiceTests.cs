@@ -18,12 +18,21 @@ public sealed class CollectionsCampaignAppServiceTests
         public int Reads { get; private set; }
         public DateTime ReadAt { get; set; } = Now;
         public Exception? Failure { get; set; }
-        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken)
+        public PactReceivablesRequest? LastRequest { get; private set; }
+        public TimeSpan Delay { get; set; }
+        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
+            ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
+
+        public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
         {
-            Reads++;
+            Reads++; LastRequest = request;
+            if (Delay > TimeSpan.Zero) await Task.Delay(Delay, cancellationToken);
             if (Failure is not null) throw Failure;
-            Assert.Equal(new DateOnly(throughDate.Year, throughDate.Month, DateTime.DaysInMonth(throughDate.Year, throughDate.Month)), throughDate);
-            return Task.FromResult(new PactReceivablesSnapshot(Items, ReadAt, false));
+            // Mimic the SQL source: only the requested window and company are returned.
+            var rows = Items.Where(r => DateOnly.FromDateTime(r.DueDate) >= (request.FromDate ?? DateOnly.MinValue)
+                && DateOnly.FromDateTime(r.DueDate) <= request.ThroughDate
+                && (request.CompanyId is null || r.CompanyId == request.CompanyId)).ToList();
+            return new PactReceivablesSnapshot(rows, ReadAt, false);
         }
     }
 
@@ -41,7 +50,7 @@ public sealed class CollectionsCampaignAppServiceTests
             Source, NullLogger<CollectionsCampaignAppService>.Instance);
     }
 
-    private static PactReceivableInstalment Row(int day = 20, decimal amount = 500m, string tenant = "3001",
+    private static PactReceivableInstalment Row(int day = 10, decimal amount = 500m, string tenant = "3001",
         int company = 4, int unit = 101) => new(company, tenant, "Example Customer", "971500003001", "example@example.test",
             unit, $"TP140-{unit}", "TP140", "INV-1", "", new(2026, 10, day), amount, "Installment");
 
@@ -82,7 +91,7 @@ public sealed class CollectionsCampaignAppServiceTests
     public async Task UnitsAndCompaniesAreIndependent_IdsAreStableWithinTheMonth()
     {
         var h = new Harness(); h.Campaign.FinancialSourceValidated = true;
-        h.Source.Items.AddRange([Row(amount: 100m), Row(day: 21, amount: 200m, unit: 202), Row(amount: 300m, company: 32)]);
+        h.Source.Items.AddRange([Row(amount: 100m), Row(day: 12, amount: 200m, unit: 202), Row(amount: 300m, company: 32)]);
         var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items;
         Assert.Equal(3, items.Count); Assert.Equal(3, items.Select(c => c.RecordId).Distinct().Count());
         Assert.Equal(new decimal?[] { 100m, 200m, 300m }, items.Select(c => c.Amount));
@@ -165,5 +174,62 @@ public sealed class CollectionsCampaignAppServiceTests
         parser.ReadFields(); var fields = parser.ReadFields()!;
         Assert.Equal("'=\"Example,\"\nCustomer", fields[4]); Assert.Equal("'+971500003001", fields[5]);
         Assert.Equal("500.00", fields[10]); Assert.Equal(22, fields.Length); Assert.Equal(new[] { "false", "false", "false" }, fields[19..]);
+    }
+
+    [Fact]
+    public async Task DefaultWindowIsJanuaryFirstThroughPreviewDate_AndIsPushedToTheSource()
+    {
+        var h = new Harness(); h.Source.Items.AddRange([Row(), Row(tenant: "3002") with { DueDate = new(2025, 12, 31) }]);
+        var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
+        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), new(2026, 10, 8), null), h.Source.LastRequest);
+        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(2026, 10, 8), report.DateTo);
+        Assert.Empty(report.Items); // Oct 10 is after To; the 2025 row is before From.
+        Assert.Contains(report.RangeNotes!, n => n.Contains("preview month"));
+    }
+
+    [Fact]
+    public async Task ExplicitRangeAndCompanyAreAppliedAtTheSource_PreviewDateStaysSeparate()
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(), Row(tenant: "3002", company: 32), Row(tenant: "3003") with { DueDate = new(2026, 3, 1) }]);
+        var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8), 4,
+            dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 31))).Value!;
+        Assert.Equal(new PactReceivablesRequest(new(2026, 10, 1), new(2026, 10, 31), 4), h.Source.LastRequest);
+        Assert.Equal("3001", Assert.Single(report.Items).TenantId);
+        Assert.Equal(new DateOnly(2026, 10, 8), report.BusinessDate);
+        Assert.Empty(report.RangeNotes!);
+    }
+
+    [Fact]
+    public async Task InvertedRangeIsRejectedWithoutReadingTheSource()
+    {
+        var h = new Harness();
+        var result = await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8),
+            dateFrom: new(2026, 10, 9), dateTo: new(2026, 10, 8));
+        Assert.Equal(CollectionsOutcome.InvalidRequest, result.Outcome); Assert.Equal(0, h.Source.Reads);
+    }
+
+    [Fact]
+    public async Task OverdueStageKeepsItsPolicyCutoff_AndFlagsTheRangeInsteadOfChangingEligibility()
+    {
+        var h = new Harness();
+        h.Source.Items.AddRange([Row(tenant: "A") with { DueDate = new(2026, 2, 5) },   // overdue > 1 month: qualifies
+                                 Row(tenant: "B") with { DueDate = new(2026, 9, 20) }]); // overdue < 1 month: does not
+        var report = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
+        Assert.Equal("A", Assert.Single(report.Items).TenantId);
+        Assert.Contains(report.RangeNotes!, n => n.Contains("08 Sep 2026"));
+    }
+
+    [Fact]
+    public async Task SourceTimeoutIsUnavailable_AndCallerCancellationPropagates()
+    {
+        var h = new Harness { }; h.Source.Delay = TimeSpan.FromSeconds(30);
+        h.Sql.CommandTimeoutSeconds = 1; // budget = 31 s: the caller token fires first below
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8), cancellationToken: cts.Token));
+        h.Source.Failure = new TaskCanceledException(); h.Source.Delay = TimeSpan.Zero;
+        var failed = await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8));
+        Assert.Equal(CollectionsOutcome.FinanceUnavailable, failed.Outcome);
     }
 }

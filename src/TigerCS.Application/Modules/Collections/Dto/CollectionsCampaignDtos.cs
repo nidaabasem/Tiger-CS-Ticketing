@@ -16,7 +16,8 @@ public sealed record CollectionsCampaignPreviewDto(
     string Source, string Stage, string CycleKey, IReadOnlyList<DateOnly> ScheduledDates,
     bool IsScheduledDate, bool FinancialSourceValidated, bool LegacyExclusionsApplied,
     bool CanExportReview, int TotalCount, int ReadyCount, int ReviewCount, int Page, int PageSize,
-    IReadOnlyList<CollectionsCampaignContactDto> Items);
+    IReadOnlyList<CollectionsCampaignContactDto> Items,
+    DateOnly? DateFrom = null, DateOnly? DateTo = null, IReadOnlyList<string>? RangeNotes = null);
 
 /// <summary>Internal API transport; the Web serves Csv as a UTF-8 downloadable file.</summary>
 public sealed record CollectionsCampaignExportDto(string FileName, string Csv, int RowCount);

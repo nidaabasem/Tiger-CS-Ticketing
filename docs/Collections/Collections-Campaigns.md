@@ -105,6 +105,56 @@ contactability per channel, handling of several units with the same phone, and p
 RecordId is an external stable key, **not** a Genesys-generated contact id and **not** durable delivery deduplication.
 Use=InternalReviewOnly and eligibility=false must not be overridden into a live campaign.
 
+## Required non-secret settings (API `appsettings*.json` / environment)
+
+Only names and non-secret values; never commit connection strings or passwords. The local `appsettings.Development.json`
+files stay uncommitted.
+
+| Key | Needed value | Purpose |
+| --- | --- | --- |
+| `Collections:Enabled` | `true` | Otherwise preview returns 503 `CollectionsDisabled` |
+| `CollectionsSource:PactReceivables:Enabled` | `true` | Enables the PACT source (committed default is `false`) |
+| `CollectionsSource:PactReceivables:StartDate` | default `2026-01-01` | Default `@StartDate`; the Campaigns page overrides it per request with *From date* |
+| `CollectionsSource:PactReceivables:CommandTimeoutSeconds` | `120` (1-300) | Per-procedure SQL timeout. API budget = this + 30 s; the Web client timeout (180 s) must stay above it |
+| `CollectionsSource:PactReceivables:ProcedureSuffix` | empty, or `V2` once the reviewed procedures are deployed | Procedure selection |
+| `CollectionsSource:PactReceivables:MaxSourceRows` | `250000` | Source-row cap |
+| `CollectionsSource:PactReceivables:ConnectionStringName` | `PACTRPT` | Name only; the value lives in `ConnectionStrings:PACTRPT` (secret, not documented here) |
+| `Collections:Campaigns:FinancialSourceValidated` / `LegalNoticeExportEnabled` / `MaxExportRows` | `false` / `false` / `5000` | See above |
+| Web `TigerCsApi:BaseUrl` | the API origin, e.g. `https://localhost:7283/` | Web to API calls |
+
+## Due-date range (From date / To date)
+
+The page and API accept `dateFrom` and `dateTo` (instalment due dates, inclusive). Defaults: 1 January of the preview year
+and the preview date. They are sent to the PACT procedures as `@StartDate` / `@EndDate` and the company filter selects the
+procedure(s) that run, so rows outside the window are never read. The **preview date stays separate**: it alone drives the
+schedule and stage eligibility.
+
+### Stage-semantics conflict (flagged, eligibility NOT changed)
+
+* **Overdue reminder** is *scheduled* on day 1; the confirmed rule qualifies instalments due **before the preview date minus one
+  calendar month**. It is not "day-1 overdue", and it is not "everything overdue since January". The label now says so and the
+  response carries `RangeNotes` stating the cut-off and that instalments before *From date* are excluded.
+* **Current month / Follow-up** qualify the whole preview month **including upcoming dates**. With the requested default
+  *To = preview date* (e.g. 8 Oct), instalments due 9-31 Oct are excluded from the read, so the list is smaller than the
+  confirmed policy. The page shows a note; set *To date* to the month end to follow the policy. Decide whether the default
+  *To date* should instead be the end of the preview month for those stages before changing it.
+* **Legal notice / referral** are likewise limited by the window (previous month; older than three months).
+
+## Why the preview used to hang (root cause)
+
+* `CollectionsCampaignAppService.PreviewAsync` always read **both** company procedures (`p4`, `p32`) and only then applied the
+  `companyId` filter in memory. Company 32 finishing in ~874 ms (3,750 rows) says nothing about company 4: its procedure is
+  documented at about 58 s even with a narrower filter (`pact-sql/Receivables-Source-Review.md`) and the log showed no
+  completion line for it. The request therefore stayed pending until p4 finished or the 150 s API budget / 180 s Web timeout
+  or the user's refresh aborted it. The `TaskCanceledException` in `ClientDisconnectMiddleware` is the aborted request
+  (`RequestAborted` cancelled), a symptom, not the cause.
+* Fix: company and due-date window are pushed into the source (a company-32 request no longer runs or waits for p4);
+  timeouts, caller cancellation and source failures are logged with stage, company scope, window, elapsed ms and failure kind
+  (no row content, no credentials). All-company requests still wait for the slower procedure; fixing that needs the reviewed
+  V2 procedures or a validated snapshot cache, and has not been done.
+* UI: the previous error is hidden when a new request starts, and a 170 s watchdog stops a navigation that never answers,
+  re-enables the button and shows a message.
+
 ## Next integration stage
 
 The proposed integration will synchronize records to Genesys, suppress/update them after payment and return channel results.

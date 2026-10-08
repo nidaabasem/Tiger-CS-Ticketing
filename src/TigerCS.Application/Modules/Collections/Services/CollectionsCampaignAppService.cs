@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Mail;
 using System.Security.Cryptography;
@@ -19,7 +20,7 @@ public sealed class CollectionsCampaignAppService(
     public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
         CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
         string? search = null, int page = 1, int pageSize = 25, bool forExport = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
         var permissions = await authorization.ResolveAsync(caller, cancellationToken);
         if (!permissions.CanReadFinancials || (forExport && !permissions.CanSendReminders))
@@ -34,31 +35,57 @@ public sealed class CollectionsCampaignAppService(
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a campaign stage, a date in 2000-2100, company 4 or 32, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
 
+        // Instalment due-date window. Defaults: 1 January of the preview year through the preview date.
+        // The preview date still alone drives stage scheduling/eligibility; the window only limits which instalments are read.
+        var from = dateFrom ?? new DateOnly(date.Year, 1, 1);
+        var to = dateTo ?? date;
+        if (from > to || from.Year < 2000 || to.Year > 2100)
+            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
+                "From date must not be after To date, and both must be within 2000-2100.");
+
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
         PactReceivablesSnapshot snapshot;
+        var started = Stopwatch.GetTimestamp();
+        var scope = companyId is { } c ? $"company {c}" : "companies 4 and 32";
         try
         {
-            snapshot = await source.ReadAsync(new DateOnly(date.Year, date.Month,
-                DateTime.DaysInMonth(date.Year, date.Month)), budget.Token);
+            // Company and window are pushed down to the source: a single-company request must not wait for the other
+            // company's (much slower) procedure, and rows outside the window are never read.
+            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId), budget.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            logger.LogInformation("Campaign preview {Stage} ({Scope}) was cancelled by the caller after {ElapsedMs} ms (client disconnected).",
+                selected, scope, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) exceeded the {Budget} s request budget after {ElapsedMs} ms; the caller was still waiting.",
+                selected, scope, from, to, sourceOptions.RequestBudgetSeconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                 "The PACT receivables read timed out. Please retry.");
         }
         catch (PactReceivablesSourceException ex)
         {
+            logger.LogWarning("Campaign preview {Stage} ({Scope}) source failure after {ElapsedMs} ms: {Reason}.",
+                selected, scope, Stopwatch.GetElapsedTime(started).TotalMilliseconds, ex.Message);
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
         }
         catch (Exception ex) when (ex is DbException or InvalidCastException or FormatException or OverflowException)
         {
-            logger.LogWarning("Campaign source read failed ({ExceptionType}).", ex.GetType().Name);
+            logger.LogWarning("Campaign preview {Stage} ({Scope}) source read failed after {ElapsedMs} ms ({ExceptionType}).",
+                selected, scope, Stopwatch.GetElapsedTime(started).TotalMilliseconds, ex.GetType().Name);
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                 "The campaign source could not be read.");
         }
 
-        var rows = snapshot.Items.Where(r => r.Amount > 0).ToList();
+        logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} source rows in {ElapsedMs} ms.",
+            selected, scope, from, to, snapshot.Items.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        // Defensive: a legacy source may ignore the window.
+        var rows = snapshot.Items.Where(r => r.Amount > 0
+            && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                 "PACT returned a receivable without a valid company/customer identity.");
@@ -138,12 +165,13 @@ public sealed class CollectionsCampaignAppService(
             "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
             campaignOptions.FinancialSourceValidated, snapshot.LegacyExclusionsApplied, permissions.CanSendReminders,
             contacts.Count, contacts.Count(c => c.Status == "Ready"), contacts.Count(c => c.Status == "NeedsReview"),
-            page, pageSize, forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList()));
+            page, pageSize, forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to)));
     }
 
     public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
         string? stage, string? mode, DateOnly? businessDate = null, int? companyId = null, string? search = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
         // No source read for an unauthorized export, including malformed requests.
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanSendReminders)
@@ -151,7 +179,7 @@ public sealed class CollectionsCampaignAppService(
         if (mode is not ("review" or "genesys"))
             return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest, "Choose review or genesys export.");
         var result = await PreviewAsync(caller, stage, businessDate, companyId, search,
-            forExport: true, cancellationToken: cancellationToken);
+            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo);
         if (!result.IsSuccess) return CollectionsResult<CollectionsCampaignExportDto>.Fail(result.Outcome, result.Detail);
         var report = result.Value!;
         if (mode == "genesys" && (report.Stage == nameof(CollectionsCampaignStage.LegalReferral)

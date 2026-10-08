@@ -19,8 +19,17 @@ public sealed class PactSqlReceivablesSource(
     private static readonly string Build =
         typeof(PactSqlReceivablesSource).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
 
-    public async Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken)
+    public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
+        ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
+
+    public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
     {
+        var throughDate = request.ThroughDate;
+        var startDate = (request.FromDate?.ToDateTime(TimeOnly.MinValue) ?? options.StartDate).Date;
+        if (request.CompanyId is not (null or 4 or 32))
+            throw new PactReceivablesSourceException("The PACT report company is not supported.");
+        if (startDate > EndOfDay(throughDate))
+            throw new PactReceivablesSourceException("The PACT report start date is after its end date.");
         var connectionString = configuration.GetConnectionString(options.ConnectionStringName);
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new PactReceivablesSourceException("The PACT report connection is not configured.");
@@ -42,8 +51,10 @@ public sealed class PactSqlReceivablesSource(
         // latency is the slower procedure rather than the sum. If one fails, the other is cancelled and the
         // original failure (not the follow-on cancellation) is reported. No partial list is ever returned.
         using var fault = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // A company-scoped request must not wait for (or be failed by) the other company's procedure.
         var work = new[] { (Company: 4, Procedure: ProcedureName(4, options.ProcedureSuffix)), (Company: 32, Procedure: ProcedureName(32, options.ProcedureSuffix)) }
-            .Select(x => Task.Run(() => ReadCompanyAsync(connectionString, x.Company, x.Procedure, endDate, fault.Token, cancellationToken), CancellationToken.None))
+            .Where(x => request.CompanyId is null || request.CompanyId == x.Company)
+            .Select(x => Task.Run(() => ReadCompanyAsync(connectionString, x.Company, x.Procedure, startDate, endDate, fault.Token, cancellationToken), CancellationToken.None))
             .ToArray();
         try
         {
@@ -63,15 +74,15 @@ public sealed class PactSqlReceivablesSource(
         if (rows.Count > Math.Clamp(options.MaxSourceRows, 1, 1000000))
             throw new PactReceivablesSourceException("The PACT report exceeded the configured source-row limit; no partial list was returned.");
 
-        logger.LogInformation("PACT receivables read complete: {Rows} rows from both companies in {ElapsedMs} ms (parallel); requestBudgetSeconds={Budget}; build={Build}.",
-            rows.Count, Stopwatch.GetElapsedTime(requestStarted).TotalMilliseconds, options.RequestBudgetSeconds, Build);
+        logger.LogInformation("PACT receivables read complete: {Rows} rows from {Companies} in {ElapsedMs} ms (parallel); startDate={StartDate:O}, endDate={EndDate:O}; requestBudgetSeconds={Budget}; build={Build}.",
+            rows.Count, request.CompanyId is { } only ? $"company {only}" : "companies 4 and 32", Stopwatch.GetElapsedTime(requestStarted).TotalMilliseconds, startDate, endDate, options.RequestBudgetSeconds, Build);
         if (options.ApplyLegacyExclusions)
             rows = ApplyExclusions(rows, downPayments, options).ToList();
         return new PactReceivablesSnapshot(rows, timeProvider.GetUtcNow().UtcDateTime, options.ApplyLegacyExclusions);
     }
 
     private async Task<List<PactReceivableInstalment>> ReadCompanyAsync(
-        string connectionString, int company, string procedure, DateTime endDate, CancellationToken token, CancellationToken callerToken)
+        string connectionString, int company, string procedure, DateTime startDate, DateTime endDate, CancellationToken token, CancellationToken callerToken)
     {
         var rows = new List<PactReceivableInstalment>();
         var started = Stopwatch.GetTimestamp();
@@ -85,7 +96,7 @@ public sealed class PactSqlReceivablesSource(
                 CommandType = CommandType.StoredProcedure,
                 CommandTimeout = Math.Clamp(options.CommandTimeoutSeconds, 1, 300)
             };
-            command.Parameters.Add("@StartDate", SqlDbType.DateTime).Value = new DateTime(2000, 1, 1);
+            command.Parameters.Add("@StartDate", SqlDbType.DateTime).Value = startDate;
             command.Parameters.Add("@EndDate", SqlDbType.DateTime).Value = endDate;
             // Include sub-dirham balances; only positive amounts survive in the service.
             command.Parameters.Add("@MinAmount", SqlDbType.Int).Value = 0;
@@ -124,8 +135,16 @@ public sealed class PactSqlReceivablesSource(
                 Math.Clamp(options.CommandTimeoutSeconds, 1, 300), Build);
             throw;
         }
+        catch (Exception ex)
+        {
+            // Failure reason without message text (it can carry server names); no row content or credentials.
+            logger.LogWarning("PACT receivables procedure {Procedure} (company {CompanyId}) failed after {ElapsedMs} ms with {Rows} rows read: {ExceptionType}{SqlNumber}; build={Build}.",
+                procedure, company, Stopwatch.GetElapsedTime(started).TotalMilliseconds, rows.Count, ex.GetType().Name,
+                ex is SqlException sql ? $" (SQL error {sql.Number})" : "", Build);
+            throw;
+        }
         logger.LogInformation("PACT receivables procedure {Procedure} (company {CompanyId}) returned {Rows} rows ({ZeroRows} with zero amount) in {ElapsedMs} ms; startDate={StartDate:O}, endDate={EndDate:O}, minAmount=0; build={Build}.",
-            procedure, company, rows.Count, zeroRows, Stopwatch.GetElapsedTime(started).TotalMilliseconds, new DateTime(2000, 1, 1), endDate, Build);
+            procedure, company, rows.Count, zeroRows, Stopwatch.GetElapsedTime(started).TotalMilliseconds, startDate, endDate, Build);
         return rows;
     }
 
