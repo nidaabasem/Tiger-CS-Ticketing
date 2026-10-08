@@ -1,0 +1,1252 @@
+From 2f00db7011b041e9cab2d0f1f419517b3a0a68ee Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 7 Oct 2026 16:52:00 +0400
+Subject: [PATCH] Add direct PACT due and overdue customer list to Ticketing
+
+---
+ docs/Collections/Pact-Receivable-Customers.md |  75 +++++++++
+ .../Controllers/PactReceivablesController.cs  |  48 ++++++
+ src/TigerCS.Api/appsettings.json              |  63 +++++++
+ .../Abstractions/IPactReceivablesSource.cs    |  18 ++
+ .../Collections/Dto/PactReceivablesDtos.cs    |  18 ++
+ .../Collections/PactReceivablesOptions.cs     |  18 ++
+ .../PactReceivableCustomersAppService.cs      | 118 +++++++++++++
+ ...frastructureServiceCollectionExtensions.cs |   4 +
+ .../Collections/PactSqlReceivablesSource.cs   | 128 +++++++++++++++
+ .../PactReceivablesEndpointTests.cs           |  72 ++++++++
+ .../Services/PactReceivableCustomersTests.cs  | 155 ++++++++++++++++++
+ .../ProtectedEndpointInventoryTests.cs        |   1 +
+ .../OpenApi/SwaggerDocumentTests.cs           |   1 +
+ .../Web/PactReceivablesRenderTests.cs         |  96 +++++++++++
+ .../Pages/Collections/Receivables.cshtml      | 131 +++++++++++++++
+ .../Pages/Collections/Receivables.cshtml.cs   |  43 +++++
+ src/TigerCS.Web/Pages/Shared/_Nav.cshtml      |   6 +-
+ .../Services/Api/CollectionsApiClient.cs      |  12 ++
+ src/TigerCS.Web/wwwroot/css/site.css          |  30 ++++
+ src/TigerCS.Web/wwwroot/js/receivables.js     |  14 ++
+ 20 files changed, 1050 insertions(+), 1 deletion(-)
+ create mode 100644 docs/Collections/Pact-Receivable-Customers.md
+ create mode 100644 src/TigerCS.Api/Controllers/PactReceivablesController.cs
+ create mode 100644 src/TigerCS.Application/Modules/Collections/Abstractions/IPactReceivablesSource.cs
+ create mode 100644 src/TigerCS.Application/Modules/Collections/Dto/PactReceivablesDtos.cs
+ create mode 100644 src/TigerCS.Application/Modules/Collections/PactReceivablesOptions.cs
+ create mode 100644 src/TigerCS.Application/Modules/Collections/Services/PactReceivableCustomersAppService.cs
+ create mode 100644 src/TigerCS.Infrastructure/Modules/Collections/PactSqlReceivablesSource.cs
+ create mode 100644 src/TigerCS.Tests/Collections/Integration/PactReceivablesEndpointTests.cs
+ create mode 100644 src/TigerCS.Tests/Collections/Services/PactReceivableCustomersTests.cs
+ create mode 100644 src/TigerCS.Tests/Web/PactReceivablesRenderTests.cs
+ create mode 100644 src/TigerCS.Web/Pages/Collections/Receivables.cshtml
+ create mode 100644 src/TigerCS.Web/Pages/Collections/Receivables.cshtml.cs
+ create mode 100644 src/TigerCS.Web/wwwroot/js/receivables.js
+
+diff --git a/docs/Collections/Pact-Receivable-Customers.md b/docs/Collections/Pact-Receivable-Customers.md
+new file mode 100644
+index 0000000..1147314
+--- /dev/null
++++ b/docs/Collections/Pact-Receivable-Customers.md
+@@ -0,0 +1,75 @@
++# PACT Due & Overdue Customers
++
++TigerCS lists PACT customers with a positive outstanding instalment due today or earlier, even if they have no TigerCS ticket or customer-directory record. The supplied report procedures cover company **4 (Dubai)** and **32 (Sharjah)** only. This feature adds no Genesys route, reminder send, next-payment calculation, database migration or background job.
++
++## UI and API
++
++- Navigation: **Collections**, `/Collections/Receivables`.
++- Authenticated staff API: `GET /api/collections/receivables/customers?companyId=4&status=all&search=3001&page=1&pageSize=25`.
++- Existing Collections financial-read authorization is enforced before any external read; the central System Administrator override applies. Reporting User alone is insufficient.
++- `companyId`: omitted, `4`, or `32`; `status`: `all` (default), `due`, or `overdue`. Search matches name, tenant ID, mobile, email or unit. Page size is 1–100, default 25.
++- One customer per `(CompanyID, TenantID)`, with every returned unit/instalment under that customer. Equal tenant IDs across companies are separate accounts; there is no CRM identity guess.
++- Dubai business date is provided by the existing Collections clock. **Due** means today; **Overdue** means before today. Future dates and amounts <= 0 are excluded. `all` is the union, not a requirement to have both.
++- Count metrics reflect the selected filters before pagination. Pagination follows customer grouping, with overdue customers and oldest dates first.
++- Response fields include company, tenant ID, name, mobile, email, units, dates, overdue days, due/overdue amounts, source read time, configured currency and whether legacy exclusions were applied.
++- Disabled or failed sources return 503, never an empty/partial success. Invalid filters return 400, unauthorized callers 401/403. The UI has corresponding error/empty/loading states.
++
++## Direct SQL source and amount limitation
++
++`PactSqlReceivablesSource` calls `dbo.p4AccountReceivables` and `dbo.p32AccountReceivables` in the configured `PACTRPT` database. It passes `@StartDate = 2000-01-01` (matching the supplied procedures' internal lower bound), an inclusive SQL datetime `@EndDate` at the end of the Dubai business date, and `@MinAmount = 0`. Positive balances below 1 AED therefore remain visible. Stored-procedure names and parameters are not caller-controlled. There is a shared request deadline and a source-row cap; either failure rejects the complete response.
++
++The supplied definitions calculate `Amount` from their payment allocation as `abs(b.PlanFutureAmount - b.NewFutureAmount - PlanFutureAmount)`. Their final invoice-to-schedule join is by tenant tag alone. Several returned rows on one date may therefore be repeated allocations or legitimate instalments. The application preserves all rows, without `DISTINCT`. A due/overdue bucket containing multiple rows on a date has a **null total** and `AmountStatus = NeedsReview`; the UI displays **Review needed** and exposes the rows. An unambiguous bucket is summed as provided. This is a conservative report of those procedures, not independent proof that the underlying allocation is correct. Unit/voucher associations remain exactly as returned by PACT.
++
++PACT returns no currency field. `Currency` defaults to AED and is marked `CurrencySource = Configured`; confirm this during environment setup.
++
++## Existing EDSM exclusions
++
++With `ApplyLegacyExclusions = true` (default), the supplied function's filters are reproduced:
++
++| Exclusion | Matching rule |
++| --- | --- |
++| Booking/down-payment rows | Exact `(UnitCode, DueDate)` returned by the supplied CRM query |
++| TP121 | DueDate > 2025-12-15 |
++| TP122 | DueDate > 2026-02-20 |
++| TP123 | DueDate > 2026-03-20 |
++| TP103, TP102, TP104, TP101 | Any unit starting with the prefix |
++| Optional PDC unit list | Entire UnitCode, matching the supplied optional argument |
++| Names containing `*` | Entire row |
++| `Helper.SEPCIAL_CASES` | Entire UnitCode; the 50 active values supplied in `Pasted text(6).txt` are loaded in the API configuration |
++
++The supplied `GetHandoverAndDownPaymentPaymentsAsync` method executes only the Booking & Downpayment query: join `tblPayment` to `tblLead` by `LeadID`, require payment type 2 or 3, lead status != 6, and DueDate >= 2025-11-01. The unit key is `TRIM(TRIM(l.ProjectCode) + '-' + TRIM(l.UnitNumber))`. `p.Amount` is returned but does not participate in matching. There is **no upper date limit**: the supplied `TotDate` argument is unused. The Handover/After Handover branches and project filters are commented out and remain inactive. TigerCS executes this fixed query directly with a typed date parameter, so no new CRM stored procedure is needed.
++
++The commented TP119 condition remains inactive. String comparisons are case-sensitive; CRM keys retain the exact timestamp instead of silently reducing it to a date.
++
++Only the active `SEPCIAL_CASES` entries were imported. Commented entries, `DN_SEPCIAL_CASES` and `GULF_CUSTOMERS` are not added to this filter, because the original function does not use them. Individual configured TP119 units are excluded, while the commented TP119 prefix/date rule remains inactive.
++
++## Environment setup
++
++The feature ships disabled. The CRM query and the 50 active special-case units come from the supplied EDSM source; no credentials or exclusion values are invented. Set server-side configuration/secrets:
++
++| Setting | Required value |
++| --- | --- |
++| `Collections:Enabled` | `true` |
++| `CollectionsSource:PactReceivables:Enabled` | `true`, after setup and validation |
++| `ConnectionStrings:PACTRPT` | Connection to the report database, using an account permitted to execute the two reports and read their required dependencies |
++| `ConnectionStrings:CrmDatabase` | Connection to the same CRM database used by EDSM's `connectionStrings.CRM`, with SELECT access to `tblPayment` and `tblLead`; the connection setting name is configurable |
++| `CollectionsSource:PactReceivables:SpecialCaseUnitCodes` | The supplied 50 active `Helper.SEPCIAL_CASES` values are included; maintain the list if the original changes |
++| `CollectionsSource:PactReceivables:SpecialCasesConfigured` | Included as `true` after importing the supplied list; a custom deployment with an empty list requires explicit confirmation that it is empty |
++| `CollectionsSource:PactReceivables:PdcExcludedUnitCodes` | Optional original PDC unit exclusions; empty reproduces an omitted `pdcPayments` argument |
++| `CollectionsSource:PactReceivables:Currency` | Confirmed reporting currency; default AED |
++
++Environment-variable names use double underscores, e.g. `ConnectionStrings__PACTRPT` and `CollectionsSource__PactReceivables__Enabled`.
++
++The supplied CRM query and `Helper.SEPCIAL_CASES` list are now incorporated. Remaining setup is the actual server-side PACT/CRM connections and build/UAT validation before activation. Missing connection/special-case configuration blocks the list and explains the missing source in the API; it does not silently omit the filter.
++
++`ApplyLegacyExclusions = false` explicitly selects the raw PACT list and the UI identifies it. It is not the supplied filtered EDSM function and is not enabled in the shipped configuration.
++
++`CommandTimeoutSeconds` defaults to 60 (clamped 1–300), `MaxSourceRows` to 250000 (clamped 1–1000000). Every request reads both reports before filtering/pagination; large-source performance needs validation in the target environment. There is no cache or synchronization between independently read CRM and PACT databases.
++
++## Validation
++
++Automated fixtures cover no-ticket customers, the Dubai date boundary, positive sub-dirham balances, future/settled exclusion, union selection, company/tenant identity, grouping before paging, formatted mobile search, legacy cutoff boundaries, raw-row preservation, ambiguous totals, authorization before reads and source failures. Endpoint tests use the real API/JWT host with a fake PACT source, not a real SQL server. The route is included in the OpenAPI and protected-endpoint inventories.
++
++**Real PACT/CRM and UAT checks have not been run.** Before activation, compare known customers with PACT: due today, overdue, both, partial-payment remainder, multiple units/invoices, repeated dates, booking/down-payment exclusions, special cases, and optional PDC exclusions. Confirm the complete list, procedure performance and currency. The report procedures' allocation/join issue must be checked against expected accounting figures; the UI's review state does not repair it.
++
++Current verification: patch whitespace, JSON parsing and JavaScript syntax checks passed. The configured special-case list was compared with the supplied source: all 50 active entries match, with no duplicates and no commented/other-list entries. The .NET SDK is unavailable in the editing environment, so the added tests and Razor build have **not been run**. GitHub writes returned 403 and no PR/CI run was created; complete the .NET build/test workflow before merging or deploying.
+diff --git a/src/TigerCS.Api/Controllers/PactReceivablesController.cs b/src/TigerCS.Api/Controllers/PactReceivablesController.cs
+new file mode 100644
+index 0000000..3d8d12f
+--- /dev/null
++++ b/src/TigerCS.Api/Controllers/PactReceivablesController.cs
+@@ -0,0 +1,48 @@
++using System.Security.Claims;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using TigerCS.Api.OpenApi;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Application.Modules.Collections.Services;
++using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
++using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
++
++namespace TigerCS.Api.Controllers;
++
++[ApiController]
++[Authorize(Policy = PolicyNames.AuthenticatedStaff)]
++[Route("api/collections/receivables/customers")]
++[Tags(OpenApiTags.Collections)]
++public sealed class PactReceivablesController(PactReceivableCustomersAppService service) : ControllerBase
++{
++    [HttpGet]
++    [ProducesResponseType<PactReceivableCustomersDto>(StatusCodes.Status200OK)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
++    public async Task<IActionResult> List([FromQuery] int? companyId, [FromQuery] string? status,
++        [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25,
++        CancellationToken cancellationToken = default)
++    {
++        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var employeeId)) return Unauthorized();
++        var caller = new CollectionsCaller(employeeId, User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
++            User.FindAll(TigerCsClaimTypes.DepartmentId).Select(c => int.TryParse(c.Value, out var d) ? d : (int?)null).OfType<int>().ToArray());
++        var result = await service.ListAsync(caller, companyId, status, search, page, pageSize, cancellationToken);
++        if (result.IsSuccess) return Ok(result.Value);
++        var (http, code) = result.Outcome switch
++        {
++            CollectionsOutcome.Forbidden => (403, "Forbidden"),
++            CollectionsOutcome.InvalidRequest => (400, "InvalidRequest"),
++            CollectionsOutcome.Disabled => (503, "CollectionsDisabled"),
++            _ => (503, "FinanceUnavailable")
++        };
++        var response = Problem(statusCode: http, title: code, detail: result.Detail ?? code,
++            type: $"https://tigercs.internal/problems/collections/{code}");
++        if (response.Value is ProblemDetails problem)
++        {
++            problem.Extensions["code"] = code;
++            problem.Extensions["message"] = result.Detail ?? code;
++        }
++        return response;
++    }
++}
+diff --git a/src/TigerCS.Api/appsettings.json b/src/TigerCS.Api/appsettings.json
+index 3e02c91..1021cbc 100644
+--- a/src/TigerCS.Api/appsettings.json
++++ b/src/TigerCS.Api/appsettings.json
+@@ -46,6 +46,69 @@
+     "BusinessRulesConfirmed": false
+   },
+   "CollectionsSource": {
++    "PactReceivables": {
++      "Enabled": false,
++      "ConnectionStringName": "PACTRPT",
++      "CommandTimeoutSeconds": 60,
++      "MaxSourceRows": 250000,
++      "Currency": "AED",
++      "ApplyLegacyExclusions": true,
++      "CrmConnectionStringName": "CrmDatabase",
++      "SpecialCasesConfigured": true,
++      "SpecialCaseUnitCodes": [
++        "TP129-8303",
++        "TP129-2102",
++        "TP124-3107",
++        "TP124-606",
++        "TP124-1106",
++        "TP124-2702",
++        "TP124-2703",
++        "TP124-2704",
++        "TP118-2308-A",
++        "TP119-3005",
++        "TP119-3007",
++        "TP119-3008",
++        "TP119-3102",
++        "TP119-3107",
++        "TP119-3202",
++        "TP119-3203",
++        "TP119-3205",
++        "TP119-3206",
++        "TP119-3208",
++        "TP119-3302",
++        "TP119-3307",
++        "TP119-3308",
++        "TP119-3401",
++        "TP119-3403",
++        "TP119-3404",
++        "TP119-3405",
++        "TP119-3406",
++        "TP119-3502",
++        "TP119-3504",
++        "TP119-3507",
++        "TP119-3601",
++        "TP119-3602",
++        "TP119-3603",
++        "TP119-3604",
++        "TP119-3605",
++        "TP119-3608",
++        "TP119-402",
++        "TP119-403",
++        "TP119-404",
++        "TP119-405",
++        "TP119-410",
++        "TP119-411",
++        "TP119-412",
++        "TP119-416",
++        "TP119-1502",
++        "TP119-1901",
++        "TP119-1008",
++        "TP119-1012",
++        "TP119-1114",
++        "TP119-805"
++      ],
++      "PdcExcludedUnitCodes": []
++    },
+     "Provider": "Unavailable",
+     "EdsmProvider": "Pact",
+     "EdsmNumberCulture": "en-US",
+diff --git a/src/TigerCS.Application/Modules/Collections/Abstractions/IPactReceivablesSource.cs b/src/TigerCS.Application/Modules/Collections/Abstractions/IPactReceivablesSource.cs
+new file mode 100644
+index 0000000..7c0a6b0
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/Abstractions/IPactReceivablesSource.cs
+@@ -0,0 +1,18 @@
++namespace TigerCS.Application.Modules.Collections.Abstractions;
++
++public interface IPactReceivablesSource
++{
++    Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken);
++}
++
++public sealed record PactReceivableInstalment(
++    int CompanyId, string TenantId, string FullName, string Mobile, string Email,
++    int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
++    string ChequeNumber, DateTime DueDate, decimal Amount, string SourceStatus);
++
++public sealed record PactReceivablesSnapshot(
++    IReadOnlyList<PactReceivableInstalment> Items,
++    DateTime ReadAtUtc,
++    bool LegacyExclusionsApplied);
++
++public sealed class PactReceivablesSourceException(string message) : Exception(message);
+diff --git a/src/TigerCS.Application/Modules/Collections/Dto/PactReceivablesDtos.cs b/src/TigerCS.Application/Modules/Collections/Dto/PactReceivablesDtos.cs
+new file mode 100644
+index 0000000..e878e8d
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/Dto/PactReceivablesDtos.cs
+@@ -0,0 +1,18 @@
++namespace TigerCS.Application.Modules.Collections.Dto;
++
++public sealed record PactReceivableInstalmentDto(
++    int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
++    string ChequeNumber, DateOnly DueDate, decimal Amount, string Status);
++
++public sealed record PactReceivableCustomerDto(
++    int CompanyId, string CompanyName, string TenantId, string FullName,
++    string Mobile, string Email, bool HasDue, bool HasOverdue,
++    decimal? DueAmount, decimal? OverdueAmount, string AmountStatus,
++    DateOnly EarliestDueDate, int OverdueDays,
++    IReadOnlyList<PactReceivableInstalmentDto> Instalments);
++
++public sealed record PactReceivableCustomersDto(
++    DateOnly BusinessDate, DateTime ReadAtUtc, bool LegacyExclusionsApplied,
++    IReadOnlyList<int> CompanyIds, string Currency, string CurrencySource,
++    int TotalCount, int DueCustomerCount, int OverdueCustomerCount,
++    int Page, int PageSize, IReadOnlyList<PactReceivableCustomerDto> Items);
+diff --git a/src/TigerCS.Application/Modules/Collections/PactReceivablesOptions.cs b/src/TigerCS.Application/Modules/Collections/PactReceivablesOptions.cs
+new file mode 100644
+index 0000000..a48f941
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/PactReceivablesOptions.cs
+@@ -0,0 +1,18 @@
++namespace TigerCS.Application.Modules.Collections;
++
++/// <summary>Direct PACT report reads; independent of the per-customer EDSM APIs.</summary>
++public sealed class PactReceivablesOptions
++{
++    public const string SectionName = "CollectionsSource:PactReceivables";
++    public bool Enabled { get; set; }
++    public string ConnectionStringName { get; set; } = "PACTRPT";
++    public int CommandTimeoutSeconds { get; set; } = 60;
++    public int MaxSourceRows { get; set; } = 250000;
++    public string Currency { get; set; } = "AED";
++    public bool ApplyLegacyExclusions { get; set; } = true;
++    public string CrmConnectionStringName { get; set; } = "CrmDatabase";
++    /// <summary>Set after copying the actual Helper.SEPCIAL_CASES list; an empty list must be intentional.</summary>
++    public bool SpecialCasesConfigured { get; set; }
++    public List<string> SpecialCaseUnitCodes { get; set; } = [];
++    public List<string> PdcExcludedUnitCodes { get; set; } = [];
++}
+diff --git a/src/TigerCS.Application/Modules/Collections/Services/PactReceivableCustomersAppService.cs b/src/TigerCS.Application/Modules/Collections/Services/PactReceivableCustomersAppService.cs
+new file mode 100644
+index 0000000..3423cc2
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/Services/PactReceivableCustomersAppService.cs
+@@ -0,0 +1,118 @@
++using System.Data.Common;
++using Microsoft.Extensions.Logging;
++using TigerCS.Application.Modules.Collections.Abstractions;
++using TigerCS.Application.Modules.Collections.Dto;
++
++namespace TigerCS.Application.Modules.Collections.Services;
++
++public sealed class PactReceivableCustomersAppService(
++    CollectionsOptions collectionsOptions,
++    PactReceivablesOptions sourceOptions,
++    CollectionsAuthorizationService authorization,
++    CollectionsClock clock,
++    IPactReceivablesSource source,
++    ILogger<PactReceivableCustomersAppService> logger)
++{
++    public async Task<CollectionsResult<PactReceivableCustomersDto>> ListAsync(
++        CollectionsCaller caller, int? companyId = null, string? status = null,
++        string? search = null, int page = 1, int pageSize = 25,
++        CancellationToken cancellationToken = default)
++    {
++        // Authorize before reading configuration or any external customer data.
++        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.Forbidden);
++        if (!collectionsOptions.Enabled || !sourceOptions.Enabled)
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.Disabled);
++        var view = (status ?? "all").Trim().ToLowerInvariant();
++        if (companyId is not (null or 4 or 32) || view is not ("all" or "due" or "overdue")
++            || page < 1 || pageSize is < 1 or > 100 || (long)(page - 1) * pageSize > int.MaxValue
++            || search?.Length > 200)
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.InvalidRequest,
++                "Choose company 4 or 32, status All/Due/Overdue, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
++
++        var today = clock.BusinessDate;
++        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
++        budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(sourceOptions.CommandTimeoutSeconds, 1, 300)));
++        PactReceivablesSnapshot snapshot;
++        try
++        {
++            snapshot = await source.ReadAsync(today, budget.Token);
++        }
++        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
++        {
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "The PACT receivables read timed out. Please retry.");
++        }
++        catch (PactReceivablesSourceException ex)
++        {
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
++        }
++        catch (Exception ex) when (ex is DbException or InvalidCastException or FormatException or OverflowException)
++        {
++            logger.LogWarning("PACT receivables source failed ({ExceptionType}).", ex.GetType().Name);
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "PACT receivables could not be read. Please retry or contact support.");
++        }
++
++        var live = snapshot.Items.Where(r => r.Amount > 0 && DateOnly.FromDateTime(r.DueDate) <= today).ToList();
++        if (live.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "The source returned a receivable without a valid company/customer identity.");
++
++        List<PactReceivableCustomerDto> customers;
++        try
++        {
++            customers = live.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
++                .Select(g => Map(g.ToList(), today)).ToList();
++        }
++        catch (OverflowException)
++        {
++            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "The PACT report contains amounts outside the supported range.");
++        }
++        var term = search?.Trim();
++        if (companyId is { } company) customers = customers.Where(c => c.CompanyId == company).ToList();
++        if (!string.IsNullOrWhiteSpace(term))
++        {
++            bool Match(string value) => value.Contains(term, StringComparison.OrdinalIgnoreCase);
++            var digits = term.Where(char.IsDigit).ToArray();
++            var phoneSearch = digits.Length >= 3 && !term.Any(char.IsLetter);
++            customers = customers.Where(c => Match(c.FullName) || Match(c.TenantId) || Match(c.Email)
++                || Match(c.Mobile) || c.Instalments.Any(i => Match(i.UnitCode))
++                || (phoneSearch && new string(c.Mobile.Where(char.IsDigit).ToArray()).Contains(new string(digits), StringComparison.Ordinal)))
++                .ToList();
++        }
++        customers = customers.Where(c => view == "all" || (view == "due" ? c.HasDue : c.HasOverdue))
++            .OrderByDescending(c => c.HasOverdue).ThenBy(c => c.EarliestDueDate)
++            .ThenBy(c => c.FullName, StringComparer.OrdinalIgnoreCase).ThenBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
++            .ToList();
++        return CollectionsResult<PactReceivableCustomersDto>.Ok(new PactReceivableCustomersDto(
++            today, snapshot.ReadAtUtc, snapshot.LegacyExclusionsApplied, [4, 32], sourceOptions.Currency, "Configured",
++            customers.Count, customers.Count(c => c.HasDue), customers.Count(c => c.HasOverdue),
++            page, pageSize, customers.Skip((page - 1) * pageSize).Take(pageSize).ToList()));
++    }
++
++    private static PactReceivableCustomerDto Map(List<PactReceivableInstalment> rows, DateOnly today)
++    {
++        var first = rows[0];
++        var items = rows.OrderBy(r => r.DueDate).ThenBy(r => r.UnitCode, StringComparer.Ordinal)
++            .Select(r => new PactReceivableInstalmentDto(r.UnitId, r.UnitCode, r.ProjectCode, r.VoucherNumber,
++                r.ChequeNumber, DateOnly.FromDateTime(r.DueDate), r.Amount,
++                DateOnly.FromDateTime(r.DueDate) < today ? "Overdue" : "Due")).ToList();
++        // These SPs join invoice rows to payment terms by tenant only. Multiple returned
++        // rows on one date can be duplicated allocations OR legitimate instalments.
++        // Preserve the rows; never silently DISTINCT them or sum an ambiguous date.
++        var due = items.Where(i => i.Status == "Due").ToList();
++        var overdue = items.Where(i => i.Status == "Overdue").ToList();
++        static decimal? SumIfUnambiguous(List<PactReceivableInstalmentDto> bucket) =>
++            bucket.GroupBy(i => i.DueDate).Any(g => g.Count() > 1) ? null : bucket.Sum(i => i.Amount);
++        var dueAmount = SumIfUnambiguous(due);
++        var overdueAmount = SumIfUnambiguous(overdue);
++        var earliest = items.Min(i => i.DueDate);
++        return new PactReceivableCustomerDto(first.CompanyId,
++            first.CompanyId == 4 ? "Tiger Group Dubai" : "Tiger Group Sharjah", first.TenantId.Trim(),
++            first.FullName, first.Mobile, first.Email, due.Count > 0, overdue.Count > 0,
++            dueAmount, overdueAmount, dueAmount is null || overdueAmount is null ? "NeedsReview" : "Provided",
++            earliest, today.DayNumber - earliest.DayNumber, items);
++    }
++}
+diff --git a/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs b/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs
+index 4e06780..3842209 100644
+--- a/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs
++++ b/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs
+@@ -310,6 +310,10 @@ public static class InfrastructureServiceCollectionExtensions
+         services.AddScoped<ICollectionsUnitOfWork, CollectionsUnitOfWork>();
+         services.AddScoped<CollectionsAuthorizationService>();
+         services.AddScoped<CollectionsClock>();
++        services.Configure<PactReceivablesOptions>(configuration.GetSection(PactReceivablesOptions.SectionName));
++        services.AddScoped(sp => sp.GetRequiredService<IOptions<PactReceivablesOptions>>().Value);
++        services.AddScoped<IPactReceivablesSource, PactSqlReceivablesSource>();
++        services.AddScoped<PactReceivableCustomersAppService>();
+         services.AddScoped<CollectionsAccountQueryAppService>();
+         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
+         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
+diff --git a/src/TigerCS.Infrastructure/Modules/Collections/PactSqlReceivablesSource.cs b/src/TigerCS.Infrastructure/Modules/Collections/PactSqlReceivablesSource.cs
+new file mode 100644
+index 0000000..09e036a
+--- /dev/null
++++ b/src/TigerCS.Infrastructure/Modules/Collections/PactSqlReceivablesSource.cs
+@@ -0,0 +1,128 @@
++using System.Data;
++using System.Globalization;
++using Microsoft.Data.SqlClient;
++using Microsoft.Extensions.Configuration;
++using TigerCS.Application.Modules.Collections;
++using TigerCS.Application.Modules.Collections.Abstractions;
++
++namespace TigerCS.Infrastructure.Modules.Collections;
++
++/// <summary>Read-only report procedures on PACTRPT; never writes to TigerCS or PACT.</summary>
++public sealed class PactSqlReceivablesSource(
++    IConfiguration configuration, PactReceivablesOptions options, TimeProvider timeProvider) : IPactReceivablesSource
++{
++    public async Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
++    {
++        var connectionString = configuration.GetConnectionString(options.ConnectionStringName);
++        if (string.IsNullOrWhiteSpace(connectionString))
++            throw new PactReceivablesSourceException("The PACT report connection is not configured.");
++
++        var endDate = businessDate.ToDateTime(TimeOnly.MinValue).AddDays(1).AddMilliseconds(-3);
++        HashSet<(string UnitCode, DateTime DueDate)> downPayments = [];
++        if (options.ApplyLegacyExclusions)
++        {
++            // Do not silently remove the original CRM filter when migrating this function.
++            if (!options.SpecialCasesConfigured)
++                throw new PactReceivablesSourceException("The original special-case unit exclusions have not been configured.");
++            downPayments = await ReadDownPaymentsAsync(cancellationToken);
++        }
++
++        var rows = new List<PactReceivableInstalment>();
++        await using var connection = new SqlConnection(connectionString);
++        await connection.OpenAsync(cancellationToken);
++        foreach (var (company, procedure) in new[] { (4, "dbo.p4AccountReceivables"), (32, "dbo.p32AccountReceivables") })
++        {
++            using var command = new SqlCommand(procedure, connection)
++            {
++                CommandType = CommandType.StoredProcedure,
++                CommandTimeout = Math.Clamp(options.CommandTimeoutSeconds, 1, 300)
++            };
++            command.Parameters.Add("@StartDate", SqlDbType.DateTime).Value = new DateTime(2000, 1, 1);
++            command.Parameters.Add("@EndDate", SqlDbType.DateTime).Value = endDate;
++            // Include sub-dirham balances; only positive amounts survive in the service.
++            command.Parameters.Add("@MinAmount", SqlDbType.Int).Value = 0;
++            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
++            var columns = Enumerable.Range(0, reader.FieldCount).ToDictionary(reader.GetName, x => x, StringComparer.OrdinalIgnoreCase);
++            foreach (var name in new[] { "CompanyID", "TenantID", "FullName", "Mobile", "Email", "UnitID", "UnitCode", "VoucherNumber", "ChequeNumber", "DueDate", "Amount", "Status" })
++                if (!columns.ContainsKey(name))
++                    throw new PactReceivablesSourceException("The PACT report result does not match the expected column contract.");
++
++            string Text(string name) => columns.TryGetValue(name, out var index) && !reader.IsDBNull(index)
++                ? Convert.ToString(reader.GetValue(index), CultureInfo.InvariantCulture) ?? "" : "";
++            while (await reader.ReadAsync(cancellationToken))
++            {
++                if (reader.IsDBNull(columns["DueDate"]) || reader.IsDBNull(columns["Amount"]))
++                    throw new PactReceivablesSourceException("The PACT report returned an instalment without a date or amount.");
++                var rowCompany = Convert.ToInt32(reader.GetValue(columns["CompanyID"]), CultureInfo.InvariantCulture);
++                if (rowCompany != company)
++                    throw new PactReceivablesSourceException("The PACT report returned an unexpected company identity.");
++                rows.Add(new PactReceivableInstalment(rowCompany, Text("TenantID"), Text("FullName"), Text("Mobile"), Text("Email"),
++                    reader.IsDBNull(columns["UnitID"]) ? null : Convert.ToInt32(reader.GetValue(columns["UnitID"]), CultureInfo.InvariantCulture),
++                    Text("UnitCode"), Text("ProjectCode"), Text("VoucherNumber"), Text("ChequeNumber"),
++                    reader.GetDateTime(columns["DueDate"]), Convert.ToDecimal(reader.GetValue(columns["Amount"]), CultureInfo.InvariantCulture), Text("Status")));
++                if (rows.Count > Math.Clamp(options.MaxSourceRows, 1, 1000000))
++                    throw new PactReceivablesSourceException("The PACT report exceeded the configured source-row limit; no partial list was returned.");
++            }
++        }
++
++        if (options.ApplyLegacyExclusions)
++            rows = ApplyExclusions(rows, downPayments, options).ToList();
++        return new PactReceivablesSnapshot(rows, timeProvider.GetUtcNow().UtcDateTime, options.ApplyLegacyExclusions);
++    }
++
++    private async Task<HashSet<(string UnitCode, DateTime DueDate)>> ReadDownPaymentsAsync(CancellationToken cancellationToken)
++    {
++        var connectionString = configuration.GetConnectionString(options.CrmConnectionStringName);
++        if (string.IsNullOrWhiteSpace(connectionString))
++            throw new PactReceivablesSourceException("The CRM booking/down-payment exclusion connection is not configured.");
++        var keys = new HashSet<(string UnitCode, DateTime DueDate)>();
++        await using var connection = new SqlConnection(connectionString);
++        await connection.OpenAsync(cancellationToken);
++        // The supplied EDSM method only executes its Booking & Downpayment branch.
++        // Its Handover branches are commented out and TotDate is not referenced:
++        // keep the original absence of an upper date/project filter.
++        using var command = new SqlCommand("""
++            SELECT TRIM(TRIM(l.ProjectCode) + '-' + TRIM(l.UnitNumber)) AS UnitCode,
++                   p.Amount, p.DueDate
++            FROM tblPayment p
++            INNER JOIN tblLead l ON l.ID = p.LeadID
++            WHERE p.[Type] IN (2, 3)
++              AND l.Status != 6
++              AND p.DueDate >= @FromDate
++            """, connection)
++        {
++            CommandType = CommandType.Text,
++            CommandTimeout = Math.Clamp(options.CommandTimeoutSeconds, 1, 300)
++        };
++        command.Parameters.Add("@FromDate", SqlDbType.DateTime).Value = new DateTime(2025, 11, 1);
++        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
++        var columns = Enumerable.Range(0, reader.FieldCount).ToDictionary(reader.GetName, x => x, StringComparer.OrdinalIgnoreCase);
++        if (!columns.TryGetValue("UnitCode", out var unit) || !columns.TryGetValue("DueDate", out var date))
++            throw new PactReceivablesSourceException("The CRM exclusion result does not match the expected column contract.");
++        var rowCount = 0;
++        while (await reader.ReadAsync(cancellationToken))
++        {
++            if (reader.IsDBNull(unit) || reader.IsDBNull(date))
++                throw new PactReceivablesSourceException("The CRM exclusions returned a row without a unit or date.");
++            keys.Add((reader.GetString(unit), reader.GetDateTime(date)));
++            if (++rowCount > Math.Clamp(options.MaxSourceRows, 1, 1000000))
++                throw new PactReceivablesSourceException("The CRM exclusions exceeded the source-row limit.");
++        }
++        return keys;
++    }
++
++    /// <summary>Exact date matching and unit-level PDC exclusions reproduce the supplied EDSM function.</summary>
++    public static IEnumerable<PactReceivableInstalment> ApplyExclusions(
++        IEnumerable<PactReceivableInstalment> rows, IReadOnlySet<(string UnitCode, DateTime DueDate)> downPayments,
++        PactReceivablesOptions options)
++    {
++        var special = options.SpecialCaseUnitCodes.ToHashSet(StringComparer.Ordinal);
++        var pdc = options.PdcExcludedUnitCodes.ToHashSet(StringComparer.Ordinal);
++        return rows.Where(r => !downPayments.Contains((r.UnitCode, r.DueDate))
++            && !(r.UnitCode.StartsWith("TP121", StringComparison.Ordinal) && r.DueDate > new DateTime(2025, 12, 15))
++            && !(r.UnitCode.StartsWith("TP122", StringComparison.Ordinal) && r.DueDate > new DateTime(2026, 2, 20))
++            && !(r.UnitCode.StartsWith("TP123", StringComparison.Ordinal) && r.DueDate > new DateTime(2026, 3, 20))
++            && !new[] { "TP103", "TP102", "TP104", "TP101" }.Any(prefix => r.UnitCode.StartsWith(prefix, StringComparison.Ordinal))
++            && !pdc.Contains(r.UnitCode) && !r.FullName.Contains('*') && !special.Contains(r.UnitCode));
++    }
++}
+diff --git a/src/TigerCS.Tests/Collections/Integration/PactReceivablesEndpointTests.cs b/src/TigerCS.Tests/Collections/Integration/PactReceivablesEndpointTests.cs
+new file mode 100644
+index 0000000..c627b8d
+--- /dev/null
++++ b/src/TigerCS.Tests/Collections/Integration/PactReceivablesEndpointTests.cs
+@@ -0,0 +1,72 @@
++using System.Net;
++using System.Net.Http.Headers;
++using System.Net.Http.Json;
++using Microsoft.Extensions.DependencyInjection;
++using TigerCS.Application.Modules.Collections.Abstractions;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Application.Modules.IdentityAndAccess.Dto;
++using TigerCS.Domain.Modules.IdentityAndAccess;
++using TigerCS.Tests.IdentityAndAccess.Integration;
++
++namespace TigerCS.Tests.Collections.Integration;
++
++public sealed class PactReceivablesEndpointTests
++{
++    private sealed class Source : IPactReceivablesSource
++    {
++        public int Reads { get; private set; }
++        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
++        {
++            Reads++;
++            return Task.FromResult(new PactReceivablesSnapshot([
++                new PactReceivableInstalment(4, "3001", "PACT-only customer", "971500003001", "", 100,
++                    "TP140-100", "", "INV-100", "", businessDate.AddDays(-1).ToDateTime(TimeOnly.MinValue), 123m, "Installment")
++            ], DateTime.UtcNow, true));
++        }
++    }
++
++    private static TigerCsApiFactory Factory(Source source) => new()
++    {
++        ExtraConfiguration = new()
++        {
++            ["Collections:Enabled"] = "true",
++            ["CollectionsSource:PactReceivables:Enabled"] = "true"
++        },
++        ExtraServices = services => services.AddScoped<IPactReceivablesSource>(_ => source)
++    };
++
++    private static async Task<HttpClient> Client(TigerCsApiFactory factory, string role)
++    {
++        var (username, password, _) = await factory.SeedEmployeeAsync(role);
++        var client = factory.CreateClient();
++        var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password)))
++            .Content.ReadFromJsonAsync<LoginResponseDto>();
++        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
++        return client;
++    }
++
++    [Fact]
++    public async Task SystemAdministratorCanReadThroughCentralOverride_WithNoCustomerTicket()
++    {
++        var source = new Source();
++        using var factory = Factory(source);
++        using var client = await Client(factory, Roles.SystemAdministrator);
++        var response = await client.GetAsync("/api/collections/receivables/customers");
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var report = await response.Content.ReadFromJsonAsync<PactReceivableCustomersDto>();
++        Assert.Equal("3001", Assert.Single(report!.Items).TenantId);
++        Assert.Equal(123m, report.Items[0].OverdueAmount);
++    }
++
++    [Fact]
++    public async Task AnonymousAndReportingUsersCannotScanPACT()
++    {
++        var source = new Source();
++        using var factory = Factory(source);
++        using var anonymous = factory.CreateClient();
++        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/receivables/customers")).StatusCode);
++        using var reporter = await Client(factory, Roles.ReportingUser);
++        Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/receivables/customers")).StatusCode);
++        Assert.Equal(0, source.Reads);
++    }
++}
+diff --git a/src/TigerCS.Tests/Collections/Services/PactReceivableCustomersTests.cs b/src/TigerCS.Tests/Collections/Services/PactReceivableCustomersTests.cs
+new file mode 100644
+index 0000000..ff98b8d
+--- /dev/null
++++ b/src/TigerCS.Tests/Collections/Services/PactReceivableCustomersTests.cs
+@@ -0,0 +1,155 @@
++using Microsoft.Extensions.Logging.Abstractions;
++using TigerCS.Application.Modules.Collections;
++using TigerCS.Application.Modules.Collections.Abstractions;
++using TigerCS.Application.Modules.Collections.Services;
++using TigerCS.Domain.Modules.IdentityAndAccess;
++using TigerCS.Infrastructure.Modules.Collections;
++using TigerCS.Tests.IdentityAndAccess.Fakes;
++using TigerCS.Tests.Notifications.Fakes;
++
++namespace TigerCS.Tests.Collections.Services;
++
++public sealed class PactReceivableCustomersTests
++{
++    private static readonly DateTime Now = new(2026, 10, 6, 21, 0, 0, DateTimeKind.Utc); // Oct 7 in Dubai
++    private sealed class Source : IPactReceivablesSource
++    {
++        public List<PactReceivableInstalment> Items { get; } = [];
++        public int Reads { get; private set; }
++        public Exception? Failure { get; set; }
++        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly businessDate, CancellationToken cancellationToken)
++        {
++            Reads++;
++            if (Failure is not null) throw Failure;
++            return Task.FromResult(new PactReceivablesSnapshot(Items, Now, true));
++        }
++    }
++
++    private sealed class Harness
++    {
++        public Source Source { get; } = new();
++        public CollectionsOptions Options { get; } = new() { Enabled = true };
++        public PactReceivablesOptions SqlOptions { get; } = new() { Enabled = true };
++        public PactReceivableCustomersAppService Service { get; }
++        public CollectionsCaller Agent { get; } = new(Guid.NewGuid(), [Roles.CsAgent], []);
++        public Harness()
++        {
++            Service = new(Options, SqlOptions,
++                new CollectionsAuthorizationService(Options, new FakeDepartmentRepository()),
++                new CollectionsClock(Options, new FakeTimeProvider(Now)), Source,
++                NullLogger<PactReceivableCustomersAppService>.Instance);
++        }
++    }
++
++    internal static PactReceivableInstalment Row(int day, decimal amount = 100m,
++        string tenant = "3001", int company = 4, string unit = "TP140-101", string voucher = "INV-1") =>
++        new(company, tenant, "Example Customer", "+971 50 000 3001", "example@example.test", 101,
++            unit, "", voucher, "", new DateTime(2026, 10, day), amount, "Installment");
++
++    [Fact]
++    public async Task ListsCustomersWithoutTickets_UsesDubaiDate_ExcludesFutureAndSettled()
++    {
++        var h = new Harness();
++        h.Source.Items.AddRange([Row(6), Row(7, 0.25m), Row(8, 900m), Row(5, 0), Row(4, -20)]);
++        var result = await h.Service.ListAsync(h.Agent);
++        var report = result.Value!;
++        var customer = Assert.Single(report.Items);
++        Assert.Equal(new DateOnly(2026, 10, 7), report.BusinessDate);
++        Assert.True(customer.HasDue);
++        Assert.True(customer.HasOverdue);
++        Assert.Equal(0.25m, customer.DueAmount);
++        Assert.Equal(100m, customer.OverdueAmount);
++        Assert.Equal(1, customer.OverdueDays);
++        Assert.Equal(2, customer.Instalments.Count);
++    }
++
++    [Fact]
++    public async Task CompanyAndTenantFormTheIdentity_AndPagingIsAfterCustomerGrouping()
++    {
++        var h = new Harness();
++        h.Source.Items.AddRange([Row(1), Row(2), Row(3, company: 32), Row(4, tenant: "4001")]);
++        var first = (await h.Service.ListAsync(h.Agent, pageSize: 2)).Value!;
++        var second = (await h.Service.ListAsync(h.Agent, page: 2, pageSize: 2)).Value!;
++        Assert.Equal(3, first.TotalCount);
++        Assert.Equal(2, first.Items.Count);
++        Assert.Single(second.Items);
++        Assert.Equal(2, first.Items.Single(c => c.CompanyId == 4).Instalments.Count);
++        Assert.Single(first.Items, c => c.CompanyId == 32 && c.TenantId == "3001");
++    }
++
++    [Fact]
++    public async Task RepeatedDueDatesNeverBecomeInflatedTotals_AndRawRowsArePreserved()
++    {
++        var h = new Harness();
++        h.Source.Items.AddRange([Row(6), Row(6, voucher: "INV-2"), Row(7)]);
++        var customer = Assert.Single((await h.Service.ListAsync(h.Agent)).Value!.Items);
++        Assert.Null(customer.OverdueAmount);
++        Assert.Equal(100m, customer.DueAmount);
++        Assert.Equal("NeedsReview", customer.AmountStatus);
++        Assert.Equal(3, customer.Instalments.Count);
++    }
++
++    [Theory]
++    [InlineData("due", 1)]
++    [InlineData("overdue", 2)]
++    [InlineData("all", 3)]
++    public async Task DueAndOverdueAreAUnion_NotARequirementToHaveBoth(string status, int expected)
++    {
++        var h = new Harness();
++        h.Source.Items.AddRange([Row(7), Row(6, tenant: "3002"), Row(5, tenant: "3003")]);
++        Assert.Equal(expected, (await h.Service.ListAsync(h.Agent, status: status)).Value!.TotalCount);
++    }
++
++    [Fact]
++    public async Task PhoneSearchHandlesFormatting_CompanyFilterDoesNotMixCompanyIds()
++    {
++        var h = new Harness();
++        h.Source.Items.AddRange([Row(6), Row(5, company: 32)]);
++        var report = (await h.Service.ListAsync(h.Agent, companyId: 32, search: "971500003001")).Value!;
++        Assert.Equal(32, Assert.Single(report.Items).CompanyId);
++    }
++
++    [Fact]
++    public async Task UnauthorizedDisabledAndInvalidRequestsDoNotTouchPACT()
++    {
++        var h = new Harness();
++        var reporter = new CollectionsCaller(Guid.NewGuid(), [Roles.ReportingUser], []);
++        Assert.Equal(CollectionsOutcome.Forbidden, (await h.Service.ListAsync(reporter)).Outcome);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ListAsync(h.Agent, companyId: 25)).Outcome);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ListAsync(h.Agent, page: int.MaxValue)).Outcome);
++        h.SqlOptions.Enabled = false;
++        Assert.Equal(CollectionsOutcome.Disabled, (await h.Service.ListAsync(h.Agent)).Outcome);
++        Assert.Equal(0, h.Source.Reads);
++    }
++
++    [Fact]
++    public async Task SourceFailureIsUnavailable_NotAnEmptyOrPartialList()
++    {
++        var h = new Harness();
++        h.Source.Failure = new PactReceivablesSourceException("CRM exclusions not configured.");
++        var result = await h.Service.ListAsync(h.Agent);
++        Assert.Equal(CollectionsOutcome.FinanceUnavailable, result.Outcome);
++        Assert.Null(result.Value);
++    }
++
++    [Fact]
++    public void LegacyExclusionsKeepCutoffBoundariesAndDoNotActivateTheCommentedTP119Rule()
++    {
++        var options = new PactReceivablesOptions
++        {
++            SpecialCaseUnitCodes = ["TP140-special"], PdcExcludedUnitCodes = ["TP140-pdc"]
++        };
++        var boundary = Row(6, unit: "TP121-101") with { DueDate = new DateTime(2025, 12, 15) };
++        var after = boundary with { DueDate = new DateTime(2025, 12, 16) };
++        var handover = Row(5, unit: "TP140-handover");
++        var rows = new[] { boundary, after, handover, Row(6, unit: "TP103-1"),
++            Row(6, unit: "TP140-special"), Row(6, unit: "TP140-pdc"),
++            Row(6) with { FullName = "*Hidden" }, Row(6, unit: "TP119-101"), Row(6, unit: "TP140-kept") };
++        var kept = PactSqlReceivablesSource.ApplyExclusions(rows,
++            new HashSet<(string, DateTime)> { (handover.UnitCode, handover.DueDate) }, options).ToList();
++        Assert.Equal(3, kept.Count);
++        Assert.Contains(boundary, kept);
++        Assert.Contains(kept, r => r.UnitCode == "TP119-101");
++        Assert.Contains(kept, r => r.UnitCode == "TP140-kept");
++    }
++}
+diff --git a/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs b/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
+index f51db77..4a38eda 100644
+--- a/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
++++ b/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
+@@ -83,6 +83,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
+         // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).
+         ["POST /api/genesys/screen-pop"] = nameof(GenesysIntegration.Integration.GenesysScreenPopEndpointsTests.Issue_ReturnsAOneHourLaunchUrl_AndStoresOnlyTheHash),
+         // Collections — the explicit financial permissions, with the System Administrator override, on both prefixes.
++        ["GET /api/collections/receivables/customers"] = nameof(Collections.Integration.PactReceivablesEndpointTests.SystemAdministratorCanReadThroughCentralOverride_WithNoCustomerTicket),
+         ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+         ["GET /api/genesys/collections/customers/{crmCustomerId}/payments"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+         ["GET /api/genesys/collections/reminders/candidates"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+diff --git a/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs b/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
+index 17080f0..d912569 100644
+--- a/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
++++ b/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
+@@ -121,6 +121,7 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
+         "GET /api/dashboard/overview",
+         "GET /api/reports/team-performance",
+         "GET /api/reports/team-performance/records",
++        "GET /api/collections/receivables/customers",
+ 
+         // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
+         // Automatic Level 2 escalation on breach has no entry here on
+diff --git a/src/TigerCS.Tests/Web/PactReceivablesRenderTests.cs b/src/TigerCS.Tests/Web/PactReceivablesRenderTests.cs
+new file mode 100644
+index 0000000..2d046a4
+--- /dev/null
++++ b/src/TigerCS.Tests/Web/PactReceivablesRenderTests.cs
+@@ -0,0 +1,96 @@
++extern alias TigerCsWeb;
++
++using System.Net;
++using System.Net.Http.Json;
++using System.Security.Claims;
++using System.Text.Encodings.Web;
++using Microsoft.AspNetCore.Authentication;
++using Microsoft.AspNetCore.Hosting;
++using Microsoft.AspNetCore.Mvc.Testing;
++using Microsoft.AspNetCore.TestHost;
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Http;
++using Microsoft.Extensions.Logging;
++using Microsoft.Extensions.Options;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Domain.Modules.IdentityAndAccess;
++
++namespace TigerCS.Tests.Web;
++
++public sealed class PactReceivablesRenderTests
++{
++    [Theory]
++    [InlineData(HttpStatusCode.OK)]
++    [InlineData(HttpStatusCode.Forbidden)]
++    [InlineData(HttpStatusCode.ServiceUnavailable)]
++    public async Task PageRendersCustomersOrAnExplicitError_WithoutClaimingAnEmptyList(HttpStatusCode apiStatus)
++    {
++        using var factory = new WebApplicationFactory<TigerCsWeb::Program>().WithWebHostBuilder(builder =>
++        {
++            builder.UseEnvironment("Development");
++            builder.ConfigureTestServices(services =>
++            {
++                services.ConfigureAll<HttpClientFactoryOptions>(options =>
++                    options.HttpMessageHandlerBuilderActions.Add(b => b.PrimaryHandler = new Source(apiStatus)));
++                services.AddAuthentication().AddScheme<AuthenticationSchemeOptions, TestAuth>("Test", _ => { });
++                services.PostConfigure<AuthenticationOptions>(options =>
++                {
++                    options.DefaultAuthenticateScheme = "Test";
++                    options.DefaultChallengeScheme = "Test";
++                });
++            });
++        });
++        using var client = factory.CreateClient();
++        var response = await client.GetAsync("/Collections/Receivables?companyId=4&search=3001&status=overdue");
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var html = await response.Content.ReadAsStringAsync();
++        Assert.Contains("aria-current=\"page\">Collections</a>", html);
++        Assert.Contains("/js/receivables.js", html);
++        Assert.DoesNotContain("<script>", html);
++        Assert.DoesNotContain("No customers in this page", html);
++        if (apiStatus == HttpStatusCode.OK)
++        {
++            Assert.Contains("PACT-only customer", html);
++            Assert.Contains("Customer ID 3001", html);
++            Assert.Contains("Review needed", html);
++            Assert.Contains("INV-1", html);
++            Assert.Contains("Several source rows share a due date", html);
++        }
++        else
++        {
++            Assert.DoesNotContain("receivables-table\"", html);
++            Assert.Contains(apiStatus == HttpStatusCode.Forbidden
++                ? "does not have permission" : "source is unavailable", html);
++        }
++    }
++
++    private sealed class TestAuth(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
++        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
++    {
++        protected override Task<AuthenticateResult> HandleAuthenticateAsync() => Task.FromResult(
++            AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity([
++                new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
++                new Claim(ClaimTypes.Name, "Test Agent"), new Claim(ClaimTypes.Role, Roles.CsAgent)
++            ], "Test")), "Test")));
++    }
++
++    private sealed class Source(HttpStatusCode status) : HttpMessageHandler
++    {
++        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
++        {
++            if (request.RequestUri!.AbsolutePath != "/api/collections/receivables/customers")
++                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
++            Assert.Contains("companyId=4", request.RequestUri.Query);
++            Assert.Contains("status=overdue", request.RequestUri.Query);
++            var today = new DateOnly(2026, 10, 7);
++            var report = new PactReceivableCustomersDto(today, DateTime.UtcNow, true, [4, 32], "AED", "Configured",
++                1, 0, 1, 1, 25, [new PactReceivableCustomerDto(4, "Tiger Group Dubai", "3001", "PACT-only customer",
++                    "971500003001", "", false, true, 0, null, "NeedsReview", today.AddDays(-1), 1,
++                    [new PactReceivableInstalmentDto(1, "TP140-101", "", "INV-1", "", today.AddDays(-1), 100, "Overdue")])]);
++            return Task.FromResult(new HttpResponseMessage(status)
++            {
++                Content = status == HttpStatusCode.OK ? JsonContent.Create(report) : null
++            });
++        }
++    }
++}
+diff --git a/src/TigerCS.Web/Pages/Collections/Receivables.cshtml b/src/TigerCS.Web/Pages/Collections/Receivables.cshtml
+new file mode 100644
+index 0000000..bdb7945
+--- /dev/null
++++ b/src/TigerCS.Web/Pages/Collections/Receivables.cshtml
+@@ -0,0 +1,131 @@
++@page "/Collections/Receivables"
++@model TigerCS.Web.Pages.Collections.ReceivablesModel
++@using TigerCS.Web.Pages.Collections
++@{
++    ViewData["Title"] = "Due & Overdue Customers";
++    ViewData["ActiveNav"] = "collections";
++    Layout = "_Layout";
++}
++<div class="page receivables-workspace">
++    <div class="page-header">
++        <div>
++            <p class="receivables-eyebrow">Collections</p>
++            <h1 class="page-title">Due &amp; Overdue Customers</h1>
++            <p class="page-subtitle">PACT customers with unpaid instalments due today or earlier, including customers with no tickets.</p>
++        </div>
++        <div class="page-header__actions"><a class="btn" href="@Model.PageUrl(Model.PageNumber)">Refresh</a></div>
++    </div>
++
++    <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter>
++        <div class="field-group filter-bar__search">
++            <label class="field-label" for="receivableSearch">Customer or unit</label>
++            <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit…" />
++        </div>
++        <div class="field-group">
++            <label class="field-label" for="receivableCompany">Company</label>
++            <select class="field-select" id="receivableCompany" name="companyId">
++                <option value="">All companies</option>
++                <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai</option>
++                <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah</option>
++            </select>
++        </div>
++        <div class="field-group">
++            <label class="field-label" for="receivableStatus">Status</label>
++            <select class="field-select" id="receivableStatus" name="status">
++                <option value="all" selected="@(Model.Status is null or "all")">Due &amp; Overdue</option>
++                <option value="due" selected="@(Model.Status == "due")">Due today</option>
++                <option value="overdue" selected="@(Model.Status == "overdue")">Overdue</option>
++            </select>
++        </div>
++        <div class="filter-bar__submit">
++            <button class="btn btn-gold" type="submit">Apply</button>
++            <a class="btn btn-ghost" href="/Collections/Receivables">Clear</a>
++        </div>
++        <span class="receivables-loading" role="status" hidden>Loading customers…</span>
++    </form>
++
++    @if (Model.Report is { } report)
++    {
++        <div class="receivables-metrics">
++            <div class="panel"><span>Customers in this list</span><strong>@report.TotalCount</strong></div>
++            <div class="panel"><span>With instalments due today</span><strong>@report.DueCustomerCount</strong></div>
++            <div class="panel"><span>With overdue instalments</span><strong>@report.OverdueCustomerCount</strong></div>
++        </div>
++        <p class="text-secondary">As of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Customers are listed once per company.</p>
++        @if (!report.LegacyExclusionsApplied)
++        {
++            <div class="receivables-notice" role="status">This is the raw PACT list. The existing booking, down-payment and special-case exclusions have not been applied.</div>
++        }
++        <div class="panel">
++            @if (report.Items.Count == 0)
++            {
++                <div class="empty-state"><p class="empty-state__title">No customers in this page match the selected filters.</p><a class="btn" href="/Collections/Receivables">Clear filters</a></div>
++            }
++            else
++            {
++                <div class="receivables-table-wrap">
++                    <table class="receivables-table">
++                        <thead><tr><th>Customer</th><th>Company / units</th><th>Due today</th><th>Overdue</th><th>Earliest due date</th><th>Instalments</th></tr></thead>
++                        <tbody>
++                        @foreach (var customer in report.Items)
++                        {
++                            <tr>
++                                <td><strong>@customer.FullName</strong><span class="receivables-meta">Customer ID @customer.TenantId</span><span class="receivables-meta">@customer.Mobile</span><span class="receivables-meta">@customer.Email</span></td>
++                                <td>@customer.CompanyName<span class="receivables-meta">@string.Join(", ", customer.Instalments.Select(i => i.UnitCode).Where(u => u.Length > 0).Distinct())</span></td>
++                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.DueAmount)</span>@if (customer.HasDue) { <span class="receivables-tag">Due today</span> }</td>
++                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.OverdueAmount)</span>@if (customer.HasOverdue) { <span class="receivables-tag receivables-tag--overdue">@customer.OverdueDays days overdue</span> }</td>
++                                <td>@customer.EarliestDueDate.ToString("dd MMM yyyy")</td>
++                                <td>
++                                    <details class="receivables-details">
++                                        <summary>View @customer.Instalments.Count</summary>
++                                        @if (customer.AmountStatus == "NeedsReview")
++                                        {
++                                            <p class="receivables-notice">Several source rows share a due date. The total needs review; each source row is shown below.</p>
++                                        }
++                                        <ul>
++                                        @foreach (var instalment in customer.Instalments)
++                                        {
++                                            <li><strong>@instalment.UnitCode</strong> · @instalment.DueDate.ToString("dd MMM yyyy") · @ReceivablesModel.Money(instalment.Amount) @report.Currency<span class="receivables-meta">@instalment.Status · Voucher @instalment.VoucherNumber</span></li>
++                                        }
++                                        </ul>
++                                    </details>
++                                </td>
++                            </tr>
++                        }
++                        </tbody>
++                    </table>
++                </div>
++            }
++            <div class="receivables-pagination">
++                <span>Page @report.Page of @Model.TotalPages</span>
++                <div>
++                    @if (report.Page > 1) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page - 1)">Previous</a> }
++                    @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page + 1)">Next</a> }
++                </div>
++            </div>
++        </div>
++    }
++    else
++    {
++        <div class="panel"><div class="error-state" role="alert">
++        @if (Model.Outcome == ApiOutcome.Forbidden)
++        {
++            <p>Your account does not have permission to view Collections financial data.</p>
++        }
++        else if (Model.Outcome == ApiOutcome.Unauthorized)
++        {
++            <p>Your session has expired. <a href="/Logout">Sign in again</a>.</p>
++        }
++        else if (Model.Outcome == ApiOutcome.ValidationError)
++        {
++            <p>The selected filters are invalid. Choose a company and status from the list and retry.</p>
++        }
++        else
++        {
++            <p>The receivables source is unavailable. The customer list could not be loaded.</p>
++            <a class="btn" href="@Model.PageUrl(Model.PageNumber)">Retry</a>
++        }
++        </div></div>
++    }
++</div>
++<script src="~/js/receivables.js" asp-append-version="true"></script>
+diff --git a/src/TigerCS.Web/Pages/Collections/Receivables.cshtml.cs b/src/TigerCS.Web/Pages/Collections/Receivables.cshtml.cs
+new file mode 100644
+index 0000000..5b5c1a6
+--- /dev/null
++++ b/src/TigerCS.Web/Pages/Collections/Receivables.cshtml.cs
+@@ -0,0 +1,43 @@
++using System.Globalization;
++using System.Web;
++using Microsoft.AspNetCore.Mvc.RazorPages;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Web.Services.Api;
++
++namespace TigerCS.Web.Pages.Collections;
++
++public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
++{
++    public int? CompanyId { get; private set; }
++    public string? Status { get; private set; }
++    public string? Search { get; private set; }
++    public int PageNumber { get; private set; } = 1;
++    public ApiOutcome Outcome { get; private set; }
++    public PactReceivableCustomersDto? Report { get; private set; }
++    public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(Report.TotalCount / (double)Report.PageSize));
++
++    public async Task OnGetAsync(int? companyId, string? status, string? search, int page = 1,
++        CancellationToken cancellationToken = default)
++    {
++        CompanyId = companyId;
++        Status = status?.Trim().ToLowerInvariant();
++        Search = search?.Trim();
++        PageNumber = page;
++        var result = await api.GetReceivableCustomersAsync(companyId, Status, Search, page, cancellationToken);
++        Outcome = result.Outcome;
++        Report = result.IsSuccess ? result.Value : null;
++    }
++
++    public string PageUrl(int page)
++    {
++        var query = HttpUtility.ParseQueryString(string.Empty);
++        if (CompanyId is { } company) query["companyId"] = company.ToString(CultureInfo.InvariantCulture);
++        if (!string.IsNullOrWhiteSpace(Status)) query["status"] = Status;
++        if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
++        query["page"] = page.ToString(CultureInfo.InvariantCulture);
++        return $"/Collections/Receivables?{query}";
++    }
++
++    public static string Money(decimal? amount) => amount is { } value
++        ? value.ToString("N2", CultureInfo.InvariantCulture) : "Review needed";
++}
+diff --git a/src/TigerCS.Web/Pages/Shared/_Nav.cshtml b/src/TigerCS.Web/Pages/Shared/_Nav.cshtml
+index f122769..102fe1b 100644
+--- a/src/TigerCS.Web/Pages/Shared/_Nav.cshtml
++++ b/src/TigerCS.Web/Pages/Shared/_Nav.cshtml
+@@ -1,5 +1,5 @@
+ @{
+-    // The primary navigation: four workspaces. The former ticket-list
++    // The primary workspace navigation. The former ticket-list
+     // shortcuts are no longer top-level items — they are the views (tabs)
+     // of the single Tickets workspace (see TicketsView), so every
+     // ticket-related page (the list, Ticket Details, Customer Profile,
+@@ -12,6 +12,10 @@
+         ("customers", "Customers", "/Customers"),
+         ("tickets", "Tickets", "/Tickets"),
+     ];
++    if (currentUser is not null)
++    {
++        items = [.. items, ("collections", "Collections", "/Collections/Receivables")];
++    }
+     // Management reports: offered to the CS Manager tier only. Hiding the
+     // link is presentation; the Api's policy is what actually refuses.
+     if (ReportsPolicy.AppliesTo(currentUser))
+diff --git a/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs b/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
+index f120516..3838f06 100644
+--- a/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
++++ b/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
+@@ -16,6 +16,18 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
+     private const string Base = "api/collections";
+     public const int PageSize = 50;
+ 
++    public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
++        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken)
++    {
++        var query = HttpUtility.ParseQueryString(string.Empty);
++        if (companyId is { } company) query["companyId"] = Id(company);
++        if (!string.IsNullOrWhiteSpace(status)) query["status"] = status;
++        if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
++        query["page"] = Id(page);
++        query["pageSize"] = "25";
++        return GetAsync<PactReceivableCustomersDto>($"{Base}/receivables/customers?{query}", cancellationToken);
++    }
++
+     /// <summary>EDSM's payment summary, resolved server-side from the customer key (PACT customers only).</summary>
+     public Task<ApiResult<CollectionsPaymentSummaryResponseDto>> GetPaymentSummaryAsync(string customerKey, CancellationToken cancellationToken) =>
+         GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customers/by-key/{Uri.EscapeDataString(customerKey)}/payment-summary", cancellationToken);
+diff --git a/src/TigerCS.Web/wwwroot/css/site.css b/src/TigerCS.Web/wwwroot/css/site.css
+index 1e0550d..87536a1 100644
+--- a/src/TigerCS.Web/wwwroot/css/site.css
++++ b/src/TigerCS.Web/wwwroot/css/site.css
+@@ -2048,3 +2048,33 @@ a.badge:hover { text-decoration: underline; }
+   .report-help__list dd { margin-bottom: var(--space-2); }
+   .report-help__body { padding: var(--space-3) var(--space-4); }
+ }
++
++/* PACT receivables customer list */
++.receivables-eyebrow { font-size: .8rem; text-transform: uppercase; letter-spacing: .09em; margin: 0 0 .35rem; color: var(--color-text-secondary); }
++.receivables-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
++.receivables-metrics .panel { padding: 1.2rem; display: flex; flex-direction: column; gap: .6rem; }
++.receivables-metrics strong { font-size: 1.8rem; }
++.receivables-metrics span, .receivables-meta { color: var(--color-text-secondary); font-size: .85rem; }
++.receivables-table-wrap { overflow-x: auto; }
++.receivables-table { width: 100%; border-collapse: collapse; font-size: .92rem; }
++.receivables-table th, .receivables-table td { padding: 1rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-border); }
++.receivables-table th { background: var(--color-bg); white-space: nowrap; font-weight: 600; }
++.receivables-meta { display: block; margin-top: .35rem; overflow-wrap: anywhere; }
++.receivables-amount { display: block; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
++.receivables-tag { display: inline-block; margin-top: .5rem; padding: .2rem .55rem; border-radius: 1rem; background: #fff4d6; color: #805617; font-size: .75rem; }
++.receivables-tag--overdue { background: #fde8e8; color: #a43232; }
++.receivables-details { min-width: 130px; }
++.receivables-details summary { color: #80641c; cursor: pointer; white-space: nowrap; }
++.receivables-details ul { padding-left: 1.1rem; min-width: 260px; }
++.receivables-details li { margin: .8rem 0; }
++.receivables-notice { background: #fff8e5; color: #765623; border: 1px solid #eedfaf; padding: .85rem; border-radius: .5rem; font-size: .85rem; margin: .8rem 0; }
++.receivables-pagination { display: flex; align-items: center; justify-content: space-between; padding: 1rem; gap: 1rem; }
++.receivables-pagination > div { display: flex; gap: .5rem; }
++.receivables-loading { font-size: .85rem; }
++@media (max-width: 700px) {
++    .receivables-metrics { grid-template-columns: 1fr; gap: .6rem; }
++    .receivables-metrics .panel { flex-direction: row; align-items: center; justify-content: space-between; }
++    .receivables-workspace .filter-bar { flex-wrap: wrap; }
++    .receivables-workspace .filter-bar > .field-group { min-width: 100%; }
++    .receivables-pagination { flex-wrap: wrap; }
++}
+diff --git a/src/TigerCS.Web/wwwroot/js/receivables.js b/src/TigerCS.Web/wwwroot/js/receivables.js
+new file mode 100644
+index 0000000..9398d7b
+--- /dev/null
++++ b/src/TigerCS.Web/wwwroot/js/receivables.js
+@@ -0,0 +1,14 @@
++(() => {
++    const form = document.querySelector('[data-receivables-filter]');
++    if (!form) return;
++    form.addEventListener('submit', () => {
++        form.setAttribute('aria-busy', 'true');
++        form.querySelector('.receivables-loading').hidden = false;
++        form.querySelector('button[type=submit]').disabled = true;
++    });
++    window.addEventListener('pageshow', () => {
++        form.removeAttribute('aria-busy');
++        form.querySelector('.receivables-loading').hidden = true;
++        form.querySelector('button[type=submit]').disabled = false;
++    });
++})();
+-- 
+2.51.1
+
