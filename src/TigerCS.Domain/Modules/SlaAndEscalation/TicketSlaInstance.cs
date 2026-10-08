@@ -145,6 +145,48 @@ public class TicketSlaInstance
     }
 
     /// <summary>
+    /// Opens the successor period of an <b>approved priority downgrade</b>
+    /// (ISSUE-023 Option B; SLA-Architecture.md section 7). The approver is
+    /// recorded on the row (<see cref="ApprovedByEmployeeId"/>, copied from
+    /// the request's decider, never client-supplied: Finding DR-05).
+    ///
+    /// <para>
+    /// As with <see cref="OpenReopenCycle"/>, First Response is carried
+    /// verbatim (due timestamp and breach flag), so a downgrade can never
+    /// restart, loosen or erase the first-response result. The Resolution
+    /// deadline is the newly computed one; the predecessor's breach flags stay
+    /// on the predecessor row, untouched.
+    /// </para>
+    /// </summary>
+    public static TicketSlaInstance OpenDowngradePeriod(
+        long ticketId,
+        byte priorityId,
+        DateTime approvedAtUtc,
+        DateTime carriedFirstResponseDueAtUtc,
+        bool carriedFirstResponseBreached,
+        DateTime resolutionDueAtUtc,
+        Guid approvedByEmployeeId)
+    {
+        if (approvedByEmployeeId == Guid.Empty)
+        {
+            throw new ArgumentException("A Downgrade period requires the approving employee.", nameof(approvedByEmployeeId));
+        }
+
+        if (resolutionDueAtUtc < approvedAtUtc)
+        {
+            throw new ArgumentException(
+                "ResolutionDueAtUtc cannot precede the approval moment.", nameof(resolutionDueAtUtc));
+        }
+
+        return new TicketSlaInstance(
+            ticketId, priorityId, approvedAtUtc, carriedFirstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.Downgrade)
+        {
+            FirstResponseBreached = carriedFirstResponseBreached,
+            ApprovedByEmployeeId = approvedByEmployeeId
+        };
+    }
+
+    /// <summary>
     /// Ends this period at <paramref name="periodEndAtUtc"/>, making room for
     /// a successor under the one-current-period invariant. One-way: an ended
     /// period is history and is never reopened, never deleted, and never

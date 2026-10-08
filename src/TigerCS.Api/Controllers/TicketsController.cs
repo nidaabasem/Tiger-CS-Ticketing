@@ -1071,6 +1071,12 @@ public class TicketsController(
             detail: "This ticket already has a category. Re-categorising an existing ticket is a separate operation and is not available.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
 
+        TicketMutationOutcome.DowngradeRequiresApproval => Problem(
+            type: "https://tigercs.internal/problems/downgrade-requires-approval",
+            title: "Priority downgrade requires approval",
+            detail: "A priority decrease never takes effect directly. Submit POST /api/tickets/{ticketId}/sla/priority-downgrade-requests for Department Head approval.",
+            statusCode: StatusCodes.Status403Forbidden),
+
         TicketMutationOutcome.CategoryNotFound => Problem(
             type: "https://tigercs.internal/problems/category-not-found",
             title: "Category not found",

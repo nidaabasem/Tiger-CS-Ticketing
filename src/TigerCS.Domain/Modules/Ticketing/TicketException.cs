@@ -141,3 +141,12 @@ public sealed class TicketAlreadyClassifiedException(long ticketId, int category
     public long TicketId { get; } = ticketId;
     public int CategoryId { get; } = categoryId;
 }
+
+/// <summary>MVP-API-Contracts.md section 3.4: a priority decrease without an approved downgrade request is refused (downgrade-requires-approval).</summary>
+public sealed class PriorityDowngradeRequiresApprovalException(long ticketId, byte currentPriorityId, byte requestedPriorityId)
+    : TicketException($"Ticket {ticketId} priority cannot drop from {currentPriorityId} to {requestedPriorityId} without an approved downgrade request.")
+{
+    public long TicketId { get; } = ticketId;
+    public byte CurrentPriorityId { get; } = currentPriorityId;
+    public byte RequestedPriorityId { get; } = requestedPriorityId;
+}

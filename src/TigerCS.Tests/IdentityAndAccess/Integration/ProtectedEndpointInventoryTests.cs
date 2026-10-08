@@ -139,6 +139,11 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/tickets/{ticketId:long}/sla/first-response"] = nameof(SystemAdministratorEndpointAuthorizationTests.RecordFirstResponse_Returns200),
         ["POST /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
         ["GET /api/tickets/{ticketId:long}/escalations"] = nameof(SystemAdministratorEndpointAuthorizationTests.EscalateTicketAndListEscalations_Return201And200),
+        ["POST /api/tickets/{ticketId:long}/sla/priority-downgrade-requests"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/tickets/{ticketId:long}/sla/priority-downgrade-requests"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["GET /api/priority-downgrade-requests/pending"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["POST /api/priority-downgrade-requests/{requestId:long}/approve"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
+        ["POST /api/priority-downgrade-requests/{requestId:long}/reject"] = nameof(SystemAdministratorEndpointAuthorizationTests.PriorityDowngradeEndpoints_AuthorizedThroughTheOverride),
 
         // Administration / Workflow Designer phase — covered by
         // AdministrationEndpointsTests (System Administrator succeeds) and

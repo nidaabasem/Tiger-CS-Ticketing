@@ -134,6 +134,11 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/sla/first-response",
         "POST /api/tickets/{ticketId}/escalations",
         "GET /api/tickets/{ticketId}/escalations",
+        "POST /api/tickets/{ticketId}/sla/priority-downgrade-requests",
+        "GET /api/tickets/{ticketId}/sla/priority-downgrade-requests",
+        "GET /api/priority-downgrade-requests/pending",
+        "POST /api/priority-downgrade-requests/{requestId}/approve",
+        "POST /api/priority-downgrade-requests/{requestId}/reject",
 
         // Genesys integration phase 1 — the inbound boundary (one normalized
         // ingestion endpoint every channel converges on, plus conversation

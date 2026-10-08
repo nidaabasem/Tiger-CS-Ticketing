@@ -96,6 +96,14 @@ public sealed class TicketClassificationAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
 
+        // A priority DECREASE on an already-classified ticket is a downgrade
+        // and takes effect only through an approved request (ISSUE-023
+        // Option B). The first priority of an unclassified ticket is not one.
+        if (ticket.IsClassified && ticket.PriorityId is { } currentPriority && request.PriorityId > currentPriority)
+        {
+            return TicketMutationResult.Failure(TicketMutationOutcome.DowngradeRequiresApproval);
+        }
+
         if (ticket.IsClassified)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.AlreadyClassified);

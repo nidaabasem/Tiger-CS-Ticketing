@@ -311,6 +311,35 @@ else
                             </div>
                         </details>
                         }
+
+                        @* Priority downgrade (ISSUE-023): requesting changes NOTHING on the
+                           ticket - a Department Head must approve before the priority or the
+                           SLA period moves. Only lower priorities are offered. *@
+                        @if (Model.CanRequestDowngrade)
+                        {
+                        <details class="disclosure" open="@(Model.OpenSection == "downgrade" ? "open" : null)">
+                            <summary class="btn btn-sm">Request priority downgrade</summary>
+                            <div class="disclosure__panel">
+                                <form method="post" asp-page-handler="RequestDowngrade" class="action-form">
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="DowngradeRequest.NewPriorityId">Lower the priority to</label>
+                                        <select class="field-select" asp-for="DowngradeRequest.NewPriorityId">
+                                            @foreach (var target in Model.DowngradeTargets)
+                                            {
+                                                <option value="@target.PriorityId">@target.Label</option>
+                                            }
+                                        </select>
+                                        <span class="field-hint">Takes effect only after a Department Head approves it. Any SLA breach already recorded stays on record.</span>
+                                    </div>
+                                    <div class="field-group">
+                                        <label class="field-label" asp-for="DowngradeRequest.Reason">Reason (required)</label>
+                                        <textarea class="form-control" asp-for="DowngradeRequest.Reason" rows="2"></textarea>
+                                    </div>
+                                    <div class="action-form__footer"><button type="submit" class="btn btn-gold btn-sm">Submit request</button></div>
+                                </form>
+                            </div>
+                        </details>
+                        }
                     }
 
                     @* Resolved is the lifecycle half; CanClose is the permission
@@ -382,6 +411,40 @@ else
                 <div class="status-banner status-banner--pending">
                     <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" /><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
                     Pending CRM verification — awaiting reconciliation.
+                </div>
+            }
+
+            @if (Model.PendingDowngrade is { } pendingDowngrade)
+            {
+                <div class="status-banner status-banner--pending" id="pending-downgrade">
+                    <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" /><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                    <div>
+                        Priority downgrade pending approval: @TicketDisplay.PriorityLabel(pendingDowngrade.CurrentPriorityId) &rarr; @TicketDisplay.PriorityLabel(pendingDowngrade.RequestedPriorityId).
+                        The priority and SLA are unchanged until a Department Head approves. Reason: @pendingDowngrade.Reason
+                        (expires @pendingDowngrade.ExpiresAtUtc.ToString("yyyy-MM-dd HH:mm") UTC).
+                        @if (Model.CanDecideDowngrade)
+                        {
+                            <form method="post" asp-page-handler="ApproveDowngrade" class="action-form">
+                                <input type="hidden" asp-for="DowngradeDecision.RequestId" value="@pendingDowngrade.PriorityDowngradeRequestId" />
+                                <input type="hidden" asp-for="DowngradeDecision.RowVersionBase64" value="@Convert.ToBase64String(pendingDowngrade.RowVersion)" />
+                                <button type="submit" class="btn btn-gold btn-sm">Approve downgrade</button>
+                            </form>
+                            <details class="disclosure" open="@(Model.OpenSection == "downgrade" ? "open" : null)">
+                                <summary class="btn btn-sm">Reject</summary>
+                                <div class="disclosure__panel">
+                                    <form method="post" asp-page-handler="RejectDowngrade" class="action-form">
+                                        <input type="hidden" asp-for="DowngradeDecision.RequestId" value="@pendingDowngrade.PriorityDowngradeRequestId" />
+                                        <input type="hidden" asp-for="DowngradeDecision.RowVersionBase64" value="@Convert.ToBase64String(pendingDowngrade.RowVersion)" />
+                                        <div class="field-group">
+                                            <label class="field-label" asp-for="DowngradeDecision.DecisionNote">Reason for rejecting (required)</label>
+                                            <textarea class="form-control" asp-for="DowngradeDecision.DecisionNote" rows="2"></textarea>
+                                        </div>
+                                        <div class="action-form__footer"><button type="submit" class="btn btn-critical btn-sm">Reject downgrade</button></div>
+                                    </form>
+                                </div>
+                            </details>
+                        }
+                    </div>
                 </div>
             }
         </section>
