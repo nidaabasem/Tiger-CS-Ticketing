@@ -18,7 +18,14 @@
 
 `tools/build-release.sh [out]` (also `.github/workflows/release-package.yml`, manual): refuses a dirty tree → `dotnet test` → `dotnet ef migrations has-pending-model-changes` → `dotnet publish` Api and Web (Release) → `dotnet ef migrations script --idempotent` → zip + `MANIFEST.txt` (commit, UTC build time, SDK, sha256). The exact commit and hashes of the package built for this review are in the pull-request description and the *Release commit* line below.
 
-**Release commit:** recorded in the PR description after the final test run (docs-only commits after the build commit do not change the package; the manifest names the build commit).
+**Release commit:** `e4059c56c45406d80151053425c7c9c6e34ac3b1` (build date 2026‑10‑08, .NET SDK 10.0.111). The package was produced by `tools/build-release.sh` on that exact commit after 3,779 passing tests and a clean EF drift check (*Local* evidence). Later commits on the branch are documentation-only (this file, PR text) and do not change the package; the package must be rebuilt if any file under `src/` changes.
+
+| File | sha256 |
+|---|---|
+| `TigerCS-e4059c5.zip` (api/, web/, idempotent migration SQL, config + deployment notes; 65 MB) | `683defdbf1049a5d95f5c07ef83066a8f6fc6fe48955bd02339759e273eaa7ea` |
+| `TigerCS-all-migrations.idempotent.sql` (all migrations, idempotent) | `1b485fa8b50f586f7709c7fd2b36105a43bdf3e22da22596599825ef3c31c67e` |
+
+Checked in the package: it contains the post-#72 types (`CollectionsCampaignAppService`, `CustomerOtpAppService`, `PriorityDowngradeAppService`, `SlaPauseService`, service-identity code); committed `appsettings.json` has an empty password and no secrets; the SQL creates `CustomerOtpChallenges`, `TicketSlaPausePeriods`, `PriorityDowngradeRequests`. A byte-identical rebuild is not promised (timestamps); verify the hash of the file you deploy, or run the manual *Release package* workflow for a CI-built artifact.
 
 ## 17.3 Migration checklist (in order; take a backup first)
 
