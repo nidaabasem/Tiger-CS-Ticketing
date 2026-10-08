@@ -52,7 +52,7 @@
         "properties": {
           "verificationSessionId": {
             "type": "string",
-            "description": "The confirmed verification session (Otp or AuthenticatedDigitalUser) for this customer."
+            "description": "The verification session returned by POST /api/genesys/verification/otp/verify for this customer. Only sessions created from a verified OTP challenge are accepted."
           },
           "documentType": {
             "type": "string",

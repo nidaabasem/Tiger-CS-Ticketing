@@ -38,9 +38,9 @@ public class GenesysDocumentsController(CrmDocumentCopyAppService documentCopyAp
 {
     /// <summary>Send the verified customer a copy of one of their documents.</summary>
     /// <remarks>
-    /// Identity comes from <c>verificationSessionId</c> (a confirmed session from
-    /// <c>POST /api/verification-sessions</c>, method Otp or AuthenticatedDigitalUser, owned by
-    /// the calling service account) — never from a phone number or customer id, which this
+    /// Identity comes from <c>verificationSessionId</c> (a session minted by a verified
+    /// OTP challenge, <c>POST /api/genesys/verification/otp/verify</c>, owned by
+    /// the calling service account; <c>POST /api/verification-sessions</c> refuses the Otp method) — never from a phone number or customer id, which this
     /// request does not accept. The document goes to the customer's email on record in CRM, as
     /// an attachment; the response never contains the document or the full address.
     ///

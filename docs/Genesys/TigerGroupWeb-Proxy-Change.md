@@ -19,6 +19,8 @@ tested in TigerGroupWeb.** Access needed to complete it: read + push on the Tige
 | 8 | `GET /api/genesys/collections/customers/{crmCustomerId}/reminders` | implemented | **not forwarded** | Add forwarding |
 | 9 | `POST /api/genesys/customers/unit-details` | implemented (this branch) | not forwarded | **Add** |
 | 10 | `POST /api/genesys/documents/send-copy` (`Idempotency-Key`) | implemented (merged branch); **blocked for real UAT** (no CRM document source) | not forwarded | **Add** (forwarding alone does not unblock the feature) |
+| 12 | `POST /api/genesys/verification/buyer-lookup`, `…/otp/send`, `…/otp/resend`, `…/otp/verify` (data actions 13–16) | implemented (review branch); needs `CrmDocuments:Enabled`, SMTP, `OtpCodePepper` | not forwarded (unverified) | **Add**; pass `Retry-After` and `application/problem+json` through unchanged (rules 4 and 6) |
+| 13 | `POST /api/genesys/agent-context`, `POST /api/genesys/screen-pop` (agent/staff only — **never** customer auth) | implemented | unknown | Verify; keep separate from customer verification |
 | 11 | `PATCH /api/genesys/tickets/{ticketId}` (body `awaitingCustomerReply`) | implemented (merged branch) | forwards the existing PATCH | **Verify** the body is forwarded as-is (§2 rule 4) |
 
 ## 2. Rules — identical to the already-implemented `by-key` forwarding (§9 of the Collections API doc)
