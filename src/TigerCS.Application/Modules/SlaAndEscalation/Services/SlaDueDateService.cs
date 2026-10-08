@@ -205,6 +205,92 @@ public sealed class SlaDueDateService(
         + $"\"requestTypeSlaNote\":{(applied.RequestTypeSlaNote is { } note ? $"\"{note.Replace("\"", "'")}\"" : "null")}}}";
 
     /// <summary>
+    /// The SLA side of an <b>approved priority downgrade</b> (ISSUE-023
+    /// Option B; SLA-Architecture.md section 7): end the current period at the
+    /// approval moment and open a <see cref="SlaChangeReason.Downgrade"/>
+    /// successor under the new priority's policy.
+    ///
+    /// <para>
+    /// <b>Nothing recorded is removed.</b> The ended period keeps its breach
+    /// flags and its dates, so management reporting shows both the original
+    /// and the changed period. First Response is carried verbatim (never
+    /// restarted or loosened, as for a reopen). The Resolution deadline is
+    /// recomputed from the approval moment under the new policy, and is never
+    /// earlier than the deadline already in effect, so a downgrade can only
+    /// ever relax the future deadline and never create a tighter one.
+    /// </para>
+    ///
+    /// <para>
+    /// Everything fallible (the policy lookup) runs before any state is
+    /// touched, so a failure leaves the period unended. Participates in the
+    /// caller's transaction. Returns null, writing nothing, when the ticket
+    /// has no current period (provisional or unclassified): the SLA will be
+    /// opened later from the ticket's then-current priority.
+    /// </para>
+    /// </summary>
+    public async Task<TicketSlaInstance?> ReplaceCurrentPeriodForApprovedDowngradeAsync(
+        Ticket ticket,
+        byte newPriorityId,
+        DateTime approvedAtUtc,
+        Guid approverEmployeeId,
+        Guid correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+
+        var current = await slaInstanceRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
+        if (current is null)
+        {
+            return null;
+        }
+
+        var (_, computedResolutionDueAtUtc) = await ComputeDueDatesAsync(newPriorityId, approvedAtUtc, cancellationToken);
+
+        // Conservative floor: never earlier than the deadline already in
+        // effect (an already-passed one is below the approval moment, so it
+        // never wins).
+        var resolutionDueAtUtc = computedResolutionDueAtUtc < current.ResolutionDueAtUtc
+            ? current.ResolutionDueAtUtc
+            : computedResolutionDueAtUtc;
+
+        current.EndPeriod(approvedAtUtc);
+
+        var period = TicketSlaInstance.OpenDowngradePeriod(
+            ticket.TicketId,
+            newPriorityId,
+            approvedAtUtc,
+            carriedFirstResponseDueAtUtc: current.FirstResponseDueAtUtc,
+            carriedFirstResponseBreached: current.FirstResponseBreached,
+            resolutionDueAtUtc,
+            approverEmployeeId);
+
+        await slaInstanceRepository.AddAsync(period, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            approverEmployeeId,
+            "ComputeSlaDueDates",
+            nameof(TicketSlaInstance),
+            ticket.TicketId.ToString(),
+            beforeValue:
+                $"{{\"changeReason\":\"{SlaChangeReason.Downgrade}\",\"endedPriorityId\":{current.PriorityId},"
+                + $"\"endedPeriodStartAtUtc\":\"{current.PeriodStartAtUtc:O}\","
+                + $"\"endedResolutionDueAtUtc\":\"{current.ResolutionDueAtUtc:O}\","
+                + $"\"endedFirstResponseBreached\":{(current.FirstResponseBreached ? "true" : "false")},"
+                + $"\"endedResolutionBreached\":{(current.ResolutionBreached ? "true" : "false")}}}",
+            afterValue:
+                $"{{\"priorityId\":{newPriorityId},\"clockStartAtUtc\":\"{approvedAtUtc:O}\","
+                + $"\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\","
+                + $"\"firstResponseDueAtUtc\":\"{period.FirstResponseDueAtUtc:O}\",\"firstResponseCarried\":true,"
+                + $"\"firstResponseBreached\":{(period.FirstResponseBreached ? "true" : "false")}}}",
+            correlationId,
+            cancellationToken);
+
+        deadlineScheduler.ScheduleDeadlineCheck(ticket.TicketId, SlaDeadlineType.Resolution, resolutionDueAtUtc);
+
+        return period;
+    }
+
+    /// <summary>
     /// The pair of due timestamps for one priority and clock-start moment,
     /// from the per-priority policy alone. Kept for callers that have no
     /// request type; <see cref="ComputeAsync"/> is the full computation.

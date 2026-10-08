@@ -292,4 +292,29 @@ public static class TicketActions
     /// </summary>
     public static bool CanEscalateToLevel4(TicketActionContext? context) =>
         context is { } c && (c.OverrideApplies || c.HasAnyRole(SlaRoleSets.ManualLevel4Escalate));
+
+    /// <summary>
+    /// Mirrors <c>PriorityDowngradeAppService.RequestAsync</c>'s authorization:
+    /// the ticket's owner, a cross-department requester role, or a
+    /// department-side role scoped to the ticket's own department (or the
+    /// System Administrator override).
+    /// </summary>
+    public static bool CanRequestPriorityDowngrade(TicketActionContext? context) =>
+        context is { } c
+        && (c.OverrideApplies
+            || c.IsCurrentOwner
+            || c.HasAnyRole(PriorityDowngradeAppService.CrossDepartmentRequesterRoles)
+            || (c.HasAnyRole(PriorityDowngradeAppService.DepartmentRequesterRoles) && c.BelongsToCurrentDepartment));
+
+    /// <summary>
+    /// Mirrors the decision rule of <c>PriorityDowngradeAppService</c>: a
+    /// Department Head of the ticket's current department, a CS Manager /
+    /// General Manager, or the System Administrator override. The requester
+    /// is excluded by the caller, which knows who requested.
+    /// </summary>
+    public static bool CanDecidePriorityDowngrade(TicketActionContext? context) =>
+        context is { } c
+        && (c.OverrideApplies
+            || c.HasAnyRole(PriorityDowngradeAppService.CrossDepartmentDeciderRoles)
+            || (c.HasRole(Roles.DepartmentHead) && c.BelongsToCurrentDepartment));
 }

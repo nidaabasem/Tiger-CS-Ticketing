@@ -81,6 +81,12 @@ builder.Services.Configure<DashboardOptions>(
     builder.Configuration.GetSection(DashboardOptions.SectionName));
 builder.Services.AddScoped(sp => sp.GetRequiredService<IOptions<DashboardOptions>>().Value);
 
+// Priority-downgrade request lifetime (SlaAndEscalation:PriorityDowngrade:ExpiryHours,
+// default 7 days). Only the expiry window is configurable; who may decide is not.
+builder.Services.Configure<TigerCS.Application.Modules.SlaAndEscalation.Services.PriorityDowngradeOptions>(
+    builder.Configuration.GetSection(TigerCS.Application.Modules.SlaAndEscalation.Services.PriorityDowngradeOptions.SectionName));
+builder.Services.AddScoped(sp => sp.GetRequiredService<IOptions<TigerCS.Application.Modules.SlaAndEscalation.Services.PriorityDowngradeOptions>>().Value);
+
 builder.Services.AddAuthorization(options => options.AddTigerCsAuthorizationPolicies());
 
 var app = builder.Build();

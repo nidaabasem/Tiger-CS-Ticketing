@@ -40,10 +40,9 @@ namespace TigerCS.Infrastructure.Persistence;
 /// </para>
 ///
 /// <para>
-/// <c>TicketSlaPausePeriods</c> (ISSUE-018 SLA pause/resume) is now mapped.
-/// <c>PriorityDowngradeRequests</c> (§0 — downgrades are hard-disabled)
-/// remains deliberately unmapped. Genesys and attachments arrive with their
-/// own increments.
+/// <c>TicketSlaPausePeriods</c> (ISSUE-018 SLA pause/resume) and
+/// <c>PriorityDowngradeRequests</c> (ISSUE-023 Department-Head approval) are
+/// both mapped. Genesys and attachments arrive with their own increments.
 /// </para>
 /// </summary>
 public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
@@ -100,6 +99,8 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     public DbSet<TicketSlaPausePeriod> TicketSlaPausePeriods => Set<TicketSlaPausePeriod>();
 
     public DbSet<TicketEscalation> TicketEscalations => Set<TicketEscalation>();
+
+    public DbSet<PriorityDowngradeRequest> PriorityDowngradeRequests => Set<PriorityDowngradeRequest>();
 
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
@@ -186,6 +187,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketSlaInstanceConfiguration());
         builder.ApplyConfiguration(new TicketSlaPausePeriodConfiguration());
         builder.ApplyConfiguration(new TicketEscalationConfiguration());
+        builder.ApplyConfiguration(new PriorityDowngradeRequestConfiguration());
         builder.ApplyConfiguration(new IdempotencyRecordConfiguration());
         builder.ApplyConfiguration(new OutboxMessageConfiguration());
         builder.ApplyConfiguration(new NotificationConfiguration());

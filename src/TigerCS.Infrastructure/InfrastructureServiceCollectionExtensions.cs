@@ -256,6 +256,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<SlaBreachDetectionAppService>();
         services.AddScoped<SlaQueryAppService>();
         services.AddScoped<SlaFirstResponseAppService>();
+
+        // Priority-downgrade approval (ISSUE-023 Option B, section 5.6).
+        // PriorityDowngradeOptions is bound in the Api host (Program.cs).
+        services.AddScoped<IPriorityDowngradeRequestRepository, PriorityDowngradeRequestRepository>();
+        services.AddScoped<PriorityDowngradeAppService>();
         services.AddScoped<TicketEscalationAppService>();
 
         // Workflow/SLA Configuration (phase 1) — the Department → Request
