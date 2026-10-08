@@ -25,8 +25,16 @@ namespace TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 /// </summary>
 public interface ICrmUnitDetailsGateway
 {
-    /// <summary>Never throws for an expected CRM answer; an unreachable CRM is <see cref="CrmUnitDetailsOutcome.Unavailable"/>.</summary>
-    Task<CrmUnitDetailsResult> GetUnitDetailsAsync(int crmCustomerId, int crmUnitId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Never throws for an expected CRM answer; an unreachable CRM is <see cref="CrmUnitDetailsOutcome.Unavailable"/>.
+    /// </summary>
+    /// <param name="crmCustomerId">The verified customer.</param>
+    /// <param name="crmUnitId">The customer's own unit (already checked against the buyer lookup).</param>
+    /// <param name="crmLeadId">The Lead the buyer lookup bound to this unit; CRM must read the sale of exactly this Lead and echo it back in <see cref="CrmSaleDetails.LeadId"/>.</param>
+    /// <param name="includeSale">True only when the caller holds a valid server-recorded verification proof; sold price and registration cost are then requested. False asks CRM not to return them at all.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<CrmUnitDetailsResult> GetUnitDetailsAsync(
+        int crmCustomerId, int crmUnitId, int? crmLeadId = null, bool includeSale = false, CancellationToken cancellationToken = default);
 }
 
 public enum CrmUnitDetailsOutcome
@@ -65,6 +73,7 @@ public sealed record CrmUnitDetailsResult(CrmUnitDetailsOutcome Outcome, CrmUnit
 /// <param name="UnitExpectedHandoverDate">Handover date recorded on the unit itself, planned.</param>
 /// <param name="UnitActualHandoverDate">Handover date recorded on the unit itself, actual.</param>
 /// <param name="Project">Project facts not in the buyer lookup.</param>
+/// <param name="Sale">The customer's recorded sale (sold price, registration cost). Null when not requested or not recorded.</param>
 public sealed record CrmUnitDetails(
     string? UnitTypeName,
     string? TowerName,
@@ -74,7 +83,19 @@ public sealed record CrmUnitDetails(
     IReadOnlyList<CrmParkingSpace>? Parking,
     DateOnly? UnitExpectedHandoverDate,
     DateOnly? UnitActualHandoverDate,
-    CrmProjectDetails? Project);
+    CrmProjectDetails? Project,
+    CrmSaleDetails? Sale = null);
+
+/// <summary>
+/// The sale recorded for this customer's unit. Each amount is what CRM stored for
+/// <b>this</b> sale — the customer's actual sold price, never the unit's current
+/// list/asking price — and a genuine zero is kept as zero; null means "not recorded".
+/// </summary>
+/// <param name="LeadId">The CRM Lead the sale was read from. Ticketing discards the sale unless this equals the Lead the buyer lookup bound to the unit.</param>
+/// <param name="SoldPrice">Actual price the customer agreed to pay.</param>
+/// <param name="RegistrationCost">Registration fee <b>amount</b> recorded for the sale (not a percentage, not derived from the price).</param>
+/// <param name="Currency">ISO-4217 code CRM records the amounts in; null when CRM gives none — never assumed.</param>
+public sealed record CrmSaleDetails(int? LeadId, decimal? SoldPrice, decimal? RegistrationCost, string? Currency);
 
 public sealed record CrmParkingSpace(string? Number, string? Level, string? Type);
 
@@ -84,10 +105,16 @@ public sealed record CrmParkingSpace(string? Number, string? Level, string? Type
 /// <param name="ActualHandoverDate">Project-level actual handover, only when recorded.</param>
 /// <param name="Description">Customer-facing description. Internal notes are never carried by this record.</param>
 /// <param name="Amenities">Customer-facing amenity names; null when not recorded.</param>
+/// <param name="CompletionPercentage">Construction completion, 0–100, as recorded (0 is a genuine value). Null when not recorded or outside 0–100.</param>
+/// <param name="ExpectedCompletionDate">Planned construction completion — a different event from handover.</param>
+/// <param name="ActualCompletionDate">Actual construction completion — a different event from handover; only when recorded.</param>
 public sealed record CrmProjectDetails(
     string? Address,
     string? Status,
     DateOnly? ExpectedHandoverDate,
     DateOnly? ActualHandoverDate,
     string? Description,
-    IReadOnlyList<string>? Amenities);
+    IReadOnlyList<string>? Amenities,
+    decimal? CompletionPercentage = null,
+    DateOnly? ExpectedCompletionDate = null,
+    DateOnly? ActualCompletionDate = null);

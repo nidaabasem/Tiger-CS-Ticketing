@@ -1,10 +1,13 @@
 using System.Globalization;
 using Microsoft.Extensions.Logging;
+using TigerCS.Application.Modules.CrmDocuments;
+using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.GenesysIntegration.Services;
@@ -52,15 +55,34 @@ public sealed record GenesysUnitDetailsResult(GenesysUnitDetailsOutcome Outcome,
 /// Nothing from CRM beyond the mapped fields (no internal notes, no other
 /// customer data, no contact details) is copied into the response.
 /// </para>
+///
+/// <para>
+/// <b>Private financial data needs proof, not just ownership.</b> The
+/// customer's actual sold price and registration cost are returned only when
+/// the request carries a <c>verificationSessionId</c> that the server itself
+/// recorded as confirmed — owned by the calling service account, unexpired, by
+/// an accepted strong method (the document-copy policy,
+/// <see cref="CrmDocumentOptions.AcceptedVerificationMethods"/>), and for this
+/// very unit. A phone number or customer id the caller typed is never proof.
+/// Without proof CRM is not even asked for the sale. With it, the sale is
+/// requested for the Lead the buyer lookup bound to this unit and discarded
+/// unless CRM echoes that same Lead, so another buyer's sale or an unrelated
+/// historical booking cannot be shown.
+/// </para>
 /// </summary>
 public sealed class GenesysCustomerUnitDetailsAppService(
     GenesysOptions options,
     CrmBuyerLookupAppService crmBuyerLookupAppService,
     ICrmUnitDetailsGateway unitDetailsGateway,
+    CrmDocumentOptions verificationPolicy,
+    IVerificationSessionRepository sessionRepository,
+    IUnitReferenceRepository unitReferenceRepository,
+    TimeProvider timeProvider,
     ILogger<GenesysCustomerUnitDetailsAppService> logger)
 {
     public async Task<GenesysUnitDetailsResult> GetAsync(
-        string? customerReference, string? phoneNumber, int? unitId, CancellationToken cancellationToken = default)
+        string? customerReference, string? phoneNumber, int? unitId,
+        Guid? callerEmployeeId = null, Guid? verificationSessionId = null, CancellationToken cancellationToken = default)
     {
         if (!options.Enabled)
         {
@@ -126,10 +148,13 @@ public sealed class GenesysCustomerUnitDetailsAppService(
             return new(GenesysUnitDetailsOutcome.UnitNotEligible);
         }
 
+        var proof = await CheckProofAsync(callerEmployeeId, verificationSessionId, unit.UnitId, cancellationToken);
+
         CrmUnitDetailsResult enrichment;
         try
         {
-            enrichment = await unitDetailsGateway.GetUnitDetailsAsync(customerId, unit.UnitId, cancellationToken);
+            enrichment = await unitDetailsGateway.GetUnitDetailsAsync(
+                customerId, unit.UnitId, unit.LeadId, includeSale: proof == ProofState.Valid, cancellationToken);
         }
         catch (CrmGatewayUnavailableException ex)
         {
@@ -139,7 +164,43 @@ public sealed class GenesysCustomerUnitDetailsAppService(
 
         return new(
             GenesysUnitDetailsOutcome.UnitDetails,
-            Map(customerKey, unit, enrichment));
+            Map(customerKey, unit, enrichment, proof));
+    }
+
+    private enum ProofState { Missing, Invalid, Valid }
+
+    /// <summary>
+    /// One answer (<see cref="ProofState.Invalid"/>) for an unknown, someone else's, unconfirmed, expired,
+    /// weak-method or other-unit session, so nothing can be learned by probing session ids.
+    /// </summary>
+    private async Task<ProofState> CheckProofAsync(
+        Guid? callerEmployeeId, Guid? verificationSessionId, int unitId, CancellationToken cancellationToken)
+    {
+        if (verificationSessionId is not { } sessionId || sessionId == Guid.Empty)
+        {
+            return ProofState.Missing;
+        }
+
+        if (callerEmployeeId is not { } caller)
+        {
+            return ProofState.Invalid;
+        }
+
+        var session = await sessionRepository.GetByIdAsync(sessionId, cancellationToken);
+        if (session is null
+            || !session.IsOwnedBy(caller)
+            || session.Status is not (VerificationSessionStatus.Confirmed or VerificationSessionStatus.Consumed)
+            || session.ExpiresAtUtc <= timeProvider.GetUtcNow().UtcDateTime
+            || !verificationPolicy.IsAccepted(session.VerificationMethod))
+        {
+            return ProofState.Invalid;
+        }
+
+        var verifiedUnit = await unitReferenceRepository.GetByIdAsync(session.UnitReferenceId, cancellationToken);
+        return verifiedUnit is not null
+            && string.Equals(verifiedUnit.CrmUnitId, unitId.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase)
+                ? ProofState.Valid
+                : ProofState.Invalid;
     }
 
     /// <summary>The Genesys lookup returns the CRM customer id as plain text (<c>externalCustomerId</c>); the Customers directory key is <c>crm:{id}</c>. Both are accepted.</summary>
@@ -165,7 +226,7 @@ public sealed class GenesysCustomerUnitDetailsAppService(
         return int.TryParse(reference.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out customerId) && customerId > 0;
     }
 
-    private static GenesysCustomerUnitDetailsResponse Map(string customerKey, CrmBuyerUnitDto unit, CrmUnitDetailsResult enrichment)
+    private GenesysCustomerUnitDetailsResponse Map(string customerKey, CrmBuyerUnitDto unit, CrmUnitDetailsResult enrichment, ProofState proof)
     {
         var details = enrichment.Outcome == CrmUnitDetailsOutcome.Found ? enrichment.Details : null;
         var project = details?.Project;
@@ -192,7 +253,10 @@ public sealed class GenesysCustomerUnitDetailsAppService(
             Iso(project?.ExpectedHandoverDate),
             Iso(project?.ActualHandoverDate),
             project?.Description,
-            project?.Amenities?.ToList());
+            project?.Amenities?.ToList(),
+            project?.CompletionPercentage,
+            Iso(project?.ExpectedCompletionDate),
+            Iso(project?.ActualCompletionDate));
 
         // Which recorded pair applies. A choice between recorded values only.
         var handoverSource =
@@ -207,8 +271,50 @@ public sealed class GenesysCustomerUnitDetailsAppService(
             _ => "NotAvailable"
         };
 
-        return new GenesysCustomerUnitDetailsResponse("UnitDetails", customerKey, [], unitDto, projectDto, handoverSource, status);
+        var (sale, financialStatus) = MapSale(unit, enrichment, details, proof);
+
+        return new GenesysCustomerUnitDetailsResponse(
+            "UnitDetails", customerKey, [], unitDto, projectDto, handoverSource, status, sale, financialStatus);
     }
+
+    /// <summary>The sale is shown only with valid proof and only when CRM read it from the Lead the buyer lookup bound to this unit.</summary>
+    private GenesysSaleMapping MapSale(CrmBuyerUnitDto unit, CrmUnitDetailsResult enrichment, CrmUnitDetails? details, ProofState proof)
+    {
+        switch (proof)
+        {
+            case ProofState.Missing:
+                return new(null, "VerificationRequired");
+            case ProofState.Invalid:
+                return new(null, "VerificationFailed");
+        }
+
+        if (enrichment.Outcome == CrmUnitDetailsOutcome.Unavailable)
+        {
+            return new(null, "Unavailable");
+        }
+
+        var crmSale = details?.Sale;
+        if (crmSale is null)
+        {
+            return new(null, "NotAvailable");
+        }
+
+        if (crmSale.LeadId != unit.LeadId)
+        {
+            logger.LogWarning(
+                "CRM returned a sale for lead {ReturnedLeadId}, not the lead {ExpectedLeadId} bound to unit {UnitId}; it was discarded.",
+                crmSale.LeadId, unit.LeadId, unit.UnitId);
+            return new(null, "NotAvailable");
+        }
+
+        return new(
+            new GenesysSaleDto(
+                crmSale.SoldPrice is { } price ? new GenesysMoneyDto(price, crmSale.Currency) : null,
+                crmSale.RegistrationCost is { } fee ? new GenesysMoneyDto(fee, crmSale.Currency) : null),
+            "Available");
+    }
+
+    private readonly record struct GenesysSaleMapping(GenesysSaleDto? Sale, string Status);
 
     private static string? Iso(DateOnly? date) => date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 }

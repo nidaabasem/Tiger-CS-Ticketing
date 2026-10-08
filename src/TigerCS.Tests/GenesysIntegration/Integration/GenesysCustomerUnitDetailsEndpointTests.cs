@@ -25,14 +25,16 @@ public sealed class GenesysCustomerUnitDetailsEndpointTests : IDisposable
 
     public void Dispose() => _factory.Dispose();
 
-    private async Task<HttpClient> SignInAsync(string role = Roles.CsAgent)
+    private async Task<HttpClient> SignInAsync(string role = Roles.CsAgent) => (await SignInWithIdAsync(role)).Client;
+
+    private async Task<(HttpClient Client, Guid EmployeeId)> SignInWithIdAsync(string role = Roles.CsAgent)
     {
-        var (username, password, _) = await _factory.SeedEmployeeAsync(role);
+        var (username, password, employeeId) = await _factory.SeedEmployeeAsync(role);
         var client = _factory.CreateClient();
         var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password)))
             .Content.ReadFromJsonAsync<LoginResponseDto>();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
-        return client;
+        return (client, employeeId);
     }
 
     private static async Task<JsonElement> JsonAsync(HttpResponseMessage response) =>
@@ -82,6 +84,56 @@ public sealed class GenesysCustomerUnitDetailsEndpointTests : IDisposable
         Assert.Equal(JsonValueKind.Null, project.GetProperty("actualHandoverDate").ValueKind);
         Assert.Equal("Unit", body.GetProperty("handoverDateSource").GetString());
         Assert.Equal("Available", body.GetProperty("detailsStatus").GetString());
+    }
+
+    [Fact]
+    public async Task WithoutProof_ProjectCompletionIsReturned_ButTheSaleIsWithheld()
+    {
+        var client = await SignInAsync();
+
+        var body = await JsonAsync(await client.PostAsJsonAsync(Route, new GenesysCustomerUnitDetailsRequest("crm:9001", Phone, 9200)));
+
+        Assert.Equal(62.5m, body.GetProperty("project").GetProperty("completionPercentage").GetDecimal());
+        Assert.Equal("2027-01-31", body.GetProperty("project").GetProperty("expectedCompletionDate").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("project").GetProperty("actualCompletionDate").ValueKind);
+        Assert.Equal("VerificationRequired", body.GetProperty("financialDetailsStatus").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("sale").ValueKind);
+        Assert.DoesNotContain("1850000", body.ToString());
+    }
+
+    [Fact]
+    public async Task WithServerRecordedProof_TheSaleIsReturned_WithTheCurrency()
+    {
+        var (client, employeeId) = await SignInWithIdAsync();
+        var session = await _factory.SeedConfirmedVerificationSessionAsync(employeeId, "9200");
+
+        var body = await JsonAsync(await client.PostAsJsonAsync(Route, new GenesysCustomerUnitDetailsRequest("crm:9001", Phone, 9200, session)));
+
+        Assert.Equal("Available", body.GetProperty("financialDetailsStatus").GetString());
+        var sale = body.GetProperty("sale");
+        Assert.Equal(1850000m, sale.GetProperty("soldPrice").GetProperty("amount").GetDecimal());
+        Assert.Equal("AED", sale.GetProperty("soldPrice").GetProperty("currency").GetString());
+        Assert.Equal(74000m, sale.GetProperty("registrationCost").GetProperty("amount").GetDecimal());
+        // The pre-existing structure is untouched.
+        foreach (var member in new[] { "mode", "customerReference", "eligibleUnits", "unit", "project", "handoverDateSource", "detailsStatus" })
+        {
+            Assert.True(body.TryGetProperty(member, out _), member);
+        }
+    }
+
+    [Fact]
+    public async Task ProofOfAnotherAgent_OrAnUnknownSession_WithholdsTheSale()
+    {
+        var (client, _) = await SignInWithIdAsync();
+        var foreign = await _factory.SeedConfirmedVerificationSessionAsync(Guid.NewGuid(), "9200");
+
+        foreach (var session in new[] { foreign, Guid.NewGuid() })
+        {
+            var body = await JsonAsync(await client.PostAsJsonAsync(Route, new GenesysCustomerUnitDetailsRequest("crm:9001", Phone, 9200, session)));
+
+            Assert.Equal("VerificationFailed", body.GetProperty("financialDetailsStatus").GetString());
+            Assert.Equal(JsonValueKind.Null, body.GetProperty("sale").ValueKind);
+        }
     }
 
     [Fact]

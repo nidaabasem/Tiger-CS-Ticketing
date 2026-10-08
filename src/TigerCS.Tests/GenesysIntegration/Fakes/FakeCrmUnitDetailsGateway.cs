@@ -11,15 +11,20 @@ public sealed class FakeCrmUnitDetailsGateway : ICrmUnitDetailsGateway
 
     public List<(int CustomerId, int UnitId)> Calls { get; } = [];
 
+    /// <summary>The lead id and includeSale flag of each call, in order — proves the sale is only requested with proof and for the bound Lead.</summary>
+    public List<(int? LeadId, bool IncludeSale)> SaleRequests { get; } = [];
+
     public FakeCrmUnitDetailsGateway Returns(int unitId, CrmUnitDetailsResult result)
     {
         _byUnit[unitId] = result;
         return this;
     }
 
-    public Task<CrmUnitDetailsResult> GetUnitDetailsAsync(int crmCustomerId, int crmUnitId, CancellationToken cancellationToken = default)
+    public Task<CrmUnitDetailsResult> GetUnitDetailsAsync(
+        int crmCustomerId, int crmUnitId, int? crmLeadId = null, bool includeSale = false, CancellationToken cancellationToken = default)
     {
         Calls.Add((crmCustomerId, crmUnitId));
+        SaleRequests.Add((crmLeadId, includeSale));
         if (Throws is not null)
         {
             throw Throws;

@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
+using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
@@ -244,6 +245,31 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
         await db.SaveChangesAsync();
 
         return (username, password, user.Id);
+    }
+
+    /// <summary>
+    /// Records a confirmed verification session for <paramref name="employeeId"/> and the CRM unit — the row
+    /// <c>POST /api/verification-sessions</c> writes after an OTP / authenticated-user confirmation. Test setup.
+    /// </summary>
+    public async Task<Guid> SeedConfirmedVerificationSessionAsync(
+        Guid employeeId, string crmUnitId, VerificationMethod method = VerificationMethod.Otp)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TigerCsDbContext>();
+        var now = DateTime.UtcNow;
+        var unit = new UnitReference(crmUnitId, "1204", "Tiger Tower", null, null, now);
+        db.Add(unit);
+        await db.SaveChangesAsync();
+        var contact = new ContactReference("c-" + Guid.NewGuid().ToString("N")[..8], unit.UnitReferenceId, "Test Buyer", null, ContactType.Owner, null, now);
+        db.Add(contact);
+        await db.SaveChangesAsync();
+        var session = new VerificationSession(
+            Guid.NewGuid(), employeeId, unit.UnitReferenceId, contact.ContactReferenceId, "1204", null, null, null, null, null,
+            now, now.AddMinutes(30), null);
+        session.Confirm(now, method);
+        db.Add(session);
+        await db.SaveChangesAsync();
+        return session.VerificationSessionId;
     }
 
     /// <summary>

@@ -324,10 +324,12 @@ public sealed record GenesysScreenPopRequest(
 /// <param name="CustomerReference">Required. The verified customer: <c>crm:{id}</c> or the plain CRM customer id (the lookup's <c>externalCustomerId</c>). Checked server-side against CRM — it is never trusted on its own.</param>
 /// <param name="PhoneNumber">Required. The verified number the customer was identified by (any <c>tel:</c>/+971/971 form). It is how CRM is asked which units the customer owns.</param>
 /// <param name="UnitId">Optional. The CRM unit id the customer selected, from a previous <c>UnitSelectionRequired</c> answer. When absent, the customer's eligible units are returned instead.</param>
+/// <param name="VerificationSessionId">Optional. A confirmed one-time-code / authenticated-user session from <c>POST /api/verification-sessions</c> for this unit and this service account. Required only for the private financial fields (sold price, registration cost); without it they are withheld and <c>financialDetailsStatus</c> says why. A phone number or customer id alone is never proof.</param>
 public sealed record GenesysCustomerUnitDetailsRequest(
     string? CustomerReference,
     string? PhoneNumber,
-    int? UnitId = null);
+    int? UnitId = null,
+    Guid? VerificationSessionId = null);
 
 /// <summary>An issued Screen Pop launch.</summary>
 /// <param name="LaunchUrl">Open this in any browser or WebView. It carries a one-time token (valid once, for one hour) and nothing else — no username, password or user data.</param>

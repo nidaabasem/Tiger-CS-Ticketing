@@ -15,6 +15,8 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="Project">The selected unit's project.</param>
 /// <param name="HandoverDateSource">Which recorded handover pair applies: <c>Unit</c> when CRM recorded any date on the unit, otherwise <c>Project</c> when it recorded one on the project, otherwise null. Selects between recorded values only — no date is derived.</param>
 /// <param name="DetailsStatus">UnitDetails mode: <c>Available</c> when the enrichment source answered, <c>NotAvailable</c> when no source publishes those facts, <c>Unavailable</c> when the source could not be reached. Explains why enrichment values are null.</param>
+/// <param name="Sale">The customer's own recorded sale (sold price, registration cost). Private financial data: present only when <see cref="FinancialDetailsStatus"/> is <c>Available</c>.</param>
+/// <param name="FinancialDetailsStatus">UnitDetails mode: <c>Available</c> (CRM answered for this customer's own sale), <c>VerificationRequired</c> (no <c>verificationSessionId</c> sent), <c>VerificationFailed</c> (unknown, foreign, unconfirmed, expired, weak-method, or for a different unit), <c>NotAvailable</c> (CRM has no sale data for it, or it could not be tied to the customer's own Lead), <c>Unavailable</c> (CRM unreachable). Null in UnitSelectionRequired mode. Independent of <see cref="DetailsStatus"/>.</param>
 public sealed record GenesysCustomerUnitDetailsResponse(
     string Mode,
     string CustomerReference,
@@ -22,7 +24,16 @@ public sealed record GenesysCustomerUnitDetailsResponse(
     GenesysUnitDetailsDto? Unit,
     GenesysProjectDetailsDto? Project,
     string? HandoverDateSource,
-    string? DetailsStatus);
+    string? DetailsStatus,
+    GenesysSaleDto? Sale = null,
+    string? FinancialDetailsStatus = null);
+
+/// <summary>An amount and the currency CRM recorded it in. The currency is null when CRM does not say — it is never assumed.</summary>
+public sealed record GenesysMoneyDto(decimal Amount, string? Currency);
+
+/// <param name="SoldPrice">The price this customer actually agreed to pay for the unit — not the unit's current list price. Null when not recorded; 0 only when CRM recorded 0.</param>
+/// <param name="RegistrationCost">The registration fee amount recorded for this sale (an amount, not a percentage, and not derived from the price). Null when not recorded; 0 only when CRM recorded 0.</param>
+public sealed record GenesysSaleDto(GenesysMoneyDto? SoldPrice, GenesysMoneyDto? RegistrationCost);
 
 /// <summary>One selectable unit — enough for the bot to ask "which one?".</summary>
 public sealed record GenesysEligibleUnitDto(
@@ -72,6 +83,9 @@ public sealed record GenesysParkingDto(string? Number, string? Level, string? Ty
 /// <param name="ActualHandoverDate">Project-level actual handover (ISO date), only when recorded.</param>
 /// <param name="Description">Customer-facing description, or null.</param>
 /// <param name="Amenities">Customer-facing amenities, or null.</param>
+/// <param name="CompletionPercentage">Construction completion, 0–100, as recorded by CRM; 0 is a genuine value, null means not recorded.</param>
+/// <param name="ExpectedCompletionDate">Planned construction completion (ISO date). A different event from handover — never filled from, or into, the handover dates.</param>
+/// <param name="ActualCompletionDate">Actual construction completion (ISO date), only when recorded.</param>
 public sealed record GenesysProjectDetailsDto(
     int ProjectId,
     string? Name,
@@ -81,4 +95,7 @@ public sealed record GenesysProjectDetailsDto(
     string? ExpectedHandoverDate,
     string? ActualHandoverDate,
     string? Description,
-    IReadOnlyList<string>? Amenities);
+    IReadOnlyList<string>? Amenities,
+    decimal? CompletionPercentage = null,
+    string? ExpectedCompletionDate = null,
+    string? ActualCompletionDate = null);
