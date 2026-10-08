@@ -33,7 +33,7 @@
         "maskedDestination": "\"\"",
         "duplicate": "false",
         "choices": "[]",
-        "choiceKind": "\"\\\"\\\"\""
+        "choiceKind": "\"\""
       },
       "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"recordId\": ${recordId}, \"maskedDestination\": ${maskedDestination}, \"duplicate\": ${duplicate}, \"choices\": ${choices}, \"choiceKind\": ${choiceKind}}"
     }
