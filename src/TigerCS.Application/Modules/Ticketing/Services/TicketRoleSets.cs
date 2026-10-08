@@ -108,10 +108,10 @@ public static class TicketRoleSets
     /// <para>
     /// <b>Every other role is refused</b> — Department Employee, Department
     /// Head, General Manager, Chairman/CEO and Reporting User hold no direct
-    /// Reopen, neither the action nor the endpoint. The system has no Reopen
-    /// approval workflow for them to route through (the configured approval
-    /// types are Accounting and Customer Service approval only), so for those
-    /// roles a reopen is a request made to CS, not a capability.
+    /// Reopen, neither the action nor the endpoint. They have no direct reopen
+    /// capability; the Reopen Approval path (ApprovalType.ReopenApproval, which
+    /// applies to Resolved tickets only, never to an inactivity closure) is the
+    /// route for a reopen request that CS then decides.
     /// </para>
     ///
     /// <para>
