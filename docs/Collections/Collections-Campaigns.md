@@ -120,6 +120,7 @@ files stay uncommitted.
 | `CollectionsSource:PactReceivables:MaxSourceRows` | `250000` | Source-row cap |
 | `CollectionsSource:PactReceivables:ConnectionStringName` | `PACTRPT` | Name only; the value lives in `ConnectionStrings:PACTRPT` (secret, not documented here) |
 | `Collections:Campaigns:FinancialSourceValidated` / `LegalNoticeExportEnabled` / `MaxExportRows` | `false` / `false` / `5000` | See above |
+| `ConnectionStrings:TigerCsDatabase` / `PACTRPT` / `CrmDatabase` | committed with an **empty `Password=`** | Supply the password via user-secrets or `ConnectionStrings__PACTRPT` etc.; never in `appsettings*.json` |
 | Web `TigerCsApi:BaseUrl` | the API origin, e.g. `https://localhost:7283/` | Web to API calls |
 
 ## Due-date range (From date / To date)
