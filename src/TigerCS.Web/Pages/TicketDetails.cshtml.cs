@@ -466,6 +466,14 @@ public sealed class TicketDetailsModel(
             return RedirectToPage(new { id });
         }
 
+        // Idempotent from the user's side: a double click (or a second agent) finds it already recorded.
+        if (result.Outcome == ApiOutcome.Conflict
+            && result.ProblemType?.EndsWith("first-response-already-recorded", StringComparison.Ordinal) == true)
+        {
+            ActionSuccess = "First response was already recorded.";
+            return RedirectToPage(new { id });
+        }
+
         ActionError = DescribeError(result.Outcome, result.Detail);
         OpenSection = "sla";
         await LoadAsync(cancellationToken);

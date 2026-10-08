@@ -69,10 +69,19 @@ public sealed class SlaFirstResponseAppService(
             return SlaOperationResult<TicketSlaSummaryResponseDto>.Failure(SlaOperationOutcome.FirstResponseAlreadyRecorded);
         }
 
-        ticketRepository.SetRowVersion(ticket, request.RowVersion);
-
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var occurredAtUtc = request.OccurredAtUtc ?? nowUtc;
+
+        // A response cannot have happened in the future, and a person recording it by hand cannot place it before the
+        // ticket existed (that allowance is SLA-Architecture §16 Example E, for a Genesys call answer only). Without these
+        // bounds a caller could backdate the response to erase a breach.
+        if (occurredAtUtc > nowUtc.AddMinutes(5)
+            || (source == FirstResponseSource.Manual && occurredAtUtc < ticket.CreatedAtUtc))
+        {
+            return SlaOperationResult<TicketSlaSummaryResponseDto>.Failure(SlaOperationOutcome.InvalidRequest);
+        }
+
+        ticketRepository.SetRowVersion(ticket, request.RowVersion);
         var correlationId = Guid.NewGuid();
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);

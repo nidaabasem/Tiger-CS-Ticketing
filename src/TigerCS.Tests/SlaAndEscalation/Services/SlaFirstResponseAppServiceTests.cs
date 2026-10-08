@@ -121,6 +121,31 @@ public class SlaFirstResponseAppServiceTests
         Assert.False((await h.Sla.SlaInstances.GetCurrentAsync(h.Ticket.TicketId))!.FirstResponseBreached);
     }
 
+    /// <summary>Backdating guard: a hand-recorded response cannot predate the ticket (only a Genesys call answer may).</summary>
+    [Fact]
+    public async Task AManualResponseBeforeTicketCreation_IsRejected_AndRecordsNothing()
+    {
+        var h = await CreateAsync(CreatedAt.AddMinutes(30));
+
+        var result = await h.Service.RecordAsync(
+            h.OwnerId, [Roles.CsAgent], h.Ticket.TicketId, Request(CreatedAt.AddMinutes(-1)));
+
+        Assert.Equal(SlaOperationOutcome.InvalidRequest, result.Outcome);
+        Assert.Null(h.Ticket.FirstHumanResponseAtUtc);
+    }
+
+    [Fact]
+    public async Task AResponseInTheFuture_IsRejected_AndRecordsNothing()
+    {
+        var h = await CreateAsync(CreatedAt.AddMinutes(30));
+
+        var result = await h.Service.RecordAsync(
+            h.OwnerId, [Roles.CsAgent], h.Ticket.TicketId, Request(CreatedAt.AddHours(5)));
+
+        Assert.Equal(SlaOperationOutcome.InvalidRequest, result.Outcome);
+        Assert.Null(h.Ticket.FirstHumanResponseAtUtc);
+    }
+
     [Fact]
     public async Task AnUnknownSource_IsRejected()
     {
