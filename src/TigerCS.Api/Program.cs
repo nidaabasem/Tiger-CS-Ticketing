@@ -244,6 +244,11 @@ using (var backgroundJobScope = app.Services.CreateScope())
     app.Services.UseTigerCsRecurringCollectionsReminders(
         backgroundJobOptions,
         backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.CollectionsOptions>());
+
+    // Collections PACT receivables snapshot refresh (Due & Overdue page, Campaigns). SQL Server Agent is not used.
+    app.Services.UseTigerCsRecurringCollectionsReceivablesRefresh(
+        backgroundJobOptions,
+        backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions>());
 }
 
 app.UseExceptionHandler();

@@ -20,7 +20,7 @@ public sealed class CollectionsCampaignAppService(
     public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
         CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
         string? search = null, int page = 1, int pageSize = 25, bool forExport = false,
-        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null)
     {
         var permissions = await authorization.ResolveAsync(caller, cancellationToken);
         if (!permissions.CanReadFinancials || (forExport && !permissions.CanSendReminders))
@@ -30,7 +30,7 @@ public sealed class CollectionsCampaignAppService(
         var date = businessDate ?? clock.BusinessDate;
         if (!CollectionsEnums.TryParse<CollectionsCampaignStage>(stage, out var selected)
             || date.Year is < 2000 or > 2100 || companyId is not (null or 4 or 32)
-            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100
+            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100 || towerId is <= 0
             || (long)(page - 1) * pageSize > int.MaxValue)
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a campaign stage, a date in 2000-2100, company 4 or 32, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
@@ -54,7 +54,11 @@ public sealed class CollectionsCampaignAppService(
         {
             // Company and window are pushed down to the source: a single-company request must not wait for the other
             // company's (much slower) procedure, and rows outside the window are never read.
-            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId), budget.Token);
+            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId), budget.Token);
+        }
+        catch (PactReceivablesScopeException ex)
+        {
+            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest, ex.Message);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -100,8 +104,12 @@ public sealed class CollectionsCampaignAppService(
             .Select(g => g.Key).ToHashSet();
         var dates = CollectionsCampaignPolicy.ScheduledDates(selected, date);
         var cycle = $"{date.ToString("yyyy-MM", CultureInfo.InvariantCulture)}:{selected}";
-        var fresh = snapshot.ReadAtUtc.Kind == DateTimeKind.Utc && !clock.IsStale(snapshot.ReadAtUtc)
-            && snapshot.ReadAtUtc <= clock.UtcNow.AddMinutes(1);
+        // Local snapshot: every company in scope must be loaded and within the documented maximum age
+        // (ReceivablesSnapshotOptions.MaxAgeMinutes). Other sources keep the generic staleness test.
+        var fresh = snapshot.Snapshot is { } snapshotStatus
+            ? snapshotStatus.IsFresh
+            : snapshot.ReadAtUtc.Kind == DateTimeKind.Utc && !clock.IsStale(snapshot.ReadAtUtc)
+              && snapshot.ReadAtUtc <= clock.UtcNow.AddMinutes(1);
         List<CollectionsCampaignContactDto> contacts;
         try
         {
@@ -140,7 +148,7 @@ public sealed class CollectionsCampaignAppService(
                     return new CollectionsCampaignContactDto(id, $"ext:Pact:{g.Key.Tenant}", first.CompanyId,
                         g.Key.Tenant, first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
                         amount.Amount, sourceOptions.Currency, amount.EarliestDueDate, selected.ToString(), cycle,
-                        status, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons));
+                        status, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), first.TowerNumber, first.TowerName);
                 }).OfType<CollectionsCampaignContactDto>().ToList();
         }
         catch (OverflowException)
@@ -168,12 +176,12 @@ public sealed class CollectionsCampaignAppService(
             campaignOptions.FinancialSourceValidated, snapshot.LegacyExclusionsApplied, permissions.CanSendReminders,
             contacts.Count, contacts.Count(c => c.Status == "Ready"), contacts.Count(c => c.Status == "NeedsReview"),
             page, pageSize, forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to)));
+            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to), towerId, snapshot.Snapshot));
     }
 
     public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
         string? stage, string? mode, DateOnly? businessDate = null, int? companyId = null, string? search = null,
-        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null)
     {
         // No source read for an unauthorized export, including malformed requests.
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanSendReminders)
@@ -181,9 +189,14 @@ public sealed class CollectionsCampaignAppService(
         if (mode is not ("review" or "genesys"))
             return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest, "Choose review or genesys export.");
         var result = await PreviewAsync(caller, stage, businessDate, companyId, search,
-            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo);
+            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId);
         if (!result.IsSuccess) return CollectionsResult<CollectionsCampaignExportDto>.Fail(result.Outcome, result.Detail);
         var report = result.Value!;
+        // Freshness requirement (both export modes): the snapshot of every company in scope must be loaded and no older than
+        // ReceivablesSnapshotOptions.MaxAgeMinutes. A failed latest refresh is covered by the same rule because the age keeps growing.
+        if (report.Snapshot is { IsFresh: false } stale)
+            return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest,
+                $"Receivables data is not fresh enough to export. {stale.FreshnessProblem} No file was created; wait for the next successful refresh and retry.");
         if (mode == "genesys" && (report.Stage == nameof(CollectionsCampaignStage.LegalReferral)
             || report.BusinessDate != report.LiveBusinessDate || !report.IsScheduledDate
             || report.Items.Any(c => c.Status != "Ready") || report.Items.Count == 0))

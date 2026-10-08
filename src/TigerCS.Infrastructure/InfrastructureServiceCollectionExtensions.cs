@@ -327,7 +327,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<CollectionsClock>();
         services.Configure<PactReceivablesOptions>(configuration.GetSection(PactReceivablesOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<PactReceivablesOptions>>().Value);
-        services.AddScoped<IPactReceivablesSource, PactSqlReceivablesSource>();
+        // Pages read the LOCAL snapshot (refreshed by the Hangfire job); the direct PACT read stays as an explicit escape hatch.
+        services.Configure<ReceivablesSnapshotOptions>(configuration.GetSection(ReceivablesSnapshotOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ReceivablesSnapshotOptions>>().Value);
+        services.AddScoped<PactSqlReceivablesSource>();
+        services.AddScoped<SnapshotPactReceivablesSource>();
+        services.AddScoped<IPactReceivablesSource>(sp => sp.GetRequiredService<ReceivablesSnapshotOptions>().UseLocalSnapshot
+            ? sp.GetRequiredService<SnapshotPactReceivablesSource>()
+            : sp.GetRequiredService<PactSqlReceivablesSource>());
+        services.AddScoped<ICollectionsTowerCatalog, SqlCollectionsTowerCatalog>();
+        services.AddScoped<IReceivablesRefresher, SqlReceivablesRefresher>();
         services.AddScoped<PactReceivableCustomersAppService>();
         services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);

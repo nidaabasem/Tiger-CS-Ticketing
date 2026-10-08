@@ -69,4 +69,62 @@ public sealed class PactReceivablesEndpointTests
         Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/receivables/customers")).StatusCode);
         Assert.Equal(0, source.Reads);
     }
+
+    private sealed class Catalog : ICollectionsTowerCatalog
+    {
+        public int Reads { get; private set; }
+        public Task<IReadOnlyList<CollectionsTowerDto>> ListActiveAsync(CancellationToken cancellationToken)
+        { Reads++; return Task.FromResult<IReadOnlyList<CollectionsTowerDto>>([new CollectionsTowerDto(3, "127", "Faradis", 32, true)]); }
+    }
+
+    private sealed class RecordingSource : IPactReceivablesSource
+    {
+        public PactReceivablesRequest? Request { get; private set; }
+        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
+            ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
+        public Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
+        {
+            Request = request;
+            if (request.TowerId == 404) throw new PactReceivablesScopeException("The selected tower is not available. Choose a tower from the list.");
+            return Task.FromResult(new PactReceivablesSnapshot([], DateTime.UtcNow, false));
+        }
+    }
+
+    [Fact]
+    public async Task TowersEndpoint_IsAuthorizedForFinancialReaders_AndDeniedToReportingUsers()
+    {
+        var catalog = new Catalog();
+        using var factory = new TigerCsApiFactory
+        {
+            ExtraConfiguration = new() { ["Collections:Enabled"] = "true", ["CollectionsSource:PactReceivables:Enabled"] = "true" },
+            ExtraServices = services => services.AddScoped<ICollectionsTowerCatalog>(_ => catalog)
+        };
+        using var anonymous = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/receivables/towers")).StatusCode);
+        using var reporter = await Client(factory, Roles.ReportingUser);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/receivables/towers")).StatusCode);
+        Assert.Equal(0, catalog.Reads);
+        using var admin = await Client(factory, Roles.SystemAdministrator);
+        var towers = await (await admin.GetAsync("/api/collections/receivables/towers")).Content.ReadFromJsonAsync<List<CollectionsTowerDto>>();
+        Assert.Equal("127 - Faradis", Assert.Single(towers!).Label);
+    }
+
+    [Fact]
+    public async Task TowerAndDatesReachTheSource_AndAnUnknownTowerIsABadRequest()
+    {
+        var source = new RecordingSource();
+        using var factory = new TigerCsApiFactory
+        {
+            ExtraConfiguration = new() { ["Collections:Enabled"] = "true", ["CollectionsSource:PactReceivables:Enabled"] = "true" },
+            ExtraServices = services => services.AddScoped<IPactReceivablesSource>(_ => source)
+        };
+        using var client = await Client(factory, Roles.SystemAdministrator);
+        var ok = await client.GetAsync("/api/collections/receivables/customers?towerId=3&dateFrom=2026-01-01&dateTo=2026-10-31&year=2026&month=10");
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Equal(new PactReceivablesRequest(new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 31), null, 3, PactReceivableClass.DueOrOverdue, new DateOnly(2026, 10, 1)), source.Request);
+        var report = await ok.Content.ReadFromJsonAsync<PactReceivableCustomersDto>();
+        Assert.Equal((3, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 31)), (report!.TowerId, report.DateFrom, report.DateTo));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/collections/receivables/customers?towerId=404")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/collections/receivables/customers?dateFrom=2026-05-02&dateTo=2026-05-01")).StatusCode);
+    }
 }

@@ -3,7 +3,8 @@ namespace TigerCS.Application.Modules.Collections.Dto;
 public sealed record PactReceivableInstalmentDto(
     int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
     string ChequeNumber, DateOnly DueDate, decimal RemainingAmount,
-    string ReceivablesType, string PaymentStatus, string DueTiming, string SourceStatus);
+    string ReceivablesType, string PaymentStatus, string DueTiming, string SourceStatus,
+    string? TowerNumber = null);
 
 public sealed record PactReceivableCustomerDto(
     int CompanyId, string CompanyName, string TenantId, string FullName,
@@ -11,10 +12,13 @@ public sealed record PactReceivableCustomerDto(
     bool HasDue, bool HasOverdue,
     decimal? DueAmount, decimal? OverdueAmount, decimal? TotalAmount, string AmountStatus,
     DateOnly EarliestDueDate, int OverdueDays,
-    IReadOnlyList<PactReceivableInstalmentDto> Instalments);
+    IReadOnlyList<PactReceivableInstalmentDto> Instalments,
+    string? TowerNumber = null, string? TowerName = null);
 
 public sealed record PactReceivableCustomersDto(
     DateOnly BusinessDate, int ReportYear, int ReportMonth, DateOnly PeriodStart, DateOnly PeriodEnd, DateTime ReadAtUtc, bool LegacyExclusionsApplied,
     IReadOnlyList<int> CompanyIds, string Currency, string CurrencySource,
     int TotalCount, int DueCustomerCount, int OverdueCustomerCount,
-    int Page, int PageSize, IReadOnlyList<PactReceivableCustomerDto> Items);
+    int Page, int PageSize, IReadOnlyList<PactReceivableCustomerDto> Items,
+    DateOnly? DateFrom = null, DateOnly? DateTo = null, int? TowerId = null,
+    SnapshotStatusDto? Snapshot = null, IReadOnlyList<string>? Notes = null);

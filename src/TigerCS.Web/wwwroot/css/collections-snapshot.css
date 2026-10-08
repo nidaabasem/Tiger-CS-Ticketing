@@ -1,0 +1,20 @@
+/* Receivables snapshot status panel and the searchable tower picker (Receivables + Campaigns). */
+.snapshot-status { font-size: var(--text-sm, .9rem); margin: .8rem 0; }
+.snapshot-status p { margin: 0 0 .5rem; }
+.snapshot-status__table { width: 100%; border-collapse: collapse; font-size: .85rem; margin: .5rem 0; display: block; overflow-x: auto; }
+.snapshot-status__table th, .snapshot-status__table td { padding: .45rem .7rem; text-align: left; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.snapshot-status__table th { white-space: nowrap; font-weight: 600; }
+.receivables-notice--warning { background: #fde8e8; border-color: #f2b8b8; color: #7a2323; }
+
+.tower-picker { position: relative; min-width: 230px; }
+.tower-picker__input { width: 100%; }
+.tower-picker__list {
+  position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 0; list-style: none;
+  max-height: 280px; overflow-y: auto; background: var(--color-surface); border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-sm, 0 4px 12px rgba(0,0,0,.12));
+}
+.tower-picker__list[hidden] { display: none; }
+.tower-picker__option { padding: .5rem .75rem; cursor: pointer; font-size: .9rem; }
+.tower-picker__option[aria-selected="true"], .tower-picker__option:hover { background: var(--color-info-tint); }
+.tower-picker__empty { padding: .5rem .75rem; color: var(--color-text-secondary); font-size: .85rem; }
+@media (max-width: 720px) { .tower-picker { min-width: 100%; } }

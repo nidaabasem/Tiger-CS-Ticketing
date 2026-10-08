@@ -18,19 +18,24 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
 
     public Task<ApiResult<CollectionsCampaignPreviewDto>> GetCampaignPreviewAsync(string stage, DateOnly? businessDate,
         int? companyId, string? search, int page, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
-        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&page={Id(page)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null) =>
+        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId)}&page={Id(page)}", cancellationToken);
 
     public Task<ApiResult<CollectionsCampaignExportDto>> GetCampaignExportAsync(string stage, string mode,
         DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
-        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null) =>
+        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+
+    /// <summary>Active towers for the searchable tower dropdown (local table; no PACT call).</summary>
+    public Task<ApiResult<List<CollectionsTowerDto>>> GetTowersAsync(CancellationToken cancellationToken) =>
+        GetAsync<List<CollectionsTowerDto>>($"{Base}/receivables/towers", cancellationToken);
 
     private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         query["stage"] = stage;
+        if (towerId is { } tower) query["towerId"] = Id(tower);
         if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (businessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -40,9 +45,13 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     }
 
     public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
-        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null)
+        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null,
+        int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
+        if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (year is { } y) query["year"] = Id(y);
         if (month is { } m) query["month"] = Id(m);
         if (companyId is { } company) query["companyId"] = Id(company);

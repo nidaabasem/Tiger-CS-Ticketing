@@ -88,6 +88,7 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/customers/lookup/ticket-history"] = nameof(Collections.Edsm.EdsmPaymentSummaryApiTests.LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost),
         // Collections — the explicit financial permissions, with the System Administrator override, on both prefixes.
         ["GET /api/collections/receivables/customers"] = nameof(Collections.Integration.PactReceivablesEndpointTests.SystemAdministratorCanReadThroughCentralOverride_WithNoCustomerTicket),
+        ["GET /api/collections/receivables/towers"] = nameof(Collections.Integration.PactReceivablesEndpointTests.TowersEndpoint_IsAuthorizedForFinancialReaders_AndDeniedToReportingUsers),
         ["GET /api/collections/campaigns/preview"] = nameof(Collections.Integration.CollectionsCampaignEndpointsTests.SystemAdministratorCanPreviewAndExportReview_ThroughCentralOverride),
         ["GET /api/collections/campaigns/export"] = nameof(Collections.Integration.CollectionsCampaignEndpointsTests.SystemAdministratorCanPreviewAndExportReview_ThroughCentralOverride),
         ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),

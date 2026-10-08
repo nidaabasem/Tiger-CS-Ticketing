@@ -6,6 +6,7 @@
     ViewData["ActiveNav"] = "collections";
     Layout = "_Layout";
 }
+<link rel="stylesheet" href="~/css/collections-snapshot.css" asp-append-version="true" />
 <div class="page receivables-workspace">
     <div class="page-header">
         <div>
@@ -21,14 +22,7 @@
             <label class="field-label" for="receivableSearch">Customer or unit</label>
             <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit…" />
         </div>
-        <div class="field-group">
-            <label class="field-label" for="receivableCompany">Company</label>
-            <select class="field-select" id="receivableCompany" name="companyId">
-                <option value="">All companies</option>
-                <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai</option>
-                <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah</option>
-            </select>
-        </div>
+        <partial name="_TowerPicker" model="@(new TowerPickerModel("receivableTower", Model.Towers, Model.TowerId, Model.TowersFailed))" />
         <div class="field-group">
             <label class="field-label" for="receivableStatus">Status</label>
             <select class="field-select" id="receivableStatus" name="status">
@@ -38,10 +32,12 @@
             </select>
         </div>
         <div class="field-group">
-            <label class="field-label" for="receivableMonth">Reporting month</label>
-            <input class="field-input" type="month" id="receivableMonth" data-month-input value="@(Model.Report is { } r0 ? $"{r0.ReportYear:0000}-{r0.ReportMonth:00}" : "")" />
-            <input type="hidden" name="year" value="@Model.Year" data-year-field />
-            <input type="hidden" name="month" value="@Model.Month" data-month-field />
+            <label class="field-label" for="receivableFrom">From (instalment due)</label>
+            <input class="field-input" type="date" id="receivableFrom" name="dateFrom" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" />
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableTo">To (instalment due, inclusive)</label>
+            <input class="field-input" type="date" id="receivableTo" name="dateTo" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
         </div>
         <div class="filter-bar__submit">
             <button class="btn btn-gold" type="submit">Apply</button>
@@ -57,7 +53,9 @@
             <div class="panel"><span>Due this month</span><strong>@report.DueCustomerCount</strong></div>
             <div class="panel"><span>Overdue</span><strong>@report.OverdueCustomerCount</strong></div>
         </div>
+        @if (report.Snapshot is { } snapshot) { <partial name="_SnapshotStatus" model="snapshot" /> }
         <p class="text-secondary">Reporting month @report.PeriodStart.ToString("MMM yyyy") (Due = due @report.PeriodStart.ToString("dd MMM")–@report.PeriodEnd.ToString("dd MMM yyyy"); Overdue = due before @report.PeriodStart.ToString("dd MMM yyyy")) · as of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Each row is one apartment.</p>
+        @foreach (var note in report.Notes ?? []) { <p class="text-secondary" role="status">@note</p> }
         @if (report.PeriodEnd < report.BusinessDate || report.PeriodStart > report.BusinessDate)
         {
             <div class="receivables-notice" role="status">Amounts are the current remaining balances of instalments whose due dates fall in the selected period. They are not a historical balance as of that month.</div>
@@ -69,7 +67,7 @@
         <div class="panel">
             @if (report.Items.Count == 0)
             {
-                <div class="empty-state"><p class="empty-state__title">No customers in this page match the selected filters.</p><a class="btn" href="/Collections/Receivables">Clear filters</a></div>
+                <div class="empty-state"><p class="empty-state__title">No unpaid instalments match the selected tower and dates in the loaded data.</p><a class="btn" href="/Collections/Receivables">Clear filters</a></div>
             }
             else
             {
@@ -81,7 +79,7 @@
                         {
                             <tr>
                                 <td><strong>@customer.FullName</strong><span class="receivables-meta">Customer ID @customer.TenantId</span><span class="receivables-meta">@customer.Mobile</span><span class="receivables-meta">@customer.Email</span></td>
-                                <td>@customer.CompanyName<span class="receivables-meta">@(customer.UnitCode.Length > 0 ? customer.UnitCode : "No unit code")</span></td>
+                                <td>@customer.CompanyName<span class="receivables-meta">@(customer.UnitCode.Length > 0 ? customer.UnitCode : "No unit code")</span>@if (customer.TowerNumber is not null) { <span class="receivables-meta">Tower @customer.TowerNumber@(string.IsNullOrWhiteSpace(customer.TowerName) ? " (not in tower list)" : " - " + customer.TowerName)</span> }</td>
                                 <td><span class="receivables-amount">@ReceivablesModel.Money(customer.DueAmount)</span>@if (customer.HasDue) { <span class="receivables-tag">Due this month</span> }</td>
                                 <td><span class="receivables-amount">@ReceivablesModel.Money(customer.OverdueAmount)</span>@if (customer.HasOverdue) { <span class="receivables-tag receivables-tag--overdue">@customer.OverdueDays days overdue</span> }</td>
                                 <td><span class="receivables-amount">@ReceivablesModel.Money(customer.TotalAmount)</span></td>
@@ -122,7 +120,7 @@
     }
     else
     {
-        <div class="panel"><div class="error-state" role="alert">
+        <div class="panel"><div class="error-state" role="alert" data-campaign-error>
         @if (Model.Outcome == ApiOutcome.Forbidden)
         {
             <p>Your account does not have permission to view Collections financial data.</p>
@@ -133,14 +131,15 @@
         }
         else if (Model.Outcome == ApiOutcome.ValidationError)
         {
-            <p>The selected filters are invalid. Choose a company and status from the list and retry.</p>
+            <p>@(Model.Error ?? "The selected filters are invalid. Choose a tower, status and valid dates and retry.")</p>
         }
         else
         {
-            <p>The receivables source is unavailable. The customer list could not be loaded.</p>
+            <p>@(Model.Error ?? "The receivables source is unavailable.") The customer list could not be loaded; this is not an empty result.</p>
             <a class="btn" href="@Model.PageUrl(Model.PageNumber)">Retry</a>
         }
         </div></div>
     }
 </div>
 <script src="~/js/receivables.js" asp-append-version="true"></script>
+<script src="~/js/collections-towers.js" asp-append-version="true"></script>

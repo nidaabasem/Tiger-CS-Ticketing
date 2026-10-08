@@ -1,5 +1,9 @@
 # Collections campaigns preview and CSV export
 
+> **Update:** campaigns read the local receivables snapshot (see [Receivables-Snapshot.md](Receivables-Snapshot.md)). The company selector is
+> replaced by a searchable **Tower** filter (`towerId`); stage rules, the preview date and the From/To defaults are unchanged. Exports (review and
+> Genesys) are refused unless every company in scope has a successful refresh no older than `Collections:ReceivablesSnapshot:MaxAgeMinutes` (90).
+
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.
 It does not add CRM or other-company coverage. It creates no campaign, sends no message, schedules no job, creates no ticket,
