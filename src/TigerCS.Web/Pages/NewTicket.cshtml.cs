@@ -732,10 +732,8 @@ public sealed class NewTicketModel(
                     continue;
                 }
 
-                if (string.Equals(source.Source, "Pact", StringComparison.Ordinal) && external.Units.Count == 0)
-                {
-                    continue;
-                }
+                // A PACT customer whose contracts have all expired still gets a card: the identity and ticket history
+                // stay available while ExternalLookupSources has removed every unit from selection (UnitsCount = 0).
                 candidates.Add(new NewTicketCandidate(
                     $"ext:{Uri.EscapeDataString(source.Source)}:{Uri.EscapeDataString(external.ExternalCustomerId)}",
                     source.Source,
