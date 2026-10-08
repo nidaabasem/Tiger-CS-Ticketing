@@ -13,7 +13,7 @@
             <h1 class="page-title">Due &amp; Overdue Customers</h1>
             <p class="page-subtitle">PACT customers with unpaid instalments due today or earlier, including customers with no tickets.</p>
         </div>
-        <div class="page-header__actions"><a class="btn" href="@Model.PageUrl(Model.PageNumber)">Refresh</a></div>
+        <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a><a class="btn" href="@Model.PageUrl(Model.PageNumber)">Refresh</a></div>
     </div>
 
     <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter>

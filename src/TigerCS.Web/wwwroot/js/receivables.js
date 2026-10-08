@@ -1,16 +1,36 @@
 (() => {
     const form = document.querySelector('[data-receivables-filter]');
     if (!form) return;
-    form.addEventListener('submit', () => {
-        form.setAttribute('aria-busy', 'true');
-        form.querySelector('.receivables-loading').hidden = false;
-        form.querySelector('button[type=submit]').disabled = true;
-    });
-    window.addEventListener('pageshow', () => {
+    const loading = form.querySelector('.receivables-loading');
+    const timeout = form.querySelector('.receivables-timeout');
+    const button = form.querySelector('button[type=submit]');
+    // Longer than the API request budget (command timeout + 30 s) but shorter than the Web client's 180 s timeout.
+    const WATCHDOG_MS = 170000;
+    let watchdog = 0;
+    const idle = () => {
+        window.clearTimeout(watchdog);
         form.removeAttribute('aria-busy');
-        form.querySelector('.receivables-loading').hidden = true;
-        form.querySelector('button[type=submit]').disabled = false;
+        loading.hidden = true;
+        button.disabled = false;
+    };
+    form.addEventListener('submit', () => {
+        // A new request starts: drop the previous error/timeout message and show progress.
+        document.querySelectorAll('[data-campaign-error]').forEach(e => { e.hidden = true; });
+        if (timeout) timeout.hidden = true;
+        form.setAttribute('aria-busy', 'true');
+        loading.hidden = false;
+        button.disabled = true;
+        window.clearTimeout(watchdog);
+        watchdog = window.setTimeout(() => {
+            // The navigation never produced a response: stop it so the form is usable again.
+            window.stop();
+            idle();
+            if (timeout) timeout.hidden = false;
+        }, WATCHDOG_MS);
     });
+    // Back/forward cache restores the old DOM; a stopped or failed navigation must not leave it busy.
+    window.addEventListener('pageshow', idle);
+    window.addEventListener('pagehide', () => window.clearTimeout(watchdog));
 })();
 
 // Reporting month picker: mirrors the <input type="month"> into the year/month query fields.

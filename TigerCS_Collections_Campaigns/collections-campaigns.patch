@@ -1,0 +1,1316 @@
+diff --git a/docs/Collections/Collections-Campaigns.md b/docs/Collections/Collections-Campaigns.md
+new file mode 100644
+index 0000000..66dc865
+--- /dev/null
++++ b/docs/Collections/Collections-Campaigns.md
+@@ -0,0 +1,129 @@
++# Collections campaigns preview and CSV export
++
++Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
++`/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.
++It does not add CRM or other-company coverage. It creates no campaign, sends no message, schedules no job, creates no ticket,
++and opens no legal case. The existing reminder dispatcher and its rule configuration are unchanged.
++
++## Confirmed policy decisions
++
++The user selected the **schedule table** in Collections Communication Script Final, dated 7 October 2026, and **per-unit**
++thresholds on 8 October 2026. These choices resolve the table/body date differences for this preview.
++
++| Stage | Schedule in Asia/Dubai | Qualifying remaining principal per unit |
++| --- | --- | --- |
++| OverdueReminder | Day 1 | Instalments due strictly before the preview date minus one calendar month |
++| CurrentMonthReminder | Day 14 | Positive remaining balances with due dates anywhere in the preview month, including upcoming dates |
++| FollowUpReminder | Day 28 | Positive remaining balances with due dates anywhere in the preview month |
++| LegalNotice | Days 12 and 14 | Previous calendar month's remaining balances, summing to strictly more than AED 1,500 |
++| LegalReferral | Day 30, or the last day in February | Remaining balances due strictly more than three calendar months before the preview date, summing to strictly more than AED 20,000 |
++
++Settled rows are removed before evaluating eligibility. Partly paid rows contribute only their reported remaining amount.
++Calendar months, rather than fixed 30/90 days, are the implementation convention; referral thresholds apply to the qualifying
++aged balance itself, rather than adding newer arrears to an old debt. Fees and penalties are not added. Confirm these amount
++conventions against Collections' records during UAT before releasing campaign exports.
++
++A selected past or future preview date changes eligibility against **live** remaining balances; it is not a historical
++statement and cannot authorize a Genesys export. Both CurrentMonthReminder and LegalNotice can qualify on day 14; the preview
++does not choose a priority or coordinate attempts across stages. Campaign coordination remains part of the Genesys integration.
++
++## Data validation and export modes
++
++Preview requires the existing Collections financial-read grant. Both export modes require the existing reminder-send grant
++(CS Supervisor, CS Manager, members holding a configured Collections department role, configured integration accounts,
++or the System Administrator central override). Authorization runs before external reads.
++
++* **Review CSV** exports all matching records across pages, with their status/reasons and `Use=InternalReviewOnly`.
++  Channel eligibility flags are false. This is a staff review file, not a customer campaign file. Spreadsheet formula
++  prefixes are neutralized, including the leading plus sign in phone numbers. Do not import this file into Genesys.
++* **Genesys CSV** re-reads PACT and requires every matching record to be Ready, the selected date to be today in Dubai and
++  scheduled for the chosen stage, and at least one record. It refuses the whole export if a selected record needs review;
++  it does not silently omit unresolved units. `LegalReferral` can never be exported for a customer campaign.
++* Exports are bounded by `Collections:Campaigns:MaxExportRows` (default 5,000). Exceeding the limit returns an explicit error,
++  with no truncated file. Filter by company or customer to reduce the selection.
++
++`Collections:Enabled=true` and `CollectionsSource:PactReceivables:Enabled=true` expose preview/review using the existing
++PACTRPT configuration. Two additional switches default to false:
++
++```json
++{
++  "Collections": {
++    "Campaigns": {
++      "FinancialSourceValidated": false,
++      "LegalNoticeExportEnabled": false,
++      "MaxExportRows": 5000
++    }
++  }
++}
++```
++
++`FinancialSourceValidated` must stay false until **remaining amounts and unit allocation** have been reconciled against
++actual PACT accounts, including multi-unit customers and partial payments. The original procedures have proven invoice
++fan-out and allocation defects, described in `pact-sql/Receivables-Source-Review.md`. Selecting a procedure named V2 does not
++establish that reconciliation passed. Ordinary campaign exports become available only after the source is reconciled.
++`LegalNoticeExportEnabled` additionally controls release of client-facing legal-notice files.
++
++Even with source validation enabled, rows remain NeedsReview for ambiguous same-date instalments, allocations appearing under
++different units of the same customer/date, conflicting unit ids/codes or contact details, invalid/zero unit identity,
++positive balances labelled Paid, amounts with more than two decimal places, a non-AED currency, stale/invalid read timestamps,
++or no valid phone/email. Same-date rows across units may be legitimate; they are held for review because this source contract
++does not expose enough instalment identity to prove that. The page preserves these records instead of deduplicating or guessing.
++
++## API and CSV contract
++
++These are **internal TigerCS API routes**, called server-side by Web as the signed-in user. They are not yet published through
++TigerGroupWeb's `/api/genesys` proxy.
++
++```text
++GET /api/collections/campaigns/preview?stage=CurrentMonthReminder&businessDate=2026-10-14&companyId=4&page=1&pageSize=25
++GET /api/collections/campaigns/export?stage=CurrentMonthReminder&businessDate=2026-10-14&companyId=4&mode=review
++```
++
++`businessDate`, `companyId` and `search` are optional. The default date is today in Dubai. Stage names are required and numeric
++enum values are rejected. Preview pages accept 1–100 records; company filters accept only 4 or 32. Search is limited to 200
++characters. Export modes are `review` and `genesys`; the API returns `{ fileName, csv, rowCount }`. Web serves the CSV as a
++UTF-8 attachment with BOM. Financial responses and downloads set `Cache-Control: no-store`.
++
++| CSV columns | Meaning |
++| --- | --- |
++| RecordId | SHA-256 of company, tenant, unit id, unit code and monthly stage cycle; stable across re-reads in that cycle |
++| CustomerKey, CompanyId, TenantId | `ext:Pact:{tenantId}` plus company id; a tenant id alone is not an account identity |
++| CustomerName, Phone, Email | Name and validated contacts; Genesys mode preserves E.164 phone strings |
++| UnitId, UnitCode, ProjectCode | Source unit/project identifiers; ProjectCode is not necessarily a project name |
++| Amount, Currency, DueDate | Qualifying remaining principal, AED, and earliest qualifying due date |
++| Stage, CycleKey, ReadAtUtc | Communication stage, monthly cycle, and latest report-read timestamp |
++| Status, Reason, Use | Ready/review/preview/internal state, reasons, and intended use of the export |
++| VoiceEligible, SmsEligible, EmailEligible | Custom campaign columns to map/filter in Genesys; not claims that Genesys configured contactability |
++
++Numeric amount strings have at least two decimal places with no thousands separators for machine parsing; the display uses
++thousands separators. Preview may show source precision for review but cannot export it as Ready. If a unit has several
++qualifying due dates, Amount is their sum and DueDate is the earliest; the bot must not describe the sum as one instalment due
++on that date. Project names and per-instalment due-date narratives require additional mapping/data before using every template.
++
++For Genesys release, agree the contact-list column mapping, contactListIds, authentication/region, update/upsert semantics,
++contactability per channel, handling of several units with the same phone, and priority/attempt limits across overlapping stages.
++RecordId is an external stable key, **not** a Genesys-generated contact id and **not** durable delivery deduplication.
++Use=InternalReviewOnly and eligibility=false must not be overridden into a live campaign.
++
++## Next integration stage
++
++The proposed integration will synchronize records to Genesys, suppress/update them after payment and return channel results.
++The CSV read verifies payment state at export time only. It cannot cancel a queued contact after a later payment; revalidation
++before contact and suppression in Genesys must be implemented before automated live campaigns. A CSV download is not recorded
++as a sent reminder, and downloading it twice does not prevent two manual imports.
++
++Response tickets must be linked to the customer/unit/campaign and routed to Collections only on actual customer response,
++using the existing ingestion/outcome workflow where appropriate. The new preview/export does not create them.
++
++## UAT checks
++
++1. Open Campaigns as a Collections sender and verify preview plus review export; a financial-read-only agent can preview but
++   cannot export. Anonymous and Reporting User calls must fail before PACT is read.
++2. Verify two different units of one customer and the same tenant id in companies 4 and 32 stay separate.
++3. Reconcile a partial payment, a settled unit, old arrears and upcoming month instalments against PACT. Confirm exact
++   one-/three-month age boundaries and exact AED 1,500/20,000 balances do not meet strict thresholds.
++4. Verify ambiguous allocations, unit 0 and stale reads are visible for review and cannot enter a campaign file.
++5. Download a multi-page review, pay/remove an account before a second export, and confirm the fresh file excludes it.
++6. Confirm a February referral uses the last day, follow-up stays on day 28, and LegalReferral remains internal.
++7. Only after source reconciliation, test Genesys export on an actual scheduled Dubai date; unresolved rows, different dates,
++   source failures and over-limit selections must fail explicitly rather than produce a partial campaign.
+diff --git a/src/TigerCS.Api/Controllers/CollectionsCampaignsController.cs b/src/TigerCS.Api/Controllers/CollectionsCampaignsController.cs
+new file mode 100644
+index 0000000..f223ffa
+--- /dev/null
++++ b/src/TigerCS.Api/Controllers/CollectionsCampaignsController.cs
+@@ -0,0 +1,71 @@
++using System.Security.Claims;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using TigerCS.Api.OpenApi;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Application.Modules.Collections.Services;
++using TigerCS.Infrastructure.Modules.IdentityAndAccess.Authorization;
++using TigerCS.Infrastructure.Modules.IdentityAndAccess.Services;
++
++namespace TigerCS.Api.Controllers;
++
++[ApiController]
++[Authorize(Policy = PolicyNames.AuthenticatedStaff)]
++[Route("api/collections/campaigns")]
++[Tags(OpenApiTags.Collections)]
++[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
++public sealed class CollectionsCampaignsController(CollectionsCampaignAppService service) : ControllerBase
++{
++    /// <summary>Preview one communication stage, per unit, using current remaining balances from PACT companies 4 and 32.</summary>
++    [HttpGet("preview")]
++    [ProducesResponseType<CollectionsCampaignPreviewDto>(StatusCodes.Status200OK)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
++    public async Task<IActionResult> Preview([FromQuery] string? stage, [FromQuery] DateOnly? businessDate,
++        [FromQuery] int? companyId, [FromQuery] string? search, [FromQuery] int page = 1,
++        [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
++    {
++        var caller = Caller();
++        if (caller is null) return Unauthorized();
++        return Result(await service.PreviewAsync(caller, stage, businessDate, companyId, search, page, pageSize,
++            cancellationToken: cancellationToken));
++    }
++
++    /// <summary>Export the full filtered list. Review mode is for internal review; Genesys mode refuses any unresolved row,
++    /// an unscheduled or non-current date, and internal legal referrals. CSV is returned in an internal JSON envelope.</summary>
++    [HttpGet("export")]
++    [ProducesResponseType<CollectionsCampaignExportDto>(StatusCodes.Status200OK)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
++    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
++    public async Task<IActionResult> Export([FromQuery] string? stage, [FromQuery] string? mode,
++        [FromQuery] DateOnly? businessDate, [FromQuery] int? companyId, [FromQuery] string? search,
++        CancellationToken cancellationToken = default)
++    {
++        var caller = Caller();
++        if (caller is null) return Unauthorized();
++        return Result(await service.ExportAsync(caller, stage, mode, businessDate, companyId, search, cancellationToken));
++    }
++
++    private CollectionsCaller? Caller() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
++        ? new(id, User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
++            User.FindAll(TigerCsClaimTypes.DepartmentId).Select(c => int.TryParse(c.Value, out var d) ? d : (int?)null).OfType<int>().ToArray())
++        : null;
++
++    private IActionResult Result<T>(CollectionsResult<T> result)
++    {
++        if (result.IsSuccess) return Ok(result.Value);
++        var (status, code) = result.Outcome switch
++        {
++            CollectionsOutcome.Forbidden => (403, "Forbidden"),
++            CollectionsOutcome.InvalidRequest => (400, "InvalidRequest"),
++            CollectionsOutcome.Disabled => (503, "CollectionsDisabled"),
++            _ => (503, "FinanceUnavailable")
++        };
++        var response = Problem(statusCode: status, title: code, detail: result.Detail ?? code,
++            type: $"https://tigercs.internal/problems/collections/{code}");
++        if (response.Value is ProblemDetails problem) problem.Extensions["code"] = code;
++        return response;
++    }
++}
+diff --git a/src/TigerCS.Application/Modules/Collections/CollectionsCampaignOptions.cs b/src/TigerCS.Application/Modules/Collections/CollectionsCampaignOptions.cs
+new file mode 100644
+index 0000000..3ac8640
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/CollectionsCampaignOptions.cs
+@@ -0,0 +1,12 @@
++namespace TigerCS.Application.Modules.Collections;
++
++public sealed class CollectionsCampaignOptions
++{
++    public const string SectionName = "Collections:Campaigns";
++    /// <summary>Enable only after reconciling remaining amounts AND unit allocation against actual PACT records.
++    /// A V2 procedure name alone does not prove the reconciliation succeeded.</summary>
++    public bool FinancialSourceValidated { get; set; }
++    /// <summary>Separate release switch for client-facing legal notices. Preview and internal review remain available.</summary>
++    public bool LegalNoticeExportEnabled { get; set; }
++    public int MaxExportRows { get; set; } = 5000;
++}
+diff --git a/src/TigerCS.Application/Modules/Collections/Dto/CollectionsCampaignDtos.cs b/src/TigerCS.Application/Modules/Collections/Dto/CollectionsCampaignDtos.cs
+new file mode 100644
+index 0000000..7c5f8c4
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/Dto/CollectionsCampaignDtos.cs
+@@ -0,0 +1,22 @@
++namespace TigerCS.Application.Modules.Collections.Dto;
++
++public sealed record CollectionsCampaignContactDto(
++    string RecordId, string CustomerKey, int CompanyId, string TenantId,
++    string CustomerName, string Phone, string Email, int? UnitId, string UnitCode,
++    string ProjectCode, decimal? Amount, string Currency, DateOnly? DueDate,
++    string Stage, string CycleKey, string Status, string Reason)
++{
++    public bool VoiceEligible => Status == "Ready" && Phone.Length > 0;
++    public bool SmsEligible => Status == "Ready" && Phone.Length > 0;
++    public bool EmailEligible => Status == "Ready" && Email.Length > 0;
++}
++
++public sealed record CollectionsCampaignPreviewDto(
++    DateOnly BusinessDate, DateOnly LiveBusinessDate, DateTime ReadAtUtc,
++    string Source, string Stage, string CycleKey, IReadOnlyList<DateOnly> ScheduledDates,
++    bool IsScheduledDate, bool FinancialSourceValidated, bool LegacyExclusionsApplied,
++    bool CanExportReview, int TotalCount, int ReadyCount, int ReviewCount, int Page, int PageSize,
++    IReadOnlyList<CollectionsCampaignContactDto> Items);
++
++/// <summary>Internal API transport; the Web serves Csv as a UTF-8 downloadable file.</summary>
++public sealed record CollectionsCampaignExportDto(string FileName, string Csv, int RowCount);
+diff --git a/src/TigerCS.Application/Modules/Collections/Services/CollectionsCampaignAppService.cs b/src/TigerCS.Application/Modules/Collections/Services/CollectionsCampaignAppService.cs
+new file mode 100644
+index 0000000..02fb141
+--- /dev/null
++++ b/src/TigerCS.Application/Modules/Collections/Services/CollectionsCampaignAppService.cs
+@@ -0,0 +1,209 @@
++using System.Data.Common;
++using System.Globalization;
++using System.Net.Mail;
++using System.Security.Cryptography;
++using System.Text;
++using Microsoft.Extensions.Logging;
++using TigerCS.Application.Modules.Collections.Abstractions;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Domain.Modules.Collections;
++
++namespace TigerCS.Application.Modules.Collections.Services;
++
++/// <summary>Read-only campaign preview and manual export. No scheduling, dispatch, ticket creation or legal referral.</summary>
++public sealed class CollectionsCampaignAppService(
++    CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
++    CollectionsAuthorizationService authorization, CollectionsClock clock, IPactReceivablesSource source,
++    ILogger<CollectionsCampaignAppService> logger)
++{
++    public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
++        CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
++        string? search = null, int page = 1, int pageSize = 25, bool forExport = false,
++        CancellationToken cancellationToken = default)
++    {
++        var permissions = await authorization.ResolveAsync(caller, cancellationToken);
++        if (!permissions.CanReadFinancials || (forExport && !permissions.CanSendReminders))
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.Forbidden);
++        if (!options.Enabled || !sourceOptions.Enabled)
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.Disabled);
++        var date = businessDate ?? clock.BusinessDate;
++        if (!CollectionsEnums.TryParse<CollectionsCampaignStage>(stage, out var selected)
++            || date.Year is < 2000 or > 2100 || companyId is not (null or 4 or 32)
++            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100
++            || (long)(page - 1) * pageSize > int.MaxValue)
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
++                "Choose a campaign stage, a date in 2000-2100, company 4 or 32, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
++
++        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
++        budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
++        PactReceivablesSnapshot snapshot;
++        try
++        {
++            snapshot = await source.ReadAsync(new DateOnly(date.Year, date.Month,
++                DateTime.DaysInMonth(date.Year, date.Month)), budget.Token);
++        }
++        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
++        {
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "The PACT receivables read timed out. Please retry.");
++        }
++        catch (PactReceivablesSourceException ex)
++        {
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
++        }
++        catch (Exception ex) when (ex is DbException or InvalidCastException or FormatException or OverflowException)
++        {
++            logger.LogWarning("Campaign source read failed ({ExceptionType}).", ex.GetType().Name);
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "The campaign source could not be read.");
++        }
++
++        var rows = snapshot.Items.Where(r => r.Amount > 0).ToList();
++        if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "PACT returned a receivable without a valid company/customer identity.");
++        // The originals can repeat one instalment under different apartments of the same tenant.
++        var ambiguousTenants = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
++            .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))
++                .Any(d => d.Select(r => (r.UnitId, Code: r.UnitCode.Trim())).Distinct().Count() > 1)
++                || g.GroupBy(r => r.UnitId).Any(u => u.Select(r => r.UnitCode.Trim()).Distinct().Count() > 1)
++                || g.GroupBy(r => r.UnitCode.Trim()).Any(u => u.Select(r => r.UnitId).Distinct().Count() > 1))
++            .Select(g => g.Key).ToHashSet();
++        var dates = CollectionsCampaignPolicy.ScheduledDates(selected, date);
++        var cycle = $"{date.ToString("yyyy-MM", CultureInfo.InvariantCulture)}:{selected}";
++        var fresh = snapshot.ReadAtUtc.Kind == DateTimeKind.Utc && !clock.IsStale(snapshot.ReadAtUtc)
++            && snapshot.ReadAtUtc <= clock.UtcNow.AddMinutes(1);
++        List<CollectionsCampaignContactDto> contacts;
++        try
++        {
++            contacts = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim()))
++                .Select(g =>
++                {
++                    var first = g.First();
++                    var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
++                        new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
++                    if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
++                    var phone = NormalizePhone(first.Mobile);
++                    var email = NormalizeEmail(first.Email);
++                    var reasons = new List<string>();
++                    if (amount.Reason != "Qualifies") reasons.Add(amount.Reason);
++                    if (amount.Amount is { } value && value != decimal.Round(value, 2)) reasons.Add("AmountPrecisionNeedsReview");
++                    if (g.Key.UnitId is not > 0 || string.IsNullOrWhiteSpace(g.Key.Code) || g.Key.Code == "0")
++                        reasons.Add("MissingUnitIdentity");
++                    if (g.Select(r => (r.FullName.Trim(), Phone: NormalizePhone(r.Mobile), Email: NormalizeEmail(r.Email), r.ProjectCode))
++                        .Distinct().Count() > 1) reasons.Add("ConflictingContactDetails");
++                    if (ambiguousTenants.Contains((g.Key.CompanyId, g.Key.Tenant))) reasons.Add("UnitAllocationNeedsReview");
++                    if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase))) reasons.Add("ContradictoryPaymentStatus");
++                    if (sourceOptions.Currency != "AED") reasons.Add("CurrencyNeedsReview");
++                    if (!fresh) reasons.Add("StaleSource");
++                    if (!campaignOptions.FinancialSourceValidated) reasons.Add("SourceReconciliationRequired");
++                    if (selected != CollectionsCampaignStage.LegalReferral && phone.Length == 0 && email.Length == 0)
++                        reasons.Add("NoValidContact");
++                    var status = reasons.Count > 0 ? "NeedsReview" : "Ready";
++                    if (reasons.Count == 0 && (date != clock.BusinessDate || !dates.Contains(date)))
++                    { status = "PreviewOnly"; reasons.Add("OutsideSchedule"); }
++                    if (reasons.Count == 0 && selected == CollectionsCampaignStage.LegalNotice && !campaignOptions.LegalNoticeExportEnabled)
++                    { status = "NeedsReview"; reasons.Add("LegalNoticeReleaseRequired"); }
++                    if (reasons.Count == 0 && selected == CollectionsCampaignStage.LegalReferral)
++                    { status = "InternalReview"; reasons.Add("InternalLegalReferralOnly"); }
++                    var identity = $"{g.Key.CompanyId}:{g.Key.Tenant}:{g.Key.UnitId}:{g.Key.Code}:{cycle}";
++                    var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
++                    return new CollectionsCampaignContactDto(id, $"ext:Pact:{g.Key.Tenant}", first.CompanyId,
++                        g.Key.Tenant, first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
++                        amount.Amount, sourceOptions.Currency, amount.EarliestDueDate, selected.ToString(), cycle,
++                        status, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons));
++                }).OfType<CollectionsCampaignContactDto>().ToList();
++        }
++        catch (OverflowException)
++        {
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
++                "The campaign contains amounts outside the supported range.");
++        }
++        if (companyId is { } company) contacts = contacts.Where(c => c.CompanyId == company).ToList();
++        if (!string.IsNullOrWhiteSpace(search))
++        {
++            var term = search.Trim();
++            var digits = new string(term.Where(char.IsAsciiDigit).ToArray());
++            bool Match(string value) => value.Contains(term, StringComparison.OrdinalIgnoreCase);
++            contacts = contacts.Where(c => Match(c.CustomerName) || Match(c.TenantId) || Match(c.UnitCode)
++                || Match(c.Phone) || Match(c.Email)
++                || (digits.Length >= 3 && !term.Any(char.IsLetter) && c.Phone.Contains(digits, StringComparison.Ordinal))).ToList();
++        }
++        contacts = contacts.OrderBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
++            .ThenBy(c => c.UnitCode, StringComparer.Ordinal).ThenBy(c => c.UnitId).ToList();
++        if (forExport && contacts.Count > Math.Clamp(campaignOptions.MaxExportRows, 1, 50000))
++            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
++                "The export exceeds the row limit. Filter by company or customer; no partial file was created.");
++        return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, snapshot.ReadAtUtc,
++            "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
++            campaignOptions.FinancialSourceValidated, snapshot.LegacyExclusionsApplied, permissions.CanSendReminders,
++            contacts.Count, contacts.Count(c => c.Status == "Ready"), contacts.Count(c => c.Status == "NeedsReview"),
++            page, pageSize, forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList()));
++    }
++
++    public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
++        string? stage, string? mode, DateOnly? businessDate = null, int? companyId = null, string? search = null,
++        CancellationToken cancellationToken = default)
++    {
++        // No source read for an unauthorized export, including malformed requests.
++        if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanSendReminders)
++            return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.Forbidden);
++        if (mode is not ("review" or "genesys"))
++            return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest, "Choose review or genesys export.");
++        var result = await PreviewAsync(caller, stage, businessDate, companyId, search,
++            forExport: true, cancellationToken: cancellationToken);
++        if (!result.IsSuccess) return CollectionsResult<CollectionsCampaignExportDto>.Fail(result.Outcome, result.Detail);
++        var report = result.Value!;
++        if (mode == "genesys" && (report.Stage == nameof(CollectionsCampaignStage.LegalReferral)
++            || report.BusinessDate != report.LiveBusinessDate || !report.IsScheduledDate
++            || report.Items.Any(c => c.Status != "Ready") || report.Items.Count == 0))
++            return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest,
++                "Genesys export needs a current scheduled date and every selected row ready. Review the list first; internal legal referrals cannot be sent to a customer campaign.");
++        var csv = CollectionsCampaignCsv.Write(report, review: mode == "review");
++        return CollectionsResult<CollectionsCampaignExportDto>.Ok(new(
++            $"collections-{report.Stage}-{report.BusinessDate:yyyy-MM-dd}-{mode}.csv", csv, report.Items.Count));
++    }
++
++    internal static string NormalizePhone(string value)
++    {
++        var compact = new string(value.Where(c => c is not (' ' or '-' or '(' or ')')).ToArray());
++        if (compact.StartsWith("00", StringComparison.Ordinal)) compact = "+" + compact[2..];
++        if (compact.Length == 10 && compact.StartsWith("05", StringComparison.Ordinal)) compact = "+971" + compact[1..];
++        if (compact.Length == 12 && compact.StartsWith("971", StringComparison.Ordinal)) compact = "+" + compact;
++        return compact.StartsWith('+') && compact.Length is >= 9 and <= 16 && compact[1] != '0'
++            && compact[1..].All(char.IsAsciiDigit) ? compact : "";
++    }
++
++    private static string NormalizeEmail(string value) =>
++        MailAddress.TryCreate(value.Trim(), out var address) && address.Address == value.Trim() ? address.Address : "";
++}
++
++public static class CollectionsCampaignCsv
++{
++    public static string Write(CollectionsCampaignPreviewDto report, bool review)
++    {
++        var text = new StringBuilder();
++        text.Append("RecordId,CustomerKey,CompanyId,TenantId,CustomerName,Phone,Email,UnitId,UnitCode,ProjectCode,Amount,Currency,DueDate,Stage,CycleKey,ReadAtUtc,Status,Reason,Use,VoiceEligible,SmsEligible,EmailEligible\r\n");
++        foreach (var c in report.Items)
++        {
++            var cells = new[] { c.RecordId, c.CustomerKey, c.CompanyId.ToString(CultureInfo.InvariantCulture), c.TenantId,
++                c.CustomerName, c.Phone, c.Email, c.UnitId?.ToString(CultureInfo.InvariantCulture) ?? "", c.UnitCode,
++                c.ProjectCode, c.Amount?.ToString("0.00##########################", CultureInfo.InvariantCulture) ?? "",
++                c.Currency, c.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "", c.Stage, c.CycleKey,
++                report.ReadAtUtc.ToString("O", CultureInfo.InvariantCulture), c.Status, c.Reason,
++                review ? "InternalReviewOnly" : "GenesysCampaign", !review && c.VoiceEligible ? "true" : "false",
++                !review && c.SmsEligible ? "true" : "false", !review && c.EmailEligible ? "true" : "false" };
++            text.Append(string.Join(',', cells.Select((v, index) => Cell(v, review, isPhone: index == 5)))).Append("\r\n");
++        }
++        return text.ToString();
++    }
++
++    private static string Cell(string value, bool review, bool isPhone)
++    {
++        // Review files are opened in spreadsheets. Machine imports preserve validated E.164 phone numbers.
++        var trimmed = value.TrimStart();
++        if (trimmed.Length > 0 && trimmed[0] is '=' or '+' or '-' or '@'
++            && (review || !isPhone || !(trimmed.StartsWith('+') && trimmed[1..].All(char.IsAsciiDigit)))) value = "'" + value;
++        return "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
++    }
++}
+diff --git a/src/TigerCS.Domain/Modules/Collections/CollectionsCampaignPolicy.cs b/src/TigerCS.Domain/Modules/Collections/CollectionsCampaignPolicy.cs
+new file mode 100644
+index 0000000..37d811a
+--- /dev/null
++++ b/src/TigerCS.Domain/Modules/Collections/CollectionsCampaignPolicy.cs
+@@ -0,0 +1,62 @@
++namespace TigerCS.Domain.Modules.Collections;
++
++public enum CollectionsCampaignStage
++{
++    OverdueReminder = 1,
++    CurrentMonthReminder = 2,
++    FollowUpReminder = 3,
++    LegalNotice = 4,
++    LegalReferral = 5
++}
++
++public sealed record CampaignInstalment(DateOnly DueDate, decimal RemainingAmount);
++public sealed record CampaignAmount(decimal? Amount, DateOnly? EarliestDueDate, string Reason);
++
++/// <summary>The 7 October 2026 communication table, with thresholds evaluated per unit.
++/// Values are the source's remaining principal, never the original plan or the customer's total balance.</summary>
++public static class CollectionsCampaignPolicy
++{
++    public static IReadOnlyList<DateOnly> ScheduledDates(CollectionsCampaignStage stage, DateOnly businessDate)
++    {
++        var last = DateTime.DaysInMonth(businessDate.Year, businessDate.Month);
++        DateOnly Day(int day) => new(businessDate.Year, businessDate.Month, Math.Min(day, last));
++        return stage switch
++        {
++            CollectionsCampaignStage.OverdueReminder => [Day(1)],
++            CollectionsCampaignStage.CurrentMonthReminder => [Day(14)],
++            CollectionsCampaignStage.FollowUpReminder => [Day(28)],
++            CollectionsCampaignStage.LegalNotice => [Day(12), Day(14)],
++            CollectionsCampaignStage.LegalReferral => [Day(30)],
++            _ => throw new ArgumentOutOfRangeException(nameof(stage))
++        };
++    }
++
++    public static CampaignAmount Evaluate(IEnumerable<CampaignInstalment> instalments,
++        CollectionsCampaignStage stage, DateOnly businessDate)
++    {
++        if (!Enum.IsDefined(stage)) throw new ArgumentOutOfRangeException(nameof(stage));
++        var monthStart = new DateOnly(businessDate.Year, businessDate.Month, 1);
++        var monthEnd = monthStart.AddMonths(1);
++        var previousMonthStart = monthStart.AddMonths(-1);
++        var rows = instalments.Where(i => i.RemainingAmount > 0 && (stage switch
++        {
++            CollectionsCampaignStage.OverdueReminder => i.DueDate < businessDate.AddMonths(-1),
++            CollectionsCampaignStage.LegalNotice => i.DueDate >= previousMonthStart && i.DueDate < monthStart,
++            CollectionsCampaignStage.LegalReferral => i.DueDate < businessDate.AddMonths(-3),
++            _ => i.DueDate >= monthStart && i.DueDate < monthEnd
++        })).ToList();
++        if (rows.Count == 0) return new(0m, null, "NoQualifyingBalance");
++        var earliest = rows.Min(i => i.DueDate);
++        // The existing source cannot distinguish valid same-date instalments from duplicated allocations.
++        if (rows.GroupBy(i => i.DueDate).Any(g => g.Count() > 1))
++            return new(null, earliest, "AmbiguousInstalments");
++        var amount = rows.Sum(i => i.RemainingAmount);
++        var qualifies = stage switch
++        {
++            CollectionsCampaignStage.LegalNotice => amount > 1500m,
++            CollectionsCampaignStage.LegalReferral => amount > 20000m,
++            _ => amount > 0m
++        };
++        return new(amount, earliest, qualifies ? "Qualifies" : "BelowThreshold");
++    }
++}
+diff --git a/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs b/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs
+index 12a0650..66a843e 100644
+--- a/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs
++++ b/src/TigerCS.Infrastructure/InfrastructureServiceCollectionExtensions.cs
+@@ -329,6 +329,9 @@ public static class InfrastructureServiceCollectionExtensions
+         services.AddScoped(sp => sp.GetRequiredService<IOptions<PactReceivablesOptions>>().Value);
+         services.AddScoped<IPactReceivablesSource, PactSqlReceivablesSource>();
+         services.AddScoped<PactReceivableCustomersAppService>();
++        services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
++        services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);
++        services.AddScoped<CollectionsCampaignAppService>();
+         services.AddScoped<CollectionsAccountQueryAppService>();
+         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
+         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
+diff --git a/src/TigerCS.Tests/Collections/Domain/CollectionsCampaignPolicyTests.cs b/src/TigerCS.Tests/Collections/Domain/CollectionsCampaignPolicyTests.cs
+new file mode 100644
+index 0000000..261dfee
+--- /dev/null
++++ b/src/TigerCS.Tests/Collections/Domain/CollectionsCampaignPolicyTests.cs
+@@ -0,0 +1,79 @@
++using TigerCS.Domain.Modules.Collections;
++
++namespace TigerCS.Tests.Collections.Domain;
++
++public sealed class CollectionsCampaignPolicyTests
++{
++    [Theory]
++    [InlineData(CollectionsCampaignStage.OverdueReminder, 1)]
++    [InlineData(CollectionsCampaignStage.CurrentMonthReminder, 14)]
++    [InlineData(CollectionsCampaignStage.FollowUpReminder, 28)]
++    [InlineData(CollectionsCampaignStage.LegalReferral, 30)]
++    public void ScheduleUsesTheCommunicationTable(CollectionsCampaignStage stage, int day) =>
++        Assert.Equal(new DateOnly(2026, 10, day), Assert.Single(CollectionsCampaignPolicy.ScheduledDates(stage, new(2026, 10, 8))));
++
++    [Theory]
++    [InlineData(2026, 28)]
++    [InlineData(2028, 29)]
++    public void ShortMonthReferralFallsOnLastDay_AndFollowUpStaysOn28(int year, int last)
++    {
++        Assert.Equal(new DateOnly(year, 2, last), Assert.Single(CollectionsCampaignPolicy.ScheduledDates(CollectionsCampaignStage.LegalReferral, new(year, 2, 1))));
++        Assert.Equal(new DateOnly(year, 2, 28), Assert.Single(CollectionsCampaignPolicy.ScheduledDates(CollectionsCampaignStage.FollowUpReminder, new(year, 2, 1))));
++        Assert.Equal([new DateOnly(year, 2, 12), new DateOnly(year, 2, 14)], CollectionsCampaignPolicy.ScheduledDates(CollectionsCampaignStage.LegalNotice, new(year, 2, 1)));
++    }
++
++    [Fact]
++    public void OverdueIsStrictlyOlderThanOneCalendarMonth_AndQuotesRemainingPrincipal()
++    {
++        var result = CollectionsCampaignPolicy.Evaluate([
++            new(new(2026, 9, 13), 125m), new(new(2026, 9, 14), 1000m), new(new(2026, 8, 10), 0m)
++        ], CollectionsCampaignStage.OverdueReminder, new(2026, 10, 14));
++        Assert.Equal(125m, result.Amount);
++        Assert.Equal(new DateOnly(2026, 9, 13), result.EarliestDueDate);
++    }
++
++    [Theory]
++    [InlineData(CollectionsCampaignStage.CurrentMonthReminder)]
++    [InlineData(CollectionsCampaignStage.FollowUpReminder)]
++    public void CurrentMonthIncludesUpcomingPayments_ExcludesOtherMonthsAndSettledRows(CollectionsCampaignStage stage)
++    {
++        var result = CollectionsCampaignPolicy.Evaluate([
++            new(new(2026, 9, 30), 5000m), new(new(2026, 10, 1), 120m), new(new(2026, 10, 31), 80m),
++            new(new(2026, 11, 1), 6000m), new(new(2026, 10, 5), 0m)
++        ], stage, new(2026, 10, 14));
++        Assert.Equal(200m, result.Amount);
++    }
++
++    [Theory]
++    [InlineData(1500, "BelowThreshold")]
++    [InlineData(1501, "Qualifies")]
++    public void LegalNoticeUsesPreviousMonthOnly_AndStrictThreshold(int amount, string expected)
++    {
++        var result = CollectionsCampaignPolicy.Evaluate([
++            new(new(2026, 9, 15), amount), new(new(2026, 8, 15), 90000m), new(new(2026, 10, 15), 90000m)
++        ], CollectionsCampaignStage.LegalNotice, new(2026, 10, 14));
++        Assert.Equal(amount, result.Amount);
++        Assert.Equal(expected, result.Reason);
++    }
++
++    [Theory]
++    [InlineData(20000, "BelowThreshold")]
++    [InlineData(20001, "Qualifies")]
++    public void ReferralThresholdAppliesToTheBalanceStrictlyOlderThanThreeMonths(int amount, string expected)
++    {
++        var result = CollectionsCampaignPolicy.Evaluate([
++            new(new(2026, 7, 13), amount), new(new(2026, 7, 14), 90000m), new(new(2026, 8, 1), 90000m)
++        ], CollectionsCampaignStage.LegalReferral, new(2026, 10, 14));
++        Assert.Equal(amount, result.Amount);
++        Assert.Equal(expected, result.Reason);
++    }
++
++    [Fact]
++    public void SameDateRowsHaveNoCampaignAmount()
++    {
++        var result = CollectionsCampaignPolicy.Evaluate([new(new(2026, 10, 1), 100m), new(new(2026, 10, 1), 100m)],
++            CollectionsCampaignStage.CurrentMonthReminder, new(2026, 10, 14));
++        Assert.Null(result.Amount);
++        Assert.Equal("AmbiguousInstalments", result.Reason);
++    }
++}
+diff --git a/src/TigerCS.Tests/Collections/Integration/CollectionsCampaignEndpointsTests.cs b/src/TigerCS.Tests/Collections/Integration/CollectionsCampaignEndpointsTests.cs
+new file mode 100644
+index 0000000..3a15d43
+--- /dev/null
++++ b/src/TigerCS.Tests/Collections/Integration/CollectionsCampaignEndpointsTests.cs
+@@ -0,0 +1,86 @@
++using System.Net;
++using System.Net.Http.Headers;
++using System.Net.Http.Json;
++using Microsoft.Extensions.DependencyInjection;
++using TigerCS.Application.Modules.Collections.Abstractions;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Application.Modules.IdentityAndAccess.Dto;
++using TigerCS.Domain.Modules.IdentityAndAccess;
++using TigerCS.Tests.IdentityAndAccess.Integration;
++
++namespace TigerCS.Tests.Collections.Integration;
++
++public sealed class CollectionsCampaignEndpointsTests
++{
++    private sealed class Source : IPactReceivablesSource
++    {
++        public int Reads { get; private set; }
++        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken)
++        {
++            Reads++;
++            return Task.FromResult(new PactReceivablesSnapshot([
++                new(4, "3001", "Campaign Customer", "971500003001", "", 101, "TP140-101", "TP140", "INV", "",
++                    throughDate.ToDateTime(TimeOnly.MinValue), 600m, "Installment")
++            ], DateTime.UtcNow, false));
++        }
++    }
++
++    private static TigerCsApiFactory Factory(Source source) => new()
++    {
++        ExtraConfiguration = new()
++        {
++            ["Collections:Enabled"] = "true",
++            ["CollectionsSource:PactReceivables:Enabled"] = "true"
++        },
++        ExtraServices = services => services.AddScoped<IPactReceivablesSource>(_ => source)
++    };
++
++    private static async Task<HttpClient> Client(TigerCsApiFactory factory, string role)
++    {
++        var (username, password, _) = await factory.SeedEmployeeAsync(role);
++        var client = factory.CreateClient();
++        var login = await (await client.PostAsJsonAsync("/api/auth/login", new LoginRequestDto(username, password)))
++            .Content.ReadFromJsonAsync<LoginResponseDto>();
++        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login!.AccessToken);
++        return client;
++    }
++
++    [Fact]
++    public async Task SystemAdministratorCanPreviewAndExportReview_ThroughCentralOverride()
++    {
++        var source = new Source(); using var factory = Factory(source);
++        using var client = await Client(factory, Roles.SystemAdministrator);
++        var preview = await client.GetAsync("/api/collections/campaigns/preview?stage=CurrentMonthReminder");
++        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
++        Assert.True(preview.Headers.CacheControl!.NoStore);
++        Assert.Equal("Campaign Customer", Assert.Single((await preview.Content.ReadFromJsonAsync<CollectionsCampaignPreviewDto>())!.Items).CustomerName);
++        var export = await client.GetAsync("/api/collections/campaigns/export?stage=CurrentMonthReminder&mode=review");
++        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
++        Assert.Contains("InternalReviewOnly", (await export.Content.ReadFromJsonAsync<CollectionsCampaignExportDto>())!.Csv);
++        Assert.Equal(2, source.Reads);
++    }
++
++    [Fact]
++    public async Task AnonymousAndReportingUserCannotPreview_AgentCannotExport_WithoutSourceRead()
++    {
++        var source = new Source(); using var factory = Factory(source);
++        using var anonymous = factory.CreateClient();
++        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/campaigns/preview?stage=CurrentMonthReminder")).StatusCode);
++        using var reporter = await Client(factory, Roles.ReportingUser);
++        Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/campaigns/preview?stage=CurrentMonthReminder")).StatusCode);
++        using var agent = await Client(factory, Roles.CsAgent);
++        Assert.Equal(HttpStatusCode.Forbidden, (await agent.GetAsync("/api/collections/campaigns/export?stage=CurrentMonthReminder&mode=review")).StatusCode);
++        Assert.Equal(0, source.Reads);
++    }
++
++    [Fact]
++    public async Task InvalidDateIsRejectedAtApiEdge_AndUnsafeCampaignExportIsRefused()
++    {
++        var source = new Source(); using var factory = Factory(source);
++        using var client = await Client(factory, Roles.CsManager);
++        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/collections/campaigns/preview?stage=CurrentMonthReminder&businessDate=invalid")).StatusCode);
++        Assert.Equal(0, source.Reads);
++        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/collections/campaigns/export?stage=CurrentMonthReminder&mode=genesys")).StatusCode);
++        Assert.Equal(1, source.Reads);
++    }
++}
+diff --git a/src/TigerCS.Tests/Collections/Services/CollectionsCampaignAppServiceTests.cs b/src/TigerCS.Tests/Collections/Services/CollectionsCampaignAppServiceTests.cs
+new file mode 100644
+index 0000000..dc210bf
+--- /dev/null
++++ b/src/TigerCS.Tests/Collections/Services/CollectionsCampaignAppServiceTests.cs
+@@ -0,0 +1,169 @@
++using Microsoft.Extensions.Logging.Abstractions;
++using Microsoft.VisualBasic.FileIO;
++using TigerCS.Application.Modules.Collections;
++using TigerCS.Application.Modules.Collections.Abstractions;
++using TigerCS.Application.Modules.Collections.Services;
++using TigerCS.Domain.Modules.IdentityAndAccess;
++using TigerCS.Tests.IdentityAndAccess.Fakes;
++using TigerCS.Tests.Notifications.Fakes;
++
++namespace TigerCS.Tests.Collections.Services;
++
++public sealed class CollectionsCampaignAppServiceTests
++{
++    private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);
++    private sealed class Source : IPactReceivablesSource
++    {
++        public List<PactReceivableInstalment> Items { get; } = [];
++        public int Reads { get; private set; }
++        public DateTime ReadAt { get; set; } = Now;
++        public Exception? Failure { get; set; }
++        public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken)
++        {
++            Reads++;
++            if (Failure is not null) throw Failure;
++            Assert.Equal(new DateOnly(throughDate.Year, throughDate.Month, DateTime.DaysInMonth(throughDate.Year, throughDate.Month)), throughDate);
++            return Task.FromResult(new PactReceivablesSnapshot(Items, ReadAt, false));
++        }
++    }
++
++    private sealed class Harness
++    {
++        public Source Source { get; } = new();
++        public CollectionsOptions Options { get; } = new() { Enabled = true };
++        public PactReceivablesOptions Sql { get; } = new() { Enabled = true };
++        public CollectionsCampaignOptions Campaign { get; } = new();
++        public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
++        public CollectionsCaller Agent { get; } = new(Guid.NewGuid(), [Roles.CsAgent], []);
++        public CollectionsCampaignAppService Service { get; }
++        public Harness() => Service = new(Options, Campaign, Sql,
++            new(Options, new FakeDepartmentRepository()), new(Options, new FakeTimeProvider(Now)),
++            Source, NullLogger<CollectionsCampaignAppService>.Instance);
++    }
++
++    private static PactReceivableInstalment Row(int day = 20, decimal amount = 500m, string tenant = "3001",
++        int company = 4, int unit = 101) => new(company, tenant, "Example Customer", "971500003001", "example@example.test",
++            unit, $"TP140-{unit}", "TP140", "INV-1", "", new(2026, 10, day), amount, "Installment");
++
++    [Fact]
++    public async Task DefaultIsReviewOnly_GenesysExportRequiresReconciledSource()
++    {
++        var h = new Harness(); h.Source.Items.Add(Row());
++        var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!;
++        var row = Assert.Single(report.Items);
++        Assert.Equal("NeedsReview", row.Status);
++        Assert.Contains("SourceReconciliationRequired", row.Reason);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Outcome);
++        var review = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review")).Value!;
++        Assert.Contains("InternalReviewOnly", review.Csv);
++        Assert.Contains("SourceReconciliationRequired", review.Csv);
++    }
++
++    [Fact]
++    public async Task ExportReReadsAllPages_AndAlreadyPaidUnitDisappears()
++    {
++        var h = new Harness(); h.Campaign.FinancialSourceValidated = true;
++        for (var n = 1; n <= 30; n++) h.Source.Items.Add(Row(tenant: n.ToString()));
++        var preview = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!;
++        Assert.Equal(25, preview.Items.Count); Assert.Equal(30, preview.TotalCount);
++        var stableId = preview.Items.First(c => c.TenantId == "10").RecordId;
++        h.Source.Items.RemoveAll(r => r.TenantId == "1");
++        var file = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Value!;
++        Assert.Equal(29, file.RowCount); Assert.Equal(2, h.Source.Reads);
++        Assert.Contains(stableId, file.Csv);
++        using var parser = new TextFieldParser(new StringReader(file.Csv)) { Delimiters = [","], HasFieldsEnclosedInQuotes = true };
++        Assert.Equal(22, parser.ReadFields()!.Length);
++        var tenants = new List<string>();
++        while (!parser.EndOfData) { var cells = parser.ReadFields()!; tenants.Add(cells[3]); Assert.Equal("+971500003001", cells[5]); Assert.Equal(new[] { "true", "true", "true" }, cells[19..]); }
++        Assert.Equal(29, tenants.Count); Assert.DoesNotContain("1", tenants);
++    }
++
++    [Fact]
++    public async Task UnitsAndCompaniesAreIndependent_IdsAreStableWithinTheMonth()
++    {
++        var h = new Harness(); h.Campaign.FinancialSourceValidated = true;
++        h.Source.Items.AddRange([Row(amount: 100m), Row(day: 21, amount: 200m, unit: 202), Row(amount: 300m, company: 32)]);
++        var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items;
++        Assert.Equal(3, items.Count); Assert.Equal(3, items.Select(c => c.RecordId).Distinct().Count());
++        Assert.Equal(new decimal?[] { 100m, 200m, 300m }, items.Select(c => c.Amount));
++        var again = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 15))).Value!.Items;
++        Assert.Equal(items.Select(c => c.RecordId), again.Select(c => c.RecordId));
++        Assert.All(again, c => Assert.Equal("PreviewOnly", c.Status));
++    }
++
++    [Theory]
++    [InlineData(0)]
++    [InlineData(-1)]
++    public async Task InvalidUnitCannotEnterAGenesysCampaign(int unit)
++    {
++        var h = new Harness(); h.Campaign.FinancialSourceValidated = true; h.Source.Items.Add(Row(unit: unit));
++        Assert.Contains("MissingUnitIdentity", Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items).Reason);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Outcome);
++    }
++
++    [Fact]
++    public async Task RepeatedDueDatesAcrossUnitsAreFlaggedEvenAfterSourceValidation()
++    {
++        var h = new Harness(); h.Campaign.FinancialSourceValidated = true;
++        h.Source.Items.AddRange([Row(), Row(unit: 202)]);
++        Assert.All((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items,
++            c => Assert.Contains("UnitAllocationNeedsReview", c.Reason));
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Outcome);
++    }
++
++    [Fact]
++    public async Task StaleSourceFailsCampaignExport_AndSourceFailureDoesNotLookLikeAnEmptyList()
++    {
++        var h = new Harness(); h.Campaign.FinancialSourceValidated = true; h.Source.Items.Add(Row());
++        h.Source.ReadAt = Now.AddHours(-2);
++        Assert.Contains("StaleSource", Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items).Reason);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Outcome);
++        h.Source.Failure = new PactReceivablesSourceException("Unavailable");
++        var failed = await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder");
++        Assert.Equal(CollectionsOutcome.FinanceUnavailable, failed.Outcome); Assert.Null(failed.Value);
++    }
++
++    [Fact]
++    public async Task LegalNoticeIsSeparateAndReferralNeverBecomesACustomerCampaign()
++    {
++        var h = new Harness(); h.Campaign.FinancialSourceValidated = true;
++        h.Source.Items.Add(Row(amount: 2000m) with { DueDate = new(2026, 9, 20) });
++        Assert.Contains("LegalNoticeReleaseRequired", Assert.Single((await h.Service.PreviewAsync(h.Manager, "LegalNotice")).Value!.Items).Reason);
++        h.Campaign.LegalNoticeExportEnabled = true;
++        Assert.Equal(CollectionsOutcome.Success, (await h.Service.ExportAsync(h.Manager, "LegalNotice", "genesys")).Outcome);
++        h.Source.Items.Clear(); h.Source.Items.Add(Row(amount: 25000m) with { DueDate = new(2026, 6, 1) });
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "LegalReferral", "genesys", new(2026, 10, 30))).Outcome);
++        Assert.Equal(CollectionsOutcome.Success, (await h.Service.ExportAsync(h.Manager, "LegalReferral", "review")).Outcome);
++    }
++
++    [Fact]
++    public async Task ExportCapRejectsRatherThanTruncating()
++    {
++        var h = new Harness(); h.Campaign.MaxExportRows = 1;
++        h.Source.Items.AddRange([Row(), Row(tenant: "3002")]);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review")).Outcome);
++    }
++
++    [Fact]
++    public async Task AgentsCanPreviewButCannotExport_AndInvalidRequestsNeverReadSource()
++    {
++        var h = new Harness(); h.Source.Items.Add(Row());
++        Assert.Equal(CollectionsOutcome.Success, (await h.Service.PreviewAsync(h.Agent, "CurrentMonthReminder")).Outcome);
++        var reads = h.Source.Reads;
++        Assert.Equal(CollectionsOutcome.Forbidden, (await h.Service.ExportAsync(h.Agent, "CurrentMonthReminder", "review")).Outcome);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.PreviewAsync(h.Manager, "1")).Outcome);
++        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", companyId: 25)).Outcome);
++        Assert.Equal(reads, h.Source.Reads);
++    }
++
++    [Fact]
++    public async Task ReviewCsvEscapesCommasQuotesNewlinesAndFormulaPrefixes()
++    {
++        var h = new Harness(); h.Source.Items.Add(Row() with { FullName = "=\"Example,\"\nCustomer" });
++        var file = (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review")).Value!;
++        using var parser = new TextFieldParser(new StringReader(file.Csv)) { Delimiters = [","], HasFieldsEnclosedInQuotes = true };
++        parser.ReadFields(); var fields = parser.ReadFields()!;
++        Assert.Equal("'=\"Example,\"\nCustomer", fields[4]); Assert.Equal("'+971500003001", fields[5]);
++        Assert.Equal("500.00", fields[10]); Assert.Equal(22, fields.Length); Assert.Equal(new[] { "false", "false", "false" }, fields[19..]);
++    }
++}
+diff --git a/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs b/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
+index 492b4ba..c532231 100644
+--- a/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
++++ b/src/TigerCS.Tests/IdentityAndAccess/Integration/ProtectedEndpointInventoryTests.cs
+@@ -88,6 +88,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
+         ["GET /api/customers/lookup/ticket-history"] = nameof(Collections.Edsm.EdsmPaymentSummaryApiTests.LookupFinancialsAndHistory_AreAuthorizedWithoutAnyTicket_ThroughTheRealHost),
+         // Collections — the explicit financial permissions, with the System Administrator override, on both prefixes.
+         ["GET /api/collections/receivables/customers"] = nameof(Collections.Integration.PactReceivablesEndpointTests.SystemAdministratorCanReadThroughCentralOverride_WithNoCustomerTicket),
++        ["GET /api/collections/campaigns/preview"] = nameof(Collections.Integration.CollectionsCampaignEndpointsTests.SystemAdministratorCanPreviewAndExportReview_ThroughCentralOverride),
++        ["GET /api/collections/campaigns/export"] = nameof(Collections.Integration.CollectionsCampaignEndpointsTests.SystemAdministratorCanPreviewAndExportReview_ThroughCentralOverride),
+         ["GET /api/genesys/collections/customers/{crmCustomerId}/outstanding"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+         ["GET /api/genesys/collections/customers/{crmCustomerId}/payments"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+         ["GET /api/genesys/collections/reminders/candidates"] = nameof(Collections.Integration.CollectionsEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryCollectionsRoute_ThroughTheOverride),
+diff --git a/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs b/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
+index 2c49d50..2235f93 100644
+--- a/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
++++ b/src/TigerCS.Tests/OpenApi/SwaggerDocumentTests.cs
+@@ -123,6 +123,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
+         "GET /api/reports/team-performance",
+         "GET /api/reports/team-performance/records",
+         "GET /api/collections/receivables/customers",
++        "GET /api/collections/campaigns/preview",
++        "GET /api/collections/campaigns/export",
+ 
+         // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
+         // Automatic Level 2 escalation on breach has no entry here on
+diff --git a/src/TigerCS.Tests/Web/CollectionsCampaignRenderTests.cs b/src/TigerCS.Tests/Web/CollectionsCampaignRenderTests.cs
+new file mode 100644
+index 0000000..d5482d1
+--- /dev/null
++++ b/src/TigerCS.Tests/Web/CollectionsCampaignRenderTests.cs
+@@ -0,0 +1,105 @@
++extern alias TigerCsWeb;
++
++using System.Net;
++using System.Net.Http.Json;
++using System.Security.Claims;
++using System.Text;
++using System.Text.Encodings.Web;
++using Microsoft.AspNetCore.Authentication;
++using Microsoft.AspNetCore.Hosting;
++using Microsoft.AspNetCore.Mvc.Testing;
++using Microsoft.AspNetCore.TestHost;
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Http;
++using Microsoft.Extensions.Logging;
++using Microsoft.Extensions.Options;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Domain.Modules.IdentityAndAccess;
++
++namespace TigerCS.Tests.Web;
++
++public sealed class CollectionsCampaignRenderTests
++{
++    private static WebApplicationFactory<TigerCsWeb::Program> Factory(Source source) =>
++        new WebApplicationFactory<TigerCsWeb::Program>().WithWebHostBuilder(builder =>
++        {
++            builder.UseEnvironment("Development");
++            builder.ConfigureTestServices(services =>
++            {
++                services.ConfigureAll<HttpClientFactoryOptions>(options =>
++                    options.HttpMessageHandlerBuilderActions.Add(b => b.PrimaryHandler = source));
++                services.AddAuthentication().AddScheme<AuthenticationSchemeOptions, TestAuth>("Test", _ => { });
++                services.PostConfigure<AuthenticationOptions>(options =>
++                { options.DefaultAuthenticateScheme = "Test"; options.DefaultChallengeScheme = "Test"; });
++            });
++        });
++
++    [Theory]
++    [InlineData(HttpStatusCode.OK)]
++    [InlineData(HttpStatusCode.Forbidden)]
++    [InlineData(HttpStatusCode.ServiceUnavailable)]
++    public async Task PageShowsReviewStateOrExplicitError_AndPreservesFilters(HttpStatusCode status)
++    {
++        using var factory = Factory(new Source(status)); using var client = factory.CreateClient();
++        var response = await client.GetAsync("/Collections/Campaigns?stage=CurrentMonthReminder&companyId=4&businessDate=2026-10-14&search=3001");
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var html = await response.Content.ReadAsStringAsync();
++        Assert.Contains("Collections Campaigns", html);
++        Assert.Contains("receivables-loading", html);
++        if (status == HttpStatusCode.OK)
++        {
++            Assert.Contains("Campaign Customer", html); Assert.Contains("Export review CSV", html);
++            Assert.DoesNotContain("Export Genesys CSV", html);
++            Assert.Contains("Financial source reconciliation required", html);
++            Assert.Contains("businessDate=2026-10-14", html); Assert.Contains("companyId=4", html);
++        }
++        else Assert.Contains(status == HttpStatusCode.Forbidden ? "does not have permission" : "source is unavailable", html);
++    }
++
++    [Fact]
++    public async Task DownloadIsUtf8Csv_WithNoStore_AndInvalidDateNeverCallsApi()
++    {
++        var source = new Source(HttpStatusCode.OK); using var factory = Factory(source); using var client = factory.CreateClient();
++        var download = await client.GetAsync("/Collections/Campaigns?handler=Export&stage=CurrentMonthReminder&mode=review&businessDate=2026-10-14&companyId=4&search=3001");
++        Assert.Equal("text/csv", download.Content.Headers.ContentType!.MediaType);
++        Assert.Equal("attachment", download.Content.Headers.ContentDisposition!.DispositionType);
++        Assert.True(download.Headers.CacheControl!.NoStore);
++        var bytes = await download.Content.ReadAsByteArrayAsync();
++        Assert.Equal(Encoding.UTF8.GetPreamble(), bytes.Take(3));
++        Assert.Contains("CustomerName", Encoding.UTF8.GetString(bytes));
++        var reads = source.Reads;
++        var invalid = await client.GetAsync("/Collections/Campaigns?businessDate=invalid");
++        Assert.Contains("Choose valid filters", await invalid.Content.ReadAsStringAsync()); Assert.Equal(reads, source.Reads);
++    }
++
++    private sealed class Source(HttpStatusCode status) : HttpMessageHandler
++    {
++        public int Reads { get; private set; }
++        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
++        {
++            Reads++;
++            Assert.Contains("stage=CurrentMonthReminder", request.RequestUri!.Query);
++            Assert.Contains("companyId=4", request.RequestUri.Query);
++            Assert.Contains("businessDate=2026-10-14", request.RequestUri.Query);
++            if (status != HttpStatusCode.OK) return Task.FromResult(new HttpResponseMessage(status));
++            if (request.RequestUri.AbsolutePath == "/api/collections/campaigns/export")
++                return Task.FromResult(new HttpResponseMessage(status) { Content = JsonContent.Create(new CollectionsCampaignExportDto("campaign-review.csv", "CustomerName\r\nExample\r\n", 1)) });
++            Assert.Equal("/api/collections/campaigns/preview", request.RequestUri.AbsolutePath);
++            var date = new DateOnly(2026, 10, 14);
++            var report = new CollectionsCampaignPreviewDto(date, date, DateTime.UtcNow, "PACT", "CurrentMonthReminder", "2026-10:CurrentMonthReminder",
++                [date], true, false, false, true, 1, 0, 1, 1, 25, [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "", 101,
++                    "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NeedsReview", "SourceReconciliationRequired")]);
++            return Task.FromResult(new HttpResponseMessage(status) { Content = JsonContent.Create(report) });
++        }
++    }
++
++    private sealed class TestAuth(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
++        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
++    {
++        protected override Task<AuthenticateResult> HandleAuthenticateAsync() => Task.FromResult(
++            AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity([
++                new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()), new Claim(ClaimTypes.Name, "Manager"),
++                new Claim(ClaimTypes.Role, Roles.CsManager)
++            ], "Test")), "Test")));
++    }
++}
+diff --git a/src/TigerCS.Web/Pages/Collections/Campaigns.cshtml b/src/TigerCS.Web/Pages/Collections/Campaigns.cshtml
+new file mode 100644
+index 0000000..70d6352
+--- /dev/null
++++ b/src/TigerCS.Web/Pages/Collections/Campaigns.cshtml
+@@ -0,0 +1,115 @@
++@page "/Collections/Campaigns"
++@model TigerCS.Web.Pages.Collections.CampaignsModel
++@using TigerCS.Web.Pages.Collections
++@using TigerCS.Web.Services.Api
++@{
++    ViewData["Title"] = "Collections Campaigns";
++    ViewData["ActiveNav"] = "collections";
++    Layout = "_Layout";
++}
++<link rel="stylesheet" href="~/css/collections-campaigns.css" asp-append-version="true" />
++<div class="page receivables-workspace">
++    <div class="page-header">
++        <div>
++            <p class="receivables-eyebrow">Collections</p>
++            <h1 class="page-title">Collections Campaigns</h1>
++            <p class="page-subtitle">Review payment reminders per apartment and prepare a contact list for Genesys.</p>
++        </div>
++        <div class="page-header__actions"><a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
++    </div>
++    <form class="filter-bar" method="get" action="/Collections/Campaigns" data-receivables-filter>
++        <div class="field-group">
++            <label class="field-label" for="campaignStage">Stage</label>
++            <select class="field-select" id="campaignStage" name="stage">
++                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">Overdue reminder · day 1</option>
++                <option value="CurrentMonthReminder" selected="@(Model.Stage.Equals("CurrentMonthReminder", StringComparison.OrdinalIgnoreCase))">Current month reminder · day 14</option>
++                <option value="FollowUpReminder" selected="@(Model.Stage.Equals("FollowUpReminder", StringComparison.OrdinalIgnoreCase))">Follow-up reminder · day 28</option>
++                <option value="LegalNotice" selected="@(Model.Stage.Equals("LegalNotice", StringComparison.OrdinalIgnoreCase))">Legal notice · days 12 and 14</option>
++                <option value="LegalReferral" selected="@(Model.Stage.Equals("LegalReferral", StringComparison.OrdinalIgnoreCase))">Internal Legal referral · day 30</option>
++            </select>
++        </div>
++        <div class="field-group">
++            <label class="field-label" for="campaignDate">Preview date</label>
++            <input class="field-input" id="campaignDate" name="businessDate" type="date" min="2000-01-01" max="2100-12-31" value="@Model.BusinessDate?.ToString("yyyy-MM-dd")" />
++        </div>
++        <div class="field-group">
++            <label class="field-label" for="campaignCompany">Company</label>
++            <select class="field-select" id="campaignCompany" name="companyId">
++                <option value="">All supported companies</option>
++                <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai</option>
++                <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah</option>
++            </select>
++        </div>
++        <div class="field-group filter-bar__search">
++            <label class="field-label" for="campaignSearch">Customer or unit</label>
++            <input class="field-input" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit" />
++        </div>
++        <button class="btn btn-primary" type="submit">Preview list</button>
++        <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>
++    </form>
++    @if (Model.Report is { } report)
++    {
++        <div class="panel">
++            <div class="campaign-summary">
++                <p><strong>@report.TotalCount units</strong> · @report.ReadyCount ready · @report.ReviewCount need review</p>
++                <p>Scheduled: @string.Join(", ", report.ScheduledDates.Select(d => d.ToString("dd MMM yyyy"))) · Latest read: @report.ReadAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
++                <p>Amounts use current remaining balances. A different preview date changes eligibility, not the payment history. Supported source: PACT companies 4 and 32.</p>
++                @if (!report.FinancialSourceValidated)
++                { <p role="status">Review the financial source against PACT before exporting a list for a customer campaign.</p> }
++                @if (report.LegacyExclusionsApplied)
++                { <p role="status">Legacy exclusions are active; this list does not contain every receivable.</p> }
++                @if (report.Stage == "LegalReferral")
++                { <p><strong>Internal Legal review only.</strong> These records are not a customer contact campaign.</p> }
++                @if (report.CanExportReview)
++                {
++                    <a class="btn" href="@Model.PageUrl(export: "review")">Export review CSV</a>
++                    @if (report.TotalCount > 0 && report.ReadyCount == report.TotalCount)
++                    { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
++                    <p>Exports include every matching unit across all pages and re-read payments before creating the file.</p>
++                }
++            </div>
++            <div class="table-scroll">
++                <table class="table receivables-table">
++                    <thead><tr><th>Customer</th><th>Unit</th><th>Contact</th><th>Qualifying balance</th><th>Earliest qualifying due date</th><th>Status</th></tr></thead>
++                    <tbody>
++                    @foreach (var row in report.Items)
++                    {
++                        <tr>
++                            <td><strong>@row.CustomerName</strong><br />Customer ID @row.TenantId · Company @row.CompanyId</td>
++                            <td>@row.UnitCode<br />@row.ProjectCode</td>
++                            <td>@row.Phone<br />@row.Email</td>
++                            <td>@row.Currency @ReceivablesModel.Money(row.Amount)</td>
++                            <td>@row.DueDate?.ToString("dd MMM yyyy")</td>
++                            <td><strong>@(row.Status switch { "NeedsReview" => "Needs review", "PreviewOnly" => "Preview only", "InternalReview" => "Internal review", _ => row.Status })</strong><br />@CampaignsModel.Reason(row.Reason)</td>
++                        </tr>
++                    }
++                    @if (report.TotalCount == 0)
++                    { <tr><td colspan="6">No units qualify for this stage and these filters.</td></tr> }
++                    </tbody>
++                </table>
++            </div>
++            <div class="receivables-pagination">
++                <span>Page @report.Page of @Model.TotalPages</span>
++                <div>
++                    @if (report.Page > 1) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page - 1)">Previous</a> }
++                    @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page + 1)">Next</a> }
++                </div>
++            </div>
++        </div>
++    }
++    else
++    {
++        <div class="panel"><div class="error-state" role="alert">
++            @if (Model.Outcome == ApiOutcome.Forbidden)
++            { <p>Your account does not have permission for this Collections operation.</p> }
++            else if (Model.Outcome == ApiOutcome.Unauthorized)
++            { <p>Your session has expired. <a href="/Logout">Sign in again</a>.</p> }
++            else if (Model.Outcome == ApiOutcome.ValidationError)
++            { <p>@(Model.Error ?? "Choose valid filters and retry.")</p> }
++            else
++            { <p>The campaign source is unavailable. The list could not be loaded.</p> }
++            <a class="btn" href="@Model.PageUrl()">Return to preview</a>
++        </div></div>
++    }
++</div>
++<script src="~/js/receivables.js" asp-append-version="true"></script>
+diff --git a/src/TigerCS.Web/Pages/Collections/Campaigns.cshtml.cs b/src/TigerCS.Web/Pages/Collections/Campaigns.cshtml.cs
+new file mode 100644
+index 0000000..2b1b307
+--- /dev/null
++++ b/src/TigerCS.Web/Pages/Collections/Campaigns.cshtml.cs
+@@ -0,0 +1,86 @@
++using System.Globalization;
++using System.Text;
++using System.Web;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.AspNetCore.Mvc.RazorPages;
++using TigerCS.Application.Modules.Collections.Dto;
++using TigerCS.Web.Services.Api;
++
++namespace TigerCS.Web.Pages.Collections;
++
++[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
++public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
++{
++    public string Stage { get; private set; } = "OverdueReminder";
++    public DateOnly? BusinessDate { get; private set; }
++    public int? CompanyId { get; private set; }
++    public string? Search { get; private set; }
++    public int PageNumber { get; private set; } = 1;
++    public ApiOutcome Outcome { get; private set; }
++    public string? Error { get; private set; }
++    public CollectionsCampaignPreviewDto? Report { get; private set; }
++    public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(Report.TotalCount / (double)Report.PageSize));
++
++    public async Task OnGetAsync(string stage = "OverdueReminder", DateOnly? businessDate = null, int? companyId = null,
++        string? search = null, [FromQuery(Name = "page")] int pageNumber = 1, CancellationToken cancellationToken = default)
++    {
++        SetFilters(stage, businessDate, companyId, search, pageNumber);
++        if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return; }
++        var result = await api.GetCampaignPreviewAsync(Stage, BusinessDate, CompanyId, Search, pageNumber, cancellationToken);
++        Outcome = result.Outcome;
++        Report = result.IsSuccess ? result.Value : null;
++        Error = result.Detail;
++        BusinessDate ??= Report?.BusinessDate;
++    }
++
++    public async Task<IActionResult> OnGetExportAsync(string stage = "OverdueReminder", string mode = "review",
++        DateOnly? businessDate = null, int? companyId = null, string? search = null,
++        CancellationToken cancellationToken = default)
++    {
++        SetFilters(stage, businessDate, companyId, search, 1);
++        if (!ModelState.IsValid) { Outcome = ApiOutcome.ValidationError; Error = "Choose valid filters and retry."; return Page(); }
++        var result = await api.GetCampaignExportAsync(Stage, mode, BusinessDate, CompanyId, Search, cancellationToken);
++        if (result.IsSuccess && result.Value is { } file)
++        {
++            var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(file.Csv)).ToArray();
++            return File(bytes, "text/csv; charset=utf-8", file.FileName);
++        }
++        Outcome = result.Outcome;
++        Error = result.Detail;
++        return Page();
++    }
++
++    private void SetFilters(string stage, DateOnly? date, int? company, string? search, int page)
++    { Stage = stage; BusinessDate = date; CompanyId = company; Search = search?.Trim(); PageNumber = page; }
++
++    public string PageUrl(int page = 1, string? export = null)
++    {
++        var query = HttpUtility.ParseQueryString(string.Empty);
++        query["stage"] = Stage;
++        if (BusinessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
++        if (CompanyId is { } company) query["companyId"] = company.ToString(CultureInfo.InvariantCulture);
++        if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
++        if (export is null) query["page"] = page.ToString(CultureInfo.InvariantCulture);
++        else { query["handler"] = "Export"; query["mode"] = export; }
++        return $"/Collections/Campaigns?{query}";
++    }
++
++    public static string Reason(string reason) => string.Join("; ", reason.Split(';').Select(r => r switch
++    {
++        "AmbiguousInstalments" => "Several instalments share a due date; amount needs review",
++        "MissingUnitIdentity" => "Unit identity needs review",
++        "ConflictingContactDetails" => "Customer contact details conflict",
++        "UnitAllocationNeedsReview" => "Instalments appear under several units; allocation needs review",
++        "ContradictoryPaymentStatus" => "Paid status conflicts with a remaining balance",
++        "CurrencyNeedsReview" => "Currency must be AED",
++        "AmountPrecisionNeedsReview" => "Amount precision needs review before quoting AED",
++        "StaleSource" => "Financial data is not fresh",
++        "SourceReconciliationRequired" => "Financial source reconciliation required",
++        "NoValidContact" => "No valid phone or email",
++        "OutsideSchedule" => "Preview date is outside today's scheduled campaign",
++        "LegalNoticeReleaseRequired" => "Legal notice export is not enabled",
++        "InternalLegalReferralOnly" => "Internal Legal review only",
++        "Qualifies" => "Qualifies for this stage",
++        _ => r
++    }));
++}
+diff --git a/src/TigerCS.Web/Pages/Collections/Receivables.cshtml b/src/TigerCS.Web/Pages/Collections/Receivables.cshtml
+index c820fff..1509499 100644
+--- a/src/TigerCS.Web/Pages/Collections/Receivables.cshtml
++++ b/src/TigerCS.Web/Pages/Collections/Receivables.cshtml
+@@ -13,7 +13,7 @@
+             <h1 class="page-title">Due &amp; Overdue Customers</h1>
+             <p class="page-subtitle">PACT customers with unpaid instalments due today or earlier, including customers with no tickets.</p>
+         </div>
+-        <div class="page-header__actions"><a class="btn" href="@Model.PageUrl(Model.PageNumber)">Refresh</a></div>
++        <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a><a class="btn" href="@Model.PageUrl(Model.PageNumber)">Refresh</a></div>
+     </div>
+ 
+     <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter>
+diff --git a/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs b/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
+index 2d5565c..515992b 100644
+--- a/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
++++ b/src/TigerCS.Web/Services/Api/CollectionsApiClient.cs
+@@ -16,6 +16,24 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
+     private const string Base = "api/collections";
+     public const int PageSize = 50;
+ 
++    public Task<ApiResult<CollectionsCampaignPreviewDto>> GetCampaignPreviewAsync(string stage, DateOnly? businessDate,
++        int? companyId, string? search, int page, CancellationToken cancellationToken) =>
++        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search)}&page={Id(page)}", cancellationToken);
++
++    public Task<ApiResult<CollectionsCampaignExportDto>> GetCampaignExportAsync(string stage, string mode,
++        DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken) =>
++        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
++
++    private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search)
++    {
++        var query = HttpUtility.ParseQueryString(string.Empty);
++        query["stage"] = stage;
++        if (businessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
++        if (companyId is { } company) query["companyId"] = Id(company);
++        if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
++        return query.ToString()!;
++    }
++
+     public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
+         int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null)
+     {
+diff --git a/src/TigerCS.Web/wwwroot/css/collections-campaigns.css b/src/TigerCS.Web/wwwroot/css/collections-campaigns.css
+new file mode 100644
+index 0000000..676573a
+--- /dev/null
++++ b/src/TigerCS.Web/wwwroot/css/collections-campaigns.css
+@@ -0,0 +1,11 @@
++.campaign-summary {
++    padding: var(--space-5);
++    border-bottom: 1px solid var(--color-border);
++    font-size: var(--text-sm);
++    line-height: 1.6;
++}
++.campaign-summary p { margin: 0 0 var(--space-3); }
++.campaign-summary p:last-child { margin: var(--space-3) 0 0; color: var(--color-text-secondary); }
++.campaign-summary .btn { margin-right: var(--space-2); }
++.campaign-summary [role="status"] { color: var(--color-text-secondary); }
++.receivables-workspace .receivables-table td:last-child { max-width: 340px; }

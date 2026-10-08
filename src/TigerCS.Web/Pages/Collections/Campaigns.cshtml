@@ -1,0 +1,126 @@
+@page "/Collections/Campaigns"
+@model TigerCS.Web.Pages.Collections.CampaignsModel
+@using TigerCS.Web.Pages.Collections
+@using TigerCS.Web.Services.Api
+@{
+    ViewData["Title"] = "Collections Campaigns";
+    ViewData["ActiveNav"] = "collections";
+    Layout = "_Layout";
+}
+<link rel="stylesheet" href="~/css/collections-campaigns.css" asp-append-version="true" />
+<div class="page receivables-workspace">
+    <div class="page-header">
+        <div>
+            <p class="receivables-eyebrow">Collections</p>
+            <h1 class="page-title">Collections Campaigns</h1>
+            <p class="page-subtitle">Review payment reminders per apartment and prepare a contact list for Genesys.</p>
+        </div>
+        <div class="page-header__actions"><a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
+    </div>
+    <form class="filter-bar" method="get" action="/Collections/Campaigns" data-receivables-filter>
+        <div class="field-group">
+            <label class="field-label" for="campaignStage">Stage</label>
+            <select class="field-select" id="campaignStage" name="stage">
+                <option value="OverdueReminder" selected="@(Model.Stage.Equals("OverdueReminder", StringComparison.OrdinalIgnoreCase))">Overdue reminder · sent day 1 (overdue more than one month)</option>
+                <option value="CurrentMonthReminder" selected="@(Model.Stage.Equals("CurrentMonthReminder", StringComparison.OrdinalIgnoreCase))">Current month reminder · day 14</option>
+                <option value="FollowUpReminder" selected="@(Model.Stage.Equals("FollowUpReminder", StringComparison.OrdinalIgnoreCase))">Follow-up reminder · day 28</option>
+                <option value="LegalNotice" selected="@(Model.Stage.Equals("LegalNotice", StringComparison.OrdinalIgnoreCase))">Legal notice · days 12 and 14</option>
+                <option value="LegalReferral" selected="@(Model.Stage.Equals("LegalReferral", StringComparison.OrdinalIgnoreCase))">Internal Legal referral · day 30</option>
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="campaignDate">Preview date</label>
+            <input class="field-input" id="campaignDate" name="businessDate" type="date" min="2000-01-01" max="2100-12-31" value="@Model.BusinessDate?.ToString("yyyy-MM-dd")" />
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="campaignFrom">From date (instalment due)</label>
+            <input class="field-input" id="campaignFrom" name="dateFrom" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" />
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="campaignTo">To date (instalment due)</label>
+            <input class="field-input" id="campaignTo" name="dateTo" type="date" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="campaignCompany">Company</label>
+            <select class="field-select" id="campaignCompany" name="companyId">
+                <option value="">All supported companies</option>
+                <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai</option>
+                <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah</option>
+            </select>
+        </div>
+        <div class="field-group filter-bar__search">
+            <label class="field-label" for="campaignSearch">Customer or unit</label>
+            <input class="field-input" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit" />
+        </div>
+        <button class="btn btn-primary" type="submit">Preview list</button>
+        <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>
+        <span class="receivables-timeout" role="alert" hidden>The list is taking too long. The request was stopped; retry or choose one company.</span>
+    </form>
+    @if (Model.Report is { } report)
+    {
+        <div class="panel">
+            <div class="campaign-summary">
+                <p><strong>@report.TotalCount units</strong> · @report.ReadyCount ready · @report.ReviewCount need review</p>
+                <p>Scheduled: @string.Join(", ", report.ScheduledDates.Select(d => d.ToString("dd MMM yyyy"))) · Latest read: @report.ReadAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
+                <p>Instalments due @report.DateFrom?.ToString("dd MMM yyyy") to @report.DateTo?.ToString("dd MMM yyyy"). Blank From/To use the defaults (1 Jan of the preview year; the preview date, or the month end for current-month and follow-up). Preview date (@report.BusinessDate.ToString("dd MMM yyyy")) only decides stage eligibility and schedule.</p>
+                @foreach (var note in report.RangeNotes ?? []) { <p role="status">@note</p> }
+                <p>Amounts use current remaining balances. A different preview date changes eligibility, not the payment history. Supported source: PACT companies 4 and 32.</p>
+                @if (!report.FinancialSourceValidated)
+                { <p role="status">Review the financial source against PACT before exporting a list for a customer campaign.</p> }
+                @if (report.LegacyExclusionsApplied)
+                { <p role="status">Legacy exclusions are active; this list does not contain every receivable.</p> }
+                @if (report.Stage == "LegalReferral")
+                { <p><strong>Internal Legal review only.</strong> These records are not a customer contact campaign.</p> }
+                @if (report.CanExportReview)
+                {
+                    <a class="btn" href="@Model.PageUrl(export: "review")">Export review CSV</a>
+                    @if (report.TotalCount > 0 && report.ReadyCount == report.TotalCount)
+                    { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
+                    <p>Exports include every matching unit across all pages and re-read payments before creating the file.</p>
+                }
+            </div>
+            <div class="table-scroll">
+                <table class="table receivables-table">
+                    <thead><tr><th>Customer</th><th>Unit</th><th>Contact</th><th>Qualifying balance</th><th>Earliest qualifying due date</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var row in report.Items)
+                    {
+                        <tr>
+                            <td><strong>@row.CustomerName</strong><br />Customer ID @row.TenantId · Company @row.CompanyId</td>
+                            <td>@row.UnitCode<br />@row.ProjectCode</td>
+                            <td>@row.Phone<br />@row.Email</td>
+                            <td>@row.Currency @ReceivablesModel.Money(row.Amount)</td>
+                            <td>@row.DueDate?.ToString("dd MMM yyyy")</td>
+                            <td><strong>@(row.Status switch { "NeedsReview" => "Needs review", "PreviewOnly" => "Preview only", "InternalReview" => "Internal review", _ => row.Status })</strong><br />@CampaignsModel.Reason(row.Reason)</td>
+                        </tr>
+                    }
+                    @if (report.TotalCount == 0)
+                    { <tr><td colspan="6">No units qualify for this stage and these filters.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+            <div class="receivables-pagination">
+                <span>Page @report.Page of @Model.TotalPages</span>
+                <div>
+                    @if (report.Page > 1) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page - 1)">Previous</a> }
+                    @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page + 1)">Next</a> }
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="panel"><div class="error-state" role="alert" data-campaign-error>
+            @if (Model.Outcome == ApiOutcome.Forbidden)
+            { <p>Your account does not have permission for this Collections operation.</p> }
+            else if (Model.Outcome == ApiOutcome.Unauthorized)
+            { <p>Your session has expired. <a href="/Logout">Sign in again</a>.</p> }
+            else if (Model.Outcome == ApiOutcome.ValidationError)
+            { <p>@(Model.Error ?? "Choose valid filters and retry.")</p> }
+            else
+            { <p>The campaign source is unavailable. The list could not be loaded.</p> }
+            <a class="btn" href="@Model.PageUrl()">Return to preview</a>
+        </div></div>
+    }
+</div>
+<script src="~/js/receivables.js" asp-append-version="true"></script>
