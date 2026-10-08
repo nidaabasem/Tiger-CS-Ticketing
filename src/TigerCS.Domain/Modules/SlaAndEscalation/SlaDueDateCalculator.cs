@@ -51,6 +51,25 @@ public static class SlaDueDateCalculator
             throw new ArgumentOutOfRangeException(nameof(targetMinutes), "An SLA target must be a positive number of minutes.");
         }
 
+        return ComputeDueAtUtc(clockStartAtUtc, TimeSpan.FromMinutes(targetMinutes), clockBasis, calendar);
+    }
+
+    /// <summary>
+    /// The same computation for a duration that is not a whole number of
+    /// minutes — used by SLA pause/resume (a remaining business time with
+    /// seconds in it) and by request-type SLAs (hours, business days).
+    /// </summary>
+    public static DateTime ComputeDueAtUtc(
+        DateTime clockStartAtUtc,
+        TimeSpan target,
+        SlaClockBasis clockBasis,
+        BusinessCalendarSnapshot? calendar)
+    {
+        if (target <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(target), "An SLA target must be a positive duration.");
+        }
+
         var startUtc = AsUtc(clockStartAtUtc);
 
         if (clockBasis == SlaClockBasis.TwentyFourSeven)
@@ -59,11 +78,62 @@ public static class SlaDueDateCalculator
             // addition from the start event, with no business-hours or
             // holiday-calendar exclusion". The calendar argument is ignored
             // here even when one is supplied.
-            return startUtc.AddMinutes(targetMinutes);
+            return startUtc.Add(target);
         }
 
         ArgumentNullException.ThrowIfNull(calendar);
-        return ComputeBusinessHoursDueAtUtc(startUtc, targetMinutes, calendar);
+        return ComputeBusinessHoursDueAtUtc(startUtc, target, calendar);
+    }
+
+    /// <summary>
+    /// The business time (inside the window, on working non-holiday dates)
+    /// between two instants — the inverse of the business-hours walk, used to
+    /// know how much of a Resolution target was still unspent when a pause
+    /// began. Calendar-local arithmetic, so a DST-observing zone could be an
+    /// hour out on a transition day; the approved Asia/Dubai calendar has no
+    /// DST.
+    /// </summary>
+    public static TimeSpan BusinessTimeBetween(DateTime fromUtc, DateTime toUtc, BusinessCalendarSnapshot calendar)
+    {
+        ArgumentNullException.ThrowIfNull(calendar);
+
+        var from = AsUtc(fromUtc);
+        var to = AsUtc(toUtc);
+        if (to <= from)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var fromLocal = TimeZoneInfo.ConvertTimeFromUtc(from, calendar.TimeZone);
+        var toLocal = TimeZoneInfo.ConvertTimeFromUtc(to, calendar.TimeZone);
+        var lastDate = DateOnly.FromDateTime(toLocal);
+        var total = TimeSpan.Zero;
+
+        var walked = 0;
+        for (var date = DateOnly.FromDateTime(fromLocal); date <= lastDate; date = date.AddDays(1))
+        {
+            if (++walked > MaximumDaysWalked)
+            {
+                throw new InvalidOperationException("Business-time measurement spans more than ten years — refusing to walk it.");
+            }
+
+            if (!calendar.IsWorkingDate(date))
+            {
+                continue;
+            }
+
+            var windowStart = date.ToDateTime(calendar.BusinessDayStartLocal);
+            var windowEnd = date.ToDateTime(calendar.BusinessDayEndLocal);
+            var segmentStart = fromLocal > windowStart ? fromLocal : windowStart;
+            var segmentEnd = toLocal < windowEnd ? toLocal : windowEnd;
+
+            if (segmentEnd > segmentStart)
+            {
+                total += segmentEnd - segmentStart;
+            }
+        }
+
+        return total;
     }
 
     /// <summary>
@@ -73,10 +143,10 @@ public static class SlaDueDateCalculator
     /// First Response figure.
     /// </summary>
     private static DateTime ComputeBusinessHoursDueAtUtc(
-        DateTime startUtc, int targetMinutes, BusinessCalendarSnapshot calendar)
+        DateTime startUtc, TimeSpan target, BusinessCalendarSnapshot calendar)
     {
         var cursorLocal = TimeZoneInfo.ConvertTimeFromUtc(startUtc, calendar.TimeZone);
-        var remaining = TimeSpan.FromMinutes(targetMinutes);
+        var remaining = target;
 
         for (var daysWalked = 0; daysWalked <= MaximumDaysWalked; daysWalked++)
         {

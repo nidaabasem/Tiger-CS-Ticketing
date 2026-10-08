@@ -1040,6 +1040,43 @@ public class Ticket
         }
     }
 
+    /// <summary>
+    /// SLA pause (ISSUE-018): <see cref="SlaState.Running"/> becomes
+    /// <see cref="SlaState.Paused"/>. Narrow like <see cref="StartSlaClock"/>:
+    /// a Breached, Met or NotApplicable ticket is left alone, so a pause can
+    /// never hide a recorded breach. The pause row itself is the application
+    /// service's job.
+    /// </summary>
+    /// <returns>True when this call changed the state.</returns>
+    public bool PauseSla()
+    {
+        if (SlaState != SlaState.Running)
+        {
+            return false;
+        }
+
+        SlaState = SlaState.Paused;
+        return true;
+    }
+
+    /// <summary>
+    /// SLA resume: <see cref="SlaState.Paused"/> becomes
+    /// <see cref="SlaState.Running"/>; every other state (notably a sticky
+    /// Breached recorded during the pause by the First Response clock) is
+    /// left as it is.
+    /// </summary>
+    /// <returns>True when this call changed the state.</returns>
+    public bool ResumeSla()
+    {
+        if (SlaState != SlaState.Paused)
+        {
+            return false;
+        }
+
+        SlaState = SlaState.Running;
+        return true;
+    }
+
     /// <summary>Closed-ticket immutability (PR correction): every mutating method above calls this first — a Closed ticket accepts no further Assign/Transfer/ChangeStatus/Resolve/Close.</summary>
     private void EnsureNotClosed()
     {

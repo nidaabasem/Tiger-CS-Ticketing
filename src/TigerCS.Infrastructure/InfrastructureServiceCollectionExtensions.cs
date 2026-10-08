@@ -232,6 +232,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ISlaPolicyRepository, SlaPolicyRepository>();
         services.AddScoped<IBusinessCalendarRepository, BusinessCalendarRepository>();
         services.AddScoped<ITicketSlaInstanceRepository, TicketSlaInstanceRepository>();
+        services.AddScoped<ITicketSlaPausePeriodRepository, TicketSlaPausePeriodRepository>();
+        services.AddScoped<SlaPauseService>();
         services.AddScoped<ITicketEscalationRepository, TicketEscalationRepository>();
         services.AddScoped<IIdempotencyRecordStore, IdempotencyRecordStore>();
         services.AddScoped<SlaDueDateService>();

@@ -2,6 +2,7 @@ using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Services;
+using TigerCS.Application.Modules.WorkflowConfiguration.Abstractions;
 using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 
@@ -25,7 +26,10 @@ public sealed class SlaQueryAppService(
     ITicketEscalationRepository escalationRepository,
     TicketQueryAppService ticketQueryAppService,
     ISlaPolicyRepository slaPolicyRepository,
-    IBusinessCalendarRepository businessCalendarRepository)
+    IBusinessCalendarRepository businessCalendarRepository,
+    ITicketSlaPausePeriodRepository? pauseRepository = null,
+    IRequestTypeSlaPolicyRepository? requestTypeSlaPolicyRepository = null,
+    TimeProvider? timeProvider = null)
 {
     // ---- The implementation facts the explanation states. One place, so the
     // ticket panel and the administration view never disagree. Each sentence
@@ -40,18 +44,25 @@ public sealed class SlaQueryAppService(
         + "or at the moment of classification for a ticket created unclassified (every Genesys call, chat or message starts unclassified). "
         + "The clock is never backdated to the interaction or creation time. A provisional ticket awaiting CRM reconciliation starts when it is reconciled.";
 
+    public const string PolicySourceRequestType = "Request-type SLA policy (per-priority policy for anything it does not set)";
+
     public const string PolicyPrecedence =
         "Targets come from the per-priority SLA policy (Critical, High, Medium, Low). "
-        + "The SLA values configured per request type are stored and shown for reference but are not applied by the due-date calculation in this release; "
-        + "no department-level SLA exists.";
+        + "A request type's own SLA values override them only where they are unambiguous: the row is active, starts at ticket creation, has an explicit clock basis, "
+        + "and each duration is a single value (not a range). Anything else is not applied: the per-priority policy is used and the ticket's SLA panel states the exact reason "
+        + "(range interpretation, calendar-vs-business days, or a non-creation trigger is still undecided). "
+        + "First response always comes from the per-priority policy unless the request type sets a single value. No department-level SLA exists.";
 
     public const string FirstResponseRule =
         "First response is satisfied only by a recorded human response: a human agent's message in the Genesys conversation transcript, or an explicit 'record first response' call. "
         + "Accepting a pending interaction (Accept & Start / Start Handling), assigning the ticket, changing its status or the automated acknowledgement do NOT count.";
 
     public const string PauseRule =
-        "Pause and resume are not implemented in this release: the clock never pauses, including while the ticket is Pending Customer. "
-        + "The request-type 'pauses on Pending Customer' setting is stored but not applied.";
+        "The Resolution SLA pauses while a non-Critical ticket is Pending Customer (and, for legacy tickets, Pending Third Party) and resumes when it returns to In Progress; "
+        + "the due time is extended by the time paused, and elapsed time, breaches and history are never erased. "
+        + "The Critical SLA never pauses, and the First Response SLA never pauses (it cannot once a first human response is recorded). "
+        + "A request type can explicitly set 'pauses on Pending Customer' to Yes or No; when unset it follows this rule. "
+        + "A pause still open when the ticket is resolved or closed ends at that moment. Pending Internal does not pause (undecided).";
 
     /// <summary>MVP-API-Contracts.md §5.1 — the ticket detail screen's SLA panel.</summary>
     public async Task<SlaOperationResult<TicketSlaSummaryResponseDto>> GetSummaryAsync(
@@ -82,13 +93,69 @@ public sealed class SlaQueryAppService(
         var policy = appliedPriority is { } priorityId
             ? await slaPolicyRepository.GetByPriorityIdAsync(priorityId, cancellationToken)
             : null;
-        var calendar = policy is { ClockBasis: SlaClockBasis.BusinessHours }
+        var effectiveBasis = instance?.ResolutionClockBasis ?? policy?.ClockBasis;
+        var calendar = effectiveBasis == SlaClockBasis.BusinessHours
             ? await businessCalendarRepository.GetActiveDescriptionAsync(cancellationToken)
             : null;
 
+        // The request-type row is only evaluated live when no period exists
+        // to carry the snapshot of what happened at open time (a period
+        // records its own applied policy and not-applied reason).
+        RequestTypeSlaEvaluation? liveRequestTypeSla = null;
+        if (instance is null && ticket.RequestTypeId is { } requestTypeId && appliedPriority is { } liveP
+            && requestTypeSlaPolicyRepository is not null)
+        {
+            var requestTypePolicy = await requestTypeSlaPolicyRepository.GetActiveAsync(requestTypeId, liveP, cancellationToken);
+            var description = requestTypePolicy?.ClockBasis == SlaClockBasis.BusinessHours
+                ? calendar ?? await businessCalendarRepository.GetActiveDescriptionAsync(cancellationToken)
+                : null;
+            liveRequestTypeSla = RequestTypeSlaEnforcement.Evaluate(requestTypePolicy, BusinessDayLengthOf(description));
+        }
+
+        var pause = await GetPauseSummaryAsync(instance, cancellationToken);
+
         return SlaOperationResult<TicketSlaSummaryResponseDto>.Success(
-            ToSummaryDto(ticket, instance) with { Explanation = BuildExplanation(ticket, instance, policy, calendar) });
+            ToSummaryDto(ticket, instance, pause)
+            with { Explanation = BuildExplanation(ticket, instance, policy, calendar, liveRequestTypeSla, pause) });
     }
+
+    /// <summary>The pause facts of the current period, for the summary fields and the explanation.</summary>
+    public sealed record SlaPauseSummary(bool IsCurrentlyPaused, string? CurrentPauseReason, int TotalPausedMinutes);
+
+    private async Task<SlaPauseSummary?> GetPauseSummaryAsync(TicketSlaInstance? instance, CancellationToken cancellationToken)
+    {
+        if (instance is null || pauseRepository is null)
+        {
+            return null;
+        }
+
+        var now = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+        return SummarizePauses(await pauseRepository.ListByInstanceIdAsync(instance.TicketSlaInstanceId, cancellationToken), now);
+    }
+
+    /// <summary>
+    /// The §5.1 pause fields from one period's pause rows. An open pause is
+    /// counted up to <paramref name="nowUtc"/>; minutes are floored, not
+    /// rounded — a minute is only claimed once it has passed.
+    /// </summary>
+    public static SlaPauseSummary SummarizePauses(IReadOnlyCollection<TicketSlaPausePeriod> pauses, DateTime nowUtc)
+    {
+        var open = pauses.FirstOrDefault(p => p.IsOpen);
+        var totalMinutes = (int)pauses.Sum(p => p.DurationAsOf(nowUtc).TotalMinutes);
+        return new SlaPauseSummary(open is not null, open is null ? null : SlaPauseService.ReasonText(open.Reason), totalMinutes);
+    }
+
+    /// <summary>The §5.1 response shape from a ticket, its current period and that period's pause summary.</summary>
+    public static TicketSlaSummaryResponseDto BuildSummary(Ticket ticket, TicketSlaInstance? instance, SlaPauseSummary? pause) =>
+        ToSummaryDto(ticket, instance, pause);
+
+    private static TimeSpan? BusinessDayLengthOf(SlaCalendarDto? calendar) =>
+        calendar is not null
+        && TimeOnly.TryParse(calendar.BusinessDayStartLocal, out var start)
+        && TimeOnly.TryParse(calendar.BusinessDayEndLocal, out var end)
+        && end > start
+            ? end - start
+            : null;
 
     /// <summary>
     /// The System Administrator's reference view of the SLA configuration the
@@ -119,11 +186,18 @@ public sealed class SlaQueryAppService(
     /// first (the Genesys case), then CRM reconciliation, then a missing policy.
     /// </summary>
     public static SlaExplanationDto BuildExplanation(
-        Ticket ticket, TicketSlaInstance? instance, SlaPolicy? policy, SlaCalendarDto? calendar)
+        Ticket ticket, TicketSlaInstance? instance, SlaPolicy? policy, SlaCalendarDto? calendar,
+        RequestTypeSlaEvaluation? liveRequestTypeSla = null, SlaPauseSummary? pause = null)
     {
         var appliedPriority = instance?.PriorityId ?? ticket.PriorityId;
         var notes = new List<string>();
         string? notStarted = null;
+
+        // Request-type SLA: what governed the period (the period's own
+        // snapshot), or — before any period exists — what would.
+        var requestTypeApplied = instance?.RequestTypeSlaPolicyId is not null;
+        var requestTypeNote = instance is not null ? instance.RequestTypeSlaNote : liveRequestTypeSla?.Reason;
+        var effectiveBasis = instance?.ResolutionClockBasis ?? policy?.ClockBasis;
 
         if (instance is null)
         {
@@ -165,7 +239,7 @@ public sealed class SlaQueryAppService(
             }
         }
 
-        if (policy is not null && policy.ClockBasis == SlaClockBasis.BusinessHours)
+        if (policy is not null && effectiveBasis == SlaClockBasis.BusinessHours)
         {
             notes.Add(calendar is null
                 ? "Clock basis is business hours, but no active business calendar is configured — the calculation cannot run without one."
@@ -176,14 +250,37 @@ public sealed class SlaQueryAppService(
             notes.Add("24/7 clock: every minute counts, including nights, weekends and holidays.");
         }
 
+        if (requestTypeApplied)
+        {
+            notes.Add(instance!.AppliedResolutionTargetMinutes == 0
+                ? "Request-type SLA applied: this request type is resolved immediately, so the Resolution deadline is the clock start."
+                : $"Request-type SLA applied: the Resolution target ({FormatMinutes(instance.AppliedResolutionTargetMinutes)}) comes from this request type's own SLA on a "
+                  + $"{(effectiveBasis == SlaClockBasis.BusinessHours ? "business-hours" : "calendar (24/7)")} clock.");
+        }
+        else if (requestTypeNote is not null)
+        {
+            // The exact reason, verbatim (e.g. "Request-type SLA not applied: range interpretation undecided …").
+            notes.Add(requestTypeNote);
+        }
+
+        if (pause is { IsCurrentlyPaused: true })
+        {
+            notes.Add($"The Resolution SLA is paused ({pause.CurrentPauseReason}); its deadline is held and will be extended by the paused time on resume. First Response is not paused.");
+        }
+
+        if (pause is { TotalPausedMinutes: > 0 })
+        {
+            notes.Add($"Total paused time in this period: {FormatMinutes(pause.TotalPausedMinutes)}.");
+        }
+
         return new SlaExplanationDto(
             HasActivePeriod: instance is not null,
             AppliedPriorityId: appliedPriority,
             AppliedPriorityLabel: appliedPriority is { } p ? PriorityLabel(p) : null,
-            PolicySource: PolicySourcePriority,
-            FirstResponseTargetMinutes: policy?.FirstResponseTargetMinutes,
-            ResolutionTargetMinutes: policy?.ResolutionTargetMinutes,
-            ClockBasis: policy is null ? null : ClockBasisLabel(policy.ClockBasis),
+            PolicySource: requestTypeApplied ? PolicySourceRequestType : PolicySourcePriority,
+            FirstResponseTargetMinutes: instance?.AppliedFirstResponseTargetMinutes ?? policy?.FirstResponseTargetMinutes,
+            ResolutionTargetMinutes: instance?.AppliedResolutionTargetMinutes ?? policy?.ResolutionTargetMinutes,
+            ClockBasis: effectiveBasis is { } basis ? ClockBasisLabel(basis) : null,
             WarningThresholdPercent: policy?.WarningThresholdPercent,
             Calendar: calendar,
             ClockStartedAtUtc: instance?.PeriodStartAtUtc,
@@ -191,8 +288,18 @@ public sealed class SlaQueryAppService(
             NotStartedReason: notStarted,
             FirstResponseRule: FirstResponseRule,
             PauseRule: PauseRule,
-            Notes: notes);
+            Notes: notes,
+            RequestTypeSlaApplied: requestTypeApplied,
+            RequestTypeSlaNote: requestTypeNote);
     }
+
+    private static string FormatMinutes(int? minutes) => minutes switch
+    {
+        null => "unknown",
+        < 60 => $"{minutes} min",
+        _ when minutes % 60 == 0 => $"{minutes / 60} h",
+        _ => $"{minutes / 60} h {minutes % 60} min"
+    };
 
     internal static string PriorityLabel(byte? priorityId) => priorityId switch
     {
@@ -208,7 +315,7 @@ public sealed class SlaQueryAppService(
         basis == SlaClockBasis.BusinessHours ? "Business hours" : "24/7";
 
     /// <summary>The §5.1 response shape, built once here so every endpoint that returns an SLA summary returns the identical projection.</summary>
-    internal static TicketSlaSummaryResponseDto ToSummaryDto(Ticket ticket, TicketSlaInstance? instance) =>
+    internal static TicketSlaSummaryResponseDto ToSummaryDto(Ticket ticket, TicketSlaInstance? instance, SlaPauseSummary? pause = null) =>
         new(SlaState: ticket.SlaState.ToString(),
             FirstResponseDueAtUtc: instance?.FirstResponseDueAtUtc,
             FirstResponseBreached: instance?.FirstResponseBreached ?? false,
@@ -216,13 +323,12 @@ public sealed class SlaQueryAppService(
             ResolutionDueAtUtc: instance?.ResolutionDueAtUtc,
             ResolutionBreached: instance?.ResolutionBreached ?? false,
 
-            // MVP-Implementation-Backlog.md §0.2 — SLA pause/resume is not
-            // built in this pilot. The three fields stay in the approved §5.1
-            // response shape at their pause-free values rather than being
-            // dropped from the contract.
-            IsCurrentlyPaused: false,
-            CurrentPauseReason: null,
-            TotalPausedMinutesThisPeriod: 0,
+            // ISSUE-018 pause facts of the current period. A response built
+            // without them (a caller that has no pause repository, or a
+            // ticket with no period) reports the pause-free values.
+            IsCurrentlyPaused: pause?.IsCurrentlyPaused ?? false,
+            CurrentPauseReason: pause?.CurrentPauseReason,
+            TotalPausedMinutesThisPeriod: pause?.TotalPausedMinutes ?? 0,
 
             EscalationLevel: ticket.EscalationLevel.ToString());
 
