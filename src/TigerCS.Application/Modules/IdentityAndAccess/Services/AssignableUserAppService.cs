@@ -1,3 +1,4 @@
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.IdentityAndAccess.Abstractions;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
 
@@ -26,11 +27,15 @@ namespace TigerCS.Application.Modules.IdentityAndAccess.Services;
 /// </remarks>
 public sealed class AssignableUserAppService(
     IUserDepartmentAssignmentRepository assignmentRepository,
-    IUserRoleReader roleReader)
+    IUserRoleReader roleReader,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     public async Task<IReadOnlyList<AssignableUserDto>> ListAsync(CancellationToken cancellationToken = default)
     {
-        var memberships = await assignmentRepository.ListActiveMembershipsAsync(cancellationToken);
+        // Configured service identities (the Genesys integration account) are not people: never offered as assignees.
+        var memberships = (await assignmentRepository.ListActiveMembershipsAsync(cancellationToken))
+            .Where(m => serviceIdentities is null || !serviceIdentities.IsServiceIdentity(m.EmployeeId))
+            .ToList();
 
         var result = new List<AssignableUserDto>();
         foreach (var group in memberships

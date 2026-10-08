@@ -615,6 +615,9 @@ public class TicketsController(
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/approvals")]
+    // Chairman/CEO is read-only except for the documented right to REQUEST a Reopen Approval
+    // (Solution-Analysis.md 4.1); TicketApprovalAppService refuses every other approval type for it.
+    [AllowReadOnlyCallerWrite]
     [Tags(OpenApiTags.Approvals)]
     public async Task<IActionResult> RequestApproval(
         long ticketId, [FromBody] RequestApprovalRequestDto request, CancellationToken cancellationToken)

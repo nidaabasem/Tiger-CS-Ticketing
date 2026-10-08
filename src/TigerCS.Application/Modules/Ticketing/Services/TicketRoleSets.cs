@@ -45,6 +45,9 @@ public static class TicketRoleSets
     /// Status change ("work" sub-machine — Open→InProgress, InProgress↔Pending*):
     /// cross-department authority for Supervisor+, on top of the ticket's
     /// current owner (checked separately in TicketLifecycleAppService).
+    /// Chairman/CEO is deliberately absent: the role is read-only by agreed
+    /// management decision (audit F-5) and holds no status-change,
+    /// classification, approval-operation or first-response authority.
     /// Department Head is department-scoped instead (checked separately,
     /// against the specific department), not cross-department. Unaffected
     /// by the Assign/Transfer correction below — status-change authority was
@@ -52,7 +55,7 @@ public static class TicketRoleSets
     /// </summary>
     public static readonly IReadOnlyCollection<string> CrossDepartmentSupervisory =
     [
-        Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo, Roles.SystemAdministrator
+        Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.SystemAdministrator
     ];
 
     /// <summary>

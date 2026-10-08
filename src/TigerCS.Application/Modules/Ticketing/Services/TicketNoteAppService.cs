@@ -1,6 +1,7 @@
 using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Abstractions;
 using TigerCS.Application.Modules.Ticketing.Dto;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Domain.Modules.Ticketing;
 
 namespace TigerCS.Application.Modules.Ticketing.Services;
@@ -31,6 +32,12 @@ public sealed class TicketNoteAppService(
         if (ticket is null)
         {
             return NoteResult.Failure(NoteOutcome.TicketNotFound);
+        }
+
+        // Read-only roles (Chairman/CEO, Reporting User) may read notes but never write one.
+        if (Roles.IsReadOnlyCaller(callerRoles))
+        {
+            return NoteResult.Failure(NoteOutcome.Forbidden);
         }
 
         if (!await ticketQueryAppService.CanViewDepartmentAsync(callerEmployeeId, callerRoles, ticket.CurrentDepartmentId, cancellationToken))

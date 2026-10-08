@@ -4,7 +4,7 @@ namespace TigerCS.Web.Services.Auth;
 
 /// <summary>
 /// The Web-side gate on the /Reports folder and the "Team Performance" nav
-/// item — the same role set the Api's <c>CsManagerOrGeneralManager</c>
+/// item — the same role set the Api's <c>ReportsRead</c>
 /// policy requires (CS Manager, General Manager, Chairman/CEO), plus
 /// System Administrator, who passes every Api policy through the ADR-0024
 /// override. Display-only; the Api is the enforcement point, and a page

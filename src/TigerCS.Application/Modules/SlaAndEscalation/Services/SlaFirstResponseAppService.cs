@@ -114,6 +114,11 @@ public sealed class SlaFirstResponseAppService(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
         AuthorizationGate.EvaluateAsync(callerRoles, async () =>
         {
+            if (Roles.IsReadOnlyCaller(callerRoles))
+            {
+                return false;
+            }
+
             if (ticket.CurrentOwnerEmployeeId == callerEmployeeId)
             {
                 return true;

@@ -22,6 +22,7 @@ namespace TigerCS.Api.Controllers;
 /// </summary>
 [Route("api/genesys/collections")]
 [Tags(OpenApiTags.Collections)]
+[AllowServiceIdentity]
 public sealed class GenesysCollectionsController(
     CollectionsAccountQueryAppService queries,
     CollectionsPaymentSummaryAppService paymentSummaries,

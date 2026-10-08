@@ -618,7 +618,7 @@ else
                                 </ol>
                             }
 
-                            @if (!isClosed)
+                            @if (!isClosed && TicketActions.CanAddNote(Model.Viewer?.Roles))
                             {
                                 <div class="composer">
                                     <form method="post" asp-page-handler="AddNote">
