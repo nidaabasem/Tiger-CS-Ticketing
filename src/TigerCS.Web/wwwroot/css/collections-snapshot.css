@@ -38,12 +38,18 @@
 .receivables-table--nested { font-size: .9em; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-/* Receivables: month overview */
-.month-overview { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0; }
-.month-card { display: flex; flex-direction: column; gap: .2rem; min-width: 8.5rem; padding: .7rem .9rem; border: 1px solid var(--color-border, #e3e6ea); border-radius: .5rem; background: var(--color-surface, #fff); color: inherit; text-decoration: none; font-variant-numeric: tabular-nums; }
-.month-card:hover { border-color: var(--color-primary, #2563eb); }
-.month-card:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; }
-.month-card__title { font-weight: 600; }
-.month-card span:not(.month-card__title) { color: var(--color-text-secondary); font-size: .85rem; }
-.month-card--overdue strong { color: var(--color-danger, #b42318); }
-.month-card--selected { border-color: var(--color-primary, #2563eb); box-shadow: inset 0 0 0 1px var(--color-primary, #2563eb); background: var(--color-primary-soft, #eff4ff); }
+/* By unit: months in the row */
+.unit-months { list-style: none; margin: .15rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .1rem; }
+.unit-month { display: flex; justify-content: space-between; gap: .75rem; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.unit-month__name { color: var(--color-text-secondary); }
+.receivables-table--units td { vertical-align: top; }
+.receivables-help, .snapshot-status__details { margin: .25rem 0 .5rem; font-size: .85rem; color: var(--color-text-secondary); }
+.receivables-help > summary, .snapshot-status__details > summary { cursor: pointer; }
+.snapshot-status { margin-bottom: .25rem; }
+
+/* Compact summary tiles and unit table */
+.receivables-metrics--five { gap: .5rem; margin-bottom: .5rem; }
+.receivables-metrics--five .panel { padding: .45rem .75rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; }
+.receivables-metrics--five .panel strong { font-size: 1.15rem; }
+.receivables-table--units td:nth-child(2) { white-space: nowrap; }
+.receivables-amount--overdue { color: var(--color-danger, #b3261e); }

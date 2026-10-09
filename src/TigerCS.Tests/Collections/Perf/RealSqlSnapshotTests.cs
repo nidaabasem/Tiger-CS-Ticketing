@@ -208,6 +208,46 @@ public sealed class RealSqlSnapshotTests
         Assert.Equal(flat.Select(Key).Order(), units.SelectMany(u => u.Instalments).Select(Key).Order());
     }
 
+    [Fact]
+    public async Task UnitView_RealData_ExpansionsMatchUnitTotalsAndMonthlyAmounts_AndMonthCardsFilterBothViews()
+    {
+        if (string.IsNullOrEmpty(ConnectionString)) return;
+        var options = new TigerCS.Application.Modules.Collections.CollectionsOptions { Enabled = true };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:TigerCsDatabase"] = ConnectionString }).Build();
+        var service = new PactInstalmentsAppService(options, new PactReceivablesOptions { Enabled = true }, new CollectionsAuthorizationService(options, new FakeDepartmentRepository()),
+            new CollectionsClock(options, new FakeTimeProvider(new DateTime(2026, 10, 9, 5, 0, 0, DateTimeKind.Utc))),
+            new SnapshotPactReceivablesSource(config, new ReceivablesSnapshotOptions { MaxAgeMinutes = 100000 }, new PactReceivablesOptions { Enabled = true }, TimeProvider.System, NullLogger<SnapshotPactReceivablesSource>.Instance),
+            NullLogger<PactInstalmentsAppService>.Instance);
+        Task<CollectionsResult<TigerCS.Application.Modules.Collections.Dto.PactInstalmentsPageDto>> List(string view, string? month, int page = 1, int size = 100) =>
+            service.ListAsync(Caller, 5, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 31), "outstanding", 100m, null, page, size, default, view, month);
+
+        var all = (await List("units", null)).Value!;
+        Assert.NotEmpty(all.Months!);
+        foreach (var unit in all.Units!)
+        {
+            Assert.Equal(unit.InstalmentCount, unit.Instalments.Count);
+            Assert.Equal(unit.RemainingTotal, unit.Instalments.Sum(i => i.RemainingAmount));
+            var perMonth = unit.Instalments.Where(i => i.RemainingAmount > 0).GroupBy(i => (i.DueDate.Year, i.DueDate.Month)).ToDictionary(g => g.Key, g => g.Sum(i => i.RemainingAmount));
+            Assert.Equal(unit.RemainingTotal, perMonth.Values.Sum());                                  // the monthly amounts add up to the unit total
+            // Due / Overdue / Not yet due is the date rule of the business month: one label per month.
+            foreach (var g in unit.Instalments.GroupBy(i => (i.DueDate.Year, i.DueDate.Month)))
+            {
+                var expected = (g.Key.Year, g.Key.Month).CompareTo((2026, 10)) switch { < 0 => "Overdue", 0 => "Due", _ => "NotYetDue" };
+                Assert.All(g.Where(i => i.RemainingAmount > 0), i => Assert.Equal(expected, i.Classification));
+            }
+        }
+        foreach (var card in all.Months!)
+        {
+            var key = $"{card.Year}-{card.Month:00}";
+            var byUnit = (await List("units", key)).Value!;
+            var byInstalment = (await List("instalments", key)).Value!;
+            Assert.Equal((card.InstalmentCount, card.RemainingTotal, card.OverdueCount, card.OverdueRemaining), (byUnit.Totals.Count, byUnit.Totals.RemainingTotal, byUnit.Totals.OverdueCount, byUnit.Totals.OverdueRemaining));
+            Assert.Equal(byInstalment.Totals with { UnitCount = byUnit.Totals.UnitCount }, byUnit.Totals);               // both views, same month filter, same totals
+            Assert.All(byUnit.Units!.SelectMany(u => u.Instalments), i => Assert.Equal((card.Year, card.Month), (i.DueDate.Year, i.DueDate.Month)));
+            Assert.True(byUnit.Units!.Sum(u => u.RemainingTotal) <= card.RemainingTotal);                                 // one page of units never exceeds the whole month
+        }
+    }
+
     private static string UnitKey(TigerCS.Application.Modules.Collections.Dto.PactInstalmentUnitDto u) =>
         $"{u.CompanyId}|{u.TenantId}|{u.UnitId}|{u.UnitCode}|{u.InstalmentCount}|{u.RemainingTotal}|{u.OldestDueDate:yyyy-MM-dd}|{u.CustomerName}";
 
