@@ -32,9 +32,9 @@ Common assumptions: header `Authorization: ${authResponse.token_type} ${authResp
 | 10 | awaiting-customer-reply | PATCH | `:207` | matches; null-field defaults |
 | 11 | send-document-copy | `POST /api/genesys/documents/send-copy` + `Idempotency-Key` | `GenesysDocumentsController.cs:69` | matches; stale description |
 | 12 | customer-unit-details | `POST /api/genesys/customers/unit-details` | `GenesysController.cs:397` | quoting already correct; not-recorded defaults changed from `0` to sentinels `-999` / `-1` / `-1` (F-03 closed) |
-| 13 | buyer-lookup | `POST /api/genesys/verification/buyer-lookup` | `GenesysVerificationController.cs` `buyer-lookup` | matches; `tel:` rejected (F-09) |
-| 14 | otp-send | `POST .../verification/otp/send` | `otp/send` | same |
-| 15 | otp-resend | `POST .../verification/otp/resend` | `otp/resend` | matches |
+| 13 | buyer-lookup | `POST /api/genesys/verification/buyer-lookup` | `GenesysVerificationController.cs` `buyer-lookup` | matches; `tel:` rejected (F-09); outputs `availableChannels`/`maskedMobile` added with SMS |
+| 14 | otp-send | `POST .../verification/otp/send` | `otp/send` | matches; inputs `channel`/`language` and output `channel` added with SMS |
+| 15 | otp-resend | `POST .../verification/otp/resend` | `otp/resend` | matches; output `channel` added |
 | 16 | otp-verify | `POST .../verification/otp/verify` | `otp/verify` | matches |
 
 Not covered by any action (routes exist in code): `agent-context`, `screen-pop`, `GET/POST` collections reminders/candidates/outcomes/outstanding/payments, `POST /api/verification-sessions`, pending-interaction work list, transcript delivery.

@@ -113,17 +113,21 @@ public sealed partial class GenesysDataActionContractTests
         ]),
         new("13", "POST", "api/genesys/verification/buyer-lookup", typeof(BuyerLookupRequestDto), ["phoneNumber"], () =>
         [
-            ("found", new CustomerOtpResult(CustomerOtpStatus.Found, Units: [new BuyerUnitChoice("41230", 12345, "1205", "Tiger \"Sky\" Tower")], MaskedDestination: "a***@g***.com"))
+            ("found", new CustomerOtpResult(CustomerOtpStatus.Found, Units: [new BuyerUnitChoice("41230", 12345, "1205", "Tiger \"Sky\" Tower")], MaskedDestination: "a***@g***.com",
+                MaskedMobile: "+971******888", AvailableChannels: ["Email", "Sms"]))
         ]),
         new("14", "POST", "api/genesys/verification/otp/send", typeof(OtpSendRequestDto), ["phoneNumber"], () =>
         [
-            ("sent", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "a***@g***.com", ExpiresAtUtc: DateTime.UtcNow)),
+            ("sent", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "a***@g***.com", ExpiresAtUtc: DateTime.UtcNow, Channel: "Email")),
+            ("sentBySms", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "+971******888", ExpiresAtUtc: DateTime.UtcNow, Channel: "Sms")),
+            ("unconfirmed", new CustomerOtpResult(CustomerOtpStatus.DeliveryUnconfirmed, Code: "OTP_DELIVERY_UNCONFIRMED", Message: "Unknown", ChallengeId: SessionId, MaskedDestination: "+971******888", Channel: "Sms")),
             ("selection", new CustomerOtpResult(CustomerOtpStatus.UnitSelectionRequired, Code: "UNIT_SELECTION_REQUIRED", Message: "Choose",
                 Units: [new BuyerUnitChoice("41230", 12345, "1205", null), new BuyerUnitChoice("41231", 12346, "1403", "P")]))
         ]),
         new("15", "POST", "api/genesys/verification/otp/resend", typeof(OtpResendRequestDto), ["challengeId"], () =>
         [
-            ("sent", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "a***@g***.com"))
+            ("sent", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "a***@g***.com", Channel: "Email")),
+            ("sentBySms", new CustomerOtpResult(CustomerOtpStatus.CodeSent, ChallengeId: SessionId, MaskedDestination: "+971******888", Channel: "Sms"))
         ]),
         new("16", "POST", "api/genesys/verification/otp/verify", typeof(OtpVerifyRequestDto), ["challengeId", "code"], () =>
         [

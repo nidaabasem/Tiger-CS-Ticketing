@@ -291,7 +291,7 @@ Callers reach these via TigerGroupWeb as an integration service account that hol
 | Method | Route | Body | Success | Errors (code) |
 |---|---|---|---|---|
 | POST | `/api/genesys/verification/buyer-lookup` | `{phoneNumber*}` | 200 `CustomerOtpResult` status `Found` (units, masked email) | 400; 404 `CUSTOMER_NOT_FOUND`; 409 `CUSTOMER_AMBIGUOUS`; 502 `CRM_AUTHENTICATION_FAILED`/`CRM_INVALID_RESPONSE`; 503 `CRM_UNAVAILABLE`/`DOCUMENT_COPY_DISABLED` |
-| POST | `/api/genesys/verification/otp/send` | `{phoneNumber*, crmUnitId?}` | 200 `CodeSent` / `AlreadySent` / `UnitSelectionRequired` | 400; 403 `UNIT_NOT_OWNED`; 404; 409; 422 `NO_EMAIL_ON_RECORD`; 429 `OTP_RATE_LIMITED`/`OTP_RESEND_LIMIT_REACHED` (+`Retry-After`); 502 `OTP_DELIVERY_FAILED`; 503 (also when `EmailNotifications:Enabled=false`) |
+| POST | `/api/genesys/verification/otp/send` | `{phoneNumber*, crmUnitId?, channel? Email\|Sms, language? en\|ar}` | 200 `CodeSent` (+`channel`) / `AlreadySent` / `UnitSelectionRequired` | 400; 403 `UNIT_NOT_OWNED`; 404; 409; 422 `NO_EMAIL_ON_RECORD` / `NO_MOBILE_ON_RECORD`; 503 `OTP_SMS_NOT_CONFIGURED`; 504 `OTP_DELIVERY_UNCONFIRMED` (SMS, see `Sms-Verification-Channel.md`); 429 `OTP_RATE_LIMITED`/`OTP_RESEND_LIMIT_REACHED` (+`Retry-After`); 502 `OTP_DELIVERY_FAILED`; 503 (also when `EmailNotifications:Enabled=false`) |
 | POST | `/api/genesys/verification/otp/resend` | `{challengeId*}` | 200 `CodeSent` | 404 `OTP_CHALLENGE_NOT_FOUND`; 410 `OTP_EXPIRED`; 423 `OTP_LOCKED`; 429 `OTP_RESEND_TOO_SOON`/limit; 502 |
 | POST | `/api/genesys/verification/otp/verify` | `{challengeId*, code*}` (6 digits) | 200 `Verified` + `session` | 400 `OTP_INVALID` (`attemptsRemaining`); 404; 409 `OTP_ALREADY_USED`; 410; 423 |
 

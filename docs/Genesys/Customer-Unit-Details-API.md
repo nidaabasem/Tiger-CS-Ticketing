@@ -47,13 +47,13 @@ The feature flag `Genesys:Enabled` governs it like every Genesys route
 | `customerReference` | string | yes | The verified CRM customer: `crm:9001`, or the plain id `9001` (the lookup's `externalCustomerId`). Non-CRM references (`ext:…`, `phone:…`) are rejected. |
 | `phoneNumber` | string | yes | The verified number the customer was identified by (`tel:+971…`, `+971…`, `971…`). It is how CRM is asked which units the customer owns. |
 | `unitId` | integer | no | The CRM unit id the customer selected (from a previous `UnitSelectionRequired` answer). Omit it to get the eligible units. |
-| `verificationSessionId` | GUID | no | A confirmed verification session (`POST /api/verification-sessions`, method `Otp` or `AuthenticatedDigitalUser`, owned by the calling service account, unexpired, **for this unit**). Needed **only** for the private sale fields. Without it the response is still `200` with unit/project data and `financialDetailsStatus: "VerificationRequired"`. |
+| `verificationSessionId` | GUID | no | The `verificationSessionId` returned by `otp/verify` (email or SMS code) **for this unit**. Needed **only** for the private sale fields. Without it the response is still `200` with unit/project data and `financialDetailsStatus: "VerificationRequired"`. A session that merely asserts a method (including via `POST /api/verification-sessions`) never qualifies. |
 
 ### Workflow
 
 1. **Customer lookup** — `GET customers/lookup` (Data Action 01) returns `externalCustomerId` for the caller's number.
 2. **Unit selection** — call this route with `customerReference` + `phoneNumber` and no `unitId`; read `eligibleUnits`; ask the customer which one.
-3. **Verification** — for sold price / registration cost, run strong verification for the chosen unit (SMS one-time code via `api/genesys/verification/otp/send` then `verify`, see [Otp-Sms-API.md](Otp-Sms-API.md); or an authenticated digital user) and keep its `verificationSessionId`. Unit, project, completion and handover facts do not need this step.
+3. **Verification** — for sold price / registration cost, run strong verification for the chosen unit (a one-time code by email or SMS via `api/genesys/verification/otp/send` then `verify` — see [Sms-Verification-Channel.md](Sms-Verification-Channel.md)) and keep its `verificationSessionId`. Unit, project, completion and handover facts do not need this step.
 4. **Unit details** — call again with `unitId` (and `verificationSessionId` if the customer asked about price or fees).
 
 ## How access is decided (server-side, every call)
@@ -68,15 +68,14 @@ The feature flag `Genesys:Enabled` governs it like every Genesys route
    ids cannot be probed. A unit id alone never grants access.
 4. Only then are unit and project details assembled. The response carries no
    contact details, no other units' details, and no CRM notes.
-5. **Sale (sold price, registration cost) additionally requires proof.** A phone
-   number or customer id typed by the caller is not proof. The server loads the
-   `verificationSessionId` it recorded itself and releases the sale only if the
-   session is confirmed, owned by the calling service account, not expired, by an
-   accepted strong method (`CrmDocuments:AcceptedVerificationMethods`, default
-   `Otp`, `AuthenticatedDigitalUser` — the same policy as document copies) **and
-   belongs to this unit**. Unknown, foreign, unconfirmed, expired, weak-method or
-   other-unit sessions all give the same answer, `VerificationFailed`. Without proof
-   CRM is not even asked for the sale (`includeSale` is not sent).
+5. **Sale (sold price, registration cost) additionally requires server-recorded evidence.** A phone
+   number, customer id or a `verificationMethod` someone asserted is not proof. The sale is released only for
+   a session that the server's own OTP verification produced (it carries `ProofChallengeId`,
+   `CrmBuyerCustomerId` and `CrmBuyerLeadId`), owned by the calling service account, confirmed, unexpired,
+   bound to **this** CRM customer, **this** unit and **this** unit's Lead — and whose recorded challenge was
+   spent by the right code and produced that very session. Unknown, foreign, unconfirmed, expired,
+   asserted, other-customer, other-unit and other-Lead sessions all give the same answer,
+   `VerificationFailed`. Without proof CRM is not even asked for the sale (`includeSale` is not sent).
 6. **Sale binding.** CRM is asked for the sale of the Lead the buyer lookup bound to
    this unit (`leadId`). CRM must echo that `leadId`; if it echoes another Lead or
    none, the sale is discarded (`NotAvailable`) — another buyer's sale or an old

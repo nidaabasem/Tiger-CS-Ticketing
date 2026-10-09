@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.CrmDocuments;
+using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
@@ -58,11 +59,11 @@ public sealed record GenesysUnitDetailsResult(GenesysUnitDetailsOutcome Outcome,
 /// <para>
 /// <b>Private financial data needs proof, not just ownership.</b> The
 /// customer's actual sold price and registration cost are returned only when
-/// the request carries a <c>verificationSessionId</c> that the server itself
-/// recorded as confirmed — owned by the calling service account, unexpired, by
-/// an accepted strong method (the document-copy policy,
-/// <see cref="CrmDocumentOptions.AcceptedVerificationMethods"/>), and for this
-/// very unit. A phone number or customer id the caller typed is never proof.
+/// the request carries a <c>verificationSessionId</c> produced by the server's own
+/// one-time-code verification (email or SMS) for this very customer, unit and Lead,
+/// owned by the calling service account and unexpired — the same evidence document
+/// copies require. A <c>verificationMethod</c> a caller merely asserted is never proof,
+/// and neither is a phone number or customer id the caller typed.
 /// Without proof CRM is not even asked for the sale. With it, the sale is
 /// requested for the Lead the buyer lookup bound to this unit and discarded
 /// unless CRM echoes that same Lead, so another buyer's sale or an unrelated
@@ -76,6 +77,7 @@ public sealed class GenesysCustomerUnitDetailsAppService(
     CrmDocumentOptions verificationPolicy,
     IVerificationSessionRepository sessionRepository,
     IUnitReferenceRepository unitReferenceRepository,
+    ICustomerOtpChallengeRepository otpChallengeRepository,
     TimeProvider timeProvider,
     ILogger<GenesysCustomerUnitDetailsAppService> logger)
 {
@@ -125,7 +127,7 @@ public sealed class GenesysCustomerUnitDetailsAppService(
 
         var unit = resolved.Unit!;
 
-        var proof = await CheckProofAsync(callerEmployeeId, verificationSessionId, unit.UnitId, cancellationToken);
+        var proof = await CheckProofAsync(callerEmployeeId, verificationSessionId, customerId, unit, cancellationToken);
 
         CrmUnitDetailsResult enrichment;
         try
@@ -147,11 +149,17 @@ public sealed class GenesysCustomerUnitDetailsAppService(
     private enum ProofState { Missing, Invalid, Valid }
 
     /// <summary>
-    /// One answer (<see cref="ProofState.Invalid"/>) for an unknown, someone else's, unconfirmed, expired,
-    /// weak-method or other-unit session, so nothing can be learned by probing session ids.
+    /// The sale is private, so it needs <b>server-recorded</b> evidence, never an assertion. A session qualifies only when
+    /// <i>all</i> of these hold: it is owned by the calling account, confirmed and unexpired; it carries the proof the OTP service
+    /// attaches (<c>ProofChallengeId</c>, <c>CrmBuyerCustomerId</c>, <c>CrmBuyerLeadId</c>) — which no agent-asserted session has,
+    /// whatever <c>verificationMethod</c> it names; the proof was bound to <i>this</i> CRM customer and <i>this</i> unit's Lead; the
+    /// session's unit is this unit; and the recorded challenge itself exists, was spent by a correct code, produced this very
+    /// session for this caller, and is bound to the same customer, Lead and unit. Unknown, foreign, unconfirmed, expired,
+    /// asserted, other-customer, other-unit and other-Lead sessions all give the same answer (<see cref="ProofState.Invalid"/>), so session
+    /// ids cannot be probed. A phone number or customer id alone is never proof.
     /// </summary>
     private async Task<ProofState> CheckProofAsync(
-        Guid? callerEmployeeId, Guid? verificationSessionId, int unitId, CancellationToken cancellationToken)
+        Guid? callerEmployeeId, Guid? verificationSessionId, int customerId, CrmBuyerUnitDto unit, CancellationToken cancellationToken)
     {
         if (verificationSessionId is not { } sessionId || sessionId == Guid.Empty)
         {
@@ -168,14 +176,29 @@ public sealed class GenesysCustomerUnitDetailsAppService(
             || !session.IsOwnedBy(caller)
             || session.Status is not (VerificationSessionStatus.Confirmed or VerificationSessionStatus.Consumed)
             || session.ExpiresAtUtc <= timeProvider.GetUtcNow().UtcDateTime
-            || !verificationPolicy.IsAccepted(session.VerificationMethod))
+            || !verificationPolicy.IsAccepted(session.VerificationMethod)
+            || session.ProofChallengeId is not { } challengeId
+            || session.CrmBuyerCustomerId != customerId
+            || session.CrmBuyerLeadId != unit.LeadId)
         {
             return ProofState.Invalid;
         }
 
         var verifiedUnit = await unitReferenceRepository.GetByIdAsync(session.UnitReferenceId, cancellationToken);
-        return verifiedUnit is not null
-            && string.Equals(verifiedUnit.CrmUnitId, unitId.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase)
+        if (verifiedUnit is null
+            || !string.Equals(verifiedUnit.CrmUnitId, unit.UnitId.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase))
+        {
+            return ProofState.Invalid;
+        }
+
+        var challenge = await otpChallengeRepository.GetByIdAsync(challengeId, cancellationToken);
+        return challenge is not null
+            && challenge.CallerEmployeeId == caller
+            && challenge.Status == OtpChallengeStatus.Verified
+            && challenge.VerificationSessionId == session.VerificationSessionId
+            && challenge.CrmCustomerId == customerId
+            && challenge.CrmLeadId == unit.LeadId
+            && challenge.UnitReferenceId == session.UnitReferenceId
                 ? ProofState.Valid
                 : ProofState.Invalid;
     }

@@ -248,8 +248,9 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Records a confirmed verification session for <paramref name="employeeId"/> and the CRM unit — the row
-    /// <c>POST /api/verification-sessions</c> writes after an OTP / authenticated-user confirmation. Test setup.
+    /// Records a confirmed, <b>agent-asserted</b> verification session (method Otp, but without the server-recorded proof the OTP
+    /// service attaches) for <paramref name="employeeId"/> and the CRM unit — the shape a forged or merely asserted session has.
+    /// It must never release private data. Test setup.
     /// </summary>
     public async Task<Guid> SeedConfirmedVerificationSessionAsync(
         Guid employeeId, string crmUnitId, VerificationMethod method = VerificationMethod.Otp)

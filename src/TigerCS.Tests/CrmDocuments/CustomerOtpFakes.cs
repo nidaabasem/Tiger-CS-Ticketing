@@ -50,9 +50,9 @@ public sealed class FakeOtpStore : ICustomerOtpChallengeRepository
     }
 
     public Task<CustomerOtpChallenge?> FindPendingAsync(
-        Guid callerEmployeeId, int crmCustomerId, int crmLeadId, DateTime nowUtc, CancellationToken cancellationToken = default) =>
+        Guid callerEmployeeId, int crmCustomerId, int crmLeadId, OtpChannel channel, DateTime nowUtc, CancellationToken cancellationToken = default) =>
         Task.FromResult(_committed.Values
-            .Where(c => c.CallerEmployeeId == callerEmployeeId && c.CrmCustomerId == crmCustomerId && c.CrmLeadId == crmLeadId
+            .Where(c => c.CallerEmployeeId == callerEmployeeId && c.CrmCustomerId == crmCustomerId && c.CrmLeadId == crmLeadId && c.Channel == channel
                 && c.Status == OtpChallengeStatus.Pending && c.ExpiresAtUtc >= nowUtc)
             .OrderByDescending(c => c.CreatedAtUtc)
             .Select(c => GetByIdAsync(c.CustomerOtpChallengeId).Result)
@@ -138,6 +138,9 @@ public sealed class OtpServiceFixture
     public FakeOtpStore Store { get; } = new();
     public OtpUnitOfWork UnitOfWork { get; }
     public FakeEmailSender Email { get; } = new();
+    public TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender Sms { get; } = new(
+        Microsoft.Extensions.Options.Options.Create(new TigerCS.Integrations.Modules.SmsIntegration.SmsOptions()),
+        NullLogger<TigerCS.Integrations.Modules.SmsIntegration.FakeSmsSender>.Instance);
     public FixedCodes Codes { get; } = new("111111", "222222", "333333", "444444", "555555", "666666");
     public FakeAuditEntryWriter Audit { get; } = new();
     public FakeTimeProvider Clock { get; } = new(new DateTime(2026, 10, 7, 9, 0, 0, DateTimeKind.Utc));
@@ -167,13 +170,22 @@ public sealed class OtpServiceFixture
     public static CrmBuyerUnitDto Unit(int leadId, int unitId, string? number, string? project, int customerType = 1) =>
         new(leadId, 8, "Sold", unitId, number, 3, 2, 12, 79, project, null, customerType, "Buyer");
 
+    /// <summary>Replaces the SMS provider (e.g. with one that reports itself unconfigured) and rebuilds the service.</summary>
+    public void UseSmsSender(TigerCS.Application.Modules.Notifications.Abstractions.ISmsSender sender)
+    {
+        _smsSender = sender;
+        Service = Build();
+    }
+
+    private TigerCS.Application.Modules.Notifications.Abstractions.ISmsSender? _smsSender;
+
     private CustomerOtpAppService Build()
     {
         var sessionService = new VerificationSessionAppService(Sessions, Units, Contacts, UnitOfWork, Audit, Clock);
         var cache = new CrmBuyerVerificationCache(Units, Contacts, UnitOfWork, Clock);
         return new CustomerOtpAppService(
             Options, new CrmBuyerLookupAppService(Buyers, NullLogger<CrmBuyerLookupAppService>.Instance), cache, Store, Units, Contacts,
-            sessionService, Codes, new ForwardingEmail(this), EmailPolicy, UnitOfWork, Audit, Clock, NullLogger<CustomerOtpAppService>.Instance);
+            sessionService, Codes, new ForwardingEmail(this), _smsSender ?? Sms, EmailPolicy, UnitOfWork, Audit, Clock, NullLogger<CustomerOtpAppService>.Instance);
     }
 
     // The policy is read at construction; rebuild when a test changes it.
@@ -189,6 +201,12 @@ public sealed class OtpServiceFixture
             TigerCS.Application.Modules.Notifications.Abstractions.EmailMessage message, CancellationToken cancellationToken = default) =>
             f.Email.SendAsync(message, cancellationToken);
     }
+
+    /// <summary>Turns the SMS channel on (CrmDocuments:OtpSmsEnabled) for a test. The fake sender counts as a configured provider.</summary>
+    public void EnableSms() => Options.OtpSmsEnabled = true;
+
+    /// <summary>The 6-digit code in the most recent SMS.</summary>
+    public string LastSmsCode() => System.Text.RegularExpressions.Regex.Match(Sms.Last!.Text, @"\b\d{6}\b").Value;
 
     /// <summary>The 6-digit code in the most recent email.</summary>
     public string LastEmailedCode() =>

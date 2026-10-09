@@ -63,7 +63,7 @@ omitted), which Ticketing surfaces as `null`. Nothing is defaulted or computed.
 
 ## Financial protection
 
-CRM has no verification session of its own. The agreed contract is: **TigerCS releases `includeSale=true` only after validating a server-recorded, unexpired, strong-method verification session for that unit** (implemented and tested in Tiger-CS-Ticketing). In CRM the flag is honoured only for a caller holding `TicketingSecretKey` (a browser or any keyless caller gets 401 first), additionally requires the lead binding above, and is off unless `AppSettings["TicketingReleaseSale"] = "true"`. The flag alone is therefore never treated as customer verification by anyone but the trusted service.
+CRM has no verification session of its own. The agreed contract is: **TigerCS releases `includeSale=true` only for a session its own OTP verification produced** (email or SMS code): owned by the calling account, unexpired, carrying the recorded proof and bound to the requested CRM customer, unit and Lead, with the spent challenge on record. An asserted `verificationMethod` never qualifies (implemented and tested in Tiger-CS-Ticketing). In CRM the flag is honoured only for a caller holding `TicketingSecretKey`; it also requires the lead binding above, and it is off unless `AppSettings["TicketingReleaseSale"] = "true"`.
 
 ## Configuration
 

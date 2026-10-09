@@ -26,6 +26,9 @@ public class CustomerOtpChallengeConfiguration : IEntityTypeConfiguration<Custom
         builder.Property(c => c.UnitReferenceId).IsRequired();
         builder.Property(c => c.ContactReferenceId).IsRequired();
         builder.Property(c => c.MaskedDestination).HasMaxLength(CustomerOtpChallenge.MaskedDestinationMaxLength).IsRequired();
+        builder.Property(c => c.Channel).HasConversion<byte>().IsRequired().HasDefaultValue(OtpChannel.Email);
+        builder.Property(c => c.Language).HasMaxLength(2).IsRequired().HasDefaultValue("en");
+        builder.Property(c => c.DeliveryState).HasConversion<byte>().IsRequired().HasDefaultValue(OtpDeliveryState.NotSent);
         builder.Property(c => c.Salt).HasMaxLength(32).IsRequired();
         builder.Property(c => c.CodeHash).HasMaxLength(32).IsRequired();
 

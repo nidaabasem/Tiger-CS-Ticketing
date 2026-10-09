@@ -21,16 +21,20 @@
         "message": "$.message",
         "challengeId": "$.challengeId",
         "maskedDestination": "$.maskedDestination",
-        "units": "$.units"
+        "units": "$.units",
+        "availableChannels": "$.availableChannels",
+        "maskedMobile": "$.maskedMobile"
       },
       "translationMapDefaults": {
         "code": "\"\"",
         "message": "\"\"",
         "challengeId": "\"\"",
         "maskedDestination": "\"\"",
-        "units": "[]"
+        "units": "[]",
+        "availableChannels": "[]",
+        "maskedMobile": "\"\""
       },
-      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}}"
+      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}, \"availableChannels\": ${availableChannels}, \"maskedMobile\": ${maskedMobile}}"
     }
   },
   "contract": {
@@ -93,6 +97,17 @@
                 }
               }
             }
+          },
+          "availableChannels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Delivery channels that can carry a code for this customer right now: Email (CRM holds a valid email) and/or Sms (SMS is switched on and CRM holds a usable mobile). Empty: no code can be sent - hand over to an agent."
+          },
+          "maskedMobile": {
+            "type": "string",
+            "description": "The mobile CRM holds, masked (e.g. +971******888). Empty when SMS is not available. The full number is never returned."
           }
         }
       }

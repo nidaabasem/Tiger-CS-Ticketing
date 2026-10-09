@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\", \"crmUnitId\": \"$!esc.jsonString($input.crmUnitId)\"}"
+      "requestTemplate": "{\"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\", \"crmUnitId\": \"$!esc.jsonString($input.crmUnitId)\", \"channel\": \"$!esc.jsonString($input.channel)\", \"language\": \"$!esc.jsonString($input.language)\"}"
     },
     "response": {
       "translationMap": {
@@ -21,16 +21,18 @@
         "message": "$.message",
         "challengeId": "$.challengeId",
         "maskedDestination": "$.maskedDestination",
-        "units": "$.units"
+        "units": "$.units",
+        "channel": "$.channel"
       },
       "translationMapDefaults": {
         "code": "\"\"",
         "message": "\"\"",
         "challengeId": "\"\"",
         "maskedDestination": "\"\"",
-        "units": "[]"
+        "units": "[]",
+        "channel": "\"\""
       },
-      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}}"
+      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}, \"channel\": ${channel}}"
     }
   },
   "contract": {
@@ -49,6 +51,22 @@
           "crmUnitId": {
             "type": "string",
             "description": "The unit the customer chose (crmUnitId from the lookup). Leave empty only when the customer has one unit."
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "Email",
+              "Sms"
+            ],
+            "description": "Optional. How the code is delivered: Email (default when empty) or Sms. The destination is never an input: the code goes to the email / mobile CRM holds for the customer. Only offer Sms when buyer-lookup returned it in availableChannels."
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "ar"
+            ],
+            "description": "Optional. Language of the SMS (en or ar). Ignored for Email."
           }
         }
       }
@@ -61,7 +79,7 @@
         "properties": {
           "status": {
             "type": "string",
-            "description": "Found, CodeSent, AlreadySent, UnitSelectionRequired. Failures are error responses with a code."
+            "description": "Found, CodeSent, AlreadySent, UnitSelectionRequired. Failures are error responses with a code. Added with SMS: DeliveryUnconfirmed (HTTP 504 - the provider gave no verifiable answer; the SMS may have arrived: ask the customer, keep the challengeId, do NOT call send again - use Resend only if nothing arrived), NoMobileOnRecord, SmsNotConfigured."
           },
           "code": {
             "type": "string"
@@ -96,6 +114,10 @@
                 }
               }
             }
+          },
+          "channel": {
+            "type": "string",
+            "description": "Email or Sms - the channel the code was sent on."
           }
         }
       }

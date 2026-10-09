@@ -5,6 +5,7 @@ using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration;
 using TigerCS.Application.Modules.GenesysIntegration.Services;
+using TigerCS.Tests.CrmDocuments;
 using TigerCS.Tests.CustomerVerification.Fakes;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Tests.GenesysIntegration.Fakes;
@@ -38,31 +39,80 @@ public sealed class GenesysCustomerUnitDetailsTests
         public FakeVerificationSessionRepository Sessions { get; } = new();
         public FakeUnitReferenceRepository Units { get; } = new();
         public FakeContactReferenceRepository Contacts { get; } = new();
+        public FakeOtpStore Challenges { get; } = new();
         public Guid Caller { get; } = Guid.NewGuid();
         public DateTime Now { get; set; } = new(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
 
         public GenesysCustomerUnitDetailsAppService Service =>
             new(Options, new GenesysVerifiedBuyerResolver(new CrmBuyerLookupAppService(Crm, NullLogger<CrmBuyerLookupAppService>.Instance), NullLogger<GenesysVerifiedBuyerResolver>.Instance), Details,
-                new CrmDocumentOptions(), Sessions, Units, new FixedTime(() => Now),
+                new CrmDocumentOptions(), Sessions, Units, Challenges, new FixedTime(() => Now),
                 NullLogger<GenesysCustomerUnitDetailsAppService>.Instance);
 
-        /// <summary>Records a session the way VerificationSessionAppService does (confirmed, 30 minutes) for a CRM unit.</summary>
-        public Guid Session(
-            string crmUnitId, VerificationMethod method = VerificationMethod.Otp, Guid? owner = null, bool confirm = true, TimeSpan? lifetime = null)
+        public enum Flaw
         {
+            None,
+            /// <summary>The session names a challenge that does not exist.</summary>
+            ChallengeMissing,
+            /// <summary>The challenge was never spent by a correct code.</summary>
+            ChallengePending,
+            /// <summary>The challenge belongs to another service account.</summary>
+            ChallengeOfAnotherCaller,
+            /// <summary>The challenge produced a different session.</summary>
+            ChallengeLinkedToAnotherSession,
+            /// <summary>The challenge was bound to another CRM customer than the session says.</summary>
+            ChallengeOfAnotherCustomer,
+            /// <summary>The challenge was bound to another Lead than the session says.</summary>
+            ChallengeOfAnotherLead
+        }
+
+        private static int LeadFor(string crmUnitId) => crmUnitId switch { "9200" => 9100, "9201" => 9101, _ => 1 };
+
+        /// <summary>
+        /// Records a session. By default it is what the OTP service produces: a confirmed Otp session carrying the recorded proof
+        /// (<c>AttachOtpProof</c>) backed by a spent challenge for the same account, customer, unit and Lead. <paramref name="proof"/> = false
+        /// is an <i>asserted</i> session — the same row an agent-confirmed session or a forged method would give.
+        /// </summary>
+        public Guid Session(
+            string crmUnitId, VerificationMethod method = VerificationMethod.Otp, Guid? owner = null, bool confirm = true, TimeSpan? lifetime = null,
+            int customer = CustomerId, int? lead = null, bool proof = true, Flaw flaw = Flaw.None)
+        {
+            var leadId = lead ?? LeadFor(crmUnitId);
             var unit = Units.Seed(crmUnitId, "1204");
-            var contact = Contacts.Seed(unit.UnitReferenceId, "c-1", "Test Buyer");
-            var id = Guid.NewGuid();
+            var contact = Contacts.Seed(unit.UnitReferenceId, $"{customer}-{crmUnitId}", "Test Buyer");
+            var sessionId = Guid.NewGuid();
             var session = new VerificationSession(
-                id, owner ?? Caller, unit.UnitReferenceId, contact.ContactReferenceId, "1204", null, null, null, null, null,
+                sessionId, owner ?? Caller, unit.UnitReferenceId, contact.ContactReferenceId, "1204", null, null, null, null, null,
                 Now, Now.Add(lifetime ?? TimeSpan.FromMinutes(30)), null);
+
+            if (proof)
+            {
+                var challengeId = Guid.NewGuid();
+                session.AttachOtpProof(challengeId, customer, leadId);
+                if (flaw != Flaw.ChallengeMissing)
+                {
+                    var challenge = new CustomerOtpChallenge(
+                        challengeId, flaw == Flaw.ChallengeOfAnotherCaller ? Guid.NewGuid() : owner ?? Caller,
+                        flaw == Flaw.ChallengeOfAnotherCustomer ? 7777 : customer, flaw == Flaw.ChallengeOfAnotherLead ? 555 : leadId,
+                        unit.UnitReferenceId, contact.ContactReferenceId, "+971******900", new byte[16], new byte[32], Now,
+                        TimeSpan.FromMinutes(10), OtpChannel.Sms);
+                    if (flaw != Flaw.ChallengePending)
+                    {
+                        challenge.Verify(true, Now, 5);
+                        challenge.LinkSession(flaw == Flaw.ChallengeLinkedToAnotherSession ? Guid.NewGuid() : sessionId);
+                    }
+
+                    Challenges.AddAsync(challenge).GetAwaiter().GetResult();
+                    Challenges.Commit();
+                }
+            }
+
             if (confirm)
             {
                 session.Confirm(Now, method);
             }
 
             Sessions.AddAsync(session).GetAwaiter().GetResult();
-            return id;
+            return sessionId;
         }
 
         public Task<GenesysUnitDetailsResult> Get(int unitId, Guid? sessionId = null, Guid? caller = null) =>
@@ -552,7 +602,12 @@ public sealed class GenesysCustomerUnitDetailsTests
         Assert.False(h.Details.SaleRequests.Single().IncludeSale);
     }
 
-    public enum BadProof { Unknown, OtherAgent, Unconfirmed, Expired, WeakMethod, OtherUnit }
+    public enum BadProof
+    {
+        Unknown, OtherAgent, Unconfirmed, Expired, WeakMethod, OtherUnit,
+        Asserted, OtherCustomer, OtherLead, ChallengeMissing, ChallengePending, ChallengeOfAnotherCaller,
+        ChallengeLinkedToAnotherSession, ChallengeOfAnotherCustomer, ChallengeOfAnotherLead
+    }
 
     [Theory]
     [InlineData(BadProof.Unknown)]
@@ -561,6 +616,15 @@ public sealed class GenesysCustomerUnitDetailsTests
     [InlineData(BadProof.Expired)]
     [InlineData(BadProof.WeakMethod)]
     [InlineData(BadProof.OtherUnit)]
+    [InlineData(BadProof.Asserted)]
+    [InlineData(BadProof.OtherCustomer)]
+    [InlineData(BadProof.OtherLead)]
+    [InlineData(BadProof.ChallengeMissing)]
+    [InlineData(BadProof.ChallengePending)]
+    [InlineData(BadProof.ChallengeOfAnotherCaller)]
+    [InlineData(BadProof.ChallengeLinkedToAnotherSession)]
+    [InlineData(BadProof.ChallengeOfAnotherCustomer)]
+    [InlineData(BadProof.ChallengeOfAnotherLead)]
     public async Task InvalidOrExpiredProof_WithholdsTheSale_WithOneAnswer(BadProof kind)
     {
         var h = TwoUnitCustomer();
@@ -572,7 +636,16 @@ public sealed class GenesysCustomerUnitDetailsTests
             BadProof.Unconfirmed => h.Session("9200", confirm: false),
             BadProof.Expired => h.Session("9200").With(_ => h.Now = h.Now.AddHours(1)),
             BadProof.WeakMethod => h.Session("9200", VerificationMethod.ManualAgentConfirmation),
-            _ => h.Session("9201")
+            BadProof.OtherUnit => h.Session("9201"),
+            BadProof.Asserted => h.Session("9200", proof: false),
+            BadProof.OtherCustomer => h.Session("9200", customer: 7777),
+            BadProof.OtherLead => h.Session("9200", lead: 9101),
+            BadProof.ChallengeMissing => h.Session("9200", flaw: Harness.Flaw.ChallengeMissing),
+            BadProof.ChallengePending => h.Session("9200", flaw: Harness.Flaw.ChallengePending),
+            BadProof.ChallengeOfAnotherCaller => h.Session("9200", flaw: Harness.Flaw.ChallengeOfAnotherCaller),
+            BadProof.ChallengeLinkedToAnotherSession => h.Session("9200", flaw: Harness.Flaw.ChallengeLinkedToAnotherSession),
+            BadProof.ChallengeOfAnotherCustomer => h.Session("9200", flaw: Harness.Flaw.ChallengeOfAnotherCustomer),
+            _ => h.Session("9200", flaw: Harness.Flaw.ChallengeOfAnotherLead)
         };
 
         var response = (await h.Get(9200, session)).Response!;
@@ -581,6 +654,25 @@ public sealed class GenesysCustomerUnitDetailsTests
         Assert.Null(response.Sale);
         Assert.False(h.Details.SaleRequests.Single().IncludeSale);
         Assert.Equal("Tiger Tower", response.Project!.Name);
+    }
+
+    /// <summary>The method on a session is a label. Whatever it says — including the ones the policy accepts — a session without the server's recorded proof releases nothing.</summary>
+    [Theory]
+    [InlineData(VerificationMethod.Otp)]
+    [InlineData(VerificationMethod.AuthenticatedDigitalUser)]
+    [InlineData(VerificationMethod.ManualAgentConfirmation)]
+    [InlineData(VerificationMethod.FaceToFaceDocumentCheck)]
+    [InlineData(VerificationMethod.Other)]
+    public async Task AnAssertedVerificationMethod_NeverReleasesTheSale(VerificationMethod method)
+    {
+        var h = TwoUnitCustomer();
+        h.Details.Returns(9200, WithSale(9100, 1850000m, 74000m));
+
+        var response = (await h.Get(9200, h.Session("9200", method, proof: false))).Response!;
+
+        Assert.Equal("VerificationFailed", response.FinancialDetailsStatus);
+        Assert.Null(response.Sale);
+        Assert.False(h.Details.SaleRequests.Single().IncludeSale);
     }
 
     [Fact]

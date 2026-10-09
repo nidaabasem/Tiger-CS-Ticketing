@@ -58,6 +58,29 @@ public sealed class CrmDocumentOptions
     /// <summary>Challenges started per CRM customer per hour, across every caller — the cap on how many emails anyone can make us send a customer.</summary>
     public int OtpMaxChallengesPerCustomerPerHour { get; set; } = 5;
 
+    // ---- SMS as a second one-time-code channel (same challenge, limits, hashing and session as email) ----
+
+    /// <summary>
+    /// Allows <c>channel: "Sms"</c> on <c>otp/send</c>. Off by default; independent of whether the SMS provider
+    /// (<c>Sms:*</c>) is configured — both must be true before any code is created for the SMS channel.
+    /// </summary>
+    public bool OtpSmsEnabled { get; set; }
+
+    /// <summary>
+    /// Country calling code (digits only) prepended to a CRM mobile written in national form with one leading 0
+    /// ("0501234567"). Empty (default): such a number is refused rather than guessed.
+    /// </summary>
+    public string OtpSmsDefaultCountryCode { get; set; } = string.Empty;
+
+    /// <summary>"en" or "ar": the SMS language when the request names none.</summary>
+    public string OtpSmsDefaultLanguage { get; set; } = "en";
+
+    /// <summary>Placeholders: {code}, {minutes}.</summary>
+    public string OtpSmsMessageEn { get; set; } = "Your Tiger verification code is {code}. It expires in {minutes} minutes. Do not share it with anyone.";
+
+    /// <summary>Placeholders: {code}, {minutes}.</summary>
+    public string OtpSmsMessageAr { get; set; } = "رمز التحقق الخاص بك من تايجر هو {code}. تنتهي صلاحيته خلال {minutes} دقائق. لا تشاركه مع أحد.";
+
     /// <summary>Server-side secret mixed into the stored code hash. Set it in configuration (user-secrets / environment), never commit it.</summary>
     public string? OtpCodePepper { get; set; }
 

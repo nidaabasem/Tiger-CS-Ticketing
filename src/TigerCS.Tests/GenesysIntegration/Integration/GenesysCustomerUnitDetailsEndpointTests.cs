@@ -101,19 +101,22 @@ public sealed class GenesysCustomerUnitDetailsEndpointTests : IDisposable
         Assert.DoesNotContain("1850000", body.ToString());
     }
 
+    /// <summary>
+    /// A confirmed session whose method says Otp but which the OTP service never produced (no recorded proof) — what an agent-asserted
+    /// or forged session looks like. The sale stays withheld. The positive case (a session from a real, verified OTP) is
+    /// <c>GenesysSmsOtpEndpointTests</c>.
+    /// </summary>
     [Fact]
-    public async Task WithServerRecordedProof_TheSaleIsReturned_WithTheCurrency()
+    public async Task ASessionThatOnlyAssertsOtp_DoesNotReleaseTheSale()
     {
         var (client, employeeId) = await SignInWithIdAsync();
         var session = await _factory.SeedConfirmedVerificationSessionAsync(employeeId, "9200");
 
         var body = await JsonAsync(await client.PostAsJsonAsync(Route, new GenesysCustomerUnitDetailsRequest("crm:9001", Phone, 9200, session)));
 
-        Assert.Equal("Available", body.GetProperty("financialDetailsStatus").GetString());
-        var sale = body.GetProperty("sale");
-        Assert.Equal(1850000m, sale.GetProperty("soldPrice").GetProperty("amount").GetDecimal());
-        Assert.Equal("AED", sale.GetProperty("soldPrice").GetProperty("currency").GetString());
-        Assert.Equal(74000m, sale.GetProperty("registrationCost").GetProperty("amount").GetDecimal());
+        Assert.Equal("VerificationFailed", body.GetProperty("financialDetailsStatus").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("sale").ValueKind);
+        Assert.DoesNotContain("1850000", body.ToString());
         // The pre-existing structure is untouched.
         foreach (var member in new[] { "mode", "customerReference", "eligibleUnits", "unit", "project", "handoverDateSource", "detailsStatus" })
         {

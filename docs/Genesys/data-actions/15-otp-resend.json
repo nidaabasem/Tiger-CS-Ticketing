@@ -21,16 +21,18 @@
         "message": "$.message",
         "challengeId": "$.challengeId",
         "maskedDestination": "$.maskedDestination",
-        "units": "$.units"
+        "units": "$.units",
+        "channel": "$.channel"
       },
       "translationMapDefaults": {
         "code": "\"\"",
         "message": "\"\"",
         "challengeId": "\"\"",
         "maskedDestination": "\"\"",
-        "units": "[]"
+        "units": "[]",
+        "channel": "\"\""
       },
-      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}}"
+      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}, \"channel\": ${channel}}"
     }
   },
   "contract": {
@@ -92,6 +94,10 @@
                 }
               }
             }
+          },
+          "channel": {
+            "type": "string",
+            "description": "Email or Sms - the channel of the challenge."
           }
         }
       }
