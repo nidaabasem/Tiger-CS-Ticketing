@@ -92,7 +92,7 @@ public class GenesysController(
     /// originating department is never rewritten), the configured automatic
     /// assignment runs (no eligible employee leaves it in the department
     /// queue) and its SLA policy replaces the Normal-priority targets
-    /// without restarting the clock. With no usable request type the ticket
+    /// without restarting the clock. With no request type supplied the ticket
     /// stays awaiting classification in the existing human follow-up queue;
     /// the bot can send it later on <c>PATCH</c>. A repeated delivery of the
     /// same <c>conversationId</c> changes nothing.
@@ -102,7 +102,7 @@ public class GenesysController(
     /// <response code="200">The conversation was already ingested — the same ticket is returned, and nothing was created.</response>
     /// <response code="201">A ticket was created for this conversation.</response>
     /// <response code="400">The channel was not recognized, or conversationId was blank.</response>
-    /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, or ticket creation itself was refused.</response>
+    /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, a request type was supplied but is invalid (nothing is written), or ticket creation itself was refused.</response>
     /// <response code="503">The Genesys integration is switched off (<c>Genesys:Enabled</c> is false).</response>
     [HttpPost("tickets")]
     [ProducesResponseType<GenesysInquiryAcceptedResponse>(StatusCodes.Status200OK)]
@@ -160,6 +160,13 @@ public class GenesysController(
                 title: "No department could be resolved for this inquiry",
                 detail: result.Detail
                     ?? "No department could be resolved from departmentId, departmentCode or the queue mapping.",
+                statusCode: StatusCodes.Status422UnprocessableEntity),
+
+            GenesysIngestionOutcome.RequestTypeInvalid => Problem(
+                type: "https://tigercs.internal/problems/genesys-request-type-invalid",
+                title: "The supplied request type is not valid",
+                detail: (result.Detail ?? "The request type does not exist, is inactive, is ambiguous or cannot route.")
+                    + " No ticket was created. Omit requestType to create the ticket for human classification, or send a valid one.",
                 statusCode: StatusCodes.Status422UnprocessableEntity),
 
             GenesysIngestionOutcome.ChannelNotConfigured => Problem(

@@ -13,7 +13,7 @@ A new Genesys ticket is created on the configured default priority instead of a 
 
 `POST /api/genesys/tickets` accepts `requestType: { requestTypeId | name }`; `PATCH /api/genesys/tickets/{id}` accepts the same part when the bot identifies it later. Both go through `GenesysRequestTypeClassificationAppService` → `TicketRequestTypeRoutingService`:
 
-1. **Validate**: exists, active, unambiguous by name, responsible department active, published workflow. Otherwise nothing is written (PATCH: `422`; POST: ticket still created, awaiting classification).
+1. **Validate**: exists, active, unambiguous by name, responsible department active, published workflow. Otherwise nothing is written: PATCH and POST both return `422` (POST creates no ticket, intake record, interaction or SLA; a retry without the type, or with a valid one, succeeds).
 2. **Classify + pin** the published workflow version.
 3. **Department**: if the request type's department differs, `Ticket.TransferToDepartment` (the same transfer semantics as the manual transfer: owner cleared, audited `Transfer`). `OriginatingDepartmentId` is never changed.
 4. **Assignment**: the existing `TicketAutoAssignmentService` (trigger `DepartmentTransfer`, or `RequestTypeClassified` when the department did not change). No eligible employee ⇒ the responsible department's queue. A ticket a person already owns, and that did not move, keeps its owner.
@@ -22,7 +22,7 @@ A new Genesys ticket is created on the configured default priority instead of a 
 
 Idempotency: the same request type again ⇒ `AlreadyClassified`, no writes; a different one ⇒ `409`; ticket closed ⇒ `409`.
 
-**Missing / unresolved request type**: the ticket stays unclassified in its arrival department and a human follow-up item is raised through the existing handoff queue (trigger `RoutingDecision`, reason prefix `Awaiting classification`). When a request type is classified later, that item — and only an item with that reason — is cancelled. `Genesys:HumanQueueForUnclassified=false` disables the queue entry.
+**Missing request type** (none supplied; an explicitly invalid one is a `422`, see Validate above): the ticket is created with Normal priority, stays unclassified in its arrival department and a human follow-up item is raised through the existing handoff queue (trigger `RoutingDecision`, reason prefix `Awaiting classification`). When a request type is classified later, that item — and only an item with that reason — is cancelled. `Genesys:HumanQueueForUnclassified=false` disables the queue entry.
 
 Response fields: `classificationStatus` (`Classified` | `AwaitingClassification`), `requestTypeId`, `departmentId`, `assignedEmployeeId` (null = department queue), `classificationDetail`.
 

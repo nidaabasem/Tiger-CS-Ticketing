@@ -36,6 +36,16 @@ public sealed class GenesysRequestTypeClassificationAppService(
     /// <summary>The handoff reason prefix that marks human work as "this ticket is waiting to be classified" — what lets a later classification stand exactly that work down and nothing else.</summary>
     public const string AwaitingClassificationReason = "Awaiting classification";
 
+    /// <summary>
+    /// Read-only check of an explicitly supplied request type, used BEFORE ingestion writes anything: an invalid one (unknown id, unknown or
+    /// ambiguous name, inactive, or one that cannot route) is a client error, never a ticket in the human queue.
+    /// </summary>
+    public Task<RequestTypeResolution> ValidateAsync(GenesysRequestTypeDto requestType, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requestType);
+        return routingService.ResolveAsync(requestType.RequestTypeId, requestType.Name, cancellationToken);
+    }
+
     public async Task<GenesysClassificationResult> ClassifyAsync(
         Guid callerEmployeeId,
         long ticketId,

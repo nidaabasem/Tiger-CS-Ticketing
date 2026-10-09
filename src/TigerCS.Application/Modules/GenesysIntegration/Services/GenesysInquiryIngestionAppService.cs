@@ -86,8 +86,10 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// transfer semantics, <c>OriginatingDepartmentId</c> untouched), the
 /// configured automatic assignment runs, and its SLA policy is applied to
 /// the running period without restarting the clock. A missing or unusable
-/// request type never costs the inquiry: the ticket stays awaiting
-/// classification and joins the human follow-up queue.
+/// request type is not an error: the ticket is created with the default
+/// priority and joins the human classification queue. An explicitly
+/// <i>invalid</i> request type (unknown, inactive, ambiguous, cannot route) is
+/// refused with 422 before anything is written.
 /// </para>
 /// </summary>
 public sealed class GenesysInquiryIngestionAppService(
@@ -144,6 +146,18 @@ public sealed class GenesysInquiryIngestionAppService(
             return GenesysIngestionResult.Failure(
                 GenesysIngestionOutcome.DepartmentNotResolved,
                 DescribeUnresolvedDepartment(inquiry));
+        }
+
+        // An EXPLICITLY supplied request type is validated before anything is written. Absent is fine (the ticket is created on the
+        // default priority and joins the human classification queue); present-but-unusable is the caller's mistake and is refused
+        // with nothing created, so a retry with a corrected value works and no half-classified ticket is left behind.
+        if (inquiry.RequestType is { IsSupplied: true } supplied)
+        {
+            var check = await classificationAppService.ValidateAsync(supplied, cancellationToken);
+            if (!check.IsValid)
+            {
+                return GenesysIngestionResult.Failure(GenesysIngestionOutcome.RequestTypeInvalid, check.Detail);
+            }
         }
 
         // The caller's number as TigerCS writes it. Genesys reports a voice
@@ -314,10 +328,12 @@ public sealed class GenesysInquiryIngestionAppService(
     }
 
     /// <summary>
-    /// A request type the bot supplied is applied now; one that is missing or
-    /// cannot be used leaves the ticket awaiting classification in the human
-    /// follow-up queue. Never throws the inquiry away: the ticket exists
-    /// either way.
+    /// A request type the bot supplied (already validated before the ticket was
+    /// written) is applied now; a missing one leaves the ticket awaiting
+    /// classification in the human queue. If a validated type still cannot be
+    /// applied (it changed in the instant between validation and write, or a
+    /// concurrent update won) the ticket, which now exists, is queued for a
+    /// human rather than lost.
     /// </summary>
     private async Task<GenesysClassificationResult> ClassifyOrQueueAsync(
         Guid callerEmployeeId, long ticketId, string conversationId, GenesysInquiryDto inquiry, CancellationToken cancellationToken)

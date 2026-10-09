@@ -69,7 +69,7 @@ public sealed record GenesysInquiryRequest(
 /// <summary>
 /// The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
 /// <c>name</c>; the id wins when both are sent. Omit the whole part, or send blanks, when the bot
-/// could not identify one: the ticket is then awaiting classification in the human follow-up queue.
+/// did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then awaiting classification in the human follow-up queue.
 /// </summary>
 /// <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
 /// <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
@@ -110,7 +110,7 @@ public sealed record GenesysTranscriptMessageRequest(
 /// <param name="ConversationId">The conversation this refers to, echoed back.</param>
 /// <param name="TicketId">The one ticket this conversation produced.</param>
 /// <param name="TicketNumber">That ticket's human-facing number.</param>
-/// <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when none was supplied or it could not be used (the ticket is then in the human follow-up queue). Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
+/// <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
 /// <param name="RequestTypeId">The applied request type, when classified.</param>
 /// <param name="DepartmentId">The responsible department after routing.</param>
 /// <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>

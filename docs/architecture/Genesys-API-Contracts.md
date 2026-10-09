@@ -168,8 +168,10 @@ this call, or later on `PATCH /api/genesys/tickets/{ticketId}`, TigerCS validate
 it, routes the ticket to the request type's department (the originating
 department never changes), runs the configured automatic assignment (no
 eligible employee = department queue) and applies the request type's SLA policy
-without restarting the clock. A missing or unusable request type leaves the
-ticket awaiting classification in the human follow-up queue. A TigerCS agent can
+without restarting the clock. A missing request type creates the ticket on Normal priority, awaiting
+classification in the human follow-up queue. An explicitly invalid one
+(unknown, inactive, ambiguous name, no published workflow) returns `422` and
+writes nothing. A TigerCS agent can
 still classify through `POST /api/tickets/{ticketId}/classification`. See
 [Request-Type-Routing-And-Default-Priority.md](../Genesys/Request-Type-Routing-And-Default-Priority.md).
 

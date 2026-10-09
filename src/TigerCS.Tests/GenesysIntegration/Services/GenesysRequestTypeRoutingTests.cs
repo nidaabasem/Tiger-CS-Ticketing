@@ -164,18 +164,83 @@ public class GenesysRequestTypeRoutingTests
     }
 
     [Fact]
-    public async Task UnresolvableRequestType_StillCreatesTheTicket_AndQueuesItForAHuman()
+    public async Task MissingRequestType_CreatesTheTicketOnNormalPriority_AndPlacesItInTheHumanClassificationQueue()
     {
         var w = Build(queueUnclassified: true);
 
-        var result = await w.F.Ingestion.IngestAsync(
-            ServiceAccount, Inquiry(w, "conv-bad", new GenesysRequestTypeDto(RequestTypeId: 99999)));
+        var result = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-missing-normal"));
+        var blank = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-blank-normal", new GenesysRequestTypeDto(Name: "   ")));
 
+        // Absent and blank are the same thing: no request type was supplied. Not an error.
         Assert.Equal(GenesysIngestionOutcome.TicketCreated, result.Outcome);
-        var ticket = Assert.Single(w.F.Tickets.All);
+        Assert.Equal(GenesysIngestionOutcome.TicketCreated, blank.Outcome);
+        Assert.All(w.F.Tickets.All, t =>
+        {
+            Assert.Equal((byte)PriorityLevel.Medium, t.PriorityId);          // Normal
+            Assert.Null(t.RequestTypeId);
+            Assert.False(t.IsClassified);
+            Assert.Equal(SlaState.Running, t.SlaState);                       // the Normal SLA runs from creation
+        });
+        Assert.Equal(2, w.F.Handoffs.All.Count);                              // one human work item per ticket
+        Assert.All(w.F.Handoffs.All, h => Assert.StartsWith(GenesysRequestTypeClassificationAppService.AwaitingClassificationReason, h.RequestReason));
+        Assert.All([result, blank], r => Assert.Equal("AwaitingClassification", r.Classification!.Status));
+    }
+
+    [Theory]
+    [InlineData("unknown-id")]
+    [InlineData("unknown-name")]
+    [InlineData("inactive")]
+    [InlineData("ambiguous-name")]
+    public async Task ExplicitlyInvalidRequestType_IsRefused_BeforeAnythingIsWritten(string kind)
+    {
+        var w = Build(queueUnclassified: true);
+        var inactive = w.F.RequestTypes.Add(new RequestType(
+            w.Finance.DepartmentId, "Retired", w.RequestType.WorkflowId, (byte)PriorityLevel.Medium, false, true, true, true, isActive: false));
+        var other = w.F.Departments.AddDepartment("Legal", "LGL");
+        w.F.RequestTypes.Add(new RequestType(
+            other.DepartmentId, "Payment Receipt", w.RequestType.WorkflowId, (byte)PriorityLevel.Medium, false, true, true, true));   // same name, second department
+        var dto = kind switch
+        {
+            "unknown-id" => new GenesysRequestTypeDto(RequestTypeId: 99999),
+            "unknown-name" => new GenesysRequestTypeDto(Name: "No Such Request"),
+            "inactive" => new GenesysRequestTypeDto(inactive.RequestTypeId),
+            _ => new GenesysRequestTypeDto(Name: "Payment Receipt")
+        };
+        var audit = w.F.Audit.Entries.Count;
+
+        var result = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-bad", dto));
+
+        // "422, nothing written": no ticket, intake record, interaction, SLA period, human work item, audit entry or notification.
+        Assert.Equal(GenesysIngestionOutcome.RequestTypeInvalid, result.Outcome);
+        Assert.Null(result.Ticket);
+        Assert.False(string.IsNullOrWhiteSpace(result.Detail));
+        Assert.Empty(w.F.Tickets.All);
+        Assert.Empty(w.F.IntakeRecords.All);
+        Assert.Empty(w.F.Interactions.All);
+        Assert.Empty(w.F.Handoffs.All);
+        Assert.Empty(w.F.Sla.SlaInstances.All);
+        Assert.Equal(audit, w.F.Audit.Entries.Count);
+        Assert.Empty(w.F.Outbox.Staged);
+
+        // Nothing was half-created, so the caller fixes the value and retries the same conversation.
+        var retry = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-bad", new GenesysRequestTypeDto(w.RequestType.RequestTypeId)));
+        Assert.Equal(GenesysIngestionOutcome.TicketCreated, retry.Outcome);
+        Assert.Equal(w.RequestType.RequestTypeId, Assert.Single(w.F.Tickets.All).RequestTypeId);
+    }
+
+    [Fact]
+    public async Task AnInvalidRequestType_OnAnAlreadyIngestedConversation_ReturnsTheExistingTicket_AndChangesNothing()
+    {
+        var w = Build();
+        var ticket = await IngestAsync(w, "conv-again");
+        var audit = w.F.Audit.Entries.Count;
+
+        var retry = await w.F.Ingestion.IngestAsync(ServiceAccount, Inquiry(w, "conv-again", new GenesysRequestTypeDto(RequestTypeId: 99999)));
+
+        Assert.Equal(GenesysIngestionOutcome.AlreadyIngested, retry.Outcome);   // idempotent retry; the original ticket is returned
+        Assert.Equal(ticket.TicketId, retry.Ticket!.TicketId);
         Assert.Null(ticket.RequestTypeId);
-        Assert.Contains("99999", result.Classification!.Detail);
-        Assert.Single(w.F.Handoffs.All);
+        Assert.Equal(audit, w.F.Audit.Entries.Count);
     }
 
     // ---- Classification received later → routing without losing SLA history ----

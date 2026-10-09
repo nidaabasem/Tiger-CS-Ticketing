@@ -153,6 +153,9 @@ public enum GenesysIngestionOutcome
     /// <summary>The normalized channel does not resolve to a configured, active <c>Channel</c> row.</summary>
     ChannelNotConfigured,
 
+    /// <summary>A request type WAS supplied but does not exist, is inactive, is ambiguous or cannot route. Nothing was written: no ticket, intake record, interaction or audit entry. (A request type that is merely absent is not an error: the ticket is created and awaits human classification.)</summary>
+    RequestTypeInvalid,
+
     /// <summary>Ticket creation itself was refused; <see cref="GenesysIngestionResult.TicketCreationOutcome"/> carries the underlying reason unchanged.</summary>
     TicketCreationFailed
 }

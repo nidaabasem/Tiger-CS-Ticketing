@@ -68,7 +68,7 @@ public sealed class GenesysOptions
     public string? DefaultTicketPriority { get; set; } = DefaultDefaultTicketPriority;
 
     /// <summary>
-    /// Whether a Genesys ticket with a missing or unusable request type is put
+    /// Whether a Genesys ticket with no request type supplied is put
     /// in the human follow-up queue ("awaiting classification") instead of
     /// being left for the bot alone. On by default — the business rule is that
     /// an unclassified Genesys ticket is never left without a human owner of

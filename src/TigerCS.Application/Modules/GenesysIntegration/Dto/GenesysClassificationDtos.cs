@@ -19,7 +19,7 @@ public enum GenesysClassificationOutcome
     /// <summary>The ticket already carries exactly this request type — an idempotent repeat; nothing changed.</summary>
     AlreadyClassified,
 
-    /// <summary>No usable request type: the ticket stays awaiting classification, in the human follow-up queue.</summary>
+    /// <summary>No request type supplied: the ticket stays awaiting classification, in the human follow-up queue.</summary>
     AwaitingClassification,
 
     /// <summary>The supplied request type does not exist, is inactive, is ambiguous, or cannot route; nothing was written.</summary>
