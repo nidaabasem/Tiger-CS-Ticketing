@@ -4,7 +4,6 @@ using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
-using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.CustomerVerification;
@@ -36,7 +35,7 @@ public sealed record GenesysUnitDetailsResult(GenesysUnitDetailsOutcome Outcome,
 /// <b>Authorization is decided here, against CRM, on every call.</b> The
 /// request names a customer and (optionally) a unit, but neither is trusted.
 /// The verified phone number is looked up through
-/// <see cref="CrmBuyerLookupAppService"/> — the same service the New Ticket
+/// <see cref="GenesysVerifiedBuyerResolver"/> — the same service the New Ticket
 /// wizard and the Genesys lookup use — and the request is served only when
 /// (1) that lookup resolves to exactly the customer the request names, and
 /// (2) the requested unit is one of that customer's own Buyer units
@@ -72,7 +71,7 @@ public sealed record GenesysUnitDetailsResult(GenesysUnitDetailsOutcome Outcome,
 /// </summary>
 public sealed class GenesysCustomerUnitDetailsAppService(
     GenesysOptions options,
-    CrmBuyerLookupAppService crmBuyerLookupAppService,
+    GenesysVerifiedBuyerResolver buyerResolver,
     ICrmUnitDetailsGateway unitDetailsGateway,
     CrmDocumentOptions verificationPolicy,
     IVerificationSessionRepository sessionRepository,
@@ -89,45 +88,29 @@ public sealed class GenesysCustomerUnitDetailsAppService(
             return new(GenesysUnitDetailsOutcome.IntegrationDisabled);
         }
 
-        if (!TryParseCustomerId(customerReference, out var customerId))
+        var resolved = await buyerResolver.ResolveAsync(customerReference, phoneNumber, unitId, cancellationToken);
+        switch (resolved.Outcome)
         {
-            return new(GenesysUnitDetailsOutcome.CustomerReferenceInvalid);
-        }
-
-        var searched = CustomerPhoneNumber.FromTelephonyAddress(phoneNumber);
-        if (searched is null)
-        {
-            return new(GenesysUnitDetailsOutcome.PhoneNumberInvalid);
-        }
-
-        if (unitId is <= 0)
-        {
-            return new(GenesysUnitDetailsOutcome.UnitIdInvalid);
-        }
-
-        var lookup = await crmBuyerLookupAppService.GetBuyerByPhoneAsync(searched, cancellationToken);
-        switch (lookup.Outcome)
-        {
-            case CrmBuyerLookupOutcome.Success:
+            case VerifiedBuyerOutcome.Resolved:
                 break;
-            case CrmBuyerLookupOutcome.NotFound:
+            case VerifiedBuyerOutcome.CustomerReferenceInvalid:
+                return new(GenesysUnitDetailsOutcome.CustomerReferenceInvalid);
+            case VerifiedBuyerOutcome.PhoneNumberInvalid:
+                return new(GenesysUnitDetailsOutcome.PhoneNumberInvalid);
+            case VerifiedBuyerOutcome.UnitIdInvalid:
+                return new(GenesysUnitDetailsOutcome.UnitIdInvalid);
+            case VerifiedBuyerOutcome.CustomerNotVerified:
                 return new(GenesysUnitDetailsOutcome.CustomerNotVerified);
-            case CrmBuyerLookupOutcome.AmbiguousCustomerMatch:
+            case VerifiedBuyerOutcome.UnitNotEligible:
+                return new(GenesysUnitDetailsOutcome.UnitNotEligible);
+            case VerifiedBuyerOutcome.AmbiguousCustomer:
                 return new(GenesysUnitDetailsOutcome.AmbiguousCustomer);
             default:
                 return new(GenesysUnitDetailsOutcome.CrmUnavailable);
         }
 
-        // At most one customer per phone number (CrmBuyerLookupAppService).
-        var buyer = lookup.Buyers?.SingleOrDefault();
-        if (buyer is null || buyer.Customer.CustomerId != customerId)
-        {
-            logger.LogWarning(
-                "Unit-details request named customer {RequestedCustomerId}, which is not the customer CRM resolved for the verified number.",
-                customerId);
-            return new(GenesysUnitDetailsOutcome.CustomerNotVerified);
-        }
-
+        var buyer = resolved.Buyer!;
+        var customerId = resolved.CustomerId;
         var customerKey = CustomerIdentity.Crm(customerId).Key;
 
         if (unitId is null)
@@ -140,13 +123,7 @@ public sealed class GenesysCustomerUnitDetailsAppService(
                 new GenesysCustomerUnitDetailsResponse("UnitSelectionRequired", customerKey, eligible, null, null, null, null));
         }
 
-        var unit = buyer.Units.FirstOrDefault(u => u.UnitId == unitId);
-        if (unit is null)
-        {
-            logger.LogWarning(
-                "Customer {CustomerId} asked for unit {UnitId}, which is not among their eligible units.", customerId, unitId);
-            return new(GenesysUnitDetailsOutcome.UnitNotEligible);
-        }
+        var unit = resolved.Unit!;
 
         var proof = await CheckProofAsync(callerEmployeeId, verificationSessionId, unit.UnitId, cancellationToken);
 
@@ -201,29 +178,6 @@ public sealed class GenesysCustomerUnitDetailsAppService(
             && string.Equals(verifiedUnit.CrmUnitId, unitId.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase)
                 ? ProofState.Valid
                 : ProofState.Invalid;
-    }
-
-    /// <summary>The Genesys lookup returns the CRM customer id as plain text (<c>externalCustomerId</c>); the Customers directory key is <c>crm:{id}</c>. Both are accepted.</summary>
-    private static bool TryParseCustomerId(string? reference, out int customerId)
-    {
-        customerId = 0;
-        if (string.IsNullOrWhiteSpace(reference))
-        {
-            return false;
-        }
-
-        if (CustomerIdentity.TryParse(reference, out var identity))
-        {
-            if (identity.Kind != CustomerIdentityKind.Crm)
-            {
-                return false;
-            }
-
-            customerId = identity.CrmBuyerCustomerId!.Value;
-            return true;
-        }
-
-        return int.TryParse(reference.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out customerId) && customerId > 0;
     }
 
     private GenesysCustomerUnitDetailsResponse Map(string customerKey, CrmBuyerUnitDto unit, CrmUnitDetailsResult enrichment, ProofState proof)

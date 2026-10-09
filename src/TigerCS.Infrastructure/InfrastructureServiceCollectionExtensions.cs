@@ -16,6 +16,7 @@ using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.Abstractions;
+using TigerCS.Application.Modules.CustomerVerification.Otp;
 using TigerCS.Application.Modules.CustomerVerification.Services;
 using TigerCS.Application.Modules.GenesysIntegration;
 using TigerCS.Application.Modules.GenesysIntegration.Abstractions;
@@ -312,6 +313,13 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GenesysTicketUpdateAppService>();
         services.AddScoped<ChatbotInactivityCloseAppService>();
         services.AddScoped<GenesysCustomerLookupAppService>();
+        services.AddScoped<GenesysVerifiedBuyerResolver>();
+
+        // One-time codes (SMS): extends the existing VerificationSession flow; Otp:Enabled is false by default.
+        services.Configure<OtpOptions>(configuration.GetSection(OtpOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<OtpOptions>>().Value);
+        services.AddScoped<IOtpChallengeRepository, OtpChallengeRepository>();
+        services.AddScoped<OtpAppService>();
         services.AddScoped<GenesysCustomerUnitDetailsAppService>();
 
         // Collections — balances read from the authoritative financial source

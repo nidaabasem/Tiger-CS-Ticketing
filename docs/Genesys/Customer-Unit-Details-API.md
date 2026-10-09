@@ -53,7 +53,7 @@ The feature flag `Genesys:Enabled` governs it like every Genesys route
 
 1. **Customer lookup** — `GET customers/lookup` (Data Action 01) returns `externalCustomerId` for the caller's number.
 2. **Unit selection** — call this route with `customerReference` + `phoneNumber` and no `unitId`; read `eligibleUnits`; ask the customer which one.
-3. **Verification** — for sold price / registration cost, run the existing strong verification (one-time code, or an authenticated digital user) for the chosen unit and keep its `verificationSessionId`. Unit, project, completion and handover facts do not need this step.
+3. **Verification** — for sold price / registration cost, run strong verification for the chosen unit (SMS one-time code via `api/genesys/verification/otp/send` then `verify`, see [Otp-Sms-API.md](Otp-Sms-API.md); or an authenticated digital user) and keep its `verificationSessionId`. Unit, project, completion and handover facts do not need this step.
 4. **Unit details** — call again with `unitId` (and `verificationSessionId` if the customer asked about price or fees).
 
 ## How access is decided (server-side, every call)

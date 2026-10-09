@@ -692,6 +692,21 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    /// <summary>The OTP routes sit behind the same CustomerVerification policy, so the override reaches them: authorized and answered by the service (here with the shipped switch off, 503) — never 401/403. Behaviour is in <c>GenesysOtpEndpointTests</c>.</summary>
+    [Fact]
+    public async Task GenesysOtpEndpoints_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        foreach (var route in new[] { "send", "resend", "verify" })
+        {
+            var response = await client.PostAsJsonAsync($"/api/genesys/verification/otp/{route}", new { });
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Contains("OTP_DISABLED", await response.Content.ReadAsStringAsync());
+        }
+    }
+
     /// <summary>
     /// The chatbot document-copy endpoint sits behind the same
     /// CustomerVerification policy as the other Genesys routes, so the System

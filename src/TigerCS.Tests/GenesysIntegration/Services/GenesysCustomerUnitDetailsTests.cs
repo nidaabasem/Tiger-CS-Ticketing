@@ -42,7 +42,7 @@ public sealed class GenesysCustomerUnitDetailsTests
         public DateTime Now { get; set; } = new(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
 
         public GenesysCustomerUnitDetailsAppService Service =>
-            new(Options, new CrmBuyerLookupAppService(Crm, NullLogger<CrmBuyerLookupAppService>.Instance), Details,
+            new(Options, new GenesysVerifiedBuyerResolver(new CrmBuyerLookupAppService(Crm, NullLogger<CrmBuyerLookupAppService>.Instance), NullLogger<GenesysVerifiedBuyerResolver>.Instance), Details,
                 new CrmDocumentOptions(), Sessions, Units, new FixedTime(() => Now),
                 NullLogger<GenesysCustomerUnitDetailsAppService>.Instance);
 
