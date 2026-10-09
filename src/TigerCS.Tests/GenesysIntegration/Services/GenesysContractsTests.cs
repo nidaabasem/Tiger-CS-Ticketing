@@ -2,6 +2,7 @@ using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
 using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.GenesysIntegration.Fakes;
 
@@ -448,11 +449,13 @@ public class GenesysContractsTests
         var after = Assert.Single(f.Tickets.All);
         Assert.Equal(TicketStatus.Open, after.TicketStatus);
         Assert.Null(after.CategoryId);
-        Assert.Null(after.PriorityId);
+        // The default priority is the only business state a new Genesys ticket
+        // carries; the update contract moved nothing from it.
+        Assert.Equal(before.PriorityId, after.PriorityId);
         Assert.Null(after.RequestTypeId);
         Assert.Null(after.CurrentOwnerEmployeeId);
         Assert.Null(after.ResolutionOutcome);
-        Assert.Equal(SlaState.NotApplicable, after.SlaState);
+        Assert.Equal(before.SlaState, after.SlaState);
         Assert.Equal(before.CurrentDepartmentId, after.CurrentDepartmentId);
     }
 }

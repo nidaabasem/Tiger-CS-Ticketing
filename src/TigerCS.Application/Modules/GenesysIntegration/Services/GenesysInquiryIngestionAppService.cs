@@ -64,16 +64,32 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Services;
 /// </para>
 ///
 /// <para>
-/// <b>The ticket is created Unclassified, and nothing is inferred.</b> The
+/// <b>The ticket is created Unclassified, on the default priority.</b> The
 /// department (the website form's Leasing / Customer Service / Maintenance
 /// choice, or the queue mapping) is a department and nothing else: it is not
-/// a Category, not a Request Type, and not a Priority. An inquiry reaches an
-/// agent before anyone has read the request, so the ticket is created with
-/// <c>CategoryId = null</c> and <c>RequestTypeId = null</c> rather than
-/// filed under a placeholder — and consequently with <b>no SLA period</b>,
-/// since the SLA policy is chosen by priority and no real priority exists
-/// yet. <c>TicketClassificationAppService</c> completes all of it, on the
-/// same ticket, when the agent classifies.
+/// a Category and not a Request Type. The ticket is created with
+/// <c>CategoryId = null</c> rather than filed under a placeholder, but it
+/// starts on the configured default priority (<c>Genesys:DefaultTicketPriority</c>,
+/// "Normal" — the Medium tier — resolved from the Priorities table, never a
+/// hard-coded id) so its SLA is measured from the first moment: the period
+/// opens at ticket creation with that priority's policy, the same clock-start
+/// rule as every other ticket. A staff member can change the priority through
+/// the existing Ticket Details flow; re-ingesting the conversation never
+/// does.
+/// </para>
+///
+/// <para>
+/// <b>The request type, when the bot has one.</b> A request type on the
+/// inquiry is validated and applied by
+/// <see cref="GenesysRequestTypeClassificationAppService"/> right after the
+/// ticket exists: its department becomes the responsible one (through the
+/// transfer semantics, <c>OriginatingDepartmentId</c> untouched), the
+/// configured automatic assignment runs, and its SLA policy is applied to
+/// the running period without restarting the clock. A missing or unusable
+/// request type is not an error: the ticket is created with the default
+/// priority and joins the human classification queue. An explicitly
+/// <i>invalid</i> request type (unknown, inactive, ambiguous, cannot route) is
+/// refused with 422 before anything is written.
 /// </para>
 /// </summary>
 public sealed class GenesysInquiryIngestionAppService(
@@ -88,7 +104,9 @@ public sealed class GenesysInquiryIngestionAppService(
     CustomerSearchAppService customerSearchAppService,
     IAuditEntryWriter auditWriter,
     ITicketingUnitOfWork unitOfWork,
-    GenesysAgentResolutionAppService agentResolution)
+    GenesysAgentResolutionAppService agentResolution,
+    GenesysDefaultPriorityResolver defaultPriorityResolver,
+    GenesysRequestTypeClassificationAppService classificationAppService)
 {
     public async Task<GenesysIngestionResult> IngestAsync(
         Guid callerEmployeeId, GenesysInquiryDto inquiry, CancellationToken cancellationToken = default)
@@ -130,6 +148,18 @@ public sealed class GenesysInquiryIngestionAppService(
                 DescribeUnresolvedDepartment(inquiry));
         }
 
+        // An EXPLICITLY supplied request type is validated before anything is written. Absent is fine (the ticket is created on the
+        // default priority and joins the human classification queue); present-but-unusable is the caller's mistake and is refused
+        // with nothing created, so a retry with a corrected value works and no half-classified ticket is left behind.
+        if (inquiry.RequestType is { IsSupplied: true } supplied)
+        {
+            var check = await classificationAppService.ValidateAsync(supplied, cancellationToken);
+            if (!check.IsValid)
+            {
+                return GenesysIngestionResult.Failure(GenesysIngestionOutcome.RequestTypeInvalid, check.Detail);
+            }
+        }
+
         // The caller's number as TigerCS writes it. Genesys reports a voice
         // caller as a telephony address (Call.Ani = "tel:+971…"), which no
         // lookup source understands and the customer directory's phone
@@ -151,6 +181,11 @@ public sealed class GenesysInquiryIngestionAppService(
         // strict, refusing path for an agent acting is the agent-context
         // endpoint (GenesysAgentContextAppService).
         var agent = await ResolveAgentAsync(inquiry.AgentId, cancellationToken);
+
+        // The configured default priority (Normal). Unresolvable configuration
+        // never costs the inquiry: it falls back to the previous behavior (no
+        // priority, no SLA until classified) and says so on the audit entry.
+        var defaultPriority = await defaultPriorityResolver.ResolveAsync(cancellationToken);
 
         var intake = await intakeRecordAppService.CreateAsync(
             callerEmployeeId,
@@ -186,16 +221,14 @@ public sealed class GenesysInquiryIngestionAppService(
             IntakeRecordId: intake.Response.IntakeRecordId,
             UnitReferenceId: null,
             ContactReferenceId: null,
-            // Unclassified, on purpose: the agent has taken the inquiry but
-            // has not read the request yet, so there is neither a category
-            // nor a priority to give. The department — which IS known —
+            // Unclassified, on purpose: nobody has read the request yet, so
+            // there is no category to give. The department — which IS known —
             // places the ticket, and nothing else about the request is
-            // guessed. Priority in particular is left null rather than
-            // defaulted: it drives the dashboard counts, the queue order and
-            // the attention ranking, so a default would rank an inquiry
-            // nobody has read among tickets a human actually triaged.
+            // guessed. The priority is the configured DEFAULT (Normal), not a
+            // judgement: it is what lets the SLA run from creation, and an
+            // authorized person changes it through the existing priority flow.
             CategoryId: null,
-            PriorityId: null,
+            PriorityId: defaultPriority?.PriorityId,
             RequestSummary: BuildRequestSummary(inquiry),
             // The website form's tower/unit, when the customer typed one —
             // the same manual snapshot an agent would enter by hand. Never a
@@ -276,12 +309,49 @@ public sealed class GenesysInquiryIngestionAppService(
                 + $"ReceivedDepartmentCode={(string.IsNullOrWhiteSpace(inquiry.DepartmentCode) ? "(none)" : inquiry.DepartmentCode.Trim())};"
                 + $"QueueId={inquiry.QueueId ?? "(none)"};QueueName={inquiry.QueueName ?? "(none)"};"
                 + $"CustomerLookup={lookup.Status};Classification=Unclassified;"
+                + $"DefaultPriority={(defaultPriority is null ? "(none: not configured or not found)" : $"{defaultPriority.Name}({defaultPriority.PriorityId})")};"
                 + $"AgentMapping={DescribeAgentMapping(inquiry.AgentId, agent)}",
             correlationId: Guid.NewGuid(),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return GenesysIngestionResult.Created(creation.Response);
+        var classification = await ClassifyOrQueueAsync(callerEmployeeId, creation.Response.TicketId, conversationId, inquiry, cancellationToken);
+
+        // Classification can move the ticket (department, owner), so the
+        // response is read back rather than echoing the creation snapshot.
+        var ticketNow = classification.Outcome == GenesysClassificationOutcome.Classified
+            ? await ticketRepository.GetByIdAsync(creation.Response.TicketId, cancellationToken)
+            : null;
+
+        return GenesysIngestionResult.Created(
+            ticketNow is null ? creation.Response : TicketProjection.ToResponseDto(ticketNow), classification);
+    }
+
+    /// <summary>
+    /// A request type the bot supplied (already validated before the ticket was
+    /// written) is applied now; a missing one leaves the ticket awaiting
+    /// classification in the human queue. If a validated type still cannot be
+    /// applied (it changed in the instant between validation and write, or a
+    /// concurrent update won) the ticket, which now exists, is queued for a
+    /// human rather than lost.
+    /// </summary>
+    private async Task<GenesysClassificationResult> ClassifyOrQueueAsync(
+        Guid callerEmployeeId, long ticketId, string conversationId, GenesysInquiryDto inquiry, CancellationToken cancellationToken)
+    {
+        if (inquiry.RequestType is not { IsSupplied: true } requestType)
+        {
+            return await classificationAppService.AwaitClassificationAsync(
+                callerEmployeeId, conversationId, "no request type was supplied.", cancellationToken);
+        }
+
+        var classified = await classificationAppService.ClassifyAsync(
+            callerEmployeeId, ticketId, conversationId, requestType, "GenesysIngestion", cancellationToken);
+
+        return classified.Outcome is GenesysClassificationOutcome.Classified or GenesysClassificationOutcome.AlreadyClassified
+            ? classified
+            : await classificationAppService.AwaitClassificationAsync(
+                callerEmployeeId, conversationId,
+                classified.Detail ?? $"the supplied request type could not be applied ({classified.Outcome}).", cancellationToken);
     }
 
     /// <summary>

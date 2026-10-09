@@ -326,13 +326,14 @@ existing ticket. Agents see it under **Pending Interactions**. TigerCS performs
 no dialling, chat transport, WhatsApp/social sending or queue routing — Genesys
 owns all of that.
 
-Nothing configures a **category** or a **priority**. A Genesys ticket is
-created *Unclassified* — `CategoryId`, `RequestTypeId` and `PriorityId` all
-`NULL`, `SlaState = NotApplicable` — because at pick-up nobody has read the
-request yet. An agent supplies a real category and priority later on the same
-ticket via `POST /api/tickets/{ticketId}/classification`, and **that** is when
-the business/resolution SLA period opens, timed from the classification
-moment. How quickly a human first responded is measured separately and is
+Nothing configures a **category**. A Genesys ticket is created *Unclassified*
+(`CategoryId` and `RequestTypeId` `NULL`) on the default priority
+(`Genesys:DefaultTicketPriority`, "Normal" = Medium) with its SLA running from
+creation — nobody has read the request yet, but it is measured from the first
+moment. A request type supplied by the bot (at creation or later) routes it; an
+agent can still add the category via
+`POST /api/tickets/{ticketId}/classification`, which does not restart the clock.
+How quickly a human first responded is measured separately and is
 unaffected by any of this.
 
 ## 3d. Configure customer email notifications (`EmailNotifications`)

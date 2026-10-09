@@ -159,7 +159,8 @@ public sealed class TicketCreationAppService(
         // fields whenever a caller does supply them.
 
         var routing = await ResolveRoutingAsync(
-            request.CategoryId, request.DepartmentId, request.PriorityId, intakeRecord.DepartmentId, cancellationToken);
+            request.CategoryId, request.DepartmentId, request.PriorityId, intakeRecord.DepartmentId,
+            allowUnclassifiedPriority: request.GenesysContext is not null, cancellationToken);
         if (routing.Failure is { } routingFailure)
         {
             return TicketCreationResult.Failure(routingFailure);
@@ -234,7 +235,7 @@ public sealed class TicketCreationAppService(
                 // same as CreateUnverified.
                 ? Ticket.CreateUnclassified(
                     ticketNumber, department.DepartmentId, request.RequestSummary, now,
-                    request.ManualProjectName, request.ManualUnitNumber)
+                    request.ManualProjectName, request.ManualUnitNumber, defaultPriorityId: priority?.PriorityId)
                 : (unitReference, contactReference, hasCrmBuyerMatch, hasExternalVerification) switch
             {
                 (not null, not null, _, _) => Ticket.CreateVerified(
@@ -340,14 +341,16 @@ public sealed class TicketCreationAppService(
         // CreatedAtUtc and the SLA clock-start event (ISSUE-001 Option C,
         // SLA-Architecture.md §1/§2).
         //
-        // The one exception, and the reason it is an exception: the SLA
-        // policy is selected by PriorityId (SlaDueDateService.ComputeDueDates
-        // -> SlaPolicies keyed on priority). An Unclassified ticket has no
-        // priority at all — nobody has read the request — so there is no
-        // policy to select and no commitment to measure.
-        // TicketClassificationAppService opens the period at the moment a
-        // real classification exists, timed from that moment.
-        if (ticket.IsClassified)
+        // The SLA policy is selected by PriorityId (SlaDueDateService.ComputeDueDates
+        // -> SlaPolicies keyed on priority), so the period opens whenever the
+        // ticket has one — a classified ticket always does, and an
+        // Unclassified Genesys ticket does too since it starts on the
+        // configured default (Normal) priority. The clock start is the same
+        // `now` either way: creation. Only an Unclassified ticket with NO
+        // priority (the default is switched off or unresolved) has no policy
+        // to select and no commitment to measure; TicketClassificationAppService
+        // opens its period at the moment a real classification exists.
+        if (ticket.PriorityId is not null)
         {
             await slaDueDateService.OpenInitialPeriodAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
         }
@@ -446,19 +449,34 @@ public sealed class TicketCreationAppService(
     /// this last case only fires against a request built outside that UI.
     /// </summary>
     private async Task<RoutingResolution> ResolveRoutingAsync(
-        int? categoryId, int? requestedDepartmentId, byte? priorityId, int? intakeDepartmentId, CancellationToken cancellationToken)
+        int? categoryId, int? requestedDepartmentId, byte? priorityId, int? intakeDepartmentId,
+        bool allowUnclassifiedPriority, CancellationToken cancellationToken)
     {
         // The Unclassified path: no category has been chosen because nobody
         // has read the request yet, so the department is supplied directly
         // and is the ONLY thing that places the ticket. Nothing is inferred —
         // no category stands in, and no priority either: an unjudged ticket
         // carries none rather than a default that would rank it against
-        // tickets a human actually triaged.
+        // tickets a human actually triaged. The one exception is a Genesys
+        // ticket (allowUnclassifiedPriority), which carries the configured
+        // DEFAULT priority so its SLA runs from creation: the priority is
+        // validated here, but it remains a default — category and request
+        // type are still unjudged.
+        Priority? defaultPriority = null;
         if (categoryId is null)
         {
-            if (priorityId is not null)
+            if (priorityId is { } suppliedPriorityId)
             {
-                return RoutingResolution.Failed(TicketCreationOutcome.PriorityRequiresCategory);
+                if (!allowUnclassifiedPriority)
+                {
+                    return RoutingResolution.Failed(TicketCreationOutcome.PriorityRequiresCategory);
+                }
+
+                defaultPriority = await priorityRepository.GetByIdAsync(suppliedPriorityId, cancellationToken);
+                if (defaultPriority is null)
+                {
+                    return RoutingResolution.Failed(TicketCreationOutcome.PriorityNotFound);
+                }
             }
 
             if (requestedDepartmentId is not { } unclassifiedDepartmentId)
@@ -482,7 +500,7 @@ public sealed class TicketCreationAppService(
                 return RoutingResolution.Failed(TicketCreationOutcome.CategoryDepartmentMismatch);
             }
 
-            return RoutingResolution.Succeeded(category: null, priority: null, unclassifiedDepartment);
+            return RoutingResolution.Succeeded(category: null, defaultPriority, unclassifiedDepartment);
         }
 
         // A classified ticket must name a real priority — the classified
@@ -524,7 +542,7 @@ public sealed class TicketCreationAppService(
         Domain.Modules.IdentityAndAccess.Department? Department,
         TicketCreationOutcome? Failure)
     {
-        /// <summary><paramref name="category"/> and <paramref name="priority"/> are both null exactly on the Unclassified path, where the department alone places the ticket and nothing about the request has been judged.</summary>
+        /// <summary><paramref name="category"/> is null exactly on the Unclassified path, where the department alone places the ticket; <paramref name="priority"/> is then null too unless a Genesys default priority was supplied.</summary>
         public static RoutingResolution Succeeded(
             Domain.Modules.ClassificationAndRouting.Category? category, Priority? priority, Domain.Modules.IdentityAndAccess.Department department) =>
             new(category, priority, department, null);

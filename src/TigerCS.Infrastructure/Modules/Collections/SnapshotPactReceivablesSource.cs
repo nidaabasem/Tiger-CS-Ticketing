@@ -17,7 +17,7 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 /// </summary>
 public sealed class SnapshotPactReceivablesSource(
     IConfiguration configuration, ReceivablesSnapshotOptions snapshotOptions, PactReceivablesOptions pactOptions,
-    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactCampaignSource
+    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactInstalmentMonthSource, IPactCampaignSource
 {
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
@@ -492,6 +492,47 @@ public sealed class SnapshotPactReceivablesSource(
         logger.LogInformation("Unit page read: page {Page}, {Units} units / {Total} instalments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, filter {Filter}, min {Min}).",
             request.Page, totals.UnitCount, totals.Count, sqlMs, request.From, request.To, request.PaymentFilter, request.MinAmount);
         return new PactInstalmentUnitsPage(totals, units, unavailable, status, ReceivablesSnapshotComposer.ReadAt(status), sqlMs);
+    }
+
+    /// <summary>Month overview: one round trip to dbo.usp_Collections_GetInstalmentMonths (the same filters as the list, no paging, no month selection).</summary>
+    public async Task<IReadOnlyList<PactInstalmentMonthDto>> ReadInstalmentMonthsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)
+    {
+        if (request.CompanyId is not (null or 4 or 32))
+            throw new PactReceivablesSourceException("The PACT report company is not supported.");
+        var connectionString = configuration.GetConnectionString(snapshotOptions.ConnectionStringName);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
+        var months = new List<PactInstalmentMonthDto>();
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("dbo.usp_Collections_GetInstalmentMonths", connection)
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(snapshotOptions.ReadCommandTimeoutSeconds, 1, 600) };
+            command.Parameters.Add("@TowerId", SqlDbType.Int).Value = (object?)request.TowerId ?? DBNull.Value;
+            command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = (object?)request.CompanyId ?? DBNull.Value;
+            command.Parameters.Add("@FromDate", SqlDbType.Date).Value = request.From.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.Add("@ToDate", SqlDbType.Date).Value = request.To.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.Add("@AsOfDate", SqlDbType.Date).Value = request.AsOf.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.Add(new SqlParameter("@MinAmount", SqlDbType.Decimal) { Precision = 19, Scale = 4, Value = request.MinAmount });
+            command.Parameters.Add("@PaymentFilter", SqlDbType.VarChar, 12).Value = request.PaymentFilter;
+            command.Parameters.Add("@Search", SqlDbType.NVarChar, 200).Value = (object?)request.Search ?? DBNull.Value;
+            command.Parameters.Add("@PhoneDigits", SqlDbType.NVarChar, 200).Value = (object?)request.PhoneDigits ?? DBNull.Value;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken) || !reader.GetBoolean(reader.GetOrdinal("ScopeValid")))
+                throw new PactReceivablesScopeException("The selected tower is not available. Choose a tower from the list.");
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                months.Add(new PactInstalmentMonthDto(reader.GetInt32(reader.GetOrdinal("DueYear")), reader.GetInt32(reader.GetOrdinal("DueMonth")),
+                    reader.GetInt32(reader.GetOrdinal("InstalmentCount")), reader.GetDecimal(reader.GetOrdinal("RemainingTotal")),
+                    reader.GetInt32(reader.GetOrdinal("OverdueCount")), reader.GetDecimal(reader.GetOrdinal("OverdueRemaining"))));
+        }
+        catch (SqlException ex)
+        {
+            logger.LogWarning("Month overview read failed (SQL error {SqlNumber}).", ex.Number);
+            throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
+        }
+        return months;
     }
 
     private static decimal? NullableDecimal(SqlDataReader r, string name) { var i = r.GetOrdinal(name); return r.IsDBNull(i) ? null : r.GetDecimal(i); }

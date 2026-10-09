@@ -40,9 +40,11 @@ public sealed class SlaQueryAppService(
     public const string PolicySourcePriority = "Per-priority SLA policy";
 
     public const string ClockStartRule =
-        "The SLA clock starts when the ticket has a category and a priority: at creation for a ticket created classified, "
-        + "or at the moment of classification for a ticket created unclassified (every Genesys call, chat or message starts unclassified). "
-        + "The clock is never backdated to the interaction or creation time. A provisional ticket awaiting CRM reconciliation starts when it is reconciled.";
+        "The SLA clock starts at ticket creation, as soon as the ticket has a priority — including a Genesys call, chat or message, which is created on the default Normal priority "
+        + "(the Medium tier) even though its category and request type are not known yet. Classifying the request type or category later adjusts the running period "
+        + "(the request type's SLA replaces the Normal-priority targets, measured from the original start) and never restarts the clock or erases elapsed time or breaches. "
+        + "Only a ticket with no priority at all (created before the default existed, or while it was not configured) starts at the moment of classification. "
+        + "The clock is never backdated to the interaction time. A provisional ticket awaiting CRM reconciliation starts when it is reconciled.";
 
     public const string PolicySourceRequestType = "Request-type SLA policy (per-priority policy for anything it does not set)";
 
@@ -201,12 +203,13 @@ public sealed class SlaQueryAppService(
 
         if (instance is null)
         {
-            if (!ticket.IsClassified || ticket.PriorityId is null)
+            if (ticket.PriorityId is null)
             {
                 notStarted =
-                    "No SLA is running: this ticket is unclassified (no category and/or no priority). "
-                    + "Tickets created from Genesys calls, chats and messages start unclassified. "
-                    + "The SLA starts when an agent classifies the ticket and sets its priority; the clock then starts at the classification time, not at the time of the interaction.";
+                    "No SLA is running: this ticket has no priority, and the SLA policy is chosen by priority. "
+                    + "New Genesys tickets start on the default Normal priority, so this one was created before that default existed "
+                    + "or while the default priority was not configured or could not be found. "
+                    + "The SLA starts when the ticket is classified and a priority is set; the clock then starts at that moment, not at the time of the interaction.";
             }
             else if (ticket.VerificationStatus == CrmVerificationStatus.PendingCrmVerification)
             {
@@ -225,9 +228,22 @@ public sealed class SlaQueryAppService(
         }
         else
         {
-            notes.Add(instance.ChangeReason == SlaChangeReason.Reopen
-                ? "This is a reopen cycle: the Resolution target was recomputed from the reopen time; First Response is carried over from the original period and never restarts."
-                : "Due times were computed once, when the clock started, from the policy's targets and clock basis.");
+            notes.Add(instance.ChangeReason switch
+            {
+                SlaChangeReason.Reopen =>
+                    "This is a reopen cycle: the Resolution target was recomputed from the reopen time; First Response is carried over from the original period and never restarts.",
+                SlaChangeReason.Upgrade =>
+                    "The priority was raised: the Resolution target is the earlier of the previous and the new tier's target, and First Response is carried over and never restarts.",
+                _ => "Due times were computed when the clock started, from the policy's targets and clock basis."
+            });
+
+            if (!ticket.IsClassified)
+            {
+                notes.Add(ticket.RequestTypeId is null
+                    ? $"Awaiting classification: the SLA runs on the {PriorityLabel(appliedPriority)} priority policy from {instance.PeriodStartAtUtc:u}. "
+                      + "When the request type is classified its SLA policy, if one is configured, replaces these targets without restarting the clock."
+                    : "The request type is classified; this ticket has no category yet.");
+            }
 
             if (ticket.SlaState == SlaState.Breached)
             {
@@ -261,6 +277,13 @@ public sealed class SlaQueryAppService(
         {
             // The exact reason, verbatim (e.g. "Request-type SLA not applied: range interpretation undecided …").
             notes.Add(requestTypeNote);
+        }
+        else if (ticket.RequestTypeId is not null && instance is not null)
+        {
+            // A request type is set but no row governed the period: say so
+            // instead of leaving the targets unexplained.
+            notes.Add(
+                $"No request-type SLA is configured for this request type at the {PriorityLabel(appliedPriority)} priority, so the per-priority SLA policy applies.");
         }
 
         if (pause is { IsCurrentlyPaused: true })

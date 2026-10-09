@@ -12,7 +12,7 @@
 
 ## 1. First Response SLA
 
-**Start event:** Ticket creation (`Ticket.CreatedAtUtc`) — approved per ISSUE-001, Option C: the clock starts at creation, with time-to-assignment tracked as a separate, non-blocking metric.
+**Start event:** Ticket creation (`Ticket.CreatedAtUtc`) — approved per ISSUE-001, Option C: the clock starts at creation, with time-to-assignment tracked as a separate, non-blocking metric. This holds for Genesys tickets too: they are created on the default Normal priority (Medium tier), so the period opens at creation; a request type classified later re-applies its SLA policy to the *running* period measured from that original start (`SlaDueDateService.ReapplyPolicyForRequestTypeAsync`) — never restarting the clock, moving a breached or answered deadline, or recomputing a period with pause history. Only a ticket with no priority at all starts at classification.
 
 **Achievement event:** `FirstHumanResponseAtUtc` — approved per ISSUE-019, refined for this pilot by ADR-0019/0009:
 - **Inbound phone via Genesys:** the interaction's **answer timestamp**, if a ticket is linked to that interaction at or before the answer event.

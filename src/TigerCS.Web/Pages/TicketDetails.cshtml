@@ -87,7 +87,7 @@ else
                         <span class="badge badge-verification-@t.VerificationStatus.ToLowerInvariant()">@TicketDisplay.VerificationStatusLabel(t.VerificationStatus)</span>
                         @if (slaBadge is not null)
                         {
-                            <span class="badge badge-sla-@slaBadge.Value.CssKey">SLA: @slaBadge.Value.Label</span>
+                            <span class="badge badge-sla-@slaBadge.Value.CssKey" title="@(Model.Sla?.Explanation?.NotStartedReason)">SLA: @slaBadge.Value.Label</span>
                         }
                     </div>
                 </div>
@@ -594,7 +594,7 @@ else
                             <p class="sla-explain__reason">@why.NotStartedReason</p>
                         }
                         <dl>
-                            <div class="facts-row"><dt>SLA status</dt><dd>@TicketDisplay.SlaStateLabel(sla.SlaState)</dd></div>
+                            <div class="facts-row"><dt>SLA status</dt><dd>@(sla.SlaState == "NotApplicable" && why?.NotStartedReason is not null ? "Not started (see the reason above)" : TicketDisplay.SlaStateLabel(sla.SlaState))</dd></div>
                             @if (why is not null)
                             {
                                 <div class="facts-row"><dt>Applied priority</dt><dd>@(why.AppliedPriorityLabel ?? "Not set")</dd></div>

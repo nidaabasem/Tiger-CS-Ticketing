@@ -82,10 +82,9 @@ public class GenesysInquiryIngestionAppServiceTests
         // It is a real ticket: the existing creation path ran in full.
         Assert.Equal(TicketStatus.Open, ticket.TicketStatus);
 
-        // …but no SLA clock started, because the SLA policy is chosen by
-        // priority and no real priority has been set. A clock here would
-        // measure against a target nobody chose.
-        Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
+        // The SLA runs from creation on the default (Normal) priority's policy.
+        Assert.Equal(SlaState.Running, ticket.SlaState);
+        Assert.Single(f.Sla.SlaInstances.All);
         Assert.Contains(f.Audit.Written, w => w.Action == "Create" && w.EntityType == "Ticket");
         Assert.Contains(f.Audit.Written, w => w.Action == "GenesysInquiryIngested" && w.EntityId == "conv-1001");
     }
@@ -261,14 +260,11 @@ public class GenesysInquiryIngestionAppServiceTests
         Assert.Null(ticket.WorkflowTemplateId);
         Assert.Null(ticket.CategoryId);
 
-        // Nor a priority. A default here would not be harmless: priority
-        // drives the dashboard counts, the queue order and the attention
-        // ranking, so it would place an unread inquiry among tickets a human
-        // actually triaged. With no priority there is also no SLA policy to
-        // select, and so no period.
-        Assert.Null(ticket.PriorityId);
-        Assert.Equal(SlaState.NotApplicable, ticket.SlaState);
-        Assert.Empty(f.Sla.SlaInstances.All);
+        // The priority is the configured default (Normal = Medium), which is
+        // what lets the SLA run from creation; it is not inferred from the
+        // department.
+        Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);
+        Assert.Equal(SlaState.Running, ticket.SlaState);
     }
 
     // ---- 9 & 10. Customer lookup: used, but never a gate ----

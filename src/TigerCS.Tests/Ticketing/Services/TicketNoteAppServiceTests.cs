@@ -56,6 +56,22 @@ public class TicketNoteAppServiceTests
     }
 
     [Fact]
+    public async Task AddNoteAsync_AnInternalNote_NeverStopsTheFirstResponseSla()
+    {
+        // A note is internal: the customer cannot see it, so it is not a response to them.
+        var f = CreateService();
+        var ticket = await SeedTicketAsync(f.Tickets);
+        var employeeId = Guid.NewGuid();
+        f.DepartmentAssignments.Assignments.Add(new UserDepartmentAssignment(employeeId, ticket.CurrentDepartmentId, true, DateTime.UtcNow, null));
+
+        var result = await f.Service.AddNoteAsync(
+            employeeId, [Roles.DepartmentEmployee], ticket.TicketId, new CreateNoteRequestDto("Called the tenant, no answer."));
+
+        Assert.Equal(NoteOutcome.Success, result.Outcome);
+        Assert.Null(ticket.FirstHumanResponseAtUtc);
+    }
+
+    [Fact]
     public async Task AddNoteAsync_CallerOutsideDepartmentScope_ReturnsForbidden()
     {
         var f = CreateService();

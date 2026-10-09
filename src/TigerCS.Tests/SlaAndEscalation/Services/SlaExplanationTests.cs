@@ -22,9 +22,9 @@ public class SlaExplanationTests
         new("Default", "08:00", "18:00", "Asia/Dubai", ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Saturday"], 0, []);
 
     [Fact]
-    public void UnclassifiedGenesysTicket_HasNoPeriod_AndSaysClassificationAndPriorityAreRequired()
+    public void UnclassifiedTicketWithNoPriority_HasNoPeriod_AndExplainsWhy()
     {
-        // The shape GenesysInquiryIngestionAppService creates: no category, no priority.
+        // A Genesys ticket from before default priorities existed (or while none is configured): no category, no priority.
         var ticket = Ticket.CreateUnclassified("TG-CS-20261007-0001", departmentId: 1, "Website chat started via Genesys", Now);
 
         var explanation = SlaQueryAppService.BuildExplanation(ticket, instance: null, policy: null, calendar: null);
@@ -32,8 +32,8 @@ public class SlaExplanationTests
         Assert.False(explanation.HasActivePeriod);
         Assert.Null(explanation.ClockStartedAtUtc);
         Assert.Null(explanation.AppliedPriorityLabel);
-        Assert.Contains("unclassified", explanation.NotStartedReason, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("classifies the ticket and sets its priority", explanation.NotStartedReason, StringComparison.Ordinal);
+        Assert.Contains("has no priority", explanation.NotStartedReason, StringComparison.Ordinal);
+        Assert.Contains("default Normal priority", explanation.NotStartedReason, StringComparison.Ordinal);
         Assert.Contains("not at the time of the interaction", explanation.NotStartedReason, StringComparison.Ordinal);
         // Start Handling / Accept & Start is never presented as a first response.
         Assert.Contains("Accept & Start / Start Handling", explanation.FirstResponseRule, StringComparison.Ordinal);

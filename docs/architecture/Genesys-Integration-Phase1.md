@@ -113,6 +113,9 @@ about the request is, because nobody has read it yet. See §4a.
 
 ## 4a. Unclassified tickets, and when the SLA clock starts
 
+> **Updated (Genesys request-type routing & default priority):** a new Genesys ticket now starts on the configured default priority (`Genesys:DefaultTicketPriority`, "Normal" = the Medium tier) with its SLA running from creation, and a request type supplied at ingestion or later routes it. The text below describes the earlier Unclassified-with-no-priority design; see [Request-Type-Routing-And-Default-Priority.md](../Genesys/Request-Type-Routing-And-Default-Priority.md) for the current behaviour.
+
+
 ### Why both fields are null
 
 `Tickets.CategoryId` and `Tickets.PriorityId` are both **nullable**. Both were

@@ -9,4 +9,7 @@ public sealed class PriorityRepository(TigerCsDbContext dbContext) : IPriorityRe
 {
     public Task<Priority?> GetByIdAsync(byte priorityId, CancellationToken cancellationToken = default) =>
         dbContext.Priorities.FirstOrDefaultAsync(p => p.PriorityId == priorityId, cancellationToken);
+
+    public Task<Priority?> GetByNameAsync(string name, CancellationToken cancellationToken = default) =>
+        dbContext.Priorities.FirstOrDefaultAsync(p => p.Name == name.Trim(), cancellationToken);
 }
