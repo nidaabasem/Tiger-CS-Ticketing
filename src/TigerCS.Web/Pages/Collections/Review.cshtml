@@ -1,0 +1,289 @@
+@page "/Collections/Review"
+@model TigerCS.Web.Pages.Collections.ReviewModel
+@using TigerCS.Web.Pages.Collections
+@{
+    ViewData["Title"] = "Collections Review";
+    ViewData["ActiveNav"] = "collections";
+    Layout = "_Layout";
+    var statuses = new[] { ("UnpaidOrPartial", "Unpaid or partially paid (default)"), ("All", "All"), ("Unpaid", "Unpaid"), ("PartiallyPaid", "Partially paid"), ("Paid", "Paid"), ("Unknown", "Unknown") };
+    var types = new[] { ("", "All reminder types"), ("CurrentMonth", "Current Month"), ("FollowUp", "Follow Up"), ("Overdue", "Overdue"), ("LegalNotice", "Legal Notice"), ("LegalCase", "Legal Case") };
+    var validations = new[] { ("", "All"), ("Ready", "Ready"), ("NeedsReview", "Needs Review"), ("Excluded", "Excluded"), ("AlreadySent", "Already Sent") };
+}
+<link rel="stylesheet" href="~/css/collections-campaigns.css" asp-append-version="true" />
+<link rel="stylesheet" href="~/css/collections-review.css" asp-append-version="true" />
+<div class="page receivables-workspace" data-review-page>
+    <div class="page-header">
+        <div>
+            <p class="receivables-eyebrow">Collections</p>
+            <h1 class="page-title">Review and approve reminders</h1>
+            <p class="page-subtitle">Check each reminder against the financial source, approve an exact list, and upload it to the Genesys outbound contact lists.</p>
+        </div>
+        <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaign preview</a> <a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
+    </div>
+
+    @if (Model.Error is not null) { <div class="panel"><div class="error-state" role="alert"><p>@Model.Error</p></div></div> }
+    @if (Model.Notice is not null) { <div class="panel"><p role="status">@Model.Notice</p></div> }
+
+    @if (Model.DispatchResult is { } d)
+    {
+        <div class="panel review-dispatch" data-dispatch-status="@d.Status">
+            <h2>Send @ReviewModel.Label(d.Status)</h2>
+            <p>@d.ApprovedCount approved ·
+                @foreach (var total in d.ApprovedTotalsByCurrency) { <span>@total.Key @ReviewModel.Money(total.Value) </span> }
+                · started by employee @d.InitiatedByEmployeeId · @d.InitiatedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
+            @if (!string.IsNullOrEmpty(d.StatusReason)) { <p role="status">@d.StatusReason</p> }
+            <ul class="review-tally">
+                <li><strong>@d.UploadedCount</strong> uploaded to Genesys</li>
+                <li><strong>@d.ExcludedCount</strong> excluded at sending (paid or settled)</li>
+                <li><strong>@d.FailedCount</strong> rejected by Genesys (nothing created)</li>
+                <li><strong>@d.UnknownCount</strong> unconfirmed</li>
+            </ul>
+            @if (!string.IsNullOrEmpty(d.Phase)) { <p role="status">Progress: @d.Phase@(d.RevalidationMs is { } ms ? $" · balances checked in {ms / 1000.0:0.0} s" : "")</p> }
+            <p>Paid-after-upload protection: <strong>@d.SuppressedCount</strong> contact(s) already made not callable@(d.SuppressionFailedCount > 0 ? $", {d.SuppressionFailedCount} could not be (needs attention)" : "").
+               @if (d.UploadedWithoutContactId > 0) { <text><br /><strong>@d.UploadedWithoutContactId uploaded contact(s) have no Genesys contact id and cannot be suppressed automatically.</strong> Check them in Genesys by hand.<br /></text> }
+               <a href="/Collections/Review?handler=Contacts&amp;dispatch=@d.DispatchId">Download the contacts as uploaded (CSV)</a></p>
+            <p class="review-note">@d.Disclaimer</p>
+            <div class="table-scroll"><table class="table">
+                <thead><tr><th>#</th><th>Reminder type</th><th>List</th><th>Contacts</th><th>Status</th><th>Attempts</th><th>Detail</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var b in d.Batches)
+                {
+                    <tr>
+                        <td>@b.Sequence</td><td>@ReviewModel.Label(b.ReminderType)</td><td><code>@b.ContactListId</code></td>
+                        <td>@b.ContactCount@(b.ReturnedContactCount is { } r ? $" ({r} ids returned)" : "")</td>
+                        <td><strong>@ReviewModel.Label(b.Status)</strong></td><td>@b.AttemptCount</td>
+                        <td>@b.Error @b.ReconciliationNote</td>
+                        <td>
+                            @if (b.Status == "UnknownOutcome")
+                            {
+                                <form method="post" class="review-reconcile">
+                                    <input type="hidden" name="Dispatch" value="@d.DispatchId" />
+                                    <input type="hidden" name="BatchId" value="@b.BatchId" />
+                                    <p class="review-note">Genesys did not confirm this upload. Do not send it again. Check the contact list in Genesys, then record what you found.</p>
+                                    <select class="field-select" name="Resolution" aria-label="Resolution">
+                                        <option value="ConfirmedUploaded">The contacts are in the list</option>
+                                        <option value="ConfirmedNotUploaded">No contacts were created</option>
+                                    </select>
+                                    <input class="field-input" name="Note" maxlength="500" required placeholder="What you checked" aria-label="Reconciliation note" />
+                                    <button class="btn btn-sm" type="submit" asp-page-handler="Reconcile">Record</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (d.Batches.Count == 0) { <tr><td colspan="8">No batches yet. @(d.Status is "Queued" or "Revalidating" ? "Current balances are being checked before anything is uploaded." : "")</td></tr> }
+                </tbody>
+            </table></div>
+            <p><a class="btn" href="/Collections/Review">Back to review</a></p>
+        </div>
+        <script>
+            if (@(d.Status is "Queued" or "Revalidating" or "Sending" ? "true" : "false")) window.setTimeout(function () { window.location.reload(); }, 4000);
+        </script>
+    }
+    else
+    {
+    <div class="review-main">
+    @if (Model.Run is { } run)
+    {
+        <div class="panel review-run" data-run-active="@(Model.RunActive ? "true" : "false")">
+            <p>
+                <strong>Source:</strong> @run.Source
+                · <strong>Last refresh:</strong> @(run.SourceReadAtUtc?.ToString("yyyy-MM-dd HH:mm") + " UTC")
+                · @run.RecordCount records from @run.SourceRowCount source rows
+                · <strong>Source reconciled:</strong> @(run.SourceReconciled ? "yes" : "no")
+            </p>
+            @if (run.IsStale && run.Status == "Completed") { <p role="status">This data is older than the freshness limit. Refresh it; nothing can be sent from stale data.</p> }
+            @if (Model.RunActive)
+            {
+                <p role="status" data-run-phase>@run.Phase…</p>
+                <progress max="100" value="@run.ProgressPercent" data-run-progress></progress>
+            }
+            else if (run.Status == "Failed") { <p role="alert">The last refresh failed: @run.Error</p> }
+            @if (!run.SourceReconciled) { <p role="status">The financial source has not been reconciled against PACT for the configured procedure, so every record needs review and none can be sent.</p> }
+        </div>
+    }
+    else
+    {
+        <div class="panel"><p>No review data yet. Start a refresh to read the financial source once and validate every record.</p></div>
+    }
+    <form method="post" class="review-refresh">
+        @if (Model.CompanyId is { } c) { <input type="hidden" name="CompanyId" value="@c" /> }
+        <button class="btn btn-primary" type="submit" asp-page-handler="Refresh" disabled="@Model.RunActive">Refresh review data</button>
+        <span class="review-note">Reads PACT once in the background (can take a few minutes) and shows progress. Browsing and filtering never read PACT.</span>
+    </form>
+
+    <form class="filter-bar" method="get" action="/Collections/Review" data-review-filter>
+        <div class="field-group"><label class="field-label" for="fCompany">Company</label>
+            <select class="field-select" id="fCompany" name="companyId">
+                <option value="">All companies</option>
+                <option value="4" selected="@(Model.CompanyId == 4)">Tiger Group Dubai (4)</option>
+                <option value="32" selected="@(Model.CompanyId == 32)">Tiger Group Sharjah (32)</option>
+            </select></div>
+        <div class="field-group"><label class="field-label" for="fProject">Project</label><input class="field-input" id="fProject" name="project" maxlength="200" value="@Model.Project" /></div>
+        <div class="field-group"><label class="field-label" for="fUnit">Unit</label><input class="field-input" id="fUnit" name="unit" maxlength="200" value="@Model.Unit" /></div>
+        <div class="field-group filter-bar__search"><label class="field-label" for="fCustomer">Customer name or phone</label><input class="field-input" type="search" id="fCustomer" name="customer" maxlength="200" value="@Model.Customer" /></div>
+        <div class="field-group"><label class="field-label" for="fMonth">Due month</label><input class="field-input" type="month" id="fMonth" name="month" value="@Model.Month" /></div>
+        <div class="field-group"><label class="field-label" for="fFrom">Due from</label><input class="field-input" type="date" id="fFrom" name="dueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" /></div>
+        <div class="field-group"><label class="field-label" for="fTo">Due to</label><input class="field-input" type="date" id="fTo" name="dueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /></div>
+        <div class="field-group"><label class="field-label" for="fPay">Payment status</label>
+            <select class="field-select" id="fPay" name="paymentStatus">
+                @foreach (var (value, text) in statuses) { <option value="@value" selected="@((Model.PaymentStatus ?? "UnpaidOrPartial") == value)">@text</option> }
+            </select></div>
+        <div class="field-group"><label class="field-label" for="fMin">Minimum remaining (AED)</label><input class="field-input" id="fMin" name="minRemaining" inputmode="decimal" value="@(Model.MinRemaining ?? Model.Report?.MinRemainingApplied.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "100")" /></div>
+        <div class="field-group"><label class="field-label" for="fMax">Maximum remaining (AED)</label><input class="field-input" id="fMax" name="maxRemaining" inputmode="decimal" value="@Model.MaxRemaining" /></div>
+        <div class="field-group"><label class="field-label" for="fType">Reminder type</label>
+            <select class="field-select" id="fType" name="reminderType">
+                @foreach (var (value, text) in types) { <option value="@value" selected="@((Model.ReminderType ?? "") == value)">@text</option> }
+            </select></div>
+        <div class="field-group"><label class="field-label" for="fVal">Validation status</label>
+            <select class="field-select" id="fVal" name="validationStatus">
+                @foreach (var (value, text) in validations) { <option value="@value" selected="@((Model.ValidationStatus ?? "") == value)">@text</option> }
+            </select></div>
+        <div class="field-group"><label class="field-label" for="fReason">Failed validation</label>
+            <select class="field-select" id="fReason" name="reason">
+                <option value="">Any reason</option>
+                @foreach (var reason in ReviewModel.Reasons) { <option value="@reason.Code" selected="@(Model.Reason == reason.Code)" title="@reason.Explanation">@reason.Code</option> }
+            </select></div>
+        <button class="btn btn-primary" type="submit">Apply filters</button>
+        <a class="btn" href="/Collections/Review">Reset</a>
+    </form>
+
+    @if (Model.Report is { } report)
+    {
+        <div class="review-tiles" role="group" aria-label="Validation counts">
+            <a class="tile tile-ready" href="@Model.PageUrl(1, validation: "Ready")"><strong>@report.Counts.Ready</strong><span>Ready</span></a>
+            <a class="tile tile-review" href="@Model.PageUrl(1, validation: "NeedsReview")"><strong>@report.Counts.NeedsReview</strong><span>Needs Review</span></a>
+            <a class="tile tile-excluded" href="@Model.PageUrl(1, validation: "Excluded")"><strong>@report.Counts.Excluded</strong><span>Excluded</span></a>
+            <a class="tile tile-sent" href="@Model.PageUrl(1, validation: "AlreadySent")"><strong>@report.Counts.AlreadySent</strong><span>Already Sent</span></a>
+        </div>
+        @if (report.Counts.UnknownPaymentStatus > 0 && (Model.PaymentStatus ?? "UnpaidOrPartial") is not ("All" or "Unknown"))
+        {
+            <p class="review-note" role="status">@report.Counts.UnknownPaymentStatus matching record(s) have an unknown payment status and are hidden from this view. They are never sendable. <a href="@Model.PageUrl(1, "Unknown")">Show them</a>.</p>
+        }
+
+        @if (Model.Overlaps is { TotalPhones: > 0 } overlaps)
+        {
+            <details class="panel review-overlaps" open>
+                <summary><strong>@overlaps.TotalPhones phone number(s) held back to avoid repeated calls</strong></summary>
+                <p class="review-note">These records share a phone across units, or one unit qualifies for several reminder types today (for example Current Month and Legal Notice on day 14).
+                    Amounts are not merged and no unit is chosen for you. They stay out of any send until the business decides how repeated calls should be handled.
+                    Filter the list by reason <code>SharedPhoneMultipleUnits</code> or <code>ReminderTypeOverlap</code> to see every record.</p>
+                <div class="table-scroll"><table class="table">
+                    <thead><tr><th>Phone</th><th>Customers</th><th>Units</th><th>Records</th><th>Why held back</th><th>Reminder types</th><th>Customer · unit · amount</th></tr></thead>
+                    <tbody>
+                    @foreach (var g in overlaps.Groups)
+                    {
+                        <tr>
+                            <td>@g.Phone</td><td>@g.CustomerCount</td><td>@g.UnitCount</td><td>@g.RecordCount</td>
+                            <td>@if (g.SharedAcrossUnits) { <text>Several units on one phone</text> }@if (g.SharedAcrossUnits && g.ReminderTypeOverlap) { <text><br /></text> }@if (g.ReminderTypeOverlap) { <text>Several reminder types for one unit</text> }</td>
+                            <td>@string.Join(", ", g.ReminderTypes.Select(ReviewModel.Label))</td>
+                            <td>@foreach (var r in g.Rows) { <div>@r.CustomerName · @r.UnitCode · @ReviewModel.Label(r.ReminderType) · @r.Currency @ReviewModel.Money(r.RemainingAmount)</div> }</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+                @if (overlaps.TotalPhones > overlaps.Groups.Count) { <p class="review-note">Showing the first @overlaps.Groups.Count of @overlaps.TotalPhones.</p> }
+            </details>
+        }
+
+        <div class="panel">
+            <div class="table-scroll">
+                <table class="table receivables-table review-table">
+                    <thead><tr>
+                        <th><input type="checkbox" data-select-page aria-label="Select all Ready records on this page" /></th>
+                        <th>Customer</th><th>Phone / email</th><th>Company · project · unit</th><th>Payment status</th><th>Remaining</th><th>Due date</th>
+                        <th>Reminder</th><th>Validation</th><th>Previous send</th><th>Source</th></tr></thead>
+                    <tbody>
+                    @foreach (var row in report.Items)
+                    {
+                        <tr data-validation="@row.ValidationStatus">
+                            <td>@if (row.ValidationStatus == "Ready") { <input type="checkbox" class="review-select" data-key="@row.RecordKey" aria-label="Select @row.CustomerName" /> }</td>
+                            <td><strong>@row.CustomerName</strong></td>
+                            <td>@(string.IsNullOrEmpty(row.Phone) ? "—" : row.Phone)<br />@row.Email</td>
+                            <td>@row.CompanyId · @row.ProjectCode · @row.UnitCode</td>
+                            <td>@ReviewModel.Label(row.PaymentStatus)</td>
+                            <td>@row.Currency @ReviewModel.Money(row.RemainingAmount)</td>
+                            <td>@row.DueDate?.ToString("dd MMM yyyy")</td>
+                            <td>@ReviewModel.Label(row.ReminderType)</td>
+                            <td><strong>@ReviewModel.Label(row.ValidationStatus)</strong>
+                                @if (row.Reasons.Count > 0) { <ul class="review-reasons">@foreach (var reason in row.Reasons) { <li class="reason-@reason.Kind.ToLowerInvariant()" title="@reason.Code">@reason.Explanation</li> }</ul> }</td>
+                            <td>@if (row.PreviousDispatchStatus is not null) { <text>@ReviewModel.Label(row.PreviousDispatchStatus)<br />@row.PreviousDispatchAtUtc?.ToString("dd MMM yyyy HH:mm")</text> } else { <text>—</text> }</td>
+                            <td>@row.Source<br />@row.SourceReadAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                        </tr>
+                    }
+                    @if (report.TotalCount == 0) { <tr><td colspan="11">No records match these filters.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+            <div class="receivables-pagination">
+                <span>@report.TotalCount records · page @report.Page of @Model.TotalPages</span>
+                <div>
+                    @if (report.Page > 1) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page - 1)">Previous</a> }
+                    @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page + 1)">Next</a> }
+                </div>
+            </div>
+        </div>
+
+        <form method="post" class="panel review-selection" data-selection-form>
+            <h2>Select records to send</h2>
+            <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" />
+            <input type="hidden" name="Unit" value="@Model.Unit" /><input type="hidden" name="Customer" value="@Model.Customer" />
+            <input type="hidden" name="Month" value="@Model.Month" /><input type="hidden" name="DueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" />
+            <input type="hidden" name="DueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /><input type="hidden" name="PaymentStatus" value="@Model.PaymentStatus" />
+            <input type="hidden" name="MinRemaining" value="@Model.MinRemaining" /><input type="hidden" name="MaxRemaining" value="@Model.MaxRemaining" />
+            <input type="hidden" name="ReminderType" value="@Model.ReminderType" /><input type="hidden" name="ValidationStatus" value="@Model.ValidationStatus" />
+            <input type="hidden" name="Reason" value="@Model.Reason" /><input type="hidden" name="SelectedKeys" value="" data-selected-keys />
+            <label><input type="radio" name="SelectionMode" value="SelectedKeys" checked="@(Model.SelectionMode == "SelectedKeys")" /> Only the records I ticked (<span data-selected-count>0</span>, kept across pages)</label><br />
+            <label><input type="radio" name="SelectionMode" value="AllMatching" checked="@(Model.SelectionMode == "AllMatching")" /> Every <strong>Ready</strong> record matching the filters above, on all pages (not only this page; the exact number is shown next)</label>
+            <p class="review-note">Only Ready records can be selected. Records that need review, are excluded or were already sent are never included.</p>
+            <button class="btn btn-primary" type="submit" asp-page-handler="Summary">Review selection</button>
+            <button class="btn" type="button" data-clear-selection>Clear ticks</button>
+        </form>
+
+        @if (Model.Summary is { } s)
+        {
+            <form method="post" class="panel review-confirm" data-confirm-form>
+                <h2>Confirm exactly this list</h2>
+                <p><strong data-summary-count>@s.Count</strong> contacts will be uploaded to Genesys.</p>
+                <ul class="review-tally">
+                    @foreach (var total in s.TotalsByCurrency) { <li>Total <strong>@total.Key @ReviewModel.Money(total.Value)</strong></li> }
+                    @foreach (var type in s.CountByReminderType) { <li>@ReviewModel.Label(type.Key): <strong>@type.Value</strong> → its own contact list</li> }
+                </ul>
+                @foreach (var n in s.Notices) { <p role="status">@n</p> }
+                <div class="table-scroll"><table class="table">
+                    <thead><tr><th>Customer</th><th>Phone</th><th>Email</th><th>Unit</th><th>Reminder</th><th>Amount due</th><th>Due date</th></tr></thead>
+                    <tbody>
+                    @foreach (var c in s.Contacts)
+                    {
+                        <tr class="@(c.SharedPhone ? "shared-phone" : "")"><td>@c.CustomerName</td><td>@c.Phone@(c.SharedPhone ? " ⚠" : "")</td><td>@c.Email</td><td>@c.UnitCode</td>
+                            <td>@ReviewModel.Label(c.ReminderType)</td><td>@c.Currency @ReviewModel.Money(c.Amount)</td><td>@c.DueDate.ToString("dd MMM yyyy")</td></tr>
+                    }
+                    </tbody>
+                </table></div>
+                @if (s.Count > s.Contacts.Count + (s.Page - 1) * s.PageSize || s.Page > 1)
+                {
+                    <p>Showing contacts @((s.Page - 1) * s.PageSize + 1)–@((s.Page - 1) * s.PageSize + s.Contacts.Count) of @s.Count.
+                        @if (s.Page > 1) { <button class="btn btn-sm" type="submit" asp-page-handler="Summary" name="ContactPage" value="@(s.Page - 1)" formnovalidate>Previous contacts</button> }
+                        @if (s.Page * s.PageSize < s.Count) { <button class="btn btn-sm" type="submit" asp-page-handler="Summary" name="ContactPage" value="@(s.Page + 1)" formnovalidate>More contacts</button> }
+                    </p>
+                }
+                <input type="hidden" name="CompanyId" value="@Model.CompanyId" /><input type="hidden" name="Project" value="@Model.Project" />
+                <input type="hidden" name="Unit" value="@Model.Unit" /><input type="hidden" name="Customer" value="@Model.Customer" />
+                <input type="hidden" name="Month" value="@Model.Month" /><input type="hidden" name="DueFrom" value="@Model.DueFrom?.ToString("yyyy-MM-dd")" />
+                <input type="hidden" name="DueTo" value="@Model.DueTo?.ToString("yyyy-MM-dd")" /><input type="hidden" name="PaymentStatus" value="@Model.PaymentStatus" />
+                <input type="hidden" name="MinRemaining" value="@Model.MinRemaining" /><input type="hidden" name="MaxRemaining" value="@Model.MaxRemaining" />
+                <input type="hidden" name="ReminderType" value="@Model.ReminderType" /><input type="hidden" name="ValidationStatus" value="@Model.ValidationStatus" />
+                <input type="hidden" name="Reason" value="@Model.Reason" /><input type="hidden" name="SelectionMode" value="@Model.SelectionMode" />
+                <input type="hidden" name="SelectedKeys" value="@Model.SelectedKeys" />
+                <input type="hidden" name="ExpectedCount" value="@s.Count" /><input type="hidden" name="ExpectedFingerprint" value="@s.Fingerprint" />
+                <input type="hidden" name="IdempotencyKey" value="@Model.ConfirmKey" />
+                <label><input type="checkbox" name="AckCampaign" value="true" required /> I understand that an active Genesys campaign using these lists may start calling the uploaded contacts immediately, and that "uploaded" does not mean "contacted".</label><br />
+                <p class="review-note">Before uploading, the current balance of every record is checked again. Paid records are dropped; any other change stops the whole send for review.</p>
+                <button class="btn btn-primary" type="submit" asp-page-handler="Confirm" data-confirm-button>Confirm and send @s.Count to Genesys</button>
+            </form>
+        }
+    }
+    </div>
+    }
+</div>
+<script src="~/js/collections-review.js" asp-append-version="true"></script>

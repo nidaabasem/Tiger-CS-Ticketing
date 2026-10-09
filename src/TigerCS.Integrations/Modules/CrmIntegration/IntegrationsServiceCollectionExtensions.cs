@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
@@ -138,6 +139,7 @@ public static class IntegrationsServiceCollectionExtensions
         AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);
         AddEdsmCollections(services, configuration);
+        AddGenesysOutbound(services, configuration);
         AddTasleehGateway(services, configuration);
         AddEmailSender(services, configuration);
 
@@ -268,6 +270,25 @@ public static class IntegrationsServiceCollectionExtensions
                 var p => throw new NotSupportedException(
                     $"CollectionsSource:EdsmProvider '{p}' is not supported. Use \"Unavailable\", \"Pact\" (or \"Fixture\" in Development/Testing).")
             });
+    }
+
+    /// <summary>
+    /// Genesys Cloud outbound contact upload. Credentials come from <c>Collections:GenesysOutbound:ClientId/ClientSecret</c>
+    /// (user-secrets or environment, never a committed file). The token provider is a singleton so its cache is shared;
+    /// the upload client is transient. Nothing is sent unless <c>Collections:GenesysOutbound:Enabled</c> is true.
+    /// </summary>
+    private static void AddGenesysOutbound(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<GenesysOutboundOptions>(configuration.GetSection(GenesysOutboundOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<GenesysOutboundOptions>>().Value);
+        services.AddHttpClient("GenesysLogin", (sp, client) =>
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(sp.GetRequiredService<GenesysOutboundOptions>().RequestTimeoutSeconds, 5, 120)));
+        services.AddSingleton<IGenesysTokenProvider>(sp => new GenesysTokenProvider(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("GenesysLogin"), sp.GetRequiredService<GenesysOutboundOptions>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GenesysTokenProvider>>()));
+        services.AddHttpClient<IGenesysOutboundClient, GenesysOutboundHttpClient>((sp, client) =>
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(sp.GetRequiredService<GenesysOutboundOptions>().RequestTimeoutSeconds, 5, 120)));
     }
 
     /// <summary>Business-rule change: Tasleeh phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>

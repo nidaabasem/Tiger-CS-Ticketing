@@ -276,6 +276,12 @@ using (var backgroundJobScope = app.Services.CreateScope())
     app.Services.UseTigerCsRecurringCollectionsReminders(
         backgroundJobOptions,
         backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.CollectionsOptions>());
+
+    // Paid-after-upload suppression of Genesys contacts — registered only while upload and suppression are both enabled.
+    app.Services.UseTigerCsRecurringGenesysSuppression(
+        backgroundJobOptions,
+        backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.Review.GenesysOutboundOptions>(),
+        backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.CollectionsOptions>().TimeZoneId);
 }
 
 app.UseExceptionHandler();

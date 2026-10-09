@@ -12,6 +12,7 @@ using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
@@ -349,6 +350,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);
         services.AddScoped<CollectionsCampaignAppService>();
+        // Review and approval workflow: stored review data, explicit refresh/dispatch jobs, Genesys outbound upload.
+        services.Configure<CollectionsReviewOptions>(configuration.GetSection(CollectionsReviewOptions.SectionName));
+        services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsReviewOptions>>().Value);
+        services.AddScoped<IReviewStore, ReviewStore>();
+        services.AddScoped<ReviewQueryService>();
+        services.AddScoped<ReviewRefreshService>();
+        services.AddScoped<CurrentBalanceReader>();
+        services.AddScoped<DispatchService>();
+        services.AddScoped<SuppressionService>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);

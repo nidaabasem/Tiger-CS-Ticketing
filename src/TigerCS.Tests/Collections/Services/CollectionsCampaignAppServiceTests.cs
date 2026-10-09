@@ -15,17 +15,21 @@ public sealed class CollectionsCampaignAppServiceTests
     internal sealed class Source : IPactReceivablesSource
     {
         public List<PactReceivableInstalment> Items { get; } = [];
-        public int Reads { get; private set; }
+        private int _reads;
+        public int Reads => _reads;
         public DateTime ReadAt { get; set; } = Now;
         public Exception? Failure { get; set; }
         public PactReceivablesRequest? LastRequest { get; private set; }
         public TimeSpan Delay { get; set; }
+        /// <summary>Runs at the start of every read (before the delay), e.g. to advance a clock or touch the database while a read is in flight.</summary>
+        public Func<CancellationToken, Task>? OnRead { get; set; }
         public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
             ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
 
         public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
         {
-            Reads++; LastRequest = request;
+            Interlocked.Increment(ref _reads); LastRequest = request;
+            if (OnRead is not null) await OnRead(cancellationToken);
             if (Delay > TimeSpan.Zero) await Task.Delay(Delay, cancellationToken);
             if (Failure is not null) throw Failure;
             // Mimic the SQL source: only the requested window and company are returned.

@@ -36,7 +36,15 @@ public enum CollectionsOutcome
     ReminderSuppressed,
 
     /// <summary>The customer has no verified PACT company/tenant mapping, so no EDSM figure can be returned.</summary>
-    NotMapped
+    NotMapped,
+
+    /// <summary>The approved list no longer matches the stored review data or a dispatch changed it: review again (409).</summary>
+    ReviewRequired,
+
+    /// <summary>A record is already part of a pending or sent dispatch, or the same key was used for a different list (409).</summary>
+    DuplicateDispatch,
+
+    NotFound
 }
 
 public sealed record CollectionsResult<T>(
@@ -99,6 +107,10 @@ public sealed class CollectionsClock(CollectionsOptions options, TimeProvider ti
     public DateOnly BusinessDate => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(UtcNow, _zone.Value));
 
     public string TimeZoneId => options.TimeZoneId;
+
+    /// <summary>The Dubai calendar date of a UTC instant.</summary>
+    public DateOnly ToBusinessDate(DateTime utc) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), _zone.Value));
 
     public bool IsStale(DateTime asOfUtc) => UtcNow - asOfUtc > TimeSpan.FromMinutes(Math.Max(1, options.StaleAfterMinutes));
 
