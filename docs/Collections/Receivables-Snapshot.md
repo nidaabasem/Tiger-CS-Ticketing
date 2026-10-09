@@ -5,7 +5,7 @@ The **Due & Overdue Customers** page and **Collections Campaigns** read a **loca
 stage and search). There is no company selector: the company is resolved from the tower.
 
 Deployment scripts: [`database/collections-receivables/`](../../database/collections-receivables/). Nothing here is deployed
-automatically. **Nothing in this change has been run against a real SQL Server or PACT** (see "Verification status").
+automatically. **Nothing has been run against the real PACT server or the production Ticketing database**; everything was exercised on a local SQL Server 2022 with synthetic data (see "Verification status").
 
 ## 1. How it works
 
@@ -15,7 +15,7 @@ Hangfire recurring job (every 30 min, + once at startup)
        per company (4, then 32), independently:
          INSERT ... EXEC [10.10.10.94].[PACTRPT].[dbo].[p4|p32AccountReceivables] -> dbo.CollectionsReceivableStaging
          dbo.usp_Collections_PublishReceivablesStaging: validate -> insert under a NEW RunId -> flip CurrentRunId
-Pages -> API -> EXEC dbo.usp_Collections_GetReceivables (tower + window + Due/Overdue) -> C# groups per apartment
+Pages -> API -> dbo.usp_Collections_GetReceivablesPage / GetInstalmentsPage / GetCampaignUnits (tower + window + filters + aggregation + paging in SQL)
 ```
 
 * **Atomic publish, previous snapshot preserved.** New rows are inserted under a new `RunId`; readers only see
@@ -157,7 +157,7 @@ set it to `false` for an outstanding-only snapshot - Fully paid / All are then d
   A partly missing range or company offers **Load missing data**. Before the first successful snapshot nothing is presented as zero receivables, export is blocked and Fully paid / All stay disabled.
 * **SQL does the work.** Filtering, per-apartment aggregation (Receivables apartment API), instalment totals and `OFFSET/FETCH` paging run in `usp_Collections_GetInstalmentsPage` / `usp_Collections_GetReceivablesPage`; only one page (<= 100 rows) reaches the application.
   Indexes: clustered `(CompanyId, RunId, DueDate)`, `(CompanyId, RunId, TowerNumber)`, `(CompanyId, RunId, TenantId, UnitId)`; the unmatched-tower report reads a per-run summary table instead of scanning the snapshot.
-  **Campaigns** still read the window's instalment rows (now already limited by tower, window and minimum) because their per-unit review flags (ambiguity, contact validity, stage thresholds) run in the application; they are loaded asynchronously, but this is the one remaining path that materialises a large set.
+  **Campaigns** are evaluated in SQL too (`usp_Collections_GetCampaignUnits`, section 4d); the application no longer loads the window's instalments for them.
 * **Publishing does not block reads, without dirty reads.** The refresh inserts a *new run* in committed batches of 1,500 rows (below lock escalation), flips `CurrentRunId` in a short transaction (a few single-row updates), and keeps the replaced run for one more cycle before deleting older runs in batches.
   Readers only touch `CurrentRunId` rows by index seek. Measured: see below. `NOLOCK`/`READ UNCOMMITTED` are not used anywhere (a contract test enforces it). A **reader/cleanup deadlock** found during this work (cleanup deleting the run an in-flight reader was still scanning) is fixed by keeping the replaced run.
 
@@ -181,6 +181,60 @@ set it to `false` for an outstanding-only snapshot - Fully paid / All are then d
 | Reads while PACT is artificially slow (25 s per procedure) | n/a | median 62 ms: a read never waits for the remote fetch |
 
 Refresh itself (loopback "PACT", so remote time excludes the real ledger work): ~45 s with paid rows retained (was ~20 s without), of which fetch 7 s / validate 0.1-0.3 s / publish 5-10 s per company when idle.
+
+## 4d. Campaigns: filtering, per-unit evaluation, flags, totals and paging in SQL
+
+**Problem.** The Campaigns preview read *every instalment of the date window* (157 k rows in the default window of the 441 k-row synthetic snapshot), grouped them per unit in C# and only then paged:
+3.1 s idle, **8.4 s median / 14.9 s worst while a refresh published**, 475 MB allocated per request, 660 MB peak working set. A loading indicator alone could not fix that.
+
+**What runs where now.** `usp_Collections_GetCampaignUnits` (V007) does, for the requested tower / company / window / minimum amount / stage:
+
+1. window scan of the *current* run only, from a narrow covering index (`IX_CollectionsReceivableSnapshot_Campaign`), aggregated per (unit, due day) on **integer keys**;
+2. per-unit stage amount: stage rows = due day in the stage range, `SUM(remaining)`, ambiguous when two stage rows share a due day (amount `NULL`, still a candidate, needs review), otherwise `SUM > threshold` (0 / 1,500 / 20,000);
+3. **all unit-level review flags over the whole result set, before paging**: ambiguity, amount precision, missing unit identity, conflicting contact details, tenant-level unit-allocation ambiguity, contradictory `Paid` status, no valid contact;
+4. search (name, customer id, unit code, normalised phone/e-mail, phone digits), totals (`TotalUnits`, `CleanUnits`, `ReviewUnits`) and `OFFSET/FETCH` paging in the order company, tenant (binary), unit code (binary), unit id.
+
+The application only adds the *global* gates that do not depend on the unit (stale source, incomplete coverage, currency, financial-source validation, outside-schedule, legal-notice release, internal legal referral) and derives
+Ready / Needs review / Preview only / Internal review. Because every unit-level reason makes a unit "Needs review" regardless of the global gates, the Ready and Review **counts are exact over the whole filtered set** without materialising it.
+An **export** asks for the bounded full result (`MaxExportRows + 1` units; more than the limit is refused with no file, as before); the CSV contract is unchanged and both export modes use the same gates.
+
+**Review flags that need application code (bounded, precomputed).** Phone and e-mail validity is the application's rule (`CollectionsContactNormalizer`: E.164 for UAE numbers, `System.Net.Mail` for e-mail) and is *not* re-implemented in T-SQL.
+Each run's publish registers every distinct phone / e-mail text in `dbo.CollectionsContactNorm` and records, per unit, whether it is valid once normalised. The application normalises what is missing (typically only the new customers of the last refresh, done right after the refresh by the job and otherwise lazily on first read) and
+`usp_Collections_SyncUnitContacts` records the result on the units. The dictionary is a pure function of the text and versioned (`CollectionsContactNormalizer.Version`), so stored values stay valid until a rule change.
+Units whose rows all carry one identical (name, phone, e-mail, project) - nearly all - need no per-row work; the few "Variants" units are resolved exactly from their own rows (first row by due date, voucher, row id; distinct normalised tuples).
+
+**What falls back to the old in-memory evaluation (never to an empty list):** a snapshot published before V007 (`ExoticTextRows IS NULL`), or one holding tenant / unit / name / status text with leading/trailing whitespace that .NET trims but T-SQL cannot (`ExoticTextRows > 0`), or any other `IPactReceivablesSource`.
+The in-memory evaluation stays in the code as the **reference implementation** the SQL engine is tested against.
+
+**Independent of PACT refresh.** Preview and export only read the local snapshot (`CurrentRunId` rows by index range). The service has no dependency on the refresher or the range loader (a unit test pins that); there are no dirty-read hints.
+The publish step prepares the *new* run before the pointer flip (batches of 1,500 rows, same as the snapshot rows), so readers never see an unprepared run.
+
+### Measurements (same 441 k-row synthetic snapshot, 4 vCPU sandbox, service call incl. mapping; stage Overdue, default window, minimum 100, page 1)
+
+| | Before (in memory) | After (SQL engine) |
+| --- | --- | --- |
+| Idle: p50 / p95 / max | 3,095 / 3,297 / 3,433 ms | **421 / 476 / 542 ms** |
+| **During a refresh** (same service call in a loop while the real refresh procedure publishes): p50 / p95 / max | 8,357 / 9,963 / 14,860 ms (16 calls) | **725 / 1,270 / 1,634 ms** (92 calls) |
+| Allocated per request | 475 MB | 0.1 MB |
+| Peak working set of the test process | 660 MB | 267 MB (runtime baseline included) |
+| Reader lock waits during the refresh | n/a | 0 ms (0 waits) |
+| Stored-procedure time only (`bench_campaign.py`): idle p50 / p95; during refresh p50 / p95 / max | n/a | 485 / 522 ms; 887 / 1,537 / 2,028 ms |
+
+Target "preview p95 < 2 s" is met idle and during the refresh in this environment (p95 1.27 s through the service, 1.54 s for the procedure alone; the worst single call was 2.03 s for the procedure and 1.63 s through the service - there is little margin on a 4-vCPU box shared with the refresh).
+Where the idle ~0.42 s goes (procedure, warm): window scan + per-(unit, day) aggregation 160 ms, per-unit aggregation 85 ms, candidate join with the unit table 75 ms, tenant-ambiguity check ~35 ms, flags 35 ms, page ~5 ms. Further reductions would need a columnstore index or
+a precomputed per-month aggregate, both rejected for now (operational cost, minimum-amount semantics).
+The first call after a deployment or plan-cache eviction pays ~1.4 s of plan compilation.
+
+**Plans, indexes, locks.** The window scan is an `Index Seek` on `IX_CollectionsReceivableSnapshot_Campaign` (covering: no key lookups; 67 MB against 264 MB for the clustered index over 884 k rows), then a parallel `Hash Match (Aggregate)` (captured with `SET STATISTICS XML`).
+Publishing with the extra preparation stayed in the range seen before it (company 4: 16-22 s, company 32: 5-8 s per publish across runs; whole refresh 75-120 s here with paid rows retained, dominated by the loopback fetch and the batched inserts).
+The reader waited **0 ms on locks** in each of the three measured publications and there were no deadlocks or errors; the preparation uses the same 1,500-row committed batches as the snapshot rows, and `usp_Collections_SetContactNorms` / `usp_Collections_SyncUnitContacts` stay below lock escalation.
+Dictionary growth: one row per distinct phone / e-mail text ever seen (50 k rows here); old entries are not pruned (they are tiny and a pure function of the text).
+
+**Result equivalence (real SQL Server).** `RealSqlCampaignEquivalenceTests` run the same service over the same snapshot twice - SQL engine and in-memory reference - for 90 scenarios (5 stages x 18: default / minimum 0 / 100 / 1000 / 99.99, company 4 / 32, towers 103 / 127, month and wide windows, searches incl. LIKE wildcards, brackets, apostrophes,
+Arabic text, phone and unit-code terms, legal-notice release on/off) and compare **every field of every row in order on first / second / last page, the totals, the snapshot status and both CSV exports byte for byte** (or the identical refusal). Hand-written edge cases (`tests/local-sqlserver/03_edge_cases.sql`: ambiguous same-day instalments, first-row tie-breaks,
+contradictory status in any case, tenant allocation ambiguity (all three kinds), phones that normalise equal, name case / spacing, project trailing space, invalid / valid e-mails, threshold boundaries 1,500 / 1,500.01 / 1,499.99 / 20,000 / 20,000.01, minimum boundaries 99.99 / 100 / 100.01,
+amount precision, blank and `0` unit codes, tenant id case) are loaded; a test asserts every review flag occurs in the results. Further tests: lazy normalisation (dictionary and units reset), fallback when the snapshot is unprepared or contains edge-whitespace text, stored normalisations equal the C# functions. 98 tests, all passing.
+A first run found a real bug (SQL three-valued logic made a search that matched nothing return rows); it is fixed and covered.
 
 ## 5. Scheduling (SQL Server Agent is **not** used)
 
@@ -218,11 +272,12 @@ The linked server name and PACT database are the two `DECLARE`s at the top of `V
 1. Back up `TigerCsTicketing`. Run `tests/probe_pact_result_shape.sql` as the application login (**needs V003 first**, so run V001-V003, then the probe).
    It reports which column layout each deployed procedure returns (company 32 has never been run through the linked server), counts of zero / negative / UnitID 0 / blank-tenant rows,
    status values, and tower-number matching. **Do not enable the job before reading it.**
-2. Run `V001` ... `V006` in order (idempotent; `CREATE OR ALTER` / `IF NOT EXISTS` / guarded `ALTER TABLE ... ADD`). **Re-running V002 is required on a database that already has an earlier revision of these scripts**: it adds
+2. Run `V001` ... `V007` in order (idempotent; `CREATE OR ALTER` / `IF NOT EXISTS` / guarded `ALTER TABLE ... ADD`). **Re-running V002 is required on a database that already has an earlier revision of these scripts**: it adds
    `Snapshot.OriginalAmount/PaidAmount/PaymentStatus`, `CompanyState.PaidRetained/BreakdownAvailable/UnclassifiedRows`, the staging columns, the `RunCompany` timing columns, `IX_..._Apartment` and `CollectionsReceivableTowerSummary`;
-   then V004, V005, V006 (procedures replaced). Review `V001`'s reports (duplicates, missing 127/140).
+   `V002` also adds `Snapshot.UnitSeq/TenantSeq/RowFlags`, `IX_..._Campaign` (**creating it reads the whole table once**; do it outside peak hours), `CompanyState.ExoticTextRows`, `CollectionsContactNorm`, `CollectionsReceivableUnit(Text)`.
+   then V004, V005, V006, V007 (procedures replaced). **Until the first refresh after this upgrade the Campaigns still work but use the slower in-memory evaluation** (the current run is not prepared); the refresh prepares the new run and the job normalises the contact values right after it. Review `V001`'s reports (duplicates, missing 127/140).
 3. `EXEC dbo.usp_Collections_RefreshReceivables @TriggerSource = N'Manual';` in SSMS. Expect two result sets: run summary and per-company outcome (now incl. FetchMs / ValidateMs / PublishMs). Re-run `@CompanyId = 32` alone if needed.
-   **The first refresh after upgrading rewrites the snapshot with paid rows and statuses**; until it completes the pages show the previous data (rows without a verified status read "Needs verification"; Fully paid / All stay disabled because `PaidRetained` is still 0).
+   **The first refresh after upgrading rewrites the snapshot with paid rows, statuses and the campaign preparation**; until it completes the pages show the previous data (rows without a verified status read "Needs verification"; Fully paid / All stay disabled because `PaidRetained` is still 0).
    If INSERT-EXEC fails with 8501/7391 (distributed transaction): the procedure already sets `REMOTE_PROC_TRANSACTIONS OFF`; otherwise MSDTC or the linked server's
    *Enable Promotion of Distributed Transactions for RPC* option must be adjusted by the DBA.
 4. Optional: `tests/smoke_snapshot_publish_and_read.sql` on a development copy (rolls back). For the unpaid/partial breakdown: deploy the reviewed companion procedures separately (after reconciliation), then
@@ -233,11 +288,11 @@ The linked server name and PACT database are the two `DECLARE`s at the top of `V
 
 **Real SQL Server (local SQL Server 2022 Developer on Linux, synthetic PACT data behind a loopback linked server named `[10.10.10.94]`)** - run during development, repeatable with `database/collections-receivables/tests/local-sqlserver`:
 
-* V001-V006 deploy cleanly; the real `usp_Collections_RefreshReceivables` runs end to end (`INSERT ... EXEC` through a linked server, both shapes: deployed layout and companion layout), validation, batched publish, pointer flip and cleanup.
-* 28 .NET tests (`RealSqlSnapshotTests`) pass against that server: SQL-paged apartment lists equal the application-side rules; the instalment-page procedure equals the in-memory reference model for 12 scenarios (month, range, tower,
+* V001-V007 deploy cleanly - **also on an empty database** (a clean install initially failed in V002: the staging-table upgrades ran before the table existed; fixed, and the rolled-back smoke test now also checks the campaign preparation); the real `usp_Collections_RefreshReceivables` runs end to end (`INSERT ... EXEC` through a linked server, both shapes: deployed layout and companion layout), validation, batched publish, pointer flip and cleanup.
+* 98 more .NET tests (`RealSqlCampaignEquivalenceTests`, section 4d) pass against that server, besides the 28 `RealSqlSnapshotTests`: SQL-paged apartment lists equal the application-side rules; the instalment-page procedure equals the in-memory reference model for 12 scenarios (month, range, tower,
   outstanding/unpaid/partial/paid/all, minimum, search, paging, "Unavailable" for views the data cannot back) in **both** data shapes; the stored payment status equals the domain classifier for every row.
 * Bugs found only by running it (fixed): `SUM(int)` vs bigint reader mismatch, `MAX(bit)`, a reader/cleanup deadlock, lock behaviour of the publish.
-* Timings and contention above.
+* Timings and contention above (synthetic data, 4 vCPU, loopback "PACT"). **Not real-PACT or production measurements.**
 
 **Fakes only (also run in CI, no SQL Server needed):** service rules (month boundaries, leap February, year change, payment classification, minimum amounts, preview/export consistency, partial refresh failure, freshness gate), page rendering and
 the Load/progress flow, API authorization and parameter pass-through, static contract tests of the SQL scripts.

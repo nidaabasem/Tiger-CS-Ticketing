@@ -7,6 +7,13 @@ MERGE dbo.FakeConfig t USING (VALUES (4,25000,12,0,1),(32,12000,12,0,1)) s(Compa
 WHEN MATCHED THEN UPDATE SET Tenants=s.Tenants, Instalments=s.Instalments, DelaySeconds=s.DelaySeconds, Shape=s.Shape
 WHEN NOT MATCHED THEN INSERT VALUES (s.CompanyId,s.Tenants,s.Instalments,s.DelaySeconds,s.Shape);
 GO
+-- Hand-written edge-case rows (03_edge_cases.sql) that are appended to the generated rows of the deployed shape: ambiguous same-day instalments,
+-- contradictory status, conflicting contact details, invalid phones / e-mails, threshold boundaries... Empty unless that script is run.
+IF OBJECT_ID('dbo.FakeEdgeRows') IS NULL
+CREATE TABLE dbo.FakeEdgeRows (CompanyId int NOT NULL, ProjectCode varchar(20) NOT NULL, UnitCode varchar(60) NOT NULL, TenantID varchar(20) NOT NULL, FullName nvarchar(100) NOT NULL,
+    Mobile varchar(30) NOT NULL, Email varchar(100) NOT NULL, UnitID int NOT NULL, VoucherNumber varchar(40) NOT NULL, ChequeNumber varchar(20) NOT NULL DEFAULT '',
+    DueDate datetime NOT NULL, Amount float NOT NULL, Status varchar(20) NOT NULL);
+GO
 -- Deterministic synthetic receivables shaped like the deployed procedures (variant 1 column order). NOT PACT data.
 CREATE OR ALTER PROCEDURE dbo.FakeReceivables @Company int, @StartDate datetime, @EndDate datetime, @MinAmount int
 AS
@@ -37,6 +44,9 @@ BEGIN
     INTO #res
     FROM #n n CROSS JOIN #k k
     CROSS APPLY (SELECT CASE WHEN @Company = 32 THEN CHOOSE(n.n % 4 + 1, 127, 140, 127, 140) ELSE 101 + (n.n % 30) + CASE WHEN n.n % 400 = 0 THEN 18 ELSE 0 END END AS tower) tw;
+  INSERT #res (CompanyID, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status)
+    SELECT CompanyId, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status
+      FROM dbo.FakeEdgeRows WHERE CompanyId = @Company;
   IF @Shape = 1
     SELECT CompanyID, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status
       FROM #res WHERE DueDate BETWEEN @StartDate AND @EndDate AND Amount >= @MinAmount ORDER BY DueDate DESC;

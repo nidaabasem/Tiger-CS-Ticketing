@@ -5,6 +5,10 @@
 > Genesys) are refused unless every company in scope has a successful refresh no older than `Collections:ReceivablesSnapshot:MaxAgeMinutes` (90).
 > A **Minimum outstanding amount (AED)** filter (default 100, remaining unpaid amount >= value) applies to the preview and both exports; fully paid instalments are never candidates; the date column is
 > **Earliest unpaid due date**. Month/Year selectors set the From/To dates. Details: Receivables-Snapshot.md sections 4b-4c.
+>
+> **Performance:** the preview and both exports are evaluated in SQL (`usp_Collections_GetCampaignUnits`): instalment filtering, per-unit aggregation, the stage amount rule, every review flag, search, totals and paging
+> run on the server, so only the requested page (or the bounded export) reaches the application and the counts/eligibility stay exact over the whole result set. A snapshot the engine cannot use
+> falls back to the earlier in-memory evaluation, which is also the reference the SQL engine is tested against. Details and measurements: Receivables-Snapshot.md section 4d.
 
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.

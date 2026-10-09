@@ -41,6 +41,14 @@ IF EXISTS (SELECT 1 FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AN
 IF (SELECT ExcludedInvalidUnitRows FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 1 THROW 51003, N'UnitID 0 row must be counted', 1;
 IF (SELECT TowerNumber FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AND TenantId = N'T3') <> N'9001' THROW 51004, N'TP9001-C-103 must map to tower 9001', 1;
 
+-- Campaign preparation (V007): every row has its unit key, one unit row per unit in campaign order, the new phone / e-mail texts are registered as pending.
+IF EXISTS (SELECT 1 FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AND (UnitSeq IS NULL OR TenantSeq IS NULL OR RowFlags IS NULL)) THROW 51020, N'every published row needs its unit key', 1;
+IF (SELECT COUNT(*) FROM dbo.CollectionsReceivableUnit WHERE RunId = @run) <> 8 OR (SELECT COUNT(*) FROM dbo.CollectionsReceivableUnitText WHERE RunId = @run) <> 8 THROW 51021, N'one unit row per published unit', 1;
+IF (SELECT ExoticTextRows FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 0 THROW 51022, N'the run is prepared for the SQL campaign engine', 1;
+IF (SELECT TOP (1) TenantId FROM dbo.CollectionsReceivableUnitText WHERE RunId = @run ORDER BY UnitSeq) <> N'T1' THROW 51023, N'UnitSeq follows the campaign order (tenant, unit code, unit id)', 1;
+IF NOT EXISTS (SELECT 1 FROM dbo.CollectionsContactNorm WHERE Kind = 2 AND Raw = N'a@x' AND Norm IS NULL) THROW 51024, N'new e-mail texts are registered and wait for the application to normalise them', 1;
+IF EXISTS (SELECT 1 FROM dbo.CollectionsReceivableUnit WHERE RunId = @run AND EmailOk IS NOT NULL) THROW 51025, N'validity is unknown until the application has normalised the text', 1;
+
 -- Read: Tower A, whole of Oct 2026, as of 7 Oct => T2 (Due), T3 (Due), T9 (Due, 23:00 on the To day), T1 is before From.
 DECLARE @tower int = (SELECT TowerId FROM dbo.CollectionsTowers WHERE CompanyId = 4 AND TowerNumber = N'9001');
 -- Result sets cannot be captured by INSERT-EXEC when there are several, so assert through the same predicate the procedure uses:

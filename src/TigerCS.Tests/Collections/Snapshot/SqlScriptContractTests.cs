@@ -18,7 +18,8 @@ public sealed class SqlScriptContractTests
     [Fact]
     public void ScriptsAreVersionedInOrder() =>
         Assert.Equal(["V001__reconcile_CollectionsTowers.sql", "V002__create_receivables_snapshot_tables.sql", "V003__fn_CollectionsTowerNumber.sql",
-            "V004__usp_Collections_PublishReceivablesStaging.sql", "V005__usp_Collections_RefreshReceivables.sql", "V006__usp_Collections_GetReceivables.sql"],
+            "V004__usp_Collections_PublishReceivablesStaging.sql", "V005__usp_Collections_RefreshReceivables.sql", "V006__usp_Collections_GetReceivables.sql",
+            "V007__usp_Collections_GetCampaignUnits.sql"],
             Directory.GetFiles(Dir(), "V*.sql").Select(f => Path.GetFileName(f)!).Order().ToArray());
 
     [Fact]

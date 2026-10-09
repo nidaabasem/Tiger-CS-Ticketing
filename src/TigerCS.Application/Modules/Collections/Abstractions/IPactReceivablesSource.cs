@@ -115,3 +115,38 @@ public sealed record PactInstalmentsRequest(
 
 public sealed record PactInstalmentsPage(
     PactInstalmentTotalsDto Totals, IReadOnlyList<PactInstalmentRowDto> Rows, bool Unavailable, SnapshotStatusDto Snapshot, DateTime ReadAtUtc, double SqlMs);
+
+/// <summary>
+/// A source that evaluates the Campaigns preview/export itself: instalment filtering, per-unit aggregation, the stage amount rule, the unit-level review
+/// flags, search, totals and paging all happen in the data store, so only the requested page of units (or, for an export, the bounded full result) reaches
+/// the application. A source may answer <see cref="PactCampaignPage.Supported"/> = false (data not prepared for it); the caller then evaluates in memory.
+/// </summary>
+public interface IPactCampaignSource
+{
+    Task<PactCampaignPage> ReadCampaignAsync(PactCampaignRequest request, CancellationToken cancellationToken);
+}
+
+/// <remarks>
+/// The unit's rows are those inside [From, To] (due DAY) with remaining Amount &gt; 0 and &gt;= MinAmount. Stage rows are the ones whose due day is in
+/// [StageFrom, StageToExclusive) (StageFrom null = unbounded); a stage amount qualifies when its sum is &gt; Threshold. ContactRequired is false for the
+/// internal legal-referral stage. PhoneDigits are the digits of a phone-like search term, else null. Offset/Take page the ordered units
+/// (company, tenant, unit code, unit id).
+/// </remarks>
+public sealed record PactCampaignRequest(
+    DateOnly From, DateOnly To, decimal MinAmount, DateOnly? StageFrom, DateOnly StageToExclusive, decimal Threshold, bool ContactRequired,
+    string? Search, string? PhoneDigits, int Offset, int Take, int? CompanyId, int? TowerId);
+
+/// <summary>Unit-level facts of one campaign candidate. <c>Flags</c> is a <see cref="TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags"/> mask;
+/// <c>Amount</c> is null when the unit's stage instalments are ambiguous.</summary>
+public sealed record CampaignUnitFacts(
+    int CompanyId, string TenantId, string FullName, string Phone, string Email, int? UnitId, string UnitCode, string ProjectCode,
+    decimal? Amount, DateOnly? EarliestDue, int Flags, string? TowerNumber, string? TowerName);
+
+/// <remarks>
+/// Supported = false: the data store could not use its campaign engine for the snapshot (the caller evaluates in memory). BadIdentityRows: rows without
+/// a valid company / customer identity (the campaign refuses to run). Total / Clean / Review count the candidate units over the whole filtered set,
+/// before paging (Clean = no unit-level review flag; Review = at least one).
+/// </remarks>
+public sealed record PactCampaignPage(
+    bool Supported, int BadIdentityRows, int Total, int Clean, int Review, IReadOnlyList<CampaignUnitFacts> Units,
+    DateTime ReadAtUtc, SnapshotStatusDto Snapshot, double SqlMs);

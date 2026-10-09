@@ -6,6 +6,7 @@ using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Domain.Modules.Collections;
 
 namespace TigerCS.Infrastructure.Modules.Collections;
 
@@ -16,7 +17,7 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 /// </summary>
 public sealed class SnapshotPactReceivablesSource(
     IConfiguration configuration, ReceivablesSnapshotOptions snapshotOptions, PactReceivablesOptions pactOptions,
-    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource
+    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactCampaignSource
 {
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
@@ -195,6 +196,132 @@ public sealed class SnapshotPactReceivablesSource(
         logger.LogInformation("Receivables page read: page {Page} of {Total} apartments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, min {Min}).",
             request.Page, totalApartments, sqlMs, request.From, request.To, request.MinAmount);
         return new PactReceivablesPage(totalApartments, dueApartments, overdueApartments, apartments, ReceivablesSnapshotComposer.ReadAt(status), status, sqlMs);
+    }
+
+    /// <summary>
+    /// Campaigns preview / export: one round trip to dbo.usp_Collections_GetCampaignUnits, which filters the window, aggregates per unit, applies the stage rule and
+    /// the unit-level review flags, searches, counts and pages in SQL. When the procedure reports phone / e-mail texts it has no normalisation for yet, they are
+    /// normalised here (CollectionsContactNormalizer - the only definition), stored, and the read is repeated; the stored values serve every later read.
+    /// A snapshot the SQL engine cannot use (published before it existed, or with text it cannot trim like .NET) returns Supported = false.
+    /// </summary>
+    public async Task<PactCampaignPage> ReadCampaignAsync(PactCampaignRequest request, CancellationToken cancellationToken)
+    {
+        if (pactOptions.ApplyLegacyExclusions)
+            throw new PactReceivablesSourceException("The legacy exclusions are not supported by the local receivables snapshot; disable them or set Collections:ReceivablesSnapshot:UseLocalSnapshot to false.");
+        if (request.CompanyId is not (null or 4 or 32))
+            throw new PactReceivablesSourceException("The PACT report company is not supported.");
+        var connectionString = configuration.GetConnectionString(snapshotOptions.ConnectionStringName);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                var read = await ReadCampaignOnceAsync(connectionString, request, cancellationToken);
+                if (read.Status == "NeedsNorm" && attempt < 3)
+                {
+                    logger.LogInformation("Campaign read: normalising {Count} contact values (attempt {Attempt}).", read.Missing.Count, attempt + 1);
+                    await CollectionsContactNormStore.StoreAsync(connectionString, read.Missing, snapshotOptions.ReadCommandTimeoutSeconds, cancellationToken);
+                    continue;
+                }
+                if (read.Status == "NeedsNorm")
+                    throw new PactReceivablesSourceException("The campaign contact values could not be prepared. Please retry.");
+                var now = timeProvider.GetUtcNow().UtcDateTime;
+                var status = ReceivablesSnapshotComposer.BuildStatus(request.From, request.To, read.Companies, read.Unmatched, now, snapshotOptions.MaxAgeMinutes);
+                var sqlMs = timer.Elapsed.TotalMilliseconds;
+                if (read.Status == "LegacyRequired")
+                {
+                    logger.LogInformation("Campaign read: the snapshot is not prepared for the SQL engine; the application evaluates the campaign in memory.");
+                    return new PactCampaignPage(false, 0, 0, 0, 0, [], ReceivablesSnapshotComposer.ReadAt(status), status, sqlMs);
+                }
+                logger.LogInformation("Campaign read: {Units} of {Total} units in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, min {Min}).",
+                    read.Units.Count, read.Total, sqlMs, request.From, request.To, request.MinAmount);
+                return new PactCampaignPage(true, read.BadIdentityRows, read.Total, read.Clean, read.Review, read.Units, ReceivablesSnapshotComposer.ReadAt(status), status, sqlMs);
+            }
+        }
+        catch (SqlException ex)
+        {
+            logger.LogWarning("Campaign read failed (SQL error {SqlNumber}).", ex.Number);
+            throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
+        }
+    }
+
+    private sealed record CampaignRead(string Status, int BadIdentityRows, int Total, int Clean, int Review, List<SnapshotCompanyRaw> Companies,
+        List<UnmatchedTowerDto> Unmatched, List<CampaignUnitFacts> Units, List<(int Id, byte Kind, string Raw)> Missing);
+
+    private async Task<CampaignRead> ReadCampaignOnceAsync(string connectionString, PactCampaignRequest request, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("dbo.usp_Collections_GetCampaignUnits", connection)
+        { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(snapshotOptions.ReadCommandTimeoutSeconds, 1, 600) };
+        command.Parameters.Add("@TowerId", SqlDbType.Int).Value = (object?)request.TowerId ?? DBNull.Value;
+        command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = (object?)request.CompanyId ?? DBNull.Value;
+        command.Parameters.Add("@FromDate", SqlDbType.Date).Value = request.From.ToDateTime(TimeOnly.MinValue);
+        command.Parameters.Add("@ToDate", SqlDbType.Date).Value = request.To.ToDateTime(TimeOnly.MinValue);
+        command.Parameters.Add(new SqlParameter("@MinAmount", SqlDbType.Decimal) { Precision = 19, Scale = 4, Value = request.MinAmount });
+        command.Parameters.Add("@StageFrom", SqlDbType.Date).Value = request.StageFrom is { } stageFrom ? stageFrom.ToDateTime(TimeOnly.MinValue) : DBNull.Value;
+        command.Parameters.Add("@StageToExclusive", SqlDbType.Date).Value = request.StageToExclusive.ToDateTime(TimeOnly.MinValue);
+        command.Parameters.Add(new SqlParameter("@Threshold", SqlDbType.Decimal) { Precision = 19, Scale = 4, Value = request.Threshold });
+        command.Parameters.Add("@ContactRequired", SqlDbType.Bit).Value = request.ContactRequired;
+        command.Parameters.Add("@Search", SqlDbType.NVarChar, 200).Value = (object?)request.Search ?? DBNull.Value;
+        command.Parameters.Add("@PhoneDigits", SqlDbType.NVarChar, 200).Value = (object?)request.PhoneDigits ?? DBNull.Value;
+        command.Parameters.Add("@Offset", SqlDbType.Int).Value = request.Offset;
+        command.Parameters.Add("@Take", SqlDbType.Int).Value = request.Take;
+        command.Parameters.Add("@NormVersion", SqlDbType.TinyInt).Value = CollectionsContactNormalizer.Version;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        var companies = new List<SnapshotCompanyRaw>();
+        var unmatched = new List<UnmatchedTowerDto>();
+        var units = new List<CampaignUnitFacts>();
+        var missing = new List<(int, byte, string)>();
+        int total = 0, clean = 0, review = 0, bad = 0;
+        var status = "Ok";
+        // 1 scope
+        if (!await reader.ReadAsync(cancellationToken) || !reader.GetBoolean(reader.GetOrdinal("ScopeValid")))
+            throw new PactReceivablesScopeException("The selected tower is not available. Choose a tower from the list.");
+        await reader.NextResultAsync(cancellationToken);
+        // 2 coverage
+        while (await reader.ReadAsync(cancellationToken)) companies.Add(ReadCompany(reader));
+        await reader.NextResultAsync(cancellationToken);
+        // 3 header
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            status = reader.GetString(reader.GetOrdinal("Status"));
+            bad = reader.GetInt32(reader.GetOrdinal("BadIdentityRows"));
+        }
+        await reader.NextResultAsync(cancellationToken);
+        // 4 totals
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            total = reader.GetInt32(reader.GetOrdinal("TotalUnits"));
+            clean = reader.GetInt32(reader.GetOrdinal("CleanUnits"));
+            review = reader.GetInt32(reader.GetOrdinal("ReviewUnits"));
+        }
+        await reader.NextResultAsync(cancellationToken);
+        // 5 page
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var amountOrdinal = reader.GetOrdinal("Amount");
+            var dueOrdinal = reader.GetOrdinal("EarliestDue");
+            units.Add(new CampaignUnitFacts(reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")),
+                reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("Phone")), reader.GetString(reader.GetOrdinal("Email")),
+                (int)reader.GetInt64(reader.GetOrdinal("UnitId")), reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("ProjectCode")),
+                reader.IsDBNull(amountOrdinal) ? null : reader.GetDecimal(amountOrdinal),
+                reader.IsDBNull(dueOrdinal) ? null : DateOnly.FromDateTime(reader.GetDateTime(dueOrdinal)),
+                reader.GetInt32(reader.GetOrdinal("Flags")), Text(reader, "TowerNumber"), Text(reader, "TowerName")));
+        }
+        await reader.NextResultAsync(cancellationToken);
+        // 6 unmatched towers
+        while (await reader.ReadAsync(cancellationToken))
+            unmatched.Add(new UnmatchedTowerDto(reader.GetInt32(reader.GetOrdinal("CompanyId")), Text(reader, "TowerNumber"),
+                reader.GetString(reader.GetOrdinal("Reason")), reader.GetInt64(reader.GetOrdinal("RowCount_")), reader.GetDecimal(reader.GetOrdinal("Amount"))));
+        await reader.NextResultAsync(cancellationToken);
+        // 7 contact values that still need normalising
+        while (await reader.ReadAsync(cancellationToken))
+            missing.Add((reader.GetInt32(0), reader.GetByte(1), reader.GetString(2)));
+        return new CampaignRead(status, bad, total, clean, review, companies, unmatched, units, missing);
     }
 
     /// <summary>
@@ -383,6 +510,14 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
                     companies.Add(new ReceivablesRefreshCompanyResult(reader.GetInt32(0), reader.GetString(1),
                         Nullable(reader, 2), Nullable(reader, 3), Nullable(reader, 4), Nullable(reader, 5), Nullable(reader, 6), Nullable(reader, 7),
                         reader.IsDBNull(8) ? null : reader.GetString(8), Nullable(reader, 9), Nullable(reader, 10), Nullable(reader, 11)));
+            await reader.DisposeAsync();
+            if (companies.Any(x => x.Status == "Succeeded"))
+            {
+                // Best effort: normalise the contact values the new run registered, so the first campaign preview does not have to.
+                try { await CollectionsContactNormStore.FillPendingAsync(connectionString, options.ReadCommandTimeoutSeconds, cancellationToken); }
+                catch (Exception ex) when (ex is SqlException or InvalidOperationException)
+                { logger.LogWarning("Contact normalisation after the refresh was skipped ({ExceptionType}); it will run on the first campaign read.", ex.GetType().Name); }
+            }
             return new ReceivablesRefreshResult(runId, status, message, companies);
         }
         catch (SqlException ex)
@@ -394,4 +529,58 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
     }
 
     private static int? Nullable(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+}
+
+/// <summary>
+/// Fills <c>dbo.CollectionsContactNorm</c> with the application's phone / e-mail normalisations (CollectionsContactNormalizer). The dictionary is a pure
+/// function of the raw text, so a stored value stays valid until <see cref="CollectionsContactNormalizer.Version"/> changes.
+/// </summary>
+public static class CollectionsContactNormStore
+{
+    private const int Chunk = 2000;   // well below the ~5000-lock escalation threshold: a table lock would stall readers
+
+    public static async Task StoreAsync(string connectionString, IReadOnlyList<(int Id, byte Kind, string Raw)> items, int timeoutSeconds, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        for (var offset = 0; offset < items.Count; offset += Chunk)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(items.Skip(offset).Take(Chunk).Select(i => new
+            {
+                id = i.Id,
+                norm = i.Kind == 1 ? CollectionsContactNormalizer.NormalizePhone(i.Raw) : CollectionsContactNormalizer.NormalizeEmail(i.Raw)
+            }));
+            await using var command = new SqlCommand("dbo.usp_Collections_SetContactNorms", connection)
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(timeoutSeconds, 1, 600) };
+            command.Parameters.Add("@NormVersion", SqlDbType.TinyInt).Value = CollectionsContactNormalizer.Version;
+            command.Parameters.Add("@Json", SqlDbType.NVarChar, -1).Value = json;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        // Record the result on the units (also repairs units that lag behind an already normalised dictionary; a no-op when everything is current).
+        await using var sync = new SqlCommand("dbo.usp_Collections_SyncUnitContacts", connection)
+        { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(timeoutSeconds, 1, 600) };
+        sync.Parameters.Add("@NormVersion", SqlDbType.TinyInt).Value = CollectionsContactNormalizer.Version;
+        await sync.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Normalises every registered value that has no up-to-date normalisation yet.</summary>
+    public static async Task FillPendingAsync(string connectionString, int timeoutSeconds, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var pending = new List<(int, byte, string)>();
+            await using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync(cancellationToken);
+                await using var command = new SqlCommand(
+                    "SELECT TOP (20000) ContactId, Kind, Raw FROM dbo.CollectionsContactNorm WHERE Norm IS NULL OR NormVersion IS NULL OR NormVersion <> @v", connection)
+                { CommandTimeout = Math.Clamp(timeoutSeconds, 1, 600) };
+                command.Parameters.Add("@v", SqlDbType.TinyInt).Value = CollectionsContactNormalizer.Version;
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) pending.Add((reader.GetInt32(0), reader.GetByte(1), reader.GetString(2)));
+            }
+            await StoreAsync(connectionString, pending, timeoutSeconds, cancellationToken);   // also syncs the units (a no-op when nothing was pending)
+            if (pending.Count < 20000) return;
+        }
+    }
 }

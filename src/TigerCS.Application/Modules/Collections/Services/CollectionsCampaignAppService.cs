@@ -49,16 +49,36 @@ public sealed class CollectionsCampaignAppService(
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
 
+        // Search: the same term semantics for both evaluation paths (name, customer id, unit code, normalised phone / e-mail, phone digits).
+        var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        var digits = term is null ? "" : new string(term.Where(char.IsAsciiDigit).ToArray());
+        var phoneDigits = term is not null && digits.Length >= 3 && !term.Any(char.IsLetter) ? digits : null;
+        var (stageFrom, stageToExclusive) = CollectionsCampaignPolicy.StageRange(selected, date);
+        var exportLimit = Math.Clamp(campaignOptions.MaxExportRows, 1, 50000);
+
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
-        PactReceivablesSnapshot snapshot;
+        PactCampaignPage? sqlPage = null;
+        PactReceivablesSnapshot? snapshot = null;
         var started = Stopwatch.GetTimestamp();
         var scope = companyId is { } c ? $"company {c}" : "companies 4 and 32";
         try
         {
+            // The data store evaluates the campaign itself when it can (filtering, aggregation, review flags, totals, paging): only the requested
+            // page - or, for an export, the bounded full result - reaches the application. Otherwise (a source without that capability, or a
+            // snapshot the engine cannot use) every instalment of the window is read and evaluated in memory, as before.
+            if (source is IPactCampaignSource campaign)
+            {
+                var request = new PactCampaignRequest(from, to, min, stageFrom, stageToExclusive, CollectionsCampaignPolicy.Threshold(selected),
+                    selected != CollectionsCampaignStage.LegalReferral, term, phoneDigits,
+                    forExport ? 0 : (page - 1) * pageSize, forExport ? exportLimit + 1 : pageSize, companyId, towerId);
+                sqlPage = await campaign.ReadCampaignAsync(request, budget.Token);
+                if (!sqlPage.Supported) sqlPage = null;
+            }
             // Company and window are pushed down to the source: a single-company request must not wait for the other
             // company's (much slower) procedure, and rows outside the window are never read.
-            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId, MinAmount: min), budget.Token);
+            if (sqlPage is null)
+                snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId, MinAmount: min), budget.Token);
         }
         catch (PactReceivablesScopeException ex)
         {
@@ -91,15 +111,121 @@ public sealed class CollectionsCampaignAppService(
                 "The campaign source could not be read.");
         }
 
-        logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} source rows in {ElapsedMs} ms.",
-            selected, scope, from, to, snapshot.Items.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-        // Defensive: a legacy source may ignore the window.
         var sourceMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-        var rows = snapshot.Items.Where(r => r.Amount > 0 && r.Amount >= min
+        var snapshotStatus = sqlPage?.Snapshot ?? snapshot!.Snapshot;
+        var readAtUtc = sqlPage?.ReadAtUtc ?? snapshot!.ReadAtUtc;
+        logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} {What} in {ElapsedMs} ms ({Engine}).",
+            selected, scope, from, to, sqlPage?.Units.Count ?? snapshot!.Items.Count, sqlPage is null ? "source rows" : "units", sourceMs, sqlPage is null ? "in memory" : "sql");
+
+        var dates = CollectionsCampaignPolicy.ScheduledDates(selected, date);
+        var cycle = $"{date.ToString("yyyy-MM", CultureInfo.InvariantCulture)}:{selected}";
+        // Local snapshot: every company in scope must be loaded and within the documented maximum age
+        // (ReceivablesSnapshotOptions.MaxAgeMinutes). Other sources keep the generic staleness test.
+        var fresh = snapshotStatus is { } status
+            ? status.IsFresh
+            : readAtUtc.Kind == DateTimeKind.Utc && !clock.IsStale(readAtUtc) && readAtUtc <= clock.UtcNow.AddMinutes(1);
+        var coverageIncomplete = snapshotStatus is { RangeCovered: false };
+        CollectionsCampaignContactDto ToContact(CampaignUnitFacts f)
+        {
+            var (unitStatus, reasons) = Compose(f.Flags, fresh, coverageIncomplete, selected, date, dates);
+            var identity = $"{f.CompanyId}:{f.TenantId}:{f.UnitId}:{f.UnitCode}:{cycle}";
+            var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+            return new CollectionsCampaignContactDto(id, $"ext:Pact:{f.TenantId}", f.CompanyId, f.TenantId, f.FullName, f.Phone, f.Email,
+                f.UnitId, f.UnitCode, f.ProjectCode, f.Amount, sourceOptions.Currency, f.EarliestDue, selected.ToString(), cycle,
+                unitStatus, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), f.TowerNumber, f.TowerName);
+        }
+
+        int count, ready, review;
+        List<CollectionsCampaignContactDto> items;
+        if (sqlPage is not null)
+        {
+            if (sqlPage.BadIdentityRows > 0)
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
+                    "PACT returned a receivable without a valid company/customer identity.");
+            if (forExport && sqlPage.Total > exportLimit)
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
+                    "The export exceeds the row limit. Filter by company or customer; no partial file was created.");
+            // Every unit-level reason makes a unit NeedsReview whatever the global gates are; a unit without one gets the status a hypothetical clean
+            // unit would get, so Ready / NeedsReview counts are exact over the whole filtered set without materialising it.
+            var cleanStatus = Compose(0, fresh, coverageIncomplete, selected, date, dates).Status;
+            count = sqlPage.Total;
+            ready = cleanStatus == "Ready" ? sqlPage.Clean : 0;
+            review = sqlPage.Review + (cleanStatus == "NeedsReview" ? sqlPage.Clean : 0);
+            items = sqlPage.Units.Select(ToContact).ToList();
+        }
+        else
+        {
+            List<CampaignUnitFacts> facts;
+            try
+            {
+                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId);
+            }
+            catch (OverflowException)
+            {
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
+                    "The campaign contains amounts outside the supported range.");
+            }
+            catch (InvalidDataException)
+            {
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
+                    "PACT returned a receivable without a valid company/customer identity.");
+            }
+            if (forExport && facts.Count > exportLimit)
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
+                    "The export exceeds the row limit. Filter by company or customer; no partial file was created.");
+            var contacts = facts.Select(ToContact).ToList();
+            count = contacts.Count;
+            ready = contacts.Count(x => x.Status == "Ready");
+            review = contacts.Count(x => x.Status == "NeedsReview");
+            items = forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        }
+        return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, readAtUtc,
+            "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
+            campaignOptions.FinancialSourceValidated, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,
+            count, ready, review, page, pageSize, items,
+            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to), towerId, snapshotStatus, min,
+            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds)));
+    }
+
+    /// <summary>Review reasons and status of a candidate from its unit-level flags and the global (source / schedule / release) gates. Order is part of the contract.</summary>
+    private (string Status, List<string> Reasons) Compose(int flags, bool fresh, bool coverageIncomplete, CollectionsCampaignStage selected,
+        DateOnly date, IReadOnlyList<DateOnly> dates)
+    {
+        bool Has(CollectionsCampaignFlags flag) => (flags & (int)flag) != 0;
+        var reasons = new List<string>();
+        if (Has(CollectionsCampaignFlags.AmbiguousInstalments)) reasons.Add("AmbiguousInstalments");
+        if (Has(CollectionsCampaignFlags.AmountPrecisionNeedsReview)) reasons.Add("AmountPrecisionNeedsReview");
+        if (Has(CollectionsCampaignFlags.MissingUnitIdentity)) reasons.Add("MissingUnitIdentity");
+        if (Has(CollectionsCampaignFlags.ConflictingContactDetails)) reasons.Add("ConflictingContactDetails");
+        if (Has(CollectionsCampaignFlags.UnitAllocationNeedsReview)) reasons.Add("UnitAllocationNeedsReview");
+        if (Has(CollectionsCampaignFlags.ContradictoryPaymentStatus)) reasons.Add("ContradictoryPaymentStatus");
+        if (sourceOptions.Currency != "AED") reasons.Add("CurrencyNeedsReview");
+        if (!fresh) reasons.Add("StaleSource");
+        if (coverageIncomplete) reasons.Add("CoverageIncomplete");
+        if (!campaignOptions.FinancialSourceValidated) reasons.Add("SourceReconciliationRequired");
+        if (Has(CollectionsCampaignFlags.NoValidContact)) reasons.Add("NoValidContact");
+        var status = reasons.Count > 0 ? "NeedsReview" : "Ready";
+        if (reasons.Count == 0 && (date != clock.BusinessDate || !dates.Contains(date)))
+        { status = "PreviewOnly"; reasons.Add("OutsideSchedule"); }
+        if (reasons.Count == 0 && selected == CollectionsCampaignStage.LegalNotice && !campaignOptions.LegalNoticeExportEnabled)
+        { status = "NeedsReview"; reasons.Add("LegalNoticeReleaseRequired"); }
+        if (reasons.Count == 0 && selected == CollectionsCampaignStage.LegalReferral)
+        { status = "InternalReview"; reasons.Add("InternalLegalReferralOnly"); }
+        return (status, reasons);
+    }
+
+    /// <summary>
+    /// The in-memory evaluation: every instalment of the window is grouped per unit here. It is the reference implementation of the rules (the SQL engine
+    /// must return the same units, flags, totals and order - see the equivalence tests) and the fallback for sources/snapshots without the SQL engine.
+    /// </summary>
+    internal List<CampaignUnitFacts> BuildFactsInMemory(IReadOnlyList<PactReceivableInstalment> items, DateOnly from, DateOnly to, decimal min,
+        CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId)
+    {
+        // Defensive: a legacy source may ignore the window.
+        var rows = items.Where(r => r.Amount > 0 && r.Amount >= min
             && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
-            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
-                "PACT returned a receivable without a valid company/customer identity.");
+            throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
         var ambiguousTenants = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
             .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))
@@ -107,83 +233,40 @@ public sealed class CollectionsCampaignAppService(
                 || g.GroupBy(r => r.UnitId).Any(u => u.Select(r => r.UnitCode.Trim()).Distinct().Count() > 1)
                 || g.GroupBy(r => r.UnitCode.Trim()).Any(u => u.Select(r => r.UnitId).Distinct().Count() > 1))
             .Select(g => g.Key).ToHashSet();
-        var dates = CollectionsCampaignPolicy.ScheduledDates(selected, date);
-        var cycle = $"{date.ToString("yyyy-MM", CultureInfo.InvariantCulture)}:{selected}";
-        // Local snapshot: every company in scope must be loaded and within the documented maximum age
-        // (ReceivablesSnapshotOptions.MaxAgeMinutes). Other sources keep the generic staleness test.
-        var fresh = snapshot.Snapshot is { } snapshotStatus
-            ? snapshotStatus.IsFresh
-            : snapshot.ReadAtUtc.Kind == DateTimeKind.Utc && !clock.IsStale(snapshot.ReadAtUtc)
-              && snapshot.ReadAtUtc <= clock.UtcNow.AddMinutes(1);
-        List<CollectionsCampaignContactDto> contacts;
-        try
+        var facts = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim()))
+            .Select(g =>
+            {
+                var first = g.First();
+                var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
+                    new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
+                if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
+                var phone = CollectionsContactNormalizer.NormalizePhone(first.Mobile);
+                var email = CollectionsContactNormalizer.NormalizeEmail(first.Email);
+                var flags = CollectionsCampaignFlags.None;
+                if (amount.Reason != "Qualifies") flags |= CollectionsCampaignFlags.AmbiguousInstalments;
+                if (amount.Amount is { } value && value != decimal.Round(value, 2)) flags |= CollectionsCampaignFlags.AmountPrecisionNeedsReview;
+                if (g.Key.UnitId is not > 0 || string.IsNullOrWhiteSpace(g.Key.Code) || g.Key.Code == "0")
+                    flags |= CollectionsCampaignFlags.MissingUnitIdentity;
+                if (g.Select(r => (r.FullName.Trim(), Phone: CollectionsContactNormalizer.NormalizePhone(r.Mobile),
+                        Email: CollectionsContactNormalizer.NormalizeEmail(r.Email), r.ProjectCode)).Distinct().Count() > 1)
+                    flags |= CollectionsCampaignFlags.ConflictingContactDetails;
+                if (ambiguousTenants.Contains((g.Key.CompanyId, g.Key.Tenant))) flags |= CollectionsCampaignFlags.UnitAllocationNeedsReview;
+                if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase)))
+                    flags |= CollectionsCampaignFlags.ContradictoryPaymentStatus;
+                if (selected != CollectionsCampaignStage.LegalReferral && phone.Length == 0 && email.Length == 0)
+                    flags |= CollectionsCampaignFlags.NoValidContact;
+                return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
+                    amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName);
+            }).OfType<CampaignUnitFacts>().ToList();
+        if (companyId is { } company) facts = facts.Where(f => f.CompanyId == company).ToList();
+        if (term is not null)
         {
-            contacts = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim()))
-                .Select(g =>
-                {
-                    var first = g.First();
-                    var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
-                        new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
-                    if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
-                    var phone = NormalizePhone(first.Mobile);
-                    var email = NormalizeEmail(first.Email);
-                    var reasons = new List<string>();
-                    if (amount.Reason != "Qualifies") reasons.Add(amount.Reason);
-                    if (amount.Amount is { } value && value != decimal.Round(value, 2)) reasons.Add("AmountPrecisionNeedsReview");
-                    if (g.Key.UnitId is not > 0 || string.IsNullOrWhiteSpace(g.Key.Code) || g.Key.Code == "0")
-                        reasons.Add("MissingUnitIdentity");
-                    if (g.Select(r => (r.FullName.Trim(), Phone: NormalizePhone(r.Mobile), Email: NormalizeEmail(r.Email), r.ProjectCode))
-                        .Distinct().Count() > 1) reasons.Add("ConflictingContactDetails");
-                    if (ambiguousTenants.Contains((g.Key.CompanyId, g.Key.Tenant))) reasons.Add("UnitAllocationNeedsReview");
-                    if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase))) reasons.Add("ContradictoryPaymentStatus");
-                    if (sourceOptions.Currency != "AED") reasons.Add("CurrencyNeedsReview");
-                    if (!fresh) reasons.Add("StaleSource");
-                    if (snapshot.Snapshot is { RangeCovered: false }) reasons.Add("CoverageIncomplete");
-                    if (!campaignOptions.FinancialSourceValidated) reasons.Add("SourceReconciliationRequired");
-                    if (selected != CollectionsCampaignStage.LegalReferral && phone.Length == 0 && email.Length == 0)
-                        reasons.Add("NoValidContact");
-                    var status = reasons.Count > 0 ? "NeedsReview" : "Ready";
-                    if (reasons.Count == 0 && (date != clock.BusinessDate || !dates.Contains(date)))
-                    { status = "PreviewOnly"; reasons.Add("OutsideSchedule"); }
-                    if (reasons.Count == 0 && selected == CollectionsCampaignStage.LegalNotice && !campaignOptions.LegalNoticeExportEnabled)
-                    { status = "NeedsReview"; reasons.Add("LegalNoticeReleaseRequired"); }
-                    if (reasons.Count == 0 && selected == CollectionsCampaignStage.LegalReferral)
-                    { status = "InternalReview"; reasons.Add("InternalLegalReferralOnly"); }
-                    var identity = $"{g.Key.CompanyId}:{g.Key.Tenant}:{g.Key.UnitId}:{g.Key.Code}:{cycle}";
-                    var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-                    return new CollectionsCampaignContactDto(id, $"ext:Pact:{g.Key.Tenant}", first.CompanyId,
-                        g.Key.Tenant, first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
-                        amount.Amount, sourceOptions.Currency, amount.EarliestDueDate, selected.ToString(), cycle,
-                        status, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), first.TowerNumber, first.TowerName);
-                }).OfType<CollectionsCampaignContactDto>().ToList();
-        }
-        catch (OverflowException)
-        {
-            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
-                "The campaign contains amounts outside the supported range.");
-        }
-        if (companyId is { } company) contacts = contacts.Where(c => c.CompanyId == company).ToList();
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var term = search.Trim();
-            var digits = new string(term.Where(char.IsAsciiDigit).ToArray());
             bool Match(string value) => value.Contains(term, StringComparison.OrdinalIgnoreCase);
-            contacts = contacts.Where(c => Match(c.CustomerName) || Match(c.TenantId) || Match(c.UnitCode)
-                || Match(c.Phone) || Match(c.Email)
-                || (digits.Length >= 3 && !term.Any(char.IsLetter) && c.Phone.Contains(digits, StringComparison.Ordinal))).ToList();
+            facts = facts.Where(c => Match(c.FullName) || Match(c.TenantId) || Match(c.UnitCode) || Match(c.Phone) || Match(c.Email)
+                || (phoneDigits is not null && c.Phone.Contains(phoneDigits, StringComparison.Ordinal))).ToList();
         }
-        contacts = contacts.OrderBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
+        return facts.OrderBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
             .ThenBy(c => c.UnitCode, StringComparer.Ordinal).ThenBy(c => c.UnitId).ToList();
-        if (forExport && contacts.Count > Math.Clamp(campaignOptions.MaxExportRows, 1, 50000))
-            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "The export exceeds the row limit. Filter by company or customer; no partial file was created.");
-        return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, snapshot.ReadAtUtc,
-            "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
-            campaignOptions.FinancialSourceValidated, snapshot.LegacyExclusionsApplied, permissions.CanSendReminders,
-            contacts.Count, contacts.Count(c => c.Status == "Ready"), contacts.Count(c => c.Status == "NeedsReview"),
-            page, pageSize, forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to), towerId, snapshot.Snapshot, min,
-            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds)));
     }
 
     public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
@@ -214,19 +297,6 @@ public sealed class CollectionsCampaignAppService(
         return CollectionsResult<CollectionsCampaignExportDto>.Ok(new(
             $"collections-{report.Stage}-{report.BusinessDate:yyyy-MM-dd}-{mode}.csv", csv, report.Items.Count));
     }
-
-    internal static string NormalizePhone(string value)
-    {
-        var compact = new string(value.Where(c => c is not (' ' or '-' or '(' or ')')).ToArray());
-        if (compact.StartsWith("00", StringComparison.Ordinal)) compact = "+" + compact[2..];
-        if (compact.Length == 10 && compact.StartsWith("05", StringComparison.Ordinal)) compact = "+971" + compact[1..];
-        if (compact.Length == 12 && compact.StartsWith("971", StringComparison.Ordinal)) compact = "+" + compact;
-        return compact.StartsWith('+') && compact.Length is >= 9 and <= 16 && compact[1] != '0'
-            && compact[1..].All(char.IsAsciiDigit) ? compact : "";
-    }
-
-    private static string NormalizeEmail(string value) =>
-        MailAddress.TryCreate(value.Trim(), out var address) && address.Address == value.Trim() ? address.Address : "";
 }
 
 public static class CollectionsCampaignCsv
