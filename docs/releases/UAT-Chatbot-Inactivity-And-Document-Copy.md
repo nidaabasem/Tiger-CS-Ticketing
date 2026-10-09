@@ -91,27 +91,54 @@ Data action: `docs/Genesys/data-actions/11-send-document-copy.json`.
 `CrmDocuments:Enabled` ships **false**; set true for UAT. Same migration as above (table `CrmDocumentDeliveryRequests`,
 unique `(CallerEmployeeId, IdempotencyKey)`). Email needs `EmailNotifications:Enabled=true` + SMTP credentials.
 
-### Missing document source / delivery integration — flagged
+> ## ⚠ Document copies: PENDING REAL UAT VERIFICATION — disabled in Production
+> Phase 1 (CRM buyers requesting their own documents) is built and passes 3 100+ automated tests, including the whole
+> lookup → unit → email OTP → session → document → download → one-email flow through the real host against a stub CRM.
+> **It has not been run against real CRM, the real file routes, real SMTP or the public Genesys route.** Complete only when a real
+> customer completes verification, selects a unit and a document and receives exactly one email through the public route
+> (exit criteria: `docs/Genesys/CRM-Required-Contracts.md` §8). `CrmDocuments:Enabled=false` ships; a Production host refuses to
+> start with it enabled unless `CrmDocuments:AllowInProduction=true` is also set.
 
-* **No document source exists.** Neither TigerCS nor the Tiger CRM contracts it uses store or generate contracts,
-  reservation forms, unit layouts or registration receipts. The port `ICrmDocumentGateway` is complete and tested; its only
-  `Crm:Provider=Http` implementation fails closed (503 `DOCUMENT_SOURCE_UNAVAILABLE`). **Against real CRM nothing can be sent
-  until Tiger CRM publishes the list/download operations** (exact shape in the contract doc).
-* **WhatsApp/SMS: no integration.** Answers 501 `DELIVERY_CHANNEL_NOT_INTEGRATED`. Email attachment works.
-* **Verification sessions over real CRM are also blocked** by the unpublished CRM unit/contact endpoints
-  (`UnimplementedCrmHttpGateway`), and OTP issuance/checking lives outside TigerCS.
-* **TigerGroupWeb must forward the new route** (and `PATCH` field `awaitingCustomerReply` is part of the existing route).
+### What Phase 1 delivers (see `docs/Genesys/Document-Copy-API.md`)
 
-### UAT steps (local/Mock only until the dependencies above exist)
+* **Buyer lookup → cache:** the verification unit/contact cache is filled from the real `GetBuyerByPhone` (unit id as `CrmUnitId`,
+  contact id `"{customerId}-{unitId}"`, type `Buyer` — `customerType=1` is not read as Owner). Ambiguous customers and multiple units
+  are explicit results. Agent-desk, tenant and representative flows are unchanged.
+* **Email OTP:** code to the address CRM returns (no destination field anywhere); bound to integration account + CRM customer + unit/lead;
+  10-minute expiry, 5 attempts, 3 sends ≥ 60 s apart, 5 challenges/customer/hour, single use; stored only as a salted HMAC. `Otp` can no
+  longer be asserted on `POST /api/verification-sessions`; `send-copy` accepts only a session carrying the recorded proof.
+* **Delivery:** CRM `GetCustomerDocuments` → choices when `selectionRequired` → download with the CRM secret (CRM origin only; other
+  hosts fetched without it) → type/extension from the file's own bytes (an extension-less "Layout Plan" becomes `.png`/`.pdf` as it really is)
+  → one email; idempotency and delivery audit unchanged.
 
-1. Run the API with `Crm:Provider=Mock` (Development), `CrmDocuments:Enabled=true`, `EmailNotifications:Provider=Recording`.
-2. As a CS Agent: `GET /api/crm/units/CRM-UNIT-1001`, `GET /api/crm/units/CRM-UNIT-1001/contacts`,
-   `POST /api/verification-sessions` (contact `CRM-CONTACT-2001`, `verificationMethod: "Otp"`).
-3. `send-copy` `ReservationForm` → `Sent`, masked address `a***@e***.com`. Repeat the identical request → `duplicate:true`, no second mail.
-4. `Contract` → `SelectionRequired` (two choices); repeat with `recordId` (new key) → `Sent`.
-5. `RegistrationReceipt` on unit 1001 → 404 `DOCUMENT_NOT_FOUND`. `recordId: "MOCK-CONTRACT-3"` → 403 `RECORD_OWNERSHIP_MISMATCH`.
-6. Session with `ManualAgentConfirmation` → 403 `VERIFICATION_FAILED`. `deliveryChannel: "WhatsApp"` → 501.
-7. Real UAT: with `Crm:Provider=Http` expect 503 `DOCUMENT_SOURCE_UNAVAILABLE` — that confirms the fail-closed behaviour.
+### UAT result (this session)
+
+| Check | Result |
+|---|---|
+| Automated: full suite | **3 113 passed, 0 failed** (Release build, 0 warnings) |
+| Automated: whole flow through the real host over a stub CRM (happy path, wrong/locked/reused OTP, another account, another customer's lead, other unit, multiple documents, download 401/403/404/5xx/HTML/executable/off-host, idempotent retries) | passed |
+| Concurrency rules (single-use code, attempt budget, resend race, one session per challenge) on a real relational engine (SQLite, real EF model) | passed |
+| Real CRM `GetBuyerByPhone` / `GetCustomerDocuments` / file download | **not run** — `tigercrm.tigergroup.ae:8014` is unreachable from this environment and no `Crm:SecretKey` is available |
+| Real SMTP delivery of the code and the document | **not run** |
+| Public Genesys route | **not reachable**: unauthenticated POSTs to `tigergroup.ae` return `401` for the existing `/api/genesys/tickets` but `404` for `/api/genesys/verification/*` and `/documents/send-copy` (not deployed and/or not forwarded by TigerGroupWeb — this probe cannot tell which) |
+| File-route authentication | **unconfirmed** — run `docs/Genesys/uat/verify-crm-file-auth.sh` where CRM is reachable |
+
+### Remaining dependencies
+
+1. **TigerGroupWeb** must forward `/api/genesys/verification/*` and `/api/genesys/documents/send-copy` (and the new build must be deployed).
+2. **File storage:** how the `Uploads` routes authenticate (public / cookie / secret header) — unknown; cookie auth cannot work. A separate file host is possible only as https in `Crm:DocumentFileHosts` and is fetched **without** the CRM secret.
+3. **CRM data:** buyer email must be the customer's own and current; `mobileNumber` must be findable by `GetBuyerByPhone?phoneNumber=+971…`; `unitNumber` non-empty.
+4. **Config:** `CrmDocuments:OtpCodePepper` (secret), `EmailNotifications:Enabled=true` + SMTP credentials, `Crm:SecretKey`, `BackgroundJobs:Enabled` (inactivity feature), both migrations applied.
+
+### UAT runbook (where CRM, SMTP and the public route are reachable)
+
+1. Apply `AddChatbotInactivityAndCrmDocumentCopies.sql` and `AddCustomerOtpVerification.sql`; set the §4 config; `CrmDocuments:Enabled=true` (UAT only).
+2. `uat/verify-crm-file-auth.sh Contract` (and `UnitLayout`) with a real buyer's `CRM_CUSTOMER_ID` / `CRM_LEAD_ID`: record the file-route behaviour with and without the secret.
+3. Through the **public** route as the integration account: `buyer-lookup` (the buyer's phone) → expect the real units and a masked email; `otp/send` with the chosen `crmUnitId` → the code arrives in the buyer's mailbox; `otp/verify` → `Verified` + `verificationSessionId`.
+4. `send-copy` `Contract` → if CRM lists several: `SelectionRequired` → choose → `Sent`; check the mailbox has **exactly one** document email with the right file and extension; repeat the identical call (same key and a new key) → `duplicate:true`, no second email.
+5. `UnitLayout` for a lead whose plan has no extension in its name → attachment gets the true extension.
+6. Negatives: wrong code (`OTP_INVALID`, attempts fall), 5 wrong codes (`OTP_LOCKED`), reuse (`OTP_ALREADY_USED`), expired code (wait 10 min), another customer's `crmLeadId` and the same customer's other unit (`RECORD_OWNERSHIP_MISMATCH`, no CRM document call in the log), wrong `Crm:SecretKey` (`CRM_AUTHENTICATION_FAILED`), a type with nothing on record (`DOCUMENT_NOT_FOUND`).
+7. Record every result here. **Only then** consider `CrmDocuments:AllowInProduction`.
 
 ## Changed files
 
@@ -123,7 +150,7 @@ unique `(CallerEmployeeId, IdempotencyKey)`). Email needs `EmailNotifications:En
 
 **Document copy** — new `GenesysDocumentsController.cs`; `Application/Modules/CrmDocuments/*` (service, DTOs, options, ports, email channel sender);
 `CrmDocumentType.cs`, `CrmDocumentDeliveryRequest.cs`; `CrmDocumentDeliveryRequestConfiguration.cs`, `CrmDocumentDeliveryRepository.cs`, `TigerCsDbContext.cs`;
-`UnimplementedCrmDocumentGateway.cs`, `MockCrmDocumentGateway.cs`, `IntegrationsServiceCollectionExtensions.cs`; email attachments in `IEmailSender.cs`,
+`CrmDocumentHttpGateway.cs`, `MockCrmDocumentGateway.cs`, `IntegrationsServiceCollectionExtensions.cs`; email attachments in `IEmailSender.cs`,
 `SmtpEmailSender.cs`, `RecordingEmailSender.cs`.
 
 **Both** — migration `20261007093644_AddChatbotInactivityAndCrmDocumentCopies` (+ snapshot), `AddChatbotInactivityAndCrmDocumentCopies.sql`, `appsettings.json`, docs and two data-action JSON files.

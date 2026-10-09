@@ -9,18 +9,10 @@ namespace TigerCS.Domain.Modules.Collections;
 /// </summary>
 public static class CollectionsContactNormalizer
 {
-    public const byte Version = 1;
+    public const byte Version = 2;   // 2: phone rule replaced by Review.PhoneNormalizer (merge of the review / dispatch workflow)
 
-    /// <summary>E.164 for UAE-style numbers; an empty string means "not a valid phone".</summary>
-    public static string NormalizePhone(string value)
-    {
-        var compact = new string(value.Where(c => c is not (' ' or '-' or '(' or ')')).ToArray());
-        if (compact.StartsWith("00", StringComparison.Ordinal)) compact = "+" + compact[2..];
-        if (compact.Length == 10 && compact.StartsWith("05", StringComparison.Ordinal)) compact = "+971" + compact[1..];
-        if (compact.Length == 12 && compact.StartsWith("971", StringComparison.Ordinal)) compact = "+" + compact;
-        return compact.StartsWith('+') && compact.Length is >= 9 and <= 16 && compact[1] != '0'
-            && compact[1..].All(char.IsAsciiDigit) ? compact : "";
-    }
+    /// <summary>The callable E.164 number of the source value, or an empty string when it cannot be confirmed (the review workflow's rule).</summary>
+    public static string NormalizePhone(string value) => Review.PhoneNormalizer.Normalize(value).E164;
 
     /// <summary>The address itself when it is a plain, valid address; an empty string otherwise.</summary>
     public static string NormalizeEmail(string value) =>

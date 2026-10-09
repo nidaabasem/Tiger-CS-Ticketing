@@ -160,6 +160,8 @@ public class AuthController(
     /// <response code="400">A field was missing or blank.</response>
     /// <response code="422">The current password did not verify (<c>CURRENT_PASSWORD_INCORRECT</c>), or the new password violates the policy (<c>errors</c> lists each reason).</response>
     [HttpPost("change-password")]
+    [AllowServiceIdentity]
+    [AllowReadOnlyCallerWrite]
     [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -220,6 +222,8 @@ public class AuthController(
     /// <remarks>Succeeds with 204 whether or not the token carried a resolvable employee id.</remarks>
     /// <response code="204">Signed out.</response>
     [HttpPost("logout")]
+    [AllowServiceIdentity]
+    [AllowReadOnlyCallerWrite]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
     {

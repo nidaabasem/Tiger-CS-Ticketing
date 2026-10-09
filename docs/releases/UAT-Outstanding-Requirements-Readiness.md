@@ -1,5 +1,9 @@
 # Genesys UAT — outstanding requirements: readiness matrix, contracts and UAT checklist
 
+> **Partly superseded (2026-10-08 review).** Items 7 (document copies) and the statement "OTP issue/check is outside TigerCS" no longer
+> hold on the review branch: a real CRM document gateway and email‑OTP verification (`/api/genesys/verification/*`) were integrated.
+> The authoritative, current status is [docs/system/15-requirements-traceability-matrix.md](../system/15-requirements-traceability-matrix.md).
+
 Scope: the 15 outstanding Tiger-CS-Ticketing / Genesys UAT requirements. Basis: `main` at `039ae51`
 plus this branch. **Nothing here was exercised on UAT** — this environment has no network path to
 UAT, CRM, PACT, EDSM, SMTP or Genesys. "Verified" below means verified by the automated suite

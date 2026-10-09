@@ -46,7 +46,7 @@ Genesys Cloud ──OAuth2 client_credentials──▶ TigerGroupWeb  (https://t
 
 A fourth, read-only route serves the chatbot/voicebot — verified customer's unit and
 project details, `POST /api/genesys/customers/unit-details`, Data Action
-`TigerCS - Customer Unit Details` (`data-actions/12-…json`). See
+`TigerCS - Customer Unit Details` (`data-actions/12-customer-unit-details.json`). See
 `Customer-Unit-Details-API.md`; TigerGroupWeb must forward this route too.
 
 Contract 3 is **one** endpoint. It has five data actions only because a

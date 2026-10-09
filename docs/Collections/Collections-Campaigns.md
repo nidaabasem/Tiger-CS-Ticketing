@@ -9,6 +9,8 @@
 > **Performance:** the preview and both exports are evaluated in SQL (`usp_Collections_GetCampaignUnits`): instalment filtering, per-unit aggregation, the stage amount rule, every review flag, search, totals and paging
 > run on the server, so only the requested page (or the bounded export) reaches the application and the counts/eligibility stay exact over the whole result set. A snapshot the engine cannot use
 > falls back to the earlier in-memory evaluation, which is also the reference the SQL engine is tested against. Details and measurements: Receivables-Snapshot.md section 4d.
+>
+> The review, approval and Genesys upload workflow is described in [Collections-Review-And-Genesys-Dispatch.md](Collections-Review-And-Genesys-Dispatch.md). This page covers the original preview and CSV export.
 
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.
@@ -136,7 +138,7 @@ files stay uncommitted.
 ## Due-date range (From date / To date)
 
 The page and API accept `dateFrom` and `dateTo` (instalment due dates, inclusive); both are editable and a blank field uses
-the default. **From** defaults to 1 January of the preview year. **To** defaults to the **end of the preview date's month**
+the default. **From** defaults to the configured receivables start date (`CollectionsSource:PactReceivables:StartDate`, `2026-01-01`), not to 1 January of the preview year, so December arrears stay reachable in January; a preview whose window ends before that date is rejected rather than widened. **To** defaults to the **end of the preview date's month**
 for the whole-month stages (Current month, Follow-up) and to the **preview date** for Overdue, Legal notice and Legal
 referral. The dates are sent to the PACT procedures as `@StartDate` / `@EndDate` and the company filter selects the
 procedure(s) that run, so rows outside the window are never read. The **preview date stays separate**: it alone drives the

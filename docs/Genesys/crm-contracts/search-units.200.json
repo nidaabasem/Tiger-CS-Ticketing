@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "found": true,
+  "message": null,
+  "units": [
+    { "crmUnitId": "1101", "unitNumber": "1205", "propertyName": "Tiger Sky Tower", "towerName": "Tower 1", "unitType": "Residential" },
+    { "crmUnitId": "2207", "unitNumber": "1205", "propertyName": "Tiger Marina Residences", "towerName": null, "unitType": "Residential" }
+  ]
+}

@@ -15,7 +15,7 @@
     4 apartments  the requested page: one row per apartment with its due/overdue sums
     5 instalments the instalments of exactly those apartments
     6 unmatched   usp_Collections_GetUnmatchedTowers
-  Result sets of usp_Collections_GetReceivables: 1 scope, 2 coverage, 3 rows, 4 unmatched.
+  Result sets of usp_Collections_GetReceivables: 1 scope, 2 coverage, 3 rows (incl. OriginalAmount / PaidAmount - NULL unless the source returned and reconciled them; the review workflow derives Unpaid / Partially paid from them), 4 unmatched.
   Result sets of usp_Collections_GetInstalmentsPage: 1 scope, 2 coverage, 3 totals (incl. Unavailable), 4 the requested page of instalments, 5 unmatched.
 
   PAYMENT STATUS (usp_Collections_GetInstalmentsPage @PaymentFilter)
@@ -134,7 +134,7 @@ BEGIN
     DECLARE @FromDt datetime = CAST(@FromDate AS datetime);
 
     SELECT s.CompanyId, s.TenantId, s.FullName, s.Mobile, s.Email, s.UnitId, s.UnitCode, s.ProjectCode,
-           s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount, s.SourceStatus, s.TowerNumber,
+           s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount, s.SourceStatus, s.TowerNumber, s.OriginalAmount, s.PaidAmount,
            tw.TowerId, CONVERT(nvarchar(400), tw.TowerName) AS TowerName,
            CASE WHEN s.DueDate < @MonthStart THEN 'OverDue' WHEN s.DueDate < @NextMonthStart THEN 'Due' ELSE 'Outstanding' END AS ReceivableType
       FROM dbo.CollectionsReceivableCompanyState st
@@ -226,7 +226,7 @@ BEGIN
            SUM(CASE WHEN d.IsOver = 0 THEN d.Amt ELSE 0 END), SUM(CASE WHEN d.IsOver = 1 THEN d.Amt ELSE 0 END),
            SUM(CASE WHEN d.IsOver = 0 THEN 1 ELSE 0 END), SUM(CASE WHEN d.IsOver = 1 THEN 1 ELSE 0 END),
            MIN(d.Day_), MAX(d.Hit)
-      FROM (SELECT s.CompanyId, s.TenantId, s.UnitId, s.UnitCode,
+      FROM (SELECT s.CompanyId, s.TenantId COLLATE Latin1_General_BIN2 AS TenantId, s.UnitId, s.UnitCode COLLATE Latin1_General_BIN2 AS UnitCode,
                    CAST(CASE WHEN s.DueDate < @MonthStartDt THEN 1 ELSE 0 END AS bit) AS IsOver, CAST(s.DueDate AS date) AS Day_,
                    COUNT(*) AS Cnt, SUM(s.Amount) AS Amt, MIN(s.SnapshotRowId) AS FirstId,
                    CAST(CASE WHEN @Like IS NULL THEN 1
@@ -240,7 +240,7 @@ BEGIN
                AND (@TowerId IS NULL OR s.TowerNumber = @TowerNumber)
                AND s.DueDate >= @FromDt AND s.DueDate < @UpperDt
                AND s.Amount > 0 AND s.Amount >= @MinAmount AND s.UnitId > 0
-             GROUP BY s.CompanyId, s.TenantId, s.UnitId, s.UnitCode,
+             GROUP BY s.CompanyId, s.TenantId COLLATE Latin1_General_BIN2, s.UnitId, s.UnitCode COLLATE Latin1_General_BIN2,   -- an apartment is the exact (binary) tenant / code, as in the application
                       CASE WHEN s.DueDate < @MonthStartDt THEN 1 ELSE 0 END, CAST(s.DueDate AS date)) d
      GROUP BY d.CompanyId, d.TenantId, d.UnitId, d.UnitCode
     OPTION (RECOMPILE);
@@ -279,7 +279,7 @@ BEGIN
       FROM #page p
       JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = p.CompanyId
       JOIN dbo.CollectionsReceivableSnapshot s ON s.CompanyId = p.CompanyId AND s.RunId = st.CurrentRunId AND s.TenantId = p.TenantId AND s.UnitId = p.UnitId
-     WHERE s.UnitCode = p.UnitKey
+     WHERE s.UnitCode = p.UnitKey AND s.TenantId COLLATE Latin1_General_BIN2 = p.TenantId COLLATE Latin1_General_BIN2 AND s.UnitCode COLLATE Latin1_General_BIN2 = p.UnitKey COLLATE Latin1_General_BIN2
        AND s.DueDate >= @FromDt AND s.DueDate < @UpperDt AND s.Amount > 0 AND s.Amount >= @MinAmount
      ORDER BY s.CompanyId, s.TenantId, s.UnitId, s.DueDate, s.VoucherNumber, s.SnapshotRowId
      OPTION (RECOMPILE);

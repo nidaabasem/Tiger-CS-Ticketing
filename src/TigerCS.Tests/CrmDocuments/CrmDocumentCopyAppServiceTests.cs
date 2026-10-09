@@ -1,5 +1,8 @@
+using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Dto;
+using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
+using TigerCS.Application.Modules.CustomerVerification.Dto;
 using TigerCS.Domain.Modules.CustomerVerification;
 
 namespace TigerCS.Tests.CrmDocuments;
@@ -12,8 +15,9 @@ namespace TigerCS.Tests.CrmDocuments;
 /// </summary>
 public class CrmDocumentCopyAppServiceTests
 {
-    private static CrmDocumentCopyRequestDto Req(DocumentServiceFixture f, string type = "Contract", string? recordId = null, string? unitId = null, string? channel = null) =>
-        new(f.SessionId, type, unitId, recordId, channel);
+    private static CrmDocumentCopyRequestDto Req(
+        DocumentServiceFixture f, string type = "Contract", string? recordId = null, string? unitId = null, string? channel = null, int? leadId = null) =>
+        new(f.SessionId, type, unitId, recordId, channel) { CrmLeadId = leadId };
 
     private static Task<CrmDocumentCopyResult> Send(DocumentServiceFixture f, CrmDocumentCopyRequestDto r, string? key = "key-1") =>
         f.Service.SendAsync(DocumentServiceFixture.Caller, r, key);
@@ -137,13 +141,13 @@ public class CrmDocumentCopyAppServiceTests
     {
         var f = new DocumentServiceFixture();
         f.Own("REC-MINE");
-        f.Add(new CrmDocumentRecord("REC-THEIRS", "Their contract", "CRM-UNIT-1002", "CRM-CONTACT-2003"));
+        f.Gateway.Add(9002, 22222, CrmDocumentType.Contract, "REC-THEIRS");
 
         var result = await Send(f, Req(f, recordId: "REC-THEIRS"));
 
         Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
         Assert.Equal(CrmDocumentCodes.RecordOwnershipMismatch, result.Code);
-        Assert.Empty(f.Gateway.ContentCalls);
+        Assert.Empty(f.Gateway.DownloadCalls);
         Assert.Empty(f.Email.Sent);
     }
 
@@ -156,7 +160,7 @@ public class CrmDocumentCopyAppServiceTests
         var result = await Send(f, Req(f, recordId: "REC-GUESS"));
 
         Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
-        Assert.Empty(f.Gateway.ContentCalls);
+        Assert.Empty(f.Gateway.DownloadCalls);
     }
 
     [Fact]
@@ -182,34 +186,266 @@ public class CrmDocumentCopyAppServiceTests
     }
 
     [Fact]
-    public async Task ForeignRecordsCrmReturnsAnyway_AreDroppedBeforeSelection()
-    {
-        // A source that ignores the scoping it was asked for must not widen what the customer can get.
-        var f = new DocumentServiceFixture();
-        f.Gateway.ReturnEverythingUnfiltered = true;
-        f.Own("REC-MINE");
-        f.Add(new CrmDocumentRecord("REC-THEIRS", "Their contract", "CRM-UNIT-1002", "CRM-CONTACT-2003"));
-        f.Add(new CrmDocumentRecord("REC-SAMEUNIT-OTHEROWNER", "Co-owner contract", "CRM-UNIT-1001", "CRM-CONTACT-2002"));
-
-        var result = await Send(f, Req(f));
-
-        Assert.Equal(CrmDocumentCopyStatus.Sent, result.Status);
-        Assert.Equal("REC-MINE", result.RecordId);
-        Assert.Equal(["REC-MINE"], f.Gateway.ContentCalls);
-    }
-
-    [Fact]
-    public async Task ContentThatDoesNotMatchTheOwnedRecord_IsNeverSent()
+    public async Task ContentForADifferentRecordThanSelected_IsNeverSent()
     {
         var f = new DocumentServiceFixture();
         f.Own("REC-1");
-        f.Gateway.Contents["REC-1"] = new CrmDocumentContent("REC-1", "CRM-UNIT-1002", "CRM-CONTACT-2003", [9], "application/pdf", "x.pdf");
+        f.Gateway.Contents["REC-1"] = new CrmDocumentContent("REC-OTHER", [9], "application/pdf", "x.pdf");
 
         var result = await Send(f, Req(f));
 
         Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
         Assert.Empty(f.Email.Sent);
         Assert.Equal(DocumentDeliveryStatus.Failed, Assert.Single(f.Deliveries.All).Status);
+    }
+
+    [Fact]
+    public async Task ALeadOtherThanTheVerifiedOne_IsAnOwnershipMismatch_EvenForTheSameCustomer_AndCrmIsNeverAskedForDocuments()
+    {
+        // The proof covers ONE unit. The customer's other unit (lead 12346) needs its own verification.
+        var f = new DocumentServiceFixture();
+        f.Gateway.Add(DocumentServiceFixture.CustomerId, DocumentServiceFixture.OtherLeadId, CrmDocumentType.Contract, "REC-OTHER");
+
+        var result = await Send(f, Req(f, leadId: DocumentServiceFixture.OtherLeadId));
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
+        Assert.Empty(f.Gateway.ListCalls);
+        Assert.Empty(f.Email.Sent);
+    }
+
+    [Fact]
+    public async Task ARecordOfTheCustomersOtherUnit_CannotBeFetchedThroughTheVerifiedUnitsLead()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-MINE");
+        f.Gateway.Add(DocumentServiceFixture.CustomerId, DocumentServiceFixture.OtherLeadId, CrmDocumentType.Contract, "REC-OTHER-UNIT");
+
+        var result = await Send(f, Req(f, recordId: "REC-OTHER-UNIT"));
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
+        Assert.Empty(f.Gateway.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task CrmIsAskedWithTheCustomerAndLeadFromTheVerifiedLookup_NeverFromTheCaller()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        await Send(f, Req(f));
+
+        Assert.Equal(DocumentServiceFixture.VerifiedPhone, f.Buyers.LastSearchedPhoneNumber);
+        Assert.Equal((CrmDocumentType.Contract, 9001, 12345), Assert.Single(f.Gateway.ListCalls));
+        Assert.Contains(f.Audit.Entries, e => e.Action == "CrmDocumentCopySent" && e.AfterValue!.Contains("CrmCustomerId=9001") && e.AfterValue.Contains("CrmLeadId=12345"));
+    }
+
+    // ---- server-side proof ----
+
+    [Theory]
+    [InlineData(VerificationMethod.Otp)]
+    [InlineData(VerificationMethod.AuthenticatedDigitalUser)]
+    [InlineData(VerificationMethod.ManualAgentConfirmation)]
+    public async Task ASessionWithoutTheServerRecordedProof_IsNeverEnough_WhateverMethodItNames(VerificationMethod method)
+    {
+        // An asserted "Otp" session — what the generic endpoint used to allow — carries no challenge and no CRM binding.
+        var f = new DocumentServiceFixture(method, serverProof: false);
+        f.Own("REC-1");
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.VerificationFailed, result.Status);
+        Assert.Equal(CrmDocumentCodes.VerificationFailed, result.Code);
+        Assert.Equal(0, f.Buyers.CallCount);
+        Assert.Empty(f.Gateway.ListCalls);
+        Assert.Empty(f.Email.Sent);
+    }
+
+    [Fact]
+    public async Task IfCrmNowSaysThePhoneBelongsToADifferentCustomer_TheProofNoLongerApplies()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Buyers.Returns(CrmBuyerLookupResult.Success(
+        [
+            new CrmBuyerMatchDto(
+                new CrmCustomerDto(7777, "Someone Else", null, DocumentServiceFixture.VerifiedPhone, "else@example.com"),
+                [DocumentServiceFixture.BuyerUnit(DocumentServiceFixture.LeadId, 77, "1204", "Tiger Tower A")])
+        ]));
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, result.Status);
+        Assert.Empty(f.Gateway.ListCalls);
+        Assert.Empty(f.Email.Sent);
+    }
+
+    [Fact]
+    public async Task IfTheBoundLeadIsNoLongerThisCustomersUnit_NothingIsReleased()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Buyers.Returns(CrmBuyerLookupResult.Success(
+        [
+            new CrmBuyerMatchDto(
+                new CrmCustomerDto(9001, "Ahmed", null, DocumentServiceFixture.VerifiedPhone, "customer@example.com"),
+                [DocumentServiceFixture.BuyerUnit(999, 99, "0001", "Elsewhere")])
+        ]));
+
+        Assert.Equal(CrmDocumentCopyStatus.OwnershipMismatch, (await Send(f, Req(f))).Status);
+        Assert.Empty(f.Gateway.ListCalls);
+    }
+
+    [Fact]
+    public async Task TheCustomerAndLeadCrmIsAskedAbout_AreTheOnesTheProofWasBoundTo()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+
+        await Send(f, Req(f));
+
+        Assert.Equal((CrmDocumentType.Contract, 9001, 12345), Assert.Single(f.Gateway.ListCalls));
+    }
+
+    // ---- which CRM customer ----
+
+    [Fact]
+    public async Task AVerifiedContactWithNoPhone_CannotBeResolvedToACrmCustomer()
+    {
+        var f = new DocumentServiceFixture(contactChannel: "ahmed@example.com");
+        f.Own("REC-1");
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.VerificationFailed, result.Status);
+        Assert.Equal(CrmDocumentCodes.CrmCustomerNotResolved, result.Code);
+        Assert.Equal(0, f.Buyers.CallCount);
+        Assert.Empty(f.Gateway.ListCalls);
+    }
+
+    [Theory]
+    [InlineData(CrmBuyerLookupOutcome.NotFound)]
+    [InlineData(CrmBuyerLookupOutcome.AmbiguousCustomerMatch)]
+    public async Task ANotFoundOrAmbiguousBuyer_ReleasesNothing(CrmBuyerLookupOutcome outcome)
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Buyers.Returns(new CrmBuyerLookupResult(outcome));
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.VerificationFailed, result.Status);
+        Assert.Equal(CrmDocumentCodes.CrmCustomerNotResolved, result.Code);
+        Assert.Empty(f.Gateway.ListCalls);
+    }
+
+    [Theory]
+    [InlineData(CrmBuyerLookupOutcome.Unavailable)]
+    [InlineData(CrmBuyerLookupOutcome.Unauthorized)]
+    [InlineData(CrmBuyerLookupOutcome.InvalidResponse)]
+    public async Task ABuyerLookupThatFails_IsSourceUnavailable(CrmBuyerLookupOutcome outcome)
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Buyers.Returns(new CrmBuyerLookupResult(outcome));
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.DocumentUnavailable, result.Status);
+        Assert.Equal(CrmDocumentCodes.DocumentSourceUnavailable, result.Code);
+        Assert.Empty(f.Email.Sent);
+    }
+
+    [Fact]
+    public async Task WhenCrmSaysSelectionRequired_EvenForOneRecord_NothingIsSent()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Gateway.ForceSelectionRequired = true;
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.SelectionRequired, result.Status);
+        Assert.Equal("Document", result.ChoiceKind);
+        Assert.Empty(f.Email.Sent);
+        Assert.Empty(f.Gateway.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task TheChoiceMadeAfterSelectionRequired_IsSent()
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Own("REC-2", "Addendum 1");
+
+        var result = await Send(f, Req(f, recordId: "REC-2"), key: "key-2");
+
+        Assert.Equal(CrmDocumentCopyStatus.Sent, result.Status);
+        Assert.Equal(["REC-2"], f.Gateway.DownloadCalls);
+    }
+
+    // ---- type mapping ----
+
+    [Theory]
+    [InlineData(CrmDocumentType.ReservationForm, "ReservationForm", 4)]
+    [InlineData(CrmDocumentType.Contract, "TigerContract", 5)]
+    [InlineData(CrmDocumentType.RegistrationReceipt, "RegistrationReceipt", 6)]
+    [InlineData(CrmDocumentType.UnitLayout, "Layout", null)]
+    public void PublicTypes_MapToCrmValues(CrmDocumentType type, string crmName, int? attachmentType)
+    {
+        Assert.Equal(crmName, CrmDocumentTypeMapping.ToCrmName(type));
+        Assert.Equal(attachmentType, CrmDocumentTypeMapping.ToCrmAttachmentType(type));
+    }
+
+    [Fact]
+    public void ThePublicTypeNamesAreUnchanged()
+    {
+        Assert.Equal(["Contract", "ReservationForm", "UnitLayout", "RegistrationReceipt"], Enum.GetNames<CrmDocumentType>());
+        Assert.Equal(1, (byte)CrmDocumentType.Contract);
+        Assert.Equal(3, (byte)CrmDocumentType.UnitLayout);
+    }
+
+    // ---- every CRM failure is its own answer ----
+
+    [Theory]
+    [InlineData(CrmDocumentSourceFailure.RequestRejected, CrmDocumentCodes.CrmRequestRejected, false)]
+    [InlineData(CrmDocumentSourceFailure.AuthenticationFailed, CrmDocumentCodes.CrmAuthenticationFailed, false)]
+    [InlineData(CrmDocumentSourceFailure.AccessDenied, CrmDocumentCodes.CrmAccessDenied, false)]
+    [InlineData(CrmDocumentSourceFailure.InvalidResponse, CrmDocumentCodes.CrmInvalidResponse, false)]
+    [InlineData(CrmDocumentSourceFailure.Unavailable, CrmDocumentCodes.DocumentSourceUnavailable, true)]
+    public async Task ACrmListingFailure_GetsItsOwnCode_AndNothingIsSent(CrmDocumentSourceFailure failure, string code, bool retryable)
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Gateway.ListFailure = failure;
+
+        var result = await Send(f, Req(f));
+
+        Assert.Equal(CrmDocumentCopyStatus.DocumentUnavailable, result.Status);
+        Assert.Equal(code, result.Code);
+        Assert.Equal(retryable, result.Retryable);
+        Assert.Empty(f.Email.Sent);
+        Assert.Empty(f.Deliveries.All); // nothing claimed
+    }
+
+    [Theory]
+    [InlineData(CrmDocumentSourceFailure.AuthenticationFailed, CrmDocumentCodes.CrmAuthenticationFailed)]
+    [InlineData(CrmDocumentSourceFailure.ReferenceRejected, CrmDocumentCodes.CrmInvalidResponse)]
+    [InlineData(CrmDocumentSourceFailure.Unavailable, CrmDocumentCodes.DocumentSourceUnavailable)]
+    public async Task ACrmDownloadFailure_FailsTheClaim_AndAFixedCrmCanBeRetriedWithTheSameKey(CrmDocumentSourceFailure failure, string code)
+    {
+        var f = new DocumentServiceFixture();
+        f.Own("REC-1");
+        f.Gateway.DownloadFailure = failure;
+
+        var failed = await Send(f, Req(f));
+        Assert.Equal(CrmDocumentCopyStatus.DocumentUnavailable, failed.Status);
+        Assert.Equal(code, failed.Code);
+        Assert.Equal(DocumentDeliveryStatus.Failed, Assert.Single(f.Deliveries.All).Status);
+        Assert.Empty(f.Email.Sent);
+
+        f.Gateway.DownloadFailure = null;
+        Assert.Equal(CrmDocumentCopyStatus.Sent, (await Send(f, Req(f))).Status);
+        Assert.Single(f.Email.Sent);
     }
 
     // ---- selection ----
@@ -228,7 +464,7 @@ public class CrmDocumentCopyAppServiceTests
         Assert.Equal("1204", result.Choices![0].UnitNumber);
         Assert.Empty(f.Email.Sent);
         Assert.Empty(f.Deliveries.All);       // nothing claimed: the follow-up uses its own key
-        Assert.Empty(f.Gateway.ContentCalls); // and nothing fetched
+        Assert.Empty(f.Gateway.DownloadCalls); // and nothing fetched
     }
 
     [Fact]
@@ -262,7 +498,7 @@ public class CrmDocumentCopyAppServiceTests
     {
         var f = new DocumentServiceFixture();
         f.Own("REC-1");
-        f.Gateway.Unavailable = true;
+        f.Gateway.ListFailure = CrmDocumentSourceFailure.Unavailable;
 
         var result = await Send(f, Req(f));
 
@@ -276,7 +512,7 @@ public class CrmDocumentCopyAppServiceTests
     {
         var f = new DocumentServiceFixture();
         f.Own("REC-1");
-        f.Gateway.Contents["REC-1"] = null;
+        f.Gateway.Contents["REC-1"] = null; // CRM listed it, then the file is gone (404 on the storage reference)
 
         var result = await Send(f, Req(f));
 
@@ -313,9 +549,8 @@ public class CrmDocumentCopyAppServiceTests
     [Fact]
     public async Task NoValidEmailOnRecord_IsDeliveryFailed_WithoutSending()
     {
-        var f = new DocumentServiceFixture();
+        var f = new DocumentServiceFixture(customerEmail: "not-an-email");
         f.Own("REC-1");
-        f.Gateway.CustomerEmail = "not-an-email";
 
         var result = await Send(f, Req(f));
 
@@ -521,7 +756,7 @@ public class CrmDocumentCopyAppServiceTests
     {
         var f = new DocumentServiceFixture();
         f.Own("REC-1");
-        f.Add(new CrmDocumentRecord("RES-1", "Reservation Form", f.Unit.CrmUnitId, f.Contact.CrmContactId), CrmDocumentType.ReservationForm);
+        f.Own("RES-1", "Reservation Form", CrmDocumentType.ReservationForm);
         await Send(f, Req(f), key: "shared-key");
 
         var other = await Send(f, Req(f, "ReservationForm"), key: "shared-key");

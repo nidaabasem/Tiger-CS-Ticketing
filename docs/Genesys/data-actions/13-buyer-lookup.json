@@ -1,0 +1,102 @@
+{
+  "name": "TigerCS - Buyer Lookup",
+  "integrationType": "custom-rest-actions",
+  "actionType": "custom",
+  "category": "TigerCS",
+  "config": {
+    "request": {
+      "requestUrlTemplate": "https://tigergroup.ae/api/genesys/verification/buyer-lookup",
+      "requestType": "POST",
+      "headers": {
+        "Authorization": "${authResponse.token_type} ${authResponse.access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "requestTemplate": "{\"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\"}"
+    },
+    "response": {
+      "translationMap": {
+        "status": "$.status",
+        "code": "$.code",
+        "message": "$.message",
+        "challengeId": "$.challengeId",
+        "maskedDestination": "$.maskedDestination",
+        "units": "$.units"
+      },
+      "translationMapDefaults": {
+        "code": "\"\"",
+        "message": "\"\"",
+        "challengeId": "\"\"",
+        "maskedDestination": "\"\"",
+        "units": "[]"
+      },
+      "successTemplate": "{\"status\": ${status}, \"code\": ${code}, \"message\": ${message}, \"challengeId\": ${challengeId}, \"maskedDestination\": ${maskedDestination}, \"units\": ${units}}"
+    }
+  },
+  "contract": {
+    "input": {
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Buyer Lookup",
+        "type": "object",
+        "required": [
+          "phoneNumber"
+        ],
+        "properties": {
+          "phoneNumber": {
+            "type": "string",
+            "description": "The caller's number (Call.Ani). Only the key CRM is searched by - it proves nothing."
+          }
+        }
+      }
+    },
+    "output": {
+      "successSchema": {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "title": "TigerCS - Buyer Lookup result",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Found, CodeSent, AlreadySent, UnitSelectionRequired. Failures are error responses with a code."
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "challengeId": {
+            "type": "string"
+          },
+          "maskedDestination": {
+            "type": "string",
+            "description": "Masked email the code went to - safe to read back."
+          },
+          "units": {
+            "type": "array",
+            "description": "Units the customer can verify for.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "crmUnitId": {
+                  "type": "string"
+                },
+                "leadId": {
+                  "type": "integer"
+                },
+                "unitNumber": {
+                  "type": "string"
+                },
+                "projectName": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "secure": false
+}

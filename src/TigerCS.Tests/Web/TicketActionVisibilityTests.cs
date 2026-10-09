@@ -266,10 +266,15 @@ public sealed class TicketActionVisibilityTests
         Assert.True(TicketActions.CanChangeStatus(
             Context(Owner, [Roles.DepartmentEmployee], currentOwner: Owner, viewerDepartmentIds: [])));
 
-        foreach (var supervisory in new[] { Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo })
+        foreach (var supervisory in new[] { Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager })
         {
             Assert.True(TicketActions.CanChangeStatus(Context(Stranger, [supervisory], viewerDepartmentIds: [])));
         }
+
+        // Chairman/CEO is read-only: no status control, even for a ticket it somehow owns.
+        Assert.False(TicketActions.CanChangeStatus(Context(Stranger, [Roles.ChairmanCeo], viewerDepartmentIds: [])));
+        Assert.False(TicketActions.CanChangeStatus(
+            Context(Owner, [Roles.ChairmanCeo], currentOwner: Owner, viewerDepartmentIds: [])));
 
         Assert.True(TicketActions.CanChangeStatus(Context(Stranger, [Roles.DepartmentHead], viewerDepartmentIds: [TicketDepartmentId])));
         Assert.True(TicketActions.CanChangeStatus(Context(Stranger, [Roles.SystemAdministrator], viewerDepartmentIds: [])));

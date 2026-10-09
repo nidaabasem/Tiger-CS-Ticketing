@@ -77,7 +77,7 @@ public sealed class GenesysAgentHandoffAppService(
         AgentHandoffMode? mode = null;
         if (!string.IsNullOrWhiteSpace(request.Mode))
         {
-            if (!Enum.TryParse<AgentHandoffMode>(request.Mode, ignoreCase: true, out var parsed))
+            if (!NamedEnum.TryParse<AgentHandoffMode>(request.Mode, out var parsed))
             {
                 return GenesysHandoffResult.Failure(
                     GenesysHandoffOutcome.InvalidMode,
@@ -93,8 +93,7 @@ public sealed class GenesysAgentHandoffAppService(
         HandoffTrigger? trigger = null;
         if (!string.IsNullOrWhiteSpace(request.Trigger))
         {
-            if (!Enum.TryParse<HandoffTrigger>(request.Trigger, ignoreCase: true, out var parsedTrigger)
-                || !Enum.IsDefined(parsedTrigger))
+            if (!NamedEnum.TryParse<HandoffTrigger>(request.Trigger, out var parsedTrigger))
             {
                 return GenesysHandoffResult.Failure(
                     GenesysHandoffOutcome.InvalidTrigger,

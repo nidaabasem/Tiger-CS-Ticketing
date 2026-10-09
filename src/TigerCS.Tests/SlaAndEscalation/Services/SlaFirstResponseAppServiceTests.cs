@@ -121,6 +121,31 @@ public class SlaFirstResponseAppServiceTests
         Assert.False((await h.Sla.SlaInstances.GetCurrentAsync(h.Ticket.TicketId))!.FirstResponseBreached);
     }
 
+    /// <summary>Backdating guard: a hand-recorded response cannot predate the ticket (only a Genesys call answer may).</summary>
+    [Fact]
+    public async Task AManualResponseBeforeTicketCreation_IsRejected_AndRecordsNothing()
+    {
+        var h = await CreateAsync(CreatedAt.AddMinutes(30));
+
+        var result = await h.Service.RecordAsync(
+            h.OwnerId, [Roles.CsAgent], h.Ticket.TicketId, Request(CreatedAt.AddMinutes(-1)));
+
+        Assert.Equal(SlaOperationOutcome.InvalidRequest, result.Outcome);
+        Assert.Null(h.Ticket.FirstHumanResponseAtUtc);
+    }
+
+    [Fact]
+    public async Task AResponseInTheFuture_IsRejected_AndRecordsNothing()
+    {
+        var h = await CreateAsync(CreatedAt.AddMinutes(30));
+
+        var result = await h.Service.RecordAsync(
+            h.OwnerId, [Roles.CsAgent], h.Ticket.TicketId, Request(CreatedAt.AddHours(5)));
+
+        Assert.Equal(SlaOperationOutcome.InvalidRequest, result.Outcome);
+        Assert.Null(h.Ticket.FirstHumanResponseAtUtc);
+    }
+
     [Fact]
     public async Task AnUnknownSource_IsRejected()
     {
@@ -211,7 +236,6 @@ public class SlaFirstResponseAppServiceTests
     [InlineData(Roles.CsSupervisor)]
     [InlineData(Roles.CsManager)]
     [InlineData(Roles.GeneralManager)]
-    [InlineData(Roles.ChairmanCeo)]
     public async Task SupervisoryRoles_MayRecordOnAnotherAgentsTicket(string role)
     {
         var h = await CreateAsync(CreatedAt.AddMinutes(20));
@@ -219,6 +243,19 @@ public class SlaFirstResponseAppServiceTests
         var result = await h.Service.RecordAsync(Guid.NewGuid(), [role], h.Ticket.TicketId, Request());
 
         Assert.Equal(SlaOperationOutcome.Success, result.Outcome);
+    }
+
+    /// <summary>Chairman/CEO (and Reporting User) are read-only: they cannot record a first response, even on a ticket they own.</summary>
+    [Theory]
+    [InlineData(Roles.ChairmanCeo)]
+    [InlineData(Roles.ReportingUser)]
+    public async Task ReadOnlyRoles_AreRefused(string role)
+    {
+        var h = await CreateAsync(CreatedAt.AddMinutes(20));
+
+        var result = await h.Service.RecordAsync(Guid.NewGuid(), [role], h.Ticket.TicketId, Request());
+
+        Assert.Equal(SlaOperationOutcome.Forbidden, result.Outcome);
     }
 
     /// <summary>A Department Head may record for a ticket in a department they belong to, and not otherwise.</summary>

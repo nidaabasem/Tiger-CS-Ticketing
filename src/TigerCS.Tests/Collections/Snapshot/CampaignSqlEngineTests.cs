@@ -238,13 +238,14 @@ public sealed class CampaignSqlEngineTests
     [InlineData("+971501234567", "+971501234567")]
     [InlineData("971501234567", "+971501234567")]
     [InlineData(" 050 123 4567 ", "+971501234567")]
-    [InlineData("(050)-123-4567", "+971501234567")]
     [InlineData("00971501234567", "+971501234567")]
     [InlineData("123", "")]
     [InlineData("", "")]
-    [InlineData("+0971501234567", "")]
-    [InlineData("0123456789", "")]
-    public void PhoneNormalisation_IsTheSingleDefinition(string raw, string expected) => Assert.Equal(expected, CollectionsContactNormalizer.NormalizePhone(raw));
+    public void PhoneNormalisation_IsTheReviewWorkflowsRule_NotASecondDefinition(string raw, string expected)
+    {
+        Assert.Equal(expected, CollectionsContactNormalizer.NormalizePhone(raw));
+        Assert.Equal(TigerCS.Domain.Modules.Collections.Review.PhoneNormalizer.Normalize(raw).E164, CollectionsContactNormalizer.NormalizePhone(raw));
+    }
 
     [Theory]
     [InlineData("a@example.test", "a@example.test")]

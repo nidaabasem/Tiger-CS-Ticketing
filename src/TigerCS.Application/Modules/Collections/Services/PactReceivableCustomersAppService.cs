@@ -90,10 +90,10 @@ public sealed class PactReceivableCustomersAppService(
         var reportMonth = month ?? today.Month;
         var periodStart = new DateOnly(reportYear, reportMonth, 1);
         var periodEnd = new DateOnly(reportYear, reportMonth, DateTime.DaysInMonth(reportYear, reportMonth));
-        // Instalment due-date window (inclusive; To covers its whole day). Default: 1 January of the report year through the
+        // Instalment due-date window (inclusive; To covers its whole day). Default: the configured receivables start date through the
         // end of the reporting month. It only limits WHICH instalments are listed; the Due/Overdue classification below still
         // depends on the reporting month alone, so a window never turns a future instalment into an overdue one.
-        var from = dateFrom ?? new DateOnly(reportYear, 1, 1);
+        var from = dateFrom ?? DateOnly.FromDateTime(sourceOptions.StartDate);
         var to = dateTo ?? periodEnd;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.InvalidRequest,

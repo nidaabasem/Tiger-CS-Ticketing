@@ -41,7 +41,7 @@ public sealed class PactInstalmentsAppService(
         var monthStart = new DateOnly(today.Year, today.Month, 1);
         var monthEnd = CollectionsDateRanges.Month(today.Year, today.Month).To;
         // Default window: 1 January of the current year through the end of the current month. Both ends are editable; a month selector sets them to a calendar month.
-        var from = dateFrom ?? new DateOnly(today.Year, 1, 1);
+        var from = dateFrom ?? DateOnly.FromDateTime(sourceOptions.StartDate);
         var to = dateTo ?? monthEnd;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "From date must not be after To date, and both must be within 2000-2100.");

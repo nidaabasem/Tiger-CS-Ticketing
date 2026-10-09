@@ -51,10 +51,10 @@ Pages -> API -> dbo.usp_Collections_GetReceivablesPage / GetInstalmentsPage / Ge
 | **Neither** | `DueDate` after the as-of month end ("Outstanding"): never overdue, never listed on the Receivables page. A future instalment is never classified overdue. |
 | **Campaign stages** | Unchanged: Overdue reminder `< preview date - 1 month`; Current month = whole preview month; Follow-up = whole month; Legal notice = previous calendar month (> 1,500); Legal referral `< preview date - 3 months` (> 20,000). The window is an extra reviewer filter on top of these rules and can only remove instalments; `RangeNotes` flag when it does. |
 
-Defaults: **From = 1 January of the preview/report year** (2026-01-01 for 2026). **To** = month end for *Current-month* and *Follow-up*
+Defaults: **From = the configured receivables start date** (`CollectionsSource:PactReceivables:StartDate`, 2026-01-01 by default; merged with the review workflow, which found that a calendar-year floor silently empties the overdue and legal stages from January onwards). **To** = month end for *Current-month* and *Follow-up*
 stages and for the Receivables page (so Due and Overdue are both complete); for the other campaign stages the preview date. The inputs are
 pre-filled with the effective values; in Campaigns, unedited defaults follow stage/preview-date changes in the browser and edited dates are kept.
-1 January is **only the default From, never a minimum**: any From/To within 2000-2100 can be selected (e.g. across a year boundary). With the default From, instalments due before 1 January of that year are **not listed** (the page says so); lower From to include them.
+The start date is **only the default From, never a minimum**: any From/To within 2000-2100 can be selected (e.g. across a year boundary). With the default From, instalments due before the start date are **not listed**; lower From to include them.
 Customer totals are sums of the *listed* instalments.
 
 ## 3. Towers
@@ -234,7 +234,18 @@ Dictionary growth: one row per distinct phone / e-mail text ever seen (50 k rows
 Arabic text, phone and unit-code terms, legal-notice release on/off) and compare **every field of every row in order on first / second / last page, the totals, the snapshot status and both CSV exports byte for byte** (or the identical refusal). Hand-written edge cases (`tests/local-sqlserver/03_edge_cases.sql`: ambiguous same-day instalments, first-row tie-breaks,
 contradictory status in any case, tenant allocation ambiguity (all three kinds), phones that normalise equal, name case / spacing, project trailing space, invalid / valid e-mails, threshold boundaries 1,500 / 1,500.01 / 1,499.99 / 20,000 / 20,000.01, minimum boundaries 99.99 / 100 / 100.01,
 amount precision, blank and `0` unit codes, tenant id case) are loaded; a test asserts every review flag occurs in the results. Further tests: lazy normalisation (dictionary and units reset), fallback when the snapshot is unprepared or contains edge-whitespace text, stored normalisations equal the C# functions. 98 tests, all passing.
-A first run found a real bug (SQL three-valued logic made a search that matched nothing return rows); it is fixed and covered.
+A first run found a real bug (SQL three-valued logic made a search that matched nothing return rows); it is fixed and covered. After the merge the apartment-list procedure was also made binary-exact (tenant ids that differ only by letter case are different customers, as in the application).
+
+## 4e. Review, approval and Genesys dispatch on the snapshot (merge of #80)
+
+The review refresh, the dispatch revalidation and the paid-after-upload sweep read the **same local snapshot** as the Campaigns preview, so the three flows agree:
+
+* **Same filters.** All of them ask the source for the configured start date and the **same minimum outstanding amount** (`DefaultMinOutstandingAmount`, 100; remaining >= value per instalment) - a 99.99 instalment is nobody's candidate, a 100.00 one is everybody's.
+  The stage rule, the amount rule, the phone rule (`Review.PhoneNormalizer`, also used by the campaign engine's contact dictionary) and the money normalisation are single definitions shared by preview, review and the SQL engine. A test pins that preview, review records, export and the contacts uploaded to the (scripted) Genesys client carry identical units and amounts.
+* **Payment status.** `usp_Collections_GetReceivables` now also returns `OriginalAmount` / `PaidAmount` (NULL unless the source returned and reconciled them), which become the rows' `PlanAmount` / `AllocatedAmount`; with the deployed procedures they stay NULL and every open balance stays "Unknown" (unsendable), exactly as with a live read.
+* **Freshness is a dispatch gate, not a hint.** Revalidation requires a snapshot that is fresh (`MaxAgeMinutes`) and covers the window; otherwise it throws and the dispatch ends *Failed* with nothing sent (previously a missing record meant "paid or settled"; with a stale local snapshot that would have excluded everything). The review refresh refuses a snapshot that is not loaded or does not cover the window; a merely stale snapshot is still flagged on every record through its read time. The approval check (exact count + fingerprint), idempotency, lease, revalidation of amounts and per-type batching are untouched.
+* **Cost.** Review and revalidation no longer call PACT per run; they read the snapshot (one read per company). Revalidation therefore sees data up to one refresh interval old, bounded by the freshness gate.
+* Customer data: nothing was sent anywhere in these tests; the Genesys client is a scripted fake and all contacts are synthetic.
 
 ## 5. Scheduling (SQL Server Agent is **not** used)
 

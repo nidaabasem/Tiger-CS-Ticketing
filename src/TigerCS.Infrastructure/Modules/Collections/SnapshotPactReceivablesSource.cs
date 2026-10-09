@@ -81,7 +81,8 @@ public sealed class SnapshotPactReceivablesSource(
                     (int)reader.GetInt64(reader.GetOrdinal("UnitId")), reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("ProjectCode")),
                     reader.GetString(reader.GetOrdinal("VoucherNumber")), reader.GetString(reader.GetOrdinal("ChequeNumber")),
                     reader.GetDateTime(reader.GetOrdinal("DueDate")), reader.GetDecimal(reader.GetOrdinal("Amount")), Text(reader, "SourceStatus") ?? "",
-                    Text(reader, "TowerNumber"), Int(reader, "TowerId"), Text(reader, "TowerName")));
+                    Text(reader, "TowerNumber"), Int(reader, "TowerId"), Text(reader, "TowerName"),
+                    PlanAmount: NullableDecimal(reader, "OriginalAmount"), AllocatedAmount: NullableDecimal(reader, "PaidAmount")));   // verified breakdown only (V2 shape); never invented
                 if (rows.Count > limit)
                     throw new PactReceivablesSourceException("The receivables snapshot exceeded the configured row limit; no partial list was returned.");
             }

@@ -4,6 +4,7 @@ using TigerCS.Domain.Audit;
 using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.Collections;
+using TigerCS.Domain.Modules.Collections.Review;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -40,11 +41,9 @@ namespace TigerCS.Infrastructure.Persistence;
 /// </para>
 ///
 /// <para>
-/// Two groups of MVP-Data-Dictionary.md §2.1–2.27 remain deliberately
-/// unmapped, per MVP-Implementation-Backlog.md S-04's "25 of 27" scope:
-/// <c>TicketSlaPausePeriods</c> (§0.2 — SLA pause/resume is not built in this
-/// pilot) and <c>PriorityDowngradeRequests</c> (§0 — downgrades are hard-
-/// disabled). Genesys and attachments arrive with their own increments.
+/// <c>TicketSlaPausePeriods</c> (ISSUE-018 SLA pause/resume) and
+/// <c>PriorityDowngradeRequests</c> (ISSUE-023 Department-Head approval) are
+/// both mapped. Genesys and attachments arrive with their own increments.
 /// </para>
 /// </summary>
 public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
@@ -62,6 +61,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<VerificationSession> VerificationSessions => Set<VerificationSession>();
     public DbSet<CrmDocumentDeliveryRequest> CrmDocumentDeliveryRequests => Set<CrmDocumentDeliveryRequest>();
+    public DbSet<CustomerOtpChallenge> CustomerOtpChallenges => Set<CustomerOtpChallenge>();
 
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -97,7 +97,11 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<TicketSlaInstance> TicketSlaInstances => Set<TicketSlaInstance>();
 
+    public DbSet<TicketSlaPausePeriod> TicketSlaPausePeriods => Set<TicketSlaPausePeriod>();
+
     public DbSet<TicketEscalation> TicketEscalations => Set<TicketEscalation>();
+
+    public DbSet<PriorityDowngradeRequest> PriorityDowngradeRequests => Set<PriorityDowngradeRequest>();
 
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
@@ -141,6 +145,16 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<CollectionsReminderEvent> CollectionsReminderEvents => Set<CollectionsReminderEvent>();
 
+    public DbSet<CollectionsReviewRun> CollectionsReviewRuns => Set<CollectionsReviewRun>();
+
+    public DbSet<CollectionsReviewRecord> CollectionsReviewRecords => Set<CollectionsReviewRecord>();
+
+    public DbSet<CollectionsDispatch> CollectionsDispatches => Set<CollectionsDispatch>();
+
+    public DbSet<CollectionsDispatchItem> CollectionsDispatchItems => Set<CollectionsDispatchItem>();
+
+    public DbSet<CollectionsGenesysBatch> CollectionsGenesysBatches => Set<CollectionsGenesysBatch>();
+
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
 
     public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
@@ -161,6 +175,7 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new ContactReferenceConfiguration());
         builder.ApplyConfiguration(new VerificationSessionConfiguration());
         builder.ApplyConfiguration(new CrmDocumentDeliveryRequestConfiguration());
+        builder.ApplyConfiguration(new CustomerOtpChallengeConfiguration());
 
         builder.ApplyConfiguration(new AuditEntryConfiguration());
 
@@ -181,7 +196,9 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new BusinessCalendarWorkingDayConfiguration());
         builder.ApplyConfiguration(new HolidayConfiguration());
         builder.ApplyConfiguration(new TicketSlaInstanceConfiguration());
+        builder.ApplyConfiguration(new TicketSlaPausePeriodConfiguration());
         builder.ApplyConfiguration(new TicketEscalationConfiguration());
+        builder.ApplyConfiguration(new PriorityDowngradeRequestConfiguration());
         builder.ApplyConfiguration(new IdempotencyRecordConfiguration());
         builder.ApplyConfiguration(new OutboxMessageConfiguration());
         builder.ApplyConfiguration(new NotificationConfiguration());
@@ -205,6 +222,11 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new CollectionsReminderConfiguration());
         builder.ApplyConfiguration(new CollectionsReminderChannelConfiguration());
         builder.ApplyConfiguration(new CollectionsReminderEventConfiguration());
+        builder.ApplyConfiguration(new CollectionsReviewRunConfiguration());
+        builder.ApplyConfiguration(new CollectionsReviewRecordConfiguration());
+        builder.ApplyConfiguration(new CollectionsDispatchConfiguration());
+        builder.ApplyConfiguration(new CollectionsDispatchItemConfiguration());
+        builder.ApplyConfiguration(new CollectionsGenesysBatchConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
         builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());

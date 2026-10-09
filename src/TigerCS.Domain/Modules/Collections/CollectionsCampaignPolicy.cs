@@ -71,11 +71,18 @@ public static class CollectionsCampaignPolicy
         _ => 0m
     };
 
-    public static CampaignAmount Evaluate(IEnumerable<CampaignInstalment> instalments,
+    /// <summary>The instalments that count for <paramref name="stage"/> on <paramref name="businessDate"/> (calendar-month conventions).</summary>
+    public static IReadOnlyList<CampaignInstalment> Qualifying(IEnumerable<CampaignInstalment> instalments,
         CollectionsCampaignStage stage, DateOnly businessDate)
     {
         var (from, toExclusive) = StageRange(stage, businessDate);
-        var rows = instalments.Where(i => i.RemainingAmount > 0 && (from is null || i.DueDate >= from) && i.DueDate < toExclusive).ToList();
+        return instalments.Where(i => i.RemainingAmount > 0 && (from is null || i.DueDate >= from) && i.DueDate < toExclusive).ToList();
+    }
+
+    public static CampaignAmount Evaluate(IEnumerable<CampaignInstalment> instalments,
+        CollectionsCampaignStage stage, DateOnly businessDate)
+    {
+        var rows = Qualifying(instalments, stage, businessDate);
         if (rows.Count == 0) return new(0m, null, "NoQualifyingBalance");
         var earliest = rows.Min(i => i.DueDate);
         // The existing source cannot distinguish valid same-date instalments from duplicated allocations.

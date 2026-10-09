@@ -29,3 +29,6 @@ PublishProfiles/
 # OS files
 .DS_Store
 Thumbs.db
+
+# release packages built by tools/build-release.sh
+/artifacts/

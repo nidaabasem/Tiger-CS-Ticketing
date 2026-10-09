@@ -95,6 +95,8 @@ public class AdminWorkflowAppServiceTests
         Assert.Equal(AdminOutcome.ValidationFailed, invalidStep.Outcome);
         var badKind = await f.Service.AddStepAsync(Admin, versionId, new SaveStepRequestDto("x", (WorkflowStepKind)77, false, null));
         Assert.Equal(AdminOutcome.ValidationFailed, badKind.Outcome);
+        var retired = await f.Service.AddStepAsync(Admin, versionId, new SaveStepRequestDto("Waiting", WorkflowStepKind.PendingInternal, false, null));
+        Assert.Equal(AdminOutcome.ValidationFailed, retired.Outcome);
         Assert.Contains(f.Audit.Entries, e => e.Action == "AdminAddWorkflowStep" && e.ActorEmployeeId == Admin);
     }
 

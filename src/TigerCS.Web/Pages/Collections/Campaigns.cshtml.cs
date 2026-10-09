@@ -11,7 +11,7 @@ using TigerCS.Web.Services.Api;
 namespace TigerCS.Web.Pages.Collections;
 
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
+public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extensions.Configuration.IConfiguration configuration) : PageModel
 {
     public string Stage { get; private set; } = "OverdueReminder";
     public DateOnly? BusinessDate { get; private set; }
@@ -120,8 +120,13 @@ public sealed class CampaignsModel(CollectionsApiClient api) : PageModel
 
     public string? LoadNotice { get; private set; }
 
-    /// <summary>Defaults the browser re-derives for UNEDITED dates: 1 Jan of the preview year; month end for current-month/follow-up, else the preview date.</summary>
-    public DateOnly DefaultFrom => new((BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday()).Year, 1, 1);
+    /// <summary>The configured receivables start date (CollectionsSource:PactReceivables:StartDate, as in the API; 2026-01-01 when absent). Overdue and legal stages
+    /// look back months, so an unedited From is this date and not 1 January of the preview year - the same default the API applies to a blank From.</summary>
+    public DateOnly ConfiguredStart => DateTime.TryParse(configuration["CollectionsSource:PactReceivables:StartDate"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+        ? DateOnly.FromDateTime(d) : DateOnly.FromDateTime(new TigerCS.Application.Modules.Collections.PactReceivablesOptions().StartDate);
+
+    /// <summary>Defaults the browser re-derives for UNEDITED dates: the configured start date; month end for current-month/follow-up, else the preview date.</summary>
+    public DateOnly DefaultFrom => ConfiguredStart;
     public DateOnly DefaultTo => CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage)
         ? CollectionsCampaignPolicy.DefaultDateTo(stage, BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday())
         : BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();

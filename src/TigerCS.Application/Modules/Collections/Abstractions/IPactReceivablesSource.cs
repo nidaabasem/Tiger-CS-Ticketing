@@ -34,7 +34,8 @@ public sealed record PactReceivableInstalment(
     int CompanyId, string TenantId, string FullName, string Mobile, string Email,
     int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
     string ChequeNumber, DateTime DueDate, decimal Amount, string SourceStatus,
-    string? TowerNumber = null, int? TowerId = null, string? TowerName = null);
+    string? TowerNumber = null, int? TowerId = null, string? TowerName = null,
+    decimal? PlanAmount = null, bool AmountIsFloatingPoint = false, decimal? AllocatedAmount = null);
 
 public sealed record PactReceivablesSnapshot(
     IReadOnlyList<PactReceivableInstalment> Items,

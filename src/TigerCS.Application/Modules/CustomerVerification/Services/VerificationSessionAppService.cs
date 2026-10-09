@@ -77,6 +77,18 @@ public sealed class VerificationSessionAppService(
         string? idempotencyKey,
         CancellationToken cancellationToken = default)
     {
+        // "Otp" is evidence TigerCS produced itself (CustomerOtpAppService), not a
+        // label a caller may attach. Refused here, before anything is read or
+        // written, so no other session-creation path can mint an OTP session.
+        // Every other method (including the agent's ManualAgentConfirmation)
+        // keeps its existing, agent-asserted behaviour — and none of those is
+        // accepted by the chatbot document flow, which requires the proof.
+        if (Enum.TryParse<VerificationMethod>(request.VerificationMethod, ignoreCase: true, out var requestedMethod)
+            && requestedMethod == VerificationMethod.Otp)
+        {
+            return VerificationSessionResult.OtpRequiresChallenge();
+        }
+
         if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
             var replay = await sessionRepository.GetByIdempotencyKeyAsync(agentEmployeeId, idempotencyKey, cancellationToken);
@@ -150,6 +162,36 @@ public sealed class VerificationSessionAppService(
 
         return VerificationSessionResult.Success(ToDto(session));
     }
+
+    /// <summary>
+    /// Builds — and stages, without saving — the OTP-verified session for a
+    /// challenge that has just been proven. The caller saves it in the same
+    /// unit of work as the spent challenge, so "challenge verified" and "session
+    /// exists" are one atomic fact. Public only to <c>CustomerOtpAppService</c>.
+    /// </summary>
+    internal async Task<VerificationSession> StageOtpVerifiedSessionAsync(
+        Guid integrationEmployeeId, UnitReference unit, ContactReference contact, CustomerOtpChallenge challenge,
+        CancellationToken cancellationToken = default)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var session = new VerificationSession(
+            Guid.NewGuid(), integrationEmployeeId, unit.UnitReferenceId, contact.ContactReferenceId,
+            unit.UnitNumber, unit.PropertyName, unit.TowerName, unit.UnitType,
+            contact.DisplayName, contact.ContactChannel, now, now.Add(SessionLifetime), idempotencyKey: null);
+
+        session.AttachOtpProof(challenge.CustomerOtpChallengeId, challenge.CrmCustomerId, challenge.CrmLeadId);
+        session.Confirm(now, VerificationMethod.Otp);
+
+        await sessionRepository.AddAsync(session, cancellationToken);
+        await auditWriter.WriteAsync(
+            integrationEmployeeId, "ConfirmVerificationSession", "VerificationSession", session.VerificationSessionId.ToString(),
+            beforeValue: null,
+            afterValue: $"UnitReferenceId={unit.UnitReferenceId};ContactReferenceId={contact.ContactReferenceId};VerificationMethod=Otp;ProofChallengeId={challenge.CustomerOtpChallengeId}",
+            correlationId: Guid.NewGuid(), cancellationToken);
+        return session;
+    }
+
+    internal VerificationSessionResponseDto ToResponse(VerificationSession session) => ToDto(session);
 
     public async Task<VerificationSessionResult> GetAsync(
         Guid verificationSessionId, Guid callerEmployeeId, CancellationToken cancellationToken = default)

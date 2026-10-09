@@ -1,0 +1,10 @@
+{
+  "customerId": 9001,
+  "leadId": 12345,
+  "count": 2,
+  "selectionRequired": true,
+  "attachments": [
+    { "attachmentId": 5001, "fileUrl": "/Uploads/Contracts/5001.pdf", "name": "Sale and Purchase Agreement.pdf" },
+    { "attachmentId": 5002, "fileUrl": "/Uploads/Contracts/5002.pdf", "name": "Addendum 1.pdf" }
+  ]
+}

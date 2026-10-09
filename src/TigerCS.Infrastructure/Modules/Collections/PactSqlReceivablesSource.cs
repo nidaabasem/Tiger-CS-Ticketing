@@ -116,10 +116,20 @@ public sealed class PactSqlReceivablesSource(
                 if (rowCompany != company)
                     throw new PactReceivablesSourceException("The PACT report returned an unexpected company identity.");
                 var amount = Convert.ToDecimal(reader.GetValue(columns["Amount"]), CultureInfo.InvariantCulture);
+                // The deployed procedures compute Amount in float; the reviewed V2 returns decimal(19,4). Record which, so floating-point
+                // residue (e.g. 1E-12 on a settled instalment) can be told apart from a genuine sub-fils source amount.
+                var amountType = reader.GetFieldType(columns["Amount"]);
+                var amountIsFloat = amountType == typeof(double) || amountType == typeof(float);
+                // PlanAmount (V2 only) lets the review separate Unpaid from PartiallyPaid; the deployed procedures omit it.
+                decimal? plan = columns.TryGetValue("PlanAmount", out var planIndex) && !reader.IsDBNull(planIndex)
+                    ? Convert.ToDecimal(reader.GetValue(planIndex), CultureInfo.InvariantCulture) : null;
+                // AllocatedAmount (V2 only) is the paid part of the instalment: original = paid + remaining.
+                decimal? allocated = columns.TryGetValue("AllocatedAmount", out var allocatedIndex) && !reader.IsDBNull(allocatedIndex)
+                    ? Convert.ToDecimal(reader.GetValue(allocatedIndex), CultureInfo.InvariantCulture) : null;
                 rows.Add(new PactReceivableInstalment(rowCompany, Text("TenantID"), Text("FullName"), Text("Mobile"), Text("Email"),
                     reader.IsDBNull(columns["UnitID"]) ? null : Convert.ToInt32(reader.GetValue(columns["UnitID"]), CultureInfo.InvariantCulture),
                     Text("UnitCode"), Text("ProjectCode"), Text("VoucherNumber"), Text("ChequeNumber"),
-                    reader.GetDateTime(columns["DueDate"]), amount, Text("Status")));
+                    reader.GetDateTime(columns["DueDate"]), amount, Text("Status"), PlanAmount: plan, AmountIsFloatingPoint: amountIsFloat, AllocatedAmount: allocated));
                 if (amount == 0) zeroRows++;
                 if (rows.Count > Math.Clamp(options.MaxSourceRows, 1, 1000000))
                     throw new PactReceivablesSourceException("The PACT report exceeded the configured source-row limit; no partial list was returned.");

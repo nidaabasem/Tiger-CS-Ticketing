@@ -3,6 +3,7 @@ using Hangfire.SqlServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Application.Modules.Collections;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 
 namespace TigerCS.Infrastructure.BackgroundJobs;
@@ -38,6 +39,9 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<CollectionsReminderScheduleJob>();
         services.AddScoped<CollectionsReceivablesRefreshJob>();
         services.AddScoped<CollectionsReceivablesRangeLoadJob>();
+        services.AddScoped<CollectionsReviewRefreshJob>();
+        services.AddScoped<CollectionsDispatchJob>();
+        services.AddScoped<CollectionsSuppressionJob>();
         // Holds only the scope factory; it opens one scope per candidate itself.
         services.AddScoped<ChatbotInactivityCloseJob>();
 
@@ -46,6 +50,7 @@ public static class BackgroundJobServiceCollectionExtensions
             // See NoOpSlaDeadlineScheduler's remarks: detection logic is
             // unaffected, only its timing.
             services.AddSingleton<ISlaDeadlineScheduler, NoOpSlaDeadlineScheduler>();
+            services.AddSingleton<IReviewJobScheduler, NoOpReviewJobScheduler>();
             return services;
         }
 
@@ -72,6 +77,7 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddHangfireServer();
         services.AddScoped<TigerCS.Application.Modules.Collections.Abstractions.IReceivablesRangeLoader, HangfireReceivablesRangeLoader>();
         services.AddSingleton<ISlaDeadlineScheduler, HangfireSlaDeadlineScheduler>();
+        services.AddSingleton<IReviewJobScheduler, HangfireReviewJobScheduler>();
 
         return services;
     }
@@ -229,5 +235,24 @@ public static class BackgroundJobServiceCollectionExtensions
         {
             manager.Trigger(CollectionsReceivablesRefreshJob.RecurringJobId);
         }
+    }
+
+    /// <summary>
+    /// Registers the paid-after-upload suppression sweep only while Genesys upload and its suppression are both enabled, and removes it otherwise.
+    /// </summary>
+    public static void UseTigerCsRecurringGenesysSuppression(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, GenesysOutboundOptions genesysOptions, string timeZoneId)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        if (!backgroundJobOptions.Enabled) return;
+
+        var manager = services.GetRequiredService<IRecurringJobManager>();
+        if (!genesysOptions.Enabled || !genesysOptions.SuppressionEnabled)
+        {
+            manager.RemoveIfExists(CollectionsSuppressionJob.RecurringJobId);
+            return;
+        }
+        manager.AddOrUpdate<CollectionsSuppressionJob>(CollectionsSuppressionJob.RecurringJobId, job => job.RunAsync(CancellationToken.None),
+            genesysOptions.SuppressionSweepCron, new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId) });
     }
 }

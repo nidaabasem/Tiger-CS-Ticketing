@@ -17,7 +17,7 @@
             const y = +m[1], mo = +m[2];
             const wholeMonth = stage.value === 'CurrentMonthReminder' || stage.value === 'FollowUpReminder';
             const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
-            return { from: `${y}-01-01`, to: wholeMonth ? `${y}-${pad(mo)}-${pad(last)}` : date.value };
+            return { from: from.dataset.default || `${y}-01-01`, to: wholeMonth ? `${y}-${pad(mo)}-${pad(last)}` : date.value };
         };
         // A field is "unedited" while it still holds the default the page was rendered with (or the last one we wrote).
         const track = input => { input.dataset.auto = input.value === (input.dataset.default || '') || input.value === '' ? 'true' : 'false'; };

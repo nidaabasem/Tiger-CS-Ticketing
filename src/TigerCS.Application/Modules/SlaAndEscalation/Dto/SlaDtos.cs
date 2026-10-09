@@ -6,12 +6,10 @@ namespace TigerCS.Application.Modules.SlaAndEscalation.Dto;
 /// The SLA panel for one ticket (MVP-API-Contracts.md §5.1).
 ///
 /// <para>
-/// The three pause fields are part of §5.1's approved response shape and are
-/// returned at their pause-free values in this pilot: SLA pause/resume
-/// (<c>TicketSlaPausePeriods</c>) is explicitly not built
-/// (MVP-Implementation-Backlog.md §0.2 — "a real, disclosed limitation, not a
-/// silent one"). They are kept rather than dropped so the approved contract
-/// does not change shape when the post-pilot feature lands.
+/// The three pause fields (§5.1) report the Resolution clock's pause state
+/// from <c>TicketSlaPausePeriods</c> (ISSUE-018): whether it is paused right
+/// now, why, and the total paused time of the current period (an open pause
+/// counted to "now"). First Response never pauses.
 /// </para>
 /// </summary>
 /// <param name="SlaState">The ticket-level summary of both clocks: Running, Paused, Met, Breached, or NotApplicable.</param>
@@ -20,9 +18,9 @@ namespace TigerCS.Application.Modules.SlaAndEscalation.Dto;
 /// <param name="FirstHumanResponseAtUtc">The moment the First Response SLA was satisfied, if it has been. Never set by the automated acknowledgement (ISSUE-019).</param>
 /// <param name="ResolutionDueAtUtc">When the Resolution target expires. Null under the same condition as <paramref name="FirstResponseDueAtUtc"/>.</param>
 /// <param name="ResolutionBreached">True once the Resolution deadline was missed. Never returns to false.</param>
-/// <param name="IsCurrentlyPaused">Always false in this pilot — see this type's remarks.</param>
-/// <param name="CurrentPauseReason">Always null in this pilot — see this type's remarks.</param>
-/// <param name="TotalPausedMinutesThisPeriod">Always 0 in this pilot — see this type's remarks.</param>
+/// <param name="IsCurrentlyPaused">True while the Resolution clock is paused (Pending Customer, non-Critical).</param>
+/// <param name="CurrentPauseReason">Why it is paused ("Pending Customer", "Pending Third Party (legacy)"), or null when running.</param>
+/// <param name="TotalPausedMinutesThisPeriod">Whole minutes the Resolution clock has been paused in the current SLA period.</param>
 /// <param name="EscalationLevel">The ticket's current escalation level — an independent dimension, never derived from and never changing TicketStatus (ADR-0008/ADR-0011).</param>
 /// <param name="Explanation">How the effective SLA was arrived at — or why there is none yet. Additive to the approved §5.1 shape; the fields above are unchanged.</param>
 public sealed record TicketSlaSummaryResponseDto(
@@ -61,6 +59,8 @@ public sealed record TicketSlaSummaryResponseDto(
 /// <param name="FirstResponseRule">What counts as the first human response — and what does not.</param>
 /// <param name="PauseRule">How pausing works in this release.</param>
 /// <param name="Notes">Further statements about how the figures were arrived at.</param>
+/// <param name="RequestTypeSlaApplied">True when the request type's own SLA governed the Resolution (and possibly First Response) targets of this period.</param>
+/// <param name="RequestTypeSlaNote">When a request-type SLA is configured but was NOT applied: the exact reason (e.g. "Request-type SLA not applied: Resolution is a range (10–12 Days) and the range interpretation … is undecided."). Null otherwise.</param>
 public sealed record SlaExplanationDto(
     bool HasActivePeriod,
     byte? AppliedPriorityId,
@@ -76,7 +76,9 @@ public sealed record SlaExplanationDto(
     string? NotStartedReason,
     string FirstResponseRule,
     string PauseRule,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    bool RequestTypeSlaApplied = false,
+    string? RequestTypeSlaNote = null);
 
 /// <summary>The active business calendar, as configuration reference data (read-only in this release).</summary>
 /// <param name="Name">The calendar's name.</param>

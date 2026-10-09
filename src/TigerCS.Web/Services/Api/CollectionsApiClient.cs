@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Review;
 
 namespace TigerCS.Web.Services.Api;
 
@@ -51,6 +52,61 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     /// <summary>Active towers for the searchable tower dropdown (local table; no PACT call).</summary>
     public Task<ApiResult<List<CollectionsTowerDto>>> GetTowersAsync(CancellationToken cancellationToken) =>
         GetAsync<List<CollectionsTowerDto>>($"{Base}/receivables/towers", cancellationToken);
+
+    // ---- review and approval (stored review data; the page never reads the financial source)
+
+    private const string ReviewBase = "api/collections/review";
+
+    public Task<ApiResult<ReviewRunDto?>> GetReviewRunAsync(CancellationToken cancellationToken) =>
+        GetAsync<ReviewRunDto?>($"{ReviewBase}/runs/current", cancellationToken);
+
+    public Task<ApiResult<ReviewRunDto>> StartReviewRefreshAsync(int? companyId, CancellationToken cancellationToken) =>
+        PostAsync<object, ReviewRunDto>($"{ReviewBase}/refresh", new { companyId }, cancellationToken);
+
+    public Task<ApiResult<ReviewPageDto>> GetReviewPageAsync(ReviewFilter filter, int page, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        void Add(string name, string? value) { if (!string.IsNullOrWhiteSpace(value)) query[name] = value; }
+        Add("companyId", filter.CompanyId?.ToString(CultureInfo.InvariantCulture));
+        Add("project", filter.Project); Add("unit", filter.Unit); Add("customer", filter.Customer);
+        Add("year", filter.Year?.ToString(CultureInfo.InvariantCulture)); Add("month", filter.Month?.ToString(CultureInfo.InvariantCulture));
+        Add("dueFrom", filter.DueFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        Add("dueTo", filter.DueTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        Add("paymentStatus", filter.PaymentStatus);
+        Add("minRemaining", filter.MinRemaining?.ToString(CultureInfo.InvariantCulture));
+        Add("maxRemaining", filter.MaxRemaining?.ToString(CultureInfo.InvariantCulture));
+        Add("reminderType", filter.ReminderType); Add("validationStatus", filter.ValidationStatus); Add("reason", filter.Reason);
+        query["page"] = Id(page);
+        query["pageSize"] = "25";
+        return GetAsync<ReviewPageDto>($"{ReviewBase}/records?{query}", cancellationToken);
+    }
+
+    public Task<ApiResult<SelectionSummaryDto>> SummarizeSelectionAsync(SelectionRequest request, CancellationToken cancellationToken) =>
+        PostAsync<SelectionRequest, SelectionSummaryDto>($"{ReviewBase}/selection/summary", request, cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> ConfirmDispatchAsync(ConfirmDispatchRequest request, CancellationToken cancellationToken) =>
+        PostAsync<ConfirmDispatchRequest, DispatchDto>($"{ReviewBase}/dispatches", request,
+            new Dictionary<string, string> { ["Idempotency-Key"] = request.IdempotencyKey }, cancellationToken);
+
+    public Task<ApiResult<OverlapPageDto>> GetOverlapsAsync(int page, CancellationToken cancellationToken) =>
+        GetAsync<OverlapPageDto>($"{ReviewBase}/overlaps?page={Id(page)}&pageSize=25", cancellationToken);
+
+    /// <summary>The CSV of the contacts of one send, exactly as uploaded; null when the Api refuses or is unreachable.</summary>
+    public async Task<byte[]?> GetDispatchContactsCsvAsync(Guid dispatchId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await Http.GetAsync($"{ReviewBase}/dispatches/{dispatchId:D}/contacts", cancellationToken);
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(cancellationToken) : null;
+        }
+        catch (HttpRequestException) { return null; }
+    }
+
+    public Task<ApiResult<DispatchDto>> GetDispatchAsync(Guid dispatchId, CancellationToken cancellationToken) =>
+        GetAsync<DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}", cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> ReconcileBatchAsync(Guid dispatchId, long batchId, ReconcileBatchRequest request, CancellationToken cancellationToken) =>
+        PostAsync<ReconcileBatchRequest, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/batches/{batchId.ToString(CultureInfo.InvariantCulture)}/reconcile", request, cancellationToken);
 
     private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search,
         DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)

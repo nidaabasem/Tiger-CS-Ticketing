@@ -33,6 +33,23 @@ public static class Roles
         ReportingUser
     ];
 
+    /// <summary>
+    /// Roles that are read-only by agreed management decision: Chairman/CEO
+    /// (views all tickets, dashboard and executive reports; receives Level 4
+    /// escalations but initiates nothing) and Reporting User ("no ticket
+    /// actions"). A caller holding <i>only</i> these roles may never mutate
+    /// anything; a caller who additionally holds a working role keeps that
+    /// role's authority (a user may hold several roles).
+    /// </summary>
+    public static readonly IReadOnlyCollection<string> ReadOnly = [ChairmanCeo, ReportingUser];
+
+    /// <summary>True when the caller holds at least one role and every role it holds is read-only.</summary>
+    public static bool IsReadOnlyCaller(IReadOnlyCollection<string> callerRoles)
+    {
+        ArgumentNullException.ThrowIfNull(callerRoles);
+        return callerRoles.Count > 0 && callerRoles.All(ReadOnly.Contains);
+    }
+
     /// <summary>High-level descriptions for GET /api/roles (MVP-API-Contracts.md §1.5).</summary>
     public static readonly IReadOnlyDictionary<string, string> Descriptions = new Dictionary<string, string>
     {

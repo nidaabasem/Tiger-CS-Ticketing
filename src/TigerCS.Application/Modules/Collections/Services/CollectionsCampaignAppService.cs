@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Domain.Modules.Collections;
+using TigerCS.Domain.Modules.Collections.Review;
 
 namespace TigerCS.Application.Modules.Collections.Services;
 
@@ -39,12 +40,20 @@ public sealed class CollectionsCampaignAppService(
         // instalment rows before the stage rules, review flags, counts, pages and both CSV exports, so all of them agree.
         var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
 
-        // Instalment due-date window. Defaults: 1 January of the preview year through the preview date, except the
+        // Instalment due-date window. Defaults: the configured receivables StartDate through the preview date, except the
         // whole-month stages (current month, follow-up), which default to the end of the preview month so upcoming
         // instalments of that month are not cut off. The preview date still alone drives stage scheduling/eligibility;
         // the window only limits which instalments are read.
-        var from = dateFrom ?? new DateOnly(date.Year, 1, 1);
         var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
+        // Lower bound = the configured receivables StartDate (not 1 January of the preview year): overdue and legal
+        // stages look back months, so a calendar-year floor would silently empty them from January onwards.
+        var configuredStart = DateOnly.FromDateTime(sourceOptions.StartDate);
+        if (dateFrom is null && configuredStart > to)
+            // No calendar-year fallback: instalments before the configured start date are out of scope, so a window that ends
+            // before it has nothing to read.
+            return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
+                $"The window ends before the configured receivables start date ({configuredStart:yyyy-MM-dd}); nothing earlier is in scope. Choose a later preview date, or set From date explicitly.");
+        var from = dateFrom ?? configuredStart;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
@@ -222,8 +231,11 @@ public sealed class CollectionsCampaignAppService(
         CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId)
     {
         // Defensive: a legacy source may ignore the window.
-        var rows = items.Where(r => r.Amount > 0 && r.Amount >= min
-            && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
+        // Floating-point residue from the deployed procedures (e.g. 1E-12 on a settled instalment) is snapped to fils; a genuine
+        // sub-fils amount stays as read so AmountPrecisionNeedsReview still fires. Rounding is never used to hide it.
+        var rows = items
+            .Select(r => MoneyNormalizer.Normalize(r.Amount, r.AmountIsFloatingPoint) is { IsResolved: true, Value: { } value } ? r with { Amount = value } : r)
+            .Where(r => r.Amount > 0 && r.Amount >= min && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
