@@ -3,6 +3,8 @@
 > **Update:** campaigns read the local receivables snapshot (see [Receivables-Snapshot.md](Receivables-Snapshot.md)). The company selector is
 > replaced by a searchable **Tower** filter (`towerId`); stage rules, the preview date and the From/To defaults are unchanged. Exports (review and
 > Genesys) are refused unless every company in scope has a successful refresh no older than `Collections:ReceivablesSnapshot:MaxAgeMinutes` (90).
+> A **Minimum outstanding amount (AED)** filter (default 100, remaining unpaid amount >= value) applies to the preview and both exports; fully paid instalments are never candidates; the date column is
+> **Earliest unpaid due date**. Month/Year selectors set the From/To dates. Details: Receivables-Snapshot.md sections 4b-4c.
 
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.

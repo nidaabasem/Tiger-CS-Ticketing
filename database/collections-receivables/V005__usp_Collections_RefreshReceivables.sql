@@ -20,6 +20,10 @@
         1 CompanyID,ProjectCode,UnitCode,TenantID,FullName,Mobile,Email,UnitID,VoucherNumber,ChequeNumber,DueDate,Amount,Status
         2 same without Status        3 same without ProjectCode        4 without ProjectCode and Status
     Every variant must already be in the procedure's column ORDER; an unknown order fails with a clear message and publishes nothing.
+  * PAYMENT STATUS: the deployed procedures return only the remaining Amount and Status (Paid / Installment) - the original and allocated amounts are
+    computed inside them but not returned, so Unpaid vs Partially paid cannot be told apart from their output. With @ProcedureSuffix = N'V2' (the
+    reviewed companion draft in docs/Collections/pact-sql, deployed separately) layouts 5-6 also carry PlanAmount / AllocatedAmount and the publish step
+    stores a verified status. Note the companion changes the allocation arithmetic (it fixes defects D1-D5 of the source review): reconcile it first.
   * Overlap protection: a session-scoped application lock. A second concurrent call returns RunStatus = 'AlreadyRunning'.
   * COVERAGE: @SourceFromDate/@SourceThroughDate is the due-date window requested from PACT. With @ExtendCoverage = 1 (default) the window used
     for each company is the UNION of the request and the coverage already published for that company, so the scheduled refresh keeps a range
@@ -38,7 +42,10 @@ CREATE OR ALTER PROCEDURE dbo.usp_Collections_RefreshReceivables
     @MaxShrinkPercent   int          = 60,
     @ShrinkGuardMinRows int          = 200,
     @AllowLargeShrink   bit          = 0,
-    @ExtendCoverage     bit          = 1           -- 1 = never shrink a company's stored coverage (see below)
+    @ExtendCoverage     bit          = 1,          -- 1 = never shrink a company's stored coverage (see below)
+    @ProcedureSuffix    nvarchar(16) = N'',        -- '' = the deployed p4/p32AccountReceivables; e.g. 'V2' = a companion procedure that also returns original + allocated amounts
+    @RetainPaid         bit          = 1,          -- keep fully paid instalments (needed for the "Fully paid" and "All" views)
+    @StrictIdentity     bit          = 0           -- companion procedures only: 1 = fail instead of guessing an ambiguous voucher/unit
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -49,6 +56,7 @@ BEGIN
 
     IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50001, N'Company must be 4, 32 or NULL.', 1;
     IF @SourceFromDate > @SourceThroughDate THROW 50002, N'@SourceFromDate must not be after @SourceThroughDate.', 1;
+    IF @ProcedureSuffix LIKE N'%[^A-Za-z0-9]%' THROW 50003, N'@ProcedureSuffix must be letters and digits only.', 1;
 
     DECLARE @lock int;
     EXEC @lock = sys.sp_getapplock @Resource = N'Collections.ReceivablesRefresh', @LockMode = N'Exclusive',
@@ -59,7 +67,8 @@ BEGIN
                N'Another refresh is already running; this call did nothing.' AS Message;
         SELECT CAST(NULL AS int) AS CompanyId, CAST(NULL AS varchar(20)) AS Status, CAST(NULL AS int) AS RawRows, CAST(NULL AS int) AS PublishedRows,
                CAST(NULL AS int) AS ExcludedZeroRows, CAST(NULL AS int) AS ExcludedInvalidUnitRows, CAST(NULL AS int) AS ExcludedInvalidIdentityRows,
-               CAST(NULL AS int) AS ErrorNumber, CAST(NULL AS nvarchar(1000)) AS ErrorMessage WHERE 1 = 0;
+               CAST(NULL AS int) AS ErrorNumber, CAST(NULL AS nvarchar(1000)) AS ErrorMessage,
+               CAST(NULL AS int) AS FetchMs, CAST(NULL AS int) AS ValidateMs, CAST(NULL AS int) AS PublishMs WHERE 1 = 0;
         RETURN;
     END;
 
@@ -73,7 +82,7 @@ BEGIN
         VALUES (@RunId, @TriggerSource, @CompanyId, @now, 'Running');
 
         DECLARE @c int, @pref tinyint, @n int, @v tinyint, @ok bit, @sql nvarchar(max), @cols nvarchar(max), @proc nvarchar(400),
-                @errNo int, @errMsg nvarchar(4000), @statusPresent bit, @cFrom date, @cThrough date;
+                @errNo int, @errMsg nvarchar(4000), @statusPresent bit, @cFrom date, @cThrough date, @tFetch datetime2(3), @fetchMs int, @nVariants int, @breakdown bit;
 
         DECLARE company_cursor CURSOR LOCAL FAST_FORWARD FOR
             SELECT v.CompanyId FROM (VALUES (4), (32)) v (CompanyId) WHERE @CompanyId IS NULL OR v.CompanyId = @CompanyId ORDER BY v.CompanyId;
@@ -85,7 +94,7 @@ BEGIN
             DELETE FROM dbo.CollectionsReceivableStaging;
 
             SET @proc = CONCAT(QUOTENAME(@LinkedServer), N'.', QUOTENAME(@RemoteDatabase), N'.', QUOTENAME(N'dbo'), N'.',
-                               QUOTENAME(CONCAT(N'p', @c, N'AccountReceivables')));
+                               QUOTENAME(CONCAT(N'p', @c, N'AccountReceivables', @ProcedureSuffix)));
             SELECT @pref = ISNULL(ShapeVariant, 1),
                    @cFrom = CASE WHEN @ExtendCoverage = 1 AND CoverageFromDate    IS NOT NULL AND CoverageFromDate    < @SourceFromDate    THEN CoverageFromDate    ELSE @SourceFromDate    END,
                    @cThrough = CASE WHEN @ExtendCoverage = 1 AND CoverageThroughDate IS NOT NULL AND CoverageThroughDate > @SourceThroughDate THEN CoverageThroughDate ELSE @SourceThroughDate END
@@ -94,23 +103,31 @@ BEGIN
                    @endDt   = DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, CAST(@cThrough AS datetime)));   -- 23:59:59.997
             SELECT @n = 0, @ok = 0, @errNo = NULL, @errMsg = NULL, @v = NULL;
 
-            WHILE @ok = 0 AND @n < 4
+            SET @tFetch = SYSUTCDATETIME();
+            SET @nVariants = CASE WHEN @ProcedureSuffix = N'' THEN 4 ELSE 2 END;
+            WHILE @ok = 0 AND @n < @nVariants
             BEGIN
+                -- Deployed procedures: layouts 1-4. Companion (suffix) procedures: layouts 5-6. The layout that worked last time is tried first.
                 SELECT @v = o.v
                   FROM (SELECT x.v, ROW_NUMBER() OVER (ORDER BY CASE WHEN x.v = @pref THEN 0 ELSE 1 END, x.v) AS rn
-                          FROM (VALUES (1), (2), (3), (4)) x (v)) o
+                          FROM (VALUES (1), (2), (3), (4), (5), (6)) x (v)
+                         WHERE (@ProcedureSuffix = N'' AND x.v <= 4) OR (@ProcedureSuffix <> N'' AND x.v >= 5)) o
                  WHERE o.rn = @n + 1;
                 SET @cols = CASE @v
                     WHEN 1 THEN N'CompanyID, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status'
                     WHEN 2 THEN N'CompanyID, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount'
                     WHEN 3 THEN N'CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status'
-                    ELSE        N'CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount' END;
-                SET @statusPresent = CASE WHEN @v IN (1, 3) THEN 1 ELSE 0 END;
+                    WHEN 4 THEN N'CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount'
+                    WHEN 5 THEN N'CompanyID, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status, PaymentTermAccountId, PlanAmount, AllocatedAmount'
+                    ELSE        N'CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status, PaymentTermAccountId, PlanAmount, AllocatedAmount' END;
+                SET @statusPresent = CASE WHEN @v IN (1, 3, 5, 6) THEN 1 ELSE 0 END;
+                SET @breakdown = CASE WHEN @v IN (5, 6) THEN 1 ELSE 0 END;
                 SET @sql = CONCAT(N'INSERT INTO dbo.CollectionsReceivableStaging (', @cols, N') EXEC ', @proc,
-                                  N' @StartDate = @StartDate, @EndDate = @EndDate, @MinAmount = @MinAmount;');
+                                  N' @StartDate = @StartDate, @EndDate = @EndDate, @MinAmount = @MinAmount',
+                                  CASE WHEN @ProcedureSuffix = N'' THEN N';' ELSE N', @IncludeSettled = @IncludeSettled, @StrictIdentity = @StrictIdentity;' END);
                 BEGIN TRY
-                    EXEC sys.sp_executesql @sql, N'@StartDate datetime, @EndDate datetime, @MinAmount int',
-                         @StartDate = @startDt, @EndDate = @endDt, @MinAmount = @SourceMinAmount;
+                    EXEC sys.sp_executesql @sql, N'@StartDate datetime, @EndDate datetime, @MinAmount int, @IncludeSettled bit, @StrictIdentity bit',
+                         @StartDate = @startDt, @EndDate = @endDt, @MinAmount = @SourceMinAmount, @IncludeSettled = @RetainPaid, @StrictIdentity = @StrictIdentity;
                     SET @ok = 1;
                 END TRY
                 BEGIN CATCH
@@ -121,13 +138,14 @@ BEGIN
                 END CATCH;
             END;
 
+            SET @fetchMs = DATEDIFF(MILLISECOND, @tFetch, SYSUTCDATETIME());
             IF @ok = 1
             BEGIN
                 EXEC dbo.usp_Collections_PublishReceivablesStaging
                      @RunId = @RunId, @CompanyId = @c, @CoverageFromDate = @cFrom, @CoverageThroughDate = @cThrough,
                      @SourceMinAmount = @SourceMinAmount, @ShapeVariant = @v, @StatusColumnPresent = @statusPresent,
                      @MaxRawRows = @MaxRawRows, @MaxShrinkPercent = @MaxShrinkPercent,
-                     @ShrinkGuardMinRows = @ShrinkGuardMinRows, @AllowLargeShrink = @AllowLargeShrink;
+                     @ShrinkGuardMinRows = @ShrinkGuardMinRows, @AllowLargeShrink = @AllowLargeShrink, @FetchMs = @fetchMs, @RetainPaid = @RetainPaid, @BreakdownPresent = @breakdown;
             END
             ELSE
             BEGIN
@@ -159,7 +177,8 @@ BEGIN
     EXEC sys.sp_releaseapplock @Resource = N'Collections.ReceivablesRefresh', @LockOwner = N'Session';
 
     SELECT RunId, Status AS RunStatus, Message FROM dbo.CollectionsReceivableRun WHERE RunId = @RunId;
-    SELECT CompanyId, Status, RawRows, PublishedRows, ExcludedZeroRows, ExcludedInvalidUnitRows, ExcludedInvalidIdentityRows, ErrorNumber, ErrorMessage
+    SELECT CompanyId, Status, RawRows, PublishedRows, ExcludedZeroRows, ExcludedInvalidUnitRows, ExcludedInvalidIdentityRows, ErrorNumber, ErrorMessage,
+           FetchMs, ValidateMs, PublishMs
       FROM dbo.CollectionsReceivableRunCompany WHERE RunId = @RunId ORDER BY CompanyId;
 END;
 GO

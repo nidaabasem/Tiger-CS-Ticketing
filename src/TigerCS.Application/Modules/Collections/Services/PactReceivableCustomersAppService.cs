@@ -66,8 +66,9 @@ public sealed class PactReceivableCustomersAppService(
         CollectionsCaller caller, int? companyId = null, string? status = null,
         string? search = null, int page = 1, int pageSize = 25,
         int? year = null, int? month = null, CancellationToken cancellationToken = default,
-        int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null, decimal? minAmount = null)
     {
+        var total = System.Diagnostics.Stopwatch.StartNew();
         // Authorize before reading configuration or any external customer data.
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.Forbidden);
@@ -78,9 +79,9 @@ public sealed class PactReceivableCustomersAppService(
             || page < 1 || pageSize is < 1 or > 100 || (long)(page - 1) * pageSize > int.MaxValue
             || search?.Length > 200
             || (year is null) != (month is null) || year is < 2000 or > 2100 || month is < 1 or > 12
-            || towerId is <= 0)
+            || towerId is <= 0 || minAmount < 0 || minAmount > sourceOptions.MaxMinOutstandingAmount)
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "Choose a tower, status All/Due/Overdue, page >= 1 and pageSize 1-100; year and month go together (2000-2100, 1-12); search is limited to 200 characters.");
+                "Choose a tower, a minimum amount of 0 or more, status All/Due/Overdue, page >= 1 and pageSize 1-100; year and month go together (2000-2100, 1-12); search is limited to 200 characters.");
 
         var today = clock.BusinessDate;
         // Reporting month (default: current Dubai month), matching EDSM's monthly receivables report:
@@ -97,12 +98,18 @@ public sealed class PactReceivableCustomersAppService(
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
+        // "Minimum outstanding amount": an instalment counts only when its remaining unpaid Amount >= min (inclusive).
+        var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
+        if (source is IPactReceivablesPageSource pageSource)
+            return await ListViaPageSourceAsync(pageSource, total, caller, companyId, view, search, page, pageSize, towerId, from, to, min, today,
+                periodStart, periodEnd, reportYear, reportMonth, budget.Token, cancellationToken);
         PactReceivablesSnapshot snapshot;
+        var sourceTimer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId, PactReceivableClass.DueOrOverdue, periodStart), budget.Token);
+            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId, PactReceivableClass.DueOrOverdue, periodStart, min), budget.Token);
         }
         catch (PactReceivablesScopeException ex)
         {
@@ -129,7 +136,8 @@ public sealed class PactReceivableCustomersAppService(
         // month end are EDSM's "Outstanding" (not Due/OverDue) and are not part of this list.
         // Defensive repeat of the source filters: positive remaining balance, a valid unit (UnitID 0 is not actionable), the
         // window, and nothing after the reporting month.
-        var live = snapshot.Items.Where(r => r.Amount > 0 && r.UnitId is not <= 0
+        var sourceMs = sourceTimer.Elapsed.TotalMilliseconds;
+        var live = snapshot.Items.Where(r => r.Amount > 0 && r.Amount >= min && r.UnitId is not <= 0
             && DateOnly.FromDateTime(r.DueDate) <= periodEnd
             && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
         if (live.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
@@ -170,7 +178,71 @@ public sealed class PactReceivableCustomersAppService(
             snapshot.Snapshot?.Companies.Select(c => c.CompanyId).ToList() ?? [4, 32], sourceOptions.Currency, "Configured",
             customers.Count, customers.Count(c => c.HasDue), customers.Count(c => c.HasOverdue),
             page, pageSize, customers.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-            from, to, towerId, snapshot.Snapshot, WindowNotes(from, to, periodStart, periodEnd)));
+            from, to, towerId, snapshot.Snapshot, WindowNotes(from, to, periodStart, periodEnd), min,
+            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds)));
+    }
+
+    /// <summary>
+    /// SQL-backed path: filtering, per-apartment aggregation, counts and pagination run in the database, so only the requested page of
+    /// apartments (with their instalments) is materialised here. Business rules are the same as the in-memory path below.
+    /// </summary>
+    private async Task<CollectionsResult<PactReceivableCustomersDto>> ListViaPageSourceAsync(
+        IPactReceivablesPageSource pageSource, System.Diagnostics.Stopwatch total, CollectionsCaller caller, int? companyId, string view, string? search, int page, int pageSize,
+        int? towerId, DateOnly from, DateOnly to, decimal min, DateOnly today, DateOnly periodStart, DateOnly periodEnd, int reportYear, int reportMonth,
+        CancellationToken budgetToken, CancellationToken cancellationToken)
+    {
+        var term = search?.Trim();
+        string? digits = null;
+        if (!string.IsNullOrEmpty(term))
+        {
+            var d = new string(term.Where(char.IsDigit).ToArray());
+            if (d.Length >= 3 && !term.Any(char.IsLetter)) digits = d;
+        }
+        PactReceivablesPage result;
+        try
+        {
+            result = await pageSource.ReadPageAsync(new PactReceivablesPageRequest(from, to, periodStart, min, view, string.IsNullOrEmpty(term) ? null : term, digits, page, pageSize, companyId, towerId), budgetToken);
+        }
+        catch (PactReceivablesScopeException ex)
+        {
+            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.InvalidRequest, ex.Message);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Local receivables read exceeded the {BudgetSeconds}s request budget.", sourceOptions.RequestBudgetSeconds);
+            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable, "The receivables read timed out. Please retry.");
+        }
+        catch (PactReceivablesSourceException ex)
+        {
+            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
+        }
+        catch (Exception ex) when (ex is DbException or InvalidCastException or FormatException or OverflowException)
+        {
+            logger.LogWarning("Local receivables source failed ({ExceptionType}).", ex.GetType().Name);
+            return CollectionsResult<PactReceivableCustomersDto>.Fail(CollectionsOutcome.FinanceUnavailable, "Receivables could not be read. Please retry or contact support.");
+        }
+
+        var mapTimer = System.Diagnostics.Stopwatch.StartNew();
+        var customers = result.Apartments.Select(a =>
+        {
+            var items = a.Instalments.Select(r => new PactReceivableInstalmentDto(r.UnitId, r.UnitCode, r.ProjectCode, r.VoucherNumber,
+                r.ChequeNumber, DateOnly.FromDateTime(r.DueDate), r.Amount,
+                DateOnly.FromDateTime(r.DueDate) < periodStart ? "OverDue" : "Due",
+                PaymentStatus(r.SourceStatus, r.Amount, sourceOptions.SourceStatusMap),
+                DateOnly.FromDateTime(r.DueDate) is var d && d < today ? "Overdue" : d == today ? "DueToday" : "Upcoming",
+                r.SourceStatus ?? "", r.TowerNumber)).ToList();
+            decimal? totalAmount = a.DueAmount is { } due && a.OverdueAmount is { } over ? due + over : null;
+            return new PactReceivableCustomerDto(a.CompanyId, a.CompanyId == 4 ? "Tiger Group Dubai" : "Tiger Group Sharjah", a.TenantId, a.FullName, a.Mobile, a.Email,
+                a.UnitId, a.UnitCode, a.ProjectCode, a.DueRows > 0, a.OverdueRows > 0, a.DueAmount, a.OverdueAmount, totalAmount,
+                a.DueAmount is null || a.OverdueAmount is null ? "NeedsReview" : "Provided", a.Earliest, Math.Max(0, today.DayNumber - a.Earliest.DayNumber), items,
+                a.TowerNumber, a.TowerName);
+        }).ToList();
+        var mapMs = mapTimer.Elapsed.TotalMilliseconds;
+        return CollectionsResult<PactReceivableCustomersDto>.Ok(new PactReceivableCustomersDto(
+            today, reportYear, reportMonth, periodStart, periodEnd, result.ReadAtUtc, false, result.Snapshot.Companies.Select(c => c.CompanyId).ToList(),
+            sourceOptions.Currency, "Configured", result.TotalApartments, result.DueApartments, result.OverdueApartments, page, pageSize, customers,
+            from, to, towerId, result.Snapshot, WindowNotes(from, to, periodStart, periodEnd), min,
+            new ServerTimingsDto(result.SqlMs, mapMs, total.Elapsed.TotalMilliseconds)));
     }
 
     /// <summary>How the window and the reporting month interact, shown to the user next to the list.</summary>

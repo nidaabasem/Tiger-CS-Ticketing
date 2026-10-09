@@ -19,7 +19,7 @@ public sealed record CollectionsCampaignPreviewDto(
     bool CanExportReview, int TotalCount, int ReadyCount, int ReviewCount, int Page, int PageSize,
     IReadOnlyList<CollectionsCampaignContactDto> Items,
     DateOnly? DateFrom = null, DateOnly? DateTo = null, IReadOnlyList<string>? RangeNotes = null,
-    int? TowerId = null, SnapshotStatusDto? Snapshot = null);
+    int? TowerId = null, SnapshotStatusDto? Snapshot = null, decimal MinAmount = 0m, ServerTimingsDto? Timings = null);
 
 /// <summary>Internal API transport; the Web serves Csv as a UTF-8 downloadable file.</summary>
 public sealed record CollectionsCampaignExportDto(string FileName, string Csv, int RowCount);

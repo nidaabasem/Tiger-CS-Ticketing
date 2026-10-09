@@ -25,12 +25,13 @@ public sealed class CollectionsCampaignsController(CollectionsCampaignAppService
     public async Task<IActionResult> Preview([FromQuery] string? stage, [FromQuery] DateOnly? businessDate,
         [FromQuery] int? companyId, [FromQuery] string? search, [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default,
-        [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null, [FromQuery] int? towerId = null)
+        [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null, [FromQuery] int? towerId = null,
+        [FromQuery] decimal? minAmount = null)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
         return Result(await service.PreviewAsync(caller, stage, businessDate, companyId, search, page, pageSize,
-            cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId));
+            cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId, minAmount: minAmount));
     }
 
     /// <summary>Export the full filtered list. Review mode is for internal review; Genesys mode refuses any unresolved row,
@@ -43,11 +44,11 @@ public sealed class CollectionsCampaignsController(CollectionsCampaignAppService
     public async Task<IActionResult> Export([FromQuery] string? stage, [FromQuery] string? mode,
         [FromQuery] DateOnly? businessDate, [FromQuery] int? companyId, [FromQuery] string? search,
         CancellationToken cancellationToken = default, [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null,
-        [FromQuery] int? towerId = null)
+        [FromQuery] int? towerId = null, [FromQuery] decimal? minAmount = null)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
-        return Result(await service.ExportAsync(caller, stage, mode, businessDate, companyId, search, cancellationToken, dateFrom, dateTo, towerId));
+        return Result(await service.ExportAsync(caller, stage, mode, businessDate, companyId, search, cancellationToken, dateFrom, dateTo, towerId, minAmount));
     }
 
     private CollectionsCaller? Caller() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)

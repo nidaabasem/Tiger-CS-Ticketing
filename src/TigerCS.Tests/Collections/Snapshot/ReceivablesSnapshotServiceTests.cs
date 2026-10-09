@@ -23,7 +23,7 @@ public sealed class ReceivablesSnapshotServiceTests
         public Harness()
         {
             var options = new CollectionsOptions { Enabled = true };
-            Service = new(options, new PactReceivablesOptions { Enabled = true }, new CollectionsAuthorizationService(options, new FakeDepartmentRepository()),
+            Service = new(options, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m }, new CollectionsAuthorizationService(options, new FakeDepartmentRepository()),
                 new CollectionsClock(options, new FakeTimeProvider(Now)), Source, NullLogger<PactReceivableCustomersAppService>.Instance);
             Source.Towers.AddRange([
                 new(1, "124", "Tower 124", 4, true), new(2, "136", "Tower 136", 4, true),
@@ -189,15 +189,20 @@ public sealed class ReceivablesSnapshotServiceTests
     }
 
     [Fact]
-    public async Task NothingEverLoaded_IsAnUnavailableError_NotAFreshEmptyList()
+    public async Task NothingEverLoaded_IsAnExplicitNotLoadedStateWithAWholeRangeGap_NotAFreshEmptyList()
     {
         var h = new Harness();
         h.Source.Companies[4] = FakeSnapshotSource.NeverLoaded(4);
         h.Source.Companies[32] = FakeSnapshotSource.NeverLoaded(32);
         var result = await h.Service.ListAsync(h.Agent);
-        Assert.False(result.IsSuccess);
-        Assert.Equal(CollectionsOutcome.FinanceUnavailable, result.Outcome);
-        Assert.Contains("not an empty result", result.Detail);
+        Assert.True(result.IsSuccess);                                   // the page can render its filters and offer "Load data"
+        var list = result.Value!;
+        Assert.Empty(list.Items);
+        Assert.True(list.Snapshot!.NothingLoaded);
+        Assert.False(list.Snapshot.RangeCovered);
+        Assert.False(list.Snapshot.IsReady);
+        Assert.All(list.Snapshot.Gaps, g => Assert.Equal((list.DateFrom, list.DateTo), (g.From, g.Through)));
+        Assert.Equal(2, list.Snapshot.Gaps.Count);
     }
 
     [Fact]
@@ -254,7 +259,7 @@ public sealed class ReceivablesSnapshotServiceTests
     {
         var options = new CollectionsOptions { Enabled = true };
         var catalog = new Catalog();
-        var service = new PactReceivableCustomersAppService(options, new PactReceivablesOptions { Enabled = true },
+        var service = new PactReceivableCustomersAppService(options, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
             new CollectionsAuthorizationService(options, new FakeDepartmentRepository()), new CollectionsClock(options, new FakeTimeProvider(Now)),
             new FakeSnapshotSource(Now), NullLogger<PactReceivableCustomersAppService>.Instance, catalog);
         Assert.Equal(CollectionsOutcome.Forbidden, (await service.ListTowersAsync(new CollectionsCaller(Guid.NewGuid(), [Roles.ReportingUser], []))).Outcome);

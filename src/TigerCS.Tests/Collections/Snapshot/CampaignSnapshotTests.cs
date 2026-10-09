@@ -23,7 +23,7 @@ public sealed class CampaignSnapshotTests
         public Harness()
         {
             var options = new CollectionsOptions { Enabled = true };
-            Service = new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions { Enabled = true },
+            Service = new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
                 new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(Now)), Source, NullLogger<CollectionsCampaignAppService>.Instance);
             Source.Towers.AddRange([new(1, "124", "Tower 124", 4, true), new(3, "127", "Faradis", 32, true)]);
         }
@@ -132,9 +132,13 @@ public sealed class CampaignSnapshotTests
         Assert.Equal("Missing", preview.Snapshot!.Companies.Single(c => c.CompanyId == 32).Freshness);
         var export = await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review");
         Assert.Contains("has not been loaded", export.Detail);
-        // Selecting the tower of the missing company: nothing was ever loaded for it -> unavailable, not an empty fresh list.
-        var missing = await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", towerId: 3);
-        Assert.Equal(CollectionsOutcome.FinanceUnavailable, missing.Outcome);
+        // Selecting the tower of the missing company: nothing was ever loaded for it -> an explicit not-loaded state (so the page can offer "Load data"),
+        // never a fresh-looking empty list, and never exportable.
+        var missing = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", towerId: 3)).Value!;
+        Assert.Equal(0, missing.TotalCount);
+        Assert.True(missing.Snapshot!.NothingLoaded);
+        Assert.False(missing.Snapshot.IsReady);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", towerId: 3)).Outcome);
     }
 
     [Fact]

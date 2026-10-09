@@ -14,7 +14,8 @@ public sealed record SnapshotCompanyStatusDto(
     DateOnly? CoverageFrom, DateOnly? CoverageThrough,
     int ExcludedInvalidUnitRows, decimal ExcludedInvalidUnitAmount,
     int ExcludedInvalidIdentityRows, decimal ExcludedInvalidIdentityAmount,
-    int ContradictoryStatusRows, int UnknownStatusRows, string Freshness, int? AgeMinutes, bool RefreshInProgress = false)
+    int ContradictoryStatusRows, int UnknownStatusRows, string Freshness, int? AgeMinutes, bool RefreshInProgress = false, DateTime? RefreshStartedUtc = null, string? RunCompanyStatus = null,
+    bool PaidRetained = false, bool BreakdownAvailable = false, int UnclassifiedRows = 0)
 {
     /// <summary>The newest refresh attempt failed; the previous snapshot (if any) is still being served.</summary>
     public bool LastRefreshFailed => LastAttemptStatus == "Failed";
@@ -34,6 +35,12 @@ public sealed record SnapshotStatusDto(
     /// <summary>The whole requested From/To range is inside the loaded coverage of every loaded company in scope.</summary>
     public bool RangeCovered => Gaps.Count == 0;
     public bool LoadInProgress => Companies.Any(c => c.RefreshInProgress);
+    /// <summary>Every loaded company in scope keeps fully paid instalments: "Fully paid" and "All" may be offered. False before the first load.</summary>
+    public bool PaidRetained => Companies.Any(c => c.HasSnapshot) && Companies.Where(c => c.HasSnapshot).All(c => c.PaidRetained);
+    /// <summary>Every loaded company in scope returned original + paid amounts: "Unpaid" and "Partially paid" can be told apart reliably.</summary>
+    public bool BreakdownAvailable => Companies.Any(c => c.HasSnapshot) && Companies.Where(c => c.HasSnapshot).All(c => c.BreakdownAvailable);
+    public int UnclassifiedRows => Companies.Sum(c => c.UnclassifiedRows);
+    public bool NothingLoaded => Companies.Count > 0 && Companies.All(c => !c.HasSnapshot);
     /// <summary>Export / "this list is complete" requirement: fresh data AND the whole requested range covered.</summary>
     public bool IsReady => IsFresh && RangeCovered;
     public string? ReadyProblem => !IsFresh ? FreshnessProblem
@@ -54,3 +61,6 @@ public sealed record SnapshotStatusDto(
 
 /// <summary>Result of asking for a background load of an uncovered due-date range.</summary>
 public sealed record ReceivablesRangeLoadDto(bool Accepted, bool AlreadyCovered, bool AlreadyRunning, string Message);
+
+/// <summary>Where the time of one request went (milliseconds): the local SQL read, mapping in the application, and the total in the service.</summary>
+public sealed record ServerTimingsDto(double SourceMs, double MapMs, double TotalMs);

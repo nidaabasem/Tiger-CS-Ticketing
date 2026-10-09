@@ -20,8 +20,9 @@ public sealed class CollectionsCampaignAppService(
     public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
         CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
         string? search = null, int page = 1, int pageSize = 25, bool forExport = false,
-        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
     {
+        var total = Stopwatch.StartNew();
         var permissions = await authorization.ResolveAsync(caller, cancellationToken);
         if (!permissions.CanReadFinancials || (forExport && !permissions.CanSendReminders))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.Forbidden);
@@ -30,10 +31,13 @@ public sealed class CollectionsCampaignAppService(
         var date = businessDate ?? clock.BusinessDate;
         if (!CollectionsEnums.TryParse<CollectionsCampaignStage>(stage, out var selected)
             || date.Year is < 2000 or > 2100 || companyId is not (null or 4 or 32)
-            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100 || towerId is <= 0
+            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100 || towerId is <= 0 || minAmount < 0 || minAmount > sourceOptions.MaxMinOutstandingAmount
             || (long)(page - 1) * pageSize > int.MaxValue)
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "Choose a campaign stage, a date in 2000-2100, company 4 or 32, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
+                "Choose a campaign stage, a date in 2000-2100, company 4 or 32, a minimum amount of 0 or more, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
+        // "Minimum outstanding amount": an instalment counts only when its remaining unpaid Amount >= min (inclusive). It is applied to the
+        // instalment rows before the stage rules, review flags, counts, pages and both CSV exports, so all of them agree.
+        var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
 
         // Instalment due-date window. Defaults: 1 January of the preview year through the preview date, except the
         // whole-month stages (current month, follow-up), which default to the end of the preview month so upcoming
@@ -54,7 +58,7 @@ public sealed class CollectionsCampaignAppService(
         {
             // Company and window are pushed down to the source: a single-company request must not wait for the other
             // company's (much slower) procedure, and rows outside the window are never read.
-            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId), budget.Token);
+            snapshot = await source.ReadAsync(new PactReceivablesRequest(from, to, companyId, towerId, MinAmount: min), budget.Token);
         }
         catch (PactReceivablesScopeException ex)
         {
@@ -90,7 +94,8 @@ public sealed class CollectionsCampaignAppService(
         logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} source rows in {ElapsedMs} ms.",
             selected, scope, from, to, snapshot.Items.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         // Defensive: a legacy source may ignore the window.
-        var rows = snapshot.Items.Where(r => r.Amount > 0
+        var sourceMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        var rows = snapshot.Items.Where(r => r.Amount > 0 && r.Amount >= min
             && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
@@ -177,12 +182,13 @@ public sealed class CollectionsCampaignAppService(
             campaignOptions.FinancialSourceValidated, snapshot.LegacyExclusionsApplied, permissions.CanSendReminders,
             contacts.Count, contacts.Count(c => c.Status == "Ready"), contacts.Count(c => c.Status == "NeedsReview"),
             page, pageSize, forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to), towerId, snapshot.Snapshot));
+            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to), towerId, snapshot.Snapshot, min,
+            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds)));
     }
 
     public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
         string? stage, string? mode, DateOnly? businessDate = null, int? companyId = null, string? search = null,
-        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
     {
         // No source read for an unauthorized export, including malformed requests.
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanSendReminders)
@@ -190,7 +196,7 @@ public sealed class CollectionsCampaignAppService(
         if (mode is not ("review" or "genesys"))
             return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest, "Choose review or genesys export.");
         var result = await PreviewAsync(caller, stage, businessDate, companyId, search,
-            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId);
+            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId, minAmount: minAmount);
         if (!result.IsSuccess) return CollectionsResult<CollectionsCampaignExportDto>.Fail(result.Outcome, result.Detail);
         var report = result.Value!;
         // Freshness requirement (both export modes): the snapshot of every company in scope must be loaded and no older than

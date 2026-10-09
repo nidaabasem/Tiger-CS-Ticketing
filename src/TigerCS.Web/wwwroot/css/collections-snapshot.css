@@ -20,3 +20,10 @@
 @media (max-width: 720px) { .tower-picker { min-width: 100%; } }
 .snapshot-status__load { display: flex; align-items: center; gap: .6rem; margin-top: .6rem; }
 .receivables-shortcuts { align-self: flex-end; }
+
+.receivables-metrics--five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.receivables-table--instalments th.num, .receivables-table--instalments td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.receivables-results { min-height: 4rem; }
+.receivables-results[aria-busy="true"] { opacity: .85; }
+.receivables-results__loading { padding: 1.5rem 1rem; color: var(--color-text-secondary); }
+@media (max-width: 960px) { .receivables-metrics--five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

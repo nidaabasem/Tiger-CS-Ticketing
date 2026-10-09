@@ -75,16 +75,45 @@ public sealed class SqlScriptContractTests
     }
 
     [Fact]
-    public void ReadProcedureAppliesWindowTowerAndClassificationInSql()
+    public void ReadProceduresApplyWindowTowerMinimumAndClassificationInSql_AndNeverReadDirty()
     {
         var sql = Read("V006__usp_Collections_GetReceivables.sql");
         Assert.Contains("DATEADD(DAY, 1, CAST(@ToDate AS datetime))", sql);               // To is inclusive for the whole day
         Assert.Contains("s.DueDate < @ToExclusive", sql);
-        Assert.Contains("s.CompanyId = @TowerCompany AND s.TowerNumber = @TowerNumber", sql);   // company AND tower number
+        Assert.Contains("s.TowerNumber = @TowerNumber", sql);                               // company is fixed by the run seek; the tower number is matched exactly
+        Assert.Contains("s.Amount >= @MinAmount", sql);                                     // remaining unpaid amount >= minimum (inclusive)
+        Assert.Contains("s.Amount >= @Min", sql);
         Assert.Contains("@ReceivableClass = 'DueOrOverdue' AND s.DueDate < @NextMonthStart", sql);
-        Assert.DoesNotContain("ProjectCode =", sql.Replace("s.ProjectCode,", ""));          // ProjectCode is never the mapping source
-        Assert.Contains("st.CurrentRunId = s.RunId", sql);                                   // only the published run is visible
+        Assert.Contains("CASE WHEN @PaymentFilter IN ('paid', 'all') THEN 0 ELSE @MinAmount END", sql);   // the minimum never hides a paid row
+        Assert.Contains("st.CurrentRunId", sql);                                           // only the published run is visible
+        Assert.Contains("OFFSET (@PageNumber - 1) * @PageSize ROWS FETCH NEXT @PageSize ROWS ONLY", sql);   // paging in SQL
+        Assert.DoesNotContain("NOLOCK", sql, StringComparison.OrdinalIgnoreCase);          // dirty reads are not a performance fix
+        Assert.DoesNotContain("READ UNCOMMITTED", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("NoMatchingTower", sql);
+    }
+
+    [Fact]
+    public void PublishNeverUsesDirtyReads_KeepsBatchesBelowLockEscalation_AndKeepsTheReplacedRun()
+    {
+        var sql = Read("V004__usp_Collections_PublishReceivablesStaging.sql");
+        Assert.DoesNotContain("NOLOCK", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("READ UNCOMMITTED", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("@batch int = 1500", sql);
+        Assert.Contains("DELETE TOP (1500)", sql);
+        Assert.Contains("RunId <> ISNULL(@oldRun", sql);                                   // cleanup never deletes the run a reader may still be on
+        Assert.Contains("PaymentStatus", sql);
+        Assert.Contains("ABS(PlanAmount - AllocatedAmount - Amount) <= 0.01", sql);        // original/paid amounts are stored only when they reconcile
+    }
+
+    [Fact]
+    public void RefreshSupportsTheCompanionShapeAndRetainsPaidInstalmentsByDefault()
+    {
+        var sql = Read("V005__usp_Collections_RefreshReceivables.sql");
+        Assert.Contains("@RetainPaid         bit          = 1", sql);
+        Assert.Contains("@ProcedureSuffix    nvarchar(16) = N''", sql);                   // default: the deployed procedures, untouched
+        Assert.Contains("PaymentTermAccountId, PlanAmount, AllocatedAmount", sql);
+        Assert.Contains("@IncludeSettled = @IncludeSettled", sql);
+        Assert.DoesNotContain("ALTER PROCEDURE [dbo].[p4", sql);                           // the existing procedures are never altered
     }
 
     [Fact]

@@ -29,10 +29,15 @@ VALUES
  (4, N'', N'TP9001-109',  N'T9', N'I',  N'1', N'i@x', 9, N'V9', N'', '20261031 23:00', 7.0000, N'Installment'); -- To = 31 Oct must include the whole day
 
 EXEC dbo.usp_Collections_PublishReceivablesStaging @RunId = @run, @CompanyId = 4, @CoverageFromDate = '20000101', @CoverageThroughDate = '20991231',
-     @SourceMinAmount = 0, @ShapeVariant = 1, @StatusColumnPresent = 1, @AllowLargeShrink = 1;
+     @SourceMinAmount = 0, @ShapeVariant = 1, @StatusColumnPresent = 1, @AllowLargeShrink = 1, @RetainPaid = 1;
 
 IF (SELECT LastAttemptStatus FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 'Succeeded' THROW 51001, N'publish should have succeeded', 1;
-IF (SELECT SnapshotRowCount FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 7 THROW 51002, N'expected 7 published rows (9 staged - 1 paid - 1 UnitID 0)', 1;
+IF (SELECT SnapshotRowCount FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 8 THROW 51002, N'expected 8 published rows (9 staged - 1 UnitID 0; the paid row is RETAINED)', 1;
+IF (SELECT PaidRetained FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 1 THROW 51011, N'paid instalments were retained, so PaidRetained must be 1', 1;
+IF (SELECT BreakdownAvailable FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 0 THROW 51012, N'the deployed shape returns no original/paid amounts', 1;
+IF (SELECT PaymentStatus FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AND TenantId = N'T5') <> 'FullyPaid' THROW 51013, N'remaining 0 + Status Paid is the one verifiable status', 1;
+IF EXISTS (SELECT 1 FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AND Amount > 0 AND PaymentStatus <> 'Unknown') THROW 51014, N'a positive remainder from the deployed shape must stay Unknown (Installment does not distinguish unpaid from partially paid)', 1;
+IF EXISTS (SELECT 1 FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AND (OriginalAmount IS NOT NULL OR PaidAmount IS NOT NULL)) THROW 51015, N'original/paid amounts must never be invented', 1;
 IF (SELECT ExcludedInvalidUnitRows FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 1 THROW 51003, N'UnitID 0 row must be counted', 1;
 IF (SELECT TowerNumber FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run AND TenantId = N'T3') <> N'9001' THROW 51004, N'TP9001-C-103 must map to tower 9001', 1;
 
@@ -40,9 +45,13 @@ IF (SELECT TowerNumber FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run
 DECLARE @tower int = (SELECT TowerId FROM dbo.CollectionsTowers WHERE CompanyId = 4 AND TowerNumber = N'9001');
 -- Result sets cannot be captured by INSERT-EXEC when there are several, so assert through the same predicate the procedure uses:
 DECLARE @cnt int = (SELECT COUNT(*) FROM dbo.CollectionsReceivableSnapshot s
-    WHERE s.RunId = @run AND s.TowerNumber = N'9001' AND s.DueDate >= '20261001' AND s.DueDate < DATEADD(DAY, 1, CAST('20261031' AS datetime)) AND s.DueDate < '20261101');
+    WHERE s.RunId = @run AND s.Amount > 0 AND s.TowerNumber = N'9001' AND s.DueDate >= '20261001' AND s.DueDate < DATEADD(DAY, 1, CAST('20261031' AS datetime)) AND s.DueDate < '20261101');
 IF @cnt <> 3 THROW 51005, N'window/tower predicate should select T2, T3, T9', 1;
 EXEC dbo.usp_Collections_GetReceivables @TowerId = @tower, @FromDate = '20260101', @ToDate = '20261031', @AsOfDate = '20261007';   -- eyeball: 4 rows (T1 overdue; T2,T3,T9 due), no T4/T5/T6
+-- Instalment list: payment filter outstanding excludes the paid row; paid/all need PaidRetained; unpaid/partial are Unavailable for the deployed shape; min is ignored for paid/all.
+EXEC dbo.usp_Collections_GetInstalmentsPage @TowerId = @tower, @FromDate = '20260101', @ToDate = '20261231', @AsOfDate = '20261007', @MinAmount = 100, @PaymentFilter = 'outstanding';
+EXEC dbo.usp_Collections_GetInstalmentsPage @TowerId = @tower, @FromDate = '20260101', @ToDate = '20261231', @AsOfDate = '20261007', @MinAmount = 100000, @PaymentFilter = 'paid';   -- T5 still listed
+EXEC dbo.usp_Collections_GetInstalmentsPage @TowerId = @tower, @FromDate = '20260101', @ToDate = '20261231', @AsOfDate = '20261007', @MinAmount = 0, @PaymentFilter = 'partial';  -- Unavailable = 1
 EXEC dbo.usp_Collections_GetReceivables @TowerId = NULL,   @FromDate = '20260101', @ToDate = '20261231', @AsOfDate = '20261007', @ReceivableClass = 'Any';  -- includes T4 (Outstanding); result set 4 lists 119 and 9003
 
 -- Failure keeps the previous snapshot: stage an empty result for company 4.
@@ -53,7 +62,7 @@ EXEC dbo.usp_Collections_PublishReceivablesStaging @RunId = @run2, @CompanyId = 
 IF (SELECT CurrentRunId FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> @run THROW 51006, N'an empty result must not replace the snapshot', 1;
 IF (SELECT ConsecutiveFailures FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 1 THROW 51007, N'failure must be counted', 1;
 IF (SELECT LastAttemptStatus FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4) <> 'Failed' THROW 51008, N'failure must be recorded', 1;
-IF (SELECT COUNT(*) FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run) <> 7 THROW 51009, N'previous rows must survive a failed refresh', 1;
+IF (SELECT COUNT(*) FROM dbo.CollectionsReceivableSnapshot WHERE RunId = @run) <> 8 THROW 51009, N'previous rows must survive a failed refresh', 1;
 
 -- Company 32 is independent: the failed company-4 attempt must not touch its state.
 IF EXISTS (SELECT 1 FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 32 AND LastAttemptRunId IN (@run, @run2)) THROW 51010, N'company 32 must be untouched', 1;

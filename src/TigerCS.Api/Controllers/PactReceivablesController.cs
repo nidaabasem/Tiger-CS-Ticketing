@@ -13,7 +13,7 @@ namespace TigerCS.Api.Controllers;
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
 [Route("api/collections/receivables/customers")]
 [Tags(OpenApiTags.Collections)]
-public sealed class PactReceivablesController(PactReceivableCustomersAppService service) : ControllerBase
+public sealed class PactReceivablesController(PactReceivableCustomersAppService service, PactInstalmentsAppService instalments) : ControllerBase
 {
     /// <summary>Lists due and overdue PACT customers for companies 4 and 32, including customers without tickets.</summary>
     /// <param name="companyId">Optional company filter; only 4 or 32 are accepted.</param>
@@ -26,6 +26,7 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     /// <param name="towerId">Optional tower (local <c>CollectionsTowers.TowerId</c>); the company is resolved from the tower. Omit for all towers.</param>
     /// <param name="dateFrom">First instalment due date included. Defaults to 1 January of the report year.</param>
     /// <param name="dateTo">Last instalment due date included (whole day). Defaults to the end of the reporting month.</param>
+    /// <param name="minAmount">Minimum outstanding amount: an instalment counts only when its remaining unpaid amount is &gt;= this value. Default 100.</param>
     /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet]
     [ProducesResponseType<PactReceivableCustomersDto>(StatusCodes.Status200OK)]
@@ -35,13 +36,41 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     public async Task<IActionResult> List([FromQuery] int? companyId, [FromQuery] string? status,
         [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25,
         [FromQuery] int? year = null, [FromQuery] int? month = null, CancellationToken cancellationToken = default,
-        [FromQuery] int? towerId = null, [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null)
+        [FromQuery] int? towerId = null, [FromQuery] DateOnly? dateFrom = null, [FromQuery] DateOnly? dateTo = null,
+        [FromQuery] decimal? minAmount = null)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
-        var result = await service.ListAsync(caller, companyId, status, search, page, pageSize, year, month, cancellationToken, towerId, dateFrom, dateTo);
+        var result = await service.ListAsync(caller, companyId, status, search, page, pageSize, year, month, cancellationToken, towerId, dateFrom, dateTo, minAmount);
         if (result.IsSuccess) return Ok(result.Value);
         return Failure(result.Outcome, result.Detail);
+    }
+
+    /// <summary>
+    /// Instalment-level list from the local snapshot (never PACT): tower, due-date range (any range or a whole month), payment status, minimum outstanding amount.
+    /// Totals and paging are computed over exactly the filtered instalments.
+    /// </summary>
+    /// <param name="towerId">Optional tower; omit for all towers.</param>
+    /// <param name="dateFrom">First due date included (default 1 January of the current year).</param>
+    /// <param name="dateTo">Last due date included, whole day (default end of the current month).</param>
+    /// <param name="paymentStatus"><c>outstanding</c> (default: remaining balance &gt; 0), <c>unpaid</c>, <c>partial</c>, <c>paid</c> or <c>all</c>.</param>
+    /// <param name="minAmount">Remaining balance &gt;= this value (default 100). Ignored for <c>paid</c> and <c>all</c>.</param>
+    /// <param name="search">Customer, unit, voucher, phone or e-mail.</param>
+    /// <param name="page">One-based page.</param>
+    /// <param name="pageSize">1 to 100.</param>
+    /// <param name="cancellationToken">Request cancellation.</param>
+    [HttpGet("/api/collections/receivables/instalments")]
+    [ProducesResponseType<PactInstalmentsPageDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> Instalments([FromQuery] int? towerId, [FromQuery] DateOnly? dateFrom, [FromQuery] DateOnly? dateTo, [FromQuery] string? paymentStatus,
+        [FromQuery] decimal? minAmount, [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null) return Unauthorized();
+        var result = await instalments.ListAsync(caller, towerId, dateFrom, dateTo, paymentStatus, minAmount, search, page, pageSize, cancellationToken);
+        return result.IsSuccess ? Ok(result.Value) : Failure(result.Outcome, result.Detail);
     }
 
     /// <summary>Active towers (number and name) for the tower dropdown. Read from the local table; PACT is not contacted.</summary>

@@ -20,8 +20,9 @@ public sealed class CollectionsReceivablesRefreshJob(IReceivablesRefresher refre
         foreach (var company in result.Companies)
         {
             if (company.Status == "Succeeded")
-                logger.LogInformation("Receivables refresh company {CompanyId}: {Published} rows published ({Raw} read, {Zero} settled, {BadUnit} invalid unit, {BadIdentity} invalid identity).",
-                    company.CompanyId, company.PublishedRows, company.RawRows, company.ExcludedZeroRows, company.ExcludedInvalidUnitRows, company.ExcludedInvalidIdentityRows);
+                logger.LogInformation("Receivables refresh company {CompanyId}: {Published} rows published ({Raw} read, {Zero} settled, {BadUnit} invalid unit, {BadIdentity} invalid identity); timings: fetch from PACT {FetchMs} ms, validate {ValidateMs} ms, publish {PublishMs} ms.",
+                    company.CompanyId, company.PublishedRows, company.RawRows, company.ExcludedZeroRows, company.ExcludedInvalidUnitRows, company.ExcludedInvalidIdentityRows,
+                    company.FetchMs, company.ValidateMs, company.PublishMs);
             else
                 logger.LogWarning("Receivables refresh company {CompanyId} FAILED (error {ErrorNumber}); the previous snapshot is still served.", company.CompanyId, company.ErrorNumber);
         }

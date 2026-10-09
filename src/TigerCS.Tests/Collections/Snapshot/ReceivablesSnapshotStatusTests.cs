@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
@@ -69,11 +70,14 @@ public sealed class ReceivablesSnapshotStatusTests
     private static readonly DateOnly From = new(2026, 1, 1), Through = new(2026, 10, 31);
 
     [Fact]
-    public void ComposeRefusesToReturnAnEmptyListWhenNothingWasEverLoaded()
+    public void ComposeNeverTurnsNothingLoadedIntoAnEmptyResult_ItReportsTheWholeRangeAsMissing()
     {
-        var error = Assert.Throws<PactReceivablesSourceException>(() => ReceivablesSnapshotComposer.Compose(From, Through,
-            [FakeSnapshotSource.NeverLoaded(4), FakeSnapshotSource.NeverLoaded(32)], [], [], Now, 90));
-        Assert.Contains("not an empty result", error.Message);
+        var snapshot = ReceivablesSnapshotComposer.Compose(From, Through, [FakeSnapshotSource.NeverLoaded(4), FakeSnapshotSource.NeverLoaded(32)], [], [], Now, 90);
+        Assert.True(snapshot.Snapshot!.NothingLoaded);
+        Assert.Equal(2, snapshot.Snapshot.Gaps.Count);
+        Assert.All(snapshot.Snapshot.Gaps, g => Assert.Equal((From, Through), (g.From, g.Through)));
+        Assert.False(snapshot.Snapshot.IsReady);
+        Assert.Equal(DateTime.UnixEpoch, snapshot.ReadAtUtc);          // "never" - callers display it as not loaded
     }
 
     [Fact]
@@ -127,5 +131,8 @@ public sealed class ReceivablesSnapshotStatusTests
         Assert.Equal(90, options.MaxAgeMinutes);
         Assert.Equal(0, options.SourceMinAmount);          // never the diagnostic 100
         Assert.Equal(new DateTime(2000, 1, 1), options.SourceFromDate);
+        Assert.True(options.RetainPaidInstalments);                    // "Fully paid" / "All" need paid rows in the snapshot
+        Assert.Equal("", options.SourceProcedureSuffix);               // the deployed procedures are used unless a companion is configured
+        Assert.Equal(100m, new PactReceivablesOptions().DefaultMinOutstandingAmount);
     }
 }

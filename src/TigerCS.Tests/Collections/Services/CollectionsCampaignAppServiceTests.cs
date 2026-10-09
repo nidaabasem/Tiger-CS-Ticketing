@@ -40,7 +40,7 @@ public sealed class CollectionsCampaignAppServiceTests
     {
         public Source Source { get; } = new();
         public CollectionsOptions Options { get; } = new() { Enabled = true };
-        public PactReceivablesOptions Sql { get; } = new() { Enabled = true };
+        public PactReceivablesOptions Sql { get; } = new() { Enabled = true, DefaultMinOutstandingAmount = 0m };
         public CollectionsCampaignOptions Campaign { get; } = new();
         public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
         public CollectionsCaller Agent { get; } = new(Guid.NewGuid(), [Roles.CsAgent], []);

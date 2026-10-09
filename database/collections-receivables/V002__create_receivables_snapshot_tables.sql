@@ -38,6 +38,9 @@ CREATE TABLE dbo.CollectionsReceivableRunCompany
     ExcludedInvalidUnitRows   int              NULL,
     ExcludedInvalidIdentityRows int            NULL,
     ShapeVariant              tinyint          NULL,
+    FetchMs                   int              NULL,      -- INSERT ... EXEC from PACT (the slow, remote part)
+    ValidateMs                int              NULL,      -- staging validation
+    PublishMs                 int              NULL,      -- insert under the new run id + pointer flip + cleanup
     ErrorNumber               int              NULL,
     ErrorMessage              nvarchar(1000)   NULL,
     CONSTRAINT PK_CollectionsReceivableRunCompany PRIMARY KEY (RunId, CompanyId),
@@ -70,6 +73,9 @@ CREATE TABLE dbo.CollectionsReceivableCompanyState
     SourceMinAmount              int              NULL,
     ShapeVariant                 tinyint          NULL,      -- result-set shape that worked last (see V005)
     StatusColumnPresent          bit              NULL,
+    PaidRetained                 bit              NOT NULL CONSTRAINT DF_CRCS_PaidRetained DEFAULT (0),       -- the snapshot holds fully paid (Amount = 0) instalments
+    BreakdownAvailable           bit              NOT NULL CONSTRAINT DF_CRCS_Breakdown DEFAULT (0),          -- the source returned original + paid amounts
+    UnclassifiedRows             int              NOT NULL CONSTRAINT DF_CRCS_Unclassified DEFAULT (0),       -- retained rows whose payment status is Unknown
     CONSTRAINT CK_CollectionsReceivableCompanyState_Company CHECK (CompanyId IN (4, 32))
 );
 
@@ -95,13 +101,49 @@ BEGIN
         VoucherNumber nvarchar(100)    NOT NULL,
         ChequeNumber  nvarchar(100)    NOT NULL,
         DueDate       datetime         NOT NULL,
-        Amount        decimal(19,4)    NOT NULL,   -- remaining unpaid amount of the instalment; always > 0
+        Amount        decimal(19,4)    NOT NULL,   -- REMAINING unpaid amount of the instalment (0 = fully paid, retained only when PaidRetained)
+        OriginalAmount decimal(19,4)   NULL,       -- the instalment's original amount; NULL when the source does not return it (never guessed)
+        PaidAmount    decimal(19,4)    NULL,       -- amount allocated to the instalment; NULL when the source does not return it
+        PaymentStatus varchar(16)      NOT NULL CONSTRAINT DF_CRS_PaymentStatus DEFAULT ('Unknown'),   -- Unpaid | PartiallyPaid | FullyPaid | Unknown
         SourceStatus  nvarchar(50)     NULL,
         LoadedUtc     datetime2(3)     NOT NULL
     );
     CREATE CLUSTERED INDEX CX_CollectionsReceivableSnapshot ON dbo.CollectionsReceivableSnapshot (CompanyId, RunId, DueDate);
     CREATE INDEX IX_CollectionsReceivableSnapshot_Tower ON dbo.CollectionsReceivableSnapshot (CompanyId, RunId, TowerNumber) INCLUDE (DueDate, Amount);
 END;
+
+-- Upgrades of a database created by an earlier version of this script (idempotent).
+IF COL_LENGTH(N'dbo.CollectionsReceivableSnapshot', N'OriginalAmount') IS NULL ALTER TABLE dbo.CollectionsReceivableSnapshot ADD OriginalAmount decimal(19,4) NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableSnapshot', N'PaidAmount') IS NULL ALTER TABLE dbo.CollectionsReceivableSnapshot ADD PaidAmount decimal(19,4) NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableSnapshot', N'PaymentStatus') IS NULL ALTER TABLE dbo.CollectionsReceivableSnapshot ADD PaymentStatus varchar(16) NOT NULL CONSTRAINT DF_CRS_PaymentStatus DEFAULT ('Unknown');
+IF COL_LENGTH(N'dbo.CollectionsReceivableCompanyState', N'PaidRetained') IS NULL ALTER TABLE dbo.CollectionsReceivableCompanyState ADD PaidRetained bit NOT NULL CONSTRAINT DF_CRCS_PaidRetained DEFAULT (0);
+IF COL_LENGTH(N'dbo.CollectionsReceivableCompanyState', N'BreakdownAvailable') IS NULL ALTER TABLE dbo.CollectionsReceivableCompanyState ADD BreakdownAvailable bit NOT NULL CONSTRAINT DF_CRCS_Breakdown DEFAULT (0);
+IF COL_LENGTH(N'dbo.CollectionsReceivableCompanyState', N'UnclassifiedRows') IS NULL ALTER TABLE dbo.CollectionsReceivableCompanyState ADD UnclassifiedRows int NOT NULL CONSTRAINT DF_CRCS_Unclassified DEFAULT (0);
+IF COL_LENGTH(N'dbo.CollectionsReceivableStaging', N'PaymentTermAccountId') IS NULL ALTER TABLE dbo.CollectionsReceivableStaging ADD PaymentTermAccountId bigint NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableStaging', N'PlanAmount') IS NULL ALTER TABLE dbo.CollectionsReceivableStaging ADD PlanAmount decimal(19,4) NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableStaging', N'AllocatedAmount') IS NULL ALTER TABLE dbo.CollectionsReceivableStaging ADD AllocatedAmount decimal(19,4) NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableRunCompany', N'FetchMs') IS NULL ALTER TABLE dbo.CollectionsReceivableRunCompany ADD FetchMs int NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableRunCompany', N'ValidateMs') IS NULL ALTER TABLE dbo.CollectionsReceivableRunCompany ADD ValidateMs int NULL;
+IF COL_LENGTH(N'dbo.CollectionsReceivableRunCompany', N'PublishMs') IS NULL ALTER TABLE dbo.CollectionsReceivableRunCompany ADD PublishMs int NULL;
+
+-- Apartment lookup: the page procedure fetches the instalments of the (at most 100) apartments on the requested page by
+-- (CompanyId, RunId, TenantId, UnitId) instead of scanning the company's rows.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.CollectionsReceivableSnapshot') AND name = N'IX_CollectionsReceivableSnapshot_Apartment')
+    CREATE INDEX IX_CollectionsReceivableSnapshot_Apartment ON dbo.CollectionsReceivableSnapshot (CompanyId, RunId, TenantId, UnitId) INCLUDE (DueDate, Amount);
+
+-- Per-run tower totals, written at publish time. The "towers that are not in the tower list" report reads this tiny table
+-- (a handful of rows) instead of scanning the whole snapshot on every page view.
+IF OBJECT_ID(N'dbo.CollectionsReceivableTowerSummary', N'U') IS NULL
+CREATE TABLE dbo.CollectionsReceivableTowerSummary
+(
+    CompanyId   int              NOT NULL,
+    RunId       uniqueidentifier NOT NULL,
+    TowerNumber nvarchar(20)     NULL,
+    RowCnt      int              NOT NULL,
+    Amount      decimal(19,4)    NOT NULL
+);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.CollectionsReceivableTowerSummary') AND name = N'CX_CollectionsReceivableTowerSummary')
+    CREATE CLUSTERED INDEX CX_CollectionsReceivableTowerSummary ON dbo.CollectionsReceivableTowerSummary (CompanyId, RunId);
 
 -- Raw landing table. Column ORDER must match the PACT procedure result for INSERT ... EXEC; V005 maps four known
 -- shape variants by explicit column list, so every column is nullable and generously typed. Never a reporting table.
@@ -121,6 +163,9 @@ CREATE TABLE dbo.CollectionsReceivableStaging
     ChequeNumber  nvarchar(100)  NULL,
     DueDate       datetime       NULL,
     Amount        decimal(19,4)  NULL,
-    Status        nvarchar(50)   NULL
+    Status        nvarchar(50)   NULL,
+    PaymentTermAccountId bigint  NULL,      -- companion (V2) shape only
+    PlanAmount    decimal(19,4)  NULL,      -- companion (V2) shape only: the instalment's original amount
+    AllocatedAmount decimal(19,4) NULL      -- companion (V2) shape only: the amount allocated (paid) to the instalment
 );
 PRINT N'V002 complete.';

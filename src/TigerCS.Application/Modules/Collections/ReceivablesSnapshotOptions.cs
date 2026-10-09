@@ -37,6 +37,22 @@ public sealed class ReceivablesSnapshotOptions
     /// </summary>
     public int SourceMinAmount { get; set; }
 
+    /// <summary>
+    /// Keep fully paid instalments in the snapshot so the "Fully paid" and "All" views can be offered. Costs rows (the deployed procedures return every
+    /// paid instalment since 2000 when called with MinAmount 0); set false to keep an outstanding-only snapshot - the two views are then disabled, never faked.
+    /// </summary>
+    public bool RetainPaidInstalments { get; set; } = true;
+
+    /// <summary>
+    /// Empty = the deployed dbo.p4AccountReceivables / dbo.p32AccountReceivables (output: remaining Amount + Status only, so Unpaid and Partially paid cannot be told apart).
+    /// A companion suffix such as "V2" selects a separately deployed procedure that also returns the original and allocated amounts (see docs/Collections/pact-sql).
+    /// Letters and digits only.
+    /// </summary>
+    public string SourceProcedureSuffix { get; set; } = "";
+
+    /// <summary>Companion procedures only: true fails the refresh instead of guessing when a voucher maps to several tags/units.</summary>
+    public bool StrictIdentity { get; set; }
+
     public int MaxRawRows { get; set; } = 1_000_000;
 
     /// <summary>A refresh that would shrink a company's snapshot by more than this percentage is rejected (previous snapshot kept).</summary>

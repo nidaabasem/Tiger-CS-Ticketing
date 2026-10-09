@@ -341,6 +341,7 @@ public static class InfrastructureServiceCollectionExtensions
         // Hangfire replaces this in AddTigerCsBackgroundJobs when BackgroundJobs:Enabled is true.
         services.TryAddScoped<IReceivablesRangeLoader, InProcessReceivablesRangeLoader>();
         services.AddScoped<PactReceivableCustomersAppService>();
+        services.AddScoped<PactInstalmentsAppService>();
         services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);
         services.AddScoped<CollectionsCampaignAppService>();

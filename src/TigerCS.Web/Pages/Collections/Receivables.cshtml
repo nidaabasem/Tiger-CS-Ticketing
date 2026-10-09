@@ -12,139 +12,75 @@
         <div>
             <p class="receivables-eyebrow">Collections</p>
             <h1 class="page-title">Due &amp; Overdue Customers</h1>
-            <p class="page-subtitle">PACT customers with unpaid instalments due today or earlier, including customers with no tickets.</p>
+            <p class="page-subtitle">PACT instalments by tower, month or date range and payment status, from a local copy that is refreshed in the background.</p>
         </div>
-        <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a><a class="btn" href="@Model.PageUrl(Model.PageNumber)">Refresh</a></div>
+        <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a></div>
     </div>
 
-    <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter>
+    <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter data-results-form>
         <div class="field-group filter-bar__search">
-            <label class="field-label" for="receivableSearch">Customer or unit</label>
-            <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit…" />
+            <label class="field-label" for="receivableSearch">Customer, unit or voucher</label>
+            <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID, unit or voucher…" />
         </div>
         <partial name="_TowerPicker" model="@(new TowerPickerModel("receivableTower", Model.Towers, Model.TowerId, Model.TowersFailed))" />
         <div class="field-group">
-            <label class="field-label" for="receivableStatus">Status</label>
-            <select class="field-select" id="receivableStatus" name="status">
-                <option value="all" selected="@(Model.Status is null or "all")">Due &amp; Overdue</option>
-                <option value="due" selected="@(Model.Status == "due")">Due this month</option>
-                <option value="overdue" selected="@(Model.Status == "overdue")">Overdue</option>
+            <label class="field-label" for="receivableMonth">Month</label>
+            <select class="field-select" id="receivableMonth" name="month" data-month-select>
+                <option value="">Custom range</option>
+                @for (var m = 1; m <= 12; m++) { <option value="@m" selected="@(Model.Month == m)">@ReceivablesModel.MonthNames[m - 1]</option> }
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableYear">Year</label>
+            <select class="field-select" id="receivableYear" name="year" data-year-select>
+                <option value="">—</option>
+                @foreach (var y in Model.YearOptions()) { <option value="@y" selected="@(Model.Year == y)">@y</option> }
             </select>
         </div>
         <div class="field-group">
             <label class="field-label" for="receivableFrom">From (instalment due)</label>
-            <input class="field-input" type="date" id="receivableFrom" name="dateFrom" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" />
+            <input class="field-input" type="date" id="receivableFrom" name="dateFrom" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-date-from />
         </div>
         <div class="field-group">
             <label class="field-label" for="receivableTo">To (instalment due, inclusive)</label>
-            <input class="field-input" type="date" id="receivableTo" name="dateTo" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" />
+            <input class="field-input" type="date" id="receivableTo" name="dateTo" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" data-date-to />
         </div>
         <div class="field-group receivables-shortcuts">
             <span class="field-label">Quick range</span>
             <a class="btn btn-sm" href="@Model.LastSixMonthsUrl()" data-last-six-months>Last 6 months</a>
         </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableStatus">Payment status</label>
+            <select class="field-select" id="receivableStatus" name="paymentStatus" data-payment-status>
+                @foreach (var (value, label) in ReceivablesModel.PaymentOptions)
+                {
+                    <option value="@value" selected="@(Model.PaymentStatus == value)" data-needs="@(value is "unpaid" or "partial" ? "breakdown" : value is "paid" or "all" ? "paid" : "")">@label</option>
+                }
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableMin">Minimum outstanding amount (AED)</label>
+            <input class="field-input" type="number" id="receivableMin" name="minAmount" min="0" step="any" inputmode="decimal" value="@Model.MinAmountText" disabled="@(!Model.MinApplies)" data-min-amount aria-describedby="receivableMinHelp" />
+            <span class="receivables-meta" id="receivableMinHelp" data-min-help>
+                @if (Model.MinApplies) { <text>Shows instalments whose remaining unpaid amount is at least this value (&ge;).</text> }
+                else { <text>Not applied to Fully paid and All, so paid instalments are never hidden.</text> }
+            </span>
+        </div>
         <div class="filter-bar__submit">
             <button class="btn btn-gold" type="submit">Apply</button>
             <a class="btn btn-ghost" href="/Collections/Receivables">Clear</a>
         </div>
-        <span class="receivables-loading" role="status" hidden>Loading customers…</span>
+        <span class="receivables-loading" role="status" hidden>Loading…</span>
     </form>
 
-    @if (Model.LoadNotice is { } notice) { <div class="receivables-notice" role="status" data-load-notice>@notice</div> }
-    @if (Model.Report is { } report)
-    {
-        <div class="receivables-metrics">
-            <div class="panel"><span>Apartments in this list@(report.Snapshot is { RangeCovered: false } ? " (incomplete: dates not fully loaded)" : "")</span><strong>@(report.TotalCount.ToString() + (report.Snapshot is { RangeCovered: false } ? "+" : ""))</strong></div>
-            <div class="panel"><span>Due this month</span><strong>@report.DueCustomerCount</strong></div>
-            <div class="panel"><span>Overdue</span><strong>@report.OverdueCustomerCount</strong></div>
-        </div>
-        @if (report.Snapshot is { } snapshot) { <partial name="_SnapshotStatus" model="snapshot" /> }
-        <p class="text-secondary">Reporting month @report.PeriodStart.ToString("MMM yyyy") (Due = due @report.PeriodStart.ToString("dd MMM")–@report.PeriodEnd.ToString("dd MMM yyyy"); Overdue = due before @report.PeriodStart.ToString("dd MMM yyyy")) · as of @report.BusinessDate.ToString("dd MMM yyyy") · Dubai time · @report.Currency (configured currency). Each row is one apartment.</p>
-        @foreach (var note in report.Notes ?? []) { <p class="text-secondary" role="status">@note</p> }
-        @if (report.PeriodEnd < report.BusinessDate || report.PeriodStart > report.BusinessDate)
-        {
-            <div class="receivables-notice" role="status">Amounts are the current remaining balances of instalments whose due dates fall in the selected period. They are not a historical balance as of that month.</div>
-        }
-        @if (!report.LegacyExclusionsApplied)
-        {
-            <div class="receivables-notice" role="status">Every apartment with a positive due or overdue amount is listed. The legacy booking, down-payment and special-case exclusions are not applied.</div>
-        }
-        <div class="panel">
-            @if (report.Items.Count == 0)
-            {
-                <div class="empty-state"><p class="empty-state__title">No unpaid instalments match the selected tower and dates in the loaded data.</p><a class="btn" href="/Collections/Receivables">Clear filters</a></div>
-            }
-            else
-            {
-                <div class="receivables-table-wrap">
-                    <table class="receivables-table">
-                        <thead><tr><th>Customer</th><th>Company / apartment</th><th>Due (month)</th><th>Overdue (before month)</th><th>Total</th><th>Earliest due date</th><th>Instalments</th></tr></thead>
-                        <tbody>
-                        @foreach (var customer in report.Items)
-                        {
-                            <tr>
-                                <td><strong>@customer.FullName</strong><span class="receivables-meta">Customer ID @customer.TenantId</span><span class="receivables-meta">@customer.Mobile</span><span class="receivables-meta">@customer.Email</span></td>
-                                <td>@customer.CompanyName<span class="receivables-meta">@(customer.UnitCode.Length > 0 ? customer.UnitCode : "No unit code")</span>@if (customer.TowerNumber is not null) { <span class="receivables-meta">Tower @customer.TowerNumber@(string.IsNullOrWhiteSpace(customer.TowerName) ? " (not in tower list)" : " - " + customer.TowerName)</span> }</td>
-                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.DueAmount)</span>@if (customer.HasDue) { <span class="receivables-tag">Due this month</span> }</td>
-                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.OverdueAmount)</span>@if (customer.HasOverdue) { <span class="receivables-tag receivables-tag--overdue">@customer.OverdueDays days overdue</span> }</td>
-                                <td><span class="receivables-amount">@ReceivablesModel.Money(customer.TotalAmount)</span></td>
-                                <td>@customer.EarliestDueDate.ToString("dd MMM yyyy")</td>
-                                <td>
-                                    <details class="receivables-details">
-                                        <summary>View @customer.Instalments.Count</summary>
-                                        @if (customer.AmountStatus == "NeedsReview")
-                                        {
-                                            <p class="receivables-notice">Several source rows share a due date. The total needs review; each source row is shown below.</p>
-                                        }
-                                        <ul>
-                                        @foreach (var instalment in customer.Instalments)
-                                        {
-                                            <li><strong>@instalment.UnitCode</strong> · Due @instalment.DueDate.ToString("dd MMM yyyy") · Remaining @ReceivablesModel.Money(instalment.RemainingAmount) @report.Currency
-                                                <span class="receivables-tag">@instalment.ReceivablesType</span>
-                                                <span class="receivables-tag">@ReceivablesModel.PaymentLabel(instalment.PaymentStatus)</span>
-                                                <span class="receivables-tag @(instalment.DueTiming == "Overdue" ? "receivables-tag--overdue" : "")">@ReceivablesModel.TimingLabel(instalment.DueTiming)</span>
-                                                <span class="receivables-meta">Voucher @instalment.VoucherNumber · Source status: @(instalment.SourceStatus.Length > 0 ? instalment.SourceStatus : "(none)")</span></li>
-                                        }
-                                        </ul>
-                                    </details>
-                                </td>
-                            </tr>
-                        }
-                        </tbody>
-                    </table>
-                </div>
-            }
-            <div class="receivables-pagination">
-                <span>Page @report.Page of @Model.TotalPages</span>
-                <div>
-                    @if (report.Page > 1) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page - 1)">Previous</a> }
-                    @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" href="@Model.PageUrl(report.Page + 1)">Next</a> }
-                </div>
-            </div>
-        </div>
-    }
-    else
-    {
-        <div class="panel"><div class="error-state" role="alert" data-campaign-error>
-        @if (Model.Outcome == ApiOutcome.Forbidden)
-        {
-            <p>Your account does not have permission to view Collections financial data.</p>
-        }
-        else if (Model.Outcome == ApiOutcome.Unauthorized)
-        {
-            <p>Your session has expired. <a href="/Logout">Sign in again</a>.</p>
-        }
-        else if (Model.Outcome == ApiOutcome.ValidationError)
-        {
-            <p>@(Model.Error ?? "The selected filters are invalid. Choose a tower, status and valid dates and retry.")</p>
-        }
+    <div class="receivables-results" data-results data-results-url="/Collections/Receivables" aria-live="polite">
+        @if (Model.RenderFull) { <partial name="_InstalmentResults" model="Model" /> }
         else
         {
-            <p>@(Model.Error ?? "The receivables source is unavailable.") The customer list could not be loaded; this is not an empty result.</p>
-            <a class="btn" href="@Model.PageUrl(Model.PageNumber)">Retry</a>
+            <div class="receivables-results__loading" role="status" data-results-loading>Loading instalments…</div>
+            <noscript><p class="receivables-notice">JavaScript loads the results here. <a href="@Model.PageUrl(1)">Open the full page without JavaScript</a>.</p></noscript>
         }
-        </div></div>
-    }
+    </div>
 </div>
 <script src="~/js/receivables.js" asp-append-version="true"></script>
 <script src="~/js/collections-towers.js" asp-append-version="true"></script>

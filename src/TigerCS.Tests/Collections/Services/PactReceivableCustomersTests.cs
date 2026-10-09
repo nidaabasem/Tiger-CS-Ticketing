@@ -33,7 +33,7 @@ public sealed class PactReceivableCustomersTests
     {
         public Source Source { get; } = new();
         public CollectionsOptions Options { get; } = new() { Enabled = true };
-        public PactReceivablesOptions SqlOptions { get; } = new() { Enabled = true };
+        public PactReceivablesOptions SqlOptions { get; } = new() { Enabled = true, DefaultMinOutstandingAmount = 0m };
         public PactReceivableCustomersAppService Service { get; }
         public CollectionsCaller Agent { get; } = new(Guid.NewGuid(), [Roles.CsAgent], []);
         public Harness()

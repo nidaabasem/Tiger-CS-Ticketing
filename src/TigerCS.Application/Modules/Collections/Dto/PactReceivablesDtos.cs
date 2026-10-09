@@ -21,4 +21,5 @@ public sealed record PactReceivableCustomersDto(
     int TotalCount, int DueCustomerCount, int OverdueCustomerCount,
     int Page, int PageSize, IReadOnlyList<PactReceivableCustomerDto> Items,
     DateOnly? DateFrom = null, DateOnly? DateTo = null, int? TowerId = null,
-    SnapshotStatusDto? Snapshot = null, IReadOnlyList<string>? Notes = null);
+    SnapshotStatusDto? Snapshot = null, IReadOnlyList<string>? Notes = null,
+    decimal MinAmount = 0m, ServerTimingsDto? Timings = null);

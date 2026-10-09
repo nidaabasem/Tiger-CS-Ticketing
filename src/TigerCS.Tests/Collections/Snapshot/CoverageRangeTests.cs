@@ -88,8 +88,8 @@ public sealed class CoverageRangeTests
             var options = new CollectionsOptions { Enabled = true };
             var auth = new CollectionsAuthorizationService(options, new FakeDepartmentRepository());
             var clock = new CollectionsClock(options, new FakeTimeProvider(Now));
-            Receivables = new(options, new PactReceivablesOptions { Enabled = true }, auth, clock, Source, NullLogger<PactReceivableCustomersAppService>.Instance, null, Loader);
-            Campaigns = new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions { Enabled = true },
+            Receivables = new(options, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m }, auth, clock, Source, NullLogger<PactReceivableCustomersAppService>.Instance, null, Loader);
+            Campaigns = new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
                 new(options, new FakeDepartmentRepository()), clock, Source, NullLogger<CollectionsCampaignAppService>.Instance);
         }
     }

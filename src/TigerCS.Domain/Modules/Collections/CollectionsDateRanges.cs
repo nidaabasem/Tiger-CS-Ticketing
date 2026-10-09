@@ -10,4 +10,18 @@ public static class CollectionsDateRanges
 
     /// <summary>Sanity bounds of the date inputs. 1 January is only the DEFAULT From, never a minimum.</summary>
     public static bool IsSupported(DateOnly from, DateOnly to) => from <= to && from.Year >= 2000 && to.Year <= 2100;
+
+    /// <summary>First and last day of a calendar month (handles leap February and year changes).</summary>
+    public static (DateOnly From, DateOnly To) Month(int year, int month)
+    {
+        var first = new DateOnly(year, month, 1);
+        return (first, first.AddMonths(1).AddDays(-1));
+    }
+
+    /// <summary>True when the range is exactly one whole calendar month (the Month / Year selectors then show it).</summary>
+    public static bool TryAsCalendarMonth(DateOnly from, DateOnly to, out int year, out int month)
+    {
+        year = from.Year; month = from.Month;
+        return from.Day == 1 && Month(from.Year, from.Month).To == to;
+    }
 }
