@@ -24,6 +24,8 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     public int? TowerId { get; private set; }
     public DateOnly? DateFrom { get; private set; }
     public DateOnly? DateTo { get; private set; }
+    /// <summary>The month chosen on a month card (<c>yyyy-MM</c>), or null for "All months". It only narrows the list and totals; Overdue is unchanged.</summary>
+    public string? DueMonth { get; private set; }
     public int? Month { get; private set; }
     public int? Year { get; private set; }
     public string PaymentStatus { get; private set; } = "outstanding";
@@ -58,9 +60,9 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     }
 
     public async Task OnGetAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount,
-        string? search, int page = 1, string? render = null, string? load = null, string? view = null, CancellationToken cancellationToken = default)
+        string? search, int page = 1, string? render = null, string? load = null, string? view = null, string? dueMonth = null, CancellationToken cancellationToken = default)
     {
-        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view);
+        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view, dueMonth);
         RenderFull = render == "full";
         // The shell never waits for data. The tower list is a small local read; results arrive through the Results handler (or render=full without JavaScript).
         var towers = await api.GetTowersAsync(cancellationToken);
@@ -71,10 +73,10 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     /// <summary>The results area only (HTML fragment).</summary>
     public async Task<IActionResult> OnGetResultsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount,
-        string? search, int page = 1, string? load = null, string? view = null, CancellationToken cancellationToken = default)
+        string? search, int page = 1, string? load = null, string? view = null, string? dueMonth = null, CancellationToken cancellationToken = default)
     {
         var timer = Stopwatch.StartNew();
-        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view);
+        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view, dueMonth);
         var apiTimer = Stopwatch.StartNew();
         await LoadReportAsync(cancellationToken);
         var apiMs = apiTimer.Elapsed.TotalMilliseconds;
@@ -85,8 +87,9 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         return Partial("_InstalmentResults", this);
     }
 
-    private void Bind(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount, string? search, int page, string? load, string? view)
+    private void Bind(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount, string? search, int page, string? load, string? view, string? dueMonth)
     {
+        DueMonth = dueMonth is { Length: 7 } && DateOnly.TryParseExact(dueMonth + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _) ? dueMonth : null;
         View = string.Equals(view, "instalments", StringComparison.OrdinalIgnoreCase) ? "instalments" : "units";
         TowerId = towerId;
         PaymentStatus = CollectionsPaymentFilters.TryParse(paymentStatus, out var filter) ? CollectionsPaymentFilters.ToWire(filter) : "outstanding";
@@ -112,7 +115,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     private async Task LoadReportAsync(CancellationToken cancellationToken)
     {
-        var result = await api.GetInstalmentsAsync(TowerId, DateFrom, DateTo, PaymentStatus, MinApplies ? MinAmount : null, Search, PageNumber, cancellationToken, View);
+        var result = await api.GetInstalmentsAsync(TowerId, DateFrom, DateTo, PaymentStatus, MinApplies ? MinAmount : null, Search, PageNumber, cancellationToken, View, DueMonth);
         Outcome = result.Outcome;
         Error = result.Detail;
         Report = result.IsSuccess ? result.Value : null;
@@ -125,7 +128,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     }
 
     /// <summary>Query string of the current filters (page 1 unless given); the same names the form submits.</summary>
-    public string Query(int? page = null, DateOnly? from = null, DateOnly? to = null)
+    public string Query(int? page = null, DateOnly? from = null, DateOnly? to = null, bool keepMonth = true)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         query["view"] = View;
@@ -135,9 +138,20 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         query["paymentStatus"] = PaymentStatus;
         query["minAmount"] = MinAmountText;
         if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
+        if (keepMonth && DueMonth is not null) query["dueMonth"] = DueMonth;
         if (page is > 1) query["page"] = page.Value.ToString(CultureInfo.InvariantCulture);
         return query.ToString()!;
     }
+
+    /// <summary>Link of a month card: the same filters, that month selected, back to page 1. A null month is "All months".</summary>
+    public string MonthUrl(int? year, int? month)
+    {
+        var query = HttpUtility.ParseQueryString(Query(null, keepMonth: false));
+        if (year is { } y && month is { } m) query["dueMonth"] = $"{y:0000}-{m:00}";
+        return $"/Collections/Receivables?{query}&render=full";
+    }
+
+    public bool IsSelected(int year, int month) => DueMonth == $"{year:0000}-{month:00}";
 
     public string PageUrl(int page) => $"/Collections/Receivables?{Query(page)}&render=full";
     public string ResultsUrl(int page) => $"/Collections/Receivables?{Query(page)}&handler=Results";

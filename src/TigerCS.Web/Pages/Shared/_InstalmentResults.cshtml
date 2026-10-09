@@ -9,6 +9,26 @@
     <div hidden data-payment-views data-breakdown="@report.Views.Unpaid.ToString().ToLowerInvariant()" data-paid="@report.Views.FullyPaid.ToString().ToLowerInvariant()" data-nothing-loaded="@report.Snapshot.NothingLoaded.ToString().ToLowerInvariant()"></div>
     <div hidden data-effective-filters data-from="@report.DateFrom.ToString("yyyy-MM-dd")" data-to="@report.DateTo.ToString("yyyy-MM-dd")"></div>
     <partial name="_SnapshotStatus" model="report.Snapshot" />
+    @if (report.Months is { Count: > 0 } months)
+    {
+        <nav class="month-overview" aria-label="Months" data-month-overview>
+            <a class="month-card@(Model.DueMonth is null ? " month-card--selected" : "")" data-results-link data-month-card="all" href="@Model.MonthUrl(null, null)" aria-current="@(Model.DueMonth is null ? "true" : "false")">
+                <span class="month-card__title">All months</span>
+                <strong>@months.Sum(x => x.OverdueCount).ToString("N0") overdue</strong>
+                <span>@ReceivablesModel.Money(months.Sum(x => x.RemainingTotal))</span>
+            </a>
+            @foreach (var m in months)
+            {
+                var selected = Model.IsSelected(m.Year, m.Month);
+                <a class="month-card@(selected ? " month-card--selected" : "")@(m.OverdueCount > 0 ? " month-card--overdue" : "")" data-results-link data-month-card="@m.Year-@m.Month.ToString("00")"
+                   href="@Model.MonthUrl(m.Year, m.Month)" aria-current="@(selected ? "true" : "false")">
+                    <span class="month-card__title">@(new DateTime(m.Year, m.Month, 1).ToString("MMM yyyy", System.Globalization.CultureInfo.InvariantCulture))</span>
+                    <strong>@m.OverdueCount.ToString("N0") overdue</strong>
+                    <span>@ReceivablesModel.Money(m.RemainingTotal)</span>
+                </a>
+            }
+        </nav>
+    }
     <div class="receivables-metrics receivables-metrics--five">
         <div class="panel"><span>@(Model.ByUnit ? "Units" : "Instalments")@(report.Snapshot.RangeCovered ? "" : " (incomplete: dates not fully loaded)")</span><strong>@(Model.ListCount.ToString("N0") + (report.Snapshot.RangeCovered ? "" : "+"))</strong>@if (Model.ByUnit) { <span>@totals.Count.ToString("N0") instalments</span> }</div>
         <div class="panel"><span>Remaining (@report.Currency)</span><strong>@ReceivablesModel.Money(totals.RemainingTotal)</strong></div>

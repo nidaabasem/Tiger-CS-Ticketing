@@ -34,7 +34,8 @@ public sealed class SlaDueDateService(
     ITicketSlaInstanceRepository slaInstanceRepository,
     ISlaDeadlineScheduler deadlineScheduler,
     IAuditEntryWriter auditWriter,
-    IRequestTypeSlaPolicyRepository? requestTypeSlaPolicyRepository = null)
+    IRequestTypeSlaPolicyRepository? requestTypeSlaPolicyRepository = null,
+    ITicketSlaPausePeriodRepository? pauseRepository = null)
 {
     /// <summary>
     /// Computes and stores the ticket's first SLA period.
@@ -197,6 +198,95 @@ public sealed class SlaDueDateService(
     }
 
 
+    /// <summary>
+    /// Re-applies the governing policy to the ticket's <b>running</b> period
+    /// after a request type was classified onto it (a Genesys ticket opens on
+    /// the Normal priority policy and learns its request type later).
+    ///
+    /// <para>
+    /// <b>Never restarts, shortens-by-erasure or forgives.</b> Due times are
+    /// recomputed from the period's <i>original</i> start, so elapsed time
+    /// stays elapsed; the period row, its start and its breach flags are kept.
+    /// A deadline is left exactly as it is when it is already breached, when
+    /// First Response has already been satisfied by a human, or (Resolution)
+    /// when the period has pause history — a recomputed deadline would drop
+    /// the time already added by the pause. Nothing is written when the
+    /// result would not differ.
+    /// </para>
+    ///
+    /// <para>Participates in the caller's transaction. Returns <see cref="SlaPolicyReapplication.NoPeriod"/> when the ticket has no running period to adjust.</para>
+    /// </summary>
+    public async Task<SlaPolicyReapplication> ReapplyPolicyForRequestTypeAsync(
+        Ticket ticket, Guid? actorEmployeeId, Guid correlationId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+
+        var current = await slaInstanceRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
+        if (current is null)
+        {
+            return SlaPolicyReapplication.NoPeriod;
+        }
+
+        var computation = await ComputeAsync(current.PriorityId, ticket.RequestTypeId, current.PeriodStartAtUtc, cancellationToken);
+
+        var firstResponseLocked = ticket.FirstHumanResponseAtUtc is not null || current.FirstResponseBreached;
+        var hasPauseHistory = pauseRepository is not null
+            && (await pauseRepository.ListByInstanceIdAsync(current.TicketSlaInstanceId, cancellationToken)).Count > 0;
+        var resolutionLocked = current.ResolutionBreached || hasPauseHistory;
+
+        DateTime? newFirstResponse = firstResponseLocked ? null : computation.FirstResponseDueAtUtc;
+        DateTime? newResolution = resolutionLocked ? null : computation.ResolutionDueAtUtc;
+
+        var changesFirstResponse = newFirstResponse is { } fr && fr != current.FirstResponseDueAtUtc;
+        var changesResolution = newResolution is { } res
+            && (res != current.ResolutionDueAtUtc
+                || computation.Applied.RequestTypeSlaPolicyId != current.RequestTypeSlaPolicyId
+                || computation.Applied.RequestTypeSlaNote != current.RequestTypeSlaNote);
+
+        if (!changesFirstResponse && !changesResolution)
+        {
+            return resolutionLocked || firstResponseLocked ? SlaPolicyReapplication.Locked : SlaPolicyReapplication.Unchanged;
+        }
+
+        var before =
+            $"{{\"firstResponseDueAtUtc\":\"{current.FirstResponseDueAtUtc:O}\",\"resolutionDueAtUtc\":\"{current.ResolutionDueAtUtc:O}\","
+            + $"\"policySource\":\"{(current.RequestTypeSlaPolicyId is null ? "Priority" : "RequestType")}\"}}";
+
+        current.ReapplyPolicy(
+            changesFirstResponse ? newFirstResponse : null,
+            changesResolution ? newResolution : null,
+            computation.Applied);
+
+        await auditWriter.WriteAsync(
+            actorEmployeeId,
+            "ReapplySlaPolicy",
+            nameof(TicketSlaInstance),
+            ticket.TicketId.ToString(),
+            beforeValue: before,
+            afterValue:
+                $"{{\"priorityId\":{current.PriorityId},\"clockStartAtUtc\":\"{current.PeriodStartAtUtc:O}\",\"clockRestarted\":false,"
+                + $"\"firstResponseDueAtUtc\":\"{current.FirstResponseDueAtUtc:O}\",\"resolutionDueAtUtc\":\"{current.ResolutionDueAtUtc:O}\","
+                + $"\"firstResponseKept\":{(changesFirstResponse ? "false" : "true")},\"resolutionKept\":{(changesResolution ? "false" : "true")},"
+                + PolicyAuditSuffix(computation.Applied),
+            correlationId,
+            cancellationToken);
+
+        // The stale checks scheduled for the old due times simply find nothing
+        // due (the processor reads the current deadline); the new ones are
+        // armed here, and the recurring sweep covers a lost job.
+        if (changesFirstResponse)
+        {
+            deadlineScheduler.ScheduleDeadlineCheck(ticket.TicketId, SlaDeadlineType.FirstResponse, current.FirstResponseDueAtUtc);
+        }
+
+        if (changesResolution)
+        {
+            deadlineScheduler.ScheduleDeadlineCheck(ticket.TicketId, SlaDeadlineType.Resolution, current.ResolutionDueAtUtc);
+        }
+
+        return SlaPolicyReapplication.Reapplied;
+    }
+
     /// <summary>The audit JSON tail recording which layer decided the targets and, when a request-type SLA was skipped, exactly why.</summary>
     private static string PolicyAuditSuffix(AppliedSlaPolicy applied) =>
         $"\"policySource\":\"{(applied.RequestTypeSlaPolicyId is null ? "Priority" : "RequestType")}\","
@@ -282,6 +372,71 @@ public sealed class SlaDueDateService(
                 + $"\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\","
                 + $"\"firstResponseDueAtUtc\":\"{period.FirstResponseDueAtUtc:O}\",\"firstResponseCarried\":true,"
                 + $"\"firstResponseBreached\":{(period.FirstResponseBreached ? "true" : "false")}}}",
+            correlationId,
+            cancellationToken);
+
+        deadlineScheduler.ScheduleDeadlineCheck(ticket.TicketId, SlaDeadlineType.Resolution, resolutionDueAtUtc);
+
+        return period;
+    }
+
+    /// <summary>
+    /// The SLA side of a priority <b>upgrade</b> (ADR-0012; SLA-Architecture.md
+    /// section 7): end the current period at the change moment and open an
+    /// <see cref="SlaChangeReason.Upgrade"/> successor under the new priority.
+    /// The Resolution deadline is the <b>earlier of</b> the one already in
+    /// effect and the freshly computed one, so an upgrade only ever tightens;
+    /// First Response is carried verbatim. The ended period keeps its flags.
+    /// Returns null, writing nothing, when the ticket has no current period.
+    /// Participates in the caller's transaction.
+    /// </summary>
+    public async Task<TicketSlaInstance?> ReplaceCurrentPeriodForUpgradeAsync(
+        Ticket ticket,
+        byte newPriorityId,
+        DateTime changedAtUtc,
+        Guid? actorEmployeeId,
+        Guid correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+
+        var current = await slaInstanceRepository.GetCurrentAsync(ticket.TicketId, cancellationToken);
+        if (current is null)
+        {
+            return null;
+        }
+
+        var computation = await ComputeAsync(newPriorityId, ticket.RequestTypeId, changedAtUtc, cancellationToken);
+        var resolutionDueAtUtc = computation.ResolutionDueAtUtc < current.ResolutionDueAtUtc
+            ? computation.ResolutionDueAtUtc
+            : current.ResolutionDueAtUtc;
+
+        current.EndPeriod(changedAtUtc);
+
+        var period = TicketSlaInstance.OpenUpgradePeriod(
+            ticket.TicketId, newPriorityId, changedAtUtc,
+            carriedFirstResponseDueAtUtc: current.FirstResponseDueAtUtc,
+            carriedFirstResponseBreached: current.FirstResponseBreached,
+            resolutionDueAtUtc, computation.Applied);
+
+        await slaInstanceRepository.AddAsync(period, cancellationToken);
+
+        await auditWriter.WriteAsync(
+            actorEmployeeId,
+            "ComputeSlaDueDates",
+            nameof(TicketSlaInstance),
+            ticket.TicketId.ToString(),
+            beforeValue:
+                $"{{\"changeReason\":\"{SlaChangeReason.Upgrade}\",\"endedPriorityId\":{current.PriorityId},"
+                + $"\"endedPeriodStartAtUtc\":\"{current.PeriodStartAtUtc:O}\","
+                + $"\"endedResolutionDueAtUtc\":\"{current.ResolutionDueAtUtc:O}\","
+                + $"\"endedFirstResponseBreached\":{(current.FirstResponseBreached ? "true" : "false")},"
+                + $"\"endedResolutionBreached\":{(current.ResolutionBreached ? "true" : "false")}}}",
+            afterValue:
+                $"{{\"priorityId\":{newPriorityId},\"clockStartAtUtc\":\"{changedAtUtc:O}\","
+                + $"\"resolutionDueAtUtc\":\"{resolutionDueAtUtc:O}\",\"resolutionRule\":\"earlier-of\","
+                + $"\"firstResponseDueAtUtc\":\"{period.FirstResponseDueAtUtc:O}\",\"firstResponseCarried\":true,"
+                + PolicyAuditSuffix(computation.Applied),
             correlationId,
             cancellationToken);
 
@@ -392,3 +547,19 @@ public sealed class SlaDueDateService(
 
 /// <summary>The result of <see cref="SlaDueDateService.ComputeAsync"/>: both due timestamps and the snapshot of which policy produced them.</summary>
 public sealed record SlaDueDateComputation(DateTime FirstResponseDueAtUtc, DateTime ResolutionDueAtUtc, AppliedSlaPolicy Applied);
+
+/// <summary>What <see cref="SlaDueDateService.ReapplyPolicyForRequestTypeAsync"/> did to the running period.</summary>
+public enum SlaPolicyReapplication
+{
+    /// <summary>The ticket has no running SLA period, so there was nothing to adjust.</summary>
+    NoPeriod,
+
+    /// <summary>The governing policy already matched the request type — nothing written.</summary>
+    Unchanged,
+
+    /// <summary>Every deadline that could change was locked (breached, answered, or paused before) — nothing written.</summary>
+    Locked,
+
+    /// <summary>The due times / policy snapshot were updated in place, from the original clock start.</summary>
+    Reapplied
+}

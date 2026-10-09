@@ -12,6 +12,7 @@ Run in order on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credenti
 | `V006__usp_Collections_GetReceivables.sql` | Local read procedures (tower, due-date window, Due/Overdue) and the tower list. |
 | `V007__usp_Collections_GetCampaignUnits.sql` | Campaigns preview/export in SQL (filtering, per-unit aggregation, stage rule, review flags, search, totals, paging) + the contact-normalisation procedures. |
 | `V008__usp_Collections_GetInstalmentUnitsPage.sql` | Receivables "By unit" view: the instalment filters, grouped per unit in SQL before paging. Procedure only; no table changes. |
+| `V009__usp_Collections_GetInstalmentMonths.sql` | Receivables month overview: per due-date month overdue count and remaining amount over the whole filtered set (before paging, no month selection). Procedure only. |
 | `tests/probe_pact_result_shape.sql` | Read-only probe of the deployed PACT procedures' result shape (run after V001-V003, before enabling the job). |
 | `tests/smoke_snapshot_publish_and_read.sql` | Rolled-back smoke test of publish validation and the read procedure (development copy). |
 

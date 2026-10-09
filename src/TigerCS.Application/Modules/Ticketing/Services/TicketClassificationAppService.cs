@@ -21,14 +21,15 @@ namespace TigerCS.Application.Modules.Ticketing.Services;
 /// </para>
 ///
 /// <para>
-/// <b>This is where the business/resolution SLA starts — at the moment of
-/// classification, not retroactively.</b> An SLA policy is a commitment to
-/// resolve a <i>known</i> request within a target; while the ticket was
-/// unclassified nobody knew the request, the priority or therefore the
-/// policy, so there was no commitment to measure and no period was opened.
-/// The clock runs from <c>now</c>, the classification timestamp. Backdating
-/// it to the ticket's creation would charge the department for time during
-/// which no target existed, against a policy chosen after the fact.
+/// <b>The SLA clock is never restarted here.</b> A Genesys ticket is created
+/// on the default (Normal) priority with its SLA period already running from
+/// creation, so classifying it adds the category (and request type) to the
+/// running period: a more urgent priority tightens it under the earlier-of
+/// rule, a less urgent one needs the approved-downgrade flow. Only a ticket
+/// that has <i>no</i> priority and no period (created before default
+/// priorities existed, or while none was configured) starts its clock here —
+/// from <c>now</c>, the classification timestamp, never backdated, since no
+/// target existed before.
 /// </para>
 ///
 /// <para>
@@ -97,10 +98,13 @@ public sealed class TicketClassificationAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.TicketClosed);
         }
 
-        // A priority DECREASE on an already-classified ticket is a downgrade
-        // and takes effect only through an approved request (ISSUE-023
-        // Option B). The first priority of an unclassified ticket is not one.
-        if (ticket.IsClassified && ticket.PriorityId is { } currentPriority && request.PriorityId > currentPriority)
+        // A priority DECREASE on a ticket that already carries a priority is
+        // a downgrade and takes effect only through an approved request
+        // (ISSUE-023 Option B). A Genesys ticket arrives with the DEFAULT
+        // priority, so classifying it as less urgent than that default is a
+        // downgrade too; only a ticket with no priority at all (one from
+        // before defaults existed) is setting its first.
+        if (ticket.PriorityId is { } currentPriority && request.PriorityId > currentPriority)
         {
             return TicketMutationResult.Failure(TicketMutationOutcome.DowngradeRequiresApproval);
         }
@@ -162,9 +166,30 @@ public sealed class TicketClassificationAppService(
 
         ticketRepository.SetRowVersion(ticket, request.RowVersion);
 
+        // Captured before anything moves, for the audit trail: a Genesys
+        // ticket already runs on its default priority and SLA period.
+        var priorityBefore = ticket.PriorityId;
+        var slaStateBefore = ticket.SlaState;
+        var hadRunningPeriod = priorityBefore is not null && slaStateBefore != SlaState.NotApplicable;
+
         try
         {
-            ticket.Classify(category.CategoryId, request.PriorityId);
+            if (priorityBefore is { } alreadyHas)
+            {
+                // The default priority stands unless the agent judged the
+                // request MORE urgent (a less urgent one was refused above).
+                // Setting the category must not restart the clock, so the
+                // running period is kept — or tightened by an upgrade.
+                ticket.Classify(category.CategoryId, alreadyHas);
+                if (request.PriorityId < alreadyHas)
+                {
+                    ticket.ChangePriority(request.PriorityId);
+                }
+            }
+            else
+            {
+                ticket.Classify(category.CategoryId, request.PriorityId);
+            }
 
             if (requestType is not null && workflowVersion is not null)
             {
@@ -172,29 +197,51 @@ public sealed class TicketClassificationAppService(
                 ticket.PinWorkflowVersion(workflowVersion.WorkflowTemplateId);
             }
 
-            // The SLA clock the ticket never had, started from this moment —
-            // the first instant at which a target exists to measure against.
-            // See this type's remarks for why it is not backdated.
-            await slaDueDateService.OpenInitialPeriodAsync(
-                ticket, now, callerEmployeeId, correlationId, cancellationToken);
+            if (hadRunningPeriod)
+            {
+                // The clock is already running from ticket creation and is
+                // NOT restarted. A more urgent priority replaces the period
+                // under the earlier-of rule (ADR-0012); otherwise a request
+                // type classified now has its SLA policy applied to the
+                // running period from its original start.
+                if (ticket.PriorityId != priorityBefore)
+                {
+                    await slaDueDateService.ReplaceCurrentPeriodForUpgradeAsync(
+                        ticket, ticket.PriorityId!.Value, now, callerEmployeeId, correlationId, cancellationToken);
+                }
+                else if (requestType is not null)
+                {
+                    await slaDueDateService.ReapplyPolicyForRequestTypeAsync(
+                        ticket, callerEmployeeId, correlationId, cancellationToken);
+                }
+            }
+            else
+            {
+                // The SLA clock the ticket never had, started from this
+                // moment — the first instant at which a target exists to
+                // measure against. See this type's remarks for why it is not
+                // backdated.
+                await slaDueDateService.OpenInitialPeriodAsync(
+                    ticket, now, callerEmployeeId, correlationId, cancellationToken);
 
-            // The ticket's SlaState was NotApplicable while unclassified; a
-            // real period now exists, so the dimension reports Running like
-            // any other live ticket.
-            ticket.StartSlaClock();
+                // The ticket's SlaState was NotApplicable while unclassified;
+                // a real period now exists, so the dimension reports Running
+                // like any other live ticket.
+                ticket.StartSlaClock();
 
-            // The SlaState dimension genuinely moved, so it is recorded on
-            // the ticket's status history like every other dimension change.
-            await statusHistoryRepository.AddAsync(
-                new TicketStatusHistory(
-                    ticket.TicketId, TicketStatusDimension.SlaState, oldValue: (byte)SlaState.NotApplicable,
-                    newValue: (byte)SlaState.Running, callerEmployeeId, actorIsSystem: false,
-                    note: $"SLA clock started at classification ({now:O}).", correlationId, now),
-                cancellationToken);
+                // The SlaState dimension genuinely moved, so it is recorded on
+                // the ticket's status history like every other dimension change.
+                await statusHistoryRepository.AddAsync(
+                    new TicketStatusHistory(
+                        ticket.TicketId, TicketStatusDimension.SlaState, oldValue: (byte)SlaState.NotApplicable,
+                        newValue: (byte)SlaState.Running, callerEmployeeId, actorIsSystem: false,
+                        note: $"SLA clock started at classification ({now:O}).", correlationId, now),
+                    cancellationToken);
+            }
 
             await auditWriter.WriteAsync(
                 callerEmployeeId, "ClassifyTicket", "Ticket", ticket.TicketId.ToString(),
-                beforeValue: "CategoryId=(none);PriorityId=(none);RequestTypeId=(none);SlaState=NotApplicable",
+                beforeValue: $"CategoryId=(none);PriorityId={priorityBefore?.ToString() ?? "(none)"};RequestTypeId=(none);SlaState={slaStateBefore}",
                 afterValue:
                     $"CategoryId={ticket.CategoryId};PriorityId={ticket.PriorityId};"
                     + $"RequestTypeId={ticket.RequestTypeId?.ToString() ?? "(none)"};SlaState={ticket.SlaState}",

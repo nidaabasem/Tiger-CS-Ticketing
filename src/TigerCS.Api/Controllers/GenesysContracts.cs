@@ -42,6 +42,7 @@ namespace TigerCS.Api.Controllers;
 /// <param name="TowerName">The tower/project the customer typed into the chat form, where collected.</param>
 /// <param name="UnitNumber">The unit number the customer typed into the chat form, where collected.</param>
 /// <param name="Subject">A short subject the channel collected, where available — becomes the ticket's request summary.</param>
+/// <param name="RequestType">The request type the bot identified, when it already has one. Validated, then its department routing, automatic assignment and SLA policy are applied. Omit it (or send it blank) when unknown: the ticket then awaits classification in the human follow-up queue, and the bot can send it later on <c>PATCH</c>.</param>
 public sealed record GenesysInquiryRequest(
     string ConversationId,
     string Channel,
@@ -62,7 +63,17 @@ public sealed record GenesysInquiryRequest(
     string? DepartmentCode = null,
     string? TowerName = null,
     string? UnitNumber = null,
-    string? Subject = null);
+    string? Subject = null,
+    GenesysRequestTypePart? RequestType = null);
+
+/// <summary>
+/// The request type the bot identified. Send <c>requestTypeId</c> (preferred) or
+/// <c>name</c>; the id wins when both are sent. Omit the whole part, or send blanks, when the bot
+/// did not supply one (an explicitly invalid one is refused with 422 and nothing is created): the ticket is then awaiting classification in the human follow-up queue.
+/// </summary>
+/// <param name="RequestTypeId">The configured request type's id (see <c>GET /api/request-types</c>).</param>
+/// <param name="Name">The request type's exact name (case-insensitive). Refused as ambiguous if more than one department has it.</param>
+public sealed record GenesysRequestTypePart(int? RequestTypeId = null, string? Name = null);
 
 /// <summary>The transport shape of a conversation-end report, with the transcript available up to that moment. See <see cref="GenesysInquiryRequest"/> for why this record exists at the edge.</summary>
 /// <param name="ConversationId">Required. The conversation being ended — the id it was ingested under.</param>
@@ -99,7 +110,21 @@ public sealed record GenesysTranscriptMessageRequest(
 /// <param name="ConversationId">The conversation this refers to, echoed back.</param>
 /// <param name="TicketId">The one ticket this conversation produced.</param>
 /// <param name="TicketNumber">That ticket's human-facing number.</param>
-public sealed record GenesysInquiryAcceptedResponse(string Outcome, string ConversationId, long TicketId, string TicketNumber);
+/// <param name="ClassificationStatus">"Classified" when a valid request type was applied; "AwaitingClassification" when no request type was supplied (the ticket is then on Normal priority in the human classification queue). A request type that was supplied but is invalid is not accepted at all: the call answers 422 and nothing is created. Absent on a repeated (<c>AlreadyIngested</c>) delivery, which changes nothing.</param>
+/// <param name="RequestTypeId">The applied request type, when classified.</param>
+/// <param name="DepartmentId">The responsible department after routing.</param>
+/// <param name="AssignedEmployeeId">The employee the automatic assignment chose; null means the department queue.</param>
+/// <param name="ClassificationDetail">Why the ticket is awaiting classification, when it is.</param>
+public sealed record GenesysInquiryAcceptedResponse(
+    string Outcome,
+    string ConversationId,
+    long TicketId,
+    string TicketNumber,
+    string? ClassificationStatus = null,
+    int? RequestTypeId = null,
+    int? DepartmentId = null,
+    Guid? AssignedEmployeeId = null,
+    string? ClassificationDetail = null);
 
 /// <summary>What the conversation-end endpoint answers. <paramref name="TicketStatus"/> is included deliberately: it shows that ending a conversation did NOT close the ticket.</summary>
 /// <param name="Outcome">"Ended" or "AlreadyEnded".</param>
@@ -121,10 +146,13 @@ public sealed record GenesysConversationEndResponse(
 /// idempotent — send only what changed, and resend freely.
 ///
 /// <para>
-/// <b>Deliberately narrow.</b> There is no field for category, request type,
-/// priority, status, owner, department, resolution or closure: Genesys owns
-/// the conversation, TigerCS owns the ticket's business state, and a field
-/// absent from this contract is one Genesys cannot reach.
+/// <b>Deliberately narrow.</b> There is no field for category, priority,
+/// status, owner, department, resolution or closure: Genesys owns the
+/// conversation, TigerCS owns the ticket's business state, and a field
+/// absent from this contract is one Genesys cannot reach. The one business
+/// fact it may report is the <c>requestType</c> the bot identified —
+/// validated by TigerCS, which then applies that request type's configured
+/// department routing, automatic assignment and SLA policy itself.
 /// </para>
 /// </summary>
 /// <param name="ConversationId">Required. Must resolve to an interaction on the ticket in the route.</param>
@@ -135,6 +163,7 @@ public sealed record GenesysConversationEndResponse(
 /// <param name="StartedAtUtc">When the interaction started, UTC — recorded only if the Create call did not carry it. Never moves once known.</param>
 /// <param name="Routing">Set when the conversation moved to another queue, or an agent connected / it was transferred. Same ticket, always.</param>
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed the issue is resolved. <b>Record-only — never resolves or closes the ticket.</b></param>
+/// <param name="RequestType">Set when the bot has identified the request type (initially missing, or later in the conversation). Validated; then the request type's department routing, automatic assignment and SLA policy are applied without restarting the SLA clock. Repeating the same one changes nothing; a different one than the ticket already has is refused with 409.</param>
 /// <param name="AwaitingCustomerReply">
 /// Chatbot inactivity timer. <c>true</c> = the chatbot just asked the customer
 /// something and is waiting for the reply: TigerCS starts a persistent timer
@@ -155,7 +184,8 @@ public sealed record GenesysTicketUpdateRequest(
     DateTime? StartedAtUtc = null,
     GenesysRoutingPart? Routing = null,
     GenesysCustomerConfirmationPart? CustomerConfirmation = null,
-    bool? AwaitingCustomerReply = null);
+    bool? AwaitingCustomerReply = null,
+    GenesysRequestTypePart? RequestType = null);
 
 /// <summary>
 /// The customer explicitly confirmed, during the interaction, that the issue
@@ -238,6 +268,10 @@ public sealed record GenesysHandoffPart(
 /// <param name="AwaitingCustomerReply">Whether the inactivity timer is running for this conversation after this update.</param>
 /// <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs; otherwise null.</param>
 /// <param name="AwaitingCustomerReplyNote">Why a requested timer was not started (e.g. human follow-up pending), when it was not.</param>
+/// <param name="ClassificationStatus">"Classified" when the update carried a request type that is now applied.</param>
+/// <param name="RequestTypeId">The applied request type.</param>
+/// <param name="DepartmentId">The responsible department after routing.</param>
+/// <param name="AssignedEmployeeId">The employee chosen by the automatic assignment; null means the department queue.</param>
 public sealed record GenesysTicketUpdateResponse(
     string Outcome,
     string ConversationId,
@@ -250,7 +284,11 @@ public sealed record GenesysTicketUpdateResponse(
     long? TicketAgentHandoffId,
     bool AwaitingCustomerReply = false,
     DateTime? InactivityDeadlineUtc = null,
-    string? AwaitingCustomerReplyNote = null);
+    string? AwaitingCustomerReplyNote = null,
+    string? ClassificationStatus = null,
+    int? RequestTypeId = null,
+    int? DepartmentId = null,
+    Guid? AssignedEmployeeId = null);
 
 /// <summary>
 /// The transport shape of a Genesys <b>agent action</b>: the Ticketing screen
@@ -384,7 +422,8 @@ internal static class GenesysContractMapper
             Absent(request.DepartmentCode),
             Absent(request.TowerName),
             Absent(request.UnitNumber),
-            Absent(request.Subject));
+            Absent(request.Subject),
+            Map(request.RequestType));
         return true;
     }
 
@@ -456,7 +495,11 @@ internal static class GenesysContractMapper
                 request.CustomerConfirmation.ConfirmedResolved,
                 request.CustomerConfirmation.ConfirmedAtUtc,
                 Absent(request.CustomerConfirmation.Note)),
-        request.AwaitingCustomerReply);
+        request.AwaitingCustomerReply,
+        Map(request.RequestType));
+
+    private static GenesysRequestTypeDto? Map(GenesysRequestTypePart? part) =>
+        part is null ? null : new GenesysRequestTypeDto(part.RequestTypeId, Absent(part.Name));
 
     internal static GenesysAgentContextDto Map(GenesysAgentContextRequest request) =>
         new(request.GenesysUserId, request.AgentEmail, request.ConversationId);

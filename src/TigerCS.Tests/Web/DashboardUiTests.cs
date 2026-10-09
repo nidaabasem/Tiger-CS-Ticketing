@@ -479,7 +479,6 @@ public sealed class DashboardUiTests
         HttpClient Client() => new(handler) { BaseAddress = new Uri("http://localhost/") };
         var model = new TicketsModel(
             new TicketsApiClient(Client(), NullLogger<TicketsApiClient>.Instance),
-            new TicketSlaApiClient(Client(), NullLogger<TicketSlaApiClient>.Instance),
             new TicketNameResolver(
                 new UsersApiClient(Client(), NullLogger<UsersApiClient>.Instance),
                 new DepartmentsApiClient(Client(), NullLogger<DepartmentsApiClient>.Instance)),

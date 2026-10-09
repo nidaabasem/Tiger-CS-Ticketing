@@ -83,19 +83,26 @@ public class GenesysController(
     /// The department comes from the customer's explicit website-chat choice
     /// (Leasing / Customer Service / Maintenance) when there is one, and
     /// otherwise from the configured Genesys queue → department mapping.
-    /// Category, Request Type and Priority are never inferred from it: the
-    /// ticket is created <b>Unclassified</b> (no category at all — never a
-    /// placeholder one) and therefore starts no SLA clock. An agent
-    /// classifies it afterwards via
-    /// <c>POST /api/tickets/{ticketId}/classification</c>, on the same
-    /// ticket, and that is when the SLA clock starts.
+    /// Category and Request Type are never inferred from it: the ticket is
+    /// created <b>Unclassified</b> (no category at all — never a placeholder
+    /// one), on the configured default priority (<c>Genesys:DefaultTicketPriority</c>,
+    /// "Normal"), and its SLA clock starts at creation like any other ticket.
+    /// When the bot supplies a valid <c>requestType</c> it is applied
+    /// immediately — the request type's department becomes responsible (the
+    /// originating department is never rewritten), the configured automatic
+    /// assignment runs (no eligible employee leaves it in the department
+    /// queue) and its SLA policy replaces the Normal-priority targets
+    /// without restarting the clock. With no request type supplied the ticket
+    /// stays awaiting classification in the existing human follow-up queue;
+    /// the bot can send it later on <c>PATCH</c>. A repeated delivery of the
+    /// same <c>conversationId</c> changes nothing.
     /// </para>
     /// </remarks>
     /// <param name="request">The normalized inquiry.</param>
     /// <response code="200">The conversation was already ingested — the same ticket is returned, and nothing was created.</response>
     /// <response code="201">A ticket was created for this conversation.</response>
     /// <response code="400">The channel was not recognized, or conversationId was blank.</response>
-    /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, or ticket creation itself was refused.</response>
+    /// <response code="422">The inquiry could not be turned into a ticket — no department could be resolved, a request type was supplied but is invalid (nothing is written), or ticket creation itself was refused.</response>
     /// <response code="503">The Genesys integration is switched off (<c>Genesys:Enabled</c> is false).</response>
     [HttpPost("tickets")]
     [ProducesResponseType<GenesysInquiryAcceptedResponse>(StatusCodes.Status200OK)]
@@ -125,7 +132,10 @@ public class GenesysController(
                 $"/api/tickets/{result.Ticket!.TicketId}",
                 new GenesysInquiryAcceptedResponse(
                     nameof(GenesysIngestionOutcome.TicketCreated), inquiry.ConversationId,
-                    result.Ticket.TicketId, result.Ticket.TicketNumber)),
+                    result.Ticket.TicketId, result.Ticket.TicketNumber,
+                    result.Classification?.Status, result.Classification?.RequestTypeId,
+                    result.Ticket.CurrentDepartmentId, result.Classification?.AssignedEmployeeId,
+                    result.Classification?.Detail)),
 
             // The retry answer: 200 rather than 201, same body, no new ticket.
             GenesysIngestionOutcome.AlreadyIngested when result.Ticket is not null => Ok(
@@ -152,6 +162,13 @@ public class GenesysController(
                     ?? "No department could be resolved from departmentId, departmentCode or the queue mapping.",
                 statusCode: StatusCodes.Status422UnprocessableEntity),
 
+            GenesysIngestionOutcome.RequestTypeInvalid => Problem(
+                type: "https://tigercs.internal/problems/genesys-request-type-invalid",
+                title: "The supplied request type is not valid",
+                detail: (result.Detail ?? "The request type does not exist, is inactive, is ambiguous or cannot route.")
+                    + " No ticket was created. Omit requestType to create the ticket for human classification, or send a valid one.",
+                statusCode: StatusCodes.Status422UnprocessableEntity),
+
             GenesysIngestionOutcome.ChannelNotConfigured => Problem(
                 type: "https://tigercs.internal/problems/genesys-channel-not-configured",
                 title: "The inquiry's channel is not configured",
@@ -175,10 +192,13 @@ public class GenesysController(
     ///
     /// <para>
     /// <b>Genesys owns the conversation; TigerCS owns the ticket.</b> This
-    /// accepts conversation facts only. There is deliberately no field for
-    /// category, request type, priority, status, owner, department,
-    /// resolution or closure: those move through their own TigerCS
-    /// operations, with their own authorization and SLA consequences.
+    /// accepts conversation facts, plus the one business fact the bot may
+    /// report: the <c>requestType</c> it identified. TigerCS validates it and
+    /// applies that request type's department routing, automatic assignment
+    /// and SLA policy itself (the SLA clock is never restarted). There is
+    /// deliberately no field for category, priority, status, owner,
+    /// department, resolution or closure: those move through their own
+    /// TigerCS operations, with their own authorization and SLA consequences.
     /// </para>
     ///
     /// <para>
@@ -201,8 +221,8 @@ public class GenesysController(
     /// <response code="200">Everything supplied was applied, or was already in that state.</response>
     /// <response code="400">conversationId was blank, a transcript message had an unrecognized sender or empty body, the handoff mode or trigger is not recognized, a handoff stand-down named no reason, or customerConfirmation was sent without confirmedResolved: true.</response>
     /// <response code="404">No such ticket, or no interaction exists for this conversation.</response>
-    /// <response code="409">The conversation belongs to a different ticket than the one in the route.</response>
-    /// <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to.</response>
+    /// <response code="409">The conversation belongs to a different ticket than the one in the route, or the ticket already has a different request type, is closed, or changed while being classified (retry).</response>
+    /// <response code="422">A handoff assignment was supplied but no outstanding human work exists to apply it to, or the supplied requestType does not exist, is inactive, is ambiguous by name, or cannot route.</response>
     /// <response code="503">The Genesys integration is switched off.</response>
     [HttpPatch("tickets/{ticketId:long}")]
     [ProducesResponseType<GenesysTicketUpdateResponse>(StatusCodes.Status200OK)]
@@ -231,7 +251,9 @@ public class GenesysController(
                     result.TicketId!.Value, result.TicketNumber!, result.TicketStatus!,
                     result.ConversationEnded, result.TranscriptMessageCount,
                     result.HandoffStatus, result.TicketAgentHandoffId,
-                    result.AwaitingCustomerReply, result.InactivityDeadlineUtc, result.AwaitingCustomerReplyNote)),
+                    result.AwaitingCustomerReply, result.InactivityDeadlineUtc, result.AwaitingCustomerReplyNote,
+                    result.Classification?.Status, result.Classification?.RequestTypeId,
+                    result.Classification?.DepartmentId, result.Classification?.AssignedEmployeeId)),
 
             GenesysTicketUpdateOutcome.IntegrationDisabled => Problem(
                 type: "https://tigercs.internal/problems/genesys-integration-disabled",
@@ -277,6 +299,30 @@ public class GenesysController(
                 title: "The customer confirmation is not a confirmation",
                 detail: result.Detail,
                 statusCode: StatusCodes.Status400BadRequest),
+
+            GenesysTicketUpdateOutcome.InvalidRequestType => Problem(
+                type: "https://tigercs.internal/problems/genesys-invalid-request-type",
+                title: "The request type cannot be used",
+                detail: result.Detail,
+                statusCode: StatusCodes.Status422UnprocessableEntity),
+
+            GenesysTicketUpdateOutcome.RequestTypeConflict => Problem(
+                type: "https://tigercs.internal/problems/genesys-request-type-conflict",
+                title: "The ticket already has a different request type",
+                detail: result.Detail,
+                statusCode: StatusCodes.Status409Conflict),
+
+            GenesysTicketUpdateOutcome.TicketClosed => Problem(
+                type: "https://tigercs.internal/problems/ticket-closed",
+                title: "The ticket is closed",
+                detail: "A request type cannot be classified onto a closed ticket.",
+                statusCode: StatusCodes.Status409Conflict),
+
+            GenesysTicketUpdateOutcome.ConcurrencyConflict => Problem(
+                type: "https://tigercs.internal/problems/concurrency-conflict",
+                title: "The ticket changed while it was being classified",
+                detail: result.Detail,
+                statusCode: StatusCodes.Status409Conflict),
 
             GenesysTicketUpdateOutcome.TicketNotFound => Problem(
                 type: "https://tigercs.internal/problems/ticket-not-found",

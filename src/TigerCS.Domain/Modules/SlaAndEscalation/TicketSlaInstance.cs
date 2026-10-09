@@ -209,6 +209,57 @@ public class TicketSlaInstance
     }
 
     /// <summary>
+    /// Re-applies the governing SLA policy to the <b>running</b> period after
+    /// a request type has been classified, <b>without restarting the clock</b>:
+    /// <see cref="PeriodStartAtUtc"/> is untouched and the new due timestamps
+    /// were computed by the caller from that original start, so elapsed time
+    /// is kept. Breach flags are never touched, and a deadline that has
+    /// already breached is never moved (the caller passes null for it). A
+    /// null deadline argument means "leave that deadline, and its applied
+    /// target, exactly as it is".
+    /// </summary>
+    public void ReapplyPolicy(
+        DateTime? firstResponseDueAtUtc, DateTime? resolutionDueAtUtc, AppliedSlaPolicy applied)
+    {
+        ArgumentNullException.ThrowIfNull(applied);
+
+        if (PeriodEndAtUtc is not null)
+        {
+            throw new InvalidOperationException(
+                $"TicketSlaInstance {TicketSlaInstanceId} is ended — only the current period can be re-applied.");
+        }
+
+        if (firstResponseDueAtUtc is { } firstResponse)
+        {
+            if (FirstResponseBreached)
+            {
+                throw new InvalidOperationException("A breached First Response deadline is part of the permanent record.");
+            }
+
+            FirstResponseDueAtUtc = firstResponse;
+            AppliedFirstResponseTargetMinutes = applied.AppliedFirstResponseTargetMinutes;
+        }
+
+        if (resolutionDueAtUtc is { } resolution)
+        {
+            if (ResolutionBreached)
+            {
+                throw new InvalidOperationException("A breached Resolution deadline is part of the permanent record.");
+            }
+
+            ResolutionDueAtUtc = resolution;
+            AppliedResolutionTargetMinutes = applied.AppliedResolutionTargetMinutes;
+            ResolutionClockBasis = applied.ResolutionClockBasis;
+            PausesOnPendingCustomerOverride = applied.PausesOnPendingCustomerOverride;
+
+            // The policy snapshot describes what governs the Resolution
+            // deadline, so it only changes when that deadline does.
+            RequestTypeSlaPolicyId = applied.RequestTypeSlaPolicyId;
+            RequestTypeSlaNote = applied.RequestTypeSlaNote;
+        }
+    }
+
+    /// <summary>
     /// Opens the successor period of an <b>approved priority downgrade</b>
     /// (ISSUE-023 Option B; SLA-Architecture.md section 7). The approver is
     /// recorded on the row (<see cref="ApprovedByEmployeeId"/>, copied from
@@ -248,6 +299,35 @@ public class TicketSlaInstance
             FirstResponseBreached = carriedFirstResponseBreached,
             ApprovedByEmployeeId = approvedByEmployeeId
         };
+    }
+
+    /// <summary>
+    /// Opens the successor period of a priority <b>upgrade</b> (ADR-0012;
+    /// SLA-Architecture.md section 7): no approval is needed because an
+    /// upgrade can only tighten. First Response is carried verbatim (due
+    /// timestamp and breach flag), and the Resolution deadline is the one the
+    /// caller computed as the earlier of the existing and the freshly
+    /// computed higher-tier deadline — which may already be in the past for a
+    /// ticket that was overdue, so (unlike the other successor factories) it
+    /// is deliberately not required to follow <paramref name="changedAtUtc"/>:
+    /// an upgrade must never launder an overdue deadline into a fresh one.
+    /// </summary>
+    public static TicketSlaInstance OpenUpgradePeriod(
+        long ticketId,
+        byte priorityId,
+        DateTime changedAtUtc,
+        DateTime carriedFirstResponseDueAtUtc,
+        bool carriedFirstResponseBreached,
+        DateTime resolutionDueAtUtc,
+        AppliedSlaPolicy? applied = null)
+    {
+        var period = new TicketSlaInstance(
+            ticketId, priorityId, changedAtUtc, carriedFirstResponseDueAtUtc, resolutionDueAtUtc, SlaChangeReason.Upgrade)
+        {
+            FirstResponseBreached = carriedFirstResponseBreached
+        };
+        period.Apply(applied);
+        return period;
     }
 
     /// <summary>

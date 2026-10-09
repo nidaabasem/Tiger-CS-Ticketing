@@ -135,7 +135,10 @@ public sealed class TigerCsApiFactory : WebApplicationFactory<Program>
                 // A test that needs it off again overrides this through
                 // ExtraConfiguration, which is applied after and therefore
                 // wins — see GenesysDisabledEndpointsTests.
-                ["Genesys:Enabled"] = "true"
+                ["Genesys:Enabled"] = "true",
+                // Keeps these endpoint tests about the behavior they name; the
+                // awaiting-classification queue has its own tests.
+                ["Genesys:HumanQueueForUnclassified"] = "false"
             });
 
             if (ExtraConfiguration.Count > 0)

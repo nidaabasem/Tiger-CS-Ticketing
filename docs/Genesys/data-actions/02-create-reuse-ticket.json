@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end}"
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"channel\": \"$esc.jsonString(${input.channel})\", \"customerPhone\": \"$!esc.jsonString($input.customerPhone)\", \"customerName\": \"$!esc.jsonString($input.customerName)\", \"customerEmail\": \"$!esc.jsonString($input.customerEmail)\", \"departmentCode\": \"$!esc.jsonString($input.departmentCode)\", \"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\", \"calledNumber\": \"$!esc.jsonString($input.calledNumber)\", \"direction\": \"$!esc.jsonString($input.direction)\", \"subject\": \"$!esc.jsonString($input.subject)\", \"towerName\": \"$!esc.jsonString($input.towerName)\", \"unitNumber\": \"$!esc.jsonString($input.unitNumber)\", \"startedAtUtc\": #if(\"$!{input.startedAtUtc}\" == \"\")null#else\"$esc.jsonString(${input.startedAtUtc})\"#end, \"requestType\": {\"name\": \"$!esc.jsonString($input.requestTypeName)\"}}"
     },
     "response": {
       "translationMap": {
@@ -98,6 +98,10 @@
           "startedAtUtc": {
             "type": "string",
             "description": "ISO-8601 UTC, e.g. ToString(Flow.StartDateTimeUtc). Optional."
+          },
+          "requestTypeName": {
+            "type": "string",
+            "description": "Optional. The exact name of the request type the bot identified. Valid: the ticket is routed to that request type's department, auto-assigned and given its SLA. Blank or unknown: the ticket awaits classification in the human follow-up queue; send it later with the Update Routing action."
           }
         }
       }

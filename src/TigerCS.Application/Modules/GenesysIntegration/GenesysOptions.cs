@@ -53,6 +53,32 @@ public sealed class GenesysOptions
     /// </summary>
     public int CustomerInactivityTimeoutMinutes { get; set; } = DefaultCustomerInactivityTimeoutMinutes;
 
+    /// <summary>The default for <see cref="DefaultTicketPriority"/>: the business tier name used by the SLA document.</summary>
+    public const string DefaultDefaultTicketPriority = "Normal";
+
+    /// <summary>
+    /// The priority a new Genesys ticket starts with, by name. Resolved
+    /// against the Priorities table at ingestion time (never by a hard-coded
+    /// id): a priority row with exactly this name wins, otherwise the
+    /// documented business alias applies (<c>Normal</c> is the Medium tier —
+    /// see <c>PriorityAliases</c>). Set it under
+    /// <c>Genesys:DefaultTicketPriority</c>; blank disables the default and
+    /// restores "no priority until classified".
+    /// </summary>
+    public string? DefaultTicketPriority { get; set; } = DefaultDefaultTicketPriority;
+
+    /// <summary>
+    /// Whether a Genesys ticket with no request type supplied is put
+    /// in the human follow-up queue ("awaiting classification") instead of
+    /// being left for the bot alone. On by default — the business rule is that
+    /// an unclassified Genesys ticket is never left without a human owner of
+    /// the classification; switch it off
+    /// (<c>Genesys:HumanQueueForUnclassified</c> = false) only as a rollout kill
+    /// switch. The queue entry is stood down automatically when the request type
+    /// is later classified.
+    /// </summary>
+    public bool HumanQueueForUnclassified { get; set; } = true;
+
     /// <summary>The configured timeout, or null when automatic closure is switched off.</summary>
     public TimeSpan? CustomerInactivityTimeout =>
         CustomerInactivityTimeoutMinutes > 0 ? TimeSpan.FromMinutes(CustomerInactivityTimeoutMinutes) : null;

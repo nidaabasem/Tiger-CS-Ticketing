@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"routing\": {\"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\"}}"
+      "requestTemplate": "{\"conversationId\": \"$esc.jsonString(${input.conversationId})\", \"routing\": {\"queueId\": \"$!esc.jsonString($input.queueId)\", \"queueName\": \"$!esc.jsonString($input.queueName)\", \"agentId\": \"$!esc.jsonString($input.agentId)\", \"agentName\": \"$!esc.jsonString($input.agentName)\"}, \"requestType\": {\"name\": \"$!esc.jsonString($input.requestTypeName)\"}}"
     },
     "response": {
       "translationMap": {
@@ -60,6 +60,10 @@
           "agentName": {
             "type": "string",
             "description": "Optional."
+          },
+          "requestTypeName": {
+            "type": "string",
+            "description": "Optional. The exact name of the request type the bot has now identified. Applies its department routing, auto-assignment and SLA policy once; repeating the same name changes nothing, a different one than the ticket already has is refused (409)."
           }
         }
       }

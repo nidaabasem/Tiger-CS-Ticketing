@@ -1,3 +1,4 @@
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Tests.GenesysIntegration.Fakes;
 
@@ -114,8 +115,9 @@ public class GenesysCreateTicketOptionalFieldsTests
         Assert.Null(ticket.ManualProjectName);
         Assert.Null(ticket.ManualUnitNumber);
         Assert.Null(ticket.CategoryId);
-        Assert.Null(ticket.PriorityId);
         Assert.Null(ticket.RequestTypeId);
+        // The one value written for the caller: the configured default (Normal) priority.
+        Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);
     }
 
     [Fact]

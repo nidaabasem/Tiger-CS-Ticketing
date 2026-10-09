@@ -63,6 +63,17 @@ public sealed class GenesysServiceFixture
     public FakeUserDepartmentAssignmentRepository DepartmentAssignments { get; } = new();
     public FakeTicketAssignmentRepository TicketAssignments { get; } = new();
 
+    // Workflow configuration shared by every service below, so a test that
+    // seeds a request type, its published workflow, its assignment rule or
+    // its department settings is seen by creation, classification and routing alike.
+    public FakeRequestTypeRepository RequestTypes { get; } = new();
+    public FakeWorkflowTemplateRepository WorkflowTemplates { get; } = new();
+    public FakeRequestTypeAssignmentRuleRepository AssignmentRules { get; } = new();
+    public FakeDepartmentWorkflowSettingsRepository DepartmentSettings { get; } = new();
+
+    /// <summary>Applies a Genesys-supplied request type to a ticket (ingestion and PATCH both go through it).</summary>
+    public GenesysRequestTypeClassificationAppService RequestTypeClassification { get; }
+
     /// <summary>The ticket's typed event log — where the handoff story is recorded for Ticket Activity.</summary>
     public FakeTicketWorkflowEventRepository WorkflowEvents { get; } = new();
     public FakeTicketStatusHistoryRepository StatusHistory { get; } = new();
@@ -110,9 +121,15 @@ public sealed class GenesysServiceFixture
     public FakeTicketPendingRecordRepository PendingRecords { get; } = new();
     public FakeOutboxWriter Outbox { get; } = new();
 
-    public GenesysServiceFixture(bool enabled = true, int? inactivityTimeoutMinutes = null)
+    /// <param name="queueUnclassifiedForHuman">
+    /// Whether a ticket with no request type joins the human follow-up queue
+    /// (production default: true). Off here so the many tests of OTHER Genesys
+    /// behavior (handoffs, the inactivity timer…) are not disturbed by an
+    /// extra work item; the routing tests switch it on.
+    /// </param>
+    public GenesysServiceFixture(bool enabled = true, int? inactivityTimeoutMinutes = null, bool queueUnclassifiedForHuman = false)
     {
-        Options = new GenesysOptions { Enabled = enabled };
+        Options = new GenesysOptions { Enabled = enabled, HumanQueueForUnclassified = queueUnclassifiedForHuman };
         if (inactivityTimeoutMinutes is { } minutes)
         {
             Options.CustomerInactivityTimeoutMinutes = minutes;
@@ -130,15 +147,16 @@ public sealed class GenesysServiceFixture
         var intakeRecordAppService = new IntakeRecordAppService(
             IntakeRecords, Departments, Channels, UnitOfWork, Audit, TimeProvider.System);
 
+        var autoAssignment = new TicketAutoAssignmentService(
+            AssignmentRules, DepartmentSettings, DepartmentAssignments, TicketAssignments, Audit);
+
         var ticketCreationAppService = new TicketCreationAppService(
             IntakeRecords, new FakeUnitReferenceRepository(), new FakeContactReferenceRepository(),
             Categories, new FakePriorityRepository(), Departments, Tickets,
             new FakeTicketRequesterSnapshotRepository(), StatusHistory, UnitOfWork, Audit, outbox,
-            sla.DueDates, TimeProvider.System, new FakeRequestTypeRepository(), Interactions,
-            new TicketAutoAssignmentService(
-                new FakeRequestTypeAssignmentRuleRepository(), new FakeDepartmentWorkflowSettingsRepository(),
-                DepartmentAssignments, TicketAssignments, Audit),
-            new FakeWorkflowTemplateRepository());
+            sla.DueDates, TimeProvider.System, RequestTypes, Interactions,
+            autoAssignment,
+            WorkflowTemplates);
         ManualTicketCreation = ticketCreationAppService;
 
         // The same customer lookup the New Ticket wizard uses — composed
@@ -160,14 +178,26 @@ public sealed class GenesysServiceFixture
 
         AgentResolution = new GenesysAgentResolutionAppService(AgentMappings, UserRoles, DepartmentAssignments);
 
+        AgentHandoff = new GenesysAgentHandoffAppService(
+            Options, Conversations, Handoffs, WorkflowEvents, Tickets, UnitOfWork, Audit, TimeProvider.System);
+
+        RequestTypeClassification = new GenesysRequestTypeClassificationAppService(
+            Options, Tickets, Conversations, Handoffs,
+            new TicketRequestTypeRoutingService(
+                RequestTypes, WorkflowTemplates, Departments, autoAssignment, sla.DueDates, StatusHistory, Audit),
+            new GenesysDefaultPriorityResolver(Options, new FakePriorityRepository()),
+            AgentHandoff, UnitOfWork, TimeProvider.System);
+
         Ingestion = new GenesysInquiryIngestionAppService(
             Options, Conversations, QueueMappings, Departments, Channels,
             Tickets, intakeRecordAppService, ticketCreationAppService, customerSearch, Audit, UnitOfWork,
-            AgentResolution);
+            AgentResolution,
+            new GenesysDefaultPriorityResolver(Options, new FakePriorityRepository()),
+            RequestTypeClassification);
 
         Classification = new TicketClassificationAppService(
-            Tickets, Categories, new FakePriorityRepository(), new FakeRequestTypeRepository(),
-            new FakeWorkflowTemplateRepository(), DepartmentAssignments, StatusHistory, UnitOfWork, Audit,
+            Tickets, Categories, new FakePriorityRepository(), RequestTypes,
+            WorkflowTemplates, DepartmentAssignments, StatusHistory, UnitOfWork, Audit,
             sla.DueDates, TimeProvider.System);
 
         ConversationEnd = new GenesysConversationEndAppService(
@@ -181,9 +211,6 @@ public sealed class GenesysServiceFixture
         InteractionQuery = new TicketInteractionQueryAppService(
             Tickets, Interactions, Conversations, Channels, Handoffs, ticketQuery);
 
-        AgentHandoff = new GenesysAgentHandoffAppService(
-            Options, Conversations, Handoffs, WorkflowEvents, Tickets, UnitOfWork, Audit, TimeProvider.System);
-
         PendingWork = new AgentHandoffAppService(
             Handoffs, ticketQuery, Tickets, TicketAssignments, StatusHistory, WorkflowEvents,
             DepartmentAssignments, UnitOfWork, Audit, TimeProvider.System);
@@ -191,16 +218,16 @@ public sealed class GenesysServiceFixture
         // Contract #3: the one update facade over the two services above.
         TicketUpdate = new GenesysTicketUpdateAppService(
             Options, Conversations, Tickets, Handoffs, UnitOfWork, ConversationEnd, AgentHandoff, AgentResolution, Audit,
-            WorkflowEvents, Clock);
+            WorkflowEvents, Clock, RequestTypeClassification);
 
-        var requestTypes = new FakeRequestTypeRepository();
-        var workflowTemplates = new FakeWorkflowTemplateRepository();
-        var departmentSettings = new FakeDepartmentWorkflowSettingsRepository();
+        var requestTypes = RequestTypes;
+        var workflowTemplates = WorkflowTemplates;
+        var departmentSettings = DepartmentSettings;
         Lifecycle = new TicketLifecycleAppService(
             Tickets, Resolutions, StatusHistory, DepartmentAssignments, UnitOfWork, Audit, sla.BreachProcessor, Clock,
             PendingRecords, requestTypes, workflowTemplates, outbox, Departments, departmentSettings, WorkflowEvents,
             new TicketAutoAssignmentService(
-                new FakeRequestTypeAssignmentRuleRepository(), departmentSettings, DepartmentAssignments, TicketAssignments, Audit),
+                AssignmentRules, departmentSettings, DepartmentAssignments, TicketAssignments, Audit),
             sla.DueDates,
             new ReopenEligibilityService(StatusHistory, requestTypes, workflowTemplates, ReopenPolicy.Default));
 

@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Primitives;
 using TigerCS.Application.Modules.IdentityAndAccess.Dto;
-using TigerCS.Application.Modules.SlaAndEscalation.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Web.Models;
 using TigerCS.Web.Services;
@@ -12,7 +11,7 @@ using TigerCS.Web.Services.Auth;
 
 namespace TigerCS.Web.Pages;
 
-public sealed record TicketQueueRow(TicketSummaryDto Ticket, string? DepartmentName, string? OwnerName, TicketSlaSummaryResponseDto? Sla);
+public sealed record TicketQueueRow(TicketSummaryDto Ticket, string? DepartmentName, string? OwnerName);
 
 /// <summary>One row of the Pending Interactions view, with the department and channel resolved to names.</summary>
 public sealed record PendingInteractionRow(AgentHandoffDto Handoff, string? DepartmentName, string? ChannelName);
@@ -30,7 +29,6 @@ public sealed record PendingInteractionRow(AgentHandoffDto Handoff, string? Depa
 /// </summary>
 public sealed class TicketsModel(
     TicketsApiClient ticketsApiClient,
-    TicketSlaApiClient slaApiClient,
     TicketNameResolver nameResolver,
     ChannelsApiClient? channelsApiClient = null,
     RequestTypesApiClient? requestTypesApiClient = null,
@@ -483,9 +481,6 @@ public sealed class TicketsModel(
 
     private async Task<IReadOnlyList<TicketQueueRow>> BuildRowsAsync(IReadOnlyList<TicketSummaryDto> items, CancellationToken cancellationToken)
     {
-        var slaTasks = items.Select(t => slaApiClient.GetSlaAsync(t.TicketId, cancellationToken)).ToArray();
-        await Task.WhenAll(slaTasks);
-
         var rows = new List<TicketQueueRow>(items.Count);
         for (var i = 0; i < items.Count; i++)
         {
@@ -494,8 +489,7 @@ public sealed class TicketsModel(
             var ownerName = ticket.CurrentOwnerEmployeeId is Guid ownerId
                 ? await nameResolver.ResolveOwnerNameAsync(ticket.CurrentDepartmentId, ownerId, cancellationToken)
                 : null;
-            var slaResult = slaTasks[i].Result;
-            rows.Add(new TicketQueueRow(ticket, departmentName, ownerName, slaResult.IsSuccess ? slaResult.Value : null));
+            rows.Add(new TicketQueueRow(ticket, departmentName, ownerName));
         }
 
         return rows;

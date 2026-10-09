@@ -16,7 +16,7 @@ public sealed record FakeInstalment(int Company, string Tenant, string Name, int
 /// In-memory reference model of dbo.usp_Collections_GetInstalmentsPage (same filters, totals, ordering and paging) over the snapshot status model.
 /// Fidelity to the real T-SQL is checked against a real SQL Server by RealSqlSnapshotTests (not available in CI).
 /// </summary>
-public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSource, IPactInstalmentSource, IPactInstalmentUnitSource
+public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactInstalmentMonthSource
 {
     public List<FakeInstalment> Rows { get; } = [];
     public List<CollectionsTowerDto> Towers { get; } = [new(1, "124", "Tower 124", 4, true), new(2, "136", "Tower 136", 4, true), new(3, "127", "Faradis", 32, true)];
@@ -45,6 +45,18 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
             .OrderBy(u => u.OldestDueDate).ThenBy(u => u.CompanyId).ThenBy(u => u.TenantId, StringComparer.Ordinal).ThenBy(u => u.UnitCode, StringComparer.Ordinal).ThenBy(u => u.UnitId).ToList();
         var page = units.Skip((request.Page - 1) * request.PageSize).Take(request.PageSize).ToList();
         return Task.FromResult(new PactInstalmentUnitsPage(all.Totals with { UnitCount = units.Count }, page, false, all.Snapshot, all.ReadAtUtc, 1));
+    }
+
+    /// <summary>Reference model of dbo.usp_Collections_GetInstalmentMonths: the instalment view's filtered rows over the whole window, grouped by due month.</summary>
+    public Task<IReadOnlyList<PactInstalmentMonthDto>> ReadInstalmentMonthsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)
+    {
+        var (last, reads) = (LastRequest, Reads);
+        var all = ReadInstalmentsAsync(request with { Page = 1, PageSize = int.MaxValue / 2 }, cancellationToken).Result;
+        (LastRequest, Reads) = (last, reads);
+        IReadOnlyList<PactInstalmentMonthDto> months = all.Unavailable ? [] : all.Rows.GroupBy(r => (r.DueDate.Year, r.DueDate.Month)).OrderBy(g => g.Key)
+            .Select(g => new PactInstalmentMonthDto(g.Key.Year, g.Key.Month, g.Count(), g.Sum(r => r.RemainingAmount),
+                g.Count(r => r.Classification == "Overdue"), g.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount))).ToList();
+        return Task.FromResult(months);
     }
 
     public Task<PactInstalmentsPage> ReadInstalmentsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)

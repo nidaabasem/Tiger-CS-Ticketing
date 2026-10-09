@@ -454,17 +454,27 @@ public class Ticket
     /// <param name="createdAtUtc">Creation time, in UTC.</param>
     /// <param name="manualProjectName">Optional project/tower snapshot the channel collected, same as <see cref="CreateUnverified"/>.</param>
     /// <param name="manualUnitNumber">Optional unit-number snapshot the channel collected.</param>
+    /// <param name="defaultPriorityId">
+    /// The configured default priority (Genesys tickets: the Normal tier). It
+    /// is a default, not a judgement — category and request type stay null —
+    /// but it selects the SLA policy, so the SLA clock starts at creation.
+    /// Null keeps the original behavior: no priority and no SLA period.
+    /// </param>
     public static Ticket CreateUnclassified(
         string ticketNumber,
         int departmentId,
         string requestSummary,
         DateTime createdAtUtc,
         string? manualProjectName = null,
-        string? manualUnitNumber = null)
+        string? manualUnitNumber = null,
+        byte? defaultPriorityId = null)
     {
-        var ticket = CreateCore(ticketNumber, departmentId, categoryId: null, priorityId: null, requestSummary, createdAtUtc);
+        var ticket = CreateCore(ticketNumber, departmentId, categoryId: null, defaultPriorityId, requestSummary, createdAtUtc);
         ticket.VerificationStatus = CrmVerificationStatus.Unverified;
-        ticket.SlaState = SlaState.NotApplicable;
+        // A defaulted priority selects the SLA policy, so the clock runs from
+        // creation (the caller opens the period); without one there is no
+        // policy to measure against and nothing starts.
+        ticket.SlaState = defaultPriorityId is null ? SlaState.NotApplicable : SlaState.Running;
         ticket.ManualProjectName = manualProjectName;
         ticket.ManualUnitNumber = manualUnitNumber;
         return ticket;
@@ -627,6 +637,26 @@ public class Ticket
         }
 
         PriorityId = newPriorityId;
+    }
+
+    /// <summary>
+    /// Gives a ticket that carries no priority the configured default. Only
+    /// for an unclassified ticket created before default priorities existed
+    /// (new Genesys tickets get theirs at creation); a ticket that already
+    /// has a priority is never touched — a default must not overwrite a
+    /// priority anyone set, and re-ingesting a conversation must not reset it.
+    /// </summary>
+    public void ApplyDefaultPriority(byte priorityId)
+    {
+        EnsureNotClosed();
+
+        if (PriorityId is not null)
+        {
+            throw new InvalidOperationException(
+                $"Ticket {TicketId} already has priority {PriorityId}; a default priority never replaces it.");
+        }
+
+        PriorityId = priorityId;
     }
 
     public void ClassifyRequestType(int requestTypeId)

@@ -22,6 +22,12 @@ public sealed record PactInstalmentUnitDto(
     int CompanyId, string CompanyName, string? TowerNumber, string? TowerName, int UnitId, string UnitCode, string TenantId, string CustomerName,
     int InstalmentCount, decimal RemainingTotal, DateOnly OldestDueDate, IReadOnlyList<PactInstalmentRowDto> Instalments);
 
+/// <summary>
+/// One due-date month of the month overview, over the whole filtered set (before paging, ignoring the month selection). Overdue uses the business-date rule
+/// (remaining &gt; 0 and due before the first day of the current Dubai month); the counts and amounts equal the list's totals when filtered to that month.
+/// </summary>
+public sealed record PactInstalmentMonthDto(int Year, int Month, int InstalmentCount, decimal RemainingTotal, int OverdueCount, decimal OverdueRemaining);
+
 /// <summary>Which payment views the loaded data can answer reliably (the UI disables the others and says why).</summary>
 public sealed record PaymentViewAvailabilityDto(bool Outstanding, bool Unpaid, bool PartiallyPaid, bool FullyPaid, bool All, int UnclassifiedRows);
 
@@ -30,4 +36,5 @@ public sealed record PactInstalmentsPageDto(
     string PaymentFilter, decimal MinAmount, bool MinAmountApplied, string Currency,
     PactInstalmentTotalsDto Totals, int Page, int PageSize, IReadOnlyList<PactInstalmentRowDto> Items,
     SnapshotStatusDto Snapshot, PaymentViewAvailabilityDto Views, IReadOnlyList<string> Notes, DateTime ReadAtUtc, ServerTimingsDto? Timings = null,
-    string View = "instalments", IReadOnlyList<PactInstalmentUnitDto>? Units = null);
+    string View = "instalments", IReadOnlyList<PactInstalmentUnitDto>? Units = null,
+    IReadOnlyList<PactInstalmentMonthDto>? Months = null, string? DueMonth = null);

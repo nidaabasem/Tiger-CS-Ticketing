@@ -44,6 +44,9 @@ public sealed class FakePriorityRepository : IPriorityRepository
 
     public Task<Priority?> GetByIdAsync(byte priorityId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_priorities.GetValueOrDefault(priorityId));
+
+    public Task<Priority?> GetByNameAsync(string name, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_priorities.Values.FirstOrDefault(p => string.Equals(p.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)));
 }
 
 /// <summary>

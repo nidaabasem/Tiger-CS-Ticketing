@@ -152,6 +152,13 @@ public sealed record PactCampaignPage(
     bool Supported, int BadIdentityRows, int Total, int Clean, int Review, IReadOnlyList<CampaignUnitFacts> Units,
     DateTime ReadAtUtc, SnapshotStatusDto Snapshot, double SqlMs);
 
+/// <summary>The Receivables month overview: the instalment filters grouped per due-date month in the data store, over the whole filtered set.</summary>
+public interface IPactInstalmentMonthSource
+{
+    /// <summary>The request's window and filters, ignoring paging: one row per due-date month.</summary>
+    Task<IReadOnlyList<PactInstalmentMonthDto>> ReadInstalmentMonthsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken);
+}
+
 /// <summary>The Receivables "By unit" view: the instalment filters, grouped per unit (company + customer + unit) in the data store before paging.</summary>
 public interface IPactInstalmentUnitSource
 {

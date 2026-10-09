@@ -139,6 +139,36 @@ public sealed class PactReceivablesRenderTests
     }
 
     [Fact]
+    public async Task MonthCards_ShowOverdueCountAndRemaining_HighlightTheSelectedMonth_AndFilterTheList()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 300m, 300m, 0m, "INV-1") with { DueDate = new DateOnly(2026, 8, 5) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 120m, 120m, 0m, "INV-2", "TP124-2002") with { DueDate = new DateOnly(2026, 9, 5) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 80m, 80m, 0m, "INV-3", "TP124-2003") with { DueDate = new DateOnly(2026, 9, 20) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-4") with { DueDate = new DateOnly(2026, 10, 5) });
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+
+        var all = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.Contains("data-month-card=\"all\"", all);
+        Assert.Contains("All months", all);
+        Assert.Contains("Aug 2026", all); Assert.Contains("Sep 2026", all); Assert.Contains("Oct 2026", all);
+        Assert.Contains("2 overdue", all);                                               // September: two overdue instalments ...
+        Assert.Contains("200.00", all);                                                  // ... 120 + 80 remaining
+        Assert.Contains("aria-current=\"true\"", all);                                   // All months is the highlighted one
+        Assert.DoesNotContain("month-card--selected\" data-results-link data-month-card=\"2026-09\"", all);
+        Assert.Contains("INV-1", all); Assert.Contains("INV-4", all);
+
+        var sept = await (await client.GetAsync("/Collections/Receivables?handler=Results&dueMonth=2026-09")).Content.ReadAsStringAsync();
+        Assert.Contains("dueMonth=2026-09", Assert.Single(api.Calls("/receivables/instalments").TakeLast(1)));
+        Assert.Contains("month-card month-card--selected month-card--overdue\" data-results-link data-month-card=\"2026-09\"", sept);
+        Assert.Contains("Aug 2026", sept);                                               // the other months stay visible and clickable
+        Assert.Contains("INV-2", sept); Assert.Contains("INV-3", sept);
+        Assert.DoesNotContain("INV-1", sept); Assert.DoesNotContain("INV-4", sept);
+        Assert.Contains("view=units", sept.Contains("data-month-card=\"all\"") ? sept : "");   // the view stays in the links
+        Assert.DoesNotContain("dueMonth=", System.Text.RegularExpressions.Regex.Match(sept, "data-month-card=\"all\"[^>]*href=\"[^\"]*\"").Value);   // "All months" clears the selection
+    }
+
+    [Fact]
     public async Task RenderFull_IsTheNoJavaScriptFallback_AndIncludesTheResults()
     {
         var api = new FakeCollectionsApi();

@@ -60,7 +60,8 @@ public sealed class GenesysTicketUpdateAppService(
     GenesysAgentResolutionAppService agentResolution,
     IAuditEntryWriter auditWriter,
     ITicketWorkflowEventRepository workflowEventRepository,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    GenesysRequestTypeClassificationAppService classificationAppService)
 {
     public async Task<GenesysTicketUpdateResult> UpdateAsync(
         Guid callerEmployeeId, long ticketId, GenesysTicketUpdateDto request, CancellationToken cancellationToken = default)
@@ -111,6 +112,33 @@ public sealed class GenesysTicketUpdateAppService(
             return GenesysTicketUpdateResult.Failure(
                 GenesysTicketUpdateOutcome.InvalidCustomerConfirmation,
                 "customerConfirmation records only an explicit confirmation — send confirmedResolved: true, or omit the part.");
+        }
+
+        // The request type the bot identified, validated and applied before
+        // anything else: an invalid or conflicting one refuses the update
+        // outright, and the department / owner it sets is what the handoff,
+        // routing and timer logic below must see. Repeating the same request
+        // type is a no-op, so a redelivered update stays idempotent.
+        GenesysClassificationResult? classification = null;
+        if (request.RequestType is { IsSupplied: true } requestType)
+        {
+            classification = await classificationAppService.ClassifyAsync(
+                callerEmployeeId, ticketId, conversationId, requestType, "GenesysUpdate", cancellationToken);
+
+            var classificationFailure = classification.Outcome switch
+            {
+                GenesysClassificationOutcome.RequestTypeInvalid => (GenesysTicketUpdateOutcome?)GenesysTicketUpdateOutcome.InvalidRequestType,
+                GenesysClassificationOutcome.RequestTypeConflict => GenesysTicketUpdateOutcome.RequestTypeConflict,
+                GenesysClassificationOutcome.TicketClosed => GenesysTicketUpdateOutcome.TicketClosed,
+                GenesysClassificationOutcome.ConcurrencyConflict => GenesysTicketUpdateOutcome.ConcurrencyConflict,
+                GenesysClassificationOutcome.TicketNotFound => GenesysTicketUpdateOutcome.TicketNotFound,
+                _ => null
+            };
+
+            if (classificationFailure is { } failure)
+            {
+                return GenesysTicketUpdateResult.Failure(failure, classification.Detail);
+            }
         }
 
         // Human handoff first: a conversation that ends in the same update
@@ -296,7 +324,8 @@ public sealed class GenesysTicketUpdateAppService(
             handoffId,
             AwaitingCustomerReply: interaction.AwaitingCustomerReplySinceUtc is not null,
             InactivityDeadlineUtc: InactivityDeadline(interaction),
-            AwaitingCustomerReplyNote: timerNote);
+            AwaitingCustomerReplyNote: timerNote,
+            Classification: classification);
     }
 
     private DateTime? InactivityDeadline(TicketInteraction interaction) =>

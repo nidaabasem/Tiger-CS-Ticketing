@@ -60,7 +60,11 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 var from = DateOnly.Parse(q["dateFrom"] ?? "2026-01-01"); var to = DateOnly.Parse(q["dateTo"] ?? "2026-10-31");
                 var filter = q["paymentStatus"] ?? "outstanding";
                 var min = decimal.Parse(q["minAmount"] ?? "100", System.Globalization.CultureInfo.InvariantCulture);
-                var rows = Rows.ToList();
+                var all = Rows.ToList();
+                var months = all.GroupBy(r => (r.DueDate.Year, r.DueDate.Month)).OrderBy(g => g.Key).Select(g => new PactInstalmentMonthDto(g.Key.Year, g.Key.Month, g.Count(),
+                    g.Sum(r => r.RemainingAmount), g.Count(r => r.Classification == "Overdue"), g.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount))).ToList();
+                var dueMonth = q["dueMonth"];
+                var rows = dueMonth is null ? all : all.Where(r => r.DueDate.ToString("yyyy-MM") == dueMonth).ToList();
                 var totals = new PactInstalmentTotalsDto(rows.Count, rows.Sum(r => r.RemainingAmount), rows.Count(r => r.Classification == "Overdue"), rows.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount),
                     rows.Count(r => r.Classification == "Due"), rows.Where(r => r.Classification == "Due").Sum(r => r.RemainingAmount), 0, 0m, rows.Count(r => r.PaymentStatus == "FullyPaid"));
                 var snapshot = Snapshot(from, to);
@@ -72,7 +76,7 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                     filter, min, filter is not ("paid" or "all"), "AED", totals, int.Parse(q["page"] ?? "1"), 25, rows, snapshot,
                     new PaymentViewAvailabilityDto(true, snapshot.BreakdownAvailable, snapshot.BreakdownAvailable, snapshot.PaidRetained, snapshot.PaidRetained, snapshot.UnclassifiedRows),
                     ["Payment status and Due/Overdue are independent: an instalment can be partially paid and overdue at the same time."], DateTime.UtcNow,
-                    new ServerTimingsDto(12, 3, 20), byUnit ? "units" : "instalments", units));
+                    new ServerTimingsDto(12, 3, 20), byUnit ? "units" : "instalments", units, months, dueMonth));
             }
             case "/api/collections/campaigns/export":
                 if (Status != HttpStatusCode.OK) return Task.FromResult(new HttpResponseMessage(Status));
