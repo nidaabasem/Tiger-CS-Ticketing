@@ -158,6 +158,59 @@ public sealed class RealSqlSnapshotTests
         if (filter is "paid" or "all") Assert.Equal(0, real.Rows.Count(r => r.RemainingAmount < 0));
     }
 
+    [Theory]
+    [MemberData(nameof(InstalmentScenarios))]
+    public async Task UnitPage_RealStoredProcedure_MatchesTheReferenceModel_AndTheInstalmentView(int? tower, string from, string to, string filter, decimal min, int page, string? search)
+    {
+        if (string.IsNullOrEmpty(ConnectionString)) return;
+        var (_, _, source) = Build();
+        var (rows, companies, towers) = await LoadModelAsync();
+        var model = new Snapshot.FakeInstalmentSource(DateTime.UtcNow);
+        model.Rows.AddRange(rows); model.Towers.Clear(); model.Towers.AddRange(towers); model.Companies.Clear(); foreach (var (k, v) in companies) model.Companies[k] = v;
+        var request = new PactInstalmentsRequest(DateOnly.Parse(from), DateOnly.Parse(to), new DateOnly(2026, 10, 1), min, filter, search, null, page, 25, null, tower);
+        var real = await source.ReadInstalmentUnitsAsync(request, default);
+        var expected = await model.ReadInstalmentUnitsAsync(request, default);
+        Assert.Equal(expected.Unavailable, real.Unavailable);
+        Assert.Equal(expected.Totals, real.Totals);                                                       // counts, amounts, unit count over ALL pages
+        Assert.Equal(expected.Units.Select(UnitKey), real.Units.Select(UnitKey));                        // same units, same order, same page
+        foreach (var (e, r) in expected.Units.Zip(real.Units))
+        {
+            Assert.Equal(e.Instalments.Select(Key), r.Instalments.Select(Key));                           // expansion: every matching instalment of the unit, nothing else
+            Assert.Equal(r.InstalmentCount, r.Instalments.Count);
+            Assert.Equal(r.RemainingTotal, r.Instalments.Sum(i => i.RemainingAmount));
+            Assert.Equal(r.OldestDueDate, r.Instalments.Min(i => i.DueDate));
+        }
+        // Same filters, same instalments: the instalment view's totals are the unit view's totals.
+        var flat = await source.ReadInstalmentsAsync(request, default);
+        Assert.Equal(flat.Totals with { UnitCount = real.Totals.UnitCount }, real.Totals);
+    }
+
+    [Fact]
+    public async Task UnitPages_WalkedToTheEnd_AreDisjointComplete_AndAddUpToTheInstalmentView()
+    {
+        if (string.IsNullOrEmpty(ConnectionString)) return;
+        var (_, _, source) = Build();
+        PactInstalmentsRequest Request(int page, int size) => new(new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 31), new DateOnly(2026, 10, 1), 100m, "outstanding", null, null, page, size, null, 5);
+        var first = await source.ReadInstalmentUnitsAsync(Request(1, 100), default);
+        var pages = (int)Math.Ceiling(first.Totals.UnitCount / 100.0);
+        var units = new List<TigerCS.Application.Modules.Collections.Dto.PactInstalmentUnitDto>(first.Units);
+        for (var p = 2; p <= pages; p++) units.AddRange((await source.ReadInstalmentUnitsAsync(Request(p, 100), default)).Units);
+        Assert.Equal(first.Totals.UnitCount, units.Count);
+        Assert.Equal(units.Count, units.Select(UnitKey).Distinct().Count());                              // no unit on two pages
+        Assert.Equal(first.Totals.Count, units.Sum(u => u.InstalmentCount));                               // no instalment lost or duplicated
+        Assert.Equal(first.Totals.RemainingTotal, units.Sum(u => u.RemainingTotal));
+        Assert.True(units.Zip(units.Skip(1)).All(p => p.First.OldestDueDate <= p.Second.OldestDueDate));    // oldest first across pages
+        // Different companies / customers stay separate: no (company, customer, unit code, unit id) twice.
+        Assert.Equal(units.Count, units.Select(u => (u.CompanyId, u.TenantId, u.UnitId, u.UnitCode)).Distinct().Count());
+        // And it equals the instalment view walked to the end.
+        var flat = new List<TigerCS.Application.Modules.Collections.Dto.PactInstalmentRowDto>();
+        for (var p = 1; p <= (int)Math.Ceiling(first.Totals.Count / 100.0); p++) flat.AddRange((await source.ReadInstalmentsAsync(Request(p, 100), default)).Rows);
+        Assert.Equal(flat.Select(Key).Order(), units.SelectMany(u => u.Instalments).Select(Key).Order());
+    }
+
+    private static string UnitKey(TigerCS.Application.Modules.Collections.Dto.PactInstalmentUnitDto u) =>
+        $"{u.CompanyId}|{u.TenantId}|{u.UnitId}|{u.UnitCode}|{u.InstalmentCount}|{u.RemainingTotal}|{u.OldestDueDate:yyyy-MM-dd}|{u.CustomerName}";
+
     private static string Key(TigerCS.Application.Modules.Collections.Dto.PactInstalmentRowDto r) =>
         $"{r.CompanyId}|{r.TenantId}|{r.UnitCode}|{r.VoucherNumber}|{r.DueDate:yyyy-MM-dd}|{r.OriginalAmount}|{r.PaidAmount}|{r.RemainingAmount}|{r.PaymentStatus}|{r.Classification}";
 

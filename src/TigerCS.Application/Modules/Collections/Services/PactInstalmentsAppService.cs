@@ -22,7 +22,8 @@ public sealed class PactInstalmentsAppService(
 {
     public async Task<CollectionsResult<PactInstalmentsPageDto>> ListAsync(
         CollectionsCaller caller, int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null, string? paymentStatus = null,
-        decimal? minAmount = null, string? search = null, int page = 1, int pageSize = 25, CancellationToken cancellationToken = default)
+        decimal? minAmount = null, string? search = null, int page = 1, int pageSize = 25, CancellationToken cancellationToken = default,
+        string? view = null)
     {
         var total = Stopwatch.StartNew();
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
@@ -34,6 +35,12 @@ public sealed class PactInstalmentsAppService(
             || towerId is <= 0 || minAmount < 0 || minAmount > sourceOptions.MaxMinOutstandingAmount)
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a tower, a payment status (outstanding, unpaid, partial, paid or all), a minimum amount of 0 or more, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
+        // "units": one row per unit, grouped in SQL before paging (all matching instalments of a unit stay together); "instalments" (the default of this API): one row per instalment.
+        var byUnit = string.Equals(view, "units", StringComparison.OrdinalIgnoreCase);
+        if (!byUnit && !string.IsNullOrWhiteSpace(view) && !string.Equals(view, "instalments", StringComparison.OrdinalIgnoreCase))
+            return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "view must be units or instalments.");
+        if (byUnit && source is not IPactInstalmentUnitSource)
+            return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The unit view needs the local receivables snapshot (Collections:ReceivablesSnapshot:UseLocalSnapshot).");
         if (source is not IPactInstalmentSource instalments)
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The instalment list needs the local receivables snapshot (Collections:ReceivablesSnapshot:UseLocalSnapshot).");
 
@@ -59,10 +66,18 @@ public sealed class PactInstalmentsAppService(
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
         PactInstalmentsPage result;
+        IReadOnlyList<PactInstalmentUnitDto>? units = null;
         try
         {
-            result = await instalments.ReadInstalmentsAsync(new PactInstalmentsRequest(from, to, monthStart, min, CollectionsPaymentFilters.ToWire(filter),
-                string.IsNullOrEmpty(term) ? null : term, digits, page, pageSize, null, towerId), budget.Token);
+            var request = new PactInstalmentsRequest(from, to, monthStart, min, CollectionsPaymentFilters.ToWire(filter),
+                string.IsNullOrEmpty(term) ? null : term, digits, page, pageSize, null, towerId);
+            if (byUnit)
+            {
+                var unitPage = await ((IPactInstalmentUnitSource)source).ReadInstalmentUnitsAsync(request, budget.Token);
+                units = unitPage.Units;
+                result = new PactInstalmentsPage(unitPage.Totals, [], unitPage.Unavailable, unitPage.Snapshot, unitPage.ReadAtUtc, unitPage.SqlMs);
+            }
+            else result = await instalments.ReadInstalmentsAsync(request, budget.Token);
         }
         catch (PactReceivablesScopeException ex)
         {
@@ -101,6 +116,7 @@ public sealed class PactInstalmentsAppService(
 
         return CollectionsResult<PactInstalmentsPageDto>.Ok(new PactInstalmentsPageDto(today, monthStart, monthEnd, from, to, towerId,
             CollectionsPaymentFilters.ToWire(filter), min, minApplies, sourceOptions.Currency, result.Totals, page, pageSize, result.Rows, status, views, notes,
-            result.ReadAtUtc, new ServerTimingsDto(result.SqlMs, total.Elapsed.TotalMilliseconds - result.SqlMs, total.Elapsed.TotalMilliseconds)));
+            result.ReadAtUtc, new ServerTimingsDto(result.SqlMs, total.Elapsed.TotalMilliseconds - result.SqlMs, total.Elapsed.TotalMilliseconds),
+            byUnit ? "units" : "instalments", units));
     }
 }

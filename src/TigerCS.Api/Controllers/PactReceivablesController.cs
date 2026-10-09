@@ -58,6 +58,7 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     /// <param name="search">Customer, unit, voucher, phone or e-mail.</param>
     /// <param name="page">One-based page.</param>
     /// <param name="pageSize">1 to 100.</param>
+    /// <param name="view"><c>instalments</c> (default): one row per instalment. <c>units</c>: one row per unit (company + customer + unit) with all its matching instalments, grouped in SQL before paging.</param>
     /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet("/api/collections/receivables/instalments")]
     [ProducesResponseType<PactInstalmentsPageDto>(StatusCodes.Status200OK)]
@@ -65,11 +66,11 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Instalments([FromQuery] int? towerId, [FromQuery] DateOnly? dateFrom, [FromQuery] DateOnly? dateTo, [FromQuery] string? paymentStatus,
-        [FromQuery] decimal? minAmount, [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
+        [FromQuery] decimal? minAmount, [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, [FromQuery] string? view = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
-        var result = await instalments.ListAsync(caller, towerId, dateFrom, dateTo, paymentStatus, minAmount, search, page, pageSize, cancellationToken);
+        var result = await instalments.ListAsync(caller, towerId, dateFrom, dateTo, paymentStatus, minAmount, search, page, pageSize, cancellationToken, view);
         return result.IsSuccess ? Ok(result.Value) : Failure(result.Outcome, result.Detail);
     }
 

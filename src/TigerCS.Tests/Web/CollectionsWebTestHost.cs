@@ -64,11 +64,15 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 var totals = new PactInstalmentTotalsDto(rows.Count, rows.Sum(r => r.RemainingAmount), rows.Count(r => r.Classification == "Overdue"), rows.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount),
                     rows.Count(r => r.Classification == "Due"), rows.Where(r => r.Classification == "Due").Sum(r => r.RemainingAmount), 0, 0m, rows.Count(r => r.PaymentStatus == "FullyPaid"));
                 var snapshot = Snapshot(from, to);
+                var byUnit = q["view"] == "units";
+                var units = byUnit ? rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode)).Select(g => new PactInstalmentUnitDto(g.Key.CompanyId, g.First().CompanyName, g.First().TowerNumber,
+                    g.First().TowerName, g.Key.UnitId ?? 0, g.Key.UnitCode, g.Key.TenantId, g.First().CustomerName, g.Count(), g.Sum(r => r.RemainingAmount), g.Min(r => r.DueDate), g.ToList())).ToList() : null;
+                if (byUnit) totals = totals with { UnitCount = units!.Count };
                 return Json(new PactInstalmentsPageDto(new DateOnly(2026, 10, 9), new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), from, to, int.TryParse(q["towerId"], out var t) ? t : null,
                     filter, min, filter is not ("paid" or "all"), "AED", totals, int.Parse(q["page"] ?? "1"), 25, rows, snapshot,
                     new PaymentViewAvailabilityDto(true, snapshot.BreakdownAvailable, snapshot.BreakdownAvailable, snapshot.PaidRetained, snapshot.PaidRetained, snapshot.UnclassifiedRows),
                     ["Payment status and Due/Overdue are independent: an instalment can be partially paid and overdue at the same time."], DateTime.UtcNow,
-                    new ServerTimingsDto(12, 3, 20)));
+                    new ServerTimingsDto(12, 3, 20), byUnit ? "units" : "instalments", units));
             }
             case "/api/collections/campaigns/export":
                 if (Status != HttpStatusCode.OK) return Task.FromResult(new HttpResponseMessage(Status));

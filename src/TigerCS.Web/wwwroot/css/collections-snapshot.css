@@ -27,3 +27,13 @@
 .receivables-results[aria-busy="true"] { opacity: .85; }
 .receivables-results__loading { padding: 1.5rem 1rem; color: var(--color-text-secondary); }
 @media (max-width: 960px) { .receivables-metrics--five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Receivables: By unit / By instalment */
+.view-toggle__options { display: inline-flex; gap: 1rem; align-items: center; min-height: 2.25rem; }
+.view-toggle__options label { display: inline-flex; gap: .35rem; align-items: center; cursor: pointer; }
+.receivables-table--units th.num, .receivables-table--units td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.unit-group { border-top: 1px solid var(--color-border, #e3e6ea); }
+.unit-detail > td { padding: 0 0 .75rem 1.5rem; background: var(--color-surface-muted, transparent); }
+.unit-detail[hidden] { display: none; }
+.receivables-table--nested { font-size: .9em; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

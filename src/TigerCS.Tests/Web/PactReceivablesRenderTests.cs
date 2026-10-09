@@ -40,7 +40,7 @@ public sealed class PactReceivablesRenderTests
         api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 250m, 250m, 0m, "INV-8"));
         api.Rows.Add(FakeCollectionsApi.Row("Unknown", "Overdue", 90m, null, null, "INV-9"));
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var response = await client.GetAsync("/Collections/Receivables?handler=Results&towerId=7&dateFrom=2026-01-01&dateTo=2026-10-31&paymentStatus=outstanding&minAmount=100&search=3001");
+        var response = await client.GetAsync("/Collections/Receivables?handler=Results&view=instalments&towerId=7&dateFrom=2026-01-01&dateTo=2026-10-31&paymentStatus=outstanding&minAmount=100&search=3001");
         var html = await response.Content.ReadAsStringAsync();
         Assert.Contains("web;dur=", response.Headers.GetValues("Server-Timing").Single());
         Assert.Contains("sql;dur=12", response.Headers.GetValues("Server-Timing").Single());
@@ -104,6 +104,38 @@ public sealed class PactReceivablesRenderTests
         Assert.Contains("data-last-six-months", html);
         var expectedFrom = Display.DubaiToday().AddMonths(-6).ToString("yyyy-MM-dd");
         Assert.Contains($"dateFrom={expectedFrom}", html);
+    }
+
+    [Fact]
+    public async Task ByUnit_IsTheDefaultView_OneRowPerUnit_WithItsInstalmentsExpandable_AndTheViewSurvivesFiltersAndPaging()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 300m, 300m, 0m, "INV-1"));
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-2"));
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 150m, 150m, 0m, "INV-3", "TP124-2002"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+
+        var shell = await (await client.GetAsync("/Collections/Receivables")).Content.ReadAsStringAsync();
+        Assert.Contains("name=\"view\" value=\"units\" checked", shell);                        // By unit is the default ...
+        Assert.Contains("name=\"view\" value=\"instalments\"", shell);                         // ... By instalment stays available
+
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&search=Example")).Content.ReadAsStringAsync();
+        Assert.Contains("view=units", Assert.Single(api.Calls("/receivables/instalments")));
+        foreach (var column in new[] { ">Tower<", ">Unit<", ">Customer<", ">Instalments<", ">Total remaining<", ">Oldest due date<" }) Assert.Contains(column, html);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "data-unit-row").Count);        // two units, not three instalments
+        Assert.Contains("data-unit-toggle", html);                                                          // expandable ...
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "data-unit-detail").Count);      // ... with its instalments inside the unit
+        Assert.Contains("INV-1", html); Assert.Contains("INV-2", html); Assert.Contains("INV-3", html);
+        Assert.Contains("500.00", html);                                                                    // 300 + 200: the unit's total remaining
+        Assert.Contains("2 units", html); Assert.Contains("3 instalments", html);
+        Assert.DoesNotContain(">Voucher<th", html);
+
+        // By instalment is the unchanged one-row-per-instalment table, and the chosen view is part of every link.
+        var flat = await (await client.GetAsync("/Collections/Receivables?handler=Results&view=instalments")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("data-unit-row", flat);
+        Assert.Contains("3 instalments", flat);
+        var full = await (await client.GetAsync("/Collections/Receivables?render=full&view=instalments")).Content.ReadAsStringAsync();
+        Assert.Contains("name=\"view\" value=\"instalments\" checked", full);
     }
 
     [Fact]

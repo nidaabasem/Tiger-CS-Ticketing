@@ -16,7 +16,7 @@ public sealed record FakeInstalment(int Company, string Tenant, string Name, int
 /// In-memory reference model of dbo.usp_Collections_GetInstalmentsPage (same filters, totals, ordering and paging) over the snapshot status model.
 /// Fidelity to the real T-SQL is checked against a real SQL Server by RealSqlSnapshotTests (not available in CI).
 /// </summary>
-public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSource, IPactInstalmentSource
+public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSource, IPactInstalmentSource, IPactInstalmentUnitSource
 {
     public List<FakeInstalment> Rows { get; } = [];
     public List<CollectionsTowerDto> Towers { get; } = [new(1, "124", "Tower 124", 4, true), new(2, "136", "Tower 136", 4, true), new(3, "127", "Faradis", 32, true)];
@@ -31,6 +31,21 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
         FakeSnapshotSource.Healthy(company, successUtc) with { PaidRetained = paidRetained, BreakdownAvailable = breakdown };
 
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    /// <summary>Reference model of dbo.usp_Collections_GetInstalmentUnitsPage: the same filtered rows as the instalment view, grouped per (company, customer, unit) BEFORE paging.</summary>
+    public Task<PactInstalmentUnitsPage> ReadInstalmentUnitsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)
+    {
+        // Totals, filters and row mapping come from the instalment view over the WHOLE filtered set (no paging), then units are formed and paged.
+        var all = ReadInstalmentsAsync(request with { Page = 1, PageSize = int.MaxValue / 2 }, cancellationToken).Result;
+        if (all.Unavailable) return Task.FromResult(new PactInstalmentUnitsPage(all.Totals, [], true, all.Snapshot, all.ReadAtUtc, 0));
+        var units = all.Rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
+            .Select(g => new PactInstalmentUnitDto(g.Key.CompanyId, ReceivablesSnapshotStatusBuilder.CompanyName(g.Key.CompanyId), g.First().TowerNumber, g.First().TowerName, g.Key.UnitId ?? 0,
+                g.Key.UnitCode, g.Key.TenantId, g.First().CustomerName, g.Count(), g.Sum(r => r.RemainingAmount), g.Min(r => r.DueDate),
+                g.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList()))
+            .OrderBy(u => u.OldestDueDate).ThenBy(u => u.CompanyId).ThenBy(u => u.TenantId, StringComparer.Ordinal).ThenBy(u => u.UnitCode, StringComparer.Ordinal).ThenBy(u => u.UnitId).ToList();
+        var page = units.Skip((request.Page - 1) * request.PageSize).Take(request.PageSize).ToList();
+        return Task.FromResult(new PactInstalmentUnitsPage(all.Totals with { UnitCount = units.Count }, page, false, all.Snapshot, all.ReadAtUtc, 1));
+    }
 
     public Task<PactInstalmentsPage> ReadInstalmentsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)
     {

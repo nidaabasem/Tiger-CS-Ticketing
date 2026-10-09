@@ -17,7 +17,7 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 /// </summary>
 public sealed class SnapshotPactReceivablesSource(
     IConfiguration configuration, ReceivablesSnapshotOptions snapshotOptions, PactReceivablesOptions pactOptions,
-    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactCampaignSource
+    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactCampaignSource
 {
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
@@ -402,6 +402,96 @@ public sealed class SnapshotPactReceivablesSource(
         logger.LogInformation("Instalment page read: page {Page}, {Total} instalments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, filter {Filter}, min {Min}).",
             request.Page, totals.Count, sqlMs, request.From, request.To, request.PaymentFilter, request.MinAmount);
         return new PactInstalmentsPage(totals, rows, unavailable, status, ReceivablesSnapshotComposer.ReadAt(status), sqlMs);
+    }
+
+    /// <summary>
+    /// "By unit" view: one round trip to dbo.usp_Collections_GetInstalmentUnitsPage. Units are grouped, counted and paged in SQL; the instalments of exactly the
+    /// listed units come back with them and are attached by (company, customer, unit), so a unit is never split over pages.
+    /// </summary>
+    public async Task<PactInstalmentUnitsPage> ReadInstalmentUnitsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)
+    {
+        if (request.CompanyId is not (null or 4 or 32))
+            throw new PactReceivablesSourceException("The PACT report company is not supported.");
+        var connectionString = configuration.GetConnectionString(snapshotOptions.ConnectionStringName);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var companies = new List<SnapshotCompanyRaw>();
+        var unmatched = new List<UnmatchedTowerDto>();
+        var heads = new List<(int Company, string Tenant, long UnitId, string UnitCode, string Name, string? Tower, string? TowerName, int Count, decimal Remaining, DateOnly Oldest)>();
+        var byUnit = new Dictionary<(int, string, long, string), List<PactInstalmentRowDto>>();
+        var totals = new PactInstalmentTotalsDto(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var unavailable = false;
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("dbo.usp_Collections_GetInstalmentUnitsPage", connection)
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(snapshotOptions.ReadCommandTimeoutSeconds, 1, 600) };
+            command.Parameters.Add("@TowerId", SqlDbType.Int).Value = (object?)request.TowerId ?? DBNull.Value;
+            command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = (object?)request.CompanyId ?? DBNull.Value;
+            command.Parameters.Add("@FromDate", SqlDbType.Date).Value = request.From.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.Add("@ToDate", SqlDbType.Date).Value = request.To.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.Add("@AsOfDate", SqlDbType.Date).Value = request.AsOf.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.Add(new SqlParameter("@MinAmount", SqlDbType.Decimal) { Precision = 19, Scale = 4, Value = request.MinAmount });
+            command.Parameters.Add("@PaymentFilter", SqlDbType.VarChar, 12).Value = request.PaymentFilter;
+            command.Parameters.Add("@Search", SqlDbType.NVarChar, 200).Value = (object?)request.Search ?? DBNull.Value;
+            command.Parameters.Add("@PhoneDigits", SqlDbType.NVarChar, 200).Value = (object?)request.PhoneDigits ?? DBNull.Value;
+            command.Parameters.Add("@PageNumber", SqlDbType.Int).Value = request.Page;
+            command.Parameters.Add("@PageSize", SqlDbType.Int).Value = request.PageSize;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+            if (!await reader.ReadAsync(cancellationToken) || !reader.GetBoolean(reader.GetOrdinal("ScopeValid")))
+                throw new PactReceivablesScopeException("The selected tower is not available. Choose a tower from the list.");
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) companies.Add(ReadCompany(reader));
+            await reader.NextResultAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                totals = new PactInstalmentTotalsDto(reader.GetInt32(reader.GetOrdinal("TotalInstalments")), reader.GetDecimal(reader.GetOrdinal("RemainingTotal")),
+                    reader.GetInt32(reader.GetOrdinal("OverdueCount")), reader.GetDecimal(reader.GetOrdinal("OverdueRemaining")),
+                    reader.GetInt32(reader.GetOrdinal("DueCount")), reader.GetDecimal(reader.GetOrdinal("DueRemaining")),
+                    reader.GetInt32(reader.GetOrdinal("NotYetDueCount")), reader.GetDecimal(reader.GetOrdinal("NotYetDueRemaining")),
+                    reader.GetInt32(reader.GetOrdinal("FullyPaidCount")), reader.GetInt32(reader.GetOrdinal("UnitCount")));
+                unavailable = reader.GetBoolean(reader.GetOrdinal("Unavailable"));
+            }
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                heads.Add((reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), reader.GetInt64(reader.GetOrdinal("UnitId")),
+                    reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("FullName")), Text(reader, "TowerNumber"), Text(reader, "TowerName"),
+                    reader.GetInt32(reader.GetOrdinal("InstalmentCount")), reader.GetDecimal(reader.GetOrdinal("RemainingTotal")),
+                    DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("OldestDueDate")))));
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var company = reader.GetInt32(reader.GetOrdinal("CompanyId"));
+                var key = (company, reader.GetString(reader.GetOrdinal("TenantId")), reader.GetInt64(reader.GetOrdinal("UnitId")), reader.GetString(reader.GetOrdinal("UnitCode")));
+                if (!byUnit.TryGetValue(key, out var list)) byUnit[key] = list = [];
+                list.Add(new PactInstalmentRowDto(company, ReceivablesSnapshotStatusBuilder.CompanyName(company), Text(reader, "TowerNumber"), Text(reader, "TowerName"),
+                    (int)key.Item3, key.Item4, key.Item2, reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("Mobile")), reader.GetString(reader.GetOrdinal("Email")),
+                    reader.GetString(reader.GetOrdinal("VoucherNumber")), reader.GetString(reader.GetOrdinal("ChequeNumber")),
+                    DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("DueDate"))),
+                    NullableDecimal(reader, "OriginalAmount"), NullableDecimal(reader, "PaidAmount"), reader.GetDecimal(reader.GetOrdinal("RemainingAmount")),
+                    reader.GetString(reader.GetOrdinal("PaymentStatus")), reader.GetString(reader.GetOrdinal("Classification")), Text(reader, "SourceStatus") ?? ""));
+            }
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                unmatched.Add(new UnmatchedTowerDto(reader.GetInt32(reader.GetOrdinal("CompanyId")), Text(reader, "TowerNumber"),
+                    reader.GetString(reader.GetOrdinal("Reason")), reader.GetInt64(reader.GetOrdinal("RowCount_")), reader.GetDecimal(reader.GetOrdinal("Amount"))));
+        }
+        catch (SqlException ex)
+        {
+            logger.LogWarning("Unit page read failed (SQL error {SqlNumber}).", ex.Number);
+            throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
+        }
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var status = ReceivablesSnapshotComposer.BuildStatus(request.From, request.To, companies, unmatched, now, snapshotOptions.MaxAgeMinutes);
+        var units = heads.Select(h => new PactInstalmentUnitDto(h.Company, ReceivablesSnapshotStatusBuilder.CompanyName(h.Company), h.Tower, h.TowerName, (int)h.UnitId, h.UnitCode,
+            h.Tenant, h.Name, h.Count, h.Remaining, h.Oldest, byUnit.TryGetValue((h.Company, h.Tenant, h.UnitId, h.UnitCode), out var rows) ? rows : [])).ToList();
+        var sqlMs = timer.Elapsed.TotalMilliseconds;
+        logger.LogInformation("Unit page read: page {Page}, {Units} units / {Total} instalments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, filter {Filter}, min {Min}).",
+            request.Page, totals.UnitCount, totals.Count, sqlMs, request.From, request.To, request.PaymentFilter, request.MinAmount);
+        return new PactInstalmentUnitsPage(totals, units, unavailable, status, ReceivablesSnapshotComposer.ReadAt(status), sqlMs);
     }
 
     private static decimal? NullableDecimal(SqlDataReader r, string name) { var i = r.GetOrdinal(name); return r.IsDBNull(i) ? null : r.GetDecimal(i); }

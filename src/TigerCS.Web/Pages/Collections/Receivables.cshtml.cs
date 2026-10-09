@@ -18,6 +18,9 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     /// <summary>Same as Collections:... PactReceivables:DefaultMinOutstandingAmount on the API; the form always sends the value explicitly.</summary>
     public const decimal DefaultMinAmount = 100m;
 
+    /// <summary>"units" (default): one row per unit with expandable instalments; "instalments": one row per instalment. Kept through filtering and paging.</summary>
+    public string View { get; private set; } = "units";
+    public bool ByUnit => View == "units";
     public int? TowerId { get; private set; }
     public DateOnly? DateFrom { get; private set; }
     public DateOnly? DateTo { get; private set; }
@@ -34,7 +37,8 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     public string? LoadNotice { get; private set; }
     public PactInstalmentsPageDto? Report { get; private set; }
     public bool RenderFull { get; private set; }
-    public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(Report.Totals.Count / (double)Report.PageSize));
+    public int ListCount => Report is null ? 0 : ByUnit ? Report.Totals.UnitCount : Report.Totals.Count;
+    public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(ListCount / (double)Report.PageSize));
     public bool MinApplies => CollectionsPaymentFilters.TryParse(PaymentStatus, out var f) && CollectionsPaymentFilters.MinimumApplies(f);
     public string MinAmountText => MinAmount.ToString("0.####", CultureInfo.InvariantCulture);
 
@@ -54,9 +58,9 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     }
 
     public async Task OnGetAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount,
-        string? search, int page = 1, string? render = null, string? load = null, CancellationToken cancellationToken = default)
+        string? search, int page = 1, string? render = null, string? load = null, string? view = null, CancellationToken cancellationToken = default)
     {
-        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load);
+        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view);
         RenderFull = render == "full";
         // The shell never waits for data. The tower list is a small local read; results arrive through the Results handler (or render=full without JavaScript).
         var towers = await api.GetTowersAsync(cancellationToken);
@@ -67,10 +71,10 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     /// <summary>The results area only (HTML fragment).</summary>
     public async Task<IActionResult> OnGetResultsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount,
-        string? search, int page = 1, string? load = null, CancellationToken cancellationToken = default)
+        string? search, int page = 1, string? load = null, string? view = null, CancellationToken cancellationToken = default)
     {
         var timer = Stopwatch.StartNew();
-        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load);
+        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view);
         var apiTimer = Stopwatch.StartNew();
         await LoadReportAsync(cancellationToken);
         var apiMs = apiTimer.Elapsed.TotalMilliseconds;
@@ -81,8 +85,9 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         return Partial("_InstalmentResults", this);
     }
 
-    private void Bind(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount, string? search, int page, string? load)
+    private void Bind(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount, string? search, int page, string? load, string? view)
     {
+        View = string.Equals(view, "instalments", StringComparison.OrdinalIgnoreCase) ? "instalments" : "units";
         TowerId = towerId;
         PaymentStatus = CollectionsPaymentFilters.TryParse(paymentStatus, out var filter) ? CollectionsPaymentFilters.ToWire(filter) : "outstanding";
         MinAmount = minAmount is >= 0 ? minAmount.Value : DefaultMinAmount;
@@ -107,7 +112,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     private async Task LoadReportAsync(CancellationToken cancellationToken)
     {
-        var result = await api.GetInstalmentsAsync(TowerId, DateFrom, DateTo, PaymentStatus, MinApplies ? MinAmount : null, Search, PageNumber, cancellationToken);
+        var result = await api.GetInstalmentsAsync(TowerId, DateFrom, DateTo, PaymentStatus, MinApplies ? MinAmount : null, Search, PageNumber, cancellationToken, View);
         Outcome = result.Outcome;
         Error = result.Detail;
         Report = result.IsSuccess ? result.Value : null;
@@ -123,6 +128,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     public string Query(int? page = null, DateOnly? from = null, DateOnly? to = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
+        query["view"] = View;
         if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
         if ((from ?? DateFrom) is { } f) query["dateFrom"] = f.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if ((to ?? DateTo) is { } t) query["dateTo"] = t.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -150,6 +156,9 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         var (from, to) = CollectionsDateRanges.LastSixMonths(Report?.BusinessDate ?? CollectionsDisplay.DubaiToday());
         return $"/Collections/Receivables?{Query(null, from, to)}";
     }
+
+    /// <summary>Classification of a whole unit's instalments for the summary line of the By unit view.</summary>
+    public static string Plural(int count, string one, string many) => count == 1 ? $"1 {one}" : $"{count:N0} {many}";
 
     public static string Money(decimal? amount) => amount is { } value ? value.ToString("N2", CultureInfo.InvariantCulture) : "—";
 
