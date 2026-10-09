@@ -9,30 +9,6 @@
     <div hidden data-payment-views data-breakdown="@report.Views.Unpaid.ToString().ToLowerInvariant()" data-paid="@report.Views.FullyPaid.ToString().ToLowerInvariant()" data-nothing-loaded="@report.Snapshot.NothingLoaded.ToString().ToLowerInvariant()"></div>
     <div hidden data-effective-filters data-from="@report.DateFrom.ToString("yyyy-MM-dd")" data-to="@report.DateTo.ToString("yyyy-MM-dd")"></div>
     <partial name="_SnapshotStatus" model="report.Snapshot" />
-    @if (report.Months is { Count: > 0 } months)
-    {
-        var unpaidLabel = report.PaymentFilter is "paid" or "all" ? "Other" : "Other unpaid";
-        var allCount = months.Sum(x => x.InstalmentCount); var allRemaining = months.Sum(x => x.RemainingTotal);
-        var allOverdueCount = months.Sum(x => x.OverdueCount); var allOverdueRemaining = months.Sum(x => x.OverdueRemaining);
-        <nav class="month-overview" aria-label="Months (filter)" data-month-overview>
-            <a class="month-card month-card--all@(Model.DueMonth is null ? " month-card--selected" : "")" data-results-link data-month-card="all" href="@Model.MonthUrl(null, null)" aria-current="@(Model.DueMonth is null ? "true" : "false")">
-                <span class="month-card__title">All months</span>
-                <span class="month-card__line@(allOverdueCount > 0 ? " month-card__line--overdue" : "")" data-card-overdue>Overdue: <b>@allOverdueCount.ToString("N0")</b> · AED <b>@ReceivablesModel.Money(allOverdueRemaining)</b></span>
-                <span class="month-card__line" data-card-total>Total remaining: <b>AED @ReceivablesModel.Money(allRemaining)</b> (@allCount.ToString("N0") instalments)</span>
-            </a>
-            @foreach (var m in months)
-            {
-                var selected = Model.IsSelected(m.Year, m.Month);
-                var otherCount = m.InstalmentCount - m.OverdueCount; var otherRemaining = m.RemainingTotal - m.OverdueRemaining;
-                <a class="month-card@(selected ? " month-card--selected" : "")@(m.OverdueCount > 0 ? " month-card--overdue" : "")" data-results-link data-month-card="@m.Year-@m.Month.ToString("00")"
-                   href="@Model.MonthUrl(m.Year, m.Month)" aria-current="@(selected ? "true" : "false")">
-                    <span class="month-card__title">@ReceivablesModel.MonthLabel(m.Year, m.Month)</span>
-                    <span class="month-card__line@(m.OverdueCount > 0 ? " month-card__line--overdue" : "")" data-card-overdue>Overdue: <b>@m.OverdueCount.ToString("N0")</b>@if (m.OverdueCount > 0) { <text> · AED <b>@ReceivablesModel.Money(m.OverdueRemaining)</b></text> }</span>
-                    <span class="month-card__line" data-card-other>@unpaidLabel: <b>@otherCount.ToString("N0")</b>@if (otherCount > 0) { <text> · AED <b>@ReceivablesModel.Money(otherRemaining)</b></text> }</span>
-                </a>
-            }
-        </nav>
-    }
     <div class="receivables-metrics receivables-metrics--five">
         <div class="panel"><span>@(Model.ByUnit ? "Units" : "Instalments")@(report.Snapshot.RangeCovered ? "" : " (incomplete: dates not fully loaded)")</span><strong>@(Model.ListCount.ToString("N0") + (report.Snapshot.RangeCovered ? "" : "+"))</strong>@if (Model.ByUnit) { <span>@totals.Count.ToString("N0") instalments</span> }</div>
         <div class="panel"><span>Remaining (@report.Currency)</span><strong>@ReceivablesModel.Money(totals.RemainingTotal)</strong></div>
@@ -65,32 +41,38 @@
             {
             <div class="receivables-table-wrap">
                 <table class="receivables-table receivables-table--units">
-                    <thead><tr><th>Tower</th><th>Unit</th><th>Customer</th><th class="num">Total remaining</th><th>Months with unpaid instalments</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    <thead><tr><th>Tower</th><th>Unit</th><th>Customer</th><th>Overdue</th><th>Due</th><th>Not yet due</th><th class="num">Total remaining</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     @foreach (var unit in report.Units ?? [])
                     {
                         var rowId = $"unit-{unit.CompanyId}-{unit.UnitId}-{Math.Abs(string.GetHashCode(unit.TenantId + "|" + unit.UnitCode, StringComparison.Ordinal))}";
+                        var unitMonths = ReceivablesModel.UnitMonths(unit);
                         <tbody class="unit-group" data-unit>
                         <tr data-unit-row>
                             <td>@(unit.TowerNumber is null ? "—" : unit.TowerNumber)@if (unit.TowerNumber is not null) { <span class="receivables-meta">@(string.IsNullOrWhiteSpace(unit.TowerName) ? "not in tower list" : unit.TowerName)</span> }</td>
                             <td>@unit.UnitCode<span class="receivables-meta">@unit.CompanyName</span></td>
                             <td><strong>@unit.CustomerName</strong><span class="receivables-meta">ID @unit.TenantId</span></td>
-                            <td class="num"><span class="receivables-amount" data-unit-remaining>@ReceivablesModel.Money(unit.RemainingTotal)</span><span class="receivables-meta" data-unit-count>@ReceivablesModel.Plural(unit.InstalmentCount, "instalment", "instalments")</span></td>
-                            <td>
-                                <ul class="unit-months" data-unit-months>
-                                @foreach (var um in ReceivablesModel.UnitMonths(unit))
+                            @foreach (var cls in new[] { "Overdue", "Due", "NotYetDue" })
+                            {
+                                var inClass = unitMonths.Where(x => x.Classification == cls).ToList();
+                                <td data-unit-class="@cls">
+                                @if (inClass.Count == 0) { <span class="receivables-meta">—</span> }
+                                else
                                 {
-                                    <li class="unit-month unit-month--@um.Classification.ToLowerInvariant()" data-unit-month="@um.Year-@um.Month.ToString("00")" data-month-remaining="@um.Remaining.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)" data-classification="@um.Classification">
-                                        <span class="unit-month__name">@ReceivablesModel.MonthLabel(um.Year, um.Month)</span>
-                                        <span class="unit-month__amount">@ReceivablesModel.Money(um.Remaining)</span>
-                                        <span class="receivables-tag @(um.Classification == "Overdue" ? "receivables-tag--overdue" : "")">@ReceivablesModel.ClassificationLabel(um.Classification)</span>
-                                    </li>
+                                    <span class="receivables-amount@(cls == "Overdue" ? " receivables-amount--overdue" : "")" data-class-total>@ReceivablesModel.Money(inClass.Sum(x => x.Remaining))</span>
+                                    <ul class="unit-months" data-unit-months>
+                                    @foreach (var um in inClass)
+                                    {
+                                        <li class="unit-month unit-month--@um.Classification.ToLowerInvariant()" data-unit-month="@um.Year-@um.Month.ToString("00")" data-month-remaining="@um.Remaining.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)" data-classification="@um.Classification"><span class="unit-month__name">@ReceivablesModel.MonthLabel(um.Year, um.Month)</span> <span class="unit-month__amount">@ReceivablesModel.Money(um.Remaining)</span></li>
+                                    }
+                                    </ul>
                                 }
-                                </ul>
-                            </td>
+                                </td>
+                            }
+                            <td class="num"><span class="receivables-amount" data-unit-remaining>@ReceivablesModel.Money(unit.RemainingTotal)</span><span class="receivables-meta" data-unit-count>@ReceivablesModel.Plural(unit.InstalmentCount, "instalment", "instalments")</span></td>
                             <td><button type="button" class="btn btn-sm" data-unit-toggle aria-expanded="false" aria-controls="@rowId" hidden>Show instalments</button></td>
                         </tr>
                         <tr class="unit-detail" id="@rowId" data-unit-detail>
-                            <td colspan="6">
+                            <td colspan="8">
                                 <table class="receivables-table receivables-table--instalments receivables-table--nested">
                                     <thead><tr><th>Due date</th><th class="num">Remaining</th><th>Status</th><th>Due / Overdue</th><th>Voucher</th></tr></thead>
                                     <tbody>
