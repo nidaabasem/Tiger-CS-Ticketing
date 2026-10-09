@@ -133,4 +133,105 @@ public class CrmUnitDetailsHttpGatewayTests
         Assert.Equal(CrmUnitDetailsOutcome.Unavailable, result.Outcome);
         Assert.Equal(0, handler.CallCount);
     }
+
+    // ---- sale and completion members (proposed contract; stub-based) ----
+
+    [Fact]
+    public async Task SendsLeadAndIncludeSale_OnlyWhenAsked()
+    {
+        var handler = Returns(HttpStatusCode.OK, Full);
+
+        await Create(handler).GetUnitDetailsAsync(9001, 9200, 9100, includeSale: true);
+        Assert.Equal("https://crm.example.test/TicketingSystem/GetUnitDetails?customerId=9001&unitId=9200&leadId=9100&includeSale=true",
+            handler.LastRequest!.RequestUri!.ToString());
+
+        await Create(handler).GetUnitDetailsAsync(9001, 9200, 9100);
+        Assert.DoesNotContain("includeSale", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task MapsSaleAndCompletion_KeepingCompletionApartFromHandover()
+    {
+        var json = """
+            { "success": true, "found": true, "unit": {
+                "sale": { "leadId": 9100, "soldPrice": 1850000.5, "registrationCost": 74000, "currency": " AED " },
+                "project": { "expectedHandoverDate": "2027-03-31", "completionPercentage": 62.5,
+                             "expectedCompletionDate": "2027-01-31", "actualCompletionDate": "2026-12-15" } } }
+            """;
+
+        var d = (await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(1, 2, 9100, true)).Details!;
+
+        Assert.Equal((9100, 1850000.5m, 74000m, "AED"), (d.Sale!.LeadId, d.Sale.SoldPrice, d.Sale.RegistrationCost, d.Sale.Currency));
+        Assert.Equal(62.5m, d.Project!.CompletionPercentage);
+        Assert.Equal(new DateOnly(2027, 1, 31), d.Project.ExpectedCompletionDate);
+        Assert.Equal(new DateOnly(2026, 12, 15), d.Project.ActualCompletionDate);
+        Assert.Equal(new DateOnly(2027, 3, 31), d.Project.ExpectedHandoverDate);
+        Assert.Null(d.Project.ActualHandoverDate);
+    }
+
+    [Fact]
+    public async Task GenuineZeros_AreKept()
+    {
+        var json = """{ "success": true, "found": true, "unit": { "sale": { "leadId": 1, "soldPrice": 0, "registrationCost": 0 }, "project": { "completionPercentage": 0 } } }""";
+
+        var d = (await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(1, 2, 1, true)).Details!;
+
+        Assert.Equal(0m, d.Sale!.SoldPrice);
+        Assert.Equal(0m, d.Sale.RegistrationCost);
+        Assert.Equal(0m, d.Project!.CompletionPercentage);
+    }
+
+    [Fact]
+    public async Task MissingOrImplausibleValues_AreNull_NeverDefaulted()
+    {
+        var json = """{ "success": true, "found": true, "unit": { "sale": { "leadId": 1, "soldPrice": -5 }, "project": { "completionPercentage": 140 } } }""";
+
+        var d = (await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(1, 2, 1, true)).Details!;
+
+        Assert.Null(d.Sale!.SoldPrice);
+        Assert.Null(d.Sale.RegistrationCost);
+        Assert.Null(d.Sale.Currency);
+        Assert.Null(d.Project!.CompletionPercentage);
+    }
+
+    [Fact]
+    public async Task NoSaleBlock_MeansNoSale()
+    {
+        var d = (await Create(Returns(HttpStatusCode.OK, Full)).GetUnitDetailsAsync(1, 2, 1, true)).Details!;
+
+        Assert.Null(d.Sale);
+    }
+
+    [Fact]
+    public async Task MalformedSaleBody_IsUnavailable()
+    {
+        var json = """{ "success": true, "found": true, "unit": { "sale": { "soldPrice": "lots" } } }""";
+
+        Assert.Equal(CrmUnitDetailsOutcome.Unavailable,
+            (await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(1, 2, 1, true)).Outcome);
+    }
+
+    [Fact]
+    public async Task ExactPayloadOfTheCrmActionToday_AllMappedMembersNull_ParsesAsFound_WithNothingInvented()
+    {
+        // What docs/Genesys/crm-insertion/TicketingSystemController.GetUnitDetails.cs returns while the
+        // schema mappings are still open: every member present, explicit null, no sale member.
+        var json = """
+            {"success":true,"found":true,"message":null,"unit":{"unitTypeName":null,"towerName":null,"bedrooms":null,
+            "area":null,"areaUnit":null,"parking":null,"expectedHandoverDate":null,"actualHandoverDate":null,
+            "project":{"address":null,"status":null,"expectedHandoverDate":null,"actualHandoverDate":null,"description":null,
+            "amenities":null,"completionPercentage":null,"expectedCompletionDate":null,"actualCompletionDate":null}}}
+            """;
+
+        var result = await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(9001, 9200, 9100, true);
+
+        Assert.Equal(CrmUnitDetailsOutcome.Found, result.Outcome);
+        var d = result.Details!;
+        Assert.Null(d.TowerName);
+        Assert.Null(d.Bedrooms);
+        Assert.Null(d.Parking);
+        Assert.Null(d.Sale);
+        Assert.Null(d.Project!.CompletionPercentage);
+        Assert.Null(d.Project.ExpectedCompletionDate);
+    }
 }

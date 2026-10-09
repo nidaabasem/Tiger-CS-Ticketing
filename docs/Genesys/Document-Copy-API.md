@@ -57,7 +57,7 @@ customers' own and current (`CRM-Required-Contracts.md` §7).
 
 ## Not in this phase
 
-Tenants and authorised representatives; "Owner" semantics; lookup by unit number; WhatsApp/SMS delivery (`501`); verifying a
+Tenants and authorised representatives; "Owner" semantics; lookup by unit number; WhatsApp/SMS delivery **of documents** (`501`; SMS is supported as a delivery channel for the one-time *code* only — see `Sms-Verification-Channel.md`); verifying a
 different unit without a new challenge. The CRM-side `GetUnit` / `GetUnitContacts` contracts remain specified in
 `CRM-Required-Contracts.md` §4 and are **not** needed for this phase.
 
@@ -149,7 +149,7 @@ endpoint and no document download endpoint. The same service account must own th
 | `crmUnitId` | no | If sent it must equal the verified unit, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. Never used to look up another unit. |
 | `crmLeadId` | no | Accepted only when it equals the lead the session was verified for; anything else — another customer's lead or the same customer's other unit — is 403 `RECORD_OWNERSHIP_MISMATCH` with no CRM call. Normally omit it. |
 | `recordId` | no | The document the customer chose after a `choiceKind: "Document"` answer (CRM's `attachmentId`). Must be one CRM just listed for that customer and lead, otherwise 403 `RECORD_OWNERSHIP_MISMATCH`. |
-| `deliveryChannel` | no | `Email` (default). `WhatsApp`/`Sms` → 501 (see above). |
+| `deliveryChannel` | no | `Email` (default) — documents are delivered by email only. `WhatsApp`/`Sms` → 501 (see above). (The one-time *code* can additionally be sent by SMS: `Sms-Verification-Channel.md`.) |
 
 There is deliberately **no** phone, customer-id or destination-address field. The destination is the
 customer's email on record in CRM.

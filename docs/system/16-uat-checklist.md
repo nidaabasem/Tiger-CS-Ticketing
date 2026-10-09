@@ -34,6 +34,7 @@
 | 11 | Inactivity | `BackgroundJobs` on | send data action 10; wait timeout | ticket closed by System, one e‑mail | ☐ |
 | 12 | Screen Pop | agent mapped, base URL set | pop with `tel:+971…` | lands on lookup with number; ticket pop signs in mapped staff only | ☐ |
 | 13 | OTP | CRM buyer with e‑mail, SMTP | buyer‑lookup → otp/send → otp/verify | code mailed; Verified + session; wrong code ×5 → locked | ☐ |
+| 13b | OTP by SMS | CRM buyer with a mobile; Broadnet settings confirmed (`Sms-Verification-Channel.md`) | otp/send `channel:"Sms"` → verify → unit-details with the session → send-copy | SMS arrives on the **CRM** mobile; Verified; sale shown only with the session, only for that unit; unconfirmed/failed provider answers never reported as sent | ☐ |
 | 14 | Document copy | CRM routes, `CrmDocuments` on | send‑copy with session; repeat same `Idempotency-Key` | e‑mail with attachment once; `duplicate:true`; foreign record refused | ☐ |
 | 15 | Unit details | CRM `GetUnitDetails` | unit‑details with/without `unitId` | selection list then details; other customer's unit → 403 | ☐ |
 | 16 | Collections summary | PACT mapping via ticket | data action 08 with `customerKey` | valid JSON; unknown key 404; source down 503 | ☐ |

@@ -331,6 +331,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GenesysTicketUpdateAppService>();
         services.AddScoped<ChatbotInactivityCloseAppService>();
         services.AddScoped<GenesysCustomerLookupAppService>();
+        services.AddScoped<GenesysVerifiedBuyerResolver>();
         services.AddScoped<GenesysCustomerUnitDetailsAppService>();
 
         // Collections — balances read from the authoritative financial source

@@ -13,6 +13,7 @@
 | `Crm__SecretKey` | `X-SECRET-KEY` for Tiger CRM | `<secret>` |
 | `PactApi__ApiKey`, `PactApi__BaseUrl` | PACT customer API | `<secret>` |
 | `EmailNotifications__Password` | SMTP password | `<secret>` |
+| `Sms__Broadnet__Password` | SMS gateway password | `<secret>` |
 | `CrmDocuments__OtpCodePepper` | **Required** (startup guard) when `CrmDocuments:Enabled=true` outside Development | `<random ≥32 chars>` |
 | `Genesys__ScreenPopWebBaseUrl` | Public base URL of TigerCS.Web for Screen Pop links | `https://<web-host>` |
 
@@ -29,7 +30,11 @@
 | `Genesys:CustomerInactivityTimeoutMinutes` | `5` | duration unconfirmed (D2) |
 | `CrmDocuments:Enabled` | `false` | OTP + document copy; Production also needs `AllowInProduction=true` |
 | `CrmDocuments:AcceptedVerificationMethods` | `Otp`, `AuthenticatedDigitalUser` | |
-| `CrmDocuments:Otp*` | lifetime 10 min, 5 attempts, 3 sends, 60 s resend, 5 challenges/customer/h | |
+| `CrmDocuments:Otp*` | lifetime 10 min, 5 attempts, 3 sends, 60 s resend, 5 challenges/customer/h | shared by the email and SMS channels |
+| `CrmDocuments:OtpSmsEnabled` | `false` | allows `channel: "Sms"` on `otp/send` (also needs a configured `Sms` provider) |
+| `CrmDocuments:OtpSmsDefaultCountryCode` / `OtpSmsDefaultLanguage` / `OtpSmsMessageEn` / `OtpSmsMessageAr` | empty / `en` / templates | `Sms-Verification-Channel.md` |
+| `Sms:Provider` | `Disabled` | `Disabled`, `Broadnet`, or `Fake` (Development/Testing only; startup guard) |
+| `Sms:Broadnet:*` | empty | `Endpoint` (https), `User`, `Password` (secret), `SenderId`, `TypeEnglish`, `TypeArabic`, `MobileFormat`, `SuccessBodyPattern`, `FailureBodyPattern?`, `TimeoutSeconds` - none defaulted; the sender stays inert until all required ones are set |
 | `CrmDocuments:MaxAttachmentBytes` | 10 MB | |
 | `EmailNotifications:Enabled` | `false` | when false no customer e‑mail (and document/OTP e‑mail return 503) |
 | `EmailNotifications:FromName` | `Tiger Properties` | brand wording open (D3) |

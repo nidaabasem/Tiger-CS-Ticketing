@@ -31,7 +31,7 @@ integration account), `504` (budget spent).
 | 4 | POST | `https://tigergroup.ae/api/genesys/customers/unit-details` | `{TCS}/api/genesys/customers/unit-details` | 12 | - | - | 200, 400, 401, 403, 409, 413, 502, 503, 504 |
 | 5 | POST | `https://tigergroup.ae/api/genesys/verification/buyer-lookup` | `{TCS}/api/genesys/verification/buyer-lookup` | 13 | - | - | 200, 400, 401, 404, 409, 413, 502, 503, 504 |
 | 6 | POST | `https://tigergroup.ae/api/genesys/verification/otp/send` | `{TCS}/api/genesys/verification/otp/send` | 14 | - | - | 200, 400, 401, 403, 404, 409, 413, 422, 429, 502, 503, 504 |
-| 7 | POST | `https://tigergroup.ae/api/genesys/verification/otp/resend` | `{TCS}/api/genesys/verification/otp/resend` | 15 | - | - | 200, 400, 401, 404, 410, 413, 423, 429, 502, 504 |
+| 7 | POST | `https://tigergroup.ae/api/genesys/verification/otp/resend` | `{TCS}/api/genesys/verification/otp/resend` | 15 | - | - | 200, 400, 401, 404, 410, 413, 423, 429, 502, 503, 504 |
 | 8 | POST | `https://tigergroup.ae/api/genesys/verification/otp/verify` | `{TCS}/api/genesys/verification/otp/verify` | 16 | - | - | 200, 400, 401, 404, 409, 410, 413, 423, 502, 504 |
 | 9 | POST | `https://tigergroup.ae/api/genesys/documents/send-copy` | `{TCS}/api/genesys/documents/send-copy` | 11 | Idempotency-Key | - | 200, 202, 400, 401, 403, 404, 409, 413, 422, 501, 502, 503, 504 |
 | 10 | GET | `https://tigergroup.ae/api/genesys/collections/customers/by-key/{customerKey}/payment-summary` | `{TCS}/api/genesys/collections/customers/by-key/{customerKey}/payment-summary` | 08 | - | includeTransactions | 200, 400, 401, 403, 404, 502, 503, 504 |
@@ -62,7 +62,7 @@ what was found. "Found" items are facts from the TigerCS code; whatever happens 
 
 ### 2.2 Verification (OTP) and document delivery (data actions 13, 14, 15, 16, 11)
 1. `POST verification/buyer-lookup {phoneNumber}` -> 200 `Found` + `units[]`; 404 `CUSTOMER_NOT_FOUND`; 409 `CUSTOMER_AMBIGUOUS`; 400; 502; 503.
-2. `POST verification/otp/send {phoneNumber, crmUnitId}` -> 200 `CodeSent` / `AlreadySent` / `UnitSelectionRequired`; 403 `UNIT_NOT_OWNED`; 422 `NO_EMAIL_ON_RECORD`; **429 + `Retry-After`** (`OTP_RATE_LIMITED`, `OTP_RESEND_LIMIT_REACHED`).
+2. `POST verification/otp/send {phoneNumber, crmUnitId, channel?, language?}` -> 200 `CodeSent` / `AlreadySent` / `UnitSelectionRequired`; 403 `UNIT_NOT_OWNED`; 422 `NO_EMAIL_ON_RECORD` / `NO_MOBILE_ON_RECORD`; **429 + `Retry-After`** (`OTP_RATE_LIMITED`, `OTP_RESEND_LIMIT_REACHED`); for `channel: "Sms"` also 503 `OTP_SMS_NOT_CONFIGURED` and **504 `OTP_DELIVERY_UNCONFIRMED`** (the SMS may have been sent: the website must relay it as-is and must not retry it). `channel`, `language` and `unit-details`' `verificationSessionId` are plain body members: the existing raw-body pass-through (`ForwardPost`) carries them, so **no website code change is needed** for SMS or for the financial-details proof.
 3. `POST verification/otp/resend {challengeId}` -> 200; **429 `OTP_RESEND_TOO_SOON` + `Retry-After`**; 410 `OTP_EXPIRED`; 423 `OTP_LOCKED`; 404.
 4. `POST verification/otp/verify {challengeId, code}` -> 200 `Verified` + `session.verificationSessionId`; 400 `OTP_INVALID` + `attemptsRemaining`; 409 `OTP_ALREADY_USED`; 410; 423; 404.
 5. `POST documents/send-copy` + **`Idempotency-Key`** -> 200 `Sent` (`duplicate:true` on replay) / `SelectionRequired`; 202 `Queued`; 403 `VERIFICATION_FAILED` / `RECORD_OWNERSHIP_MISMATCH`; 404; 409 `IDEMPOTENCY_KEY_REUSED`; 422; 501; 502; 503.

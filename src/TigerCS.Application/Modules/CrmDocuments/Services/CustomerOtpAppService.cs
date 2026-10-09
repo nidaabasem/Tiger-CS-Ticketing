@@ -68,6 +68,7 @@ public sealed class CustomerOtpAppService(
     VerificationSessionAppService sessionService,
     IOtpCodeGenerator codeGenerator,
     IEmailSender emailSender,
+    ISmsSender smsSender,
     CustomerNotificationPolicy emailPolicy,
     ICustomerVerificationUnitOfWork unitOfWork,
     IAuditEntryWriter auditWriter,
@@ -106,22 +107,46 @@ public sealed class CustomerOtpAppService(
         var buyer = resolved.Buyer!;
         var units = EligibleUnits(buyer);
         var email = ValidEmail(buyer);
+        var mobile = SmsAvailable ? MobileDestination(buyer) : null;
+
+        var channels = new List<string>();
+        if (email is not null) channels.Add("Email");
+        if (mobile is not null) channels.Add("Sms");
 
         return new CustomerOtpResult(
             CustomerOtpStatus.Found, Message: units.Count == 0 ? "The customer has no unit that can be verified." : null,
             MaskedDestination: email is null ? null : CrmDocumentCopyAppService.MaskEmail(email),
-            Units: units.Select(ToChoice).ToList());
+            Units: units.Select(ToChoice).ToList(),
+            MaskedMobile: mobile is null ? null : MaskMobile(mobile),
+            AvailableChannels: channels);
     }
 
     // ------------------------------------------------------------------ send
 
     /// <summary>Step 2 — choose the unit and email the code to CRM's address for the customer.</summary>
     public async Task<CustomerOtpResult> SendAsync(
-        Guid callerEmployeeId, string? phoneNumber, string? crmUnitId, CancellationToken cancellationToken = default)
+        Guid callerEmployeeId, string? phoneNumber, string? crmUnitId, string? channel = null, string? language = null,
+        CancellationToken cancellationToken = default)
     {
         if (Gate() is { } gated)
         {
             return gated;
+        }
+
+        if (!TryChannel(channel, out var otpChannel))
+        {
+            return Invalid("channel must be Email or Sms.");
+        }
+
+        if (!TryLanguage(language, out var smsLanguage))
+        {
+            return Invalid("language must be en or ar.");
+        }
+
+        if (otpChannel == OtpChannel.Sms && !SmsAvailable)
+        {
+            return Result(CustomerOtpStatus.SmsNotConfigured, CustomerOtpCodes.SmsNotConfigured,
+                "SMS verification is switched off or the SMS provider is not configured. Nothing was sent.");
         }
 
         if (!TryNormalizePhone(phoneNumber, out var phone))
@@ -136,11 +161,14 @@ public sealed class CustomerOtpAppService(
         }
 
         var buyer = resolved.Buyer!;
-        var email = ValidEmail(buyer);
-        if (email is null)
+        var destination = otpChannel == OtpChannel.Sms ? MobileDestination(buyer) : ValidEmail(buyer);
+        if (destination is null)
         {
-            return Result(CustomerOtpStatus.NoEmailOnRecord, CustomerOtpCodes.NoEmailOnRecord,
-                "CRM has no valid email address on record for this customer, so a code cannot be sent. Nothing was sent.");
+            return otpChannel == OtpChannel.Sms
+                ? Result(CustomerOtpStatus.NoMobileOnRecord, CustomerOtpCodes.NoMobileOnRecord,
+                    "CRM has no usable mobile number on record for this customer, so an SMS code cannot be sent. Nothing was sent.")
+                : Result(CustomerOtpStatus.NoEmailOnRecord, CustomerOtpCodes.NoEmailOnRecord,
+                    "CRM has no valid email address on record for this customer, so a code cannot be sent. Nothing was sent.");
         }
 
         // ---- which unit: one of THIS customer's, never a caller-supplied lead ----
@@ -176,10 +204,17 @@ public sealed class CustomerOtpAppService(
         var customerId = buyer.Customer.CustomerId;
 
         // ---- a retried "send" for a live challenge is not a second email ----
-        var pending = await challenges.FindPendingAsync(callerEmployeeId, customerId, selected.LeadId, now, cancellationToken);
+        var pending = await challenges.FindPendingAsync(callerEmployeeId, customerId, selected.LeadId, otpChannel, now, cancellationToken);
         if (pending is not null)
         {
-            return await ResendCoreAsync(pending, email, selected, alreadySentStatus: CustomerOtpStatus.AlreadySent, cancellationToken);
+            // An SMS whose delivery is unknown is never followed by another one just because "send" was called again
+            // (a retrying flow would otherwise double-send): only an explicit otp/resend issues a new code.
+            if (otpChannel == OtpChannel.Sms && pending.DeliveryState == OtpDeliveryState.Unconfirmed)
+            {
+                return Unconfirmed(pending);
+            }
+
+            return await ResendCoreAsync(pending, destination, selected, alreadySentStatus: CustomerOtpStatus.AlreadySent, cancellationToken);
         }
 
         // ---- cap on how many emails anyone can make us send this customer ----
@@ -209,19 +244,20 @@ public sealed class CustomerOtpAppService(
         var code = codeGenerator.NewCode();
         var challengeId = Guid.NewGuid();
         var salt = RandomNumberGenerator.GetBytes(16);
-        var masked = CrmDocumentCopyAppService.MaskEmail(email);
+        var masked = otpChannel == OtpChannel.Sms ? MaskMobile(destination) : CrmDocumentCopyAppService.MaskEmail(destination);
         var challenge = new CustomerOtpChallenge(
             challengeId, callerEmployeeId, customerId, selected.LeadId, unit.UnitReferenceId, contact.ContactReferenceId,
-            masked, salt, HashCode(challengeId, salt, code), now, Lifetime);
+            masked, salt, HashCode(challengeId, salt, code), now, Lifetime, otpChannel, smsLanguage);
 
         await challenges.AddAsync(challenge, cancellationToken);
         await auditWriter.WriteAsync(
             callerEmployeeId, "CustomerOtpSent", AuditEntityType, challengeId.ToString(), beforeValue: null,
-            afterValue: $"CrmCustomerId={customerId};CrmLeadId={selected.LeadId};Destination={masked};Send=1",
+            afterValue: $"CrmCustomerId={customerId};CrmLeadId={selected.LeadId};Destination={masked};Send=1"
+                + (otpChannel == OtpChannel.Sms ? ";Channel=Sms" : string.Empty),
             Guid.NewGuid(), cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var delivery = await DeliverAsync(email, code, challenge, cancellationToken);
+        var delivery = await DeliverAsync(destination, code, challenge, cancellationToken);
         if (delivery is not null)
         {
             return delivery;
@@ -264,7 +300,7 @@ public sealed class CustomerOtpAppService(
         }
 
         var buyer = resolved.Buyer!;
-        var email = ValidEmail(buyer);
+        var destination = challenge.Channel == OtpChannel.Sms ? MobileDestination(buyer) : ValidEmail(buyer);
         var lead = buyer.Customer.CustomerId == challenge.CrmCustomerId
             ? EligibleUnits(buyer).FirstOrDefault(u => u.LeadId == challenge.CrmLeadId)
             : null;
@@ -273,16 +309,24 @@ public sealed class CustomerOtpAppService(
             return Result(CustomerOtpStatus.UnitNotOwned, CustomerOtpCodes.UnitNotOwned, "The challenge no longer matches this customer's units. Start again.");
         }
 
-        if (email is null)
+        if (destination is null)
         {
-            return Result(CustomerOtpStatus.NoEmailOnRecord, CustomerOtpCodes.NoEmailOnRecord, "CRM has no valid email address on record for this customer. Nothing was sent.");
+            return challenge.Channel == OtpChannel.Sms
+                ? Result(CustomerOtpStatus.NoMobileOnRecord, CustomerOtpCodes.NoMobileOnRecord, "CRM has no usable mobile number on record for this customer. Nothing was sent.")
+                : Result(CustomerOtpStatus.NoEmailOnRecord, CustomerOtpCodes.NoEmailOnRecord, "CRM has no valid email address on record for this customer. Nothing was sent.");
         }
 
-        return await ResendCoreAsync(challenge, email, lead, alreadySentStatus: null, cancellationToken);
+        if (challenge.Channel == OtpChannel.Sms && !string.Equals(MaskMobile(destination), challenge.MaskedDestination, StringComparison.Ordinal))
+        {
+            // The mobile CRM holds is no longer the one this challenge was created for: a code is never redirected mid-challenge.
+            return Result(CustomerOtpStatus.UnitNotOwned, CustomerOtpCodes.UnitNotOwned, "The customer's mobile number changed since this challenge was created. Start again.");
+        }
+
+        return await ResendCoreAsync(challenge, destination, lead, alreadySentStatus: null, cancellationToken);
     }
 
     private async Task<CustomerOtpResult> ResendCoreAsync(
-        CustomerOtpChallenge challenge, string email, CrmBuyerUnitDto lead, CustomerOtpStatus? alreadySentStatus, CancellationToken cancellationToken)
+        CustomerOtpChallenge challenge, string destination, CrmBuyerUnitDto lead, CustomerOtpStatus? alreadySentStatus, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
@@ -315,6 +359,12 @@ public sealed class CustomerOtpAppService(
                     ResendAvailableAtUtc: challenge.NextResendAllowedAtUtc(MinResend), RetryAfterSeconds: wait);
         }
 
+        if (challenge.Channel == OtpChannel.Sms && !SmsAvailable)
+        {
+            return Result(CustomerOtpStatus.SmsNotConfigured, CustomerOtpCodes.SmsNotConfigured,
+                "SMS verification is switched off or the SMS provider is not configured. Nothing was sent.");
+        }
+
         var code = codeGenerator.NewCode();
         var salt = RandomNumberGenerator.GetBytes(16);
         challenge.RecordResend(salt, HashCode(challenge.CustomerOtpChallengeId, salt, code), now, Lifetime);
@@ -333,7 +383,7 @@ public sealed class CustomerOtpAppService(
             return Result(CustomerOtpStatus.ResendTooSoon, CustomerOtpCodes.OtpResendTooSoon, "Another request changed this challenge. Try again.");
         }
 
-        var delivery = await DeliverAsync(email, code, challenge, cancellationToken);
+        var delivery = await DeliverAsync(destination, code, challenge, cancellationToken);
         return delivery ?? Sent(challenge, CustomerOtpStatus.CodeSent, unit: null, lead);
     }
 
@@ -442,13 +492,31 @@ public sealed class CustomerOtpAppService(
     private static CustomerOtpResult Result(CustomerOtpStatus status, string code, string message) => new(status, code, message);
 
     private CustomerOtpResult Sent(CustomerOtpChallenge c, CustomerOtpStatus status, UnitReference? unit, CrmBuyerUnitDto lead) => new(
-        status, Message: status == CustomerOtpStatus.AlreadySent ? "A code was already sent." : "A code was emailed to the address CRM holds for this customer.",
+        status, Message: status == CustomerOtpStatus.AlreadySent
+            ? "A code was already sent."
+            : c.Channel == OtpChannel.Sms
+                ? "A code was sent by SMS to the mobile CRM holds for this customer."
+                : "A code was emailed to the address CRM holds for this customer.",
         ChallengeId: c.CustomerOtpChallengeId, MaskedDestination: c.MaskedDestination, ExpiresAtUtc: c.ExpiresAtUtc,
         ResendAvailableAtUtc: c.SendCount < MaxSends ? c.NextResendAllowedAtUtc(MinResend) : null,
-        AttemptsRemaining: Math.Max(0, MaxAttempts - c.FailedAttempts), Unit: ToChoice(lead));
+        AttemptsRemaining: Math.Max(0, MaxAttempts - c.FailedAttempts), Unit: ToChoice(lead),
+        Channel: c.Channel.ToString());
 
-    private async Task<CustomerOtpResult?> DeliverAsync(string email, string code, CustomerOtpChallenge challenge, CancellationToken cancellationToken)
+    private CustomerOtpResult Unconfirmed(CustomerOtpChallenge c) => new(
+        CustomerOtpStatus.DeliveryUnconfirmed, CustomerOtpCodes.DeliveryUnconfirmed,
+        "The SMS provider gave no verifiable answer, so it is unknown whether the SMS was sent. Ask the customer whether a code arrived; "
+        + "the existing code stays valid. Nothing is resent automatically: call otp/resend only if it did not arrive.",
+        ChallengeId: c.CustomerOtpChallengeId, MaskedDestination: c.MaskedDestination, ExpiresAtUtc: c.ExpiresAtUtc,
+        ResendAvailableAtUtc: c.SendCount < MaxSends ? c.NextResendAllowedAtUtc(MinResend) : null, Channel: c.Channel.ToString());
+
+    private async Task<CustomerOtpResult?> DeliverAsync(string destination, string code, CustomerOtpChallenge challenge, CancellationToken cancellationToken)
     {
+        if (challenge.Channel == OtpChannel.Sms)
+        {
+            return await DeliverSmsAsync(destination, code, challenge, cancellationToken);
+        }
+
+        var email = destination;
         if (!emailPolicy.Enabled)
         {
             return Result(CustomerOtpStatus.DeliveryFailed, CustomerOtpCodes.DeliveryFailed,
@@ -476,6 +544,133 @@ public sealed class CustomerOtpAppService(
             : Result(CustomerOtpStatus.DeliveryFailed, CustomerOtpCodes.DeliveryFailed,
                 "The verification code could not be emailed. Try again shortly.");
     }
+
+    /// <summary>
+    /// Sends the SMS and records what is <i>known</i>. Success is reported only for a provider response the adapter verified;
+    /// a refusal or failure is an error; a timeout or unreadable answer is "unconfirmed" — the challenge stays valid and
+    /// nothing is resent from here. The code and the message text are never logged or audited.
+    /// </summary>
+    private async Task<CustomerOtpResult?> DeliverSmsAsync(string mobile, string code, CustomerOtpChallenge challenge, CancellationToken cancellationToken)
+    {
+        var minutes = (int)Lifetime.TotalMinutes;
+        var template = challenge.Language == "ar" ? options.OtpSmsMessageAr : options.OtpSmsMessageEn;
+        var text = template
+            .Replace("{code}", code, StringComparison.Ordinal)
+            .Replace("{minutes}", minutes.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+
+        SmsSendResult sent;
+        try
+        {
+            sent = await smsSender.SendAsync(new SmsMessage(mobile, text, challenge.Language), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A sender must not throw for provider answers; a fault means we do not know what happened.
+            logger.LogError("SMS sender faulted for challenge {ChallengeId} ({ErrorType}); delivery is unconfirmed.", challenge.CustomerOtpChallengeId, ex.GetType().Name);
+            sent = new SmsSendResult(SmsSendOutcome.Unconfirmed);
+        }
+
+        var state = sent.Outcome switch
+        {
+            SmsSendOutcome.Accepted => OtpDeliveryState.Accepted,
+            SmsSendOutcome.Rejected => OtpDeliveryState.Rejected,
+            SmsSendOutcome.Failed => OtpDeliveryState.Failed,
+            _ => OtpDeliveryState.Unconfirmed
+        };
+
+        challenge.RecordDelivery(state);
+        await auditWriter.WriteAsync(
+            challenge.CallerEmployeeId, "CustomerOtpSmsDelivery", AuditEntityType, challenge.CustomerOtpChallengeId.ToString(), beforeValue: null,
+            afterValue: $"Channel=Sms;Delivery={state};Send={challenge.SendCount}", Guid.NewGuid(), cancellationToken);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (ConcurrentWriteException)
+        {
+            // A parallel verify/resend changed the challenge; the delivery note is informational only.
+            unitOfWork.DiscardPendingChanges();
+            logger.LogWarning("Could not record the SMS delivery state of challenge {ChallengeId}.", challenge.CustomerOtpChallengeId);
+        }
+
+        return state switch
+        {
+            OtpDeliveryState.Accepted => null,
+            OtpDeliveryState.Unconfirmed => Unconfirmed(challenge),
+            _ => new CustomerOtpResult(
+                CustomerOtpStatus.DeliveryFailed, CustomerOtpCodes.DeliveryFailed,
+                state == OtpDeliveryState.Rejected
+                    ? "The SMS provider refused the message. No code reached the customer."
+                    : "The SMS could not be sent. No code reached the customer. Try again shortly.",
+                ChallengeId: challenge.CustomerOtpChallengeId, MaskedDestination: challenge.MaskedDestination,
+                ResendAvailableAtUtc: challenge.SendCount < MaxSends ? challenge.NextResendAllowedAtUtc(MinResend) : null,
+                Channel: challenge.Channel.ToString())
+        };
+    }
+
+    private bool SmsAvailable => options.OtpSmsEnabled && smsSender.IsConfigured;
+
+    private static bool TryChannel(string? requested, out OtpChannel channel)
+    {
+        channel = OtpChannel.Email;
+        if (string.IsNullOrWhiteSpace(requested) || string.Equals(requested.Trim(), "Email", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(requested.Trim(), "Sms", StringComparison.OrdinalIgnoreCase))
+        {
+            channel = OtpChannel.Sms;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryLanguage(string? requested, out string language)
+    {
+        var value = string.IsNullOrWhiteSpace(requested) ? options.OtpSmsDefaultLanguage : requested.Trim();
+        if (string.Equals(value, "ar", StringComparison.OrdinalIgnoreCase)) { language = "ar"; return true; }
+        if (string.Equals(value, "en", StringComparison.OrdinalIgnoreCase)) { language = "en"; return true; }
+
+        language = "en";
+        return string.IsNullOrWhiteSpace(requested);   // a bad configured default falls back to en; a bad request value is refused
+    }
+
+    /// <summary>
+    /// The mobile CRM holds for the verified customer, as international digits — never the number the caller searched by.
+    /// A national-form number (one leading 0) is completed only with a configured country code; otherwise it is refused, not guessed.
+    /// </summary>
+    private string? MobileDestination(CrmBuyerMatchDto buyer)
+    {
+        var raw = buyer.Customer.MobileNumber;
+        if (!CustomerPhoneNumber.LooksLikeNumber(raw))
+        {
+            return null;
+        }
+
+        var digits = CustomerPhoneNumber.Normalize(raw);
+        if (digits.StartsWith("00", StringComparison.Ordinal))
+        {
+            digits = digits[2..];
+        }
+        else if (digits.StartsWith('0'))
+        {
+            var countryCode = CustomerPhoneNumber.Normalize(options.OtpSmsDefaultCountryCode);
+            if (countryCode.Length == 0)
+            {
+                return null;
+            }
+
+            digits = countryCode + digits[1..];
+        }
+
+        return digits.Length is >= 8 and <= 15 ? digits : null;
+    }
+
+    /// <summary>+971******900: the country prefix and the last three digits only.</summary>
+    public static string MaskMobile(string digits) =>
+        digits.Length <= 6 ? "***" : $"+{digits[..3]}{new string('*', digits.Length - 6)}{digits[^3..]}";
 
     private async Task<(CrmBuyerMatchDto? Buyer, CustomerOtpResult? Failure)> ResolveBuyerAsync(string phone, CancellationToken cancellationToken)
     {

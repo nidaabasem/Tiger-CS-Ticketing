@@ -6,7 +6,8 @@ namespace TigerCS.Integrations.Modules.CrmIntegration;
 /// envelope and <c>X-SECRET-KEY</c> convention as <c>GetBuyerByPhone</c>.
 /// It is the contract the CRM side must implement; it is NOT yet verified
 /// against a deployed CRM, and the CRM source has not been inspected to bind
-/// each member to a column (docs/Genesys/Customer-Unit-Details-API.md §CRM
+/// each member to a column (the sale and completion members were added after
+/// the original proposal, under the same caveat) (docs/Genesys/Customer-Unit-Details-API.md §CRM
 /// contract). Dates are strings so a legacy MVC serializer's date format never
 /// fails the whole answer; <see cref="CrmUnitDetailsHttpGateway"/> parses them
 /// and treats an unreadable one as not recorded.
@@ -22,7 +23,11 @@ internal sealed record CrmUnitDetailsHttpDto(
     List<CrmParkingHttpDto>? Parking,
     string? ExpectedHandoverDate,
     string? ActualHandoverDate,
-    CrmProjectDetailsHttpDto? Project);
+    CrmProjectDetailsHttpDto? Project,
+    CrmSaleHttpDto? Sale = null);
+
+/// <summary>Proposed sale block — returned only when the request carried <c>includeSale=true</c>. <c>LeadId</c> must echo the requested <c>leadId</c>.</summary>
+internal sealed record CrmSaleHttpDto(int? LeadId, decimal? SoldPrice, decimal? RegistrationCost, string? Currency);
 
 internal sealed record CrmParkingHttpDto(string? Number, string? Level, string? Type);
 
@@ -32,4 +37,7 @@ internal sealed record CrmProjectDetailsHttpDto(
     string? ExpectedHandoverDate,
     string? ActualHandoverDate,
     string? Description,
-    List<string>? Amenities);
+    List<string>? Amenities,
+    decimal? CompletionPercentage = null,
+    string? ExpectedCompletionDate = null,
+    string? ActualCompletionDate = null);

@@ -9,7 +9,7 @@ State vocabulary: **Implemented** (code + tests in repo), **Gated** (implemented
 | Requirement | State | Notes |
 |---|---|---|
 | Agent customer verification sessions | Implemented | `POST/GET /api/verification-sessions`; 30-minute lifetime; one confirmed session = one unit + one contact snapshot; consumed once by a ticket or reconciliation |
-| OTP (email one-time code) | Implemented + Gated | TigerCS generates, emails, stores (salted HMAC) and checks the code. Gated by `CrmDocuments:Enabled=false` (committed), `EmailNotifications:Enabled=false`, and a Production start-up guard. Real SMTP/CRM delivery **External/unverified**. No SMS or WhatsApp OTP |
+| OTP (email one-time code) | Implemented + Gated | TigerCS generates, emails, stores (salted HMAC) and checks the code. Gated by `CrmDocuments:Enabled=false` (committed), `EmailNotifications:Enabled=false`, and a Production start-up guard. Real SMTP/CRM delivery **External/unverified**. **SMS is a second channel of the same flow** (`channel: "Sms"`, `Sms-Verification-Channel.md`): gated by `CrmDocuments:OtpSmsEnabled=false` and `Sms:Provider=Disabled`; verified with a fake sender only, **no real SMS sent**. No WhatsApp OTP |
 | Chatbot "send me a copy" of Contract | Gated | `POST /api/genesys/documents/send-copy`; real CRM HTTP gateway exists |
 | Reservation form copy | Gated | same flow |
 | Registration receipt copy | Gated | same flow |
@@ -39,7 +39,7 @@ State vocabulary: **Implemented** (code + tests in repo), **Gated** (implemented
 
 ### 3.1 Sequence
 1. `POST /api/genesys/verification/buyer-lookup {phoneNumber}` -> CRM `GET TicketingSystem/GetBuyerByPhone` (existing buyer gateway). 0 customers -> 404 `CUSTOMER_NOT_FOUND`; >1 -> 409 `CUSTOMER_AMBIGUOUS`. Returns unit labels and a masked email only.
-2. `POST .../otp/send {phoneNumber, crmUnitId?}` -> unit must belong to the customer (403 `UNIT_NOT_OWNED`); several units and none chosen -> `UnitSelectionRequired`; a 6-digit code is emailed to **the address CRM returns** (no destination field exists in any request).
+2. `POST .../otp/send {phoneNumber, crmUnitId?, channel?, language?}` -> unit must belong to the customer (403 `UNIT_NOT_OWNED`); several units and none chosen -> `UnitSelectionRequired`; a 6-digit code is emailed (default) or, with `channel: "Sms"`, texted to **the address / mobile CRM returns** (no destination field exists in any request). An SMS whose delivery is unknown answers 504 `OTP_DELIVERY_UNCONFIRMED` and is never resent automatically.
 3. `POST .../otp/verify {challengeId, code}` -> on success creates the OTP-verified session in the same transaction that spends the challenge, recording challenge id, CRM customer id and lead id (`AttachOtpProof`).
 4. `POST /api/genesys/documents/send-copy` with `Idempotency-Key` -> see 3.3.
 
@@ -71,7 +71,7 @@ Limits (`CrmDocumentOptions`): code valid 10 min (`OtpLifetimeMinutes`), 5 wrong
 * Not behind `CrmDocuments:Enabled`; gated only by `Genesys:Enabled` (committed true). TigerGroupWeb forwarding **unverified**.
 
 ## 5. Not built (do not promise to customers)
-Statement of Account, payment links, chatbot-to-app deep links, CSAT, construction-update documents, B.P/P.R documents, SMS/WhatsApp delivery or OTP, Arabic reminder/OTP email templates, tenant/representative document release (Phase 1 is CRM **buyers** only), a document download endpoint.
+Statement of Account, payment links, chatbot-to-app deep links, CSAT, construction-update documents, B.P/P.R documents, WhatsApp delivery or OTP, SMS/WhatsApp delivery of documents (SMS carries only the code), Arabic reminder/OTP email templates, tenant/representative document release (Phase 1 is CRM **buyers** only), a document download endpoint.
 
 ## 6. Welcome messages
 Content only (Genesys Architect). Draft English/Arabic pack in `docs/Genesys/Welcome-And-Arabic-Content.md`; advertise only logging a request and speaking to an agent until the matrix rows above turn green on UAT. Brand wording ("Tiger Group" vs "Tiger Properties") is an open business decision (D3).

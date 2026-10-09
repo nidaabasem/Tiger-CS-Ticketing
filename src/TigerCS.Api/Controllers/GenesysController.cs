@@ -382,7 +382,11 @@ public class GenesysController(
     /// with <c>eligibleUnits</c> — the bot asks which one. With it, the answer
     /// is <c>mode: UnitDetails</c>. Values CRM does not record are <c>null</c>;
     /// unit-level and project-level handover dates are separate fields, and
-    /// <c>handoverDateSource</c> says which pair applies. No internal notes or
+    /// <c>handoverDateSource</c> says which pair applies. The project's
+    /// construction completion (percentage and expected/actual completion dates)
+    /// is separate from handover. The customer's own sale — actual sold price and
+    /// registration cost — is private: it is returned only with a valid
+    /// <c>verificationSessionId</c> (see <c>financialDetailsStatus</c>). No internal notes or
     /// other customer data is ever returned.
     /// </para>
     /// </remarks>
@@ -404,13 +408,14 @@ public class GenesysController(
     public async Task<IActionResult> GetCustomerUnitDetails(
         [FromBody] GenesysCustomerUnitDetailsRequest request, CancellationToken cancellationToken)
     {
-        if (GetEmployeeId() is null)
+        if (GetEmployeeId() is not { } callerEmployeeId)
         {
             return Unauthorized();
         }
 
         var result = await unitDetailsAppService.GetAsync(
-            request.CustomerReference, request.PhoneNumber, request.UnitId, cancellationToken);
+            request.CustomerReference, request.PhoneNumber, request.UnitId,
+            callerEmployeeId, request.VerificationSessionId, cancellationToken);
 
         return result.Outcome switch
         {

@@ -22,8 +22,12 @@ public sealed class MockCrmUnitDetailsGateway : ICrmUnitDetailsGateway
         UnitActualHandoverDate: null,
         Project: new CrmProjectDetails(
             "Dubai, UAE", "Under construction", new DateOnly(2027, 3, 31), null,
-            "A residential tower.", ["Pool", "Gym"]));
+            "A residential tower.", ["Pool", "Gym"], 62.5m, new DateOnly(2027, 1, 31), null),
+        Sale: new CrmSaleDetails(LeadId: 9100, SoldPrice: 1850000m, RegistrationCost: 74000m, Currency: "AED"));
 
-    public Task<CrmUnitDetailsResult> GetUnitDetailsAsync(int crmCustomerId, int crmUnitId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(crmUnitId == 9200 ? CrmUnitDetailsResult.Found(Unit9200) : CrmUnitDetailsResult.NotAvailable());
+    public Task<CrmUnitDetailsResult> GetUnitDetailsAsync(
+        int crmCustomerId, int crmUnitId, int? crmLeadId = null, bool includeSale = false, CancellationToken cancellationToken = default) =>
+        Task.FromResult(crmUnitId == 9200
+            ? CrmUnitDetailsResult.Found(includeSale ? Unit9200 : Unit9200 with { Sale = null })
+            : CrmUnitDetailsResult.NotAvailable());
 }

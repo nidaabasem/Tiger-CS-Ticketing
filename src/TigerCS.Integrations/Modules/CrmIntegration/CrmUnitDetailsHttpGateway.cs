@@ -36,7 +36,7 @@ public sealed class CrmUnitDetailsHttpGateway(
     };
 
     public async Task<CrmUnitDetailsResult> GetUnitDetailsAsync(
-        int crmCustomerId, int crmUnitId, CancellationToken cancellationToken = default)
+        int crmCustomerId, int crmUnitId, int? crmLeadId = null, bool includeSale = false, CancellationToken cancellationToken = default)
     {
         var secretKey = options.Value.SecretKey;
         if (string.IsNullOrWhiteSpace(secretKey))
@@ -48,7 +48,9 @@ public sealed class CrmUnitDetailsHttpGateway(
         using var request = new HttpRequestMessage(
             HttpMethod.Get,
             $"TicketingSystem/GetUnitDetails?customerId={crmCustomerId.ToString(CultureInfo.InvariantCulture)}"
-            + $"&unitId={crmUnitId.ToString(CultureInfo.InvariantCulture)}");
+            + $"&unitId={crmUnitId.ToString(CultureInfo.InvariantCulture)}"
+            + (crmLeadId is { } lead ? $"&leadId={lead.ToString(CultureInfo.InvariantCulture)}" : string.Empty)
+            + (includeSale ? "&includeSale=true" : string.Empty));
         request.Headers.TryAddWithoutValidation(SecretHeaderName, secretKey);
 
         HttpResponseMessage response;
@@ -110,7 +112,9 @@ public sealed class CrmUnitDetailsHttpGateway(
         var project = u.Project is { } p
             ? new CrmProjectDetails(
                 Blank(p.Address), Blank(p.Status), ParseDate(p.ExpectedHandoverDate), ParseDate(p.ActualHandoverDate),
-                Blank(p.Description), p.Amenities?.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).ToList())
+                Blank(p.Description), p.Amenities?.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).ToList(),
+                p.CompletionPercentage is >= 0 and <= 100 ? p.CompletionPercentage : null,
+                ParseDate(p.ExpectedCompletionDate), ParseDate(p.ActualCompletionDate))
             : null;
 
         return CrmUnitDetailsResult.Found(new CrmUnitDetails(
@@ -122,8 +126,14 @@ public sealed class CrmUnitDetailsHttpGateway(
             u.Parking?.Select(x => new CrmParkingSpace(Blank(x.Number), Blank(x.Level), Blank(x.Type))).ToList(),
             ParseDate(u.ExpectedHandoverDate),
             ParseDate(u.ActualHandoverDate),
-            project));
+            project,
+            u.Sale is { } sale
+                ? new CrmSaleDetails(sale.LeadId, NonNegative(sale.SoldPrice), NonNegative(sale.RegistrationCost), Blank(sale.Currency))
+                : null));
     }
+
+    /// <summary>An amount of 0 is genuine; a negative one is not a price and reads as not recorded.</summary>
+    private static decimal? NonNegative(decimal? value) => value is >= 0 ? value : null;
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

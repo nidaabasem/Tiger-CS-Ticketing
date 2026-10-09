@@ -184,7 +184,7 @@ OTP endpoints (`GenesysVerificationController.cs`, policy `CustomerVerification`
 | Route | Request | 200 statuses | Errors |
 |---|---|---|---|
 | `POST .../verification/buyer-lookup` | `{phoneNumber}` | `Found` + `units[]`, `maskedDestination` (no name/phone/full e-mail) | 400 `INVALID_REQUEST`; 404 `CUSTOMER_NOT_FOUND`; 409 `CUSTOMER_AMBIGUOUS`; 502 `CRM_AUTHENTICATION_FAILED`/`CRM_INVALID_RESPONSE`; 503 `CRM_UNAVAILABLE`/`DOCUMENT_COPY_DISABLED` |
-| `POST .../otp/send` | `{phoneNumber, crmUnitId?}` | `CodeSent`, `AlreadySent` (same challenge), `UnitSelectionRequired` | 403 `UNIT_NOT_OWNED`; 404; 409; 422 `NO_EMAIL_ON_RECORD`; 429 `OTP_RATE_LIMITED` (5 challenges/customer/h, `Retry-After: 3600`), `OTP_RESEND_LIMIT_REACHED`; 502 `OTP_DELIVERY_FAILED`; 503 |
+| `POST .../otp/send` | `{phoneNumber, crmUnitId?, channel? Email\|Sms, language? en\|ar}` | `CodeSent` (+`channel`), `AlreadySent` (same challenge), `UnitSelectionRequired` | 403 `UNIT_NOT_OWNED`; 404; 409; 422 `NO_EMAIL_ON_RECORD`/`NO_MOBILE_ON_RECORD`; 503 `OTP_SMS_NOT_CONFIGURED`; 504 `OTP_DELIVERY_UNCONFIRMED` (SMS: may have been sent - never auto-resent); 429 `OTP_RATE_LIMITED` (5 challenges/customer/h, `Retry-After: 3600`), `OTP_RESEND_LIMIT_REACHED`; 502 `OTP_DELIVERY_FAILED`; 503 |
 | `POST .../otp/resend` | `{challengeId}` | `CodeSent` | 404 `OTP_CHALLENGE_NOT_FOUND`; 410 `OTP_EXPIRED`; 423 `OTP_LOCKED`; 429 `OTP_RESEND_TOO_SOON` (60 s, `Retry-After`) |
 | `POST .../otp/verify` | `{challengeId, code}` | `Verified` + `session` | 400 `OTP_INVALID` (`attemptsRemaining`) / `INVALID_REQUEST`; 404; 409 `OTP_ALREADY_USED`; 410; 423 |
 

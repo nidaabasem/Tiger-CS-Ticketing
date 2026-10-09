@@ -12,6 +12,32 @@ public enum OtpChallengeStatus : byte
     Locked = 3
 }
 
+/// <summary>How the code reaches the customer. Both channels share one challenge model, one verification path and one resulting session.</summary>
+public enum OtpChannel : byte
+{
+    Email = 1,
+    Sms = 2
+}
+
+/// <summary>What is known about the message that carried the current code.</summary>
+public enum OtpDeliveryState : byte
+{
+    /// <summary>Recorded before the provider is called; also what remains if the process dies mid-send.</summary>
+    NotSent = 0,
+
+    /// <summary>The provider's response was verified as acceptance (an SMS gateway's acceptance is not handset delivery).</summary>
+    Accepted = 1,
+
+    /// <summary>The provider refused the message.</summary>
+    Rejected = 2,
+
+    /// <summary>The message was not accepted (provider unreachable or erroring).</summary>
+    Failed = 3,
+
+    /// <summary>Timeout or unreadable answer: the message may or may not have been sent. Never retried automatically.</summary>
+    Unconfirmed = 4
+}
+
 public enum OtpVerifyOutcome
 {
     Verified,
@@ -54,6 +80,15 @@ public class CustomerOtpChallenge
     public int ContactReferenceId { get; private set; }
     public string MaskedDestination { get; private set; } = string.Empty;
 
+    /// <summary>Email (default, and every row created before SMS existed) or Sms.</summary>
+    public OtpChannel Channel { get; private set; } = OtpChannel.Email;
+
+    /// <summary>Language of the message ("en"/"ar"); only SMS uses it.</summary>
+    public string Language { get; private set; } = "en";
+
+    /// <summary>What is known about the current code's message. Not a concurrency token: recording it never competes with a verify.</summary>
+    public OtpDeliveryState DeliveryState { get; private set; }
+
     public byte[] Salt { get; private set; } = [];
     public byte[] CodeHash { get; private set; } = [];
 
@@ -72,7 +107,8 @@ public class CustomerOtpChallenge
 
     public CustomerOtpChallenge(
         Guid challengeId, Guid callerEmployeeId, int crmCustomerId, int crmLeadId, int unitReferenceId, int contactReferenceId,
-        string maskedDestination, byte[] salt, byte[] codeHash, DateTime nowUtc, TimeSpan lifetime)
+        string maskedDestination, byte[] salt, byte[] codeHash, DateTime nowUtc, TimeSpan lifetime,
+        OtpChannel channel = OtpChannel.Email, string language = "en")
     {
         if (callerEmployeeId == Guid.Empty)
         {
@@ -91,6 +127,8 @@ public class CustomerOtpChallenge
         UnitReferenceId = unitReferenceId;
         ContactReferenceId = contactReferenceId;
         MaskedDestination = maskedDestination.Length <= MaskedDestinationMaxLength ? maskedDestination : maskedDestination[..MaskedDestinationMaxLength];
+        Channel = channel;
+        Language = language;
         Salt = salt;
         CodeHash = codeHash;
         Status = OtpChallengeStatus.Pending;
@@ -114,8 +152,14 @@ public class CustomerOtpChallenge
     /// customer who mistyped twice and asked again would start short.
     /// The send budget (<see cref="SendCount"/>) is never reset.
     /// </summary>
-    public void RecordResend(byte[] salt, byte[] codeHash, DateTime nowUtc, TimeSpan lifetime)
+    public void RecordResend(byte[] salt, byte[] codeHash, DateTime nowUtc, TimeSpan lifetime, string? language = null)
     {
+        if (language is not null)
+        {
+            Language = language;
+        }
+
+        DeliveryState = OtpDeliveryState.NotSent;
         Salt = salt;
         CodeHash = codeHash;
         SendCount++;
@@ -166,4 +210,6 @@ public class CustomerOtpChallenge
     }
 
     public void LinkSession(Guid verificationSessionId) => VerificationSessionId = verificationSessionId;
+
+    public void RecordDelivery(OtpDeliveryState state) => DeliveryState = state;
 }

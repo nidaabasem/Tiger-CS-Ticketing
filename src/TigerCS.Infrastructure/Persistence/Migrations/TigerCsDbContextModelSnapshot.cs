@@ -1196,6 +1196,11 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CallerEmployeeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<byte>("Channel")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint")
+                        .HasDefaultValue((byte)1);
+
                     b.Property<byte[]>("CodeHash")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1213,12 +1218,24 @@ namespace TigerCS.Infrastructure.Persistence.Migrations
                     b.Property<int>("CrmLeadId")
                         .HasColumnType("int");
 
+                    b.Property<byte>("DeliveryState")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint")
+                        .HasDefaultValue((byte)0);
+
                     b.Property<DateTime>("ExpiresAtUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<int>("FailedAttempts")
                         .IsConcurrencyToken()
                         .HasColumnType("int");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .HasColumnType("nvarchar(2)")
+                        .HasDefaultValue("en");
 
                     b.Property<DateTime>("LastSentAtUtc")
                         .HasColumnType("datetime2");

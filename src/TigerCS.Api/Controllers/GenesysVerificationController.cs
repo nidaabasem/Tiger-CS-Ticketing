@@ -47,8 +47,12 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
     public async Task<IActionResult> LookUp([FromBody] BuyerLookupRequestDto request, CancellationToken cancellationToken) =>
         Map(await otpAppService.LookupAsync(request.PhoneNumber, cancellationToken));
 
-    /// <summary>Choose the unit and email a one-time code to the address CRM holds for the customer.</summary>
+    /// <summary>Choose the unit and send a one-time code — by email (default) or SMS — to the address / mobile CRM holds for the customer.</summary>
     /// <remarks>
+    /// <c>channel: "Sms"</c> (optional <c>language</c> en/ar) sends the same kind of code to the mobile CRM holds, never to a number the caller
+    /// supplies. <c>CodeSent</c> means the provider's response was verified as acceptance; a timeout or unreadable provider response is
+    /// <c>504 OTP_DELIVERY_UNCONFIRMED</c> (the SMS may have arrived, the challenge stays valid, nothing is resent automatically — call
+    /// <c>otp/resend</c> only if the customer got nothing).
     /// A repeated call for a live challenge does not email again (it answers <c>AlreadySent</c> with the same
     /// <c>challengeId</c>, or — after the resend interval — acts as a resend). Limits: 3 codes per challenge, 60 s
     /// apart, 5 challenges per customer per hour, 10-minute expiry, 5 wrong tries.
@@ -58,10 +62,11 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
     /// <response code="403">UNIT_NOT_OWNED — the unit is not one of this customer's.</response>
     /// <response code="404">CUSTOMER_NOT_FOUND.</response>
     /// <response code="409">CUSTOMER_AMBIGUOUS.</response>
-    /// <response code="422">NO_EMAIL_ON_RECORD — CRM holds no valid email, so no code can be sent.</response>
+    /// <response code="422">NO_EMAIL_ON_RECORD / NO_MOBILE_ON_RECORD — CRM holds no valid email / mobile, so no code can be sent.</response>
     /// <response code="429">OTP_RATE_LIMITED / OTP_RESEND_LIMIT_REACHED (with Retry-After where applicable).</response>
     /// <response code="502">OTP_DELIVERY_FAILED, CRM_AUTHENTICATION_FAILED, CRM_INVALID_RESPONSE.</response>
-    /// <response code="503">CRM_UNAVAILABLE, or DOCUMENT_COPY_DISABLED.</response>
+    /// <response code="503">CRM_UNAVAILABLE, DOCUMENT_COPY_DISABLED, or OTP_SMS_NOT_CONFIGURED.</response>
+    /// <response code="504">OTP_DELIVERY_UNCONFIRMED (SMS only).</response>
     [HttpPost("otp/send")]
     [ProducesResponseType<CustomerOtpResult>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -72,6 +77,7 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status504GatewayTimeout)]
     public async Task<IActionResult> Send([FromBody] OtpSendRequestDto request, CancellationToken cancellationToken)
     {
         if (GetEmployeeId() is not { } caller)
@@ -79,7 +85,7 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
             return Unauthorized();
         }
 
-        return Map(await otpAppService.SendAsync(caller, request.PhoneNumber, request.CrmUnitId, cancellationToken));
+        return Map(await otpAppService.SendAsync(caller, request.PhoneNumber, request.CrmUnitId, request.Channel, request.Language, cancellationToken));
     }
 
     /// <summary>Send a new code for the same challenge (the previous code stops working).</summary>
@@ -89,6 +95,8 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
     /// <response code="423">OTP_LOCKED.</response>
     /// <response code="429">OTP_RESEND_TOO_SOON (Retry-After) / OTP_RESEND_LIMIT_REACHED.</response>
     /// <response code="502">OTP_DELIVERY_FAILED and CRM errors.</response>
+    /// <response code="503">OTP_SMS_NOT_CONFIGURED (an SMS challenge while SMS is switched off).</response>
+    /// <response code="504">OTP_DELIVERY_UNCONFIRMED (SMS only).</response>
     [HttpPost("otp/resend")]
     [ProducesResponseType<CustomerOtpResult>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -96,6 +104,8 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status423Locked)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status504GatewayTimeout)]
     public async Task<IActionResult> Resend([FromBody] OtpResendRequestDto request, CancellationToken cancellationToken)
     {
         if (GetEmployeeId() is not { } caller)
@@ -152,6 +162,9 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
             CustomerOtpStatus.CustomerAmbiguous or CustomerOtpStatus.AlreadyUsed => (StatusCodes.Status409Conflict, "Conflict"),
             CustomerOtpStatus.Expired => (StatusCodes.Status410Gone, "The code has expired"),
             CustomerOtpStatus.NoEmailOnRecord => (StatusCodes.Status422UnprocessableEntity, "No email on record"),
+            CustomerOtpStatus.NoMobileOnRecord => (StatusCodes.Status422UnprocessableEntity, "No mobile number on record"),
+            CustomerOtpStatus.DeliveryUnconfirmed => (StatusCodes.Status504GatewayTimeout, "SMS delivery could not be confirmed"),
+            CustomerOtpStatus.SmsNotConfigured => (StatusCodes.Status503ServiceUnavailable, "SMS delivery is not configured"),
             CustomerOtpStatus.Locked => (StatusCodes.Status423Locked, "The challenge is locked"),
             CustomerOtpStatus.RateLimited or CustomerOtpStatus.ResendTooSoon or CustomerOtpStatus.ResendLimitReached =>
                 (StatusCodes.Status429TooManyRequests, "Too many requests"),
@@ -170,6 +183,8 @@ public class GenesysVerificationController(CustomerOtpAppService otpAppService) 
             details.Extensions["outcome"] = result.Status.ToString();
             if (result.ChallengeId is not null) details.Extensions["challengeId"] = result.ChallengeId;
             if (result.MaskedDestination is not null) details.Extensions["maskedDestination"] = result.MaskedDestination;
+            if (result.Channel is not null) details.Extensions["channel"] = result.Channel;
+            if (result.ExpiresAtUtc is not null) details.Extensions["expiresAtUtc"] = result.ExpiresAtUtc;
             if (result.AttemptsRemaining is not null) details.Extensions["attemptsRemaining"] = result.AttemptsRemaining;
             if (result.ResendAvailableAtUtc is not null) details.Extensions["resendAvailableAtUtc"] = result.ResendAvailableAtUtc;
         }

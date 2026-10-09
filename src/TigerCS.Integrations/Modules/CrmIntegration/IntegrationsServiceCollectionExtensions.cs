@@ -15,6 +15,7 @@ using TigerCS.Application.Modules.Notifications.Services;
 using TigerCS.Integrations.Modules.CollectionsIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 using TigerCS.Integrations.Modules.PactIntegration;
+using TigerCS.Integrations.Modules.SmsIntegration;
 using TigerCS.Integrations.Modules.TasleehIntegration;
 
 namespace TigerCS.Integrations.Modules.CrmIntegration;
@@ -24,6 +25,9 @@ public static class IntegrationsServiceCollectionExtensions
     public static IServiceCollection AddTigerCsIntegrations(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<CrmGatewayOptions>(configuration.GetSection(CrmGatewayOptions.SectionName));
+
+        // SMS delivery for one-time codes (Sms:Provider: Disabled by default).
+        services.AddTigerCsSms(configuration);
 
         // The Collections financial source. "Unavailable" (the default, and
         // the only value for real environments today) fails closed — no

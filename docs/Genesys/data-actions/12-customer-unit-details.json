@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"customerReference\": \"$esc.jsonString(${input.customerReference})\", \"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\"#if($input.unitId), \"unitId\": ${input.unitId}#end}"
+      "requestTemplate": "{\"customerReference\": \"$esc.jsonString(${input.customerReference})\", \"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\"#if($input.unitId), \"unitId\": ${input.unitId}#end#if($input.verificationSessionId), \"verificationSessionId\": \"$esc.jsonString(${input.verificationSessionId})\"#end}"
     },
     "response": {
       "translationMap": {
@@ -35,7 +35,15 @@
         "projectExpectedHandoverDate": "$.project.expectedHandoverDate",
         "projectActualHandoverDate": "$.project.actualHandoverDate",
         "handoverDateSource": "$.handoverDateSource",
-        "detailsStatus": "$.detailsStatus"
+        "detailsStatus": "$.detailsStatus",
+        "projectCompletionPercentage": "$.project.completionPercentage",
+        "projectExpectedCompletionDate": "$.project.expectedCompletionDate",
+        "projectActualCompletionDate": "$.project.actualCompletionDate",
+        "soldPrice": "$.sale.soldPrice.amount",
+        "soldPriceCurrency": "$.sale.soldPrice.currency",
+        "registrationCost": "$.sale.registrationCost.amount",
+        "registrationCostCurrency": "$.sale.registrationCost.currency",
+        "financialDetailsStatus": "$.financialDetailsStatus"
       },
       "translationMapDefaults": {
         "mode": "\"\"",
@@ -57,9 +65,17 @@
         "projectExpectedHandoverDate": "\"\"",
         "projectActualHandoverDate": "\"\"",
         "handoverDateSource": "\"\"",
-        "detailsStatus": "\"\""
+        "detailsStatus": "\"\"",
+        "projectCompletionPercentage": "-1",
+        "projectExpectedCompletionDate": "\"\"",
+        "projectActualCompletionDate": "\"\"",
+        "soldPrice": "-1",
+        "soldPriceCurrency": "\"\"",
+        "registrationCost": "-1",
+        "registrationCostCurrency": "\"\"",
+        "financialDetailsStatus": "\"\""
       },
-      "successTemplate": "{\"mode\": ${mode}, \"customerReference\": ${customerReference}, \"eligibleUnits\": ${eligibleUnits}, \"unitNumber\": ${unitNumber}, \"tower\": ${tower}, \"floor\": ${floor}, \"bedrooms\": ${bedrooms}, \"areaValue\": ${areaValue}, \"areaUnit\": ${areaUnit}, \"bookingReference\": ${bookingReference}, \"bookingStatus\": ${bookingStatus}, \"unitExpectedHandoverDate\": ${unitExpectedHandoverDate}, \"unitActualHandoverDate\": ${unitActualHandoverDate}, \"projectName\": ${projectName}, \"projectAddress\": ${projectAddress}, \"projectStatus\": ${projectStatus}, \"projectExpectedHandoverDate\": ${projectExpectedHandoverDate}, \"projectActualHandoverDate\": ${projectActualHandoverDate}, \"handoverDateSource\": ${handoverDateSource}, \"detailsStatus\": ${detailsStatus}}"
+      "successTemplate": "{\"mode\": ${mode}, \"customerReference\": ${customerReference}, \"eligibleUnits\": ${eligibleUnits}, \"unitNumber\": ${unitNumber}, \"tower\": ${tower}, \"floor\": ${floor}, \"bedrooms\": ${bedrooms}, \"areaValue\": ${areaValue}, \"areaUnit\": ${areaUnit}, \"bookingReference\": ${bookingReference}, \"bookingStatus\": ${bookingStatus}, \"unitExpectedHandoverDate\": ${unitExpectedHandoverDate}, \"unitActualHandoverDate\": ${unitActualHandoverDate}, \"projectName\": ${projectName}, \"projectAddress\": ${projectAddress}, \"projectStatus\": ${projectStatus}, \"projectExpectedHandoverDate\": ${projectExpectedHandoverDate}, \"projectActualHandoverDate\": ${projectActualHandoverDate}, \"handoverDateSource\": ${handoverDateSource}, \"detailsStatus\": ${detailsStatus}, \"projectCompletionPercentage\": ${projectCompletionPercentage}, \"projectExpectedCompletionDate\": ${projectExpectedCompletionDate}, \"projectActualCompletionDate\": ${projectActualCompletionDate}, \"soldPrice\": ${soldPrice}, \"soldPriceCurrency\": ${soldPriceCurrency}, \"registrationCost\": ${registrationCost}, \"registrationCostCurrency\": ${registrationCostCurrency}, \"financialDetailsStatus\": ${financialDetailsStatus}}"
     }
   },
   "contract": {
@@ -68,7 +84,10 @@
         "$schema": "http://json-schema.org/draft-04/schema#",
         "title": "TigerCS - Customer Unit Details",
         "type": "object",
-        "required": ["customerReference", "phoneNumber"],
+        "required": [
+          "customerReference",
+          "phoneNumber"
+        ],
         "properties": {
           "customerReference": {
             "type": "string",
@@ -81,6 +100,10 @@
           "unitId": {
             "type": "integer",
             "description": "Optional. The CRM unit id the customer selected. Omit to receive eligibleUnits."
+          },
+          "verificationSessionId": {
+            "type": "string",
+            "description": "Optional. The verificationSessionId returned by Verify Code (otp/verify) for THIS unit. Required only to receive soldPrice and registrationCost; without it (or with a session that was not produced by a verified one-time code for this customer, unit and lead) they are withheld and financialDetailsStatus says VerificationRequired / VerificationFailed."
           }
         }
       }
@@ -91,30 +114,113 @@
         "title": "TigerCS - Customer Unit Details result",
         "type": "object",
         "properties": {
-          "mode": { "type": "string", "description": "UnitSelectionRequired (ask which unit; see eligibleUnits) or UnitDetails." },
-          "customerReference": { "type": "string" },
+          "mode": {
+            "type": "string",
+            "description": "UnitSelectionRequired (ask which unit; see eligibleUnits) or UnitDetails."
+          },
+          "customerReference": {
+            "type": "string"
+          },
           "eligibleUnits": {
             "type": "array",
             "description": "unitId, unitNumber, projectId, projectName, floor, bookingStatus per unit. Empty in UnitDetails mode.",
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
-          "unitNumber": { "type": "string" },
-          "tower": { "type": "string", "description": "Empty when CRM does not record it." },
-          "floor": { "type": "integer", "description": "-999 means CRM does not record the floor (0 is a real ground floor)." },
-          "bedrooms": { "type": "integer", "description": "-1 means CRM does not record the bedroom count (0 is a studio)." },
-          "areaValue": { "type": "number", "description": "-1 means CRM does not record the area." },
-          "areaUnit": { "type": "string" },
-          "bookingReference": { "type": "string" },
-          "bookingStatus": { "type": "string" },
-          "unitExpectedHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Unit-level." },
-          "unitActualHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Unit-level." },
-          "projectName": { "type": "string" },
-          "projectAddress": { "type": "string" },
-          "projectStatus": { "type": "string" },
-          "projectExpectedHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Project-level." },
-          "projectActualHandoverDate": { "type": "string", "description": "yyyy-MM-dd, or empty. Project-level." },
-          "handoverDateSource": { "type": "string", "description": "Unit, Project or empty: which pair of dates applies." },
-          "detailsStatus": { "type": "string", "description": "Available, NotAvailable or Unavailable - why the optional values are empty." }
+          "unitNumber": {
+            "type": "string"
+          },
+          "tower": {
+            "type": "string",
+            "description": "Empty when CRM does not record it."
+          },
+          "floor": {
+            "type": "integer",
+            "description": "-999 means CRM does not record the floor (0 is a real ground floor)."
+          },
+          "bedrooms": {
+            "type": "integer",
+            "description": "-1 means CRM does not record the bedroom count (0 is a studio)."
+          },
+          "areaValue": {
+            "type": "number",
+            "description": "-1 means CRM does not record the area."
+          },
+          "areaUnit": {
+            "type": "string"
+          },
+          "bookingReference": {
+            "type": "string"
+          },
+          "bookingStatus": {
+            "type": "string"
+          },
+          "unitExpectedHandoverDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd, or empty. Unit-level."
+          },
+          "unitActualHandoverDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd, or empty. Unit-level."
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "projectAddress": {
+            "type": "string"
+          },
+          "projectStatus": {
+            "type": "string"
+          },
+          "projectExpectedHandoverDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd, or empty. Project-level."
+          },
+          "projectActualHandoverDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd, or empty. Project-level."
+          },
+          "handoverDateSource": {
+            "type": "string",
+            "description": "Unit, Project or empty: which pair of dates applies."
+          },
+          "detailsStatus": {
+            "type": "string",
+            "description": "Available, NotAvailable or Unavailable - why the optional values are empty."
+          },
+          "projectCompletionPercentage": {
+            "type": "number",
+            "description": "Construction completion 0-100. -1 means not recorded; 0 is a genuine 0%."
+          },
+          "projectExpectedCompletionDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd, or empty. Planned construction completion - NOT the handover date."
+          },
+          "projectActualCompletionDate": {
+            "type": "string",
+            "description": "yyyy-MM-dd, or empty. Actual construction completion - NOT the handover date."
+          },
+          "soldPrice": {
+            "type": "number",
+            "description": "The customer's actual sold price. -1 means withheld or not recorded (see financialDetailsStatus); 0 is a genuine 0."
+          },
+          "soldPriceCurrency": {
+            "type": "string",
+            "description": "Currency CRM records the price in, or empty when CRM does not say."
+          },
+          "registrationCost": {
+            "type": "number",
+            "description": "Registration fee amount for this sale. -1 means withheld or not recorded; 0 is a genuine 0."
+          },
+          "registrationCostCurrency": {
+            "type": "string",
+            "description": "Currency CRM records the fee in, or empty."
+          },
+          "financialDetailsStatus": {
+            "type": "string",
+            "description": "Available, VerificationRequired, VerificationFailed, NotAvailable or Unavailable - why soldPrice/registrationCost are -1. Independent of detailsStatus."
+          }
         }
       }
     }

@@ -9,7 +9,7 @@ public interface ICustomerOtpChallengeRepository
 
     /// <summary>The caller's still-pending, unexpired challenge for this customer and lead, or null — what makes a retried "send" a no-op instead of a second email.</summary>
     Task<CustomerOtpChallenge?> FindPendingAsync(
-        Guid callerEmployeeId, int crmCustomerId, int crmLeadId, DateTime nowUtc, CancellationToken cancellationToken = default);
+        Guid callerEmployeeId, int crmCustomerId, int crmLeadId, OtpChannel channel, DateTime nowUtc, CancellationToken cancellationToken = default);
 
     /// <summary>How many challenges (any caller) were started for this CRM customer since <paramref name="sinceUtc"/>.</summary>
     Task<int> CountStartedSinceAsync(int crmCustomerId, DateTime sinceUtc, CancellationToken cancellationToken = default);

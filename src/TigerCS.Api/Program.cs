@@ -13,6 +13,7 @@ using TigerCS.Infrastructure.Identity;
 using TigerCS.Infrastructure.Modules.IdentityAndAccess.Seed;
 using TigerCS.Integrations.Modules.CollectionsIntegration;
 using TigerCS.Integrations.Modules.CrmIntegration;
+using TigerCS.Integrations.Modules.SmsIntegration;
 using TigerCS.Integrations.Modules.EmailIntegration;
 
 // Never log token/claim contents (review item 4) — IdentityModelEventSource's PII
@@ -139,6 +140,19 @@ using (var crmStartupScope = app.Services.CreateScope())
             "never production-ready (see its own remarks) and may only run in " +
             $"{string.Join("/", CrmGatewaySafety.MockAllowedEnvironments)}. Set Crm:Provider to \"Http\" — the " +
             "standard for every real environment — before deploying to this environment.");
+    }
+}
+
+// Fail fast if the fake SMS sender (which keeps codes and pretends delivery worked) would run
+// outside Development/Testing. "Broadnet" (real SMS) stays inert until fully configured; "Disabled" is the default.
+using (var smsStartupScope = app.Services.CreateScope())
+{
+    var smsOptions = smsStartupScope.ServiceProvider.GetRequiredService<IOptions<SmsOptions>>().Value;
+    if (SmsSafety.IsUnsafe(smsOptions.Provider, app.Environment.EnvironmentName))
+    {
+        throw new InvalidOperationException(
+            $"Sms:Provider is 'Fake' in environment '{app.Environment.EnvironmentName}'. The fake sender never sends an SMS and " +
+            $"may only run in {string.Join("/", SmsSafety.FakeAllowedEnvironments)}. Use \"Disabled\" or \"Broadnet\".");
     }
 }
 
