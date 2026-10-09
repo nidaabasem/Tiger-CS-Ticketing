@@ -54,6 +54,9 @@ public sealed record TicketActionContext(
     /// <summary>True when the viewer holds a department-side role, which the Api scopes to the ticket's own department.</summary>
     public bool IsDepartmentSide => HasRole(Roles.DepartmentEmployee) || HasRole(Roles.DepartmentHead);
 
+    /// <summary>True for a viewer holding only read-only roles (Chairman/CEO, Reporting User): no write control is ever rendered for them, ownership or not.</summary>
+    public bool IsReadOnlyViewer => Roles.IsReadOnlyCaller(ViewerRoles);
+
     public bool HasRole(string role) => ViewerRoles.Contains(role);
 
     public bool HasAnyRole(IReadOnlyCollection<string> roleSet) => ViewerRoles.Any(roleSet.Contains);
@@ -206,6 +209,14 @@ public static class TicketActions
         viewerRoles is not null
         && (viewerRoles.Any(TicketRoleSets.AssignCrossDepartment.Contains) || AuthorizationOverride.AppliesTo(viewerRoles));
 
+    /// <summary>
+    /// Mirrors <c>TicketNoteAppService.AddNoteAsync</c>: anyone who can view the
+    /// ticket may add an internal note except a read-only viewer (Chairman/CEO,
+    /// Reporting User).
+    /// </summary>
+    public static bool CanAddNote(IReadOnlyCollection<string>? viewerRoles) =>
+        viewerRoles is not null && !Roles.IsReadOnlyCaller(viewerRoles);
+
     public static bool CanAssign(TicketActionContext? context) =>
         context is { } c
         && (c.OverrideApplies
@@ -227,7 +238,7 @@ public static class TicketActions
     public static bool CanChangeStatus(TicketActionContext? context) =>
         context is { } c
         && (c.OverrideApplies
-            || c.IsCurrentOwner
+            || (c.IsCurrentOwner && !c.IsReadOnlyViewer)
             || c.HasAnyRole(TicketRoleSets.CrossDepartmentSupervisory)
             || (c.HasRole(Roles.DepartmentHead) && c.BelongsToCurrentDepartment));
 
@@ -263,6 +274,11 @@ public static class TicketActions
             return false;
         }
 
+        if (c.IsReadOnlyViewer)
+        {
+            return false;
+        }
+
         return c.IsCurrentOwner || !c.IsDepartmentSide || c.BelongsToCurrentDepartment;
     }
 
@@ -276,4 +292,29 @@ public static class TicketActions
     /// </summary>
     public static bool CanEscalateToLevel4(TicketActionContext? context) =>
         context is { } c && (c.OverrideApplies || c.HasAnyRole(SlaRoleSets.ManualLevel4Escalate));
+
+    /// <summary>
+    /// Mirrors <c>PriorityDowngradeAppService.RequestAsync</c>'s authorization:
+    /// the ticket's owner, a cross-department requester role, or a
+    /// department-side role scoped to the ticket's own department (or the
+    /// System Administrator override).
+    /// </summary>
+    public static bool CanRequestPriorityDowngrade(TicketActionContext? context) =>
+        context is { } c
+        && (c.OverrideApplies
+            || c.IsCurrentOwner
+            || c.HasAnyRole(PriorityDowngradeAppService.CrossDepartmentRequesterRoles)
+            || (c.HasAnyRole(PriorityDowngradeAppService.DepartmentRequesterRoles) && c.BelongsToCurrentDepartment));
+
+    /// <summary>
+    /// Mirrors the decision rule of <c>PriorityDowngradeAppService</c>: a
+    /// Department Head of the ticket's current department, a CS Manager /
+    /// General Manager, or the System Administrator override. The requester
+    /// is excluded by the caller, which knows who requested.
+    /// </summary>
+    public static bool CanDecidePriorityDowngrade(TicketActionContext? context) =>
+        context is { } c
+        && (c.OverrideApplies
+            || c.HasAnyRole(PriorityDowngradeAppService.CrossDepartmentDeciderRoles)
+            || (c.HasRole(Roles.DepartmentHead) && c.BelongsToCurrentDepartment));
 }

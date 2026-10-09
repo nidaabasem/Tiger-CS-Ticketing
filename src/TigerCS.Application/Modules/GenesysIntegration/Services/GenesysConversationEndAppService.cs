@@ -431,8 +431,7 @@ public sealed class GenesysConversationEndAppService(
         {
             var message = transcript[index];
 
-            if (!Enum.TryParse<InteractionMessageSender>(message.Sender, ignoreCase: true, out var sender)
-                || !Enum.IsDefined(sender))
+            if (!NamedEnum.TryParse<InteractionMessageSender>(message.Sender, out var sender))
             {
                 error =
                     $"Transcript message {index + 1} has an unrecognized sender '{message.Sender}'. "

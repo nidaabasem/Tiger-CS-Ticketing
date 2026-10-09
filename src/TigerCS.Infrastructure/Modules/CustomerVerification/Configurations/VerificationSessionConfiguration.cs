@@ -62,6 +62,14 @@ public class VerificationSessionConfiguration : IEntityTypeConfiguration<Verific
             .IsUnique()
             .HasFilter("[IdempotencyKey] IS NOT NULL");
 
+        // Server-verified OTP proof (null for every agent-confirmed session). One session per challenge.
+        builder.Property(s => s.ProofChallengeId);
+        builder.Property(s => s.CrmBuyerCustomerId);
+        builder.Property(s => s.CrmBuyerLeadId);
+        builder.HasIndex(s => s.ProofChallengeId, "UX_VerificationSessions_ProofChallengeId")
+            .IsUnique()
+            .HasFilter("[ProofChallengeId] IS NOT NULL");
+
         builder.HasOne<UnitReference>()
             .WithMany()
             .HasForeignKey(s => s.UnitReferenceId)

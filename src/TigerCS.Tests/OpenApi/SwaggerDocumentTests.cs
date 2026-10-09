@@ -123,8 +123,25 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/reports/team-performance",
         "GET /api/reports/team-performance/records",
         "GET /api/collections/receivables/customers",
+        "GET /api/collections/receivables/instalments",
+        "GET /api/collections/receivables/towers",
+        "POST /api/collections/receivables/coverage/load",
         "GET /api/collections/campaigns/preview",
         "GET /api/collections/campaigns/export",
+        "GET /api/collections/review/runs/current",
+        "GET /api/collections/review/runs/{runId}",
+        "POST /api/collections/review/dispatches/{dispatchId}/cancel",
+        "GET /api/collections/review/overlaps",
+        "GET /api/collections/review/dispatches/{dispatchId}/contacts",
+        "POST /api/collections/review/suppression/sweep",
+        "POST /api/collections/review/refresh",
+        "GET /api/collections/review/records",
+        "GET /api/collections/review/reasons",
+        "POST /api/collections/review/selection/summary",
+        "POST /api/collections/review/dispatches",
+        "GET /api/collections/review/dispatches",
+        "GET /api/collections/review/dispatches/{dispatchId}",
+        "POST /api/collections/review/dispatches/{dispatchId}/batches/{batchId}/reconcile",
 
         // SLA and Escalation (MVP-API-Contracts.md §5.1/§5.2/§5.7/§5.9).
         // Automatic Level 2 escalation on breach has no entry here on
@@ -134,6 +151,11 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "POST /api/tickets/{ticketId}/sla/first-response",
         "POST /api/tickets/{ticketId}/escalations",
         "GET /api/tickets/{ticketId}/escalations",
+        "POST /api/tickets/{ticketId}/sla/priority-downgrade-requests",
+        "GET /api/tickets/{ticketId}/sla/priority-downgrade-requests",
+        "GET /api/priority-downgrade-requests/pending",
+        "POST /api/priority-downgrade-requests/{requestId}/approve",
+        "POST /api/priority-downgrade-requests/{requestId}/reject",
 
         // Genesys integration phase 1 — the inbound boundary (one normalized
         // ingestion endpoint every channel converges on, plus conversation
@@ -143,6 +165,10 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         // a ticket after creating it goes through the one PATCH.
         "POST /api/genesys/tickets",
         "POST /api/genesys/documents/send-copy",
+        "POST /api/genesys/verification/buyer-lookup",
+        "POST /api/genesys/verification/otp/send",
+        "POST /api/genesys/verification/otp/resend",
+        "POST /api/genesys/verification/otp/verify",
         "PATCH /api/genesys/tickets/{ticketId}",
         "GET /api/genesys/customers/lookup",
         // Verified customer's unit and project details for the chatbot/voicebot.

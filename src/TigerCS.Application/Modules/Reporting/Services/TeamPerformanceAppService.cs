@@ -1,3 +1,4 @@
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.Reporting.Abstractions;
 using TigerCS.Application.Modules.Reporting.Dto;
 using TigerCS.Application.Modules.Ticketing.Services;
@@ -37,7 +38,8 @@ namespace TigerCS.Application.Modules.Reporting.Services;
 /// </summary>
 public sealed class TeamPerformanceAppService(
     ITeamPerformanceQueryRepository repository,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IServiceIdentityRegistry? serviceIdentities = null)
 {
     /// <summary>
     /// The Identity roles whose holders appear on the report. A single
@@ -64,7 +66,10 @@ public sealed class TeamPerformanceAppService(
         var (dateFrom, dateTo) = DashboardAppService.ResolvePeriod(request.DateFrom, request.DateTo, today);
         var agentType = TeamPerformanceAgentTypes.Normalize(request.AgentType);
 
+        // A configured service identity (Genesys integration account) holds the CS Agent role
+        // but is not a person to measure.
         var everyone = (await repository.GetEmployeesInRolesAsync(EligibleRoles, cancellationToken))
+            .Where(e => serviceIdentities is null || !serviceIdentities.IsServiceIdentity(e.EmployeeId))
             .Select(e => (Employee: e, AgentType: AgentTypeOf(e)))
             .OrderBy(e => e.Employee.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.Employee.EmployeeId)
@@ -129,7 +134,8 @@ public sealed class TeamPerformanceAppService(
         // The same eligibility rule as the report: a count can only be
         // opened for an employee who has a row.
         var employee = (await repository.GetEmployeesInRolesAsync(EligibleRoles, cancellationToken))
-            .FirstOrDefault(e => e.EmployeeId == request.EmployeeId);
+            .FirstOrDefault(e => e.EmployeeId == request.EmployeeId
+                && (serviceIdentities is null || !serviceIdentities.IsServiceIdentity(e.EmployeeId)));
         if (employee is null)
         {
             return new TeamPerformanceRecordsResult(TeamPerformanceRecordsOutcome.EmployeeNotEligible);

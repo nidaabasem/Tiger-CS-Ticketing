@@ -59,9 +59,9 @@ public sealed class FakeContactReferenceRepository : IContactReferenceRepository
     }
 
     /// <summary>Test setup helper — bypasses the CRM gateway to seed a cache row directly.</summary>
-    public ContactReference Seed(int unitReferenceId, string crmContactId, string displayName, ContactType type = ContactType.Owner)
+    public ContactReference Seed(int unitReferenceId, string crmContactId, string displayName, ContactType type = ContactType.Owner, string contactChannel = "channel@example.com")
     {
-        var contact = new ContactReference(crmContactId, unitReferenceId, displayName, "channel@example.com", type, null, DateTime.UtcNow);
+        var contact = new ContactReference(crmContactId, unitReferenceId, displayName, contactChannel, type, null, DateTime.UtcNow);
         typeof(ContactReference).GetProperty(nameof(ContactReference.ContactReferenceId))!.SetValue(contact, _nextId++);
         _contacts[contact.ContactReferenceId] = contact;
         return contact;
@@ -107,6 +107,10 @@ public sealed class FakeCustomerVerificationUnitOfWork : ICustomerVerificationUn
 
     /// <summary>Simulates a genuine, unrelated save failure (never a uniqueness violation) on the next SaveChangesAsync call only — must never be caught/recovered as if it were a duplicate-write race.</summary>
     public bool ThrowUnrelatedFailureOnce { get; set; }
+
+    public int DiscardCount { get; private set; }
+
+    public void DiscardPendingChanges() => DiscardCount++;
 
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {

@@ -49,7 +49,7 @@ public class VerificationSessionsController(VerificationSessionAppService verifi
     /// </remarks>
     /// <param name="request">The unit/contact selection and the confirmation.</param>
     /// <response code="201">The confirmed session, including the verification-time snapshot of the unit and contact.</response>
-    /// <response code="400">confirmed was not true, or verificationMethod was not one of ManualAgentConfirmation, AuthenticatedDigitalUser, Otp, FaceToFaceDocumentCheck, Other.</response>
+    /// <response code="400">confirmed was not true, verificationMethod was not one of ManualAgentConfirmation, AuthenticatedDigitalUser, FaceToFaceDocumentCheck, Other, or it was <c>Otp</c> — which only the server-side OTP challenge flow may produce.</response>
     /// <response code="404">unitReferenceId/contactReferenceId do not reference an already-looked-up unit and one of its contacts.</response>
     [HttpPost]
     [ProducesResponseType<VerificationSessionResponseDto>(StatusCodes.Status201Created)]
@@ -66,7 +66,8 @@ public class VerificationSessionsController(VerificationSessionAppService verifi
             return ValidationProblem(ModelState);
         }
 
-        if (!Enum.TryParse<VerificationMethod>(request.VerificationMethod, ignoreCase: false, out _))
+        // Names only: Enum.TryParse would also accept a numeric string such as "3".
+        if (!Enum.GetNames<VerificationMethod>().Contains(request.VerificationMethod, StringComparer.Ordinal))
         {
             ModelState.AddModelError(
                 nameof(request.VerificationMethod),
@@ -87,6 +88,12 @@ public class VerificationSessionsController(VerificationSessionAppService verifi
         {
             VerificationSessionOutcome.Success =>
                 Created($"/api/verification-sessions/{result.Response!.VerificationSessionId}", result.Response),
+            VerificationSessionOutcome.OtpRequiresChallenge => Problem(
+                type: "https://tigercs.internal/problems/otp-requires-challenge",
+                title: "OTP verification can only be completed through the OTP challenge flow",
+                detail: "verificationMethod \"Otp\" is proof TigerCS produces itself, not a value a caller may assert. "
+                    + "Use POST /api/genesys/verification/otp/send and /otp/verify.",
+                statusCode: StatusCodes.Status400BadRequest),
             VerificationSessionOutcome.UnitOrContactNotFound => Problem(
                 type: "https://tigercs.internal/problems/unit-or-contact-not-found",
                 title: "Unit or contact not found",

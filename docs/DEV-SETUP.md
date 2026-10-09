@@ -116,7 +116,8 @@ supply them through user-secrets (Development) or environment variables
 |---|---|---|
 | `ConnectionStrings:TigerCsDatabase` | `ConnectionStrings__TigerCsDatabase` | SQL Server connection string. Both shipped Api `appsettings*.json` carry `Password=` empty — supply the whole connection string here (§2). Development does **not** point at the local Docker SQL Server; set it to that yourself if you want it |
 | `Jwt:SigningKey` | `Jwt__SigningKey` | JWT signing key (§3) |
-| `Crm:SecretKey` | `Crm__SecretKey` | CRM Buyer Lookup shared secret (§3a) |
+| `Crm:SecretKey` | `Crm__SecretKey` | CRM Buyer Lookup / customer-documents shared secret (§3a) |
+| `CrmDocuments:OtpCodePepper` | `CrmDocuments__OtpCodePepper` | Secret mixed into stored OTP code hashes (chatbot document verification) — set a long random value; never commit it |
 | `PactApi:ApiKey` | `PactApi__ApiKey` | PACT customer lookup API key (§3b) |
 | `EmailNotifications:Password` | `EmailNotifications__Password` | Microsoft 365 SMTP mailbox password (§3d) |
 | `DevAdmin:Password` | `DevAdmin__Password` | Development-only seeded administrator (§3) |

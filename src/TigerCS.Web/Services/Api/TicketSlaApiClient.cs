@@ -17,6 +17,28 @@ public sealed class TicketSlaApiClient(HttpClient httpClient, ILogger<TicketSlaA
         long ticketId, ManualEscalationRequestDto request, CancellationToken cancellationToken) =>
         PostAsync<ManualEscalationRequestDto, TicketEscalationResponseDto>($"api/tickets/{ticketId}/escalations", request, cancellationToken);
 
+    // ---- Priority-downgrade requests (MVP-API-Contracts.md section 5.6) ----
+
+    public Task<ApiResult<PriorityDowngradeRequestResponseDto>> RequestPriorityDowngradeAsync(
+        long ticketId, CreateDowngradeRequestRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<CreateDowngradeRequestRequestDto, PriorityDowngradeRequestResponseDto>(
+            $"api/tickets/{ticketId}/sla/priority-downgrade-requests", request, cancellationToken);
+
+    public Task<ApiResult<IReadOnlyList<PriorityDowngradeRequestResponseDto>>> GetPriorityDowngradeRequestsAsync(
+        long ticketId, CancellationToken cancellationToken) =>
+        GetAsync<IReadOnlyList<PriorityDowngradeRequestResponseDto>>(
+            $"api/tickets/{ticketId}/sla/priority-downgrade-requests", cancellationToken);
+
+    public Task<ApiResult<DowngradeDecisionResponseDto>> ApprovePriorityDowngradeAsync(
+        long requestId, ApproveDowngradeRequestRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<ApproveDowngradeRequestRequestDto, DowngradeDecisionResponseDto>(
+            $"api/priority-downgrade-requests/{requestId}/approve", request, cancellationToken);
+
+    public Task<ApiResult<PriorityDowngradeRequestResponseDto>> RejectPriorityDowngradeAsync(
+        long requestId, RejectDowngradeRequestRequestDto request, CancellationToken cancellationToken) =>
+        PostAsync<RejectDowngradeRequestRequestDto, PriorityDowngradeRequestResponseDto>(
+            $"api/priority-downgrade-requests/{requestId}/reject", request, cancellationToken);
+
     public Task<ApiResult<IReadOnlyList<TicketEscalationResponseDto>>> GetEscalationsAsync(long ticketId, CancellationToken cancellationToken) =>
         GetAsync<IReadOnlyList<TicketEscalationResponseDto>>($"api/tickets/{ticketId}/escalations", cancellationToken);
 }

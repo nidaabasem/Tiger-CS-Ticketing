@@ -27,7 +27,7 @@ builder.Services.AddRazorPages(options =>
 
     // Reports: the CS Manager tier (CS Manager, General Manager, Chairman/
     // CEO, System Administrator). Same principle as /Admin — the Api's
-    // CsManagerOrGeneralManager policy is the real protection.
+    // ReportsRead policy is the real protection.
     options.Conventions.AuthorizeFolder("/Reports", ReportsPolicy.Name);
 });
 builder.Services.AddHttpContextAccessor();

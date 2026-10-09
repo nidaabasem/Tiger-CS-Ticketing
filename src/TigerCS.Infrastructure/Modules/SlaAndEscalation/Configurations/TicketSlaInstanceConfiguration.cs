@@ -26,6 +26,17 @@ public class TicketSlaInstanceConfiguration : IEntityTypeConfiguration<TicketSla
         builder.Property(i => i.ResolutionBreached).IsRequired();
         builder.Property(i => i.ChangeReason).IsRequired();
 
+        // Snapshot of the policy that produced this period's due timestamps
+        // (pause/resume math and the SLA explanation read it). All nullable:
+        // a period opened before they existed falls back to the per-priority
+        // policy.
+        builder.Property(i => i.ResolutionClockBasis);
+        builder.Property(i => i.RequestTypeSlaPolicyId);
+        builder.Property(i => i.PausesOnPendingCustomerOverride);
+        builder.Property(i => i.RequestTypeSlaNote).HasMaxLength(500);
+        builder.Property(i => i.AppliedFirstResponseTargetMinutes);
+        builder.Property(i => i.AppliedResolutionTargetMinutes);
+
         // MVP-ERD.md §2.15's referential-integrity note, verbatim: "Exactly
         // one row per TicketId has PeriodEndAtUtc IS NULL (the current
         // period) — app-enforced, recommended as a filtered unique index."

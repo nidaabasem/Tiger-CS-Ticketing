@@ -3,6 +3,7 @@ using Hangfire.SqlServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Application.Modules.Collections;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 
 namespace TigerCS.Infrastructure.BackgroundJobs;
@@ -36,6 +37,11 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<SlaSweepJob>();
         services.AddScoped<OutboxDispatchJob>();
         services.AddScoped<CollectionsReminderScheduleJob>();
+        services.AddScoped<CollectionsReceivablesRefreshJob>();
+        services.AddScoped<CollectionsReceivablesRangeLoadJob>();
+        services.AddScoped<CollectionsReviewRefreshJob>();
+        services.AddScoped<CollectionsDispatchJob>();
+        services.AddScoped<CollectionsSuppressionJob>();
         // Holds only the scope factory; it opens one scope per candidate itself.
         services.AddScoped<ChatbotInactivityCloseJob>();
 
@@ -44,6 +50,7 @@ public static class BackgroundJobServiceCollectionExtensions
             // See NoOpSlaDeadlineScheduler's remarks: detection logic is
             // unaffected, only its timing.
             services.AddSingleton<ISlaDeadlineScheduler, NoOpSlaDeadlineScheduler>();
+            services.AddSingleton<IReviewJobScheduler, NoOpReviewJobScheduler>();
             return services;
         }
 
@@ -68,7 +75,9 @@ public static class BackgroundJobServiceCollectionExtensions
             }));
 
         services.AddHangfireServer();
+        services.AddScoped<TigerCS.Application.Modules.Collections.Abstractions.IReceivablesRangeLoader, HangfireReceivablesRangeLoader>();
         services.AddSingleton<ISlaDeadlineScheduler, HangfireSlaDeadlineScheduler>();
+        services.AddSingleton<IReviewJobScheduler, HangfireReviewJobScheduler>();
 
         return services;
     }
@@ -191,5 +200,59 @@ public static class BackgroundJobServiceCollectionExtensions
             job => job.RunAsync(CancellationToken.None),
             collectionsOptions.ScheduleCron,
             new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById(collectionsOptions.TimeZoneId) });
+    }
+
+    /// <summary>
+    /// Registers the recurring PACT receivables snapshot refresh (a Hangfire job, because SQL Server Agent is not available).
+    /// Removed when disabled. With <c>RefreshOnStartup</c> one run is triggered immediately so a fresh deployment does not wait
+    /// for the first cron tick. A no-op when <c>BackgroundJobs:Enabled</c> is false: the snapshot then never refreshes and
+    /// the pages show it as stale / not loaded.
+    /// </summary>
+    public static void UseTigerCsRecurringCollectionsReceivablesRefresh(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, ReceivablesSnapshotOptions snapshotOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(backgroundJobOptions);
+        ArgumentNullException.ThrowIfNull(snapshotOptions);
+
+        if (!backgroundJobOptions.Enabled)
+        {
+            return;
+        }
+
+        var manager = services.GetRequiredService<IRecurringJobManager>();
+        if (!snapshotOptions.UseLocalSnapshot || !snapshotOptions.RefreshEnabled)
+        {
+            manager.RemoveIfExists(CollectionsReceivablesRefreshJob.RecurringJobId);
+            return;
+        }
+
+        manager.AddOrUpdate<CollectionsReceivablesRefreshJob>(
+            CollectionsReceivablesRefreshJob.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            string.IsNullOrWhiteSpace(snapshotOptions.RefreshCron) ? "*/30 * * * *" : snapshotOptions.RefreshCron);
+        if (snapshotOptions.RefreshOnStartup)
+        {
+            manager.Trigger(CollectionsReceivablesRefreshJob.RecurringJobId);
+        }
+    }
+
+    /// <summary>
+    /// Registers the paid-after-upload suppression sweep only while Genesys upload and its suppression are both enabled, and removes it otherwise.
+    /// </summary>
+    public static void UseTigerCsRecurringGenesysSuppression(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, GenesysOutboundOptions genesysOptions, string timeZoneId)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        if (!backgroundJobOptions.Enabled) return;
+
+        var manager = services.GetRequiredService<IRecurringJobManager>();
+        if (!genesysOptions.Enabled || !genesysOptions.SuppressionEnabled)
+        {
+            manager.RemoveIfExists(CollectionsSuppressionJob.RecurringJobId);
+            return;
+        }
+        manager.AddOrUpdate<CollectionsSuppressionJob>(CollectionsSuppressionJob.RecurringJobId, job => job.RunAsync(CancellationToken.None),
+            genesysOptions.SuppressionSweepCron, new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId) });
     }
 }

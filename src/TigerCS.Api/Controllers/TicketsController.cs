@@ -615,6 +615,9 @@ public class TicketsController(
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     [HttpPost("{ticketId:long}/approvals")]
+    // Chairman/CEO is read-only except for the documented right to REQUEST a Reopen Approval
+    // (Solution-Analysis.md 4.1); TicketApprovalAppService refuses every other approval type for it.
+    [AllowReadOnlyCallerWrite]
     [Tags(OpenApiTags.Approvals)]
     public async Task<IActionResult> RequestApproval(
         long ticketId, [FromBody] RequestApprovalRequestDto request, CancellationToken cancellationToken)
@@ -1070,6 +1073,12 @@ public class TicketsController(
             title: "Ticket is already classified",
             detail: "This ticket already has a category. Re-categorising an existing ticket is a separate operation and is not available.",
             statusCode: StatusCodes.Status422UnprocessableEntity),
+
+        TicketMutationOutcome.DowngradeRequiresApproval => Problem(
+            type: "https://tigercs.internal/problems/downgrade-requires-approval",
+            title: "Priority downgrade requires approval",
+            detail: "A priority decrease never takes effect directly. Submit POST /api/tickets/{ticketId}/sla/priority-downgrade-requests for Department Head approval.",
+            statusCode: StatusCodes.Status403Forbidden),
 
         TicketMutationOutcome.CategoryNotFound => Problem(
             type: "https://tigercs.internal/problems/category-not-found",

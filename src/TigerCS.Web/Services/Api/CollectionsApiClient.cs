@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Review;
 
 namespace TigerCS.Web.Services.Api;
 
@@ -18,19 +19,102 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
 
     public Task<ApiResult<CollectionsCampaignPreviewDto>> GetCampaignPreviewAsync(string stage, DateOnly? businessDate,
         int? companyId, string? search, int page, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
-        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&page={Id(page)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null) =>
+        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minAmount)}&page={Id(page)}", cancellationToken);
 
     public Task<ApiResult<CollectionsCampaignExportDto>> GetCampaignExportAsync(string stage, string mode,
         DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
-        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null) =>
+        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minAmount)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+
+    /// <summary>Instalment-level list from the local snapshot (the Receivables page).</summary>
+    public Task<ApiResult<PactInstalmentsPageDto>> GetInstalmentsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, string? paymentStatus, decimal? minAmount,
+        string? search, int page, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
+        if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(paymentStatus)) query["paymentStatus"] = paymentStatus;
+        if (minAmount is { } minimum) query["minAmount"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
+        query["page"] = Id(page);
+        query["pageSize"] = "25";
+        return GetAsync<PactInstalmentsPageDto>($"{Base}/receivables/instalments?{query}", cancellationToken);
+    }
+
+    /// <summary>Asks the API to load a due-date range the snapshot does not cover (background; returns immediately).</summary>
+    public Task<ApiResult<ReceivablesRangeLoadDto>> RequestCoverageLoadAsync(DateOnly from, DateOnly to, CancellationToken cancellationToken) =>
+        PostAsync<object, ReceivablesRangeLoadDto>(
+            $"{Base}/receivables/coverage/load?dateFrom={from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}&dateTo={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}",
+            new { }, cancellationToken);
+
+    /// <summary>Active towers for the searchable tower dropdown (local table; no PACT call).</summary>
+    public Task<ApiResult<List<CollectionsTowerDto>>> GetTowersAsync(CancellationToken cancellationToken) =>
+        GetAsync<List<CollectionsTowerDto>>($"{Base}/receivables/towers", cancellationToken);
+
+    // ---- review and approval (stored review data; the page never reads the financial source)
+
+    private const string ReviewBase = "api/collections/review";
+
+    public Task<ApiResult<ReviewRunDto?>> GetReviewRunAsync(CancellationToken cancellationToken) =>
+        GetAsync<ReviewRunDto?>($"{ReviewBase}/runs/current", cancellationToken);
+
+    public Task<ApiResult<ReviewRunDto>> StartReviewRefreshAsync(int? companyId, CancellationToken cancellationToken) =>
+        PostAsync<object, ReviewRunDto>($"{ReviewBase}/refresh", new { companyId }, cancellationToken);
+
+    public Task<ApiResult<ReviewPageDto>> GetReviewPageAsync(ReviewFilter filter, int page, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        void Add(string name, string? value) { if (!string.IsNullOrWhiteSpace(value)) query[name] = value; }
+        Add("companyId", filter.CompanyId?.ToString(CultureInfo.InvariantCulture));
+        Add("project", filter.Project); Add("unit", filter.Unit); Add("customer", filter.Customer);
+        Add("year", filter.Year?.ToString(CultureInfo.InvariantCulture)); Add("month", filter.Month?.ToString(CultureInfo.InvariantCulture));
+        Add("dueFrom", filter.DueFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        Add("dueTo", filter.DueTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        Add("paymentStatus", filter.PaymentStatus);
+        Add("minRemaining", filter.MinRemaining?.ToString(CultureInfo.InvariantCulture));
+        Add("maxRemaining", filter.MaxRemaining?.ToString(CultureInfo.InvariantCulture));
+        Add("reminderType", filter.ReminderType); Add("validationStatus", filter.ValidationStatus); Add("reason", filter.Reason);
+        query["page"] = Id(page);
+        query["pageSize"] = "25";
+        return GetAsync<ReviewPageDto>($"{ReviewBase}/records?{query}", cancellationToken);
+    }
+
+    public Task<ApiResult<SelectionSummaryDto>> SummarizeSelectionAsync(SelectionRequest request, CancellationToken cancellationToken) =>
+        PostAsync<SelectionRequest, SelectionSummaryDto>($"{ReviewBase}/selection/summary", request, cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> ConfirmDispatchAsync(ConfirmDispatchRequest request, CancellationToken cancellationToken) =>
+        PostAsync<ConfirmDispatchRequest, DispatchDto>($"{ReviewBase}/dispatches", request,
+            new Dictionary<string, string> { ["Idempotency-Key"] = request.IdempotencyKey }, cancellationToken);
+
+    public Task<ApiResult<OverlapPageDto>> GetOverlapsAsync(int page, CancellationToken cancellationToken) =>
+        GetAsync<OverlapPageDto>($"{ReviewBase}/overlaps?page={Id(page)}&pageSize=25", cancellationToken);
+
+    /// <summary>The CSV of the contacts of one send, exactly as uploaded; null when the Api refuses or is unreachable.</summary>
+    public async Task<byte[]?> GetDispatchContactsCsvAsync(Guid dispatchId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await Http.GetAsync($"{ReviewBase}/dispatches/{dispatchId:D}/contacts", cancellationToken);
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(cancellationToken) : null;
+        }
+        catch (HttpRequestException) { return null; }
+    }
+
+    public Task<ApiResult<DispatchDto>> GetDispatchAsync(Guid dispatchId, CancellationToken cancellationToken) =>
+        GetAsync<DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}", cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> ReconcileBatchAsync(Guid dispatchId, long batchId, ReconcileBatchRequest request, CancellationToken cancellationToken) =>
+        PostAsync<ReconcileBatchRequest, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/batches/{batchId.ToString(CultureInfo.InvariantCulture)}/reconcile", request, cancellationToken);
 
     private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         query["stage"] = stage;
+        if (minAmount is { } minimum) query["minAmount"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
         if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (businessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -40,9 +124,13 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     }
 
     public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
-        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null)
+        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null,
+        int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
+        if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (year is { } y) query["year"] = Id(y);
         if (month is { } m) query["month"] = Id(m);
         if (companyId is { } company) query["companyId"] = Id(company);

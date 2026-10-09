@@ -1,3 +1,4 @@
+using TigerCS.Application.Abstractions;
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 
 namespace TigerCS.Api.Controllers;
@@ -79,7 +80,7 @@ public sealed record GenesysConversationEndRequest(
     IReadOnlyList<GenesysTranscriptMessageRequest>? Transcript = null);
 
 /// <summary>One transcript message, at the transport edge.</summary>
-/// <param name="Sender">Required. "Customer", "Agent" or "System" (case-insensitive).</param>
+/// <param name="Sender">Required. "Customer", "HumanAgent", "VirtualAgent" or "System" (case-insensitive).</param>
 /// <param name="SentAtUtc">Required. When the message was sent, UTC.</param>
 /// <param name="Body">Required. The message text, verbatim.</param>
 /// <param name="SenderName">The sender's display name, where available.</param>
@@ -418,7 +419,7 @@ internal static class GenesysContractMapper
             return true;
         }
 
-        return Enum.TryParse(name, ignoreCase: true, out channel) && Enum.IsDefined(channel);
+        return NamedEnum.TryParse(name, out channel);
     }
 
     internal static GenesysTicketUpdateDto Map(GenesysTicketUpdateRequest request) => new(

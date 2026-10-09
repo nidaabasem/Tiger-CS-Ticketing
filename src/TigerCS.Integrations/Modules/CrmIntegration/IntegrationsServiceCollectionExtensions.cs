@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
 using TigerCS.Application.Modules.CrmDocuments.Services;
 using TigerCS.Application.Modules.CustomerVerification.CrmIntegration;
@@ -111,17 +112,28 @@ public static class IntegrationsServiceCollectionExtensions
         });
 
         // Customer documents (contract / reservation form / unit layout /
-        // registration receipt) share the Crm:Provider switch: "Http" fails
-        // closed because Tiger CRM publishes no document operation;
+        // registration receipt) share the Crm:Provider switch: "Http" calls
+        // Tiger CRM's TicketingSystem/GetCustomerDocuments with Crm:SecretKey;
         // "Mock" serves labelled fixtures (Development/Testing only).
-        services.AddScoped<UnimplementedCrmDocumentGateway>();
+        services.AddHttpClient<CrmDocumentHttpGateway>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            {
+                client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        // The CRM credential must never follow a redirect to another host.
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<MockCrmDocumentGateway>();
         services.AddScoped<ICrmDocumentGateway>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
             return options.Provider switch
             {
-                "Http" => (ICrmDocumentGateway)sp.GetRequiredService<UnimplementedCrmDocumentGateway>(),
+                "Http" => (ICrmDocumentGateway)sp.GetRequiredService<CrmDocumentHttpGateway>(),
                 "Mock" => sp.GetRequiredService<MockCrmDocumentGateway>(),
                 _ => throw new NotSupportedException(UnsupportedCrmProviderMessage(options.Provider))
             };
@@ -131,6 +143,7 @@ public static class IntegrationsServiceCollectionExtensions
         AddCrmBuyerLookupGateway(services);
         AddPactGateway(services, configuration);
         AddEdsmCollections(services, configuration);
+        AddGenesysOutbound(services, configuration);
         AddTasleehGateway(services, configuration);
         AddEmailSender(services, configuration);
 
@@ -263,6 +276,25 @@ public static class IntegrationsServiceCollectionExtensions
             });
     }
 
+    /// <summary>
+    /// Genesys Cloud outbound contact upload. Credentials come from <c>Collections:GenesysOutbound:ClientId/ClientSecret</c>
+    /// (user-secrets or environment, never a committed file). The token provider is a singleton so its cache is shared;
+    /// the upload client is transient. Nothing is sent unless <c>Collections:GenesysOutbound:Enabled</c> is true.
+    /// </summary>
+    private static void AddGenesysOutbound(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<GenesysOutboundOptions>(configuration.GetSection(GenesysOutboundOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<GenesysOutboundOptions>>().Value);
+        services.AddHttpClient("GenesysLogin", (sp, client) =>
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(sp.GetRequiredService<GenesysOutboundOptions>().RequestTimeoutSeconds, 5, 120)));
+        services.AddSingleton<IGenesysTokenProvider>(sp => new GenesysTokenProvider(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("GenesysLogin"), sp.GetRequiredService<GenesysOutboundOptions>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GenesysTokenProvider>>()));
+        services.AddHttpClient<IGenesysOutboundClient, GenesysOutboundHttpClient>((sp, client) =>
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(sp.GetRequiredService<GenesysOutboundOptions>().RequestTimeoutSeconds, 5, 120)));
+    }
+
     /// <summary>Business-rule change: Tasleeh phone-based customer search — same provider-switch shape as the CRM gateway above.</summary>
     private static void AddTasleehGateway(IServiceCollection services, IConfiguration configuration)
     {
@@ -274,8 +306,11 @@ public static class IntegrationsServiceCollectionExtensions
             return options.Provider switch
             {
                 "Mock" => new MockTasleehGateway(),
+                // No approved Tasleeh contract exists yet. "Unavailable" reports Tasleeh as an unreachable source (the
+                // customer-search result shows it as Failed) instead of serving the Mock's fixture customer.
+                "Unavailable" => new UnavailableTasleehGateway(),
                 _ => throw new NotSupportedException(
-                    $"Tasleeh:Provider '{options.Provider}' is not supported. Only 'Mock' is implemented at this " +
+                    $"Tasleeh:Provider '{options.Provider}' is not supported. Only 'Mock' and 'Unavailable' are implemented at this " +
                     "pilot phase — no real Tasleeh endpoint details were available to build against. See " +
                     "MockTasleehGateway's own remarks: it must never be described as production-ready, and a " +
                     "real ITasleehGateway implementation is required before any other provider value can be used.")

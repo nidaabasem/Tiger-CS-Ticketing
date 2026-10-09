@@ -693,6 +693,35 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
     }
 
     /// <summary>
+    /// The chatbot buyer-verification endpoints sit behind the same
+    /// CustomerVerification policy as the other Genesys routes, so the System
+    /// Administrator override reaches them: each is authorized and answered by
+    /// the service (here, with the shipped switch still off) — never 401/403.
+    /// Functional behaviour: <c>GenesysDocumentsEndpointTests</c>.
+    /// </summary>
+    [Fact]
+    public async Task GenesysBuyerVerification_AuthorizedThroughTheOverride()
+    {
+        var (client, _) = await CreateAdministratorAsync();
+
+        var bodies = new Dictionary<string, object>
+        {
+            ["buyer-lookup"] = new { phoneNumber = "+971501234567" },
+            ["otp/send"] = new { phoneNumber = "+971501234567", crmUnitId = "1" },
+            ["otp/resend"] = new { challengeId = Guid.NewGuid() },
+            ["otp/verify"] = new { challengeId = Guid.NewGuid(), code = "123456" }
+        };
+
+        foreach (var (route, body) in bodies)
+        {
+            var response = await client.PostAsJsonAsync("/api/genesys/verification/" + route, body);
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Contains("DOCUMENT_COPY_DISABLED", await response.Content.ReadAsStringAsync());
+        }
+    }
+
+    /// <summary>
     /// The chatbot document-copy endpoint sits behind the same
     /// CustomerVerification policy as the other Genesys routes, so the System
     /// Administrator override reaches it: the request is authorized and
@@ -1546,5 +1575,49 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
             $"/api/tickets/{second.TicketId}/approvals/{secondApproval!.TicketApprovalId}/cancellation",
             new CancelApprovalRequestDto("Raised in error"));
         Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+    }
+    [Fact]
+    public async Task PriorityDowngradeEndpoints_AuthorizedThroughTheOverride()
+    {
+        // A downgrade is requested by an agent and decided by someone else.
+        // The administrator holds neither Department Head nor any department
+        // membership, so approving and rejecting is purely the ADR-0024 override.
+        var (agentClient, _) = await CreateClientAsync(Roles.CsAgent);
+        var (adminClient, _) = await CreateAdministratorAsync();
+
+        // Ticket 1: request -> list -> pending inbox -> approve.
+        var ticket = await CreateVerifiedTicketAsync(agentClient, "Facilities");
+        var requestResponse = await agentClient.PostAsJsonAsync(
+            $"/api/tickets/{ticket.TicketId}/sla/priority-downgrade-requests",
+            new CreateDowngradeRequestRequestDto((byte)PriorityLevel.Medium, "Customer confirmed it is not urgent."));
+        Assert.Equal(HttpStatusCode.Created, requestResponse.StatusCode);
+        var pending = await requestResponse.Content.ReadFromJsonAsync<PriorityDowngradeRequestResponseDto>();
+        Assert.Equal("Pending", pending!.Status);
+
+        var listResponse = await adminClient.GetAsync($"/api/tickets/{ticket.TicketId}/sla/priority-downgrade-requests");
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+
+        var inboxResponse = await adminClient.GetAsync("/api/priority-downgrade-requests/pending");
+        Assert.Equal(HttpStatusCode.OK, inboxResponse.StatusCode);
+        var inbox = await inboxResponse.Content.ReadFromJsonAsync<PendingDowngradePageDto>();
+        Assert.Contains(inbox!.Items, i => i.PriorityDowngradeRequestId == pending.PriorityDowngradeRequestId);
+
+        var approveResponse = await adminClient.PostAsJsonAsync(
+            $"/api/priority-downgrade-requests/{pending.PriorityDowngradeRequestId}/approve", new ApproveDowngradeRequestRequestDto());
+        Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+        var decision = await approveResponse.Content.ReadFromJsonAsync<DowngradeDecisionResponseDto>();
+        Assert.Equal("Approved", decision!.Request.Status);
+        Assert.Equal("Downgrade", decision.NewSlaPeriod!.ChangeReason);
+
+        // Ticket 2: request -> reject.
+        var second = await CreateVerifiedTicketAsync(agentClient, "Facilities");
+        var secondRequest = await (await agentClient.PostAsJsonAsync(
+                $"/api/tickets/{second.TicketId}/sla/priority-downgrade-requests",
+                new CreateDowngradeRequestRequestDto((byte)PriorityLevel.Low, "Cosmetic issue only.")))
+            .Content.ReadFromJsonAsync<PriorityDowngradeRequestResponseDto>();
+        var rejectResponse = await adminClient.PostAsJsonAsync(
+            $"/api/priority-downgrade-requests/{secondRequest!.PriorityDowngradeRequestId}/reject",
+            new RejectDowngradeRequestRequestDto("Still impacts tenants."));
+        Assert.Equal(HttpStatusCode.OK, rejectResponse.StatusCode);
     }
 }

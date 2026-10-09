@@ -109,6 +109,12 @@ invalid/expired/weak/other unit; `NotAvailable` — CRM has no sale data, or it 
 be tied to the customer's Lead; `Unavailable` — CRM unreachable. `null` in
 `UnitSelectionRequired` mode.
 
+**In the Genesys data action** (`data-actions/12-customer-unit-details.json`) a Data Action output cannot be `null`, so the file maps
+"not recorded" to values the flow can recognise and never to a plausible number: strings become `""`, `floor` becomes `-999`,
+`bedrooms` and `areaValue` become `-1` (a real `0` bedrooms is a studio and a real floor `0` is the ground floor). The flow must test for
+these sentinels before speaking a number. `GenesysDataActionContractTests` renders the file against the real response with every member
+`null` to keep this true.
+
 ### Sample: no unit selected (customer owns two units)
 
 ```json

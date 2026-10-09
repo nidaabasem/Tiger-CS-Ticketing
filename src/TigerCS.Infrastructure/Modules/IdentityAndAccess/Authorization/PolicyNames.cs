@@ -27,14 +27,17 @@ public static class PolicyNames
     /// <summary>Resource-scoped: caller must be assigned to the target department, or hold a cross-department role.</summary>
     public const string DepartmentScoped = "DepartmentScoped";
 
-    /// <summary>CS Supervisor, CS Manager, General Manager, or Chairman/CEO.</summary>
+    /// <summary>CS Supervisor, CS Manager, or General Manager (Chairman/CEO is read-only and excluded).</summary>
     public const string SupervisorOrAbove = "SupervisorOrAbove";
 
-    /// <summary>Department Head, CS Manager, General Manager, or Chairman/CEO.</summary>
+    /// <summary>Department Head, CS Manager, or General Manager (Chairman/CEO is read-only and excluded).</summary>
     public const string DepartmentHeadOrAbove = "DepartmentHeadOrAbove";
 
-    /// <summary>CS Manager or General Manager (Chairman/CEO included as the top organizational tier).</summary>
+    /// <summary>CS Manager or General Manager. Chairman/CEO is read-only and not admitted (use <see cref="ReportsRead"/> for report reads).</summary>
     public const string CsManagerOrGeneralManager = "CsManagerOrGeneralManager";
+
+    /// <summary>Read access to reports: CS Manager, General Manager, Chairman/CEO.</summary>
+    public const string ReportsRead = "ReportsRead";
 
     /// <summary>System Administrator only.</summary>
     public const string SystemAdministrator = "SystemAdministrator";

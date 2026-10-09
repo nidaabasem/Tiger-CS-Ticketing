@@ -21,6 +21,10 @@ namespace TigerCS.Application.Modules.SlaAndEscalation.Services;
 /// </summary>
 public static class SlaRoleSets
 {
+    // Chairman/CEO appears in neither the first-response nor the manual-escalate
+    // set: the role is read-only and only *receives* Level 4 (Solution-Analysis
+    // §4.1: "Esc: receive L4 only"); audit F-5.
+
     /// <summary>
     /// Record the First Human Response (MVP-API-Contracts.md §5.2, "Agent and
     /// above") — the ticket's current owner, or a supervisory role. Ownership
@@ -30,7 +34,7 @@ public static class SlaRoleSets
     /// </summary>
     public static readonly IReadOnlyCollection<string> RecordFirstResponse =
     [
-        Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo
+        Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager
     ];
 
     /// <summary>
@@ -46,7 +50,7 @@ public static class SlaRoleSets
     [
         Roles.CsAgent, Roles.CsSupervisor, Roles.CsManager,
         Roles.DepartmentEmployee, Roles.DepartmentHead,
-        Roles.GeneralManager, Roles.ChairmanCeo
+        Roles.GeneralManager
     ];
 
     /// <summary>

@@ -47,6 +47,18 @@ public interface ITicketSlaInstanceRepository
         SlaDeadlineType deadlineType, DateTime asOfUtc, int maxResults, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Resolution-clock pause history (ISSUE-018). Rows are never deleted; at most one is open per ticket.</summary>
+public interface ITicketSlaPausePeriodRepository
+{
+    /// <summary>The ticket's open pause (<c>ResumedAtUtc IS NULL</c>), or null when its clock is running.</summary>
+    Task<TicketSlaPausePeriod?> GetOpenAsync(long ticketId, CancellationToken cancellationToken = default);
+
+    /// <summary>Every pause of one SLA period, oldest first — open or closed.</summary>
+    Task<IReadOnlyList<TicketSlaPausePeriod>> ListByInstanceIdAsync(long ticketSlaInstanceId, CancellationToken cancellationToken = default);
+
+    Task AddAsync(TicketSlaPausePeriod pause, CancellationToken cancellationToken = default);
+}
+
 public interface ITicketEscalationRepository
 {
     Task AddAsync(TicketEscalation escalation, CancellationToken cancellationToken = default);

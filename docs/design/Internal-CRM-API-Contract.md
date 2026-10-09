@@ -1,6 +1,8 @@
 # Tiger Group — CS Ticketing System
 ## Internal CRM API Contract — Read-Only Data Access
 
+> **Routes, authentication, exact JSON and error cases for these three operations are now specified in [`docs/Genesys/CRM-Required-Contracts.md`](../Genesys/CRM-Required-Contracts.md) §3–§5** (with sample files under `docs/Genesys/crm-contracts/`), including which parts `GetBuyerByPhone` already satisfies. This document keeps the ownership boundary; that one is the build target for open items §5.1–5.2 below.
+
 | | |
 |---|---|
 | **Status** | The exact, minimal read-only surface Tiger CS Ticketing's Customer Verification module requires from Tiger Group's in-house CRM. Not a request for new CRM functionality — every operation below is a lookup already possible in principle against existing CRM unit/contact records (ADR-0006). |

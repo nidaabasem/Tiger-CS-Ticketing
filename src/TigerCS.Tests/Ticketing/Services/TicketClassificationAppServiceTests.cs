@@ -234,6 +234,26 @@ public class TicketClassificationAppServiceTests
         Assert.Empty(f.Sla.SlaInstances.All);
     }
 
+    /// <summary>MVP-API-Contracts.md section 3.4 / ISSUE-023: a bare priority decrease is never written; it must go through an approved downgrade request.</summary>
+    [Fact]
+    public async Task ClassifyAsync_APriorityDecreaseOnAClassifiedTicket_IsRefusedAsDowngradeRequiresApproval()
+    {
+        var f = CreateService();
+        var ticket = Ticket.CreateUnverified(
+            "TG-CS-20260910-0003", departmentId: 2, categoryId: 7,
+            priorityId: (byte)PriorityLevel.High, "AC not cooling", CreatedAt);
+        await f.Tickets.AddAsync(ticket);
+        var category = f.Categories.Seed(ticket.CurrentDepartmentId);
+
+        var result = await f.Service.ClassifyAsync(
+            Guid.NewGuid(), [Roles.CsAgent], ticket.TicketId,
+            Request(category.CategoryId, (byte)PriorityLevel.Low));
+
+        Assert.Equal(TicketMutationOutcome.DowngradeRequiresApproval, result.Outcome);
+        Assert.Equal((byte)PriorityLevel.High, ticket.PriorityId);
+        Assert.Equal(0, f.UnitOfWork.TransactionsCommitted);
+    }
+
     [Fact]
     public async Task ClassifyAsync_ACategoryFromAnotherDepartment_IsRefused_BecauseItWouldReRouteTheTicket()
     {

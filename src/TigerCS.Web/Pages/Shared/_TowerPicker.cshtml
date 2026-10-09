@@ -1,0 +1,22 @@
+@using TigerCS.Application.Modules.Collections.Dto
+@using TigerCS.Web.Pages.Collections
+@model TowerPickerModel
+@* Progressive enhancement: a plain <select> that works without JavaScript; collections-towers.js turns it into a searchable combobox. *@
+<div class="field-group tower-picker" data-tower-picker>
+    <label class="field-label" for="@Model.Id">Tower</label>
+    <select class="field-select" id="@Model.Id" name="towerId" data-tower-select>
+        <option value="">All towers</option>
+        @foreach (var tower in Model.Towers)
+        {
+            <option value="@tower.TowerId" selected="@(Model.SelectedTowerId == tower.TowerId)">@CollectionsDisplay.TowerLabel(tower)</option>
+        }
+        @if (Model.SelectedTowerId is { } selected && Model.Towers.All(t => t.TowerId != selected))
+        {
+            <option value="@selected" selected="selected">Tower #@selected (not in the list)</option>
+        }
+    </select>
+    @if (Model.LoadFailed)
+    {
+        <span class="receivables-meta" role="status">The tower list could not be loaded; only "All towers" is available. Retry the page.</span>
+    }
+</div>

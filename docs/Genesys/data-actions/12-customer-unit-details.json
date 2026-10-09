@@ -12,7 +12,7 @@
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      "requestTemplate": "{\"customerReference\": ${input.customerReference}, \"phoneNumber\": ${input.phoneNumber}#if($input.unitId), \"unitId\": ${input.unitId}#end#if($input.verificationSessionId), \"verificationSessionId\": ${input.verificationSessionId}#end}"
+      "requestTemplate": "{\"customerReference\": \"$esc.jsonString(${input.customerReference})\", \"phoneNumber\": \"$esc.jsonString(${input.phoneNumber})\"#if($input.unitId), \"unitId\": ${input.unitId}#end#if($input.verificationSessionId), \"verificationSessionId\": \"$esc.jsonString(${input.verificationSessionId})\"#end}"
     },
     "response": {
       "translationMap": {
@@ -51,9 +51,9 @@
         "eligibleUnits": "[]",
         "unitNumber": "\"\"",
         "tower": "\"\"",
-        "floor": "0",
-        "bedrooms": "0",
-        "areaValue": "0",
+        "floor": "-999",
+        "bedrooms": "-1",
+        "areaValue": "-1",
         "areaUnit": "\"\"",
         "bookingReference": "\"\"",
         "bookingStatus": "\"\"",
@@ -103,7 +103,7 @@
           },
           "verificationSessionId": {
             "type": "string",
-            "description": "Optional. The confirmed verification session (one-time code or authenticated user) from the Verify Customer flow, for this unit. Required only to receive soldPrice and registrationCost; without it they are withheld and financialDetailsStatus says VerificationRequired."
+            "description": "Optional. The verificationSessionId returned by Verify Code (otp/verify) for THIS unit. Required only to receive soldPrice and registrationCost; without it (or with a session that was not produced by a verified one-time code for this customer, unit and lead) they are withheld and financialDetailsStatus says VerificationRequired / VerificationFailed."
           }
         }
       }
@@ -136,15 +136,16 @@
             "description": "Empty when CRM does not record it."
           },
           "floor": {
-            "type": "integer"
+            "type": "integer",
+            "description": "-999 means CRM does not record the floor (0 is a real ground floor)."
           },
           "bedrooms": {
             "type": "integer",
-            "description": "0 also means not recorded - check detailsStatus."
+            "description": "-1 means CRM does not record the bedroom count (0 is a studio)."
           },
           "areaValue": {
             "type": "number",
-            "description": "0 also means not recorded."
+            "description": "-1 means CRM does not record the area."
           },
           "areaUnit": {
             "type": "string"

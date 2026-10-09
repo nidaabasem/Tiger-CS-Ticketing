@@ -234,7 +234,7 @@ public class GenesysScreenPopAppServiceTests
         var issued = await h.Service.IssueAsync(ServiceAccount,
             new GenesysScreenPopRequestDto("ga-7", TicketId: 999999, CustomerPhone: "+971 50 123 4567"));
 
-        Assert.Equal("/Customers/Lookup?phoneNumber=%2B971%2050%20123%204567", issued.TargetPath);
+        Assert.Equal("/Customers/Lookup?phoneNumber=%2B971501234567", issued.TargetPath);
         Assert.Null(issued.TicketId);
     }
 

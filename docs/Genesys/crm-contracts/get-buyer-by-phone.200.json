@@ -1,0 +1,30 @@
+{
+  "success": true,
+  "found": true,
+  "message": "Buyer found successfully.",
+  "buyers": [
+    {
+      "customer": {
+        "customerId": 9001,
+        "fullNameEnglish": "Ahmed Ali",
+        "fullNameArabic": "أحمد علي",
+        "mobileNumber": "+971501234567",
+        "email": "ahmed.ali@example.com"
+      },
+      "units": [
+        {
+          "leadId": 12345, "leadStatus": 8, "leadStatusName": "Sold",
+          "unitId": 1101, "unitNumber": "1205", "unitStatus": 3, "unitType": 2, "floorNumber": 12,
+          "projectId": 79, "projectName": "Tiger Sky Tower", "projectArabicName": null,
+          "customerType": 1, "customerTypeName": "Buyer"
+        },
+        {
+          "leadId": 12346, "leadStatus": 8, "leadStatusName": "Sold",
+          "unitId": 1102, "unitNumber": "1403", "unitStatus": 3, "unitType": 2, "floorNumber": 14,
+          "projectId": 79, "projectName": "Tiger Sky Tower", "projectArabicName": null,
+          "customerType": 1, "customerTypeName": "Buyer"
+        }
+      ]
+    }
+  ]
+}

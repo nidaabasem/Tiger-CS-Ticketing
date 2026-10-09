@@ -209,6 +209,18 @@ public sealed class TicketDetailsModel(
     /// <summary>Whether Level 4 may be OFFERED inside that control — CS Manager/GM only, per MVP-ERD.md §2.17.</summary>
     public bool CanEscalateToLevel4 { get; private set; }
 
+    /// <summary>Whether the "Request priority downgrade" control is worth rendering - mirrors PriorityDowngradeAppService.RequestAsync.</summary>
+    public bool CanRequestDowngrade { get; private set; }
+
+    /// <summary>The ticket's Pending downgrade request, if any (a downgrade never takes effect until it is approved).</summary>
+    public PriorityDowngradeRequestResponseDto? PendingDowngrade { get; private set; }
+
+    /// <summary>Whether the viewer may approve/reject the pending request: a Department Head of this department (or above) who is not the requester.</summary>
+    public bool CanDecideDowngrade { get; private set; }
+
+    /// <summary>Priorities lower than the ticket's current one - the only valid downgrade targets.</summary>
+    public IReadOnlyList<(byte PriorityId, string Label)> DowngradeTargets { get; private set; } = [];
+
     public CurrentUser? Viewer { get; private set; }
     public TicketNameResolver NameResolver => nameResolver;
     public IReadOnlyList<ActivityEntry> ActivityFeed { get; private set; } = [];
@@ -226,6 +238,8 @@ public sealed class TicketDetailsModel(
     [BindProperty] public RowVersionInput Close { get; set; } = new();
     [BindProperty] public ReopenInput Reopen { get; set; } = new();
     [BindProperty] public EscalateInput Escalate { get; set; } = new();
+    [BindProperty] public DowngradeRequestInput DowngradeRequest { get; set; } = new();
+    [BindProperty] public DowngradeDecisionInput DowngradeDecision { get; set; } = new();
     [BindProperty] public NoteInput Note { get; set; } = new();
     [BindProperty] public ApprovalRequestInput ApprovalRequest { get; set; } = new();
     [BindProperty] public ApprovalDecisionInput ApprovalDecision { get; set; } = new();
@@ -444,6 +458,42 @@ public sealed class TicketDetailsModel(
         return await HandleMutationAsync(result, "reopen", "Ticket reopened — it is In Progress again.", cancellationToken);
     }
 
+    /// <summary>
+    /// Records the first human response on the ticket (Source = Manual). The server decides who may
+    /// (current owner, supervisory roles, Department Head of the ticket's department) and refuses a
+    /// second write, so this handler only relays and reports.
+    /// </summary>
+    public async Task<IActionResult> OnPostRecordFirstResponseAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        if (!TryDecodeRowVersion(Escalate.RowVersionBase64, out var rowVersion))
+        {
+            return await ReloadWithErrorAsync("sla", "Could not read the ticket's current version. Reloading.", cancellationToken);
+        }
+
+        var result = await slaApiClient.RecordFirstResponseAsync(
+            id, new RecordFirstResponseRequestDto("Manual", null, rowVersion), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            ActionSuccess = "First response recorded.";
+            return RedirectToPage(new { id });
+        }
+
+        // Idempotent from the user's side: a double click (or a second agent) finds it already recorded.
+        if (result.Outcome == ApiOutcome.Conflict
+            && result.ProblemType?.EndsWith("first-response-already-recorded", StringComparison.Ordinal) == true)
+        {
+            ActionSuccess = "First response was already recorded.";
+            return RedirectToPage(new { id });
+        }
+
+        ActionError = DescribeError(result.Outcome, result.Detail);
+        OpenSection = "sla";
+        await LoadAsync(cancellationToken);
+        return Page();
+    }
+
     public async Task<IActionResult> OnPostEscalateAsync(long id, CancellationToken cancellationToken)
     {
         TicketId = id;
@@ -467,6 +517,87 @@ public sealed class TicketDetailsModel(
         await LoadAsync(cancellationToken);
         return Page();
     }
+
+    public async Task<IActionResult> OnPostRequestDowngradeAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        if (string.IsNullOrWhiteSpace(DowngradeRequest.Reason))
+        {
+            ActionError = "Enter a reason for the downgrade.";
+            OpenSection = "downgrade";
+            await LoadAsync(cancellationToken);
+            return Page();
+        }
+
+        var result = await slaApiClient.RequestPriorityDowngradeAsync(
+            id, new CreateDowngradeRequestRequestDto(DowngradeRequest.NewPriorityId, DowngradeRequest.Reason), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            ActionSuccess = "Downgrade requested. The priority stays unchanged until a Department Head approves it.";
+            return RedirectToPage(new { id });
+        }
+
+        ActionError = DescribeDowngradeError(result.Outcome, result.Detail);
+        OpenSection = "downgrade";
+        await LoadAsync(cancellationToken);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostApproveDowngradeAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        TryDecodeRowVersion(DowngradeDecision.RowVersionBase64, out var rowVersion);
+
+        var result = await slaApiClient.ApprovePriorityDowngradeAsync(
+            DowngradeDecision.RequestId, new ApproveDowngradeRequestRequestDto(rowVersion), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            ActionSuccess = "Downgrade approved. The ticket now follows the lower priority's SLA; earlier breaches stay on record.";
+            return RedirectToPage(new { id });
+        }
+
+        ActionError = DescribeDowngradeError(result.Outcome, result.Detail);
+        OpenSection = "downgrade";
+        await LoadAsync(cancellationToken);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRejectDowngradeAsync(long id, CancellationToken cancellationToken)
+    {
+        TicketId = id;
+        if (string.IsNullOrWhiteSpace(DowngradeDecision.DecisionNote))
+        {
+            ActionError = "Enter a note explaining the rejection.";
+            OpenSection = "downgrade";
+            await LoadAsync(cancellationToken);
+            return Page();
+        }
+
+        TryDecodeRowVersion(DowngradeDecision.RowVersionBase64, out var rowVersion);
+        var result = await slaApiClient.RejectPriorityDowngradeAsync(
+            DowngradeDecision.RequestId, new RejectDowngradeRequestRequestDto(DowngradeDecision.DecisionNote, rowVersion), cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            ActionSuccess = "Downgrade rejected. The priority is unchanged.";
+            return RedirectToPage(new { id });
+        }
+
+        ActionError = DescribeDowngradeError(result.Outcome, result.Detail);
+        OpenSection = "downgrade";
+        await LoadAsync(cancellationToken);
+        return Page();
+    }
+
+    private static string DescribeDowngradeError(ApiOutcome outcome, string? detail) => outcome switch
+    {
+        ApiOutcome.Conflict => detail ?? "A downgrade request is already pending, or it was already decided. The latest state is shown.",
+        ApiOutcome.Forbidden => "You don't have permission to do that (a requester cannot approve their own request).",
+        ApiOutcome.UnprocessableEntity => detail ?? "That downgrade isn't valid for this ticket right now.",
+        _ => DescribeError(outcome, detail)
+    };
 
     public async Task<IActionResult> OnPostAddNoteAsync(long id, CancellationToken cancellationToken)
     {
@@ -606,10 +737,15 @@ public sealed class TicketDetailsModel(
         var approvalsTask = ticketsApiClient.GetApprovalsAsync(TicketId, cancellationToken);
         var interactionsTask = ticketsApiClient.GetInteractionsAsync(TicketId, cancellationToken);
         var historyTask = ticketsApiClient.GetLifecycleHistoryAsync(TicketId, cancellationToken);
+        var downgradesTask = slaApiClient.GetPriorityDowngradeRequestsAsync(TicketId, cancellationToken);
 
         await Task.WhenAll(
             slaTask, notesTask, escalationsTask, assignableTask, assignableUsersTask, customerHistoryTask, approvalsTask, interactionsTask,
-            historyTask);
+            historyTask, downgradesTask);
+
+        PendingDowngrade = downgradesTask.Result.IsSuccess && downgradesTask.Result.Value is not null
+            ? downgradesTask.Result.Value.FirstOrDefault(r => r.Status == nameof(PriorityDowngradeRequestStatus.Pending))
+            : null;
 
         Interactions = interactionsTask.Result.IsSuccess && interactionsTask.Result.Value is not null
             ? interactionsTask.Result.Value.Interactions
@@ -726,6 +862,17 @@ public sealed class TicketDetailsModel(
         CanClose = TicketActions.CanClose(Viewer?.Roles);
         CanEscalate = TicketActions.CanEscalate(ActionContext);
         CanEscalateToLevel4 = TicketActions.CanEscalateToLevel4(ActionContext);
+
+        var open = ticket.TicketStatus is not (nameof(TicketStatus.Closed) or nameof(TicketStatus.Resolved));
+        DowngradeTargets = ticket.PriorityId is { } current
+            ? [.. Enum.GetValues<PriorityLevel>().Where(p => (byte)p > current).Select(p => ((byte)p, p.ToString()))]
+            : [];
+        CanRequestDowngrade = open && PendingDowngrade is null && DowngradeTargets.Count > 0
+            && TicketActions.CanRequestPriorityDowngrade(ActionContext);
+        CanDecideDowngrade = PendingDowngrade is { } pending
+            && Viewer?.EmployeeId != pending.RequestedByEmployeeId
+            && TicketActions.CanDecidePriorityDowngrade(ActionContext);
+        DowngradeRequest = new DowngradeRequestInput { NewPriorityId = DowngradeTargets.Count > 0 ? DowngradeTargets[0].PriorityId : (byte)0 };
     }
 
     /// <summary>
@@ -1014,6 +1161,19 @@ public sealed class TicketDetailsModel(
         [Range(1, 4)]
         public byte Level { get; set; } = 1;
         public string? Note { get; set; }
+        public string? RowVersionBase64 { get; set; }
+    }
+
+    public sealed class DowngradeRequestInput
+    {
+        public byte NewPriorityId { get; set; }
+        public string? Reason { get; set; }
+    }
+
+    public sealed class DowngradeDecisionInput
+    {
+        public long RequestId { get; set; }
+        public string? DecisionNote { get; set; }
         public string? RowVersionBase64 { get; set; }
     }
 

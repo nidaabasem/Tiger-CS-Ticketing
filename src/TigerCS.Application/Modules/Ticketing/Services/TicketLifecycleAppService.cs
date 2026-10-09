@@ -44,7 +44,8 @@ public sealed class TicketLifecycleAppService(
     ITicketWorkflowEventRepository workflowEventRepository,
     TicketAutoAssignmentService autoAssignmentService,
     SlaDueDateService slaDueDateService,
-    ReopenEligibilityService reopenEligibilityService)
+    ReopenEligibilityService reopenEligibilityService,
+    SlaPauseService? slaPauseService = null)
 {
     /// <summary>Matches the <c>TicketStatusHistory.Note</c> column, so a long reason is never lost to a database truncation error mid-transaction.</summary>
     public const int ReopenReasonMaxLength = 1000;
@@ -182,12 +183,25 @@ public sealed class TicketLifecycleAppService(
             afterValue: targetPendingKind is not null ? $"{newStatus};PendingReason={request.PendingReason}" : newStatus.ToString(),
             correlationId, cancellationToken);
 
+        // ISSUE-018: entering Pending Customer pauses the Resolution SLA
+        // (non-Critical), returning to work resumes it and extends the
+        // deadline — in this same transaction, so the status and the clock
+        // can never disagree.
+        await SyncSlaPauseAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+
         try
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch (TicketConcurrentlyModifiedException)
         {
+            return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
+        }
+        catch (DuplicateWriteException)
+        {
+            // Only reachable when pausing had to record a just-missed
+            // deadline first (the breach idempotency key raced a scheduled
+            // job). Nothing was half-applied; the caller re-reads and retries.
             return TicketMutationResult.Failure(TicketMutationOutcome.ConcurrencyConflict);
         }
 
@@ -277,6 +291,12 @@ public sealed class TicketLifecycleAppService(
             cancellationToken);
 
         var correlationId = Guid.NewGuid();
+
+        // A pause still open at this instant ends here (ISSUE-018/SLA §6):
+        // closed out first so the deadline is extended by the paused time
+        // BEFORE the breach evaluation below judges the resolution against it,
+        // and so no pause is left dangling on a Resolved ticket.
+        await SyncSlaPauseAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
         await statusHistoryRepository.AddAsync(
             new TicketStatusHistory(
                 ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.Resolved,
@@ -391,6 +411,11 @@ public sealed class TicketLifecycleAppService(
         }
 
         var correlationId = Guid.NewGuid();
+
+        // Normally a no-op (Resolve already closed any pause); defends the
+        // invariant that a Closed ticket never carries an open pause.
+        await SyncSlaPauseAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+
         await statusHistoryRepository.AddAsync(
             new TicketStatusHistory(
                 ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.Closed,
@@ -596,6 +621,14 @@ public sealed class TicketLifecycleAppService(
             return TicketMutationResult.Failure(TicketMutationOutcome.ResolutionOutcomeNotReopenable);
         }
 
+        // A pause can never survive into the new cycle: close anything still
+        // open on the period being ended (normally nothing — Resolve/Close
+        // already did) before the successor period is opened.
+        if (slaPauseService is not null)
+        {
+            await slaPauseService.CloseOpenPauseAsync(ticket, now, callerEmployeeId, correlationId, cancellationToken);
+        }
+
         ticket.RestartSlaClockForReopen();
         currentResolution.Archive();
 
@@ -683,6 +716,17 @@ public sealed class TicketLifecycleAppService(
         await transaction.CommitAsync(cancellationToken);
         return TicketMutationResult.Success(TicketQueryAppService.ToDetailDto(ticket));
     }
+
+    /// <summary>
+    /// Brings the SLA pause state in line with the ticket's just-updated
+    /// status. A no-op where no <see cref="SlaPauseService"/> is composed
+    /// (unit-test compositions that do not exercise SLA pausing).
+    /// </summary>
+    private Task SyncSlaPauseAsync(
+        Ticket ticket, DateTime now, Guid? actorEmployeeId, Guid correlationId, CancellationToken cancellationToken) =>
+        slaPauseService is null
+            ? Task.CompletedTask
+            : slaPauseService.SyncAsync(ticket, now, actorEmployeeId, correlationId, cancellationToken);
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
@@ -777,6 +821,10 @@ public sealed class TicketLifecycleAppService(
             cancellationToken);
 
         var correlationId = Guid.NewGuid();
+
+        // Straight from Pending Customer to Closed: the open pause ends at
+        // this instant, as a system action.
+        await SyncSlaPauseAsync(ticket, now, actorEmployeeId: null, correlationId, cancellationToken);
         await statusHistoryRepository.AddAsync(
             new TicketStatusHistory(
                 ticketId, TicketStatusDimension.TicketStatus, (byte)oldStatus, (byte)TicketStatus.Resolved,
@@ -894,6 +942,11 @@ public sealed class TicketLifecycleAppService(
         Guid callerEmployeeId, IReadOnlyCollection<string> callerRoles, Ticket ticket, CancellationToken cancellationToken) =>
         AuthorizationGate.EvaluateAsync(callerRoles, async () =>
         {
+            if (Roles.IsReadOnlyCaller(callerRoles))
+            {
+                return false;
+            }
+
             if (ticket.CurrentOwnerEmployeeId == callerEmployeeId)
             {
                 return true;

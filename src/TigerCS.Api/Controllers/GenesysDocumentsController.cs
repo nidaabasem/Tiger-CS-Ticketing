@@ -38,9 +38,9 @@ public class GenesysDocumentsController(CrmDocumentCopyAppService documentCopyAp
 {
     /// <summary>Send the verified customer a copy of one of their documents.</summary>
     /// <remarks>
-    /// Identity comes from <c>verificationSessionId</c> (a confirmed session from
-    /// <c>POST /api/verification-sessions</c>, method Otp or AuthenticatedDigitalUser, owned by
-    /// the calling service account) — never from a phone number or customer id, which this
+    /// Identity comes from <c>verificationSessionId</c> (a session minted by a verified
+    /// OTP challenge, <c>POST /api/genesys/verification/otp/verify</c>, owned by
+    /// the calling service account; <c>POST /api/verification-sessions</c> refuses the Otp method) — never from a phone number or customer id, which this
     /// request does not accept. The document goes to the customer's email on record in CRM, as
     /// an attachment; the response never contains the document or the full address.
     ///
@@ -59,13 +59,13 @@ public class GenesysDocumentsController(CrmDocumentCopyAppService documentCopyAp
     /// <response code="202">status <c>Queued</c> — an identical request is still being processed; nothing new was sent.</response>
     /// <response code="400">INVALID_REQUEST — missing/invalid Idempotency-Key, verificationSessionId, documentType or deliveryChannel.</response>
     /// <response code="401">Missing or invalid bearer token.</response>
-    /// <response code="403">VERIFICATION_FAILED (unknown, foreign, unconfirmed, expired or weak-method session) or RECORD_OWNERSHIP_MISMATCH (unit or record is not the verified customer's).</response>
+    /// <response code="403">VERIFICATION_FAILED (unknown, foreign, unconfirmed, expired or weak-method session), CRM_CUSTOMER_NOT_RESOLVED (the verified contact is not exactly one CRM buyer) or RECORD_OWNERSHIP_MISMATCH (unit, lead or record is not the verified customer's).</response>
     /// <response code="404">DOCUMENT_NOT_FOUND — the customer has no such document.</response>
     /// <response code="409">IDEMPOTENCY_KEY_REUSED — the key was already used for a different request.</response>
     /// <response code="422">DELIVERY_DESTINATION_UNAVAILABLE — CRM holds no valid email for the customer.</response>
     /// <response code="501">DELIVERY_CHANNEL_NOT_INTEGRATED — WhatsApp/SMS were requested; only Email is integrated.</response>
-    /// <response code="502">DELIVERY_FAILED or DOCUMENT_TOO_LARGE — the document was found but not delivered (<c>retryable</c> says whether to retry with the same key).</response>
-    /// <response code="503">DOCUMENT_SOURCE_UNAVAILABLE (CRM has no document endpoint / is unreachable) or DOCUMENT_COPY_DISABLED.</response>
+    /// <response code="502">Either DELIVERY_FAILED / DOCUMENT_TOO_LARGE (the document was found but not delivered; <c>retryable</c> says whether to retry with the same key), or an upstream CRM refusal that retrying will not fix: CRM_REQUEST_REJECTED (CRM 400), CRM_AUTHENTICATION_FAILED (CRM 401), CRM_ACCESS_DENIED (CRM 403), CRM_INVALID_RESPONSE.</response>
+    /// <response code="503">DOCUMENT_SOURCE_UNAVAILABLE (CRM unreachable, timed out, 500 or 503 — retryable) or DOCUMENT_COPY_DISABLED.</response>
     [HttpPost("send-copy")]
     [ProducesResponseType<CrmDocumentCopyResult>(StatusCodes.Status200OK)]
     [ProducesResponseType<CrmDocumentCopyResult>(StatusCodes.Status202Accepted)]
@@ -103,10 +103,19 @@ public class GenesysDocumentsController(CrmDocumentCopyAppService documentCopyAp
 
             CrmDocumentCopyStatus.DocumentUnavailable => Coded(
                 result,
-                result.Code == CrmDocumentCodes.DocumentSourceUnavailable
-                    ? StatusCodes.Status503ServiceUnavailable
-                    : StatusCodes.Status404NotFound,
-                result.Code == CrmDocumentCodes.DocumentSourceUnavailable ? "Document source unavailable" : "Document not found"),
+                result.Code switch
+                {
+                    CrmDocumentCodes.DocumentNotFound => StatusCodes.Status404NotFound,
+                    // CRM said 400/401/403 or sent a body that breaks its contract: an upstream defect or
+                    // configuration problem, not "try again" — a 502, with the CRM-specific code.
+                    CrmDocumentCodes.CrmRequestRejected
+                        or CrmDocumentCodes.CrmAuthenticationFailed
+                        or CrmDocumentCodes.CrmAccessDenied
+                        or CrmDocumentCodes.CrmInvalidResponse => StatusCodes.Status502BadGateway,
+                    // Unreachable, timed out, 500 or 503.
+                    _ => StatusCodes.Status503ServiceUnavailable
+                },
+                result.Code == CrmDocumentCodes.DocumentNotFound ? "Document not found" : "Document source unavailable"),
 
             CrmDocumentCopyStatus.DeliveryFailed => Coded(
                 result,

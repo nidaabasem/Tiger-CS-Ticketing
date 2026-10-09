@@ -5,12 +5,15 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using TigerCS.Application.Abstractions;
+using TigerCS.Application.Authorization;
 using TigerCS.Application.Modules.Administration.Services;
 using TigerCS.Application.Modules.ClassificationAndRouting.Services;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.Collections.Services;
 using TigerCS.Application.Modules.CrmDocuments;
 using TigerCS.Application.Modules.CrmDocuments.Abstractions;
@@ -141,6 +144,11 @@ public static class InfrastructureServiceCollectionExtensions
         // because they inject scoped repositories.
         services.AddSingleton<IAuthorizationHandler, SystemAdministratorOverrideHandler>();
 
+        services.Configure<ServiceIdentityOptions>(configuration.GetSection(ServiceIdentityOptions.SectionName));
+        services.AddSingleton<IServiceIdentityRegistry, ServiceIdentityRegistry>();
+        services.AddScoped<IAuthorizationHandler, ServiceIdentityRestrictionHandler>();
+        services.AddSingleton<IAuthorizationHandler, ReadOnlyCallerWriteGuardHandler>();
+
         services.AddScoped<AuthenticationAppService>();
         services.AddScoped<UserProfileAppService>();
         services.AddScoped<DepartmentUserAppService>();
@@ -166,6 +174,10 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<CrmDocumentOptions>>().Value);
         services.AddScoped<ICrmDocumentDeliveryRepository, CrmDocumentDeliveryRepository>();
         services.AddScoped<CrmDocumentCopyAppService>();
+        services.AddScoped<ICustomerOtpChallengeRepository, CustomerOtpChallengeRepository>();
+        services.AddSingleton<IOtpCodeGenerator, RandomOtpCodeGenerator>();
+        services.AddScoped<CrmBuyerVerificationCache>();
+        services.AddScoped<CustomerOtpAppService>();
         services.AddScoped<CrmUnitLookupAppService>();
         services.AddScoped<CrmBuyerLookupAppService>();
         services.AddScoped<VerificationSessionAppService>();
@@ -232,6 +244,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ISlaPolicyRepository, SlaPolicyRepository>();
         services.AddScoped<IBusinessCalendarRepository, BusinessCalendarRepository>();
         services.AddScoped<ITicketSlaInstanceRepository, TicketSlaInstanceRepository>();
+        services.AddScoped<ITicketSlaPausePeriodRepository, TicketSlaPausePeriodRepository>();
+        services.AddScoped<SlaPauseService>();
         services.AddScoped<ITicketEscalationRepository, TicketEscalationRepository>();
         services.AddScoped<IIdempotencyRecordStore, IdempotencyRecordStore>();
         services.AddScoped<SlaDueDateService>();
@@ -244,6 +258,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<SlaBreachDetectionAppService>();
         services.AddScoped<SlaQueryAppService>();
         services.AddScoped<SlaFirstResponseAppService>();
+
+        // Priority-downgrade approval (ISSUE-023 Option B, section 5.6).
+        // PriorityDowngradeOptions is bound in the Api host (Program.cs).
+        services.AddScoped<IPriorityDowngradeRequestRepository, PriorityDowngradeRequestRepository>();
+        services.AddScoped<PriorityDowngradeAppService>();
         services.AddScoped<TicketEscalationAppService>();
 
         // Workflow/SLA Configuration (phase 1) — the Department → Request
@@ -328,11 +347,32 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<CollectionsClock>();
         services.Configure<PactReceivablesOptions>(configuration.GetSection(PactReceivablesOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<PactReceivablesOptions>>().Value);
-        services.AddScoped<IPactReceivablesSource, PactSqlReceivablesSource>();
+        // Pages read the LOCAL snapshot (refreshed by the Hangfire job); the direct PACT read stays as an explicit escape hatch.
+        services.Configure<ReceivablesSnapshotOptions>(configuration.GetSection(ReceivablesSnapshotOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ReceivablesSnapshotOptions>>().Value);
+        services.AddScoped<PactSqlReceivablesSource>();
+        services.AddScoped<SnapshotPactReceivablesSource>();
+        services.AddScoped<IPactReceivablesSource>(sp => sp.GetRequiredService<ReceivablesSnapshotOptions>().UseLocalSnapshot
+            ? sp.GetRequiredService<SnapshotPactReceivablesSource>()
+            : sp.GetRequiredService<PactSqlReceivablesSource>());
+        services.AddScoped<ICollectionsTowerCatalog, SqlCollectionsTowerCatalog>();
+        services.AddScoped<IReceivablesRefresher, SqlReceivablesRefresher>();
+        // Hangfire replaces this in AddTigerCsBackgroundJobs when BackgroundJobs:Enabled is true.
+        services.TryAddScoped<IReceivablesRangeLoader, InProcessReceivablesRangeLoader>();
         services.AddScoped<PactReceivableCustomersAppService>();
+        services.AddScoped<PactInstalmentsAppService>();
         services.Configure<CollectionsCampaignOptions>(configuration.GetSection(CollectionsCampaignOptions.SectionName));
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsCampaignOptions>>().Value);
         services.AddScoped<CollectionsCampaignAppService>();
+        // Review and approval workflow: stored review data, explicit refresh/dispatch jobs, Genesys outbound upload.
+        services.Configure<CollectionsReviewOptions>(configuration.GetSection(CollectionsReviewOptions.SectionName));
+        services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsReviewOptions>>().Value);
+        services.AddScoped<IReviewStore, ReviewStore>();
+        services.AddScoped<ReviewQueryService>();
+        services.AddScoped<ReviewRefreshService>();
+        services.AddScoped<CurrentBalanceReader>();
+        services.AddScoped<DispatchService>();
+        services.AddScoped<SuppressionService>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);
@@ -394,7 +434,12 @@ public static class InfrastructureServiceCollectionExtensions
     public static AuthorizationOptions AddTigerCsAuthorizationPolicies(this AuthorizationOptions options)
     {
         AuthorizationPolicyBuilder Base() =>
-            new AuthorizationPolicyBuilder().RequireAuthenticatedUser().AddRequirements(new ActiveEmployeeRequirement());
+            new AuthorizationPolicyBuilder().RequireAuthenticatedUser().AddRequirements(
+                new ActiveEmployeeRequirement(),
+                // Confines configured service identities (the Genesys integration account) to the integration surface.
+                new ServiceIdentityRestrictionRequirement(),
+                // Chairman/CEO and Reporting User are read-only: no mutating method unless the endpoint documents otherwise.
+                new ReadOnlyCallerWriteGuardRequirement());
 
         options.DefaultPolicy = Base().Build();
 
@@ -426,14 +471,21 @@ public static class InfrastructureServiceCollectionExtensions
             .Build());
 
         options.AddPolicy(PolicyNames.SupervisorOrAbove, Base()
-            .RequireRole(Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo)
+            .RequireRole(Roles.CsSupervisor, Roles.CsManager, Roles.GeneralManager)
             .Build());
 
         options.AddPolicy(PolicyNames.DepartmentHeadOrAbove, Base()
-            .RequireRole(Roles.DepartmentHead, Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo)
+            .RequireRole(Roles.DepartmentHead, Roles.CsManager, Roles.GeneralManager)
             .Build());
 
+        // Chairman/CEO is read-only by agreed decision: no operational policy admits it.
         options.AddPolicy(PolicyNames.CsManagerOrGeneralManager, Base()
+            .RequireRole(Roles.CsManager, Roles.GeneralManager)
+            .Build());
+
+        // Read access to reports (Team Performance): the management tier plus
+        // the read-only executive. A read policy only; nothing on it mutates.
+        options.AddPolicy(PolicyNames.ReportsRead, Base()
             .RequireRole(Roles.CsManager, Roles.GeneralManager, Roles.ChairmanCeo)
             .Build());
 
