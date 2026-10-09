@@ -174,6 +174,20 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     /// <summary>Classification of a whole unit's instalments for the summary line of the By unit view.</summary>
     public static string Plural(int count, string one, string many) => count == 1 ? $"1 {one}" : $"{count:N0} {many}";
 
+    /// <summary>One month of a unit with unpaid instalments: the sum of that month's remaining amounts and its Due / Overdue / Not yet due classification.</summary>
+    public sealed record UnitMonth(int Year, int Month, decimal Remaining, int Count, string Classification);
+
+    /// <summary>The months in which the unit still has a remaining balance, from ITS listed instalments (the same rows the expansion shows, so the two always agree).
+    /// The classification is the date rule of the business month (all instalments of a month share it): before it = Overdue, in it = Due, after it = Not yet due.</summary>
+    public static IReadOnlyList<UnitMonth> UnitMonths(PactInstalmentUnitDto unit) => unit.Instalments
+        .Where(i => i.RemainingAmount > 0)
+        .GroupBy(i => (i.DueDate.Year, i.DueDate.Month))
+        .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
+        .Select(g => new UnitMonth(g.Key.Year, g.Key.Month, g.Sum(i => i.RemainingAmount), g.Count(), g.First().Classification))
+        .ToList();
+
+    public static string MonthLabel(int year, int month) => new DateTime(year, month, 1).ToString("MMM yyyy", CultureInfo.InvariantCulture);
+
     public static string Money(decimal? amount) => amount is { } value ? value.ToString("N2", CultureInfo.InvariantCulture) : "—";
 
     public static string StatusLabel(string status) => status switch

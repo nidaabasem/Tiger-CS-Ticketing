@@ -121,14 +121,15 @@ public sealed class PactReceivablesRenderTests
 
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&search=Example")).Content.ReadAsStringAsync();
         Assert.Contains("view=units", Assert.Single(api.Calls("/receivables/instalments")));
-        foreach (var column in new[] { ">Tower<", ">Unit<", ">Customer<", ">Instalments<", ">Total remaining<", ">Oldest due date<" }) Assert.Contains(column, html);
+        foreach (var column in new[] { ">Tower<", ">Unit<", ">Customer<", ">Total remaining<", ">Months with unpaid instalments<" }) Assert.Contains(column, html);
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "data-unit-row").Count);        // two units, not three instalments
         Assert.Contains("data-unit-toggle", html);                                                          // expandable ...
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "data-unit-detail").Count);      // ... with its instalments inside the unit
         Assert.Contains("INV-1", html); Assert.Contains("INV-2", html); Assert.Contains("INV-3", html);
         Assert.Contains("500.00", html);                                                                    // 300 + 200: the unit's total remaining
         Assert.Contains("2 units", html); Assert.Contains("3 instalments", html);
-        Assert.DoesNotContain(">Voucher<th", html);
+        Assert.Contains("data-unit-month=\"2026-09\"", html);                                              // the months with unpaid instalments sit in the unit row ...
+        Assert.Contains(">Overdue</span>", html);                                                           // ... each with its Due / Overdue label
 
         // By instalment is the unchanged one-row-per-instalment table, and the chosen view is part of every link.
         var flat = await (await client.GetAsync("/Collections/Receivables?handler=Results&view=instalments")).Content.ReadAsStringAsync();
@@ -152,8 +153,9 @@ public sealed class PactReceivablesRenderTests
         Assert.Contains("data-month-card=\"all\"", all);
         Assert.Contains("All months", all);
         Assert.Contains("Aug 2026", all); Assert.Contains("Sep 2026", all); Assert.Contains("Oct 2026", all);
-        Assert.Contains("2 overdue", all);                                               // September: two overdue instalments ...
-        Assert.Contains("200.00", all);                                                  // ... 120 + 80 remaining
+        Assert.Contains("Overdue: <b>2</b> · AED <b>200.00</b>", all);                  // September: two overdue instalments, labelled, 120 + 80 remaining
+        Assert.Contains("Total remaining: <b>AED 700.00</b>", all);                      // All months: total remaining is distinct from the overdue remaining (500.00)
+        Assert.Contains("Overdue: <b>3</b> · AED <b>500.00</b>", all);
         Assert.Contains("aria-current=\"true\"", all);                                   // All months is the highlighted one
         Assert.DoesNotContain("month-card--selected\" data-results-link data-month-card=\"2026-09\"", all);
         Assert.Contains("INV-1", all); Assert.Contains("INV-4", all);
@@ -217,5 +219,43 @@ public sealed class PactReceivablesRenderTests
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
         Assert.Contains("data-breakdown=\"false\"", html);                               // Unpaid / Partially paid cannot be told apart by the deployed procedures
         Assert.Contains("data-paid=\"true\"", html);
+    }
+
+    [Fact]
+    public async Task UnitRows_ShowMonthlyAmountsWithBusinessLabels_ThatAddUpToTheUnitTotal_AndMatchTheExpansion()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 300m, 300m, 0m, "INV-1") with { DueDate = new DateOnly(2026, 8, 5) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 120m, 120m, 0m, "INV-2") with { DueDate = new DateOnly(2026, 9, 5) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 80m, 80m, 0m, "INV-3") with { DueDate = new DateOnly(2026, 9, 20) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-4") with { DueDate = new DateOnly(2026, 10, 5) });
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "NotYetDue", 150m, 150m, 0m, "INV-5") with { DueDate = new DateOnly(2026, 11, 5) });
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+
+        var row = System.Text.RegularExpressions.Regex.Match(html, "<tr data-unit-row>.*?</tr>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
+        var months = System.Text.RegularExpressions.Regex.Matches(row, "data-unit-month=\"(\\d{4}-\\d{2})\" data-month-remaining=\"([\\d.]+)\" data-classification=\"(\\w+)\"")
+            .Select(m => (Month: m.Groups[1].Value, Amount: decimal.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture), Label: m.Groups[3].Value)).ToList();
+        Assert.Equal([("2026-08", 300m, "Overdue"), ("2026-09", 200m, "Overdue"), ("2026-10", 200m, "Due"), ("2026-11", 150m, "NotYetDue")], months);
+        Assert.Equal(850m, months.Sum(m => m.Amount));                                       // the months add up to the unit's total remaining ...
+        Assert.Contains("850.00", row);                                                      // ... which the row shows
+        Assert.Contains("Not yet due", row);
+        var detail = System.Text.RegularExpressions.Regex.Match(html, "<tr class=\"unit-detail\".*?</tr>\\s*</tbody>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
+        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(detail, "data-payment-status-label").Count);   // the expansion lists every instalment of the unit
+        Assert.DoesNotContain("data-card-overdue>Overdue: <b>0</b> · AED", html);            // a card with 0 overdue never shows an unlabelled amount
+    }
+
+    [Fact]
+    public async Task MonthCards_WithNothingOverdue_ShowOnlyLabelledFigures_AndTheDiagnosticsAreCollapsed()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-4") with { DueDate = new DateOnly(2026, 10, 5) });
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        var card = System.Text.RegularExpressions.Regex.Match(html, "data-month-card=\"2026-10\".*?</a>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
+        Assert.Contains("Overdue: <b>0</b></span>", card);                                   // zero overdue: the label and the count only
+        Assert.Contains("Other unpaid: <b>1</b> · AED <b>200.00</b>", card);
+        Assert.Contains("<details class=\"snapshot-status__details\"", html);                // loading diagnostics are collapsed ...
+        Assert.Contains("snapshot-status__table", html);                                     // ... but still there
     }
 }
