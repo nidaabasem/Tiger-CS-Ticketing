@@ -210,4 +210,28 @@ public class CrmUnitDetailsHttpGatewayTests
         Assert.Equal(CrmUnitDetailsOutcome.Unavailable,
             (await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(1, 2, 1, true)).Outcome);
     }
+
+    [Fact]
+    public async Task ExactPayloadOfTheCrmActionToday_AllMappedMembersNull_ParsesAsFound_WithNothingInvented()
+    {
+        // What docs/Genesys/crm-insertion/TicketingSystemController.GetUnitDetails.cs returns while the
+        // schema mappings are still open: every member present, explicit null, no sale member.
+        var json = """
+            {"success":true,"found":true,"message":null,"unit":{"unitTypeName":null,"towerName":null,"bedrooms":null,
+            "area":null,"areaUnit":null,"parking":null,"expectedHandoverDate":null,"actualHandoverDate":null,
+            "project":{"address":null,"status":null,"expectedHandoverDate":null,"actualHandoverDate":null,"description":null,
+            "amenities":null,"completionPercentage":null,"expectedCompletionDate":null,"actualCompletionDate":null}}}
+            """;
+
+        var result = await Create(Returns(HttpStatusCode.OK, json)).GetUnitDetailsAsync(9001, 9200, 9100, true);
+
+        Assert.Equal(CrmUnitDetailsOutcome.Found, result.Outcome);
+        var d = result.Details!;
+        Assert.Null(d.TowerName);
+        Assert.Null(d.Bedrooms);
+        Assert.Null(d.Parking);
+        Assert.Null(d.Sale);
+        Assert.Null(d.Project!.CompletionPercentage);
+        Assert.Null(d.Project.ExpectedCompletionDate);
+    }
 }

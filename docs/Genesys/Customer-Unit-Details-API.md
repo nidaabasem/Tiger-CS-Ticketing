@@ -367,8 +367,8 @@ and unit ids (never the phone number).
 | Item | State |
 |---|---|
 | TigerCS endpoint, DTOs, gateway mapping, ownership + proof + lead-binding rules | Built; unit/integration tests pass against fakes and a canned HTTP handler |
-| Tiger CRM `TicketingSystemController.GetUnitDetails` (service-key auth, ownership re-check, JSON 401, sale/completion) | **Not built — CRM source/schema not accessible.** No CRM table or column was bound |
-| TigerGroupWeb route forwarding (`GenesysController` / `TicketingGenesysService`) | **Not built — source not accessible** (the only other repository in scope, `WEBSITE`, is an unrelated stub) |
+| Tiger CRM `TicketingSystemController.GetUnitDetails` | Insertion-ready action written from the supplied controller (service-key auth, JSON 401, customer/unit/lead ownership, Sold/Contract); logic-tested against stubs, **not compiled in CRM**. Detail/handover/completion/sale columns **not yet mapped** — see [CRM-GetUnitDetails-Field-Mapping.md](CRM-GetUnitDetails-Field-Mapping.md) |
+| TigerGroupWeb route forwarding | Already present in the supplied `GenesysController`/`TicketingGenesysService` (raw-body pass-through); nothing to add. Build/registration not verified |
 | Fields genuinely connected to CRM today | Only the buyer-lookup fields: unit id/number/floor/type code, `booking.*`, project id/name/Arabic name |
 | Fields unavailable and why | tower, unit-type name, bedrooms, area, parking, unit/project handover dates, project address/status/description/amenities, completion %, completion dates, sold price, registration cost — all need the CRM action |
 | Real CRM / public website exercised | **No.** The requirement is *not* complete until the UAT procedure below passes |

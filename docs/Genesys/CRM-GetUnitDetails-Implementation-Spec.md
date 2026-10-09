@@ -1,6 +1,6 @@
 # Tiger CRM — `TicketingSystem/GetUnitDetails` implementation spec
 
-**Audience:** the Tiger CRM developer. **Status: not built.** The Tiger CRM source and
+**Audience:** the Tiger CRM developer. **Status (2026-10-09): action written but not compiled in CRM; schema mappings partly blocked.** See [CRM-GetUnitDetails-Field-Mapping.md](CRM-GetUnitDetails-Field-Mapping.md) (supersedes the mapping template below) and `crm-insertion/`. Original note: **not built.** The Tiger CRM source and
 database schema were not accessible when this was written, so **no CRM table, column or
 enum is named here — every "CRM source" cell is yours to fill from the schema.** Nothing
 below may be satisfied with a guessed column, a fixed percentage, or the unit's current
