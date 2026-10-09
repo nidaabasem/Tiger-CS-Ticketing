@@ -29,9 +29,10 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
 
     /// <summary>Instalment-level list from the local snapshot (the Receivables page).</summary>
     public Task<ApiResult<PactInstalmentsPageDto>> GetInstalmentsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, string? paymentStatus, decimal? minAmount,
-        string? search, int page, CancellationToken cancellationToken)
+        string? search, int page, CancellationToken cancellationToken, string? view = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
+        if (!string.IsNullOrWhiteSpace(view)) query["view"] = view;
         if (towerId is { } tower) query["towerId"] = Id(tower);
         if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

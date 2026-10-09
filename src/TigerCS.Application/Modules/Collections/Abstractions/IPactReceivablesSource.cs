@@ -151,3 +151,12 @@ public sealed record CampaignUnitFacts(
 public sealed record PactCampaignPage(
     bool Supported, int BadIdentityRows, int Total, int Clean, int Review, IReadOnlyList<CampaignUnitFacts> Units,
     DateTime ReadAtUtc, SnapshotStatusDto Snapshot, double SqlMs);
+
+/// <summary>The Receivables "By unit" view: the instalment filters, grouped per unit (company + customer + unit) in the data store before paging.</summary>
+public interface IPactInstalmentUnitSource
+{
+    Task<PactInstalmentUnitsPage> ReadInstalmentUnitsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken);
+}
+
+public sealed record PactInstalmentUnitsPage(
+    PactInstalmentTotalsDto Totals, IReadOnlyList<PactInstalmentUnitDto> Units, bool Unavailable, SnapshotStatusDto Snapshot, DateTime ReadAtUtc, double SqlMs);
