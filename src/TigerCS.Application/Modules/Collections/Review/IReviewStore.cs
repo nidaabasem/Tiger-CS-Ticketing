@@ -1,0 +1,92 @@
+using TigerCS.Domain.Modules.Collections.Review;
+
+namespace TigerCS.Application.Modules.Collections.Review;
+
+/// <summary>A stored record together with its live "already dispatched" fact (looked up, never copied).</summary>
+public sealed record ReviewRecordView(
+    CollectionsReviewRecord Record, bool AlreadySent, string? PreviousDispatchStatus, DateTime? PreviousDispatchAtUtc)
+{
+    /// <summary>Stored status, adjusted for a stale run and for a previous dispatch.</summary>
+    public ReviewValidationStatus EffectiveStatus(bool runStale) =>
+        AlreadySent ? ReviewValidationStatus.AlreadySent
+        : runStale && Record.ValidationStatus == ReviewValidationStatus.Ready ? ReviewValidationStatus.NeedsReview
+        : Record.ValidationStatus;
+}
+
+public sealed record StoredPage(IReadOnlyList<ReviewRecordView> Items, int TotalCount);
+
+/// <summary>Persistence port of the review and dispatch workflow. Implemented over EF Core; every filter, count and page runs in the database.</summary>
+public interface IReviewStore
+{
+    // ---- runs
+    Task<CollectionsReviewRun?> GetCurrentRunAsync(CancellationToken ct);
+    Task<CollectionsReviewRun?> GetRunAsync(long runId, CancellationToken ct);
+    Task<CollectionsReviewRun?> GetActiveRunAsync(CancellationToken ct);
+    /// <summary>Adds a Queued run; false (and no row) when another run is already queued or running.</summary>
+    Task<bool> TryAddRunAsync(CollectionsReviewRun run, CancellationToken ct);
+    /// <summary>Atomic Queued to Running; false when another worker already claimed it.</summary>
+    Task<bool> TryStartRunAsync(long runId, DateTime nowUtc, CancellationToken ct);
+    Task UpdateRunProgressAsync(long runId, string phase, int percent, int? sourceRows, CancellationToken ct);
+    Task FailRunAsync(long runId, string error, DateTime nowUtc, CancellationToken ct);
+    Task AddRecordsAsync(long runId, IReadOnlyList<CollectionsReviewRecord> records, CancellationToken ct);
+    /// <summary>Marks the run Completed and current, then prunes older runs' records, in one transaction.</summary>
+    Task PublishRunAsync(long runId, int recordCount, int sourceRows, DateTime sourceReadAtUtc, DateTime nowUtc, int runsToKeep, CancellationToken ct);
+
+    // ---- review queries (stale = the run's data is older than the freshness window)
+    Task<StoredPage> QueryAsync(long runId, ReviewQuerySpec spec, bool stale, int skip, int take, CancellationToken ct);
+    Task<ReviewCountsDto> CountAsync(long runId, ReviewQuerySpec specWithoutStatus, bool stale, CancellationToken ct);
+    /// <summary>All Ready records matching the spec (Ready after the stale adjustment), ordered, capped at <paramref name="max"/> + 1.</summary>
+    Task<IReadOnlyList<ReviewRecordView>> ResolveAsync(long runId, ReviewQuerySpec spec, IReadOnlyCollection<string>? keys, bool stale, int max, CancellationToken ct);
+
+    // ---- dispatch (entities are returned detached; changes are written back with the Update methods)
+    Task<CollectionsDispatch?> FindDispatchByKeyAsync(string idempotencyKey, CancellationToken ct);
+    /// <summary>Persists the dispatch and items. False when a unique rule rejected it (same idempotency key, or a record already in a live dispatch).</summary>
+    Task<bool> TryAddDispatchAsync(CollectionsDispatch dispatch, CancellationToken ct);
+    Task<CollectionsDispatch?> GetDispatchAsync(Guid publicId, CancellationToken ct);
+    Task<CollectionsDispatch?> GetDispatchByIdAsync(long dispatchId, CancellationToken ct);
+    Task<IReadOnlyList<CollectionsDispatch>> ListDispatchesAsync(int take, CancellationToken ct);
+    /// <summary>Atomically takes the execution lease (a Queued dispatch becomes Revalidating). False when another worker holds an unexpired lease or the dispatch is finished.</summary>
+    Task<bool> TryAcquireLeaseAsync(long dispatchId, Guid owner, DateTime nowUtc, TimeSpan ttl, CancellationToken ct);
+    Task<bool> RenewLeaseAsync(long dispatchId, Guid owner, DateTime nowUtc, TimeSpan ttl, CancellationToken ct);
+    Task UpdateDispatchAsync(CollectionsDispatch dispatch, CancellationToken ct);
+    /// <summary>Atomically Queued to Cancelled (only while no worker has taken the lease). False otherwise.</summary>
+    Task<bool> TryCancelQueuedAsync(long dispatchId, string reason, DateTime nowUtc, CancellationToken ct);
+    /// <summary>Sets every Approved item of the dispatch to Released so the records can be approved again.</summary>
+    Task ReleaseItemsAsync(long dispatchId, string reason, CancellationToken ct);
+    Task AddBatchesAsync(IReadOnlyList<CollectionsGenesysBatch> batches, CancellationToken ct);
+    Task<CollectionsGenesysBatch?> GetBatchAsync(long batchId, CancellationToken ct);
+    /// <summary>Atomic claim of a Pending batch for submission: increments the attempt and sets Submitting. False when it is no longer Pending.</summary>
+    Task<bool> TryClaimBatchAsync(long batchId, DateTime nowUtc, CancellationToken ct);
+    Task UpdateBatchAsync(CollectionsGenesysBatch batch, CancellationToken ct);
+    Task<IReadOnlyList<CollectionsDispatchItem>> GetBatchItemsAsync(long batchId, CancellationToken ct);
+    Task<IReadOnlyList<CollectionsDispatchItem>> GetItemsAsync(long dispatchId, CancellationToken ct);
+    Task UpdateItemsAsync(IReadOnlyCollection<CollectionsDispatchItem> items, CancellationToken ct);
+}
+
+/// <summary>Enqueues the explicit background jobs. The Hangfire implementation lives in Infrastructure.</summary>
+public interface IReviewJobScheduler
+{
+    void EnqueueRefresh(long runId);
+    void EnqueueDispatch(long dispatchId);
+}
+
+public enum GenesysUploadOutcome
+{
+    /// <summary>Genesys accepted the batch; contact ids were returned.</summary>
+    Accepted,
+    /// <summary>Genesys definitely did not create the contacts (4xx, rate limit, auth failure, request never sent).</summary>
+    Rejected,
+    /// <summary>Timeout, connection loss or 5xx after the request may have reached Genesys. Contacts may exist.</summary>
+    Unknown
+}
+
+public sealed record GenesysContactPayload(string ContactListId, string Phone, string CustomerName, string EmailAddress,
+    string ReminderType, string AmountDue, string DueDate, bool Callable);
+
+public sealed record GenesysUploadResult(GenesysUploadOutcome Outcome, int? HttpStatus, IReadOnlyList<string> ContactIds, string? Error);
+
+public interface IGenesysOutboundClient
+{
+    /// <summary>POST /api/v2/outbound/contactlists/{contactListId}/contacts for exactly one list and at most 1,000 contacts.</summary>
+    Task<GenesysUploadResult> UploadContactsAsync(string contactListId, IReadOnlyList<GenesysContactPayload> contacts, CancellationToken ct);
+}

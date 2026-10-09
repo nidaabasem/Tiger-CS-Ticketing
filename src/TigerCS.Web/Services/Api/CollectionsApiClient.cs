@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Review;
 
 namespace TigerCS.Web.Services.Api;
 
@@ -25,6 +26,47 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken,
         DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
         GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+
+    // ---- review and approval (stored review data; the page never reads the financial source)
+
+    private const string ReviewBase = "api/collections/review";
+
+    public Task<ApiResult<ReviewRunDto?>> GetReviewRunAsync(CancellationToken cancellationToken) =>
+        GetAsync<ReviewRunDto?>($"{ReviewBase}/runs/current", cancellationToken);
+
+    public Task<ApiResult<ReviewRunDto>> StartReviewRefreshAsync(int? companyId, CancellationToken cancellationToken) =>
+        PostAsync<object, ReviewRunDto>($"{ReviewBase}/refresh", new { companyId }, cancellationToken);
+
+    public Task<ApiResult<ReviewPageDto>> GetReviewPageAsync(ReviewFilter filter, int page, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        void Add(string name, string? value) { if (!string.IsNullOrWhiteSpace(value)) query[name] = value; }
+        Add("companyId", filter.CompanyId?.ToString(CultureInfo.InvariantCulture));
+        Add("project", filter.Project); Add("unit", filter.Unit); Add("customer", filter.Customer);
+        Add("year", filter.Year?.ToString(CultureInfo.InvariantCulture)); Add("month", filter.Month?.ToString(CultureInfo.InvariantCulture));
+        Add("dueFrom", filter.DueFrom?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        Add("dueTo", filter.DueTo?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        Add("paymentStatus", filter.PaymentStatus);
+        Add("minRemaining", filter.MinRemaining?.ToString(CultureInfo.InvariantCulture));
+        Add("maxRemaining", filter.MaxRemaining?.ToString(CultureInfo.InvariantCulture));
+        Add("reminderType", filter.ReminderType); Add("validationStatus", filter.ValidationStatus); Add("reason", filter.Reason);
+        query["page"] = Id(page);
+        query["pageSize"] = "25";
+        return GetAsync<ReviewPageDto>($"{ReviewBase}/records?{query}", cancellationToken);
+    }
+
+    public Task<ApiResult<SelectionSummaryDto>> SummarizeSelectionAsync(SelectionRequest request, CancellationToken cancellationToken) =>
+        PostAsync<SelectionRequest, SelectionSummaryDto>($"{ReviewBase}/selection/summary", request, cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> ConfirmDispatchAsync(ConfirmDispatchRequest request, CancellationToken cancellationToken) =>
+        PostAsync<ConfirmDispatchRequest, DispatchDto>($"{ReviewBase}/dispatches", request,
+            new Dictionary<string, string> { ["Idempotency-Key"] = request.IdempotencyKey }, cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> GetDispatchAsync(Guid dispatchId, CancellationToken cancellationToken) =>
+        GetAsync<DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}", cancellationToken);
+
+    public Task<ApiResult<DispatchDto>> ReconcileBatchAsync(Guid dispatchId, long batchId, ReconcileBatchRequest request, CancellationToken cancellationToken) =>
+        PostAsync<ReconcileBatchRequest, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/batches/{batchId.ToString(CultureInfo.InvariantCulture)}/reconcile", request, cancellationToken);
 
     private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search,
         DateOnly? dateFrom = null, DateOnly? dateTo = null)

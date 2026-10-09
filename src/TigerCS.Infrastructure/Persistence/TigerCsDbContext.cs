@@ -4,6 +4,7 @@ using TigerCS.Domain.Audit;
 using TigerCS.Domain.Infrastructure;
 using TigerCS.Domain.Modules.ClassificationAndRouting;
 using TigerCS.Domain.Modules.Collections;
+using TigerCS.Domain.Modules.Collections.Review;
 using TigerCS.Domain.Modules.CustomerVerification;
 using TigerCS.Domain.Modules.GenesysIntegration;
 using TigerCS.Domain.Modules.IdentityAndAccess;
@@ -144,6 +145,16 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
 
     public DbSet<CollectionsReminderEvent> CollectionsReminderEvents => Set<CollectionsReminderEvent>();
 
+    public DbSet<CollectionsReviewRun> CollectionsReviewRuns => Set<CollectionsReviewRun>();
+
+    public DbSet<CollectionsReviewRecord> CollectionsReviewRecords => Set<CollectionsReviewRecord>();
+
+    public DbSet<CollectionsDispatch> CollectionsDispatches => Set<CollectionsDispatch>();
+
+    public DbSet<CollectionsDispatchItem> CollectionsDispatchItems => Set<CollectionsDispatchItem>();
+
+    public DbSet<CollectionsGenesysBatch> CollectionsGenesysBatches => Set<CollectionsGenesysBatch>();
+
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
 
     public DbSet<TicketWorkflowEvent> TicketWorkflowEvents => Set<TicketWorkflowEvent>();
@@ -211,6 +222,11 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new CollectionsReminderConfiguration());
         builder.ApplyConfiguration(new CollectionsReminderChannelConfiguration());
         builder.ApplyConfiguration(new CollectionsReminderEventConfiguration());
+        builder.ApplyConfiguration(new CollectionsReviewRunConfiguration());
+        builder.ApplyConfiguration(new CollectionsReviewRecordConfiguration());
+        builder.ApplyConfiguration(new CollectionsDispatchConfiguration());
+        builder.ApplyConfiguration(new CollectionsDispatchItemConfiguration());
+        builder.ApplyConfiguration(new CollectionsGenesysBatchConfiguration());
         builder.ApplyConfiguration(new TicketApprovalConfiguration());
         builder.ApplyConfiguration(new TicketWorkflowEventConfiguration());
         builder.ApplyConfiguration(new RequestTypeApprovalRequirementConfiguration());

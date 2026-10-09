@@ -3,6 +3,7 @@ using Hangfire.SqlServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TigerCS.Application.Modules.Collections;
+using TigerCS.Application.Modules.Collections.Review;
 using TigerCS.Application.Modules.SlaAndEscalation.Abstractions;
 
 namespace TigerCS.Infrastructure.BackgroundJobs;
@@ -36,6 +37,8 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<SlaSweepJob>();
         services.AddScoped<OutboxDispatchJob>();
         services.AddScoped<CollectionsReminderScheduleJob>();
+        services.AddScoped<CollectionsReviewRefreshJob>();
+        services.AddScoped<CollectionsDispatchJob>();
         // Holds only the scope factory; it opens one scope per candidate itself.
         services.AddScoped<ChatbotInactivityCloseJob>();
 
@@ -44,6 +47,7 @@ public static class BackgroundJobServiceCollectionExtensions
             // See NoOpSlaDeadlineScheduler's remarks: detection logic is
             // unaffected, only its timing.
             services.AddSingleton<ISlaDeadlineScheduler, NoOpSlaDeadlineScheduler>();
+            services.AddSingleton<IReviewJobScheduler, NoOpReviewJobScheduler>();
             return services;
         }
 
@@ -69,6 +73,7 @@ public static class BackgroundJobServiceCollectionExtensions
 
         services.AddHangfireServer();
         services.AddSingleton<ISlaDeadlineScheduler, HangfireSlaDeadlineScheduler>();
+        services.AddSingleton<IReviewJobScheduler, HangfireReviewJobScheduler>();
 
         return services;
     }

@@ -36,7 +36,15 @@ public enum CollectionsOutcome
     ReminderSuppressed,
 
     /// <summary>The customer has no verified PACT company/tenant mapping, so no EDSM figure can be returned.</summary>
-    NotMapped
+    NotMapped,
+
+    /// <summary>The approved list no longer matches the stored review data or a dispatch changed it: review again (409).</summary>
+    ReviewRequired,
+
+    /// <summary>A record is already part of a pending or sent dispatch, or the same key was used for a different list (409).</summary>
+    DuplicateDispatch,
+
+    NotFound
 }
 
 public sealed record CollectionsResult<T>(

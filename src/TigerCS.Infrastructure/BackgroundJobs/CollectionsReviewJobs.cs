@@ -1,0 +1,37 @@
+using Hangfire;
+using Microsoft.Extensions.Logging;
+using TigerCS.Application.Modules.Collections.Review;
+
+namespace TigerCS.Infrastructure.BackgroundJobs;
+
+/// <summary>The explicit "refresh review data" job. No automatic retry: a failed run is reported and a person starts a new one.</summary>
+public sealed class CollectionsReviewRefreshJob(ReviewRefreshService refresh)
+{
+    [AutomaticRetry(Attempts = 0)]
+    public Task RunAsync(long runId, CancellationToken cancellationToken) => refresh.RunAsync(runId, cancellationToken);
+}
+
+/// <summary>
+/// Revalidates and uploads one approved dispatch. Safe to execute twice: the dispatch lease admits one worker, batches are claimed
+/// atomically, and a batch whose outcome is unknown is never resent.
+/// </summary>
+public sealed class CollectionsDispatchJob(DispatchService dispatch)
+{
+    [AutomaticRetry(Attempts = 3, DelaysInSeconds = [60, 300, 900])]
+    public Task RunAsync(long dispatchId, CancellationToken cancellationToken) => dispatch.ExecuteAsync(dispatchId, cancellationToken);
+}
+
+public sealed class HangfireReviewJobScheduler(IBackgroundJobClient client) : IReviewJobScheduler
+{
+    public void EnqueueRefresh(long runId) => client.Enqueue<CollectionsReviewRefreshJob>(j => j.RunAsync(runId, CancellationToken.None));
+
+    public void EnqueueDispatch(long dispatchId) => client.Enqueue<CollectionsDispatchJob>(j => j.RunAsync(dispatchId, CancellationToken.None));
+}
+
+/// <summary>Used when Hangfire is switched off: work stays Queued and is reported as such. Nothing runs silently.</summary>
+public sealed class NoOpReviewJobScheduler(ILogger<NoOpReviewJobScheduler> logger) : IReviewJobScheduler
+{
+    public void EnqueueRefresh(long runId) => logger.LogWarning("Background jobs are disabled; review refresh {RunId} stays queued.", runId);
+
+    public void EnqueueDispatch(long dispatchId) => logger.LogWarning("Background jobs are disabled; dispatch {DispatchId} stays queued.", dispatchId);
+}

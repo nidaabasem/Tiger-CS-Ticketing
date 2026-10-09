@@ -1,0 +1,69 @@
+using TigerCS.Domain.Modules.Collections.Review;
+
+namespace TigerCS.Application.Modules.Collections.Review;
+
+/// <summary>The review filters as sent by the API. Everything optional; blank means "no restriction".</summary>
+public sealed record ReviewFilter(
+    int? CompanyId = null, string? Project = null, string? Unit = null, string? Customer = null,
+    int? Year = null, int? Month = null, DateOnly? DueFrom = null, DateOnly? DueTo = null,
+    string? PaymentStatus = null, decimal? MinRemaining = null, decimal? MaxRemaining = null,
+    string? ReminderType = null, string? ValidationStatus = null, string? Reason = null);
+
+/// <summary>
+/// The normalized, validated filter the store understands. <see cref="PaymentStatuses"/> is null for "All".
+/// </summary>
+public sealed record ReviewQuerySpec(
+    int? CompanyId, string? Project, string? Unit, string? CustomerText, string? PhoneDigits,
+    DateOnly? DueFrom, DateOnly? DueTo, IReadOnlyList<ReviewPaymentStatus>? PaymentStatuses,
+    decimal? MinRemaining, decimal? MaxRemaining, CampaignReminderType? ReminderType,
+    ReviewValidationStatus? ValidationStatus, string? Reason);
+
+public sealed record ReviewRunDto(
+    long RunId, string Status, string Phase, int ProgressPercent, DateOnly AsOfDate, int? CompanyId,
+    DateOnly DueFrom, DateOnly DueTo, string Source, string? SourceProcedureSuffix, bool SourceReconciled,
+    DateTime RequestedAtUtc, DateTime? StartedAtUtc, DateTime? CompletedAtUtc, DateTime? SourceReadAtUtc,
+    int SourceRowCount, int RecordCount, string? Error, bool IsCurrent, bool IsStale);
+
+public sealed record ReviewCountsDto(int Total, int Ready, int NeedsReview, int Excluded, int AlreadySent, int UnknownPaymentStatus = 0);
+
+public sealed record ReviewRecordDto(
+    string RecordKey, string ReminderType, int CompanyId, string CustomerName, string Phone, string Email,
+    string ProjectCode, string UnitCode, string PaymentStatus, decimal? RemainingAmount, string Currency,
+    DateOnly? DueDate, string ValidationStatus, IReadOnlyList<ReviewReasonDto> Reasons,
+    string Source, DateTime SourceReadAtUtc, string? PreviousDispatchStatus, DateTime? PreviousDispatchAtUtc);
+
+public sealed record ReviewReasonDto(string Code, string Kind, string Explanation);
+
+public sealed record ReviewPageDto(
+    ReviewRunDto? Run, ReviewCountsDto Counts, int Page, int PageSize, int TotalCount,
+    IReadOnlyList<ReviewRecordDto> Items, decimal MinRemainingApplied);
+
+public sealed record SelectionRequest(
+    ReviewFilter? Filter, string Mode, IReadOnlyList<string>? RecordKeys = null,
+    IReadOnlyList<string>? ExcludedKeys = null, int ContactPage = 1, int ContactPageSize = 50);
+
+public sealed record SelectionContactDto(
+    string RecordKey, string ReminderType, string CustomerName, string Phone, string Email,
+    string UnitCode, decimal Amount, string Currency, DateOnly DueDate, bool SharedPhone);
+
+public sealed record SelectionSummaryDto(
+    long RunId, int Count, string Fingerprint, IReadOnlyDictionary<string, decimal> TotalsByCurrency,
+    IReadOnlyDictionary<string, int> CountByReminderType, int SharedPhoneRecordCount, int SharedPhoneNumberCount,
+    int Page, int PageSize, IReadOnlyList<SelectionContactDto> Contacts, IReadOnlyList<string> Notices);
+
+public sealed record ConfirmDispatchRequest(
+    SelectionRequest Selection, int ExpectedCount, string ExpectedFingerprint, string IdempotencyKey,
+    bool AcknowledgeActiveCampaignRisk, bool AcknowledgeSharedPhoneCalls);
+
+public sealed record DispatchBatchDto(
+    long BatchId, string ReminderType, string ContactListId, int Sequence, int ContactCount, string Status,
+    int AttemptCount, int? HttpStatus, int? ReturnedContactCount, string? Error,
+    DateTime? StartedAtUtc, DateTime? CompletedAtUtc, DateTime? ReconciledAtUtc, string? ReconciliationNote);
+
+public sealed record DispatchDto(
+    Guid DispatchId, string Status, string? StatusReason, Guid InitiatedByEmployeeId, DateTime InitiatedAtUtc,
+    DateTime? StartedAtUtc, DateTime? CompletedAtUtc, int ApprovedCount, int UploadedCount, int ExcludedCount,
+    int FailedCount, int UnknownCount, IReadOnlyDictionary<string, decimal> ApprovedTotalsByCurrency,
+    IReadOnlyList<DispatchBatchDto> Batches, string Disclaimer);
+
+public sealed record ReconcileBatchRequest(string Resolution, string Note);

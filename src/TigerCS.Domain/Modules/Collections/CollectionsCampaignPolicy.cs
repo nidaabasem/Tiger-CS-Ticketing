@@ -31,20 +31,27 @@ public static class CollectionsCampaignPolicy
         };
     }
 
-    public static CampaignAmount Evaluate(IEnumerable<CampaignInstalment> instalments,
+    /// <summary>The instalments that count for <paramref name="stage"/> on <paramref name="businessDate"/> (calendar-month conventions).</summary>
+    public static IReadOnlyList<CampaignInstalment> Qualifying(IEnumerable<CampaignInstalment> instalments,
         CollectionsCampaignStage stage, DateOnly businessDate)
     {
         if (!Enum.IsDefined(stage)) throw new ArgumentOutOfRangeException(nameof(stage));
         var monthStart = new DateOnly(businessDate.Year, businessDate.Month, 1);
         var monthEnd = monthStart.AddMonths(1);
         var previousMonthStart = monthStart.AddMonths(-1);
-        var rows = instalments.Where(i => i.RemainingAmount > 0 && (stage switch
+        return instalments.Where(i => i.RemainingAmount > 0 && (stage switch
         {
             CollectionsCampaignStage.OverdueReminder => i.DueDate < businessDate.AddMonths(-1),
             CollectionsCampaignStage.LegalNotice => i.DueDate >= previousMonthStart && i.DueDate < monthStart,
             CollectionsCampaignStage.LegalReferral => i.DueDate < businessDate.AddMonths(-3),
             _ => i.DueDate >= monthStart && i.DueDate < monthEnd
         })).ToList();
+    }
+
+    public static CampaignAmount Evaluate(IEnumerable<CampaignInstalment> instalments,
+        CollectionsCampaignStage stage, DateOnly businessDate)
+    {
+        var rows = Qualifying(instalments, stage, businessDate);
         if (rows.Count == 0) return new(0m, null, "NoQualifyingBalance");
         var earliest = rows.Min(i => i.DueDate);
         // The existing source cannot distinguish valid same-date instalments from duplicated allocations.

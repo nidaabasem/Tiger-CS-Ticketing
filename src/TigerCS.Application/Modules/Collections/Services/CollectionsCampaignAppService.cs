@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Domain.Modules.Collections;
+using TigerCS.Domain.Modules.Collections.Review;
 
 namespace TigerCS.Application.Modules.Collections.Services;
 
@@ -94,8 +95,11 @@ public sealed class CollectionsCampaignAppService(
         logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} source rows in {ElapsedMs} ms.",
             selected, scope, from, to, snapshot.Items.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         // Defensive: a legacy source may ignore the window.
-        var rows = snapshot.Items.Where(r => r.Amount > 0
-            && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
+        // Floating-point residue from the deployed procedures (e.g. 1E-12 on a settled instalment) is snapped to fils; a genuine
+        // sub-fils amount stays as read so AmountPrecisionNeedsReview still fires. Rounding is never used to hide it.
+        var rows = snapshot.Items
+            .Select(r => MoneyNormalizer.Normalize(r.Amount, r.AmountIsFloatingPoint) is { IsResolved: true, Value: { } value } ? r with { Amount = value } : r)
+            .Where(r => r.Amount > 0 && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                 "PACT returned a receivable without a valid company/customer identity.");
@@ -202,15 +206,8 @@ public sealed class CollectionsCampaignAppService(
             $"collections-{report.Stage}-{report.BusinessDate:yyyy-MM-dd}-{mode}.csv", csv, report.Items.Count));
     }
 
-    internal static string NormalizePhone(string value)
-    {
-        var compact = new string(value.Where(c => c is not (' ' or '-' or '(' or ')')).ToArray());
-        if (compact.StartsWith("00", StringComparison.Ordinal)) compact = "+" + compact[2..];
-        if (compact.Length == 10 && compact.StartsWith("05", StringComparison.Ordinal)) compact = "+971" + compact[1..];
-        if (compact.Length == 12 && compact.StartsWith("971", StringComparison.Ordinal)) compact = "+" + compact;
-        return compact.StartsWith('+') && compact.Length is >= 9 and <= 16 && compact[1] != '0'
-            && compact[1..].All(char.IsAsciiDigit) ? compact : "";
-    }
+    /// <summary>International (E.164) phone, or empty when the source value cannot be confirmed as a callable number.</summary>
+    internal static string NormalizePhone(string value) => PhoneNormalizer.Normalize(value).E164;
 
     private static string NormalizeEmail(string value) =>
         MailAddress.TryCreate(value.Trim(), out var address) && address.Address == value.Trim() ? address.Address : "";

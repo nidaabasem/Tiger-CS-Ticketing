@@ -1,5 +1,7 @@
 # Collections campaigns preview and CSV export
 
+> The review, approval and Genesys upload workflow is described in [Collections-Review-And-Genesys-Dispatch.md](Collections-Review-And-Genesys-Dispatch.md). This page covers the original preview and CSV export.
+
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.
 It does not add CRM or other-company coverage. It creates no campaign, sends no message, schedules no job, creates no ticket,
