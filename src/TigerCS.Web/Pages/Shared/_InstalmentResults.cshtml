@@ -10,7 +10,7 @@
     <div hidden data-effective-filters data-from="@report.DateFrom.ToString("yyyy-MM-dd")" data-to="@report.DateTo.ToString("yyyy-MM-dd")"></div>
     <partial name="_SnapshotStatus" model="report.Snapshot" />
     <div class="receivables-metrics receivables-metrics--five">
-        <div class="panel"><span>Instalments@(report.Snapshot.RangeCovered ? "" : " (incomplete: dates not fully loaded)")</span><strong>@(totals.Count.ToString("N0") + (report.Snapshot.RangeCovered ? "" : "+"))</strong></div>
+        <div class="panel"><span>@(Model.ByUnit ? "Units" : "Instalments")@(report.Snapshot.RangeCovered ? "" : " (incomplete: dates not fully loaded)")</span><strong>@(Model.ListCount.ToString("N0") + (report.Snapshot.RangeCovered ? "" : "+"))</strong>@if (Model.ByUnit) { <span>@totals.Count.ToString("N0") instalments</span> }</div>
         <div class="panel"><span>Remaining (@report.Currency)</span><strong>@ReceivablesModel.Money(totals.RemainingTotal)</strong></div>
         <div class="panel"><span>Overdue</span><strong>@totals.OverdueCount.ToString("N0")</strong><span>@ReceivablesModel.Money(totals.OverdueRemaining)</span></div>
         <div class="panel"><span>Due (this month)</span><strong>@totals.DueCount.ToString("N0")</strong><span>@ReceivablesModel.Money(totals.DueRemaining)</span></div>
@@ -28,13 +28,59 @@
                 }
                 else
                 {
-                    <p class="empty-state__title">No instalments match the selected tower, dates, payment status and minimum amount in the loaded data.</p>
+                    <p class="empty-state__title">No @(Model.ByUnit ? "units" : "instalments") match the selected tower, dates, payment status and minimum amount in the loaded data.</p>
                 }
                 <a class="btn" href="/Collections/Receivables">Clear filters</a>
             </div>
         }
         else
         {
+            @if (Model.ByUnit)
+            {
+            <div class="receivables-table-wrap">
+                <table class="receivables-table receivables-table--units">
+                    <thead><tr><th>Tower</th><th>Unit</th><th>Customer</th><th class="num">Instalments</th><th class="num">Total remaining</th><th>Oldest due date</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    @foreach (var unit in report.Units ?? [])
+                    {
+                        var rowId = $"unit-{unit.CompanyId}-{unit.UnitId}-{Math.Abs(string.GetHashCode(unit.TenantId + "|" + unit.UnitCode, StringComparison.Ordinal))}";
+                        <tbody class="unit-group" data-unit>
+                        <tr data-unit-row>
+                            <td>@(unit.TowerNumber is null ? "—" : unit.TowerNumber)@if (unit.TowerNumber is not null) { <span class="receivables-meta">@(string.IsNullOrWhiteSpace(unit.TowerName) ? "not in tower list" : unit.TowerName)</span> }</td>
+                            <td>@unit.UnitCode<span class="receivables-meta">@unit.CompanyName</span></td>
+                            <td><strong>@unit.CustomerName</strong><span class="receivables-meta">ID @unit.TenantId</span></td>
+                            <td class="num" data-unit-count>@unit.InstalmentCount.ToString("N0")</td>
+                            <td class="num"><span class="receivables-amount" data-unit-remaining>@ReceivablesModel.Money(unit.RemainingTotal)</span></td>
+                            <td>@unit.OldestDueDate.ToString("dd MMM yyyy")</td>
+                            <td><button type="button" class="btn btn-sm" data-unit-toggle aria-expanded="false" aria-controls="@rowId" hidden>Show instalments</button></td>
+                        </tr>
+                        <tr class="unit-detail" id="@rowId" data-unit-detail>
+                            <td colspan="7">
+                                <table class="receivables-table receivables-table--instalments receivables-table--nested">
+                                    <thead><tr><th>Voucher</th><th>Due date</th><th class="num">Original instalment</th><th class="num">Paid</th><th class="num">Remaining</th><th>Payment status</th><th>Due / Overdue</th></tr></thead>
+                                    <tbody>
+                                    @foreach (var row in unit.Instalments)
+                                    {
+                                        <tr>
+                                            <td>@(row.VoucherNumber.Length > 0 ? row.VoucherNumber : "—")</td>
+                                            <td>@row.DueDate.ToString("dd MMM yyyy")</td>
+                                            <td class="num" title="@(row.OriginalAmount is null ? "Not provided by the source" : "")">@ReceivablesModel.Money(row.OriginalAmount)</td>
+                                            <td class="num" title="@(row.PaidAmount is null ? "Not provided by the source" : "")">@ReceivablesModel.Money(row.PaidAmount)</td>
+                                            <td class="num"><span class="receivables-amount">@ReceivablesModel.Money(row.RemainingAmount)</span></td>
+                                            <td><span class="receivables-tag @(row.PaymentStatus == "Unknown" ? "receivables-tag--overdue" : "")" data-payment-status-label="@row.PaymentStatus">@ReceivablesModel.StatusLabel(row.PaymentStatus)</span></td>
+                                            <td><span class="receivables-tag @(row.Classification == "Overdue" ? "receivables-tag--overdue" : "")" data-classification="@row.Classification">@ReceivablesModel.ClassificationLabel(row.Classification)</span></td>
+                                        </tr>
+                                    }
+                                    </tbody>
+                                </table>
+                            </td>
+                        </tr>
+                        </tbody>
+                    }
+                </table>
+            </div>
+            }
+            else
+            {
             <div class="receivables-table-wrap">
                 <table class="receivables-table receivables-table--instalments">
                     <thead><tr><th>Tower</th><th>Unit</th><th>Customer</th><th>Voucher</th><th>Due date</th><th class="num">Original instalment</th><th class="num">Paid</th><th class="num">Remaining</th><th>Payment status</th><th>Due / Overdue</th></tr></thead>
@@ -57,9 +103,10 @@
                     </tbody>
                 </table>
             </div>
+            }
         }
         <div class="receivables-pagination">
-            <span>Page @report.Page of @Model.TotalPages · @report.Totals.Count.ToString("N0") instalments</span>
+            <span>Page @report.Page of @Model.TotalPages · @(Model.ByUnit ? ReceivablesModel.Plural(totals.UnitCount, "unit", "units") + " · " : "")@ReceivablesModel.Plural(totals.Count, "instalment", "instalments")</span>
             <div>
                 @if (report.Page > 1) { <a class="btn btn-sm" data-results-link href="@Model.PageUrl(report.Page - 1)">Previous</a> }
                 @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" data-results-link href="@Model.PageUrl(report.Page + 1)">Next</a> }

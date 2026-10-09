@@ -66,7 +66,15 @@
     };
     if (status) { applyAvailability(null); status.addEventListener('change', applyMinState); applyMinState(); }
 
+    // By unit: instalments are expanded in place. Without JavaScript the detail rows simply stay visible (the toggle buttons are hidden until this runs).
+    const setUnitOpen = (unit, open) => {
+        const detail = unit.querySelector('[data-unit-detail]'), button = unit.querySelector('[data-unit-toggle]');
+        detail.hidden = !open; button.setAttribute('aria-expanded', String(open)); button.textContent = open ? 'Hide instalments' : 'Show instalments';
+    };
+    const collapseUnits = () => box.querySelectorAll('[data-unit]').forEach(u => { u.querySelector('[data-unit-toggle]').hidden = false; setUnitOpen(u, false); });
+
     const afterRender = () => {
+        collapseUnits();
         const marker = box.querySelector('[data-payment-views]');
         if (marker) applyAvailability({ breakdown: marker.dataset.breakdown === 'true', paid: marker.dataset.paid === 'true' });
         const eff = box.querySelector('[data-effective-filters]');
@@ -111,6 +119,8 @@
         }
     }
 
+    // View (By unit / By instalment): switching re-runs the search with the same filters.
+    form.querySelectorAll('[data-view-radio]').forEach(r => r.addEventListener('change', () => form.requestSubmit()));
     form.addEventListener('submit', event => { event.preventDefault(); polls = 0; load(queryFromForm(), true); });
     box.addEventListener('click', event => {
         const link = event.target.closest('a[data-results-link]');
@@ -120,6 +130,8 @@
             load(q, true);
             return;
         }
+        const toggle = event.target.closest('[data-unit-toggle]');
+        if (toggle) { setUnitOpen(toggle.closest('[data-unit]'), toggle.getAttribute('aria-expanded') !== 'true'); return; }
         if (event.target.closest('[data-results-retry]')) { event.preventDefault(); polls = 0; load(currentQuery(), false); }
     });
     window.addEventListener('popstate', () => location.reload());

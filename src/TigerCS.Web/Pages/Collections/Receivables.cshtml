@@ -18,6 +18,13 @@
     </div>
 
     <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter data-results-form>
+        <div class="field-group view-toggle" role="radiogroup" aria-label="View">
+            <span class="field-label">View</span>
+            <div class="view-toggle__options">
+                <label><input type="radio" name="view" value="units" checked="@Model.ByUnit" data-view-radio /> By unit</label>
+                <label><input type="radio" name="view" value="instalments" checked="@(!Model.ByUnit)" data-view-radio /> By instalment</label>
+            </div>
+        </div>
         <div class="field-group filter-bar__search">
             <label class="field-label" for="receivableSearch">Customer, unit or voucher</label>
             <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID, unit or voucher…" />
@@ -77,7 +84,7 @@
         @if (Model.RenderFull) { <partial name="_InstalmentResults" model="Model" /> }
         else
         {
-            <div class="receivables-results__loading" role="status" data-results-loading>Loading instalments…</div>
+            <div class="receivables-results__loading" role="status" data-results-loading>Loading…</div>
             <noscript><p class="receivables-notice">JavaScript loads the results here. <a href="@Model.PageUrl(1)">Open the full page without JavaScript</a>.</p></noscript>
         }
     </div>
