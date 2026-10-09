@@ -155,6 +155,8 @@ set it to `false` for an outstanding-only snapshot - Fully paid / All are then d
 (`usp_Collections_GetInstalmentUnitsPage`, V008), so all matching instalments of a unit are on the same page, and a unit is (company, customer id, unit id, unit code) compared binary-exactly: other companies, other customers (even ids differing by case) are never merged.
 Unit counts/amounts always add up to the instalment view's totals (tested against the real procedure over 12 filter scenarios and a full page walk). The API default stays `view=instalments`; the page sends `units`.
 
+**Month overview.** Above the results, one card per due month (e.g. "Sep 2026": overdue instalment count and total remaining) plus "All months". Clicking a card adds `dueMonth=yyyy-MM`, which narrows the list and its totals to that month in both views; the selected card is highlighted and "All months" clears it. The cards come from `usp_Collections_GetInstalmentMonths` (V009) over the **whole** filtered set (tower, dates, payment status, minimum, search) - before paging and ignoring the month selection - so a card's count and remaining always equal the filtered list's totals for that month. Overdue is unchanged: remaining > 0 and due before the first day of the current Dubai month.
+
 ## 4c. Performance and responsiveness
 
 * **Page GET never waits for data or PACT.** The page (filters + tower list, a small cached local read) renders at once; the results area is then fetched as an HTML fragment (`?handler=Results`) by `receivables.js`.
@@ -290,7 +292,7 @@ The linked server name and PACT database are the two `DECLARE`s at the top of `V
 1. Back up `TigerCsTicketing`. Run `tests/probe_pact_result_shape.sql` as the application login (**needs V003 first**, so run V001-V003, then the probe).
    It reports which column layout each deployed procedure returns (company 32 has never been run through the linked server), counts of zero / negative / UnitID 0 / blank-tenant rows,
    status values, and tower-number matching. **Do not enable the job before reading it.**
-2. Run `V001` ... `V008` in order (idempotent; `CREATE OR ALTER` / `IF NOT EXISTS` / guarded `ALTER TABLE ... ADD`). **Re-running V002 is required on a database that already has an earlier revision of these scripts**: it adds
+2. Run `V001` ... `V009` in order (idempotent; `CREATE OR ALTER` / `IF NOT EXISTS` / guarded `ALTER TABLE ... ADD`). **Re-running V002 is required on a database that already has an earlier revision of these scripts**: it adds
    `Snapshot.OriginalAmount/PaidAmount/PaymentStatus`, `CompanyState.PaidRetained/BreakdownAvailable/UnclassifiedRows`, the staging columns, the `RunCompany` timing columns, `IX_..._Apartment` and `CollectionsReceivableTowerSummary`;
    `V002` also adds `Snapshot.UnitSeq/TenantSeq/RowFlags`, `IX_..._Campaign` (**creating it reads the whole table once**; do it outside peak hours), `CompanyState.ExoticTextRows`, `CollectionsContactNorm`, `CollectionsReceivableUnit(Text)`.
    then V004, V005, V006, V007 (procedures replaced). **Until the first refresh after this upgrade the Campaigns still work but use the slower in-memory evaluation** (the current run is not prepared); the refresh prepares the new run and the job normalises the contact values right after it. Review `V001`'s reports (duplicates, missing 127/140).
