@@ -134,7 +134,6 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
     public DbSet<GenesysQueueMapping> GenesysQueueMappings => Set<GenesysQueueMapping>();
 
     public DbSet<GenesysScreenPopLaunch> GenesysScreenPopLaunches => Set<GenesysScreenPopLaunch>();
-    public DbSet<OtpChallenge> OtpChallenges => Set<OtpChallenge>();
 
     public DbSet<CollectionsReminder> CollectionsReminders => Set<CollectionsReminder>();
 
@@ -202,7 +201,6 @@ public class TigerCsDbContext(DbContextOptions<TigerCsDbContext> options)
         builder.ApplyConfiguration(new TicketAgentHandoffConfiguration());
         builder.ApplyConfiguration(new GenesysQueueMappingConfiguration());
         builder.ApplyConfiguration(new GenesysScreenPopLaunchConfiguration());
-        builder.ApplyConfiguration(new OtpChallengeConfiguration());
 
         builder.ApplyConfiguration(new CollectionsReminderConfiguration());
         builder.ApplyConfiguration(new CollectionsReminderChannelConfiguration());

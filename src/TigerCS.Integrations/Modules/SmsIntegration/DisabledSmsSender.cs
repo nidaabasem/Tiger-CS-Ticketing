@@ -1,4 +1,4 @@
-using TigerCS.Application.Modules.CustomerVerification.Otp;
+using TigerCS.Application.Modules.Notifications.Abstractions;
 
 namespace TigerCS.Integrations.Modules.SmsIntegration;
 

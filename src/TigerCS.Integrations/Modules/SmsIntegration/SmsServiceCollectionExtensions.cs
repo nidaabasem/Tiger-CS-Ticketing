@@ -2,7 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Options;
-using TigerCS.Application.Modules.CustomerVerification.Otp;
+using TigerCS.Application.Modules.Notifications.Abstractions;
 
 namespace TigerCS.Integrations.Modules.SmsIntegration;
 

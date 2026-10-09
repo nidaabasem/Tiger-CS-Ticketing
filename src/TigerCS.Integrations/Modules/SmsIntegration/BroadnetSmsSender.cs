@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TigerCS.Application.Modules.CustomerVerification.Otp;
+using TigerCS.Application.Modules.Notifications.Abstractions;
 
 namespace TigerCS.Integrations.Modules.SmsIntegration;
 

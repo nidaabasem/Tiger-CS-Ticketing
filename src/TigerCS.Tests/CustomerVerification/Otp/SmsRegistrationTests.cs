@@ -2,7 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TigerCS.Application.Modules.CustomerVerification.Otp;
+using TigerCS.Application.Modules.Notifications.Abstractions;
 using TigerCS.Integrations.Modules.SmsIntegration;
 using TigerCS.Tests.CustomerVerification.Fakes;
 

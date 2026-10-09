@@ -80,10 +80,6 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["POST /api/genesys/documents/send-copy"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysDocumentSendCopy_AuthorizedThroughTheOverride),
         ["GET /api/genesys/customers/lookup"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerLookup_AuthorizedThroughTheOverride),
         ["POST /api/genesys/customers/unit-details"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysCustomerUnitDetails_AuthorizedThroughTheOverride),
-        // One-time codes by SMS (extend the existing VerificationSession flow).
-        ["POST /api/genesys/verification/otp/send"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysOtpEndpoints_AuthorizedThroughTheOverride),
-        ["POST /api/genesys/verification/otp/resend"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysOtpEndpoints_AuthorizedThroughTheOverride),
-        ["POST /api/genesys/verification/otp/verify"] = nameof(SystemAdministratorEndpointAuthorizationTests.GenesysOtpEndpoints_AuthorizedThroughTheOverride),
         // Genesys agent identity mapping — the strict agent-action endpoint.
         ["POST /api/genesys/agent-context"] = nameof(GenesysIntegration.Integration.GenesysAgentMappingEndpointsTests.MappedAgent_ResolvesToTheTicketingUser_AndRecordsInteractionOwnership),
         // Genesys Secure Screen Pop — issuing a launch URL (redeeming it is anonymous, below).

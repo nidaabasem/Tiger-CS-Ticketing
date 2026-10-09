@@ -1,4 +1,4 @@
-namespace TigerCS.Application.Modules.CustomerVerification.Otp;
+namespace TigerCS.Application.Modules.Notifications.Abstractions;
 
 public enum SmsSendOutcome
 {
