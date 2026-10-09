@@ -42,7 +42,10 @@ public enum AutoAssignmentTrigger
     TicketCreated,
 
     /// <summary>A department transfer moved the ticket; the rule is re-evaluated against the NEW responsible department.</summary>
-    DepartmentTransfer
+    DepartmentTransfer,
+
+    /// <summary>A request type was classified onto an existing ticket that was already in the responsible department (so no transfer happened); the rule for that request type is evaluated.</summary>
+    RequestTypeClassified
 }
 
 /// <summary>The outcome plus what was assigned, for the caller's response/logging. <paramref name="TeamMemberEmployeeIds"/> carries the configured team members (excluding the primary) for a team rule.</summary>

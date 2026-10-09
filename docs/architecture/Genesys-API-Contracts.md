@@ -161,11 +161,17 @@ two apart.
 
 ### The ticket that is created
 
-It is **Unclassified**: `categoryId`, `requestTypeId` and `priorityId` are all
-`null`, and no SLA period is opened. Nobody has read the request yet, so
-nothing about it is guessed. A TigerCS agent classifies it afterwards through
-`POST /api/tickets/{ticketId}/classification`, on the same ticket, and that is
-when the business SLA starts. **Genesys is not involved in classification.**
+It is **Unclassified** (`categoryId` null) and starts on the configured default
+priority ("Normal" = Medium), with its SLA period opened at ticket creation.
+When the bot supplies a valid `requestType` (`{requestTypeId}` or `{name}`) on
+this call, or later on `PATCH /api/genesys/tickets/{ticketId}`, TigerCS validates
+it, routes the ticket to the request type's department (the originating
+department never changes), runs the configured automatic assignment (no
+eligible employee = department queue) and applies the request type's SLA policy
+without restarting the clock. A missing or unusable request type leaves the
+ticket awaiting classification in the human follow-up queue. A TigerCS agent can
+still classify through `POST /api/tickets/{ticketId}/classification`. See
+[Request-Type-Routing-And-Default-Priority.md](../Genesys/Request-Type-Routing-And-Default-Priority.md).
 
 ### Other responses
 

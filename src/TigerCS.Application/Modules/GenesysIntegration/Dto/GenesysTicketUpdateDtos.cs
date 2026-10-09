@@ -35,6 +35,7 @@ namespace TigerCS.Application.Modules.GenesysIntegration.Dto;
 /// <param name="Routing">Set when Genesys moved the conversation to another queue, or connected / transferred it to an agent. Omit when the routing did not change.</param>
 /// <param name="CustomerConfirmation">Set when the customer explicitly confirmed during the interaction that their issue is resolved. Record-only — never resolves or closes the ticket.</param>
 /// <param name="AwaitingCustomerReply">true starts the chatbot inactivity timer (a repeat never restarts it); false cancels it (the customer replied); null leaves it as it is.</param>
+/// <param name="RequestType">Set when the bot has identified the request type: validated, then applied with its department routing, automatic assignment and SLA policy. Repeating the same one changes nothing; a different one is refused.</param>
 public sealed record GenesysTicketUpdateDto(
     string ConversationId,
     string? AgentId = null,
@@ -44,7 +45,8 @@ public sealed record GenesysTicketUpdateDto(
     DateTime? StartedAtUtc = null,
     GenesysRoutingUpdateDto? Routing = null,
     GenesysCustomerConfirmationUpdateDto? CustomerConfirmation = null,
-    bool? AwaitingCustomerReply = null);
+    bool? AwaitingCustomerReply = null,
+    GenesysRequestTypeDto? RequestType = null);
 
 /// <summary>
 /// The customer's own statement, made during the interaction, that the issue
@@ -163,7 +165,19 @@ public enum GenesysTicketUpdateOutcome
     HandoffReasonRequired,
 
     /// <summary>A customer confirmation was sent without <c>confirmedResolved: true</c>. Nothing was written.</summary>
-    InvalidCustomerConfirmation
+    InvalidCustomerConfirmation,
+
+    /// <summary>The supplied request type does not exist, is inactive, is ambiguous by name, or cannot route. Nothing was written.</summary>
+    InvalidRequestType,
+
+    /// <summary>The ticket already carries a different request type.</summary>
+    RequestTypeConflict,
+
+    /// <summary>The ticket is Closed, so a request type cannot be classified onto it.</summary>
+    TicketClosed,
+
+    /// <summary>The ticket changed underneath the classification; nothing was applied, retry.</summary>
+    ConcurrencyConflict
 }
 
 /// <summary>
@@ -183,6 +197,7 @@ public enum GenesysTicketUpdateOutcome
 /// <param name="AwaitingCustomerReply">Whether the inactivity timer is running after this update.</param>
 /// <param name="InactivityDeadlineUtc">When the ticket becomes eligible for inactivity closure, while the timer runs.</param>
 /// <param name="AwaitingCustomerReplyNote">Why a requested timer was not started, when it was not.</param>
+/// <param name="Classification">What applying the update's request type did (routing, assignment, SLA), when it carried one.</param>
 public sealed record GenesysTicketUpdateResult(
     GenesysTicketUpdateOutcome Outcome,
     long? TicketId = null,
@@ -195,7 +210,8 @@ public sealed record GenesysTicketUpdateResult(
     string? Detail = null,
     bool AwaitingCustomerReply = false,
     DateTime? InactivityDeadlineUtc = null,
-    string? AwaitingCustomerReplyNote = null)
+    string? AwaitingCustomerReplyNote = null,
+    GenesysClassificationResult? Classification = null)
 {
     public static GenesysTicketUpdateResult Failure(GenesysTicketUpdateOutcome outcome, string? detail = null) =>
         new(outcome, Detail: detail);

@@ -56,7 +56,7 @@ public sealed class SlaServiceFixture
         UnitOfWork = unitOfWork ?? new FakeTicketingUnitOfWork();
         Time = timeProvider ?? TimeProvider.System;
 
-        DueDates = new SlaDueDateService(Policies, Calendar, SlaInstances, Scheduler, Audit, RequestTypeSla);
+        DueDates = new SlaDueDateService(Policies, Calendar, SlaInstances, Scheduler, Audit, RequestTypeSla, Pauses);
         BreachProcessor = new SlaBreachProcessor(SlaInstances, Escalations, Resolutions, StatusHistory, Idempotency, Audit, Pauses);
         PauseService = new SlaPauseService(
             SlaInstances, Pauses, Policies, Calendar, Scheduler, BreachProcessor, StatusHistory, Audit);

@@ -334,6 +334,8 @@ public static class TicketDisplay
             return ("Paused", "paused");
         }
 
-        return ("Not applicable", "na");
+        // Never an unexplained "Not applicable": no running SLA means no period
+        // has been opened, and Ticket Details states exactly why.
+        return ("Not started", "na");
     }
 }

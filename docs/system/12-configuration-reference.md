@@ -28,6 +28,8 @@
 | `BackgroundJobs:Enabled` | `false` | **Must be `true`** for outbox/e‑mail dispatch, SLA sweeps, chatbot inactivity closure, reminder scheduler |
 | `Genesys:Enabled` | `true` | `false` → every `/api/genesys/*` returns 503 |
 | `Genesys:CustomerInactivityTimeoutMinutes` | `5` | duration unconfirmed (D2) |
+| `Genesys:DefaultTicketPriority` | `Normal` | name of the priority a new Genesys ticket starts on; "Normal" resolves to the Medium tier. Blank = no default (no priority/SLA until classified) |
+| `Genesys:HumanQueueForUnclassified` | `true` | a Genesys ticket with no usable request type joins the human follow-up queue ("Awaiting classification"); `false` is a rollout kill switch |
 | `CrmDocuments:Enabled` | `false` | OTP + document copy; Production also needs `AllowInProduction=true` |
 | `CrmDocuments:AcceptedVerificationMethods` | `Otp`, `AuthenticatedDigitalUser` | |
 | `CrmDocuments:Otp*` | lifetime 10 min, 5 attempts, 3 sends, 60 s resend, 5 challenges/customer/h | shared by the email and SMS channels |

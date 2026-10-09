@@ -72,6 +72,7 @@ public enum GenesysChannel
 /// <param name="TowerName">The tower/project the customer typed into the website chat form, where collected — carried onto the ticket as the manual project snapshot when no verified customer match exists.</param>
 /// <param name="UnitNumber">The unit number the customer typed into the website chat form, where collected — see <paramref name="TowerName"/>.</param>
 /// <param name="Subject">A short subject/summary the channel collected, where available. Used as the ticket's request summary; a generated, channel-named summary is used when absent.</param>
+/// <param name="RequestType">The request type the bot identified, when it already has one; otherwise null and the ticket awaits classification in the human follow-up queue.</param>
 public sealed record GenesysInquiryDto(
     string ConversationId,
     GenesysChannel Channel,
@@ -92,7 +93,8 @@ public sealed record GenesysInquiryDto(
     string? DepartmentCode = null,
     string? TowerName = null,
     string? UnitNumber = null,
-    string? Subject = null);
+    string? Subject = null,
+    GenesysRequestTypeDto? RequestType = null);
 
 /// <summary>
 /// The normalized end-of-conversation report, with the transcript available
@@ -166,10 +168,11 @@ public sealed record GenesysIngestionResult(
     GenesysIngestionOutcome Outcome,
     TicketResponseDto? Ticket = null,
     TicketCreationOutcome? TicketCreationOutcome = null,
-    string? Detail = null)
+    string? Detail = null,
+    GenesysClassificationResult? Classification = null)
 {
-    public static GenesysIngestionResult Created(TicketResponseDto ticket) =>
-        new(GenesysIngestionOutcome.TicketCreated, ticket);
+    public static GenesysIngestionResult Created(TicketResponseDto ticket, GenesysClassificationResult? classification = null) =>
+        new(GenesysIngestionOutcome.TicketCreated, ticket, Classification: classification);
 
     public static GenesysIngestionResult AlreadyIngested(TicketResponseDto ticket) =>
         new(GenesysIngestionOutcome.AlreadyIngested, ticket);

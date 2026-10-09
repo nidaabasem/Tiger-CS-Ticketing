@@ -566,12 +566,12 @@ public class SystemAdministratorEndpointAuthorizationTests : IClassFixture<Tiger
         Assert.Equal(created.TicketId, retried.TicketId);
 
         // The ticket exists, and is honestly Unclassified: no category was
-        // invented, and no SLA clock was started against a priority nobody
-        // chose.
+        // invented. It starts on the default Normal priority, so its SLA runs
+        // from creation.
         var unclassified = await (await client.GetAsync($"/api/tickets/{created.TicketId}")).Content.ReadFromJsonAsync<TicketDetailDto>();
         Assert.Null(unclassified!.CategoryId);
         Assert.False(unclassified.IsClassified);
-        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.SlaState.NotApplicable), unclassified.SlaState);
+        Assert.Equal(nameof(TigerCS.Domain.Modules.Ticketing.SlaState.Running), unclassified.SlaState);
 
         // The agent reads the conversation and classifies the SAME ticket.
         var classified = await client.PostAsJsonAsync(

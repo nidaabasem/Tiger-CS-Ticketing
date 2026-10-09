@@ -90,7 +90,6 @@ public sealed class TicketsWorkspaceTests
         HttpClient Client() => new(handler) { BaseAddress = new Uri("http://localhost/") };
         var model = new TicketsModel(
             new TicketsApiClient(Client(), NullLogger<TicketsApiClient>.Instance),
-            new TicketSlaApiClient(Client(), NullLogger<TicketSlaApiClient>.Instance),
             new TicketNameResolver(
                 new UsersApiClient(Client(), NullLogger<UsersApiClient>.Instance),
                 new DepartmentsApiClient(Client(), NullLogger<DepartmentsApiClient>.Instance)),
@@ -224,6 +223,41 @@ public sealed class TicketsWorkspaceTests
         Assert.Contains("<input type=\"hidden\" name=\"view\" value=\"@viewKey\" />", list, StringComparison.Ordinal);
         Assert.Contains("class=\"pagination\"", list, StringComparison.Ordinal);
         Assert.Contains("_TicketRow", list, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TicketList_HasNoPriorityVerificationOrSlaColumns_ButTheirFiltersRemain_AndDetailsStillShowThem()
+    {
+        var list = View("Shared", "_TicketListView.cshtml");
+        var row = View("Shared", "_TicketRow.cshtml");
+
+        // The columns are gone from the header and every row (Queue, My Tickets and Closed share this table)...
+        foreach (var column in new[] { "<th>Priority</th>", "<th>Verification</th>", "<th>SLA</th>" })
+        {
+            Assert.DoesNotContain(column, list, StringComparison.Ordinal);
+        }
+
+        foreach (var cell in new[] { "badge-priority-", "badge-verification-", "badge-sla-" })
+        {
+            Assert.DoesNotContain(cell, row, StringComparison.Ordinal);
+        }
+
+        // ...the columns that stay are untouched, and so is every filter control.
+        foreach (var column in new[] { "<th>Status</th>", "<th>Ticket</th>", "<th>Assigned Department</th>", "<th>Assigned To</th>", "<th>Created</th>" })
+        {
+            Assert.Contains(column, list, StringComparison.Ordinal);
+        }
+
+        foreach (var filter in new[] { "name=\"priorityId\"", "name=\"sla\"", "name=\"verificationStatus\"" })
+        {
+            Assert.Contains(filter, list, StringComparison.Ordinal);
+        }
+
+        // Ticket Details keeps all three.
+        var details = View("TicketDetails.cshtml");
+        Assert.Contains("badge-priority-", details, StringComparison.Ordinal);
+        Assert.Contains("badge-verification-", details, StringComparison.Ordinal);
+        Assert.Contains("SLA Information", details, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -285,6 +285,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITicketInteractionRepository, TicketInteractionRepository>();
         services.AddScoped<ITicketAgentHandoffRepository, TicketAgentHandoffRepository>();
         services.AddScoped<TicketAutoAssignmentService>();
+        services.AddScoped<TicketRequestTypeRoutingService>();
 
         // Workflow/Automation (phase 3) — approvals, approval requirements,
         // and the typed workflow event store phase 4's SLA triggers read.
@@ -325,6 +326,8 @@ public static class InfrastructureServiceCollectionExtensions
         // only) that sign the mapped agent into TigerCS Web.
         services.AddScoped<IGenesysScreenPopLaunchStore, GenesysScreenPopLaunchStore>();
         services.AddScoped<GenesysScreenPopAppService>();
+        services.AddScoped<GenesysDefaultPriorityResolver>();
+        services.AddScoped<GenesysRequestTypeClassificationAppService>();
         services.AddScoped<GenesysInquiryIngestionAppService>();
         services.AddScoped<GenesysConversationEndAppService>();
         services.AddScoped<GenesysAgentHandoffAppService>();

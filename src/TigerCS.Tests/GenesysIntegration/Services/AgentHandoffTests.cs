@@ -1,6 +1,7 @@
 using TigerCS.Application.Modules.GenesysIntegration.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.IdentityAndAccess;
+using TigerCS.Domain.Modules.SlaAndEscalation;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Tests.GenesysIntegration.Fakes;
 
@@ -240,7 +241,7 @@ public class AgentHandoffTests
 
         var ticket = Assert.Single(f.Tickets.All);
         Assert.False(ticket.IsClassified);
-        Assert.Null(ticket.PriorityId);
+        Assert.Equal((byte)PriorityLevel.Medium, ticket.PriorityId);
 
         var result = await f.AgentHandoff.RequestAsync(
             ServiceAccount, new GenesysHandoffRequestDto("conv-unclassified"));
