@@ -36,6 +36,8 @@ public static class ReviewReasons
     public const string LegalNoticeReleaseRequired = "LegalNoticeReleaseRequired";
     public const string LegalCaseNotApproved = "LegalCaseNotApproved";
     public const string SharedPhoneMultipleUnits = "SharedPhoneMultipleUnits";
+    public const string ReminderTypeOverlap = "ReminderTypeOverlap";
+    public const string SourceAmountsInconsistent = "SourceAmountsInconsistent";
 
     public static readonly IReadOnlyList<ReviewReasonInfo> All =
     [
@@ -55,7 +57,9 @@ public static class ReviewReasons
         new(OutsideSchedule, ReasonKind.Exclusion, "Today is not a scheduled send day for this reminder type."),
         new(LegalNoticeReleaseRequired, ReasonKind.Exclusion, "Sending legal notices to customers has not been released (needs an approved legal workflow)."),
         new(LegalCaseNotApproved, ReasonKind.Exclusion, "Legal Case records are internal Legal referrals; calling customers for them needs an explicit business decision."),
-        new(SharedPhoneMultipleUnits, ReasonKind.Warning, "The same phone number is on several units or reminders; sending all would call this number repeatedly.")
+        new(SourceAmountsInconsistent, ReasonKind.NeedsReview, "The source's original amount, paid amount and remaining amount do not add up (original must equal paid plus remaining)."),
+        new(SharedPhoneMultipleUnits, ReasonKind.Exclusion, "The same phone number is on several units (or several customers). Sending would call it once per record, and the business has not yet decided how to handle that, so these records are held back."),
+        new(ReminderTypeOverlap, ReasonKind.Exclusion, "This unit qualifies for more than one reminder type today (for example Current Month and Legal Notice on day 14). Sending both would call twice on the same day, and the business has not yet decided which takes priority, so these records are held back.")
     ];
 
     private static readonly Dictionary<string, ReviewReasonInfo> ByCode = All.ToDictionary(r => r.Code, StringComparer.Ordinal);

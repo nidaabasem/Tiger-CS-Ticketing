@@ -1,5 +1,7 @@
 # Collections review, approval and Genesys outbound dispatch
 
+> **Later round:** UAT readiness, template/export findings, V2 deployment, paid-after-upload suppression, the repeated-call block and the live-dispatch gate are in [Collections-UAT-Readiness.md](Collections-UAT-Readiness.md). Where this page differs (the shared-phone acknowledgement no longer exists; dispatch needs `LiveCustomerDispatchEnabled` and `SuppressionEnabled`), that page is current.
+
 Page: `/Collections/Review` (Web) · API: `/api/collections/review/*` · migration `AddCollectionsReviewAndGenesysDispatch`.
 Nothing here uploads real customer data or activates a campaign by default: `Collections:GenesysOutbound:Enabled` is `false`, and no
 credentials are committed.
@@ -23,8 +25,7 @@ credentials are committed.
   pages*. Only **Ready** records can ever be selected. The summary shows the exact count, totals by currency, count per reminder type,
   the contact list (paged) and a fingerprint of the list.
 * **Confirm** (`POST /dispatches`, needs the reminder-send grant): re-resolves the list; refuses if count/fingerprint differ from what was
-  shown (`409 ReviewRequired`); requires an idempotency key, an acknowledgement that an active Genesys campaign may start dialling, and an
-  acknowledgement when one phone number appears on several records. Persists the frozen list with the initiating employee and queues a job.
+  shown (`409 ReviewRequired`); requires an idempotency key and an acknowledgement that an active Genesys campaign may start dialling. Records sharing a phone, or one unit with several reminder types, are held back and cannot be approved. Persists the frozen list with the initiating employee and queues a job.
 * **Dispatch job**: takes a lease; re-reads current balances; records paid since approval are **excluded**, any other change (amount, due date,
   contact, validation, month rollover, disabled integration) **stops the whole dispatch for review** and releases the records; then uploads one batch
   per reminder type, ≤ 1,000 contacts each, persisting every result.
@@ -67,9 +68,9 @@ pending, uploaded or unconfirmed dispatch).
 ## Multiple units / instalments per customer
 
 One record per **unit × reminder type**; instalments inside a unit are summed only when no date is ambiguous; balances of different units are never
-merged. If the same phone appears on several records that can be sent today, each is flagged and the approver must acknowledge repeated calls.
+merged. If the same phone appears on several records that can be sent today, each is flagged and they are held back (Excluded) and cannot be approved.
 **Missing business decision:** one call per unit (what is implemented), one consolidated call, or a priority (e.g. Legal Notice over Current Month, which
-are both scheduled on day 14). Until decided, repeated calls need explicit acknowledgement.
+are both scheduled on day 14). Until decided, such records are blocked; no acknowledgement releases them.
 
 ## Genesys
 

@@ -94,11 +94,14 @@ public class CollectionsDispatch
     /// <summary>JSON object of totals by currency at approval, e.g. {"AED":"1200.50"}.</summary>
     public string ApprovedTotalsJson { get; set; } = "{}";
     public bool AcknowledgedActiveCampaignRisk { get; set; }
-    public bool AcknowledgedSharedPhoneCalls { get; set; }
     public DateTime? StartedAtUtc { get; set; }
     public DateTime? CompletedAtUtc { get; set; }
     public string? StatusReason { get; set; }
     public int ExcludedAtDispatchCount { get; set; }
+    /// <summary>Human-readable progress of the running job ("Reading company 4", "Uploading batch 2 of 3").</summary>
+    public string? Phase { get; set; }
+    /// <summary>How long the pre-send revalidation took (source reads + validation), for capacity planning.</summary>
+    public long? RevalidationMs { get; set; }
     /// <summary>Held by the worker that is revalidating/sending; an expired lease means that worker died and another may continue.</summary>
     public Guid? LeaseOwner { get; set; }
     public DateTime? LeaseExpiresAtUtc { get; set; }
@@ -144,6 +147,25 @@ public class CollectionsDispatchItem
     public int? BatchPosition { get; set; }
     public string? GenesysContactId { get; set; }
     public DateTime? UploadedAtUtc { get; set; }
+    /// <summary>Frozen at approval: a valid international phone and Ready status. Only voice-eligible records are ever uploaded as callable.</summary>
+    public bool VoiceEligible { get; set; }
+    public ContactSuppressionStatus SuppressionStatus { get; set; }
+    public DateTime? SuppressedAtUtc { get; set; }
+    public string? SuppressionError { get; set; }
+    /// <summary>Last time the suppression sweep compared this uploaded contact with the current balance.</summary>
+    public DateTime? BalanceCheckedAtUtc { get; set; }
+}
+
+/// <summary>What was done to stop an uploaded contact being dialled after its balance changed.</summary>
+public enum ContactSuppressionStatus
+{
+    None = 0,
+    /// <summary>Genesys confirmed the contact is no longer callable (callable=false) or no longer exists.</summary>
+    Suppressed = 1,
+    /// <summary>Genesys rejected the update; the contact may still be dialled. Needs attention.</summary>
+    Failed = 2,
+    /// <summary>The update's outcome is unknown (timeout/5xx). Retried by the next sweep.</summary>
+    Unconfirmed = 3
 }
 
 public enum GenesysBatchStatus

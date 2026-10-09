@@ -18,7 +18,7 @@ public enum ReviewPaymentStatus
 public static class PaymentStatusRules
 {
     public static ReviewPaymentStatus Derive(string? sourceStatus, decimal remaining, decimal? planAmount,
-        IReadOnlyDictionary<string, string>? verifiedMap = null)
+        IReadOnlyDictionary<string, string>? verifiedMap = null, decimal? allocatedAmount = null)
     {
         var status = sourceStatus?.Trim();
         if (string.IsNullOrEmpty(status)) return ReviewPaymentStatus.Unknown;
@@ -28,6 +28,12 @@ public static class PaymentStatusRules
 
         if (status.Equals("Installment", StringComparison.OrdinalIgnoreCase))
         {
+            // V2 reports original (plan), paid (allocated) and remaining. They must add up; otherwise the status is not confirmed.
+            if (allocatedAmount is { } paid && planAmount is { } original)
+            {
+                if (original <= 0 || paid < 0 || !AmountsAddUp(original, paid, remaining)) return ReviewPaymentStatus.Unknown;
+                return paid == 0 ? ReviewPaymentStatus.Unpaid : ReviewPaymentStatus.PartiallyPaid;
+            }
             if (planAmount is not { } plan || plan <= 0 || remaining > plan) return ReviewPaymentStatus.Unknown;
             return remaining == plan ? ReviewPaymentStatus.Unpaid : ReviewPaymentStatus.PartiallyPaid;
         }
@@ -42,6 +48,9 @@ public static class PaymentStatusRules
             };
         return ReviewPaymentStatus.Unknown;
     }
+
+    /// <summary>original = paid + remaining, to the source's four-decimal precision.</summary>
+    public static bool AmountsAddUp(decimal original, decimal paid, decimal remaining) => Math.Abs(original - paid - remaining) < 0.00005m;
 
     /// <summary>One unit combines several instalments: all must be known, otherwise Unknown; mixed unpaid/partial is PartiallyPaid.</summary>
     public static ReviewPaymentStatus Combine(IReadOnlyCollection<ReviewPaymentStatus> statuses)

@@ -53,7 +53,7 @@ public sealed record SelectionSummaryDto(
 
 public sealed record ConfirmDispatchRequest(
     SelectionRequest Selection, int ExpectedCount, string ExpectedFingerprint, string IdempotencyKey,
-    bool AcknowledgeActiveCampaignRisk, bool AcknowledgeSharedPhoneCalls);
+    bool AcknowledgeActiveCampaignRisk);
 
 public sealed record DispatchBatchDto(
     long BatchId, string ReminderType, string ContactListId, int Sequence, int ContactCount, string Status,
@@ -64,6 +64,17 @@ public sealed record DispatchDto(
     Guid DispatchId, string Status, string? StatusReason, Guid InitiatedByEmployeeId, DateTime InitiatedAtUtc,
     DateTime? StartedAtUtc, DateTime? CompletedAtUtc, int ApprovedCount, int UploadedCount, int ExcludedCount,
     int FailedCount, int UnknownCount, IReadOnlyDictionary<string, decimal> ApprovedTotalsByCurrency,
-    IReadOnlyList<DispatchBatchDto> Batches, string Disclaimer);
+    IReadOnlyList<DispatchBatchDto> Batches, string Disclaimer,
+    string? Phase = null, long? RevalidationMs = null, int SuppressedCount = 0, int SuppressionFailedCount = 0,
+    int UploadedWithoutContactId = 0);
+
+public sealed record OverlapRowDto(string CustomerName, int CompanyId, string TenantId, string UnitCode, string ReminderType, decimal? RemainingAmount, string Currency);
+
+/// <summary>One phone number that would receive several calls: the customers and units behind it, and why it is held back.</summary>
+public sealed record OverlapGroupDto(
+    string Phone, int CustomerCount, int UnitCount, int RecordCount, bool SharedAcrossUnits, bool ReminderTypeOverlap,
+    IReadOnlyList<string> ReminderTypes, IReadOnlyList<OverlapRowDto> Rows);
+
+public sealed record OverlapPageDto(int TotalPhones, int Page, int PageSize, IReadOnlyList<OverlapGroupDto> Groups);
 
 public sealed record ReconcileBatchRequest(string Resolution, string Note);

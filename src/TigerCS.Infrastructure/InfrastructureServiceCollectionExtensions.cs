@@ -356,7 +356,9 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IReviewStore, ReviewStore>();
         services.AddScoped<ReviewQueryService>();
         services.AddScoped<ReviewRefreshService>();
+        services.AddScoped<CurrentBalanceReader>();
         services.AddScoped<DispatchService>();
+        services.AddScoped<SuppressionService>();
         services.AddScoped<CollectionsAccountQueryAppService>();
         services.AddScoped<ICollectionsCustomerProfiles, CustomerDirectoryCollectionsProfiles>();
         services.AddScoped(sp => sp.GetRequiredService<IOptions<CollectionsEdsmOptions>>().Value);

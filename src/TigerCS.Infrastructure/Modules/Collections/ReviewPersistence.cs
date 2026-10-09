@@ -72,6 +72,7 @@ public class CollectionsDispatchConfiguration : IEntityTypeConfiguration<Collect
         builder.Property(d => d.FilterJson).HasMaxLength(2000).IsRequired();
         builder.Property(d => d.ApprovedTotalsJson).HasMaxLength(500).IsRequired();
         builder.Property(d => d.StatusReason).HasMaxLength(500);
+        builder.Property(d => d.Phase).HasMaxLength(200);
         builder.HasIndex(d => d.IdempotencyKey).IsUnique().HasDatabaseName("UX_CollectionsDispatches_IdempotencyKey");
         builder.HasIndex(d => d.PublicId).IsUnique().HasDatabaseName("UX_CollectionsDispatches_PublicId");
         builder.HasMany(d => d.Items).WithOne().HasForeignKey(i => i.CollectionsDispatchId).OnDelete(DeleteBehavior.Restrict);
@@ -100,6 +101,8 @@ public class CollectionsDispatchItemConfiguration : IEntityTypeConfiguration<Col
         builder.Property(i => i.Status).HasConversion<string>().HasMaxLength(24).IsRequired();
         builder.Property(i => i.StatusReason).HasMaxLength(500);
         builder.Property(i => i.GenesysContactId).HasMaxLength(64).IsUnicode(false);
+        builder.Property(i => i.SuppressionStatus).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(i => i.SuppressionError).HasMaxLength(500);
         // The database guarantee behind duplicate prevention: a record can be in only one live dispatch
         // (approved, uploaded or of unknown outcome) at a time, whatever the idempotency key.
         builder.HasIndex(i => i.RecordKey, "UX_CollectionsDispatchItems_LiveRecord").IsUnique().HasFilter(LiveFilter);
@@ -334,6 +337,7 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
         var tracked = await db.CollectionsDispatches.FirstAsync(d => d.CollectionsDispatchId == dispatch.CollectionsDispatchId, ct);
         tracked.Status = dispatch.Status; tracked.StatusReason = Cut(dispatch.StatusReason); tracked.StartedAtUtc = dispatch.StartedAtUtc;
         tracked.CompletedAtUtc = dispatch.CompletedAtUtc; tracked.ExcludedAtDispatchCount = dispatch.ExcludedAtDispatchCount;
+        tracked.Phase = dispatch.Phase;
         if (dispatch.LeaseOwner is null) { tracked.LeaseOwner = null; tracked.LeaseExpiresAtUtc = null; }
         await db.SaveChangesAsync(ct);
         db.ChangeTracker.Clear();
@@ -390,10 +394,46 @@ public sealed class ReviewStore(TigerCsDbContext db) : IReviewStore
                 target.Status = item.Status; target.StatusReason = Cut(item.StatusReason);
                 target.CollectionsGenesysBatchId = item.CollectionsGenesysBatchId; target.BatchPosition = item.BatchPosition;
                 target.GenesysContactId = item.GenesysContactId; target.UploadedAtUtc = item.UploadedAtUtc;
+                target.VoiceEligible = item.VoiceEligible; target.SuppressionStatus = item.SuppressionStatus;
+                target.SuppressedAtUtc = item.SuppressedAtUtc; target.SuppressionError = Cut(item.SuppressionError);
+                target.BalanceCheckedAtUtc = item.BalanceCheckedAtUtc;
             }
             await db.SaveChangesAsync(ct);
             db.ChangeTracker.Clear();
         }
+    }
+
+    public async Task<IReadOnlyList<UploadedContactView>> GetSuppressionCandidatesAsync(DateTime sinceUtc, int take, CancellationToken ct)
+    {
+        var rows = await (from i in db.CollectionsDispatchItems.AsNoTracking()
+                          join b in db.CollectionsGenesysBatches.AsNoTracking() on i.CollectionsGenesysBatchId equals b.CollectionsGenesysBatchId
+                          where i.Status == DispatchItemStatus.UploadedToGenesys && i.GenesysContactId != null
+                                && i.SuppressionStatus != ContactSuppressionStatus.Suppressed && i.UploadedAtUtc >= sinceUtc
+                          orderby i.BalanceCheckedAtUtc, i.CollectionsDispatchItemId
+                          select new { Item = i, b.ContactListId }).Take(take).ToListAsync(ct);
+        return rows.Select(r => new UploadedContactView(r.Item, r.ContactListId)).ToList();
+    }
+
+    public Task SetDispatchPhaseAsync(long dispatchId, string phase, CancellationToken ct) =>
+        db.CollectionsDispatches.Where(d => d.CollectionsDispatchId == dispatchId)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.Phase, phase), ct);
+
+    public Task SetRevalidationMsAsync(long dispatchId, long ms, CancellationToken ct) =>
+        db.CollectionsDispatches.Where(d => d.CollectionsDispatchId == dispatchId)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.RevalidationMs, ms), ct);
+
+    public async Task<OverlapPage> GetOverlapsAsync(long runId, int skip, int take, CancellationToken ct)
+    {
+        var flagged = db.CollectionsReviewRecords.AsNoTracking().Where(r => r.CollectionsReviewRunId == runId && r.Phone != ""
+            && (EF.Functions.Like(r.Reasons, "%;SharedPhoneMultipleUnits;%") || EF.Functions.Like(r.Reasons, "%;ReminderTypeOverlap;%")));
+        var phones = flagged.GroupBy(r => r.Phone);
+        var total = await phones.CountAsync(ct);
+        var page = await phones.OrderByDescending(g => g.Count()).ThenBy(g => g.Key).Skip(skip).Take(take).Select(g => g.Key).ToListAsync(ct);
+        var rows = page.Count == 0 ? [] : await flagged.Where(r => page.Contains(r.Phone))
+            .OrderBy(r => r.Phone).ThenBy(r => r.TenantId).ThenBy(r => r.UnitCode).ThenBy(r => r.ReminderType)
+            .Select(r => new OverlapRow(r.Phone, r.CompanyId, r.TenantId, r.CustomerName, r.UnitCode, r.ReminderType.ToString(), r.RemainingAmount, r.Currency, r.Reasons))
+            .ToListAsync(ct);
+        return new OverlapPage(total, page.Select(p => new OverlapGroup(p, rows.Where(r => r.Phone == p).ToList())).ToList());
     }
 
     private static string? Cut(string? text) => text is { Length: > 500 } ? text[..500] : text;

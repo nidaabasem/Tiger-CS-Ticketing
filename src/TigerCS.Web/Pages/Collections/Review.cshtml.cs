@@ -41,7 +41,6 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     [BindProperty] public string? ExpectedFingerprint { get; set; }
     [BindProperty] public string? IdempotencyKey { get; set; }
     [BindProperty] public bool AckCampaign { get; set; }
-    [BindProperty] public bool AckSharedPhone { get; set; }
     [BindProperty] public long BatchId { get; set; }
     [BindProperty] public string? Resolution { get; set; }
     [BindProperty] public string? Note { get; set; }
@@ -50,6 +49,7 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     public ReviewPageDto? Report { get; private set; }
     public SelectionSummaryDto? Summary { get; private set; }
     public DispatchDto? DispatchResult { get; private set; }
+    public OverlapPageDto? Overlaps { get; private set; }
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
     public string ConfirmKey { get; private set; } = Guid.NewGuid().ToString("N");
@@ -91,7 +91,7 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
 
     public async Task<IActionResult> OnPostConfirmAsync(CancellationToken cancellationToken)
     {
-        var request = new ConfirmDispatchRequest(BuildSelection(), ExpectedCount, ExpectedFingerprint ?? "", IdempotencyKey ?? "", AckCampaign, AckSharedPhone);
+        var request = new ConfirmDispatchRequest(BuildSelection(), ExpectedCount, ExpectedFingerprint ?? "", IdempotencyKey ?? "", AckCampaign);
         var result = await api.ConfirmDispatchAsync(request, cancellationToken);
         if (result.IsSuccess) return Redirect($"/Collections/Review?dispatch={result.Value!.DispatchId:D}");
         await LoadAsync(cancellationToken);
@@ -113,6 +113,13 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
         return Page();
     }
 
+    /// <summary>Download of the contacts of one send in the Genesys contact-list columns.</summary>
+    public async Task<IActionResult> OnGetContactsAsync(Guid dispatch, CancellationToken cancellationToken)
+    {
+        var bytes = await api.GetDispatchContactsCsvAsync(dispatch, cancellationToken);
+        return bytes is null ? NotFound() : File(System.Text.Encoding.UTF8.GetPreamble().Concat(bytes).ToArray(), "text/csv; charset=utf-8", $"genesys-contacts-{dispatch:N}.csv");
+    }
+
     private async Task LoadDispatchAsync(Guid id, CancellationToken cancellationToken)
     {
         var result = await api.GetDispatchAsync(id, cancellationToken);
@@ -123,6 +130,8 @@ public sealed class ReviewModel(CollectionsApiClient api) : PageModel
     {
         var run = await api.GetReviewRunAsync(cancellationToken);
         if (run.IsSuccess) Run = run.Value;
+        var overlaps = await api.GetOverlapsAsync(1, cancellationToken);
+        if (overlaps.IsSuccess) Overlaps = overlaps.Value;
         var report = await api.GetReviewPageAsync(BuildFilter(), Math.Max(1, PageNumber), cancellationToken);
         if (report.IsSuccess) Report = report.Value;
         else Error ??= Describe(report.Outcome, report.Detail);

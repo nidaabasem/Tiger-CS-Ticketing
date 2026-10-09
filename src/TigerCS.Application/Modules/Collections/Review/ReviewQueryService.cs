@@ -63,6 +63,27 @@ public sealed class ReviewQueryService(
             items.TotalCount, items.Items.Select(v => ToDto(v, stale)).ToList(), applied));
     }
 
+    /// <summary>Phone numbers that would be called repeatedly (several units, or several reminder types for one unit): who, how many units, and why they are held back.</summary>
+    public async Task<CollectionsResult<OverlapPageDto>> OverlapsAsync(CollectionsCaller caller, int page, int pageSize, CancellationToken ct)
+    {
+        if (!(await authorization.ResolveAsync(caller, ct)).CanReadFinancials)
+            return CollectionsResult<OverlapPageDto>.Fail(CollectionsOutcome.Forbidden);
+        if (!options.Enabled) return CollectionsResult<OverlapPageDto>.Fail(CollectionsOutcome.Disabled);
+        if (page < 1 || pageSize is < 1 or > 100 || (long)(page - 1) * pageSize > int.MaxValue)
+            return CollectionsResult<OverlapPageDto>.Fail(CollectionsOutcome.InvalidRequest, "Page must be 1 or more and page size 1-100.");
+        var run = await store.GetCurrentRunAsync(ct);
+        if (run is null) return CollectionsResult<OverlapPageDto>.Ok(new(0, page, pageSize, []));
+        var result = await store.GetOverlapsAsync(run.CollectionsReviewRunId, (page - 1) * pageSize, pageSize, ct);
+        var groups = result.Groups.Select(g => new OverlapGroupDto(g.Phone,
+            g.Rows.Select(r => (r.CompanyId, r.TenantId)).Distinct().Count(),
+            g.Rows.Select(r => (r.CompanyId, r.TenantId, r.UnitCode)).Distinct().Count(), g.Rows.Count,
+            g.Rows.Any(r => r.Reasons.Contains($";{ReviewReasons.SharedPhoneMultipleUnits};", StringComparison.Ordinal)),
+            g.Rows.Any(r => r.Reasons.Contains($";{ReviewReasons.ReminderTypeOverlap};", StringComparison.Ordinal)),
+            g.Rows.Select(r => r.ReminderType).Distinct().Order().ToList(),
+            g.Rows.Select(r => new OverlapRowDto(r.CustomerName, r.CompanyId, r.TenantId, r.UnitCode, r.ReminderType, r.RemainingAmount, r.Currency)).ToList())).ToList();
+        return CollectionsResult<OverlapPageDto>.Ok(new(result.TotalGroups, page, pageSize, groups));
+    }
+
     /// <summary>Resolves a selection to the exact Ready records it denotes, with the totals and contact list to confirm.</summary>
     public async Task<CollectionsResult<SelectionSummaryDto>> SummarizeAsync(CollectionsCaller caller, SelectionRequest request, CancellationToken ct)
     {

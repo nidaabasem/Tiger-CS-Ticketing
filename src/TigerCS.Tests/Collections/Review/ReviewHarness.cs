@@ -23,7 +23,23 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
     private readonly object _gate = new();
     public List<Call> Calls { get; } = [];
     public Queue<GenesysUploadOutcome> Script { get; } = new();
+    /// <summary>For the next Accepted upload only: return this many contact ids instead of one per contact (null entry = one per contact).</summary>
+    public Queue<int?> IdCounts { get; } = new();
     public int Created;
+
+    /// <summary>Every suppression (PUT callable=false) request, as the service sent it.</summary>
+    public sealed record Suppression(string ContactListId, string ContactId, GenesysContactPayload Contact);
+    public List<Suppression> Suppressions { get; } = [];
+    public Queue<GenesysSuppressResult> SuppressScript { get; } = new();
+
+    public Task<GenesysSuppressResult> SetNotCallableAsync(string contactListId, string contactId, GenesysContactPayload contact, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            Suppressions.Add(new(contactListId, contactId, contact));
+            return Task.FromResult(SuppressScript.Count > 0 ? SuppressScript.Dequeue() : new GenesysSuppressResult(GenesysUploadOutcome.Accepted, 200, false, false, null));
+        }
+    }
 
     public Task<GenesysUploadResult> UploadContactsAsync(string contactListId, IReadOnlyList<GenesysContactPayload> contacts, CancellationToken ct)
     {
@@ -33,7 +49,8 @@ public sealed class FakeGenesysClient : IGenesysOutboundClient
             var outcome = Script.Count > 0 ? Script.Dequeue() : GenesysUploadOutcome.Accepted;
             return Task.FromResult(outcome switch
             {
-                GenesysUploadOutcome.Accepted => new GenesysUploadResult(outcome, 200, contacts.Select(_ => $"contact-{++Created}").ToList(), null),
+                GenesysUploadOutcome.Accepted => new GenesysUploadResult(outcome, 200,
+                    contacts.Take(IdCounts.Count > 0 ? IdCounts.Dequeue() ?? contacts.Count : contacts.Count).Select(_ => $"contact-{++Created}").ToList(), null),
                 GenesysUploadOutcome.Rejected => new GenesysUploadResult(outcome, 400, [], "Genesys rejected the request (HTTP 400); nothing was created."),
                 _ => new GenesysUploadResult(outcome, null, [], "The request timed out or the connection dropped before Genesys answered.")
             });
@@ -47,6 +64,8 @@ public sealed class FakeJobScheduler : IReviewJobScheduler
     public List<long> Dispatches { get; } = [];
     public void EnqueueRefresh(long runId) => Refreshes.Add(runId);
     public void EnqueueDispatch(long dispatchId) => Dispatches.Add(dispatchId);
+    public int Sweeps;
+    public void EnqueueSuppressionSweep() => Sweeps++;
 }
 
 /// <summary>
@@ -76,7 +95,7 @@ internal sealed class ReviewHarness : IDisposable
     public PactReceivablesOptions Sql { get; } = new() { Enabled = true };
     public CollectionsCampaignOptions Campaign { get; } = new() { FinancialSourceValidated = true, LegalNoticeExportEnabled = true };
     public CollectionsReviewOptions Review { get; } = new();
-    public GenesysOutboundOptions Genesys { get; } = new() { Enabled = true };
+    public GenesysOutboundOptions Genesys { get; } = new() { Enabled = true, LiveCustomerDispatchEnabled = true, SuppressionEnabled = true, LeaseHeartbeatSeconds = 0.02 };
     public FakeGenesysClient Client { get; } = new();
     public FakeJobScheduler Scheduler { get; } = new();
     public FakeTimeProvider Time { get; } = new(Now);
@@ -113,6 +132,7 @@ internal sealed class ReviewHarness : IDisposable
         public ReviewQueryService Query { get; private set; } = null!;
         public ReviewRefreshService Refresh { get; private set; } = null!;
         public DispatchService Dispatch { get; private set; } = null!;
+        public SuppressionService Suppression { get; private set; } = null!;
         public TigerCsDbContext Context => context;
 
         public Scope Wire(IGenesysOutboundClient? client = null)
@@ -122,8 +142,10 @@ internal sealed class ReviewHarness : IDisposable
             Query = new ReviewQueryService(h.Options, h.Review, auth, clock, Store);
             Refresh = new ReviewRefreshService(h.Options, h.Campaign, h.Sql, h.Review, auth, clock, h.Source, Store, h.Scheduler, Query,
                 NullLogger<ReviewRefreshService>.Instance);
-            Dispatch = new DispatchService(h.Options, h.Sql, h.Genesys, auth, clock, h.Source, Store, h.Scheduler, client ?? h.Client, Query, Refresh,
+            var balances = new CurrentBalanceReader(h.Sql, h.Source, Refresh, NullLogger<CurrentBalanceReader>.Instance);
+            Dispatch = new DispatchService(h.Options, h.Genesys, auth, clock, Store, h.Scheduler, client ?? h.Client, Query, balances,
                 NullLogger<DispatchService>.Instance);
+            Suppression = new SuppressionService(h.Options, h.Genesys, clock, Store, client ?? h.Client, balances, NullLogger<SuppressionService>.Instance);
             return this;
         }
 
@@ -155,7 +177,7 @@ internal sealed class ReviewHarness : IDisposable
         using var scope = NewScope();
         var request = selection ?? All(new ReviewFilter(ReminderType: "CurrentMonth"));
         var summary = (await scope.Query.SummarizeAsync(Manager, request, CancellationToken.None)).Value!;
-        return (summary, new ConfirmDispatchRequest(request, summary.Count, summary.Fingerprint, key, true, true));
+        return (summary, new ConfirmDispatchRequest(request, summary.Count, summary.Fingerprint, key, true));
     }
 
     public void Dispose()

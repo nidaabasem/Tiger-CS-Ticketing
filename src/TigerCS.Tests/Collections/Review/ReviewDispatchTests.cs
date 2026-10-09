@@ -141,20 +141,51 @@ public sealed class ReviewDispatchTests
     }
 
     [Fact]
-    public async Task MultipleUnitsOnOnePhone_AreNeverMerged_AndRepeatedCallsNeedAnExplicitAcknowledgement()
+    public async Task MultipleUnitsOnOnePhone_AreBlockedNotAcknowledged_NeverMergedAndNeverSent()
     {
         using var h = new ReviewHarness();
-        h.Source.Items.AddRange([ReviewHarness.Row(1, mobile: "0500003001"), ReviewHarness.Row(2, mobile: "0500003001"), ReviewHarness.Row(3)]);
+        h.Source.Items.AddRange([ReviewHarness.Row(1, 300m, mobile: "0500003001"), ReviewHarness.Row(2, 450m, mobile: "0500003001"), ReviewHarness.Row(3)]);
         await h.RefreshAsync();
         var (summary, confirm) = await h.PrepareAsync();
-        Assert.Equal(3, summary.Count);                       // one record per unit; nothing merged
-        Assert.Equal(2, summary.SharedPhoneRecordCount);
-        Assert.Equal(1, summary.SharedPhoneNumberCount);
-        Assert.Equal(2, summary.Contacts.Count(c => c.SharedPhone));
-        var refused = await ConfirmAsync(h, confirm with { AcknowledgeSharedPhoneCalls = false });
-        Assert.Equal(CollectionsOutcome.InvalidRequest, refused.Outcome);
-        Assert.Contains("called repeatedly", refused.Detail);
-        Assert.Equal(CollectionsOutcome.Accepted, (await ConfirmAsync(h, confirm)).Outcome);
+        Assert.Equal(1, summary.Count);                        // only the unit with its own phone can be selected
+        Assert.Equal("Customer 3", summary.Contacts.Single().CustomerName);
+        using var scope = h.NewScope();
+        var page = (await scope.Query.QueryAsync(h.Manager, new ReviewFilter(ReminderType: "CurrentMonth", ValidationStatus: "Excluded"), 1, 25, CancellationToken.None)).Value!;
+        Assert.Equal(["Customer 1", "Customer 2"], page.Items.Select(i => i.CustomerName).Order());
+        Assert.All(page.Items, i => Assert.Contains(i.Reasons, r => r.Code == ReviewReasons.SharedPhoneMultipleUnits));
+        Assert.Equal([300m, 450m], page.Items.Select(i => i.RemainingAmount!.Value).Order());   // not merged into 750
+
+        // Selecting them by key anyway yields nothing, and a hand-built request carrying them is refused.
+        var blocked = page.Items.Select(i => i.RecordKey).ToList();
+        Assert.Empty((await scope.Query.ResolveAsync(new SelectionRequest(null, ReviewQueryService.ModeSelectedKeys, blocked), CancellationToken.None)).Records);
+
+        var overlaps = (await scope.Query.OverlapsAsync(h.Manager, 1, 25, CancellationToken.None)).Value!;
+        var group = Assert.Single(overlaps.Groups);
+        Assert.Equal("+971500003001", group.Phone);
+        Assert.Equal(2, group.CustomerCount);
+        Assert.Equal(2, group.UnitCount);
+        Assert.True(group.SharedAcrossUnits);
+        Assert.Contains(group.Rows, r => r.CustomerName == "Customer 1" && r.RemainingAmount == 300m);
+        Assert.Equal(CollectionsOutcome.Accepted, (await ConfirmAsync(h, confirm)).Outcome);   // the clean record is unaffected
+        Assert.Single(await ItemsAsync(h));
+    }
+
+    [Fact]
+    public async Task DayFourteenOverlap_OfCurrentMonthAndLegalNotice_IsSurfacedAndBlocked()
+    {
+        using var h = new ReviewHarness();
+        h.Source.Items.Add(ReviewHarness.Row(1, 1600m) with { DueDate = new DateTime(2026, 9, 10), VoucherNumber = "INV-SEP", PlanAmount = 1600m });
+        h.Source.Items.Add(ReviewHarness.Row(1, 400m, day: 20));
+        await h.RefreshAsync();
+        using var scope = h.NewScope();
+        var summary = (await scope.Query.SummarizeAsync(h.Manager, h.All(), CancellationToken.None)).Value!;
+        Assert.Equal(0, summary.Count);
+        var group = Assert.Single((await scope.Query.OverlapsAsync(h.Manager, 1, 25, CancellationToken.None)).Value!.Groups);
+        Assert.True(group.ReminderTypeOverlap);
+        Assert.False(group.SharedAcrossUnits);
+        Assert.Equal(1, group.UnitCount);
+        Assert.Equal(["CurrentMonth", "LegalNotice"], group.ReminderTypes);
+        Assert.Equal(CollectionsOutcome.Forbidden, (await scope.Query.OverlapsAsync(h.Reporting, 1, 25, CancellationToken.None)).Outcome);
     }
 
     // ------------------------------------------------------------ happy path & Genesys mapping
@@ -537,6 +568,7 @@ public sealed class ReviewDispatchTests
 
     private sealed class ThrowingClient(Exception failure) : IGenesysOutboundClient
     {
+        public Task<GenesysSuppressResult> SetNotCallableAsync(string contactListId, string contactId, GenesysContactPayload contact, CancellationToken ct) => throw failure;
         public Task<GenesysUploadResult> UploadContactsAsync(string contactListId, IReadOnlyList<GenesysContactPayload> contacts, CancellationToken ct) => throw failure;
     }
 

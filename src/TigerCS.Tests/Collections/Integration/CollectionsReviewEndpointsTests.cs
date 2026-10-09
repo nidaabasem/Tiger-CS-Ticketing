@@ -29,7 +29,9 @@ public sealed class CollectionsReviewEndpointsTests
         {
             ["Collections:Enabled"] = "true",
             ["CollectionsSource:PactReceivables:Enabled"] = "true",
-            ["Collections:GenesysOutbound:Enabled"] = "true"
+            ["Collections:GenesysOutbound:Enabled"] = "true",
+            ["Collections:GenesysOutbound:LiveCustomerDispatchEnabled"] = "true",
+            ["Collections:GenesysOutbound:SuppressionEnabled"] = "true"
         },
         ExtraServices = services => services.AddScoped<IPactReceivablesSource>(_ => source)
     };
@@ -58,7 +60,10 @@ public sealed class CollectionsReviewEndpointsTests
         ["refresh"] = (await client.PostAsJsonAsync("/api/collections/review/refresh", new { companyId = (int?)null })).StatusCode,
         ["summary"] = (await client.PostAsJsonAsync("/api/collections/review/selection/summary", Selection)).StatusCode,
         ["confirm"] = (await client.PostAsJsonAsync("/api/collections/review/dispatches",
-            new ConfirmDispatchRequest(Selection, 1, "x", "k", true, false))).StatusCode,
+            new ConfirmDispatchRequest(Selection, 1, "x", "k", true))).StatusCode,
+        ["overlaps"] = (await client.GetAsync("/api/collections/review/overlaps")).StatusCode,
+        ["contacts"] = (await client.GetAsync($"/api/collections/review/dispatches/{AnyDispatch}/contacts")).StatusCode,
+        ["sweep"] = (await client.PostAsync("/api/collections/review/suppression/sweep", null)).StatusCode,
         ["cancel"] = (await client.PostAsync($"/api/collections/review/dispatches/{AnyDispatch}/cancel", null)).StatusCode,
         ["reconcile"] = (await client.PostAsJsonAsync($"/api/collections/review/dispatches/{AnyDispatch}/batches/1/reconcile",
             new ReconcileBatchRequest("ConfirmedNotUploaded", "checked"))).StatusCode,
@@ -86,7 +91,7 @@ public sealed class CollectionsReviewEndpointsTests
         Assert.All(await CallEveryRouteAsync(anonymous), r => Assert.Equal(HttpStatusCode.Unauthorized, r.Value));
         using var reporter = await Client(factory, Roles.ReportingUser);
         var results = await CallEveryRouteAsync(reporter);
-        foreach (var route in new[] { "runs/current", "runs/{id}", "records", "dispatches", "dispatches/{id}", "refresh", "summary", "confirm", "reconcile", "cancel" })
+        foreach (var route in new[] { "runs/current", "runs/{id}", "records", "dispatches", "dispatches/{id}", "refresh", "summary", "confirm", "reconcile", "cancel", "overlaps", "sweep", "contacts" })
             Assert.Equal(HttpStatusCode.Forbidden, results[route]);
         Assert.Equal(0, source.Reads);
     }
@@ -104,6 +109,9 @@ public sealed class CollectionsReviewEndpointsTests
         Assert.Equal(HttpStatusCode.Forbidden, results["confirm"]);
         Assert.Equal(HttpStatusCode.Forbidden, results["reconcile"]);
         Assert.Equal(HttpStatusCode.Forbidden, results["cancel"]);
+        Assert.Equal(HttpStatusCode.Forbidden, results["sweep"]);
+        Assert.Equal(HttpStatusCode.Forbidden, results["contacts"]);
+        Assert.Equal(HttpStatusCode.OK, results["overlaps"]);
     }
 
     [Fact]
@@ -124,9 +132,9 @@ public sealed class CollectionsReviewEndpointsTests
     {
         using var factory = Factory(new Source());
         using var manager = await Client(factory, Roles.CsManager);
-        var noKey = await manager.PostAsJsonAsync("/api/collections/review/dispatches", new ConfirmDispatchRequest(Selection, 1, "x", "", true, false));
+        var noKey = await manager.PostAsJsonAsync("/api/collections/review/dispatches", new ConfirmDispatchRequest(Selection, 1, "x", "", true));
         Assert.Equal(HttpStatusCode.BadRequest, noKey.StatusCode);
-        var noAck = await manager.PostAsJsonAsync("/api/collections/review/dispatches", new ConfirmDispatchRequest(Selection, 1, "x", "k", false, false));
+        var noAck = await manager.PostAsJsonAsync("/api/collections/review/dispatches", new ConfirmDispatchRequest(Selection, 1, "x", "k", false));
         Assert.Equal(HttpStatusCode.BadRequest, noAck.StatusCode);
     }
 }

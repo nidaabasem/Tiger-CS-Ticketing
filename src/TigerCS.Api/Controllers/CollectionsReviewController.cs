@@ -52,6 +52,12 @@ public sealed class CollectionsReviewController(ReviewQueryService query, Review
     [HttpGet("reasons")]
     public IActionResult Reasons() => Ok(ReviewReasons.All.Select(r => new ReviewReasonDto(r.Code, r.Kind.ToString(), r.Explanation)));
 
+    /// <summary>Phone numbers held back because they would be called repeatedly (several units, or several reminder types for one unit), with customers and unit counts.</summary>
+    [HttpGet("overlaps")]
+    [ProducesResponseType<OverlapPageDto>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> Overlaps([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default) =>
+        Caller() is { } caller ? Result(await query.OverlapsAsync(caller, page, pageSize, ct)) : Unauthorized();
+
     /// <summary>The exact count, totals by currency and contact list of a selection, with the fingerprint to confirm.</summary>
     [HttpPost("selection/summary")]
     [ProducesResponseType<SelectionSummaryDto>(StatusCodes.Status200OK)]
@@ -78,6 +84,26 @@ public sealed class CollectionsReviewController(ReviewQueryService query, Review
     [ProducesResponseType<DispatchDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> Dispatch(Guid dispatchId, CancellationToken ct) =>
         Caller() is { } caller ? Result(await dispatch.GetAsync(caller, dispatchId, ct)) : Unauthorized();
+
+    /// <summary>The contacts of one send exactly as uploaded (the six Genesys contact-list columns) as a CSV file, for comparison with the Genesys list.</summary>
+    [HttpGet("dispatches/{dispatchId:guid}/contacts")]
+    [Produces("text/csv")]
+    public async Task<IActionResult> DispatchContacts(Guid dispatchId, CancellationToken ct)
+    {
+        if (Caller() is not { } caller) return Unauthorized();
+        var result = await dispatch.ExportContactsAsync(caller, dispatchId, ct);
+        return result.IsSuccess ? File(System.Text.Encoding.UTF8.GetBytes(result.Value!), "text/csv; charset=utf-8", $"genesys-contacts-{dispatchId:N}.csv") : Result(result);
+    }
+
+    /// <summary>Starts the paid-after-upload suppression sweep now (it also runs on a schedule when enabled).</summary>
+    [HttpPost("suppression/sweep")]
+    public async Task<IActionResult> SweepSuppression([FromServices] CollectionsAuthorizationService authorization, [FromServices] IReviewJobScheduler scheduler, CancellationToken ct)
+    {
+        if (Caller() is not { } caller) return Unauthorized();
+        if (!(await authorization.ResolveAsync(caller, ct)).CanSendReminders) return Result(CollectionsResult<object>.Fail(CollectionsOutcome.Forbidden));
+        scheduler.EnqueueSuppressionSweep();
+        return Accepted();
+    }
 
     /// <summary>Cancels an approved send that has not started yet and releases its records.</summary>
     [HttpPost("dispatches/{dispatchId:guid}/cancel")]

@@ -176,21 +176,71 @@ public sealed class ReviewValidationTests
         var records = ReviewRecordBuilder.Build([first, second], Context()).Records.Where(r => r.ReminderType == CampaignReminderType.CurrentMonth).ToList();
         Assert.Equal(2, records.Count);
         Assert.Equal(new decimal?[] { 300m, 450m }, records.OrderBy(r => r.DueDate).Select(r => r.RemainingAmount));
-        Assert.All(records, r => Assert.Equal(ReviewValidationStatus.Ready, r.ValidationStatus));
+        // One customer, two units, one phone: held back (repeated calls), not merged and not resolved by choosing a unit.
+        Assert.All(records, r => { Assert.Equal(ReviewValidationStatus.Excluded, r.ValidationStatus); Assert.Contains(ReviewReasons.SharedPhoneMultipleUnits, Reasons(r)); });
     }
 
     [Fact]
-    public void ThePhoneSharedByTwoUnitsIsWarnedAboutNotMerged()
+    public void ThePhoneSharedByTwoUnitsBlocksBoth_NothingIsMergedOrChosen()
     {
-        var a = ReviewHarness.Row(1, mobile: "0500003001");
-        var b = ReviewHarness.Row(2, mobile: "0500003001");
+        var a = ReviewHarness.Row(1, mobile: "0500003001", amount: 300m);
+        var b = ReviewHarness.Row(2, mobile: "0500003001", amount: 450m);
         var records = ReviewRecordBuilder.Build([a, b], Context()).Records.Where(r => r.ReminderType == CampaignReminderType.CurrentMonth).ToList();
-        Assert.Equal(2, records.Count);
+        Assert.Equal(2, records.Count);                                         // one record per unit; no merged 750
+        Assert.Equal(new decimal?[] { 300m, 450m }, records.OrderBy(r => r.RemainingAmount).Select(r => r.RemainingAmount));
         Assert.All(records, r =>
         {
             Assert.Contains(ReviewReasons.SharedPhoneMultipleUnits, Reasons(r));
-            Assert.Equal(ReviewValidationStatus.Ready, r.ValidationStatus);   // a warning, not a block: the business decision is the acknowledgement
+            Assert.Equal(ReviewValidationStatus.Excluded, r.ValidationStatus);  // blocked pending the business decision; no acknowledgement can release it
         });
+    }
+
+    [Fact]
+    public void ADayFourteenCurrentMonthAndLegalNoticeOnOneUnitBlockBothAsAnOverlap()
+    {
+        // The same unit: a September balance above AED 1,500 (Legal Notice) and an October instalment (Current Month); both are scheduled on day 14.
+        var september = ReviewHarness.Row(1, amount: 1600m) with { DueDate = new DateTime(2026, 9, 10), VoucherNumber = "INV-SEP" };
+        var october = ReviewHarness.Row(1, amount: 400m, day: 20);
+        var records = ReviewRecordBuilder.Build([september, october], Context()).Records;
+        var today = records.Where(r => r.ReminderType is CampaignReminderType.CurrentMonth or CampaignReminderType.LegalNotice).ToList();
+        Assert.Equal(2, today.Count);
+        Assert.All(today, r =>
+        {
+            Assert.Contains(ReviewReasons.ReminderTypeOverlap, Reasons(r));
+            Assert.Equal(ReviewValidationStatus.Excluded, r.ValidationStatus);
+        });
+        // Records for days that are not today are not part of the overlap.
+        Assert.DoesNotContain(records.Where(r => r.ReminderType is CampaignReminderType.FollowUp or CampaignReminderType.Overdue), r => Reasons(r).Contains(ReviewReasons.ReminderTypeOverlap));
+    }
+
+    [Fact]
+    public void AUnitWithOneReminderTypeTodayIsNotAnOverlap()
+    {
+        var record = Single([ReviewHarness.Row(1)]);
+        Assert.DoesNotContain(ReviewReasons.ReminderTypeOverlap, Reasons(record));
+        Assert.DoesNotContain(ReviewReasons.SharedPhoneMultipleUnits, Reasons(record));
+        Assert.Equal(ReviewValidationStatus.Ready, record.ValidationStatus);
+    }
+
+    [Fact]
+    public void OriginalPaidAndRemainingAmountsMustAddUp()
+    {
+        // V2: original (PlanAmount) 500 = paid (AllocatedAmount) 200 + remaining 300.
+        var consistent = ReviewHarness.Row(1, amount: 300m, plan: 500m) with { AllocatedAmount = 200m };
+        var ok = Single([consistent]);
+        Assert.Equal(ReviewPaymentStatus.PartiallyPaid, ok.PaymentStatus);
+        Assert.Equal(ReviewValidationStatus.Ready, ok.ValidationStatus);
+
+        // Nothing paid: Unpaid, derived from AllocatedAmount = 0, not from the due date.
+        var unpaid = Single([ReviewHarness.Row(2, amount: 500m, plan: 500m) with { AllocatedAmount = 0m }]);
+        Assert.Equal(ReviewPaymentStatus.Unpaid, unpaid.PaymentStatus);
+
+        // 500 != 100 + 300: the source disagrees with itself, so the payment status is unconfirmed and the record is not sendable.
+        var broken = Single([ReviewHarness.Row(3, amount: 300m, plan: 500m) with { AllocatedAmount = 100m }]);
+        Assert.Equal(ReviewPaymentStatus.Unknown, broken.PaymentStatus);
+        Assert.Contains(ReviewReasons.SourceAmountsInconsistent, Reasons(broken));
+        Assert.Contains(ReviewReasons.PaymentStatusUnknown, Reasons(broken));
+        Assert.Equal(ReviewValidationStatus.NeedsReview, broken.ValidationStatus);
     }
 
     [Fact]

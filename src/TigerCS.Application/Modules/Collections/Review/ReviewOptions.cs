@@ -46,6 +46,24 @@ public sealed class GenesysOutboundOptions
     /// <summary>Refresh the cached token this long before its stated expiry.</summary>
     public int TokenExpirySkewSeconds { get; set; } = 60;
 
+    /// <summary>
+    /// Master switch for uploading approved customers to the contact lists. False (default): confirmation is refused. Turn on only for a
+    /// UAT environment whose <c>ContactListIds</c> point at TEST lists with no active campaign, and for production only after the paid-after-upload
+    /// suppression has been proven end to end on a test list (see docs).
+    /// </summary>
+    public bool LiveCustomerDispatchEnabled { get; set; }
+
+    /// <summary>Runs the sweep that marks uploaded contacts not callable (PUT callable=false) when their balance was paid or changed. Required for dispatch.</summary>
+    public bool SuppressionEnabled { get; set; }
+    public string SuppressionSweepCron { get; set; } = "*/10 * * * *";
+    /// <summary>Uploaded contacts older than this are no longer swept (the month's cycle has ended).</summary>
+    public int SuppressionWindowDays { get; set; } = 3;
+    /// <summary>Genesys rate limits apply per OAuth client; one PUT per contact.</summary>
+    public int MaxSuppressionsPerSweep { get; set; } = 300;
+
+    /// <summary>How often a running dispatch renews its execution lease while it waits on the slow financial source. Must stay well below the 5-minute lease.</summary>
+    public double LeaseHeartbeatSeconds { get; set; } = 60;
+
     /// <summary>Reminder type to Genesys contact list id. Defaults are the lists supplied for this integration.</summary>
     public Dictionary<string, string> ContactListIds { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {

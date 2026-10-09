@@ -39,6 +39,7 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<CollectionsReminderScheduleJob>();
         services.AddScoped<CollectionsReviewRefreshJob>();
         services.AddScoped<CollectionsDispatchJob>();
+        services.AddScoped<CollectionsSuppressionJob>();
         // Holds only the scope factory; it opens one scope per candidate itself.
         services.AddScoped<ChatbotInactivityCloseJob>();
 
@@ -196,5 +197,24 @@ public static class BackgroundJobServiceCollectionExtensions
             job => job.RunAsync(CancellationToken.None),
             collectionsOptions.ScheduleCron,
             new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById(collectionsOptions.TimeZoneId) });
+    }
+
+    /// <summary>
+    /// Registers the paid-after-upload suppression sweep only while Genesys upload and its suppression are both enabled, and removes it otherwise.
+    /// </summary>
+    public static void UseTigerCsRecurringGenesysSuppression(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, GenesysOutboundOptions genesysOptions, string timeZoneId)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        if (!backgroundJobOptions.Enabled) return;
+
+        var manager = services.GetRequiredService<IRecurringJobManager>();
+        if (!genesysOptions.Enabled || !genesysOptions.SuppressionEnabled)
+        {
+            manager.RemoveIfExists(CollectionsSuppressionJob.RecurringJobId);
+            return;
+        }
+        manager.AddOrUpdate<CollectionsSuppressionJob>(CollectionsSuppressionJob.RecurringJobId, job => job.RunAsync(CancellationToken.None),
+            genesysOptions.SuppressionSweepCron, new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId) });
     }
 }

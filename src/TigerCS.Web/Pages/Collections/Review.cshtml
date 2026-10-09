@@ -38,6 +38,10 @@
                 <li><strong>@d.FailedCount</strong> rejected by Genesys (nothing created)</li>
                 <li><strong>@d.UnknownCount</strong> unconfirmed</li>
             </ul>
+            @if (!string.IsNullOrEmpty(d.Phase)) { <p role="status">Progress: @d.Phase@(d.RevalidationMs is { } ms ? $" · balances checked in {ms / 1000.0:0.0} s" : "")</p> }
+            <p>Paid-after-upload protection: <strong>@d.SuppressedCount</strong> contact(s) already made not callable@(d.SuppressionFailedCount > 0 ? $", {d.SuppressionFailedCount} could not be (needs attention)" : "").
+               @if (d.UploadedWithoutContactId > 0) { <text><br /><strong>@d.UploadedWithoutContactId uploaded contact(s) have no Genesys contact id and cannot be suppressed automatically.</strong> Check them in Genesys by hand.<br /></text> }
+               <a href="/Collections/Review?handler=Contacts&amp;dispatch=@d.DispatchId">Download the contacts as uploaded (CSV)</a></p>
             <p class="review-note">@d.Disclaimer</p>
             <div class="table-scroll"><table class="table">
                 <thead><tr><th>#</th><th>Reminder type</th><th>List</th><th>Contacts</th><th>Status</th><th>Attempts</th><th>Detail</th><th></th></tr></thead>
@@ -157,6 +161,31 @@
             <p class="review-note" role="status">@report.Counts.UnknownPaymentStatus matching record(s) have an unknown payment status and are hidden from this view. They are never sendable. <a href="@Model.PageUrl(1, "Unknown")">Show them</a>.</p>
         }
 
+        @if (Model.Overlaps is { TotalPhones: > 0 } overlaps)
+        {
+            <details class="panel review-overlaps" open>
+                <summary><strong>@overlaps.TotalPhones phone number(s) held back to avoid repeated calls</strong></summary>
+                <p class="review-note">These records share a phone across units, or one unit qualifies for several reminder types today (for example Current Month and Legal Notice on day 14).
+                    Amounts are not merged and no unit is chosen for you. They stay out of any send until the business decides how repeated calls should be handled.
+                    Filter the list by reason <code>SharedPhoneMultipleUnits</code> or <code>ReminderTypeOverlap</code> to see every record.</p>
+                <div class="table-scroll"><table class="table">
+                    <thead><tr><th>Phone</th><th>Customers</th><th>Units</th><th>Records</th><th>Why held back</th><th>Reminder types</th><th>Customer · unit · amount</th></tr></thead>
+                    <tbody>
+                    @foreach (var g in overlaps.Groups)
+                    {
+                        <tr>
+                            <td>@g.Phone</td><td>@g.CustomerCount</td><td>@g.UnitCount</td><td>@g.RecordCount</td>
+                            <td>@if (g.SharedAcrossUnits) { <text>Several units on one phone</text> }@if (g.SharedAcrossUnits && g.ReminderTypeOverlap) { <text><br /></text> }@if (g.ReminderTypeOverlap) { <text>Several reminder types for one unit</text> }</td>
+                            <td>@string.Join(", ", g.ReminderTypes.Select(ReviewModel.Label))</td>
+                            <td>@foreach (var r in g.Rows) { <div>@r.CustomerName · @r.UnitCode · @ReviewModel.Label(r.ReminderType) · @r.Currency @ReviewModel.Money(r.RemainingAmount)</div> }</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table></div>
+                @if (overlaps.TotalPhones > overlaps.Groups.Count) { <p class="review-note">Showing the first @overlaps.Groups.Count of @overlaps.TotalPhones.</p> }
+            </details>
+        }
+
         <div class="panel">
             <div class="table-scroll">
                 <table class="table receivables-table review-table">
@@ -249,10 +278,6 @@
                 <input type="hidden" name="ExpectedCount" value="@s.Count" /><input type="hidden" name="ExpectedFingerprint" value="@s.Fingerprint" />
                 <input type="hidden" name="IdempotencyKey" value="@Model.ConfirmKey" />
                 <label><input type="checkbox" name="AckCampaign" value="true" required /> I understand that an active Genesys campaign using these lists may start calling the uploaded contacts immediately, and that "uploaded" does not mean "contacted".</label><br />
-                @if (s.SharedPhoneRecordCount > 0)
-                {
-                    <label><input type="checkbox" name="AckSharedPhone" value="true" required /> @s.SharedPhoneNumberCount phone number(s) are on @s.SharedPhoneRecordCount records and will be called once per record (balances are not merged).</label><br />
-                }
                 <p class="review-note">Before uploading, the current balance of every record is checked again. Paid records are dropped; any other change stops the whole send for review.</p>
                 <button class="btn btn-primary" type="submit" asp-page-handler="Confirm" data-confirm-button>Confirm and send @s.Count to Genesys</button>
             </form>

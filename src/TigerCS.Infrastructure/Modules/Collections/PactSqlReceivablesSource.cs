@@ -123,10 +123,13 @@ public sealed class PactSqlReceivablesSource(
                 // PlanAmount (V2 only) lets the review separate Unpaid from PartiallyPaid; the deployed procedures omit it.
                 decimal? plan = columns.TryGetValue("PlanAmount", out var planIndex) && !reader.IsDBNull(planIndex)
                     ? Convert.ToDecimal(reader.GetValue(planIndex), CultureInfo.InvariantCulture) : null;
+                // AllocatedAmount (V2 only) is the paid part of the instalment: original = paid + remaining.
+                decimal? allocated = columns.TryGetValue("AllocatedAmount", out var allocatedIndex) && !reader.IsDBNull(allocatedIndex)
+                    ? Convert.ToDecimal(reader.GetValue(allocatedIndex), CultureInfo.InvariantCulture) : null;
                 rows.Add(new PactReceivableInstalment(rowCompany, Text("TenantID"), Text("FullName"), Text("Mobile"), Text("Email"),
                     reader.IsDBNull(columns["UnitID"]) ? null : Convert.ToInt32(reader.GetValue(columns["UnitID"]), CultureInfo.InvariantCulture),
                     Text("UnitCode"), Text("ProjectCode"), Text("VoucherNumber"), Text("ChequeNumber"),
-                    reader.GetDateTime(columns["DueDate"]), amount, Text("Status"), plan, amountIsFloat));
+                    reader.GetDateTime(columns["DueDate"]), amount, Text("Status"), plan, amountIsFloat, allocated));
                 if (amount == 0) zeroRows++;
                 if (rows.Count > Math.Clamp(options.MaxSourceRows, 1, 1000000))
                     throw new PactReceivablesSourceException("The PACT report exceeded the configured source-row limit; no partial list was returned.");

@@ -74,7 +74,9 @@ public static class ReviewRecordBuilder
                 var unresolved = stageRows.Any(r => !r.Money.IsResolved);
                 if (unresolved) reasons.Add(ReviewReasons.AmountPrecisionNeedsReview);
 
-                var statuses = stageRows.Select(r => PaymentStatusRules.Derive(r.Row.SourceStatus, r.Amount, r.Row.PlanAmount, context.StatusMap)).ToList();
+                var statuses = stageRows.Select(r => PaymentStatusRules.Derive(r.Row.SourceStatus, r.Amount, r.Row.PlanAmount, context.StatusMap, r.Row.AllocatedAmount)).ToList();
+                if (stageRows.Any(r => r.Row is { PlanAmount: { } plan, AllocatedAmount: { } paid } && !PaymentStatusRules.AmountsAddUp(plan, paid, r.Money.Raw)))
+                    reasons.Add(ReviewReasons.SourceAmountsInconsistent);
                 if (statuses.Contains(ReviewPaymentStatus.Paid) || stageRows.Any(r => string.Equals(r.Row.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase)))
                     reasons.Add(ReviewReasons.ContradictoryPaymentStatus);
                 var payment = PaymentStatusRules.Combine(statuses);
@@ -128,20 +130,33 @@ public static class ReviewRecordBuilder
             }
         }
 
-        MarkSharedPhones(records);
+        MarkRepeatedCalls(records);
         return new ReviewBuildResult(records, floatNormalized, settled);
     }
 
     /// <summary>
-    /// The same phone on several records that could be sent today means several calls to one person; flagged, not merged.
-    /// Records outside today's schedule are not candidates, so a unit's Follow Up (day 28) does not "share" with its Current Month (day 14).
+    /// Repeated calls are blocked, not merged and not silently prioritised, until the business decides the policy. Among records that could
+    /// be sent today (outside-schedule records are not candidates, so a unit's Follow Up on day 28 does not collide with its Current Month on day 14):
+    /// a unit with several reminder types gets <c>ReminderTypeOverlap</c>; a phone number used by several units gets <c>SharedPhoneMultipleUnits</c>.
     /// </summary>
-    private static void MarkSharedPhones(List<CollectionsReviewRecord> records)
+    private static void MarkRepeatedCalls(List<CollectionsReviewRecord> records)
     {
-        var candidates = records.Where(r => r.Phone.Length > 0 && !Parse(r.Reasons).Contains(ReviewReasons.OutsideSchedule));
-        foreach (var group in candidates.GroupBy(r => r.Phone).Where(g => g.Count() > 1))
-            foreach (var record in group)
-                record.Reasons = Serialize(Parse(record.Reasons).Append(ReviewReasons.SharedPhoneMultipleUnits).Distinct());
+        static (int, string, int?, string) Unit(CollectionsReviewRecord r) => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode);
+        var candidates = records.Where(r => !Parse(r.Reasons).Contains(ReviewReasons.OutsideSchedule)).ToList();
+        var flagged = new Dictionary<CollectionsReviewRecord, List<string>>();
+        void Flag(CollectionsReviewRecord r, string reason) { if (!flagged.TryGetValue(r, out var l)) flagged[r] = l = []; if (!l.Contains(reason)) l.Add(reason); }
+
+        foreach (var group in candidates.GroupBy(Unit).Where(g => g.Count() > 1))
+            foreach (var record in group) Flag(record, ReviewReasons.ReminderTypeOverlap);
+        foreach (var group in candidates.Where(r => r.Phone.Length > 0).GroupBy(r => r.Phone).Where(g => g.Select(Unit).Distinct().Count() > 1))
+            foreach (var record in group) Flag(record, ReviewReasons.SharedPhoneMultipleUnits);
+
+        foreach (var (record, reasons) in flagged)
+        {
+            var all = Parse(record.Reasons).Concat(reasons).Distinct().ToList();
+            record.Reasons = Serialize(all);
+            record.ValidationStatus = ReviewReasons.StatusFor(all, alreadySent: false);
+        }
     }
 
     public static string Serialize(IEnumerable<string> reasons)

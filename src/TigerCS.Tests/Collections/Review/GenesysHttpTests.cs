@@ -296,4 +296,96 @@ public sealed class GenesysHttpTests
         Assert.Equal(GenesysUploadOutcome.Accepted, result.Outcome);
         Assert.Empty(result.ContactIds);          // the dispatch service then marks the unmatched contacts as unconfirmed
     }
+
+    // ------------------------------------------------------------ suppression: PUT callable=false
+
+    [Fact]
+    public async Task SuppressionIsAPutToTheContactWithCallableFalseAndTheOriginalData()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK, "{\"id\":\"abc-123\",\"callable\":false}"));
+        var result = await client.SetNotCallableAsync(ListId, "abc-123", Contact(), CancellationToken.None);
+        Assert.Equal(GenesysUploadOutcome.Accepted, result.Outcome);
+        Assert.False(result.CallableAfter);
+        Assert.False(result.ContactMissing);
+
+        var (request, body) = Assert.Single(handler.Upload);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal($"https://api.mypurecloud.de/api/v2/outbound/contactlists/{ListId}/contacts/abc-123", request.RequestUri!.ToString());
+        Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+        using var json = JsonDocument.Parse(body);
+        var root = json.RootElement;
+        Assert.Equal("abc-123", root.GetProperty("id").GetString());
+        Assert.Equal(ListId, root.GetProperty("contactListId").GetString());
+        Assert.False(root.GetProperty("callable").GetBoolean());                    // never true, whatever the stored payload says
+        Assert.Equal(["Phone", "CustomerName", "Email Address", "ReminderType", "AmountDue", "DueDate"], root.GetProperty("data").EnumerateObject().Select(p => p.Name));
+        Assert.Equal("1234.50", root.GetProperty("data").GetProperty("AmountDue").GetString());
+    }
+
+    [Fact]
+    public async Task ASuppressionAnswerThatDoesNotSayCallableFalse_IsReportedAsSuch()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK, "{\"id\":\"abc\",\"callable\":true}"));
+        Assert.True((await client.SetNotCallableAsync(ListId, "abc", Contact(), CancellationToken.None)).CallableAfter);
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK, "{}"));
+        Assert.Null((await client.SetNotCallableAsync(ListId, "abc", Contact(), CancellationToken.None)).CallableAfter);
+    }
+
+    [Fact]
+    public async Task AMissingContactCannotBeDialled_SoItCountsAsSuppressed()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.NotFound, "{}"));
+        var result = await client.SetNotCallableAsync(ListId, "gone", Contact(), CancellationToken.None);
+        Assert.Equal(GenesysUploadOutcome.Accepted, result.Outcome);
+        Assert.True(result.ContactMissing);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, GenesysUploadOutcome.Rejected)]
+    [InlineData(HttpStatusCode.Forbidden, GenesysUploadOutcome.Rejected)]
+    [InlineData(HttpStatusCode.TooManyRequests, GenesysUploadOutcome.Rejected)]
+    [InlineData(HttpStatusCode.InternalServerError, GenesysUploadOutcome.Unknown)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, GenesysUploadOutcome.Unknown)]
+    public async Task SuppressionFailuresAreClassifiedLikeUploads(HttpStatusCode status, GenesysUploadOutcome expected)
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => new HttpResponseMessage(status));
+        Assert.Equal(expected, (await client.SetNotCallableAsync(ListId, "abc", Contact(), CancellationToken.None)).Outcome);
+        Assert.Single(handler.Upload);
+    }
+
+    [Fact]
+    public async Task ASuppressionTimeoutIsUnknown_AndA401RefreshesTheTokenOnce()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        handler.Responses.Enqueue(_ => throw new TaskCanceledException("timeout"));
+        Assert.Equal(GenesysUploadOutcome.Unknown, (await client.SetNotCallableAsync(ListId, "abc", Contact(), CancellationToken.None)).Outcome);
+        handler.Responses.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        handler.Responses.Enqueue(_ => Json(HttpStatusCode.OK, "{\"callable\":false}"));
+        var ok = await client.SetNotCallableAsync(ListId, "abc", Contact(), CancellationToken.None);
+        Assert.Equal(GenesysUploadOutcome.Accepted, ok.Outcome);
+        Assert.Equal(2, handler.Token.Count());
+    }
+
+    [Theory]
+    [InlineData("../other")]
+    [InlineData("a/b")]
+    [InlineData("")]
+    [InlineData("id?x=1")]
+    public async Task AContactIdThatCouldAlterTheUrlIsRefusedBeforeAnyRequest(string contactId)
+    {
+        var (client, _, handler, _, _, _) = Build();
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => client.SetNotCallableAsync(ListId, contactId, Contact(), CancellationToken.None));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ASuppressionForAnotherListIsRefused()
+    {
+        var (client, _, handler, _, _, _) = Build();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.SetNotCallableAsync(ListId, "abc", Contact(1, "3a91c06e-47ab-4a5e-a720-004bd5cf5bba"), CancellationToken.None));
+        Assert.Empty(handler.Requests);
+    }
 }

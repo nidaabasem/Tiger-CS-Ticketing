@@ -100,6 +100,18 @@ public sealed class ReviewDomainRulesTests
     }
 
     [Fact]
+    public void PaidAndRemainingFromTheSourceDecideTheStatus_WhenTheyAddUp()
+    {
+        Assert.Equal(ReviewPaymentStatus.Unpaid, PaymentStatusRules.Derive("Installment", 500m, 500m, null, 0m));
+        Assert.Equal(ReviewPaymentStatus.PartiallyPaid, PaymentStatusRules.Derive("Installment", 300m, 500m, null, 200m));
+        Assert.Equal(ReviewPaymentStatus.Unknown, PaymentStatusRules.Derive("Installment", 300m, 500m, null, 100m));   // 100 + 300 != 500
+        Assert.Equal(ReviewPaymentStatus.Unknown, PaymentStatusRules.Derive("Installment", 300m, 500m, null, -200m));
+        Assert.Equal(ReviewPaymentStatus.Unknown, PaymentStatusRules.Derive("Installment", 0.5m, 0m, null, 0.5m));
+        Assert.True(PaymentStatusRules.AmountsAddUp(500.0000m, 200.0000m, 300.00004m));
+        Assert.False(PaymentStatusRules.AmountsAddUp(500m, 200m, 300.01m));
+    }
+
+    [Fact]
     public void OnlyAConfiguredVerifiedMappingCanGiveAnUnknownSourceValueAStatus()
     {
         var map = new Dictionary<string, string> { ["Open"] = "Unpaid", ["Part"] = "PartiallyPaid", ["Bogus"] = "Paid" };
@@ -169,7 +181,9 @@ public sealed class ReviewDomainRulesTests
     {
         Assert.All(ReviewReasons.All, r => { Assert.False(string.IsNullOrWhiteSpace(r.Explanation)); Assert.Equal(r.Explanation, ReviewReasons.Explain(r.Code)); });
         Assert.Equal(ReviewReasons.All.Count, ReviewReasons.All.Select(r => r.Code).Distinct().Count());
-        Assert.Equal(ReviewValidationStatus.Ready, ReviewReasons.StatusFor([ReviewReasons.SharedPhoneMultipleUnits], false)); // a warning does not block
+        Assert.Equal(ReviewValidationStatus.Excluded, ReviewReasons.StatusFor([ReviewReasons.SharedPhoneMultipleUnits], false)); // held back pending a business decision
+        Assert.Equal(ReviewValidationStatus.Excluded, ReviewReasons.StatusFor([ReviewReasons.ReminderTypeOverlap], false));
+        Assert.Equal(ReviewValidationStatus.Ready, ReviewReasons.StatusFor([], false));
         Assert.Equal(ReviewValidationStatus.NeedsReview, ReviewReasons.StatusFor([ReviewReasons.OutsideSchedule, ReviewReasons.NoValidContact], false));
         Assert.Equal(ReviewValidationStatus.Excluded, ReviewReasons.StatusFor([ReviewReasons.OutsideSchedule], false));
         Assert.Equal(ReviewValidationStatus.AlreadySent, ReviewReasons.StatusFor([], true));

@@ -23,10 +23,9 @@ namespace TigerCS.Application.Modules.Collections.Review;
 /// "Uploaded to Genesys" means the contact is in the list. It never means the customer was called or contacted.
 /// </summary>
 public sealed class DispatchService(
-    CollectionsOptions options, PactReceivablesOptions sourceOptions,
-    GenesysOutboundOptions genesys, CollectionsAuthorizationService authorization, CollectionsClock clock,
-    IPactReceivablesSource source, IReviewStore store, IReviewJobScheduler scheduler, IGenesysOutboundClient client,
-    ReviewQueryService query, ReviewRefreshService refresh, ILogger<DispatchService> logger)
+    CollectionsOptions options, GenesysOutboundOptions genesys, CollectionsAuthorizationService authorization, CollectionsClock clock,
+    IReviewStore store, IReviewJobScheduler scheduler, IGenesysOutboundClient client,
+    ReviewQueryService query, CurrentBalanceReader balances, ILogger<DispatchService> logger)
 {
     public const string UploadDisclaimer =
         "Uploaded to Genesys means the contact was added to the outbound contact list. It does not mean the customer was called, " +
@@ -43,8 +42,12 @@ public sealed class DispatchService(
         if (!(await authorization.ResolveAsync(caller, ct)).CanSendReminders)
             return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.Forbidden);
         if (!options.Enabled) return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.Disabled);
-        if (!genesys.Enabled)
-            return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.Disabled, "Genesys upload is not enabled in this environment.");
+        if (!genesys.Enabled || !genesys.LiveCustomerDispatchEnabled)
+            return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.Disabled,
+                "Customer dispatch to Genesys is switched off in this environment. It stays off until the paid-after-upload suppression has been proven on a test contact list.");
+        if (!genesys.SuppressionEnabled)
+            return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.Disabled,
+                "Customer dispatch needs the paid-after-upload suppression sweep to be enabled; otherwise a customer who pays after upload could still be called.");
         var key = request.IdempotencyKey?.Trim();
         if (string.IsNullOrEmpty(key) || key.Length > 100)
             return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.InvalidRequest, "An idempotency key of 1-100 characters is required.");
@@ -65,9 +68,10 @@ public sealed class DispatchService(
                 "The records, amounts or contacts changed since this list was shown. Review the current list and confirm again.");
         if (query.IsStale(resolved.Run!))
             return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.ReviewRequired, "The review data is stale. Refresh it and review again.");
-        if (ReviewQueryService.SharedPhones(resolved.Records).Records > 0 && !request.AcknowledgeSharedPhoneCalls)
-            return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "Some phone numbers appear on several records and would be called repeatedly. Acknowledge this or remove those records.");
+        // Defence in depth: such records are already held back as Excluded, so this can only happen through a stale or tampered list.
+        if (ReviewQueryService.SharedPhones(resolved.Records).Records > 0 || resolved.Records.Any(r => !IsVoiceEligible(r.Phone)))
+            return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.ReviewRequired,
+                "The list contains records that share a phone number or have no callable phone. Repeated calls are blocked pending a business decision; review the current list.");
         try { foreach (var type in resolved.Records.Select(r => r.ReminderType).Distinct()) _ = genesys.ContactListIdFor(type); }
         catch (InvalidOperationException ex) { return CollectionsResult<DispatchDto>.Fail(CollectionsOutcome.InvalidRequest, ex.Message); }
 
@@ -79,12 +83,12 @@ public sealed class DispatchService(
             FilterJson = JsonSerializer.Serialize(request.Selection.Filter), ApprovedCount = resolved.Records.Count,
             ApprovedTotalsJson = JsonSerializer.Serialize(ReviewQueryService.TotalsByCurrency(resolved.Records)
                 .ToDictionary(p => p.Key, p => p.Value.ToString("0.00", CultureInfo.InvariantCulture))),
-            AcknowledgedActiveCampaignRisk = true, AcknowledgedSharedPhoneCalls = request.AcknowledgeSharedPhoneCalls,
+            AcknowledgedActiveCampaignRisk = true,
             Items = resolved.Records.Select(r => new CollectionsDispatchItem
             {
                 RecordKey = r.RecordKey, ReminderType = r.ReminderType, CompanyId = r.CompanyId, TenantId = r.TenantId, UnitId = r.UnitId,
                 UnitCode = r.UnitCode, CustomerName = r.CustomerName, Phone = r.Phone, Email = r.Email, Amount = r.RemainingAmount!.Value,
-                Currency = r.Currency, DueDate = r.DueDate!.Value, Status = DispatchItemStatus.Approved
+                Currency = r.Currency, DueDate = r.DueDate!.Value, Status = DispatchItemStatus.Approved, VoiceEligible = IsVoiceEligible(r.Phone)
             }).ToList()
         };
         if (!await store.TryAddDispatchAsync(dispatch, ct))
@@ -137,26 +141,67 @@ public sealed class DispatchService(
         var owner = Guid.NewGuid();
         if (!await store.TryAcquireLeaseAsync(dispatchId, owner, clock.UtcNow, LeaseTtl, ct))
         {
-            logger.LogInformation("Dispatch {DispatchId} is finished or being processed by another worker; skipping.", dispatchId);
+            logger.LogInformation("Dispatch {DispatchId} is finished, cancelled or being processed by another worker; skipping.", dispatchId);
             return;
         }
         var dispatch = await store.GetDispatchByIdAsync(dispatchId, ct);
         if (dispatch is null) return;
 
-        if (dispatch.Status == DispatchStatus.Revalidating)
+        try
         {
-            // Configuration may have changed between approval and execution: a disabled integration sends nothing.
-            if (!options.Enabled || !genesys.Enabled)
-            { await StopAsync(dispatch, DispatchStatus.Failed, "Genesys upload is disabled; nothing was sent.", ct); return; }
-            if (!await RevalidateAsync(dispatch, ct)) return;
-            if (!await PlanBatchesAsync(dispatch, ct)) return;
-            dispatch = (await store.GetDispatchByIdAsync(dispatchId, ct))!;
+            if (dispatch.Status == DispatchStatus.Revalidating)
+            {
+                // Configuration may have changed between approval and execution: a disabled integration sends nothing.
+                if (!options.Enabled || !genesys.Enabled || !genesys.LiveCustomerDispatchEnabled || !genesys.SuppressionEnabled)
+                { await StopAsync(dispatch, DispatchStatus.Failed, "Customer dispatch or its suppression sweep is disabled; nothing was sent.", ct); return; }
+                if (!await RevalidateAsync(dispatch, owner, ct)) return;
+                if (!await PlanBatchesAsync(dispatch, ct)) return;
+                dispatch = (await store.GetDispatchByIdAsync(dispatchId, ct))!;
+            }
+            if (dispatch.Status == DispatchStatus.Sending) await SendAsync(dispatch, owner, ct);
         }
-        if (dispatch.Status == DispatchStatus.Sending) await SendAsync(dispatch, owner, ct);
+        catch (LeaseLostException)
+        {
+            // Another worker owns the dispatch now (this one stalled past the lease). It must not write anything more.
+            logger.LogWarning("Dispatch {DispatchId} lost its lease; this worker stopped without writing further changes.", dispatchId);
+        }
+    }
+
+    private sealed class LeaseLostException : Exception;
+
+    /// <summary>
+    /// Runs slow, database-free work (the PACT reads) while renewing the lease on a timer, so a read that outlasts the lease cannot let a second worker
+    /// start. The timer only touches the store while the work awaits the source, and is stopped (awaited) before the caller uses the store again.
+    /// If the lease cannot be renewed the work is cancelled and <see cref="LeaseLostException"/> is thrown.
+    /// </summary>
+    private async Task<T> WithLeaseHeartbeatAsync<T>(long dispatchId, Guid owner, Func<CancellationToken, Task<T>> work, CancellationToken ct)
+    {
+        using var lost = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var stop = new CancellationTokenSource();
+        var interval = TimeSpan.FromSeconds(Math.Clamp(genesys.LeaseHeartbeatSeconds, 0.01, LeaseTtl.TotalSeconds / 2));
+        var beat = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    await Task.Delay(interval, stop.Token);
+                    if (!await store.RenewLeaseAsync(dispatchId, owner, clock.UtcNow, LeaseTtl, CancellationToken.None)) { await lost.CancelAsync(); return; }
+                }
+            }
+            catch (OperationCanceledException) { /* stopped */ }
+        }, CancellationToken.None);
+        try { return await work(lost.Token); }
+        catch (OperationCanceledException) when (lost.IsCancellationRequested && !ct.IsCancellationRequested) { throw new LeaseLostException(); }
+        finally
+        {
+            await stop.CancelAsync();
+            await beat;
+        }
     }
 
     /// <summary>Re-reads current balances. Settled records are excluded; any other change sends the whole list back for review.</summary>
-    private async Task<bool> RevalidateAsync(CollectionsDispatch dispatch, CancellationToken ct)
+    private async Task<bool> RevalidateAsync(CollectionsDispatch dispatch, Guid owner, CancellationToken ct)
     {
         var items = (await store.GetItemsAsync(dispatch.CollectionsDispatchId, ct)).Where(i => i.Status == DispatchItemStatus.Approved).ToList();
         var asOf = clock.BusinessDate;
@@ -164,25 +209,22 @@ public sealed class DispatchService(
         var run = await store.GetRunAsync(dispatch.ReviewRunId, ct);
         if (run is null || run.AsOfDate.Year != asOf.Year || run.AsOfDate.Month != asOf.Month)
             return await StopAsync(dispatch, DispatchStatus.ReviewRequired, "The business month changed since approval. Nothing was sent; review the current list and approve again.", ct);
-        var from = items.Min(i => i.DueDate);
-        var to = new DateOnly(asOf.Year, asOf.Month, DateTime.DaysInMonth(asOf.Year, asOf.Month));
-        var current = new Dictionary<string, CollectionsReviewRecord>(StringComparer.Ordinal);
+
+        var companies = items.Select(i => i.CompanyId).Distinct().Order().ToList();
+        await store.SetDispatchPhaseAsync(dispatch.CollectionsDispatchId, $"Checking current balances (company {string.Join(" and ", companies)}); this can take several minutes", ct);
+        CurrentBalanceReader.Result read;
         try
         {
-            using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
-            foreach (var company in items.Select(i => i.CompanyId).Distinct())
-            {
-                var snapshot = await source.ReadAsync(new PactReceivablesRequest(from < DateOnly.FromDateTime(sourceOptions.StartDate)
-                    ? from : DateOnly.FromDateTime(sourceOptions.StartDate), to, company), budget.Token);
-                var built = ReviewRecordBuilder.Build(snapshot.Items, refresh.Context(asOf, snapshot.ReadAtUtc));
-                foreach (var record in built.Records) current[record.RecordKey] = record;
-            }
+            read = await WithLeaseHeartbeatAsync(dispatch.CollectionsDispatchId, owner, token => balances.ReadAsync(companies, [asOf], token), ct);
         }
         catch (Exception ex) when ((ex is OperationCanceledException && !ct.IsCancellationRequested) || ex is PactReceivablesSourceException or DbException)
         {
             return await StopAsync(dispatch, DispatchStatus.Failed, "Current balances could not be read, so nothing was sent. Start the send again later.", ct);
         }
+        // The lease may have been lost between the last heartbeat and now; do not write on someone else's dispatch.
+        if (!await store.RenewLeaseAsync(dispatch.CollectionsDispatchId, owner, clock.UtcNow, LeaseTtl, ct)) throw new LeaseLostException();
+        await store.SetRevalidationMsAsync(dispatch.CollectionsDispatchId, read.ElapsedMs, ct);
+        var current = read.ByAsOfDate[asOf];
 
         var settled = new List<CollectionsDispatchItem>();
         var changed = 0;
@@ -211,7 +253,7 @@ public sealed class DispatchService(
         {
             dispatch.Status = DispatchStatus.Completed; dispatch.CompletedAtUtc = clock.UtcNow; dispatch.StartedAtUtc ??= clock.UtcNow;
             dispatch.StatusReason = "Every approved record was paid or settled before sending; nothing was uploaded.";
-            dispatch.LeaseOwner = null; dispatch.LeaseExpiresAtUtc = null;
+            dispatch.Phase = "Finished"; dispatch.LeaseOwner = null; dispatch.LeaseExpiresAtUtc = null;
             await store.UpdateDispatchAsync(dispatch, ct);
             return false;
         }
@@ -220,7 +262,7 @@ public sealed class DispatchService(
 
     private async Task<bool> StopAsync(CollectionsDispatch dispatch, DispatchStatus status, string reason, CancellationToken ct, int? excluded = null)
     {
-        dispatch.Status = status; dispatch.StatusReason = reason; dispatch.CompletedAtUtc = clock.UtcNow;
+        dispatch.Status = status; dispatch.StatusReason = reason; dispatch.CompletedAtUtc = clock.UtcNow; dispatch.Phase = "Finished";
         dispatch.LeaseOwner = null; dispatch.LeaseExpiresAtUtc = null;
         if (excluded is { } e) dispatch.ExcludedAtDispatchCount = e;
         await store.UpdateDispatchAsync(dispatch, ct);
@@ -231,7 +273,20 @@ public sealed class DispatchService(
     /// <summary>Splits the surviving records into one batch list per reminder type, at most BatchSize per request, and stores the plan before any upload.</summary>
     private async Task<bool> PlanBatchesAsync(CollectionsDispatch dispatch, CancellationToken ct)
     {
-        var items = (await store.GetItemsAsync(dispatch.CollectionsDispatchId, ct)).Where(i => i.Status == DispatchItemStatus.Approved).ToList();
+        var all = (await store.GetItemsAsync(dispatch.CollectionsDispatchId, ct)).Where(i => i.Status == DispatchItemStatus.Approved).ToList();
+        // callable is set only for approved voice-eligible contacts; anything else is never uploaded.
+        var ineligible = all.Where(i => !i.VoiceEligible || !IsVoiceEligible(i.Phone)).ToList();
+        foreach (var item in ineligible) { item.Status = DispatchItemStatus.Excluded; item.StatusReason = "Not voice eligible: no valid international phone number"; }
+        if (ineligible.Count > 0) await store.UpdateItemsAsync(ineligible, ct);
+        var items = all.Except(ineligible).ToList();
+        if (items.Count == 0)
+        {
+            dispatch.Status = DispatchStatus.Completed; dispatch.CompletedAtUtc = clock.UtcNow; dispatch.Phase = "Finished";
+            dispatch.StatusReason = "No approved record was voice eligible; nothing was uploaded.";
+            dispatch.LeaseOwner = null; dispatch.LeaseExpiresAtUtc = null;
+            await store.UpdateDispatchAsync(dispatch, ct);
+            return false;
+        }
         var batchSize = genesys.EffectiveBatchSize;
         var batches = new List<CollectionsGenesysBatch>();
         var plan = new List<(CollectionsGenesysBatch Batch, List<CollectionsDispatchItem> Items)>();
@@ -254,7 +309,7 @@ public sealed class DispatchService(
         foreach (var (batch, slice) in plan)
             for (var i = 0; i < slice.Count; i++) { slice[i].CollectionsGenesysBatchId = batch.CollectionsGenesysBatchId; slice[i].BatchPosition = i; }
         await store.UpdateItemsAsync(items, ct);
-        dispatch.Status = DispatchStatus.Sending; dispatch.StartedAtUtc = clock.UtcNow;
+        dispatch.Status = DispatchStatus.Sending; dispatch.StartedAtUtc = clock.UtcNow; dispatch.Phase = $"Uploading {batches.Count} batch(es)";
         await store.UpdateDispatchAsync(dispatch, ct);
         return true;
     }
@@ -265,6 +320,7 @@ public sealed class DispatchService(
         {
             if (!await store.RenewLeaseAsync(dispatch.CollectionsDispatchId, owner, clock.UtcNow, LeaseTtl, ct))
             { logger.LogWarning("Dispatch {DispatchId} lost its lease; stopping.", dispatch.CollectionsDispatchId); return; }
+            await store.SetDispatchPhaseAsync(dispatch.CollectionsDispatchId, $"Uploading batch {planned.Sequence} of {dispatch.Batches.Count}", ct);
             var batch = await store.GetBatchAsync(planned.CollectionsGenesysBatchId, ct);
             if (batch is null) continue;
             if (batch.Status == GenesysBatchStatus.Submitting)
@@ -289,7 +345,7 @@ public sealed class DispatchService(
         final.Status = allUploaded ? DispatchStatus.Completed : DispatchStatus.CompletedWithErrors;
         final.StatusReason = allUploaded ? "All approved contacts were uploaded to Genesys. No call or message has been confirmed."
             : "Some batches failed or have an unconfirmed outcome. Unconfirmed batches must be reconciled in Genesys before anything is re-sent.";
-        final.CompletedAtUtc = clock.UtcNow; final.LeaseOwner = null; final.LeaseExpiresAtUtc = null;
+        final.CompletedAtUtc = clock.UtcNow; final.Phase = "Finished"; final.LeaseOwner = null; final.LeaseExpiresAtUtc = null;
         await store.UpdateDispatchAsync(final, ct);
     }
 
@@ -346,12 +402,32 @@ public sealed class DispatchService(
         await store.UpdateItemsAsync(items, ct);
     }
 
-    /// <summary>The exact contact object posted to Genesys: the list id, the six data fields as strings, and callable.</summary>
+    /// <summary>The exact contact object posted to Genesys: the list id, the six data fields as strings, and callable (true only for approved voice-eligible contacts).</summary>
     public static GenesysContactPayload ToPayload(CollectionsDispatchItem item, string contactListId, GenesysOutboundOptions settings) => new(
         contactListId, item.Phone, item.CustomerName, item.Email, settings.LabelFor(item.ReminderType),
-        MoneyNormalizer.Format(item.Amount), item.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), Callable: true);
+        MoneyNormalizer.Format(item.Amount), item.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        Callable: item.VoiceEligible && IsVoiceEligible(item.Phone));
+
+    /// <summary>A callable contact needs a valid international (E.164) number.</summary>
+    public static bool IsVoiceEligible(string? phone) => !string.IsNullOrEmpty(phone) && System.Text.RegularExpressions.Regex.IsMatch(phone, @"^\+[1-9]\d{7,14}$");
 
     private static string? Truncate(string? text) => text is { Length: > 400 } ? text[..400] : text;
+
+    // ---------------------------------------------------------------- audit export
+
+    /// <summary>The contacts of a dispatch exactly as sent to Genesys (the six contact-list columns), for comparison with the Genesys list.</summary>
+    public async Task<CollectionsResult<string>> ExportContactsAsync(CollectionsCaller caller, Guid dispatchId, CancellationToken ct)
+    {
+        if (!(await authorization.ResolveAsync(caller, ct)).CanSendReminders)
+            return CollectionsResult<string>.Fail(CollectionsOutcome.Forbidden);
+        var dispatch = await store.GetDispatchAsync(dispatchId, ct);
+        if (dispatch is null) return CollectionsResult<string>.Fail(CollectionsOutcome.NotFound);
+        var lists = dispatch.Batches.ToDictionary(b => b.CollectionsGenesysBatchId, b => b.ContactListId);
+        var sent = dispatch.Items.Where(i => i.CollectionsGenesysBatchId is not null && i.Status != DispatchItemStatus.Excluded && i.Status != DispatchItemStatus.Released)
+            .OrderBy(i => i.CollectionsGenesysBatchId).ThenBy(i => i.BatchPosition)
+            .Select(i => ToPayload(i, lists[i.CollectionsGenesysBatchId!.Value], genesys));
+        return CollectionsResult<string>.Ok(GenesysContactTemplate.WriteCsv(sent));
+    }
 
     // ---------------------------------------------------------------- cancel
 
@@ -413,6 +489,7 @@ public sealed class DispatchService(
         var totals = string.IsNullOrEmpty(d.ApprovedTotalsJson) ? new Dictionary<string, string>()
             : JsonSerializer.Deserialize<Dictionary<string, string>>(d.ApprovedTotalsJson) ?? [];
         int Count(DispatchItemStatus s) => d.Items.Count(i => i.Status == s);
+        int Count2(ContactSuppressionStatus s) => d.Items.Count(i => i.SuppressionStatus == s);
         return new(d.PublicId, d.Status.ToString(), d.StatusReason, d.InitiatedByEmployeeId, d.InitiatedAtUtc, d.StartedAtUtc, d.CompletedAtUtc,
             d.ApprovedCount, Count(DispatchItemStatus.UploadedToGenesys), Count(DispatchItemStatus.Excluded), Count(DispatchItemStatus.Failed),
             Count(DispatchItemStatus.UnknownOutcome),
@@ -420,6 +497,7 @@ public sealed class DispatchService(
             d.Batches.OrderBy(b => b.Sequence).Select(b => new DispatchBatchDto(b.CollectionsGenesysBatchId, b.ReminderType.ToString(), b.ContactListId,
                 b.Sequence, b.ContactCount, b.Status.ToString(), b.AttemptCount, b.HttpStatus, b.ReturnedContactCount, b.Error, b.StartedAtUtc,
                 b.CompletedAtUtc, b.ReconciledAtUtc, b.ReconciliationNote)).ToList(),
-            UploadDisclaimer);
+            UploadDisclaimer, d.Phase, d.RevalidationMs, Count2(ContactSuppressionStatus.Suppressed), Count2(ContactSuppressionStatus.Failed),
+            d.Items.Count(i => i.Status == DispatchItemStatus.UploadedToGenesys && string.IsNullOrEmpty(i.GenesysContactId)));
     }
 }

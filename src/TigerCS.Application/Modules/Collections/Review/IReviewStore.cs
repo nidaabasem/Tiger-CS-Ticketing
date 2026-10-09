@@ -13,6 +13,15 @@ public sealed record ReviewRecordView(
         : Record.ValidationStatus;
 }
 
+public sealed record UploadedContactView(CollectionsDispatchItem Item, string ContactListId);
+
+public sealed record OverlapRow(string Phone, int CompanyId, string TenantId, string CustomerName, string UnitCode, string ReminderType,
+    decimal? RemainingAmount, string Currency, string Reasons);
+
+public sealed record OverlapGroup(string Phone, IReadOnlyList<OverlapRow> Rows);
+
+public sealed record OverlapPage(int TotalGroups, IReadOnlyList<OverlapGroup> Groups);
+
 public sealed record StoredPage(IReadOnlyList<ReviewRecordView> Items, int TotalCount);
 
 /// <summary>Persistence port of the review and dispatch workflow. Implemented over EF Core; every filter, count and page runs in the database.</summary>
@@ -60,6 +69,12 @@ public interface IReviewStore
     Task UpdateBatchAsync(CollectionsGenesysBatch batch, CancellationToken ct);
     Task<IReadOnlyList<CollectionsDispatchItem>> GetBatchItemsAsync(long batchId, CancellationToken ct);
     Task<IReadOnlyList<CollectionsDispatchItem>> GetItemsAsync(long dispatchId, CancellationToken ct);
+    /// <summary>Uploaded contacts (with a Genesys id) uploaded since <paramref name="sinceUtc"/> that are not yet suppressed, oldest check first.</summary>
+    Task<IReadOnlyList<UploadedContactView>> GetSuppressionCandidatesAsync(DateTime sinceUtc, int take, CancellationToken ct);
+    Task SetDispatchPhaseAsync(long dispatchId, string phase, CancellationToken ct);
+    Task SetRevalidationMsAsync(long dispatchId, long ms, CancellationToken ct);
+    /// <summary>Groups of records that share a phone across units or overlap reminder types today (blocked from dispatch).</summary>
+    Task<OverlapPage> GetOverlapsAsync(long runId, int skip, int take, CancellationToken ct);
     Task UpdateItemsAsync(IReadOnlyCollection<CollectionsDispatchItem> items, CancellationToken ct);
 }
 
@@ -68,6 +83,7 @@ public interface IReviewJobScheduler
 {
     void EnqueueRefresh(long runId);
     void EnqueueDispatch(long dispatchId);
+    void EnqueueSuppressionSweep();
 }
 
 public enum GenesysUploadOutcome
@@ -85,8 +101,21 @@ public sealed record GenesysContactPayload(string ContactListId, string Phone, s
 
 public sealed record GenesysUploadResult(GenesysUploadOutcome Outcome, int? HttpStatus, IReadOnlyList<string> ContactIds, string? Error);
 
+/// <param name="Outcome">Accepted, Rejected (certainly unchanged) or Unknown.</param>
+/// <param name="HttpStatus">The HTTP status, when a response arrived.</param>
+/// <param name="Error">A safe description; never a token or response body.</param>
+/// <param name="CallableAfter">What Genesys reports for the contact after the update; the update only counts when this is false.</param>
+/// <param name="ContactMissing">Genesys answered 404: the contact no longer exists, so it cannot be dialled.</param>
+public sealed record GenesysSuppressResult(GenesysUploadOutcome Outcome, int? HttpStatus, bool? CallableAfter, bool ContactMissing, string? Error);
+
 public interface IGenesysOutboundClient
 {
+    /// <summary>
+    /// PUT /api/v2/outbound/contactlists/{contactListId}/contacts/{contactId} with callable=false and the contact's original data
+    /// (the documented "Update a contact" operation; DELETE only removes contacts not in use by a campaign, so it is not relied on).
+    /// </summary>
+    Task<GenesysSuppressResult> SetNotCallableAsync(string contactListId, string contactId, GenesysContactPayload contact, CancellationToken ct);
+
     /// <summary>POST /api/v2/outbound/contactlists/{contactListId}/contacts for exactly one list and at most 1,000 contacts.</summary>
     Task<GenesysUploadResult> UploadContactsAsync(string contactListId, IReadOnlyList<GenesysContactPayload> contacts, CancellationToken ct);
 }

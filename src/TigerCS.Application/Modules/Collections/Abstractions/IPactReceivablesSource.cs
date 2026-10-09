@@ -23,7 +23,7 @@ public sealed record PactReceivableInstalment(
     int CompanyId, string TenantId, string FullName, string Mobile, string Email,
     int? UnitId, string UnitCode, string ProjectCode, string VoucherNumber,
     string ChequeNumber, DateTime DueDate, decimal Amount, string SourceStatus,
-    decimal? PlanAmount = null, bool AmountIsFloatingPoint = false);
+    decimal? PlanAmount = null, bool AmountIsFloatingPoint = false, decimal? AllocatedAmount = null);
 
 public sealed record PactReceivablesSnapshot(
     IReadOnlyList<PactReceivableInstalment> Items,

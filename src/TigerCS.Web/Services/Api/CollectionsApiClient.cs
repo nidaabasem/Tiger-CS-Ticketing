@@ -62,6 +62,20 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         PostAsync<ConfirmDispatchRequest, DispatchDto>($"{ReviewBase}/dispatches", request,
             new Dictionary<string, string> { ["Idempotency-Key"] = request.IdempotencyKey }, cancellationToken);
 
+    public Task<ApiResult<OverlapPageDto>> GetOverlapsAsync(int page, CancellationToken cancellationToken) =>
+        GetAsync<OverlapPageDto>($"{ReviewBase}/overlaps?page={Id(page)}&pageSize=25", cancellationToken);
+
+    /// <summary>The CSV of the contacts of one send, exactly as uploaded; null when the Api refuses or is unreachable.</summary>
+    public async Task<byte[]?> GetDispatchContactsCsvAsync(Guid dispatchId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await Http.GetAsync($"{ReviewBase}/dispatches/{dispatchId:D}/contacts", cancellationToken);
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(cancellationToken) : null;
+        }
+        catch (HttpRequestException) { return null; }
+    }
+
     public Task<ApiResult<DispatchDto>> GetDispatchAsync(Guid dispatchId, CancellationToken cancellationToken) =>
         GetAsync<DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}", cancellationToken);
 
