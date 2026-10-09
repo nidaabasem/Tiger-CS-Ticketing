@@ -9,6 +9,21 @@ public enum CollectionsCampaignStage
     LegalReferral = 5
 }
 
+/// <summary>Unit-level review reasons of a campaign candidate (bit mask). The remaining reasons (stale source, coverage, currency, release gates) do
+/// not depend on the unit and are added by the application.</summary>
+[Flags]
+public enum CollectionsCampaignFlags
+{
+    None = 0,
+    AmbiguousInstalments = 1,
+    AmountPrecisionNeedsReview = 2,
+    MissingUnitIdentity = 4,
+    ConflictingContactDetails = 8,
+    UnitAllocationNeedsReview = 16,
+    ContradictoryPaymentStatus = 32,
+    NoValidContact = 64
+}
+
 public sealed record CampaignInstalment(DateOnly DueDate, decimal RemainingAmount);
 public sealed record CampaignAmount(decimal? Amount, DateOnly? EarliestDueDate, string Reason);
 
@@ -31,21 +46,37 @@ public static class CollectionsCampaignPolicy
         };
     }
 
+    /// <summary>
+    /// The due-date range a stage looks at: instalments due on or after <c>From</c> (null = no lower bound) and before <c>ToExclusive</c>.
+    /// Shared by the in-memory evaluation and the SQL campaign engine so both use one definition.
+    /// </summary>
+    public static (DateOnly? From, DateOnly ToExclusive) StageRange(CollectionsCampaignStage stage, DateOnly businessDate)
+    {
+        if (!Enum.IsDefined(stage)) throw new ArgumentOutOfRangeException(nameof(stage));
+        var monthStart = new DateOnly(businessDate.Year, businessDate.Month, 1);
+        return stage switch
+        {
+            CollectionsCampaignStage.OverdueReminder => (null, businessDate.AddMonths(-1)),
+            CollectionsCampaignStage.LegalNotice => (monthStart.AddMonths(-1), monthStart),
+            CollectionsCampaignStage.LegalReferral => (null, businessDate.AddMonths(-3)),
+            _ => (monthStart, monthStart.AddMonths(1))
+        };
+    }
+
+    /// <summary>A stage amount qualifies when the unit's total remaining stage amount is strictly greater than this.</summary>
+    public static decimal Threshold(CollectionsCampaignStage stage) => stage switch
+    {
+        CollectionsCampaignStage.LegalNotice => 1500m,
+        CollectionsCampaignStage.LegalReferral => 20000m,
+        _ => 0m
+    };
+
     /// <summary>The instalments that count for <paramref name="stage"/> on <paramref name="businessDate"/> (calendar-month conventions).</summary>
     public static IReadOnlyList<CampaignInstalment> Qualifying(IEnumerable<CampaignInstalment> instalments,
         CollectionsCampaignStage stage, DateOnly businessDate)
     {
-        if (!Enum.IsDefined(stage)) throw new ArgumentOutOfRangeException(nameof(stage));
-        var monthStart = new DateOnly(businessDate.Year, businessDate.Month, 1);
-        var monthEnd = monthStart.AddMonths(1);
-        var previousMonthStart = monthStart.AddMonths(-1);
-        return instalments.Where(i => i.RemainingAmount > 0 && (stage switch
-        {
-            CollectionsCampaignStage.OverdueReminder => i.DueDate < businessDate.AddMonths(-1),
-            CollectionsCampaignStage.LegalNotice => i.DueDate >= previousMonthStart && i.DueDate < monthStart,
-            CollectionsCampaignStage.LegalReferral => i.DueDate < businessDate.AddMonths(-3),
-            _ => i.DueDate >= monthStart && i.DueDate < monthEnd
-        })).ToList();
+        var (from, toExclusive) = StageRange(stage, businessDate);
+        return instalments.Where(i => i.RemainingAmount > 0 && (from is null || i.DueDate >= from) && i.DueDate < toExclusive).ToList();
     }
 
     public static CampaignAmount Evaluate(IEnumerable<CampaignInstalment> instalments,
@@ -58,13 +89,7 @@ public static class CollectionsCampaignPolicy
         if (rows.GroupBy(i => i.DueDate).Any(g => g.Count() > 1))
             return new(null, earliest, "AmbiguousInstalments");
         var amount = rows.Sum(i => i.RemainingAmount);
-        var qualifies = stage switch
-        {
-            CollectionsCampaignStage.LegalNotice => amount > 1500m,
-            CollectionsCampaignStage.LegalReferral => amount > 20000m,
-            _ => amount > 0m
-        };
-        return new(amount, earliest, qualifies ? "Qualifies" : "BelowThreshold");
+        return new(amount, earliest, amount > Threshold(stage) ? "Qualifies" : "BelowThreshold");
     }
 
     /// <summary>Default "To" of the due-date window: month end for the whole-month stages, otherwise the preview date.</summary>

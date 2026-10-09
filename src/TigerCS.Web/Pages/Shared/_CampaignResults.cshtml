@@ -1,0 +1,71 @@
+@using TigerCS.Web.Pages.Collections
+@using TigerCS.Web.Services.Api
+@model CampaignsModel
+@if (Model.LoadNotice is { } notice) { <div class="receivables-notice" role="status" data-load-notice>@notice</div> }
+@if (Model.Report is { } report)
+{
+    <div hidden data-effective-filters data-from="@report.DateFrom?.ToString("yyyy-MM-dd")" data-to="@report.DateTo?.ToString("yyyy-MM-dd")"></div>
+    <div class="panel">
+        @if (report.Snapshot is { } snapshot) { <partial name="_SnapshotStatus" model="snapshot" /> }
+        <div class="campaign-summary">
+            <p><strong>@report.TotalCount units</strong> · @report.ReadyCount ready · @report.ReviewCount need review</p>
+            <p>Scheduled: @string.Join(", ", report.ScheduledDates.Select(d => d.ToString("dd MMM yyyy"))) · Data refreshed: @(report.Snapshot?.OldestSuccessUtc is { } read ? CollectionsDisplay.DubaiTime(read) : "not loaded")</p>
+            <p>Instalments due @report.DateFrom?.ToString("dd MMM yyyy") to @report.DateTo?.ToString("dd MMM yyyy"), remaining unpaid amount at least AED @report.MinAmount.ToString("0.##"). The defaults are the configured receivables start date to the preview date (month end for current-month and follow-up); both dates can be edited and To includes its whole day. Preview date (@report.BusinessDate.ToString("dd MMM yyyy")) only decides stage eligibility and schedule.</p>
+            @foreach (var note in report.RangeNotes ?? []) { <p role="status">@note</p> }
+            <p>Amounts use current remaining balances of unpaid instalments. A different preview date changes eligibility, not the payment history. Source: the local snapshot of PACT companies 4 and 32.</p>
+            @if (!report.FinancialSourceValidated)
+            { <p role="status">Review the financial source against PACT before exporting a list for a customer campaign.</p> }
+            @if (report.LegacyExclusionsApplied)
+            { <p role="status">Legacy exclusions are active; this list does not contain every receivable.</p> }
+            @if (report.Stage == "LegalReferral")
+            { <p><strong>Internal Legal review only.</strong> These records are not a customer contact campaign.</p> }
+            @if (report.CanExportReview && report.Snapshot is { IsReady: false })
+            {
+                <p role="alert" data-export-blocked><strong>Export is disabled:</strong> the receivables data must be fresh (maximum age @report.Snapshot.MaxAgeMinutes minutes), every company in scope loaded, and the whole From/To range covered. @report.Snapshot.ReadyProblem</p>
+            }
+            else if (report.CanExportReview)
+            {
+                <a class="btn" href="@Model.PageUrl(export: "review")">Export review CSV</a>
+                @if (report.TotalCount > 0 && report.ReadyCount == report.TotalCount)
+                { <a class="btn btn-primary" href="@Model.PageUrl(export: "genesys")">Export Genesys CSV</a> }
+                <p>Exports contain exactly the units matching the filters above (all pages, same minimum amount), from the data refreshed at the time shown, and are refused if that data is stale.</p>
+            }
+        </div>
+        <div class="table-scroll">
+            <table class="table receivables-table">
+                <thead><tr><th>Customer</th><th>Tower / unit</th><th>Contact</th><th>Qualifying balance</th><th>Earliest unpaid due date</th><th>Status</th></tr></thead>
+                <tbody>
+                @foreach (var row in report.Items)
+                {
+                    <tr>
+                        <td><strong>@row.CustomerName</strong><br />Customer ID @row.TenantId · Company @row.CompanyId</td>
+                        <td>@row.UnitCode<br />@(row.TowerNumber is null ? row.ProjectCode : $"Tower {row.TowerNumber}" + (string.IsNullOrWhiteSpace(row.TowerName) ? " (not in tower list)" : " - " + row.TowerName))</td>
+                        <td>@row.Phone<br />@row.Email</td>
+                        <td>@row.Currency @ReceivablesModel.Money(row.Amount)</td>
+                        <td>@row.DueDate?.ToString("dd MMM yyyy")</td>
+                        <td><strong>@(row.Status switch { "NeedsReview" => "Needs review", "PreviewOnly" => "Preview only", "InternalReview" => "Internal review", _ => row.Status })</strong><br />@CampaignsModel.Reason(row.Reason)</td>
+                    </tr>
+                }
+                @if (report.TotalCount == 0)
+                { <tr><td colspan="6">@(report.Snapshot is { RangeCovered: false } ? "No units in the loaded data - the selected dates are not fully loaded, so this is not \"no units\"." : "No units qualify for this stage and these filters.")</td></tr> }
+                </tbody>
+            </table>
+        </div>
+        <div class="receivables-pagination">
+            <span>Page @report.Page of @Model.TotalPages</span>
+            <div>
+                @if (report.Page > 1) { <a class="btn btn-sm" data-results-link href="@Model.PageUrl(report.Page - 1)">Previous</a> }
+                @if (report.Page < Model.TotalPages) { <a class="btn btn-sm" data-results-link href="@Model.PageUrl(report.Page + 1)">Next</a> }
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="panel"><div class="error-state" role="alert" data-campaign-error>
+        @if (Model.Outcome == ApiOutcome.Forbidden) { <p>Your account does not have permission for this Collections operation.</p> }
+        else if (Model.Outcome == ApiOutcome.Unauthorized) { <p>Your session has expired. <a href="/Logout">Sign in again</a>.</p> }
+        else if (Model.Outcome == ApiOutcome.ValidationError) { <p>@(Model.Error ?? "Choose valid filters and retry.")</p> }
+        else { <p>@(Model.Error ?? "The campaign source is unavailable.") The list could not be loaded; this is not an empty result.</p><button class="btn" type="button" data-results-retry>Retry</button> }
+    </div></div>
+}

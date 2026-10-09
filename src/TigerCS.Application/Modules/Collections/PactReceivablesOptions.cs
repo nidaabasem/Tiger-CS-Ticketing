@@ -23,6 +23,13 @@ public sealed class PactReceivablesOptions
     public DateTime StartDate { get; set; } = new(2026, 1, 1);
     public int MaxSourceRows { get; set; } = 250000;
     public string Currency { get; set; } = "AED";
+    /// <summary>
+    /// Default of the "Minimum outstanding amount (AED)" filter when a request does not carry one. An instalment is shown only when its
+    /// remaining unpaid Amount is &gt;= this value. Display filter only: the snapshot always holds every positive balance.
+    /// </summary>
+    public decimal DefaultMinOutstandingAmount { get; set; } = 100m;
+    /// <summary>Upper bound accepted for the filter (sanity check).</summary>
+    public decimal MaxMinOutstandingAmount { get; set; } = 1_000_000_000m;
     /// <summary>Off by default: the list shows every apartment with a positive due or overdue amount.</summary>
     public bool ApplyLegacyExclusions { get; set; }
     /// <summary>Lower bound of the legacy booking/down-payment CRM query; required only when legacy exclusions are on.</summary>

@@ -19,13 +19,39 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
 
     public Task<ApiResult<CollectionsCampaignPreviewDto>> GetCampaignPreviewAsync(string stage, DateOnly? businessDate,
         int? companyId, string? search, int page, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
-        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&page={Id(page)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null) =>
+        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minAmount)}&page={Id(page)}", cancellationToken);
 
     public Task<ApiResult<CollectionsCampaignExportDto>> GetCampaignExportAsync(string stage, string mode,
         DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null) =>
-        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null) =>
+        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minAmount)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+
+    /// <summary>Instalment-level list from the local snapshot (the Receivables page).</summary>
+    public Task<ApiResult<PactInstalmentsPageDto>> GetInstalmentsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, string? paymentStatus, decimal? minAmount,
+        string? search, int page, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
+        if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(paymentStatus)) query["paymentStatus"] = paymentStatus;
+        if (minAmount is { } minimum) query["minAmount"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
+        query["page"] = Id(page);
+        query["pageSize"] = "25";
+        return GetAsync<PactInstalmentsPageDto>($"{Base}/receivables/instalments?{query}", cancellationToken);
+    }
+
+    /// <summary>Asks the API to load a due-date range the snapshot does not cover (background; returns immediately).</summary>
+    public Task<ApiResult<ReceivablesRangeLoadDto>> RequestCoverageLoadAsync(DateOnly from, DateOnly to, CancellationToken cancellationToken) =>
+        PostAsync<object, ReceivablesRangeLoadDto>(
+            $"{Base}/receivables/coverage/load?dateFrom={from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}&dateTo={to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}",
+            new { }, cancellationToken);
+
+    /// <summary>Active towers for the searchable tower dropdown (local table; no PACT call).</summary>
+    public Task<ApiResult<List<CollectionsTowerDto>>> GetTowersAsync(CancellationToken cancellationToken) =>
+        GetAsync<List<CollectionsTowerDto>>($"{Base}/receivables/towers", cancellationToken);
 
     // ---- review and approval (stored review data; the page never reads the financial source)
 
@@ -83,10 +109,12 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         PostAsync<ReconcileBatchRequest, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/batches/{batchId.ToString(CultureInfo.InvariantCulture)}/reconcile", request, cancellationToken);
 
     private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null)
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         query["stage"] = stage;
+        if (minAmount is { } minimum) query["minAmount"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
         if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (businessDate is { } date) query["businessDate"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -96,9 +124,13 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
     }
 
     public Task<ApiResult<PactReceivableCustomersDto>> GetReceivableCustomersAsync(
-        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null)
+        int? companyId, string? status, string? search, int page, CancellationToken cancellationToken, int? year = null, int? month = null,
+        int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
+        if (towerId is { } tower) query["towerId"] = Id(tower);
+        if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (year is { } y) query["year"] = Id(y);
         if (month is { } m) query["month"] = Id(m);
         if (companyId is { } company) query["companyId"] = Id(company);

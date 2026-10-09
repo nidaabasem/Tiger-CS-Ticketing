@@ -277,6 +277,11 @@ using (var backgroundJobScope = app.Services.CreateScope())
         backgroundJobOptions,
         backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.CollectionsOptions>());
 
+    // Collections PACT receivables snapshot refresh (Due & Overdue page, Campaigns). SQL Server Agent is not used.
+    app.Services.UseTigerCsRecurringCollectionsReceivablesRefresh(
+        backgroundJobOptions,
+        backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions>());
+
     // Paid-after-upload suppression of Genesys contacts — registered only while upload and suppression are both enabled.
     app.Services.UseTigerCsRecurringGenesysSuppression(
         backgroundJobOptions,

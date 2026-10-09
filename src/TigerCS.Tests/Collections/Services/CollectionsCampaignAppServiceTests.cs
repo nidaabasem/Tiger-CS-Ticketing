@@ -20,6 +20,11 @@ public sealed class CollectionsCampaignAppServiceTests
         public DateTime ReadAt { get; set; } = Now;
         public Exception? Failure { get; set; }
         public PactReceivablesRequest? LastRequest { get; private set; }
+        /// <summary>Every request, in order.</summary>
+        public List<PactReceivablesRequest> Requests { get; } = [];
+        /// <summary>When set, the source behaves like the local snapshot: it honours MinAmount and reports this status (freshness / coverage).</summary>
+        public TigerCS.Application.Modules.Collections.Dto.SnapshotStatusDto? Snapshot { get; set; }
+        public bool HonourMinAmount { get; set; }
         public TimeSpan Delay { get; set; }
         /// <summary>Runs at the start of every read (before the delay), e.g. to advance a clock or touch the database while a read is in flight.</summary>
         public Func<CancellationToken, Task>? OnRead { get; set; }
@@ -28,15 +33,16 @@ public sealed class CollectionsCampaignAppServiceTests
 
         public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
         {
-            Interlocked.Increment(ref _reads); LastRequest = request;
+            Interlocked.Increment(ref _reads); LastRequest = request; lock (Requests) Requests.Add(request);
             if (OnRead is not null) await OnRead(cancellationToken);
             if (Delay > TimeSpan.Zero) await Task.Delay(Delay, cancellationToken);
             if (Failure is not null) throw Failure;
             // Mimic the SQL source: only the requested window and company are returned.
             var rows = Items.Where(r => DateOnly.FromDateTime(r.DueDate) >= (request.FromDate ?? DateOnly.MinValue)
                 && DateOnly.FromDateTime(r.DueDate) <= request.ThroughDate
-                && (request.CompanyId is null || r.CompanyId == request.CompanyId)).ToList();
-            return new PactReceivablesSnapshot(rows, ReadAt, false);
+                && (request.CompanyId is null || r.CompanyId == request.CompanyId)
+                && (!HonourMinAmount || (r.Amount > 0 && r.Amount >= request.MinAmount))).ToList();
+            return new PactReceivablesSnapshot(rows, ReadAt, false, Snapshot);
         }
     }
 
@@ -44,7 +50,7 @@ public sealed class CollectionsCampaignAppServiceTests
     {
         public Source Source { get; } = new();
         public CollectionsOptions Options { get; } = new() { Enabled = true };
-        public PactReceivablesOptions Sql { get; } = new() { Enabled = true };
+        public PactReceivablesOptions Sql { get; } = new() { Enabled = true, DefaultMinOutstandingAmount = 0m };
         public CollectionsCampaignOptions Campaign { get; } = new();
         public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
         public CollectionsCaller Agent { get; } = new(Guid.NewGuid(), [Roles.CsAgent], []);

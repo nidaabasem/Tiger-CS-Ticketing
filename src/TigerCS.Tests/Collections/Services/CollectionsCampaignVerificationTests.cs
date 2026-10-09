@@ -66,8 +66,8 @@ public sealed class CollectionsCampaignVerificationTests
         var result = await list.ListAsync(h.Manager);
 
         Assert.True(result.IsSuccess, result.Detail);
-        // FromDate null = "the source applies PactReceivablesOptions.StartDate" (PactSqlReceivablesSource: request.FromDate ?? options.StartDate).
-        Assert.Null(h.Source.LastRequest!.FromDate);
+        // The default lower bound is PactReceivablesOptions.StartDate (the same value the source applies to a null FromDate), never an own calendar date.
+        Assert.Equal(DateOnly.FromDateTime(h.Sql.StartDate), h.Source.LastRequest!.FromDate);
     }
 
     [Fact]

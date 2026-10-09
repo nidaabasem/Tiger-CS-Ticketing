@@ -129,7 +129,7 @@ public sealed class PactSqlReceivablesSource(
                 rows.Add(new PactReceivableInstalment(rowCompany, Text("TenantID"), Text("FullName"), Text("Mobile"), Text("Email"),
                     reader.IsDBNull(columns["UnitID"]) ? null : Convert.ToInt32(reader.GetValue(columns["UnitID"]), CultureInfo.InvariantCulture),
                     Text("UnitCode"), Text("ProjectCode"), Text("VoucherNumber"), Text("ChequeNumber"),
-                    reader.GetDateTime(columns["DueDate"]), amount, Text("Status"), plan, amountIsFloat, allocated));
+                    reader.GetDateTime(columns["DueDate"]), amount, Text("Status"), PlanAmount: plan, AmountIsFloatingPoint: amountIsFloat, AllocatedAmount: allocated));
                 if (amount == 0) zeroRows++;
                 if (rows.Count > Math.Clamp(options.MaxSourceRows, 1, 1000000))
                     throw new PactReceivablesSourceException("The PACT report exceeded the configured source-row limit; no partial list was returned.");

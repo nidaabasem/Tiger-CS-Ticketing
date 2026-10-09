@@ -77,7 +77,11 @@ public sealed class ReviewRefreshService(
         try
         {
             await store.UpdateRunProgressAsync(runId, "Reading the financial source", 5, null, ct);
-            var snapshot = await source.ReadAsync(new PactReceivablesRequest(run.DueFrom, run.DueTo, run.CompanyId), budget.Token);
+            var snapshot = await source.ReadAsync(new PactReceivablesRequest(run.DueFrom, run.DueTo, run.CompanyId, MinAmount: decimal.Round(sourceOptions.DefaultMinOutstandingAmount, 4)), budget.Token);
+            // Same minimum outstanding amount as the Campaigns preview. A local snapshot that is not loaded or does not cover the window would silently omit
+            // receivables: refuse. (A merely stale snapshot is flagged on every record through its read time, as before.)
+            if (snapshot.Snapshot is { } snapshotStatus && (!snapshotStatus.RangeCovered || snapshotStatus.Companies.Any(c => !c.HasSnapshot)))
+                throw new PactReceivablesSourceException($"Receivables data is not ready. {snapshotStatus.ReadyProblem}");
             await store.UpdateRunProgressAsync(runId, "Validating records", 45, snapshot.Items.Count, ct);
             if (snapshot.Items.Any(r => r.CompanyId is not (4 or 32)))
                 throw new PactReceivablesSourceException("PACT returned a receivable without a valid company identity.");

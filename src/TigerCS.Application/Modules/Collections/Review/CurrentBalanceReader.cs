@@ -15,6 +15,8 @@ namespace TigerCS.Application.Modules.Collections.Review;
 /// window. The window cannot be narrowed safely either: a unit's quoted amount sums every qualifying instalment from the configured start date, and an
 /// older instalment that becomes unpaid again (a reversed cheque) would be missed. So the cost of one revalidation is one full company read, which is
 /// why it runs in the background job with a lease heartbeat. Targeted reads need a new, separately reviewed procedure parameter; none is invented here.</para>
+/// <para><b>Same filters as the preview.</b> The read uses the same minimum outstanding amount (<c>DefaultMinOutstandingAmount</c>, remaining &gt;= value per instalment), the same
+/// configured start date and, with the local snapshot, the same rows as the Campaigns preview and export, and requires the snapshot to be fresh and to cover the window.</para>
 /// </summary>
 public sealed class CurrentBalanceReader(PactReceivablesOptions sourceOptions, IPactReceivablesSource source, ReviewRefreshService refresh,
     ILogger<CurrentBalanceReader> logger)
@@ -31,7 +33,13 @@ public sealed class CurrentBalanceReader(PactReceivablesOptions sourceOptions, I
         budget.CancelAfter(TimeSpan.FromSeconds(sourceOptions.RequestBudgetSeconds));
 
         var snapshots = await Task.WhenAll(companies.Distinct().Select(company =>
-            source.ReadAsync(new PactReceivablesRequest(from, to, company), budget.Token)));
+            source.ReadAsync(new PactReceivablesRequest(from, to, company, MinAmount: decimal.Round(sourceOptions.DefaultMinOutstandingAmount, 4)), budget.Token)));
+
+        // A local snapshot that is stale, not loaded or does not cover the window must never be read as "no balance left": the dispatch would then
+        // treat every approved record as paid. The revalidation fails (nothing is sent) until the snapshot is fresh and complete.
+        foreach (var snapshot in snapshots)
+            if (snapshot.Snapshot is { IsReady: false } status)
+                throw new PactReceivablesSourceException($"Receivables data is not ready. {status.ReadyProblem}");
 
         var byDate = new Dictionary<DateOnly, IReadOnlyDictionary<string, CollectionsReviewRecord>>();
         foreach (var asOf in asOfDates.Distinct())

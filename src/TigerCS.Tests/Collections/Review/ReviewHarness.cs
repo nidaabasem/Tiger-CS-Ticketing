@@ -168,7 +168,7 @@ internal sealed class ReviewHarness : IDisposable
     public static PactReceivableInstalment Row(int n, decimal amount = 500m, int day = 20, string status = "Installment", decimal? plan = null,
         int company = 4, string? mobile = null, string? name = null, string project = "TP140") => new(company, $"T{n:D4}", name ?? $"Customer {n}",
             mobile ?? $"97150{n:D7}", $"c{n}@example.test", 1000 + n, $"TP140-{n}", project, $"INV-{n}", "",
-            new DateTime(2026, 10, day), amount, status, plan ?? amount);
+            new DateTime(2026, 10, day), amount, status, PlanAmount: plan ?? amount);
 
     public SelectionRequest All(ReviewFilter? filter = null) => new(filter ?? new ReviewFilter(), ReviewQueryService.ModeAllMatching);
 
