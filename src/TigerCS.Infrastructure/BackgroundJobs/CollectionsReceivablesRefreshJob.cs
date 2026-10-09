@@ -24,7 +24,7 @@ public sealed class CollectionsReceivablesRefreshJob(IReceivablesRefresher refre
                     company.CompanyId, company.PublishedRows, company.RawRows, company.ExcludedZeroRows, company.ExcludedInvalidUnitRows, company.ExcludedInvalidIdentityRows,
                     company.FetchMs, company.ValidateMs, company.PublishMs);
             else
-                logger.LogWarning("Receivables refresh company {CompanyId} FAILED (error {ErrorNumber}); the previous snapshot is still served.", company.CompanyId, company.ErrorNumber);
+                logger.LogWarning("Receivables refresh company {CompanyId} FAILED (error {ErrorNumber}): {ErrorMessage}. The previous snapshot (if any) is still served.", company.CompanyId, company.ErrorNumber, company.ErrorMessage);
         }
         switch (result.Status)
         {

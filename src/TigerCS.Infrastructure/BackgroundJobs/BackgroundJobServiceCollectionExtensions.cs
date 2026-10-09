@@ -39,6 +39,7 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<CollectionsReminderScheduleJob>();
         services.AddScoped<CollectionsReceivablesRefreshJob>();
         services.AddScoped<CollectionsReceivablesRangeLoadJob>();
+        services.AddScoped<CollectionsReceivablesCompanyRetryJob>();
         services.AddScoped<CollectionsReviewRefreshJob>();
         services.AddScoped<CollectionsDispatchJob>();
         services.AddScoped<CollectionsSuppressionJob>();

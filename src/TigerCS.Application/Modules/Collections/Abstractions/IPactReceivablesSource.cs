@@ -76,6 +76,12 @@ public sealed record ReceivablesRefreshResult(Guid? RunId, string Status, string
 public interface IReceivablesRangeLoader
 {
     Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Re-runs the refresh for ONE company over the standard (wide) window - the "Retry" of a company whose load failed, is stale or never ran. The other company is
+    /// not touched. A loader that cannot do this returns false (nothing started).
+    /// </summary>
+    Task<bool> EnqueueCompanyRefreshAsync(int companyId, CancellationToken cancellationToken) => Task.FromResult(false);
 }
 
 /// <summary>
@@ -109,10 +115,14 @@ public interface IPactInstalmentSource
     Task<PactInstalmentsPage> ReadInstalmentsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken);
 }
 
-/// <remarks>AsOf is the first day of the classification month. PaymentFilter is outstanding, unpaid, partial, paid or all.</remarks>
+/// <remarks>
+/// AsOf is the first day of the classification month, or - when <see cref="ClassifyByDay"/> is set (the By unit view) - TODAY (Dubai): Overdue = due before it,
+/// Due = due on it, Not yet due (Upcoming) = due after it. PaymentFilter is outstanding, unpaid, partial, paid or all. Status (By unit only) keeps the units that have
+/// at least one instalment of that class: overdue, due or upcoming (null = every unit).
+/// </remarks>
 public sealed record PactInstalmentsRequest(
     DateOnly From, DateOnly To, DateOnly AsOf, decimal MinAmount, string PaymentFilter, string? Search, string? PhoneDigits,
-    int Page, int PageSize, int? CompanyId, int? TowerId);
+    int Page, int PageSize, int? CompanyId, int? TowerId, string? Status = null, bool ClassifyByDay = false);
 
 public sealed record PactInstalmentsPage(
     PactInstalmentTotalsDto Totals, IReadOnlyList<PactInstalmentRowDto> Rows, bool Unavailable, SnapshotStatusDto Snapshot, DateTime ReadAtUtc, double SqlMs);
@@ -157,6 +167,18 @@ public interface IPactInstalmentMonthSource
 {
     /// <summary>The request's window and filters, ignoring paging: one row per due-date month.</summary>
     Task<IReadOnlyList<PactInstalmentMonthDto>> ReadInstalmentMonthsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken);
+}
+
+/// <summary>The unit identity used to look up a unit's balances (the same four parts as the By unit grouping).</summary>
+public sealed record PactUnitKey(int CompanyId, string TenantId, long UnitId, string UnitCode);
+
+/// <summary>Everything a unit still owes: <see cref="TotalRemaining"/> over all its unpaid instalments, and <see cref="DueAndOverdue"/> over those due today or earlier (Dubai date).</summary>
+public sealed record PactUnitBalance(decimal TotalRemaining, decimal DueAndOverdue);
+
+/// <summary>Balances of specific units (the Campaigns table shows them next to each unit). Units with no unpaid instalment are simply absent from the result.</summary>
+public interface IPactUnitBalanceSource
+{
+    Task<IReadOnlyDictionary<PactUnitKey, PactUnitBalance>> ReadUnitBalancesAsync(IReadOnlyList<PactUnitKey> units, DateOnly today, CancellationToken cancellationToken);
 }
 
 /// <summary>The Receivables "By unit" view: the instalment filters, grouped per unit (company + customer + unit) in the data store before paging.</summary>

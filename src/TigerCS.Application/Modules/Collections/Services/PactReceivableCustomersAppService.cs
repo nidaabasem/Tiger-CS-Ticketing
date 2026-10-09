@@ -21,7 +21,7 @@ public sealed class PactReceivableCustomersAppService(
     /// it triggers work, not data exposure, and the refresh itself is single-flight (a repeated click cannot start a second load).
     /// </summary>
     public async Task<CollectionsResult<ReceivablesRangeLoadDto>> RequestLoadAsync(
-        CollectionsCaller caller, DateOnly from, DateOnly through, CancellationToken cancellationToken = default)
+        CollectionsCaller caller, DateOnly from, DateOnly through, CancellationToken cancellationToken = default, int? companyId = null)
     {
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
             return CollectionsResult<ReceivablesRangeLoadDto>.Fail(CollectionsOutcome.Forbidden);
@@ -30,9 +30,21 @@ public sealed class PactReceivableCustomersAppService(
         if (!CollectionsDateRanges.IsSupported(from, through))
             return CollectionsResult<ReceivablesRangeLoadDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date, and both must be within 2000-2100.");
+        if (companyId is not (null or 4 or 32))
+            return CollectionsResult<ReceivablesRangeLoadDto>.Fail(CollectionsOutcome.InvalidRequest, "Company must be 4 or 32.");
         try
         {
             var current = (await source.ReadAsync(new PactReceivablesRequest(from, through), cancellationToken)).Snapshot;
+            // Retry of one company: its data may be complete but stale or behind a failed refresh ("ready" says nothing about that), so only a running load stops it.
+            if (companyId is { } retry)
+            {
+                if (current is { LoadInProgress: true })
+                    return CollectionsResult<ReceivablesRangeLoadDto>.Ok(new(false, false, true, "A load is already running. Reload this page in a few minutes."));
+                var retried = await rangeLoader.EnqueueCompanyRefreshAsync(retry, cancellationToken);
+                return CollectionsResult<ReceivablesRangeLoadDto>.Ok(retried
+                    ? new(true, false, false, "Loading started in the background. Reload this page in a few minutes.")
+                    : new(false, false, true, "A load is already running. Reload this page in a few minutes."));
+            }
             if (current is { IsReady: true })
                 return CollectionsResult<ReceivablesRangeLoadDto>.Ok(new(false, true, false, "The selected dates are already loaded and fresh."));
             if (current is { LoadInProgress: true })

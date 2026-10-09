@@ -70,6 +70,67 @@ public sealed class ReceivablesByUnitTests
         }
     }
 
+    private static FakeInstalment OnDay(string tenant, int unit, string code, DateTime due, decimal remaining, string voucher) =>
+        new(4, tenant, "Customer " + tenant, unit, code, voucher, due, remaining + 100, 100, remaining, "Installment", true, "+971500000" + unit, tenant + "@example.test");
+
+    [Fact]
+    public async Task TheUnitView_ClassifiesByTheDay_NotTheMonth()
+    {
+        var (service, source) = Build();   // today (Dubai) = 14 Oct 2026
+        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 5), 100, "V1"),    // earlier this month: Overdue (the month rule called it Due)
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 13), 110, "V2"),                     // yesterday: Overdue
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 14), 120, "V3"),                     // today: Due
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 15), 130, "V4"),                     // tomorrow: Upcoming
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 12, 1), 140, "V5")]);
+        var page = (await service.ListAsync(Agent, null, new DateOnly(2000, 1, 1), new DateOnly(2099, 12, 31), "outstanding", 0m, null, 1, 25, default, "units")).Value!;
+        Assert.Equal((2, 1, 2), (page.Totals.OverdueCount, page.Totals.DueCount, page.Totals.NotYetDueCount));
+        Assert.Equal((210m, 120m, 270m), (page.Totals.OverdueRemaining, page.Totals.DueRemaining, page.Totals.NotYetDueRemaining));
+        var unit = Assert.Single(page.Units!);
+        Assert.Equal(["Overdue", "Overdue", "Due", "NotYetDue", "NotYetDue"], unit.Instalments.Select(i => i.Classification));
+        Assert.Equal(unit.RemainingTotal, unit.Instalments.Sum(i => i.RemainingAmount));          // the row and its instalments are the same rows
+        Assert.True(source.LastRequest!.ClassifyByDay);
+        Assert.Equal(new DateOnly(2026, 10, 14), source.LastRequest.AsOf);
+        Assert.Null(page.Months);                                                                 // no month overview in this view
+        // The instalment view keeps the month rule.
+        var flat = (await service.ListAsync(Agent, null, new DateOnly(2000, 1, 1), new DateOnly(2099, 12, 31), "outstanding", 0m, null, 1, 25, default, "instalments")).Value!;
+        Assert.False(source.LastRequest.ClassifyByDay);
+        Assert.Equal(5, flat.Totals.Count);
+    }
+
+    [Theory]
+    [InlineData("overdue", "TP124-1")]
+    [InlineData("due", "TP124-2")]
+    [InlineData("upcoming", "TP124-3")]
+    public async Task TheStatusFilter_KeepsTheUnitsWithAnInstalmentOfThatStatus_AndAllTheirInstalments(string status, string expectedUnit)
+    {
+        var (service, source) = Build();
+        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 9, 1), 100, "V1"), OnDay("A", 1, "TP124-1", new DateTime(2026, 12, 1), 50, "V1b"),
+            OnDay("B", 2, "TP124-2", new DateTime(2026, 10, 14), 200, "V2"),
+            OnDay("C", 3, "TP124-3", new DateTime(2026, 11, 1), 300, "V3")]);
+        var page = (await service.ListAsync(Agent, null, new DateOnly(2000, 1, 1), new DateOnly(2099, 12, 31), "outstanding", 0m, null, 1, 25, default, "units", null, status)).Value!;
+        var units = page.Units!;
+        if (status == "upcoming") Assert.Equal(["TP124-1", "TP124-3"], units.Select(u => u.UnitCode).Order());   // TP124-1 also has a December instalment
+        else Assert.Equal(expectedUnit, Assert.Single(units).UnitCode);
+        Assert.Equal(units.Count, page.Totals.UnitCount);
+        if (status == "overdue") Assert.Equal(2, Assert.Single(units).Instalments.Count);                         // the unit still lists all of its unpaid instalments
+        Assert.Equal(units.Sum(u => u.RemainingTotal), page.Totals.RemainingTotal);                               // counts and totals agree with the filtered units
+    }
+
+    [Fact]
+    public async Task UnitsWithoutARealNumber_AreNeverListed_AndAMalformedStatusIsRefused()
+    {
+        var (service, source) = Build();
+        source.Rows.AddRange([OnDay("A", 0, "TP124-1", new DateTime(2026, 9, 1), 100, "V1"),       // UnitID 0
+            OnDay("B", 2, "0", new DateTime(2026, 9, 1), 100, "V2"),                              // unit code "0"
+            OnDay("C", 3, " ", new DateTime(2026, 9, 1), 100, "V3"),                              // blank unit code
+            OnDay("D", 4, "TP124-4", new DateTime(2026, 9, 1), 100, "V4")]);
+        var page = (await service.ListAsync(Agent, null, new DateOnly(2000, 1, 1), new DateOnly(2099, 12, 31), "outstanding", 0m, null, 1, 25, default, "units")).Value!;
+        Assert.Equal("TP124-4", Assert.Single(page.Units!).UnitCode);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await service.ListAsync(Agent, null, null, null, null, null, null, 1, 25, default, "units", null, "soon")).Outcome);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await service.ListAsync(Agent, null, null, null, null, null, null, 1, 25, default, "instalments", null, "overdue")).Outcome);
+        Assert.True((await service.ListAsync(Agent, null, null, null, null, null, null, 1, 25, default, "units", null, "ALL")).IsSuccess);
+    }
+
     [Fact]
     public async Task TheViewIsValidated_AndTheApiDefaultStaysPerInstalment()
     {

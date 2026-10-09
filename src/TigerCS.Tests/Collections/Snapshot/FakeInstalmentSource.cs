@@ -7,7 +7,7 @@ namespace TigerCS.Tests.Collections.Snapshot;
 
 /// <summary>One instalment of the in-memory model. PaymentStatus is derived exactly like the SQL publish step (CollectionsPaymentFilters.Classify).</summary>
 public sealed record FakeInstalment(int Company, string Tenant, string Name, int UnitId, string UnitCode, string Voucher, DateTime Due,
-    decimal? Original, decimal? Allocated, decimal Remaining, string? SourceStatus, bool Breakdown)
+    decimal? Original, decimal? Allocated, decimal Remaining, string? SourceStatus, bool Breakdown, string Mobile = "", string Email = "")
 {
     public string PaymentStatus => CollectionsPaymentFilters.Classify(Remaining, Original, Allocated, SourceStatus, Breakdown);
 }
@@ -36,9 +36,18 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
     public Task<PactInstalmentUnitsPage> ReadInstalmentUnitsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken)
     {
         // Totals, filters and row mapping come from the instalment view over the WHOLE filtered set (no paging), then units are formed and paged.
-        var all = ReadInstalmentsAsync(request with { Page = 1, PageSize = int.MaxValue / 2 }, cancellationToken).Result;
+        var all = ReadInstalmentsAsync(request with { Page = 1, PageSize = int.MaxValue / 2, Status = null }, cancellationToken).Result;
         if (all.Unavailable) return Task.FromResult(new PactInstalmentUnitsPage(all.Totals, [], true, all.Snapshot, all.ReadAtUtc, 0));
-        var units = all.Rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
+        // Status filter: the units that have at least one instalment of the class; the totals then cover exactly those units' instalments.
+        var wanted = request.Status switch { "overdue" => "Overdue", "due" => "Due", "upcoming" => "NotYetDue", _ => null };
+        var kept = wanted is null ? all.Rows
+            : all.Rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode)).Where(g => g.Any(r => r.Classification == wanted)).SelectMany(g => g).ToList();
+        if (wanted is not null)
+            all = all with { Totals = new PactInstalmentTotalsDto(kept.Count, kept.Sum(r => r.RemainingAmount),
+                kept.Count(r => r.Classification == "Overdue"), kept.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount),
+                kept.Count(r => r.Classification == "Due"), kept.Where(r => r.Classification == "Due").Sum(r => r.RemainingAmount),
+                kept.Count(r => r.Classification == "NotYetDue"), kept.Where(r => r.Classification == "NotYetDue").Sum(r => r.RemainingAmount), all.Totals.FullyPaidCount) };
+        var units = kept.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
             .Select(g => new PactInstalmentUnitDto(g.Key.CompanyId, ReceivablesSnapshotStatusBuilder.CompanyName(g.Key.CompanyId), g.First().TowerNumber, g.First().TowerName, g.Key.UnitId ?? 0,
                 g.Key.UnitCode, g.Key.TenantId, g.First().CustomerName, g.Count(), g.Sum(r => r.RemainingAmount), g.Min(r => r.DueDate),
                 g.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList()))
@@ -77,8 +86,8 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
         if (unavailable) return Task.FromResult(new PactInstalmentsPage(empty, [], true, status, ReceivablesSnapshotComposer.ReadAt(status), 0));
 
         var min = filter is "paid" or "all" ? 0m : request.MinAmount;
-        var monthStart = request.AsOf; var nextMonth = monthStart.AddMonths(1);
-        var rows = Rows.Where(r => loaded.Any(c => c.CompanyId == r.Company && c.HasSnapshot) && r.UnitId > 0)
+        var monthStart = request.AsOf; var nextMonth = request.ClassifyByDay ? monthStart.AddDays(1) : monthStart.AddMonths(1);
+        var rows = Rows.Where(r => loaded.Any(c => c.CompanyId == r.Company && c.HasSnapshot) && r.UnitId > 0 && r.UnitCode.Trim() is not ("" or "0"))
             .Where(r => towerNumber is null || CollectionsTowerNumber.Parse(r.UnitCode) == towerNumber)
             .Where(r => { var d = DateOnly.FromDateTime(r.Due); return d >= request.From && d <= request.To; })
             .Where(r => filter switch
@@ -87,7 +96,9 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
                 "paid" => r.PaymentStatus == "FullyPaid", _ => true
             })
             .Where(r => r.Remaining >= min)
-            .Where(r => string.IsNullOrEmpty(request.Search) || new[] { r.Name, r.Tenant, r.UnitCode, r.Voucher }.Any(v => v.Contains(request.Search, StringComparison.OrdinalIgnoreCase)))
+            .Where(r => string.IsNullOrEmpty(request.Search) || new[] { r.Name, r.Tenant, r.UnitCode, r.Voucher, r.Mobile, r.Email, CollectionsTowerNumber.Parse(r.UnitCode) ?? "",
+                Towers.FirstOrDefault(t => t.CompanyId == r.Company && t.TowerNumber == CollectionsTowerNumber.Parse(r.UnitCode))?.TowerName ?? "" }
+                .Any(v => v.Contains(request.Search, StringComparison.OrdinalIgnoreCase)))
             .ToList();
         string Class(FakeInstalment r) { var d = DateOnly.FromDateTime(r.Due); return r.Remaining == 0 ? "NotApplicable" : d < monthStart ? "Overdue" : d < nextMonth ? "Due" : "NotYetDue"; }
         var totals = new PactInstalmentTotalsDto(rows.Count, rows.Sum(r => r.Remaining),
@@ -102,7 +113,7 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
                 var number = CollectionsTowerNumber.Parse(r.UnitCode);
                 var tower = Towers.FirstOrDefault(t => t.CompanyId == r.Company && t.TowerNumber == number);
                 var breakdownOk = r.PaymentStatus != "Unknown" && r.Breakdown;
-                return new PactInstalmentRowDto(r.Company, ReceivablesSnapshotStatusBuilder.CompanyName(r.Company), number, tower?.TowerName, r.UnitId, r.UnitCode, r.Tenant, r.Name, "", "",
+                return new PactInstalmentRowDto(r.Company, ReceivablesSnapshotStatusBuilder.CompanyName(r.Company), number, tower?.TowerName, r.UnitId, r.UnitCode, r.Tenant, r.Name, r.Mobile, r.Email,
                     r.Voucher, "", DateOnly.FromDateTime(r.Due), breakdownOk ? r.Original : null, breakdownOk ? r.Allocated : null, r.Remaining, r.PaymentStatus, Class(r), r.SourceStatus ?? "");
             }).ToList();
         return Task.FromResult(new PactInstalmentsPage(totals, page, false, status, ReceivablesSnapshotComposer.ReadAt(status), 1));

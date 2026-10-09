@@ -30,8 +30,8 @@ public sealed class ReceivablesMonthOverviewTests
     private static Task<CollectionsResult<PactInstalmentsPageDto>> List(PactInstalmentsAppService service, string view, string? dueMonth = null, int page = 1, int pageSize = 25) =>
         service.ListAsync(Agent, null, new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31), "outstanding", 100m, null, page, pageSize, default, view, dueMonth);
 
+    // The month overview belongs to the instalment view: the By unit view classifies by day and has no month cards.
     [Theory]
-    [InlineData("units")]
     [InlineData("instalments")]
     public async Task MonthSummaries_CoverTheWholeFilteredSet_RegardlessOfPaging(string view)
     {
@@ -50,7 +50,7 @@ public sealed class ReceivablesMonthOverviewTests
     public async Task Overdue_IsDecidedByTheBusinessMonth_NotBySelectingAMonth()
     {
         var (service, _) = Build();
-        var all = (await List(service, "units")).Value!;
+        var all = (await List(service, "instalments")).Value!;
         Assert.All(all.Months!.Where(m => m.Month < 10), m => Assert.Equal(m.InstalmentCount, m.OverdueCount));   // before October 2026: overdue
         Assert.All(all.Months!.Where(m => m.Month >= 10), m => Assert.Equal(0, m.OverdueCount));                  // current and later months: never overdue
         foreach (var month in all.Months!)
@@ -62,7 +62,6 @@ public sealed class ReceivablesMonthOverviewTests
     }
 
     [Theory]
-    [InlineData("units")]
     [InlineData("instalments")]
     public async Task ASelectedMonth_NarrowsTheListAndTotals_ToExactlyThatMonthsCard(string view)
     {
