@@ -154,6 +154,24 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         string phoneNumber, string customerKey, CancellationToken cancellationToken) =>
         GetAsync<CollectionsPaymentSummaryResponseDto>($"{Base}/customer-lookup/payment-summary?phoneNumber={Uri.EscapeDataString(phoneNumber)}&customerKey={Uri.EscapeDataString(customerKey)}", cancellationToken);
 
+    /// <summary>The unit-based financial lookup of a CRM customer (CRM units -> PACT by company + tower + apartment); the phone is optional and must resolve to the same CRM customer.</summary>
+    public Task<ApiResult<CustomerUnitLinkResultDto>> GetCrmCustomerUnitsAsync(long crmCustomerId, string? phone, string? selection, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        if (!string.IsNullOrWhiteSpace(phone)) query["phone"] = phone;
+        if (!string.IsNullOrWhiteSpace(selection)) query["selection"] = selection;
+        return GetAsync<CustomerUnitLinkResultDto>($"{Base}/customers/crm/{Id(crmCustomerId)}/units?{query}", cancellationToken);
+    }
+
+    /// <summary>Customer and unit linking by a typed phone number: CRM first, PACT (incl. Leasing) when CRM holds no eligible customer.</summary>
+    public Task<ApiResult<CustomerUnitLinkResultDto>> LookupCustomerUnitsAsync(string phone, string? selection, CancellationToken cancellationToken)
+    {
+        var query = HttpUtility.ParseQueryString(string.Empty);
+        query["phone"] = phone;
+        if (!string.IsNullOrWhiteSpace(selection)) query["selection"] = selection;
+        return GetAsync<CustomerUnitLinkResultDto>($"{Base}/customers/lookup?{query}", cancellationToken);
+    }
+
     public Task<ApiResult<CollectionsOutstandingResponseDto>> GetOutstandingAsync(long crmCustomerId, CancellationToken cancellationToken) =>
         GetAsync<CollectionsOutstandingResponseDto>($"{Base}/customers/{Id(crmCustomerId)}/outstanding?pageSize=100", cancellationToken);
 

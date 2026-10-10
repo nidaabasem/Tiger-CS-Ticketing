@@ -15,7 +15,9 @@ namespace TigerCS.Api.Controllers;
 [Authorize(Policy = PolicyNames.AuthenticatedStaff)]
 [Route("api/collections")]
 [Tags(OpenApiTags.Collections)]
-public sealed class CollectionsUnitsController(CollectionsUnitPaymentSummaryAppService summary, CollectionsLeasingSummaryAppService leasing, ICollectionsCrmOwnerStore crmOwners, CollectionsAuthorizationService authorization) : ControllerBase
+public sealed class CollectionsUnitsController(
+    CollectionsUnitPaymentSummaryAppService summary, CollectionsLeasingSummaryAppService leasing, CustomerUnitLinkService linking, ICollectionsCustomerProfiles profiles,
+    ICollectionsCrmOwnerStore crmOwners, CollectionsAuthorizationService authorization) : ControllerBase
 {
     /// <summary>
     /// Payment Summary of one unit, found by its tower + unit code (<c>TP140-101</c>), never by a phone number. The customer comes from CRM first (an eligible, not cancelled
@@ -63,6 +65,63 @@ public sealed class CollectionsUnitsController(CollectionsUnitPaymentSummaryAppS
         var caller = Caller();
         if (caller is null) return Unauthorized();
         var result = await leasing.GetAsync(caller, mobile, cancellationToken);
+        if (result.IsSuccess) return Ok(result.Value);
+        var (http, code) = result.Outcome switch
+        {
+            CollectionsOutcome.Forbidden => (403, "Forbidden"),
+            CollectionsOutcome.InvalidRequest => (400, "InvalidRequest"),
+            CollectionsOutcome.Disabled => (503, "CollectionsDisabled"),
+            _ => (503, "FinanceUnavailable")
+        };
+        return Problem(statusCode: http, title: code, detail: result.Detail ?? code, type: $"https://tigercs.internal/problems/collections/{code}");
+    }
+
+    /// <summary>
+    /// Customer and unit linking by a typed phone number (customer search, New Ticket). The phone only FINDS the customer: CRM is searched first (eligible Sold / Contract, not cancelled sales),
+    /// each unit is tied to PACT by its verified project mapping + apartment (company and tower kept), and the amounts are that unit's PACT account - whether or not the phone exists in PACT.
+    /// Only when CRM holds no eligible customer is PACT searched by phone (companies 4 / 32 and Leasing company 7; ended contracts excluded). Several customers / units / contracts come back
+    /// as candidates with <c>selectionRequired</c> - the first is never taken.
+    /// </summary>
+    /// <param name="phone">The phone number in any common format (normalised server-side).</param>
+    /// <param name="selection">Optional <c>selectionId</c> of the candidate the user chose.</param>
+    /// <param name="cancellationToken">Request cancellation.</param>
+    [HttpGet("customers/lookup")]
+    [ProducesResponseType<CustomerUnitLinkResultDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> LookupCustomerUnits([FromQuery] string? phone, [FromQuery] string? selection = null, CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        return caller is null ? Unauthorized() : ToResponse(await linking.FindByPhoneAsync(caller, phone, selection, cancellationToken));
+    }
+
+    /// <summary>
+    /// The unit-based financial lookup of a CRM customer - what the Customer Details Payment tab shows. The customer's eligible units come from CRM (through any phone TigerCS holds for them, or
+    /// the optional <c>phone</c>, which must resolve to this same CRM customer), each unit's amounts from PACT by company + tower + apartment. A CRM phone that is absent from PACT changes nothing.
+    /// <c>financialStatus</c> tells confirmed zero dues (<c>NoDues</c>) from no data (<c>NoFinancialData</c>), a failed / ambiguous match (<c>MatchFailed</c>) and a source error (<c>SourceError</c>).
+    /// </summary>
+    /// <param name="crmCustomerId">The CRM customer id.</param>
+    /// <param name="phone">Optional extra phone of this customer (New Ticket passes the typed number).</param>
+    /// <param name="selection">Optional <c>selectionId</c> of the unit the user chose.</param>
+    /// <param name="cancellationToken">Request cancellation.</param>
+    [HttpGet("customers/crm/{crmCustomerId:int}/units")]
+    [ProducesResponseType<CustomerUnitLinkResultDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> CrmCustomerUnits(int crmCustomerId, [FromQuery] string? phone = null, [FromQuery] string? selection = null, CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null) return Unauthorized();
+        var phones = new List<string>();
+        if (!string.IsNullOrWhiteSpace(phone)) phones.Add(phone);
+        var profile = await profiles.GetProfileAsync(caller.EmployeeId, caller.Roles, $"crm:{crmCustomerId}", cancellationToken);
+        if (profile.Response is { } known) phones.AddRange(known.PhoneNumbers);
+        return ToResponse(await linking.FindForCrmCustomerAsync(caller, crmCustomerId, phones, selection, cancellationToken));
+    }
+
+    private IActionResult ToResponse<T>(CollectionsResult<T> result)
+    {
         if (result.IsSuccess) return Ok(result.Value);
         var (http, code) = result.Outcome switch
         {

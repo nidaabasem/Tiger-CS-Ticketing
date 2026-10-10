@@ -22,6 +22,12 @@ public enum PaymentPanelState
     Loaded,
 
     /// <summary>
+    /// The unit-based view: the customer's units (CRM, or PACT / Leasing contracts found by phone) each with the PACT figures of that company + tower + apartment.
+    /// Every unit states whether it has amounts, confirmed zero dues, no data, a failed / ambiguous match, or a source error.
+    /// </summary>
+    UnitSummary,
+
+    /// <summary>
     /// A CRM customer with no financial source: the per-account source is not integrated, and EDSM
     /// has no verified mapping for this customer (the Api's NotMapped reason is shown).
     /// </summary>
@@ -85,13 +91,17 @@ public sealed record PaymentPanelLinks(
 /// <param name="AllowSending">False hides the Send Reminder forms (a read-only view, e.g. before ticket submission). The Api still enforces the permission either way.</param>
 /// <param name="PreferredUnitNumber">For a CRM customer with several finance accounts and no explicit choice: pick the account whose unit number matches (trimmed, case-insensitive); otherwise selection is still required.</param>
 /// <param name="PreferredExternalUnitId">For a PACT customer with several EDSM companies and no explicit choice: pick the company whose contracts include this PACT unit id; otherwise the first company.</param>
+/// <param name="PreferredCrmUnitId">For a CRM customer: the CRM unit the agent is working on (New Ticket's selected unit). With no explicit choice the unit-based view opens on that unit; with none the customer's units are listed and one must be chosen.</param>
+/// <param name="CrmLookupPhone">A phone the CRM customer is known by (New Ticket's typed number) when the unit-based lookup has no profile to take phones from. Unlike <c>LookupPhoneNumber</c> it changes nothing about the per-account / EDSM view.</param>
 /// <param name="LookupPhoneNumber">A pre-ticket lookup context. The API verifies the selected identity and any CRM/PACT association again, without requiring a directory profile.</param>
 public sealed record PaymentPanelOptions(
     PaymentPanelLinks? Links = null,
     bool AllowSending = true,
     string? PreferredUnitNumber = null,
     string? PreferredExternalUnitId = null,
-    string? LookupPhoneNumber = null);
+    string? LookupPhoneNumber = null,
+    long? PreferredCrmUnitId = null,
+    string? CrmLookupPhone = null);
 
 public sealed class CustomerPaymentPanel
 {
@@ -117,6 +127,56 @@ public sealed class CustomerPaymentPanel
     public bool ScopedByUnit { get; init; }
 
     public CollectionsOutstandingResponseDto? Outstanding { get; init; }
+
+    /// <summary>The unit-based linking result, for <see cref="PaymentPanelState.UnitSummary"/> (also kept as the diagnosis when no figure could be shown).</summary>
+    public CustomerUnitLinkResultDto? UnitLink { get; init; }
+
+    /// <summary>The unit being shown: the explicit choice, or the only candidate. Null while a choice is still required.</summary>
+    public LinkedUnitCandidateDto? SelectedUnit => UnitLink?.Candidates.FirstOrDefault(c => c.SelectionId == UnitLink.SelectedId);
+
+    public string UnitLabel(LinkedUnitCandidateDto c) =>
+        $"{(c.TowerName ?? c.ProjectName ?? (c.TowerNumber is null ? "—" : $"Tower {c.TowerNumber}"))} · {c.UnitNumber ?? "—"}{(c.CompanyId is { } company ? $" · company {company}" : "")}{(c.ContractNumber is { } contract ? $" · contract {contract}" : "")}";
+
+    public static string UnitStatusText(string financialStatus) => financialStatus switch
+    {
+        "Available" => "Amounts due",
+        "NoDues" => "Nothing due",
+        "NoFinancialData" => "No financial data",
+        "MatchFailed" => "Unit match needs review",
+        "SourceError" => "Source error",
+        _ => financialStatus
+    };
+
+    public static string UnitStatusCss(string financialStatus) => financialStatus switch
+    {
+        "Available" => "critical",
+        "NoDues" => "ok",
+        "SourceError" => "critical",
+        "MatchFailed" => "pending",
+        _ => "neutral"
+    };
+
+    /// <summary>Plain words for the machine reasons the linking reports.</summary>
+    public static string ReasonText(string reason) => reason switch
+    {
+        "ProjectMappingMissing" => "The CRM project has no verified PACT tower mapping.",
+        "ProjectMappingAmbiguous" => "The CRM project maps to more than one PACT tower.",
+        "ProjectMappingUnreadable" => "The CRM project mapping could not be read.",
+        "CompanyMappingAmbiguous" => "The tower exists in more than one PACT company.",
+        "UnitCodeInvalid" or "UnitCodeMissing" => "The unit has no valid PACT unit code.",
+        "CompanyMissing" => "PACT gave no company for the contract.",
+        "CompanyNotSupported" => "No receivables source exists for this PACT company.",
+        "LeasingReceivablesSourceMissing" => "No company-7 (Leasing) receivables source exists.",
+        "PactHoldsNoRecord" => "PACT holds no receivable record for this unit.",
+        "CompanySnapshotNotLoaded" => "The company's PACT receivables are not loaded yet.",
+        "SeveralPactAccounts" or "SeveralPactCustomers" => "More than one PACT account holds this unit.",
+        "UnitInSeveralCompanies" => "The unit code exists in more than one PACT company.",
+        "CrmCustomerAmbiguous" => "More than one CRM customer holds an eligible sale of this unit.",
+        "CrmOwnershipConflict" => "CRM lists a different customer for this unit.",
+        "ContactSourceConflict" => "CRM and PACT hold different contact details for the customer.",
+        "PactUnavailable" or "UnitReceivablesSourceNotConfigured" => "The PACT receivables could not be read.",
+        _ => reason
+    };
 
     /// <summary>EDSM's payment summary, for <see cref="PaymentPanelState.EdsmSummary"/>.</summary>
     public CollectionsPaymentSummaryResponseDto? PaymentSummary { get; init; }

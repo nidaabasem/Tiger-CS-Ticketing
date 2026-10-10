@@ -60,8 +60,7 @@ public sealed class CollectionsCrmOwnersRefreshService(
     public CrmOwnerRow? ToRow(CrmUnitOwnerDto owner, IReadOnlySet<int>? eligible = null)
     {
         eligible ??= options.EligibleLeadStatuses.ToHashSet();
-        if (owner.CustomerType != options.BuyerCustomerType || !eligible.Contains(owner.LeadStatus)) return null;
-        if (owner.LeadStatusName?.Contains("cancel", StringComparison.OrdinalIgnoreCase) == true) return null;
+        if (owner.CustomerType != options.BuyerCustomerType || !CrmSaleEligibility.IsEligible(owner.LeadStatus, owner.LeadStatusName, eligible)) return null;
         var key = CollectionsUnitKey.FromCrm(owner.ProjectCode, owner.UnitNumber);
         if (key is null || !CollectionsUnitKey.IsListable(key) || owner.UnitNumber!.Trim().TrimStart('0').Length == 0) return null; // unit 0 / 00 is no unit
         var name = !string.IsNullOrWhiteSpace(owner.FullNameEnglish) ? owner.FullNameEnglish!.Trim() : owner.FullNameArabic?.Trim() ?? "";

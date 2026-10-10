@@ -44,6 +44,10 @@
             <partial name="_EdsmPaymentSummary" model="panel" />
             break;
 
+        case PaymentPanelState.UnitSummary:
+            <partial name="_UnitPaymentSummary" model="panel" />
+            break;
+
         case PaymentPanelState.NoAccounts:
             <div class="empty-state"><p>No finance account is linked to this customer.</p></div>
             break;

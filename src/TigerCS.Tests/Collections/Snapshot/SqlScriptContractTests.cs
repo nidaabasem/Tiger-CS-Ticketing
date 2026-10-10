@@ -19,8 +19,23 @@ public sealed class SqlScriptContractTests
     public void ScriptsAreVersionedInOrder() =>
         Assert.Equal(["V001__reconcile_CollectionsTowers.sql", "V002__create_receivables_snapshot_tables.sql", "V003__fn_CollectionsTowerNumber.sql",
             "V004__usp_Collections_PublishReceivablesStaging.sql", "V005__usp_Collections_RefreshReceivables.sql", "V006__usp_Collections_GetReceivables.sql",
-            "V007__usp_Collections_GetCampaignUnits.sql", "V008__usp_Collections_GetInstalmentUnitsPage.sql", "V009__usp_Collections_GetInstalmentMonths.sql", "V010__create_crm_unit_owner_tables.sql"],
+            "V007__usp_Collections_GetCampaignUnits.sql", "V008__usp_Collections_GetInstalmentUnitsPage.sql", "V009__usp_Collections_GetInstalmentMonths.sql", "V010__create_crm_unit_owner_tables.sql", "V011__create_crm_project_map.sql"],
             Directory.GetFiles(Dir(), "V*.sql").Select(f => Path.GetFileName(f)!).Order().ToArray());
+
+    [Fact]
+    public void TheCrmProjectMapScript_InventsNoMapping_AndReadsOnlyVerifiedRowsOrTheFeedsOwnProjectCodes()
+    {
+        // Text checks only (no SQL Server in CI): they pin that V011 ships an EMPTY table - a CRM project is never tied to a PACT tower by a guess or by a display name.
+        var sql = Read("V011__create_crm_project_map.sql");
+        Assert.DoesNotContain("INSERT dbo.CollectionsCrmProjectMap", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO dbo.CollectionsCrmProjectMap", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TowerName", sql.Replace("CrmProjectName", ""), StringComparison.OrdinalIgnoreCase);        // never joined by name
+        Assert.DoesNotContain("DROP ", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetCrmProjectMap", sql);
+        Assert.Contains("UX_CollectionsCrmProjectMap_Project_Code", sql);
+        var discovery = File.ReadAllText(Path.Combine(Dir(), "tools", "crm_project_map_discovery.sql"));
+        Assert.DoesNotMatch(@"(?im)^\s*(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE)\s", System.Text.RegularExpressions.Regex.Replace(discovery, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline));
+    }
 
     [Fact]
     public void TheUnitProcedure_ClassifiesByDay_FiltersByStatus_AndNeverListsUnitZero()

@@ -28,6 +28,63 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
                 : new CustomerPaymentPanel { CustomerKey = customerKey, State = PaymentPanelState.NotCrmCustomer, Links = options.Links!, AllowSending = options.AllowSending };
         }
 
+        // Unit-based first: the customer's CRM units are tied to PACT by company + tower + apartment, so a CRM phone that PACT does not hold changes nothing.
+        var unitPanel = await TryUnitPanelAsync(customerKey, customer, accountId, notice, noticeIsError, options, cancellationToken);
+        if (unitPanel is { State: PaymentPanelState.Forbidden or PaymentPanelState.Disabled } || HasUnitFigures(unitPanel))
+            return unitPanel!;
+
+        var legacy = await LoadAccountsAsync(customerKey, customer, accountId, notice, noticeIsError, options, cancellationToken);
+        // The per-account / EDSM route is kept for what it can really show. When it shows nothing, the unit diagnosis (why exactly) replaces its generic "no figures" message.
+        var legacyHasFigures = legacy.State is PaymentPanelState.Loaded or PaymentPanelState.SelectAccount || HasEdsmFigures(legacy);
+        return unitPanel is not null && !legacyHasFigures ? unitPanel : legacy;
+    }
+
+    private async Task<CustomerPaymentPanel?> TryUnitPanelAsync(
+        string customerKey, long customer, string? accountId, string? notice, bool noticeIsError, PaymentPanelOptions options, CancellationToken cancellationToken)
+    {
+        var unitLink = await collections.GetCrmCustomerUnitsAsync(customer, options.CrmLookupPhone ?? options.LookupPhoneNumber, UnitSelection(accountId, options.PreferredCrmUnitId), cancellationToken);
+        return UnitPanel(unitLink, customerKey, customer, notice, noticeIsError, options);
+    }
+
+    private static bool HasUnitFigures(CustomerPaymentPanel? panel) =>
+        panel is { State: PaymentPanelState.UnitSummary } && panel.UnitLink!.Candidates.Any(c => c.FinancialStatus is "Available" or "NoDues");
+
+    /// <summary>Only an explicit unit choice (<c>crm:…</c> / <c>pact:…</c>) is a unit selection; a finance <c>accountId</c> belongs to the per-account view.</summary>
+    private static string? UnitSelection(string? accountId, long? preferredCrmUnitId) =>
+        accountId is not null && (accountId.StartsWith("crm:", StringComparison.Ordinal) || accountId.StartsWith("pact:", StringComparison.Ordinal))
+            ? accountId
+            : preferredCrmUnitId is { } unit ? $"crm:{unit.ToString(CultureInfo.InvariantCulture)}" : null;
+
+    private static bool HasEdsmFigures(CustomerPaymentPanel panel) =>
+        panel.State == PaymentPanelState.EdsmSummary && panel.PaymentSummary is { MappingStatus: "Mapped" } summary && summary.Companies.Any(c => c.Status == "Available");
+
+    /// <summary>The panel for a unit-linking answer; null when the answer says nothing usable (no units known), so the caller falls back to the per-account view.</summary>
+    private static CustomerPaymentPanel? UnitPanel(
+        ApiResult<CustomerUnitLinkResultDto> result, string customerKey, long? crmCustomerId, string? notice, bool noticeIsError, PaymentPanelOptions options)
+    {
+        CustomerPaymentPanel Base(PaymentPanelState state) => new()
+        {
+            CustomerKey = customerKey, CrmCustomerId = crmCustomerId, State = state, Notice = notice, NoticeIsError = noticeIsError, Links = options.Links!, AllowSending = false
+        };
+        switch (result.Outcome)
+        {
+            case ApiOutcome.Forbidden: return Base(PaymentPanelState.Forbidden);
+            case ApiOutcome.ServiceUnavailable when result.ProblemType?.EndsWith("/" + CustomerPaymentPanel.DisabledCode, StringComparison.Ordinal) == true:
+                return Base(PaymentPanelState.Disabled);
+            // Any other 503 says nothing about the customer's units: the per-account view reports the source state itself.
+            case ApiOutcome.Success when result.Value is { Candidates.Count: > 0 } link:
+                return new CustomerPaymentPanel
+                {
+                    CustomerKey = customerKey, CrmCustomerId = crmCustomerId, State = PaymentPanelState.UnitSummary, UnitLink = link, Notice = notice, NoticeIsError = noticeIsError,
+                    Links = options.Links!, AllowSending = false
+                };
+            default: return null;
+        }
+    }
+
+    private async Task<CustomerPaymentPanel> LoadAccountsAsync(
+        string customerKey, long customer, string? accountId, string? notice, bool noticeIsError, PaymentPanelOptions options, CancellationToken cancellationToken)
+    {
         var outstanding = await collections.GetOutstandingAsync(customer, cancellationToken);
         var state = outstanding.Outcome switch
         {
@@ -147,8 +204,20 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
         var href = $"/Customers/Payments?phoneNumber={Uri.EscapeDataString(phoneNumber)}&customerKey={Uri.EscapeDataString(customerKey)}";
         var links = new PaymentPanelLinks("/Customers/Payments", hidden, "account",
             account => account is null ? href : $"{href}&account={Uri.EscapeDataString(account)}", AutoSubmit: true);
-        return LoadEdsmSummaryAsync(customerKey, companyId, null, false,
-            new PaymentPanelOptions(links, AllowSending: false, LookupPhoneNumber: phoneNumber), cancellationToken);
+        var options = new PaymentPanelOptions(links, AllowSending: false, LookupPhoneNumber: phoneNumber);
+        // A CRM customer found by this phone: the same unit-based lookup as the Customer Details Payment tab.
+        if (customerKey.StartsWith("crm:", StringComparison.OrdinalIgnoreCase) && long.TryParse(customerKey.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture, out var crmCustomerId))
+            return LoadCrmLookupAsync(customerKey, crmCustomerId, companyId, options, cancellationToken);
+        return LoadEdsmSummaryAsync(customerKey, companyId, null, false, options, cancellationToken);
+    }
+
+    /// <summary>Pre-ticket lookup of a CRM customer: the unit-based figures first, then the verified EDSM lookup as before; when neither shows figures the unit diagnosis explains why.</summary>
+    private async Task<CustomerPaymentPanel> LoadCrmLookupAsync(string customerKey, long customer, string? account, PaymentPanelOptions options, CancellationToken cancellationToken)
+    {
+        var unitPanel = await TryUnitPanelAsync(customerKey, customer, account, null, false, options, cancellationToken);
+        if (unitPanel is { State: PaymentPanelState.Forbidden or PaymentPanelState.Disabled } || HasUnitFigures(unitPanel)) return unitPanel!;
+        var edsm = await LoadEdsmSummaryAsync(customerKey, account, null, false, options, cancellationToken);
+        return unitPanel is not null && !HasEdsmFigures(edsm) ? unitPanel : edsm;
     }
 
     /// <summary>Reads EDSM through the directory, or a freshly verified lookup before any ticket exists.</summary>
@@ -190,7 +259,7 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             selectedCompanyId ??= companies.FirstOrDefault()?.CompanyId;
         }
 
-        return new CustomerPaymentPanel
+        var edsmPanel = new CustomerPaymentPanel
         {
             CustomerKey = customerKey,
             State = state,
@@ -202,6 +271,30 @@ public sealed class CustomerPaymentPanelLoader(CollectionsApiClient collections)
             Links = options.Links!,
             AllowSending = options.AllowSending
         };
+
+        // A PACT customer found by phone whose EDSM summary shows no figures (Leasing company 7 is not an EDSM company; a contract may be unmapped): the unit-based view of THIS tenant's
+        // contracts says exactly what is and is not known, instead of a generic "no figures".
+        if (options.LookupPhoneNumber is { } phone && CustomerPaymentPanel.IsPactCustomer(customerKey) && !HasEdsmFigures(edsmPanel)
+            && state is not (PaymentPanelState.Forbidden or PaymentPanelState.Disabled))
+        {
+            var tenant = Uri.UnescapeDataString(customerKey[CustomerPaymentPanel.PactKeyPrefix.Length..]);
+            var lookup = await collections.LookupCustomerUnitsAsync(phone, UnitSelection(companyId, null), cancellationToken);
+            if (lookup is { Outcome: ApiOutcome.Success, Value: { } link })
+            {
+                var mine = link.Candidates.Where(c => string.Equals(c.PactTenantId, tenant, StringComparison.Ordinal)).ToList();
+                if (mine.Count > 0)
+                {
+                    var selected = mine.FirstOrDefault(c => c.SelectionId == link.SelectedId)?.SelectionId ?? (mine.Count == 1 ? mine[0].SelectionId : null);
+                    return new CustomerPaymentPanel
+                    {
+                        CustomerKey = customerKey, State = PaymentPanelState.UnitSummary, UnitLink = link with { Candidates = mine, SelectedId = selected, SelectionRequired = mine.Count > 1 && selected is null },
+                        Notice = notice, NoticeIsError = noticeIsError, Links = options.Links!, AllowSending = false
+                    };
+                }
+            }
+        }
+
+        return edsmPanel;
     }
 
     private static CustomerPaymentPanel Copy(

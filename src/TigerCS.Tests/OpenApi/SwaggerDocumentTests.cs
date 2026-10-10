@@ -131,6 +131,8 @@ public class SwaggerDocumentTests(SwaggerDocumentFixture fixture) : IClassFixtur
         "GET /api/collections/units/payment-summary",
         "GET /api/collections/crm-owners/status",
         "GET /api/collections/leasing/payment-summary",
+        "GET /api/collections/customers/lookup",
+        "GET /api/collections/customers/crm/{crmCustomerId}/units",
         "GET /api/collections/review/runs/current",
         "GET /api/collections/review/runs/{runId}",
         "POST /api/collections/review/dispatches/{dispatchId}/cancel",

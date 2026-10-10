@@ -99,6 +99,8 @@ public class ProtectedEndpointInventoryTests : IClassFixture<TigerCsApiFactory>
         ["GET /api/collections/campaigns/export"] = nameof(Collections.Integration.CollectionsCampaignEndpointsTests.SystemAdministratorCanPreviewAndExportReview_ThroughCentralOverride),
         ["GET /api/collections/units/payment-summary"] = nameof(Collections.Integration.CollectionsUnitsEndpointsTests.SystemAdministrator_IsAuthorized_OnTheUnitSummaryAndCrmStatus_ThroughCentralOverride),
         ["GET /api/collections/leasing/payment-summary"] = nameof(Collections.Integration.CollectionsUnitsEndpointsTests.SystemAdministrator_IsAuthorized_OnTheUnitSummaryAndCrmStatus_ThroughCentralOverride),
+        ["GET /api/collections/customers/lookup"] = nameof(Collections.Integration.CollectionsUnitsEndpointsTests.SystemAdministrator_IsAuthorized_OnTheUnitSummaryAndCrmStatus_ThroughCentralOverride),
+        ["GET /api/collections/customers/crm/{crmCustomerId:int}/units"] = nameof(Collections.Integration.CollectionsUnitsEndpointsTests.SystemAdministrator_IsAuthorized_OnTheUnitSummaryAndCrmStatus_ThroughCentralOverride),
         ["GET /api/collections/crm-owners/status"] = nameof(Collections.Integration.CollectionsUnitsEndpointsTests.SystemAdministrator_IsAuthorized_OnTheUnitSummaryAndCrmStatus_ThroughCentralOverride),
         ["GET /api/collections/review/runs/current"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),
         ["GET /api/collections/review/runs/{runId:long}"] = nameof(Collections.Integration.CollectionsReviewEndpointsTests.SystemAdministrator_IsAuthorizedOnEveryReviewRoute_ThroughTheOverride),

@@ -115,6 +115,8 @@ public sealed record PactCustomerMatchDto(
 /// <param name="ProjectName">The project/property the unit belongs to, when on file.</param>
 /// <param name="UnitType">The unit type, when on file.</param>
 /// <param name="CompanyId">PACT's <c>companyID</c> for the contract, when on file — with the tenant id, the key of EDSM's payment summary.</param>
+/// <param name="UnitCode">PACT's <c>unitCode</c> (<c>TP140-101</c>), when on file - with the company, the key that links the contract to its receivables.</param>
+/// <param name="ProjectCode">PACT's <c>projectCode</c>, when on file (blank in PACT's receivable output, so never used for matching).</param>
 /// <param name="ContractEndDate">PACT's <c>contractEndDate</c> as a calendar date, when readable; null otherwise. Carried for every consumer. Lookup marks expiry; New Ticket excludes expired contracts from unit selection while retaining their historical identity and mapping.</param>
 public sealed record PactContractDto(
     string ExternalUnitId,
@@ -123,4 +125,6 @@ public sealed record PactContractDto(
     string? ProjectName,
     string? UnitType,
     int? CompanyId = null,
-    DateOnly? ContractEndDate = null);
+    DateOnly? ContractEndDate = null,
+    string? UnitCode = null,
+    string? ProjectCode = null);
