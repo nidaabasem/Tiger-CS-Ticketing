@@ -1,6 +1,8 @@
 # Collections receivables snapshot - SQL deployment (TigerCsTicketing)
 
-Run in order on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credentials, no destructive statements):
+Run on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credentials, no destructive statements). **Execution order (dependencies, not file-name order):**
+`V001` -> `V002` -> `V003` -> `V004` -> `V005` -> `V006` -> **`V010`** -> `V007` -> `V008` -> `V009` -> **`V011`**
+(V010 needs V002/V003/V006; V007 and V008 read `fn_Collections_CrmUnitLinks` from V010; V011 needs V010. On an environment that already has V001-V010, only **V011** is new.)
 
 | Script | Purpose |
 | --- | --- |
@@ -14,6 +16,8 @@ Run in order on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credenti
 | `V008__usp_Collections_GetInstalmentUnitsPage.sql` | Receivables unit table: the instalment filters, grouped per unit in SQL before paging; classifies Overdue / Due / Upcoming by the DAY (`@ClassifyByDay`, today in Dubai), optional `@StatusFilter`, never lists UnitID 0 or unit code `0`, search also matches tower; `@MinTotal` = Minimum Total on the unit's summed remaining amount (strictly greater); a `*` in the unit code (cancelled apartment) is excluded; the `upcoming` status was removed. **Re-run this script before deploying the application version that sends those parameters.** Procedure only; no table changes. |
 | `V009__usp_Collections_GetInstalmentMonths.sql` | Receivables month overview: per due-date month overdue count and remaining amount over the whole filtered set (before paging, no month selection). Procedure only. Also excludes cancelled units (`*`). |
 | `V010__create_crm_unit_owner_tables.sql` | CRM unit owners (bulk copy of Sold / Contract sales per tower+unit): `fn_CollectionsUnitKey`, `CollectionsCrmOwnerState`, `CollectionsCrmUnitOwner`, `fn_Collections_CrmUnitLinks`, and the procedures `usp_Collections_StoreCrmUnitOwners`, `_PublishCrmUnitOwners`, `_RecordCrmOwnerFailure`, `_GetCrmOwnerState`, `_GetCrmUnitLinks`, `_GetUnitReceivables` (unit-keyed Payment Summary read). **V007 and V008 now read `fn_Collections_CrmUnitLinks`, so deploy V010 BEFORE V007 and V008.** |
+| `V011__create_crm_project_map.sql` | CRM project -> PACT tower mapping: `dbo.CollectionsCrmProjectMap` (empty; **no mapping is invented**) and `usp_Collections_GetCrmProjectMap` (manual rows + project/code pairs of the current CRM owner feed). Needed by the unit-based Payment tab / phone lookup / New Ticket. Needs V010. |
+| `tools/crm_project_map_discovery.sql` | **Read-only** helper: the CRM projects seen on tickets (with/without a mapping) next to `CollectionsTowers`, to let a person verify and then INSERT one `CollectionsCrmProjectMap` row per project. Run on demand, not part of the deployment order. |
 | `tests/local-sqlserver/04_receivables_page_cases.sql` | Synthetic cases (tenants VER-01..07) for the Receivables / Campaigns day-based tests (`RealSqlReceivablesPageTests`); development servers only. |
 | `tests/probe_pact_result_shape.sql` | Read-only probe of the deployed PACT procedures' result shape (run after V001-V003, before enabling the job). |
 | `tests/smoke_snapshot_publish_and_read.sql` | Rolled-back smoke test of publish validation and the read procedure (development copy). |

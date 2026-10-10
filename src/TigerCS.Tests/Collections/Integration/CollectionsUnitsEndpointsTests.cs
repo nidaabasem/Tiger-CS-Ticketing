@@ -51,6 +51,13 @@ public sealed class CollectionsUnitsEndpointsTests
         // The test source is not the snapshot source, so the unit summary reports it is unavailable (503), proving the caller got past authorization.
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await admin.GetAsync("/api/collections/units/payment-summary?unitCode=TP140-101")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/collections/leasing/payment-summary?mobile=abc")).StatusCode);
+        // Customer / unit linking: an unusable number is a 400; a CRM customer TigerCS holds no phone for is answered (NotSearched), never guessed.
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/collections/customers/lookup?phone=abc")).StatusCode);
+        var noPhone = await admin.GetAsync("/api/collections/customers/crm/498397/units");
+        Assert.Equal(HttpStatusCode.OK, noPhone.StatusCode);
+        var link = (await noPhone.Content.ReadFromJsonAsync<CustomerUnitLinkResultDto>())!;
+        Assert.Equal("NotSearched", link.CrmStatus);
+        Assert.Empty(link.Candidates);
         var status = await admin.GetAsync("/api/collections/crm-owners/status");
         Assert.Equal(HttpStatusCode.OK, status.StatusCode);
         Assert.False((await status.Content.ReadFromJsonAsync<CrmOwnerState>())!.Loaded);
@@ -64,9 +71,13 @@ public sealed class CollectionsUnitsEndpointsTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/units/payment-summary?unitCode=TP140-101")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/crm-owners/status")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/leasing/payment-summary?mobile=0501234567")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/customers/lookup?phone=0501234567")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/collections/customers/crm/498397/units")).StatusCode);
         using var reporter = await Client(factory, Roles.ReportingUser);
         Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/units/payment-summary?unitCode=TP140-101")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/crm-owners/status")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/leasing/payment-summary?mobile=0501234567")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/customers/lookup?phone=0501234567")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/collections/customers/crm/498397/units?phone=0501234567")).StatusCode);
     }
 }

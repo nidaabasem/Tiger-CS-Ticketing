@@ -1,0 +1,152 @@
+@using TigerCS.Web.Models
+@using TigerCS.Application.Modules.Collections.Dto
+@model CustomerPaymentPanel
+@{
+    var panel = Model;
+    var link = panel.UnitLink!;
+    var unit = panel.SelectedUnit;
+    var links = panel.Links;
+    var selectId = links.AccountParameter == "account" ? "paymentAccount" : $"paymentAccount-{links.AccountParameter}";
+    var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
+    string Aed(decimal? amount) => amount is { } v ? $"AED {v.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}" : "—";
+    string Source(string value) => value switch { "Crm" => "CRM", "Pact" => "PACT", _ => "" };
+}
+
+<section class="unit-payment" data-unit-payment data-crm-status="@link.CrmStatus" data-pact-status="@link.PactStatus">
+    @if (link.Candidates.Count > 1)
+    {
+        <form class="payment-toolbar__selector" method="get" action="@links.SelectorAction" data-payment-selector data-autosubmit="@(links.AutoSubmit ? "true" : null)">
+            @foreach (var hidden in links.HiddenFields)
+            {
+                <input type="hidden" name="@hidden.Key" value="@hidden.Value" />
+            }
+            <div class="field-group">
+                <label class="field-label" for="@selectId">Unit</label>
+                <select class="field-select" id="@selectId" name="@links.AccountParameter">
+                    @if (unit is null)
+                    {
+                        <option value="" selected>Select a unit…</option>
+                    }
+                    @foreach (var option in link.Candidates)
+                    {
+                        <option value="@option.SelectionId" selected="@(option.SelectionId == unit?.SelectionId)">@panel.UnitLabel(option)</option>
+                    }
+                </select>
+            </div>
+            <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+        </form>
+    }
+
+    @if (link.SelectionRequired)
+    {
+        <p class="panel-intro" data-unit-selection-required>This customer has @link.Candidates.Count units. Select one to see its balance and instalments; none is chosen automatically.</p>
+        <ul class="payment-account-list">
+            @foreach (var option in link.Candidates)
+            {
+                <li>
+                    <a class="payment-account-card" href="@links.AccountHref(option.SelectionId)" data-unit-link="@option.SelectionId">
+                        <span class="payment-account-card__unit">@panel.UnitLabel(option)</span>
+                        <span class="badge badge-pay-@CustomerPaymentPanel.UnitStatusCss(option.FinancialStatus)">@CustomerPaymentPanel.UnitStatusText(option.FinancialStatus)</span>
+                        <span class="payment-account-card__due">@(option.Total is { } t ? Aed(t) : "—") <small>total due</small></span>
+                    </a>
+                </li>
+            }
+        </ul>
+    }
+
+    @foreach (var note in link.Notes)
+    {
+        <div class="alert alert-info" role="status"><span>@note</span></div>
+    }
+
+    @if (unit is not null)
+    {
+        <div class="payment-toolbar">
+            <div class="payment-toolbar__single">
+                <span class="field-label">Unit</span>
+                <strong data-unit-label>@panel.UnitLabel(unit)</strong>
+            </div>
+            <div class="payment-toolbar__meta">
+                <span>Source <strong>@(unit.Source == "Crm" ? "CRM → PACT" : unit.Source == "Leasing" ? "PACT Leasing" : "PACT")</strong></span>
+                @if (unit.UnitKey is not null) { <span>Unit code <strong>@unit.UnitKey</strong></span> }
+                <span>As of <strong>@CustomerPaymentPanel.Date(unit.AsOf)</strong></span>
+            </div>
+        </div>
+
+        <div class="facts-panel facts-panel--flat" data-unit-customer>
+            <dl>
+                <div class="facts-row"><dt>Customer</dt><dd>@(unit.Customer.Name.Length > 0 ? unit.Customer.Name : "—") <small class="text-secondary">@Source(unit.Customer.NameSource)</small></dd></div>
+                <div class="facts-row"><dt>Mobile</dt><dd>@(unit.Customer.Mobile.Length > 0 ? unit.Customer.Mobile : "—") <small class="text-secondary">@Source(unit.Customer.MobileSource)</small></dd></div>
+                <div class="facts-row"><dt>Email</dt><dd>@(unit.Customer.Email.Length > 0 ? unit.Customer.Email : "—") <small class="text-secondary">@Source(unit.Customer.EmailSource)</small></dd></div>
+                <div class="facts-row"><dt>Tower / apartment</dt><dd>@(unit.TowerName ?? unit.ProjectName ?? "—") · @(unit.UnitNumber ?? "—")</dd></div>
+            </dl>
+        </div>
+
+        @if (unit.ReviewReasons.Count > 0)
+        {
+            <div class="alert alert-warning" role="status" data-unit-review>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                <span><strong>Needs review.</strong> @string.Join(" ", unit.ReviewReasons.Select(CustomerPaymentPanel.ReasonText))</span>
+            </div>
+        }
+
+        @switch (unit.FinancialStatus)
+        {
+            case "NoDues":
+                <div class="alert alert-success" role="status" data-unit-state="NoDues"><span><strong>Confirmed: nothing is due.</strong> PACT holds this unit and nothing is due on or before today.@(unit.FinancialDetail is { Length: > 0 } zeroDetail ? " " + zeroDetail : "")</span></div>
+                break;
+            case "NoFinancialData":
+                <div class="alert alert-info" role="status" data-unit-state="NoFinancialData">
+                    <span><strong>No financial data available.</strong> @(unit.FinancialReason is { } noDataReason ? CustomerPaymentPanel.ReasonText(noDataReason) + " " : "")@unit.FinancialDetail This is not a zero balance.</span>
+                </div>
+                break;
+            case "MatchFailed":
+                <div class="alert alert-warning" role="status" data-unit-state="MatchFailed">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                    <span><strong>The unit could not be matched to one PACT record.</strong> @(unit.FinancialReason is { } failReason ? CustomerPaymentPanel.ReasonText(failReason) + " " : "")@unit.FinancialDetail No amounts are shown. Do not quote a balance.</span>
+                </div>
+                break;
+            case "SourceError":
+                <div class="alert alert-error payment-alert-action" role="alert" data-unit-state="SourceError" data-balance-unavailable>
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                    <span><strong>Balance unavailable.</strong> A source could not be read: @unit.FinancialDetail Do not quote a balance.</span>
+                    <a class="btn btn-sm" href="@links.AccountHref(unit.SelectionId)" data-payment-retry>Retry</a>
+                </div>
+                break;
+            default:
+                <section class="kpi-grid payment-kpis" aria-label="Balance summary" data-unit-state="Available">
+                    <div class="kpi-card @(unit.Overdue > 0 ? "kpi-card--attention" : "")"><strong>@Aed(unit.Overdue)</strong><span>Overdue</span></div>
+                    <div class="kpi-card"><strong>@Aed(unit.Due)</strong><span>Due</span></div>
+                    <div class="kpi-card kpi-card--attention"><strong>@Aed(unit.Total)</strong><span>Total (Due + Overdue)</span></div>
+                </section>
+                @if (!string.IsNullOrWhiteSpace(unit.FinancialDetail))
+                {
+                    <p class="field-hint">@unit.FinancialDetail</p>
+                }
+                break;
+        }
+
+        @if (unit.Instalments.Count > 0)
+        {
+            <h3 class="payment-section-title">Unpaid instalments due today or earlier</h3>
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead><tr><th>Instalment</th><th>Due date</th><th class="col-num">Scheduled</th><th class="col-num">Paid</th><th class="col-num">Remaining</th><th>Status</th></tr></thead>
+                    <tbody>
+                        @foreach (var instalment in unit.Instalments)
+                        {
+                            <tr>
+                                <td>@instalment.Description</td>
+                                <td>@CustomerPaymentPanel.Date(instalment.DueDate)</td>
+                                <td class="col-num">@Aed(instalment.OriginalAmount)</td>
+                                <td class="col-num">@Aed(instalment.PaidAmount)</td>
+                                <td class="col-num">@Aed(instalment.RemainingAmount)</td>
+                                <td><span class="badge badge-pay-@(instalment.Status == "Overdue" ? "critical" : "pending")">@instalment.Status@(instalment.DaysLate is { } days ? $" · {days} d" : "")</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</section>

@@ -1998,4 +1998,82 @@ public sealed class NewTicketModelTests
         Assert.Equal(NewTicketModel.StepCustomer, values["step"]);
         Assert.Equal(42L, values["intakeRecordId"]);
     }
+
+    // ---- unit-based payments in the New Ticket flow ----
+
+    private static CustomerUnitLinkResultDto UnitLinkFor(string selectionId, string financialStatus, decimal? due, decimal? overdue, string? reason = null, int? company = 4) =>
+        new("+971509990001", "Found", "NotSearched",
+        [
+            new(selectionId, "Crm", company, "1506", "Nobles Tower", "Nobles Tower", "1506", "TP1506-1506", financialStatus == "MatchFailed" ? "MatchFailed" : "Linked", [],
+                new CollectionsUnitPartyDto("Sami Nasser", "+971509990001", "sami@example.test", "Crm", "Crm", "Crm"), 5001, 100, 10, "T-1506", 1506, null, null,
+                financialStatus, reason, null, due, overdue, due is null || overdue is null ? null : due + overdue, [], new DateOnly(2026, 10, 5), "Fresh")
+        ], false, selectionId, []);
+
+    private static Func<HttpRequestMessage, string?, HttpResponseMessage> CollectionsWithUnitLink(CustomerUnitLinkResultDto link) =>
+        (request, _) => request.RequestUri!.AbsolutePath.EndsWith("/customers/crm/5001/units", StringComparison.Ordinal)
+            ? FakeApiHandler.JsonResponse(HttpStatusCode.OK, link)
+            : Problem(HttpStatusCode.ServiceUnavailable, "FinanceUnavailable");
+
+    [Fact]
+    public async Task PropertyStep_CrmUnitSelected_ShowsTheUnitBasedFigures_FoundByUnitAndNotByThePhone_AndCarriesTheSelectedUnit()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            collectionsResponder: CollectionsWithUnitLink(UnitLinkFor("crm:100", "Available", 300m, 700m)));
+        var collections = LastCollectionsHandler!;
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506");
+
+        var panel = Assert.IsType<CustomerPaymentPanel>(model.PaymentPanel);
+        Assert.Equal(PaymentPanelState.UnitSummary, panel.State);
+        var unit = panel.SelectedUnit!;
+        Assert.Equal((1000m, "Sami Nasser", "1506", "Nobles Tower"), (unit.Total, unit.Customer.Name, unit.UnitNumber, unit.ProjectName));
+        Assert.Equal("sami@example.test", unit.Customer.Email);
+        // The ticket's selected CRM unit is the selection, and the typed phone only helps CRM find the customer.
+        var request = Assert.Single(collections.Requests, r => r.RequestUri.Contains("/customers/crm/5001/units"));
+        Assert.Contains("selection=crm%3a100", request.RequestUri, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("phone=", request.RequestUri, StringComparison.Ordinal);
+        Assert.False(panel.AllowSending);
+        Assert.Equal("/NewTicket", panel.Links.SelectorAction);
+    }
+
+    [Fact]
+    public async Task ReviewStep_ShowsTheUnitBasedPanelReadOnly_ForTheSelectedCrmUnit()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            categoriesResponder: CategoriesReturning(new CategoryDto(3, "Maintenance", 2, "Facility Management")),
+            collectionsResponder: CollectionsWithUnitLink(UnitLinkFor("crm:100", "NoDues", 0m, 0m)));
+        model.CreateStep = new NewTicketModel.CreateStepInput { CategoryId = 3, PriorityId = 3, RequestSummary = "Leak" };
+
+        var result = await model.OnPostReviewAsync(
+            42, "+971509990001", "crm", 5001, 900, 100, 10, "Sami Nasser", "Nobles Tower", "1506", null, null, null, CancellationToken.None);
+
+        Assert.IsType<PageResult>(result);
+        Assert.Equal(NewTicketModel.StepReview, model.Step);
+        var panel = Assert.IsType<CustomerPaymentPanel>(model.PaymentPanel);
+        Assert.Equal(PaymentPanelState.UnitSummary, panel.State);
+        Assert.Equal("NoDues", panel.SelectedUnit!.FinancialStatus);
+        Assert.False(panel.AllowSending);
+    }
+
+    [Fact]
+    public async Task PropertyStep_AnUnmappedCrmProject_ShowsAMatchFailure_NotZeroAndNotAGuessedUnit()
+    {
+        var (model, _, _, _, _, _, _, _) = CreateModel(
+            crmBuyerLookupResponder: CrmBuyersFound(SingleUnitBuyer(5001, "Sami Nasser", "+971509990001", 900, 100, 10, "1506", "Nobles Tower")),
+            collectionsResponder: CollectionsWithUnitLink(UnitLinkFor("crm:100", "MatchFailed", null, null, "ProjectMappingMissing", company: null)));
+
+        await GetAsync(model, step: NewTicketModel.StepProperty, intakeRecordId: 42, phoneNumber: "+971509990001", customer: "crm",
+            crmBuyerCustomerId: 5001, crmBuyerLeadId: 900, crmBuyerUnitId: 100, crmBuyerProjectId: 10,
+            crmBuyerCustomerName: "Sami Nasser", crmBuyerProjectName: "Nobles Tower", crmBuyerUnitNumber: "1506");
+
+        var unit = model.PaymentPanel!.SelectedUnit!;
+        Assert.Equal(("MatchFailed", "ProjectMappingMissing"), (unit.FinancialStatus, unit.FinancialReason));
+        Assert.Null(unit.Total);
+        Assert.Equal("Sami Nasser", unit.Customer.Name);                      // name, mobile, email, tower and apartment are still there for the ticket
+        Assert.Equal("+971509990001", unit.Customer.Mobile);
+        Assert.Null(model.ErrorMessage);
+    }
 }
