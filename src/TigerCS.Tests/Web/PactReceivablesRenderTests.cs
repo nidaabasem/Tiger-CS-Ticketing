@@ -241,6 +241,20 @@ public sealed class PactReceivablesRenderTests
     }
 
     [Fact]
+    public async Task WhileOneCompanyLoads_TheOtherFailedCompanyStillGetsItsRetry()
+    {
+        // Dubai is really being loaded; Sharjah's last refresh failed and nothing is running for it: it must not be hidden behind "Loading...".
+        var api = new FakeCollectionsApi { SharjahFailed = true, Stale = true, DubaiLoadingOnly = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.Contains("data-load-running", html);
+        Assert.Contains("Loading data for Tiger Group Dubai…", html);
+        Assert.Contains("Could not load data for <strong>Tiger Group Sharjah</strong>.", html);
+        Assert.Contains("name=\"companyId\" value=\"32\"", html);
+        Assert.Contains("data-load-button", html);
+    }
+
+    [Fact]
     public async Task Retry_PostsTheCompanyToTheApi_AndComesBackToTheSameFilters()
     {
         var api = new FakeCollectionsApi { SharjahFailed = true };

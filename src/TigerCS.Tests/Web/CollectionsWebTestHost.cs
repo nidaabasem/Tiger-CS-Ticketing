@@ -23,6 +23,8 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
     public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
     public bool Covered { get; set; } = true;
     public bool Loading { get; set; }
+    /// <summary>Only Tiger Group Dubai (company 4) is being loaded right now; Sharjah is not.</summary>
+    public bool DubaiLoadingOnly { get; set; }
     public bool NothingLoaded { get; set; }
     public bool Stale { get; set; }
     public bool PaidRetained { get; set; } = true;
@@ -38,9 +40,9 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
     {
         var now = DateTime.UtcNow;
         var company = NothingLoaded
-            ? new SnapshotCompanyStatusDto(4, "Tiger Group Dubai", false, null, null, "Never", null, 0, 0, null, null, 0, 0m, 0, 0m, 0, 0, "Missing", null, Loading)
+            ? new SnapshotCompanyStatusDto(4, "Tiger Group Dubai", false, null, null, "Never", null, 0, 0, null, null, 0, 0m, 0, 0m, 0, 0, "Missing", null, Loading || DubaiLoadingOnly)
             : new SnapshotCompanyStatusDto(4, "Tiger Group Dubai", true, now.AddMinutes(Stale ? -300 : -5), now.AddMinutes(Stale ? -300 : -5), "Succeeded", null, 0, 50,
-                new DateOnly(2026, 1, 1), new DateOnly(2099, 12, 31), 0, 0m, 0, 0m, 0, 0, Stale ? "Stale" : "Fresh", Stale ? 300 : 5, Loading, null, null, PaidRetained, Breakdown, Breakdown ? 0 : 3);
+                new DateOnly(2026, 1, 1), new DateOnly(2099, 12, 31), 0, 0m, 0, 0m, 0, 0, Stale ? "Stale" : "Fresh", Stale ? 300 : 5, Loading || DubaiLoadingOnly, null, null, PaidRetained, Breakdown, Breakdown ? 0 : 3);
         var gaps = NothingLoaded ? [new CoverageGapDto(4, "Tiger Group Dubai", from, through)]
             : Covered ? [] : (IReadOnlyList<CoverageGapDto>)[new CoverageGapDto(4, "Tiger Group Dubai", from, new DateOnly(2025, 12, 31))];
         if (!SharjahFailed) return new SnapshotStatusDto([company], [], 90, from, through, gaps);

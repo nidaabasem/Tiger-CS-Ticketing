@@ -2,6 +2,7 @@
   V004 - Validate and publish the staged rows of ONE company, or record a failure and keep the previous snapshot.
 
   dbo.usp_Collections_RecordReceivablesFailure   records a failed attempt for a company (previous snapshot untouched)
+  dbo.usp_Collections_CloseReceivablesRun        gives every started run/company a terminal state when its session died (timeout, cancellation, restart)
   dbo.usp_Collections_PublishReceivablesStaging  validates dbo.CollectionsReceivableStaging, then publishes it
 
   Validation (any failure => nothing is published and the previous snapshot stays current):
@@ -51,6 +52,76 @@ BEGIN
        SET LastAttemptRunId = @RunId, LastAttemptUtc = @now, LastAttemptStatus = 'Failed',
            LastErrorNumber = @ErrorNumber, LastError = @msg, ConsecutiveFailures = ConsecutiveFailures + 1
      WHERE CompanyId = @CompanyId;
+END;
+GO
+
+/*
+  Closes runs that were started but never finished. A client timeout, a cancelled Hangfire job or an application restart aborts the whole
+  T-SQL batch of dbo.usp_Collections_RefreshReceivables WITHOUT running its CATCH block, so the Run / RunCompany rows stay 'Running' and
+  CompanyState keeps showing the previous failure. Idempotent and narrow:
+    * @RunId given  -> only that run (and its company rows); NULL -> every run / company row still marked Running.
+    * Only rows with Status = 'Running' are touched; terminal rows are never rewritten.
+    * @RequireIdle = 1 (callers outside the refresh) first takes the refresh application lock, waiting up to @LockWaitSeconds. If a refresh still holds
+      it, something IS running: nothing is changed and @Outcome = 'StillRunning'. The refresh procedure calls this with 0 because it holds the lock itself.
+      Why a wait: a client timeout / cancellation does NOT stop a batch that is blocked inside the linked-server call - the session (and the lock) lives
+      until the remote procedure returns (measured on SQL Server 2022), so the caller's first attempt usually finds the lock still held.
+    * CompanyState is updated only when the closed attempt is newer than the state's last attempt, so an old orphan never overwrites a later result.
+  The earlier published snapshot (CurrentRunId, coverage, LastSuccessUtc) is never touched.
+*/
+CREATE OR ALTER PROCEDURE dbo.usp_Collections_CloseReceivablesRun
+    @RunId           uniqueidentifier = NULL,
+    @ErrorNumber     int              = -1,
+    @Message         nvarchar(1000)   = N'The refresh was interrupted before it finished (timeout, cancellation or application restart).',
+    @RunStatus       varchar(20)      = 'Failed',      -- 'Failed' | 'Abandoned'
+    @RequireIdle     bit              = 1,
+    @LockWaitSeconds int              = 0,             -- 0 = do not wait; the application passes 120
+    @ClosedRuns      int              = NULL OUTPUT,
+    @ClosedCompanies int              = NULL OUTPUT,
+    @Outcome         varchar(20)      = NULL OUTPUT    -- 'Closed' | 'StillRunning'
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT @ClosedRuns = 0, @ClosedCompanies = 0, @Outcome = 'Closed';
+    IF @RunStatus NOT IN ('Failed', 'Abandoned') THROW 50040, N'@RunStatus must be Failed or Abandoned.', 1;
+
+    DECLARE @lock int, @now datetime2(3) = SYSUTCDATETIME(), @msg nvarchar(1000) = LEFT(@Message, 1000), @takenHere bit = 0, @lockMs int = 1000 * CASE WHEN @LockWaitSeconds < 0 THEN 0 WHEN @LockWaitSeconds > 600 THEN 600 ELSE @LockWaitSeconds END;
+    IF @RequireIdle = 1
+    BEGIN
+        EXEC @lock = sys.sp_getapplock @Resource = N'Collections.ReceivablesRefresh', @LockMode = N'Exclusive', @LockOwner = N'Session', @LockTimeout = @lockMs;
+        IF @lock < 0 BEGIN SET @Outcome = 'StillRunning'; RETURN; END;
+        SET @takenHere = 1;
+    END;
+
+    BEGIN TRY
+        DECLARE @closed TABLE (RunId uniqueidentifier NOT NULL, CompanyId int NOT NULL, StartedUtc datetime2(3) NOT NULL);
+        UPDATE dbo.CollectionsReceivableRunCompany
+           SET Status = 'Failed', FinishedUtc = @now, ErrorNumber = @ErrorNumber, ErrorMessage = @msg
+        OUTPUT inserted.RunId, inserted.CompanyId, inserted.StartedUtc INTO @closed
+         WHERE Status = 'Running' AND (@RunId IS NULL OR RunId = @RunId);
+        SET @ClosedCompanies = @@ROWCOUNT;
+
+        -- The newest closed attempt per company becomes the company's last attempt, unless a later attempt already exists.
+        UPDATE st
+           SET LastAttemptRunId = c.RunId, LastAttemptUtc = @now, LastAttemptStatus = 'Failed',
+               LastErrorNumber = @ErrorNumber, LastError = @msg, ConsecutiveFailures = st.ConsecutiveFailures + 1
+          FROM dbo.CollectionsReceivableCompanyState st
+          JOIN (SELECT x.CompanyId, x.RunId, x.StartedUtc, ROW_NUMBER() OVER (PARTITION BY x.CompanyId ORDER BY x.StartedUtc DESC) AS rn FROM @closed x) c
+            ON c.CompanyId = st.CompanyId AND c.rn = 1
+         WHERE st.LastAttemptUtc IS NULL OR st.LastAttemptUtc <= c.StartedUtc;
+
+        UPDATE r
+           SET Status = CASE WHEN EXISTS (SELECT 1 FROM dbo.CollectionsReceivableRunCompany k WHERE k.RunId = r.RunId AND k.Status = 'Succeeded') THEN 'PartialFailure' ELSE @RunStatus END,
+               FinishedUtc = @now, Message = @msg
+          FROM dbo.CollectionsReceivableRun r
+         WHERE r.Status = 'Running' AND (@RunId IS NULL OR r.RunId = @RunId);
+        SET @ClosedRuns = @@ROWCOUNT;
+    END TRY
+    BEGIN CATCH
+        IF @takenHere = 1 EXEC sys.sp_releaseapplock @Resource = N'Collections.ReceivablesRefresh', @LockOwner = N'Session';
+        THROW;
+    END CATCH;
+
+    IF @takenHere = 1 EXEC sys.sp_releaseapplock @Resource = N'Collections.ReceivablesRefresh', @LockOwner = N'Session';
 END;
 GO
 

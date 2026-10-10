@@ -42,7 +42,14 @@
                         run in small committed batches and flips the pointer in a short transaction, so a refresh never blocks a read and the previous data
                         stays readable until the flip. Dirty-read hints are not used anywhere (they would trade correctness for speed).
 */
-CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetCoverage @Scope int = NULL
+/*
+  RefreshInProgress = a run of this company is Running, started within the lease, and this company's own row of that run is not already
+  finished. The lease must be longer than the application's refresh command timeout (Collections:ReceivablesSnapshot:RefreshCommandTimeoutSeconds,
+  default 1800 s): a row older than that cannot belong to a live call (the call would have timed out), so a crashed run stops reading as
+  "loading" after the lease instead of after hours, and it never hides a finished company (Succeeded / Failed) behind another company's run.
+  Raise @RunLeaseMinutes together with RefreshCommandTimeoutSeconds.
+*/
+CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetCoverage @Scope int = NULL, @RunLeaseMinutes int = 40
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -61,8 +68,10 @@ BEGIN
       FROM (VALUES (4), (32)) v (CompanyId)
       LEFT JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = v.CompanyId
       OUTER APPLY (SELECT TOP (1) r.RunId, r.StartedUtc FROM dbo.CollectionsReceivableRun r
-                    WHERE r.Status = 'Running' AND r.StartedUtc > DATEADD(HOUR, -3, SYSUTCDATETIME())
+                      LEFT JOIN dbo.CollectionsReceivableRunCompany own ON own.RunId = r.RunId AND own.CompanyId = v.CompanyId
+                    WHERE r.Status = 'Running' AND r.StartedUtc > DATEADD(MINUTE, -ISNULL(NULLIF(@RunLeaseMinutes, 0), 40), SYSUTCDATETIME())
                       AND (r.RequestedCompanyId IS NULL OR r.RequestedCompanyId = v.CompanyId)
+                      AND (own.RunId IS NULL OR own.Status = 'Running')   -- this company has not finished in that run
                     ORDER BY r.StartedUtc DESC) run
       LEFT JOIN dbo.CollectionsReceivableRunCompany rc ON rc.RunId = run.RunId AND rc.CompanyId = v.CompanyId
      WHERE @Scope IS NULL OR v.CompanyId = @Scope
