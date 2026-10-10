@@ -6,8 +6,10 @@ public sealed record CollectionsCampaignContactDto(
     string ProjectCode, decimal? Amount, string Currency, DateOnly? DueDate,
     string Stage, string CycleKey, string Status, string Reason,
     string? TowerNumber = null, string? TowerName = null,
-    decimal? UnitTotalRemaining = null, decimal? UnitDueAndOverdue = null)
+    decimal DueAmount = 0m, decimal OverdueAmount = 0m)
 {
+    /// <summary>Due + Overdue of the unit (instalments due today or earlier that are still unpaid).</summary>
+    public decimal TotalAmount => DueAmount + OverdueAmount;
     public bool VoiceEligible => Status == "Ready" && Phone.Length > 0;
     public bool SmsEligible => Status == "Ready" && Phone.Length > 0;
     public bool EmailEligible => Status == "Ready" && Email.Length > 0;

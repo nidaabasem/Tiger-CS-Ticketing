@@ -27,7 +27,7 @@ public sealed class CampaignReviewDispatchConsistencyTests
         var h = new ReviewHarness();
         h.Source.HonourMinAmount = true;
         h.Source.Snapshot = Status(ReviewHarness.Now, ReviewHarness.Now.AddMinutes(-5));
-        h.Source.Items.AddRange([ReviewHarness.Row(1, 99.99m), ReviewHarness.Row(2, 100m), ReviewHarness.Row(3, 250.5m), ReviewHarness.Row(4, 0m)]);
+        h.Source.Items.AddRange([ReviewHarness.Row(1, 99.99m, day: 10), ReviewHarness.Row(2, 100m, day: 10), ReviewHarness.Row(3, 250.5m, day: 10), ReviewHarness.Row(4, 0m, day: 10)]);
         return h;
     }
 
@@ -40,7 +40,10 @@ public sealed class CampaignReviewDispatchConsistencyTests
     {
         using var h = Harness();
         var date = new DateOnly(2026, 10, 14);
-        var preview = (await Preview(h).PreviewAsync(h.Manager, "CurrentMonthReminder", date)).Value!;
+        // The Campaigns page filters on the unit's TOTAL (strictly greater than Minimum Total); the review / dispatch pipeline keeps its own inclusive per-instalment minimum
+        // (100). 99.99 makes both exclude the 99.99 unit and include the 100 and 250.50 ones.
+        var preview = (await Preview(h).PreviewAsync(h.Manager, "CurrentMonthReminder", date, minTotal: 99.99m)).Value!;
+        h.Source.Requests.Clear();   // from here on only the review / dispatch reads are checked
         var run = await h.RefreshAsync();
         Assert.Equal("Completed", run.Status);
         using var scope = h.NewScope();
@@ -50,8 +53,9 @@ public sealed class CampaignReviewDispatchConsistencyTests
         Assert.Equal(["T0002", "T0003"], preview.Items.Select(i => i.TenantId).Order());
         Assert.Equal(preview.Items.OrderBy(i => i.UnitCode).Select(i => (i.UnitCode, i.Amount)),
                      review.Items.OrderBy(i => i.UnitCode).Select(i => (i.UnitCode, i.RemainingAmount)));
-        var export = (await Preview(h).ExportAsync(h.Manager, "CurrentMonthReminder", "review", date)).Value!;
+        var export = (await Preview(h).ExportAsync(h.Manager, "CurrentMonthReminder", "review", date, minTotal: 99.99m)).Value!;
         Assert.Equal(preview.TotalCount, export.RowCount);
+        h.Source.Requests.Clear();   // the Campaigns reads above filter the unit total; the next assertions are about the review / dispatch reads only
 
         // Every source read of the three flows carried the same filters.
         Assert.All(h.Source.Requests, r => Assert.Equal(100m, r.MinAmount));

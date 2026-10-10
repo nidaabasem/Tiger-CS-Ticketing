@@ -39,6 +39,11 @@
       (name, phone, e-mail, project) (Variants = 0) use the stored attributes; the rest (a small minority) are resolved from their rows exactly, and only
       those need the distinct-contact comparison behind ConflictingContactDetails.
     * Order: CompanyId, TenantId (binary), UnitCode (binary), UnitId - which is exactly UnitSeq order within a company.
+    * Cancelled / invalid units: a unit whose UnitCode contains '*' (e.g. 513*), is blank or '0', or whose UnitID is not positive is excluded BEFORE any aggregation, flag,
+      count, page or export; only that apartment (never the customer's other apartments).
+    * Amounts (day-based revision): with @Today (Dubai date) every candidate carries DueAmount (rows due ON @Today), OverdueAmount (rows due BEFORE it) and their sum
+      (the application's Total). The application also clamps @ToDate to @Today, so no future instalment is in any unit. A unit with no Due + Overdue is not a candidate;
+      @MinTotal (NULL = no minimum) keeps units whose Due + Overdue is GREATER than it - applied to the unit's sum, before the counts, the paging and the export.
   Concurrency: like every read, only rows of CollectionsReceivableCompanyState.CurrentRunId are touched, by index range; no dirty-read hints.
 */
 CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetCampaignUnits
@@ -55,7 +60,9 @@ CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetCampaignUnits
     @PhoneDigits      nvarchar(200) = NULL,       -- digits of a phone-like search term (>= 3 digits, no letters), else NULL
     @Offset           int           = 0,
     @Take             int           = 25,
-    @NormVersion      tinyint
+    @NormVersion      tinyint,
+    @Today            date          = NULL,       -- the Dubai date: Due = due on it, Overdue = due before it
+    @MinTotal         decimal(19,4) = NULL        -- unit Due + Overdue must be > this; NULL = no minimum
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -99,11 +106,13 @@ BEGIN
     CREATE TABLE #g   -- per unit (integers only)
     (
         CompanyId int NOT NULL, UnitSeq int NOT NULL, TenantSeq int NOT NULL,
-        StageRows int NOT NULL, StageAmt decimal(19,4) NOT NULL, StageMin date NULL, StageAmb int NOT NULL, Contra int NOT NULL
+        StageRows int NOT NULL, StageAmt decimal(19,4) NOT NULL, StageMin date NULL, StageAmb int NOT NULL, Contra int NOT NULL,
+        DueAmt decimal(19,4) NOT NULL, OverAmt decimal(19,4) NOT NULL
     );
     CREATE TABLE #a   -- candidate units
     (
         CompanyId int NOT NULL, UnitSeq int NOT NULL, TenantSeq int NOT NULL, StageAmt decimal(19,4) NOT NULL, StageMin date NULL, StageAmb int NOT NULL, Contra int NOT NULL,
+        DueAmt decimal(19,4) NOT NULL, OverAmt decimal(19,4) NOT NULL,
         CodeSeq int NOT NULL, UnitId bigint NOT NULL, Variants bit NOT NULL, BadCode bit NOT NULL, PhoneId int NULL, EmailId int NULL, PhoneOk bit NULL, EmailOk bit NULL,
         PhoneVer tinyint NULL, EmailVer tinyint NULL, Conflict int NOT NULL DEFAULT 0, UnitAlloc int NOT NULL DEFAULT 0, Flags int NULL,
         PRIMARY KEY (CompanyId, UnitSeq)
@@ -121,7 +130,10 @@ BEGIN
         SELECT s.CompanyId, s.UnitSeq, s.TenantSeq, CAST(s.DueDate AS date), COUNT(*), SUM(s.Amount), MAX(s.RowFlags & 1)
           FROM #run r
           JOIN dbo.CollectionsReceivableSnapshot s ON s.CompanyId = r.CompanyId AND s.RunId = r.RunId
+          JOIN dbo.CollectionsReceivableUnitText ut ON ut.CompanyId = s.CompanyId AND ut.RunId = s.RunId AND ut.UnitSeq = s.UnitSeq
          WHERE s.DueDate >= @FromDt AND s.DueDate < @ToExclusive AND s.Amount > 0 AND s.Amount >= @MinAmount
+           AND ut.UnitCode NOT LIKE N'%*%'                                  -- cancelled apartments (e.g. 513*) never enter the aggregation
+           AND LTRIM(RTRIM(ut.UnitCode)) NOT IN (N'', N'0') AND s.UnitId > 0 -- nor do units without a real number
            AND (@TowerId IS NULL OR s.TowerNumber = @TowerNumber)
          GROUP BY s.CompanyId, s.UnitSeq, s.TenantSeq, CAST(s.DueDate AS date)
         OPTION (RECOMPILE);
@@ -129,19 +141,22 @@ BEGIN
         INSERT #g WITH (TABLOCK)
         SELECT u.CompanyId, u.UnitSeq, MIN(u.TenantSeq),
                SUM(CASE WHEN st.InStage = 1 THEN u.Cnt ELSE 0 END), SUM(CASE WHEN st.InStage = 1 THEN u.Amt ELSE 0 END),
-               MIN(CASE WHEN st.InStage = 1 THEN u.Day_ END), MAX(CASE WHEN st.InStage = 1 AND u.Cnt > 1 THEN 1 ELSE 0 END), MAX(u.Contra)
+               MIN(CASE WHEN st.InStage = 1 THEN u.Day_ END), MAX(CASE WHEN st.InStage = 1 AND u.Cnt > 1 THEN 1 ELSE 0 END), MAX(u.Contra),
+               SUM(CASE WHEN @Today IS NOT NULL AND u.Day_ = @Today THEN u.Amt ELSE 0 END), SUM(CASE WHEN @Today IS NOT NULL AND u.Day_ < @Today THEN u.Amt ELSE 0 END)
           FROM #u u
          CROSS APPLY (SELECT CASE WHEN (@StageFrom IS NULL OR u.Day_ >= @StageFrom) AND u.Day_ < @StageToExclusive THEN 1 ELSE 0 END AS InStage) st
          GROUP BY u.CompanyId, u.UnitSeq;
 
         -- Candidates: at least one stage row, and either ambiguous (review) or above the stage threshold.
-        INSERT #a WITH (TABLOCK) (CompanyId, UnitSeq, TenantSeq, StageAmt, StageMin, StageAmb, Contra, CodeSeq, UnitId, Variants, BadCode, PhoneId, EmailId, PhoneOk, EmailOk, PhoneVer, EmailVer)
-        SELECT g.CompanyId, g.UnitSeq, g.TenantSeq, g.StageAmt, g.StageMin, g.StageAmb, g.Contra,
+        INSERT #a WITH (TABLOCK) (CompanyId, UnitSeq, TenantSeq, StageAmt, StageMin, StageAmb, Contra, DueAmt, OverAmt, CodeSeq, UnitId, Variants, BadCode, PhoneId, EmailId, PhoneOk, EmailOk, PhoneVer, EmailVer)
+        SELECT g.CompanyId, g.UnitSeq, g.TenantSeq, g.StageAmt, g.StageMin, g.StageAmb, g.Contra, g.DueAmt, g.OverAmt,
                d.CodeSeq, d.UnitId, d.Variants, d.BadCode, d.PhoneId, d.EmailId, d.PhoneOk, d.EmailOk, d.PhoneVer, d.EmailVer
           FROM #g g
           JOIN #run r ON r.CompanyId = g.CompanyId
           JOIN dbo.CollectionsReceivableUnit d ON d.CompanyId = g.CompanyId AND d.RunId = r.RunId AND d.UnitSeq = g.UnitSeq
          WHERE g.StageRows > 0 AND (g.StageAmb = 1 OR g.StageAmt > @Threshold)
+           AND (@Today IS NULL OR g.DueAmt + g.OverAmt > 0)                 -- nothing Due or Overdue: not listed
+           AND (@MinTotal IS NULL OR g.DueAmt + g.OverAmt > @MinTotal)      -- Minimum Total: on the unit's sum, before counts / paging / export
          ORDER BY g.CompanyId, g.UnitSeq;
 
         -- Units whose rows carry different contact details: resolve the first window row (DueDate, VoucherNumber, SnapshotRowId) and the distinct
@@ -255,6 +270,9 @@ BEGIN
                   LEFT JOIN dbo.CollectionsContactNorm en ON en.ContactId = a.EmailId
                  WHERE NOT (   ISNULL(vo.FullName, d.FullName) LIKE @Like ESCAPE N'\' OR d.TenantId COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\'
                             OR d.UnitCode COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR ISNULL(pn.Norm, N'') LIKE @Like ESCAPE N'\' OR ISNULL(en.Norm, N'') LIKE @Like ESCAPE N'\'
+                            OR ISNULL(vo.TowerNumber, d.TowerNumber) LIKE @Like ESCAPE N'\'
+                            OR EXISTS (SELECT 1 FROM dbo.CollectionsTowers tq WHERE tq.CompanyId = a.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) = ISNULL(vo.TowerNumber, d.TowerNumber)
+                                        AND CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\')
                             OR (@PhoneDigits IS NOT NULL AND ISNULL(pn.Norm, N'') LIKE N'%' + @PhoneDigits + N'%'));
         END;
     END;
@@ -269,7 +287,7 @@ BEGIN
 
         SELECT p.CompanyId, d.TenantId COLLATE DATABASE_DEFAULT AS TenantId, ISNULL(vo.FullName, d.FullName) AS FullName, ISNULL(pn.Norm, N'') AS Phone,
                ISNULL(en.Norm, N'') AS Email, p.UnitId, d.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, ISNULL(vo.ProjectCode, d.ProjectCode) AS ProjectCode,
-               CASE WHEN p.StageAmb = 1 THEN CAST(NULL AS decimal(19,4)) ELSE p.StageAmt END AS Amount, p.StageMin AS EarliestDue, p.Flags,
+               CASE WHEN p.StageAmb = 1 THEN CAST(NULL AS decimal(19,4)) ELSE p.StageAmt END AS Amount, p.StageMin AS EarliestDue, p.Flags, p.DueAmt AS DueAmount, p.OverAmt AS OverdueAmount,
                CASE WHEN vo.UnitSeq IS NULL THEN d.TowerNumber ELSE vo.TowerNumber END AS TowerNumber, CONVERT(nvarchar(400), tw.TowerName) AS TowerName
           FROM (SELECT * FROM #a ORDER BY CompanyId, UnitSeq OFFSET @Offset ROWS FETCH NEXT @Take ROWS ONLY) p
           JOIN #run r ON r.CompanyId = p.CompanyId

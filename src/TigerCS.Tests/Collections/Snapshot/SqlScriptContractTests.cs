@@ -30,7 +30,10 @@ public sealed class SqlScriptContractTests
         Assert.Contains("CASE WHEN @ClassifyByDay = 1 THEN @AsOfDate ELSE DATEFROMPARTS", sql);   // Overdue = before the day, Due = the day ...
         Assert.Contains("CASE WHEN @ClassifyByDay = 1 THEN DATEADD(DAY, 1, @AsOfDate)", sql);     // ... Upcoming = after it
         Assert.Contains("@StatusFilter  varchar(10)   = NULL", sql);
-        foreach (var filter in new[] { "DELETE FROM #u WHERE OverCnt = 0", "DELETE FROM #u WHERE DueCnt = 0", "DELETE FROM #u WHERE NotCnt = 0" }) Assert.Contains(filter, sql);
+        foreach (var filter in new[] { "DELETE FROM #u WHERE OverCnt = 0", "DELETE FROM #u WHERE DueCnt = 0" }) Assert.Contains(filter, sql);
+        Assert.DoesNotContain("'upcoming'", sql, StringComparison.OrdinalIgnoreCase);                                          // no Upcoming filter
+        Assert.Contains("IF @MinTotal IS NOT NULL DELETE FROM #u WHERE Rem <= @MinTotal;", sql);                              // Minimum Total on the unit sum, strictly greater
+        Assert.Contains("@MinTotal      decimal(19,4) = NULL", sql);
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sql, @"s\.UnitId > 0 AND LTRIM\(RTRIM\(s\.UnitCode\)\) NOT IN \(N'', N'0'\)").Count);   // the grouping and the listed instalments agree
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sql, @"s\.TowerNumber LIKE @Like").Count);                                          // search by tower in both places
     }

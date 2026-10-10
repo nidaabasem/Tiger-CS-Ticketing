@@ -36,7 +36,7 @@
         <div class="field-group">
             <label class="field-label" for="campaignMonth">Month</label>
             <select class="field-select" id="campaignMonth" name="month" data-month-select>
-                <option value="">Custom range</option>
+                <option value="">All months</option>
                 @for (var m = 1; m <= 12; m++) { <option value="@m" selected="@(Model.Month == m)">@CampaignsModel.MonthNames[m - 1]</option> }
             </select>
         </div>
@@ -60,12 +60,12 @@
             <a class="btn btn-sm" href="@Model.LastSixMonthsUrl()" data-last-six-months>Last 6 months</a>
         </div>
         <div class="field-group">
-            <label class="field-label" for="campaignMin">Minimum outstanding amount (AED)</label>
-            <input class="field-input" type="number" id="campaignMin" name="minAmount" min="0" step="any" inputmode="decimal" value="@Model.MinAmountText" data-min-amount />
+            <label class="field-label" for="campaignMin">Minimum Total (AED)</label>
+            <input class="field-input" type="number" id="campaignMin" name="minTotal" min="0" step="any" inputmode="decimal" value="@Model.MinTotalText" data-min-total />
         </div>
         <div class="field-group filter-bar__search">
-            <label class="field-label" for="campaignSearch">Customer or unit</label>
-            <input class="field-input" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID or unit" />
+            <label class="field-label" for="campaignSearch">Search</label>
+            <input class="field-input" type="search" id="campaignSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Customer name, mobile, tower or apartment" />
         </div>
         <button class="btn btn-primary" type="submit">Preview list</button>
         <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>

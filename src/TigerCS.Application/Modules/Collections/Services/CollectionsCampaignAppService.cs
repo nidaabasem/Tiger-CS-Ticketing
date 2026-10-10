@@ -21,7 +21,7 @@ public sealed class CollectionsCampaignAppService(
     public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
         CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
         string? search = null, int page = 1, int pageSize = 25, bool forExport = false,
-        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minTotal = null)
     {
         var total = Stopwatch.StartNew();
         var permissions = await authorization.ResolveAsync(caller, cancellationToken);
@@ -32,19 +32,22 @@ public sealed class CollectionsCampaignAppService(
         var date = businessDate ?? clock.BusinessDate;
         if (!CollectionsEnums.TryParse<CollectionsCampaignStage>(stage, out var selected)
             || date.Year is < 2000 or > 2100 || companyId is not (null or 4 or 32)
-            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100 || towerId is <= 0 || minAmount < 0 || minAmount > sourceOptions.MaxMinOutstandingAmount
+            || search?.Length > 200 || page < 1 || pageSize is < 1 or > 100 || towerId is <= 0 || minTotal < 0 || minTotal > sourceOptions.MaxMinOutstandingAmount
             || (long)(page - 1) * pageSize > int.MaxValue)
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a campaign stage, a date in 2000-2100, company 4 or 32, a minimum amount of 0 or more, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
-        // "Minimum outstanding amount": an instalment counts only when its remaining unpaid Amount >= min (inclusive). It is applied to the
-        // instalment rows before the stage rules, review flags, counts, pages and both CSV exports, so all of them agree.
-        var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
+        // "Minimum Total": a unit is listed only when its Due + Overdue is GREATER than this (null = no minimum). It is applied to the unit's sum - never to single
+        // instalments - before the counts, the pages and both CSV exports, so all of them agree.
+        decimal? unitMinTotal = minTotal is { } requested ? decimal.Round(requested, 4) : null;
+        const decimal min = 0m;   // no per-instalment minimum any more
+        var today = clock.BusinessDate;   // the real Dubai date: Due = due today, Overdue = before it; nothing later is ever listed
 
         // Instalment due-date window. Defaults: the configured receivables StartDate through the preview date, except the
         // whole-month stages (current month, follow-up), which default to the end of the preview month so upcoming
         // instalments of that month are not cut off. The preview date still alone drives stage scheduling/eligibility;
         // the window only limits which instalments are read.
         var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
+        if (to > today) to = today;   // future instalments are not part of any list, total or export
         // Lower bound = the configured receivables StartDate (not 1 January of the preview year): overdue and legal
         // stages look back months, so a calendar-year floor would silently empty them from January onwards.
         var configuredStart = DateOnly.FromDateTime(sourceOptions.StartDate);
@@ -56,7 +59,7 @@ public sealed class CollectionsCampaignAppService(
         var from = dateFrom ?? configuredStart;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
-                "From date must not be after To date, and both must be within 2000-2100.");
+                "From date must not be after To date (instalments due after today are not listed), and both must be within 2000-2100.");
 
         // Search: the same term semantics for both evaluation paths (name, customer id, unit code, normalised phone / e-mail, phone digits).
         var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
@@ -80,7 +83,7 @@ public sealed class CollectionsCampaignAppService(
             {
                 var request = new PactCampaignRequest(from, to, min, stageFrom, stageToExclusive, CollectionsCampaignPolicy.Threshold(selected),
                     selected != CollectionsCampaignStage.LegalReferral, term, phoneDigits,
-                    forExport ? 0 : (page - 1) * pageSize, forExport ? exportLimit + 1 : pageSize, companyId, towerId);
+                    forExport ? 0 : (page - 1) * pageSize, forExport ? exportLimit + 1 : pageSize, companyId, towerId, today, unitMinTotal);
                 sqlPage = await campaign.ReadCampaignAsync(request, budget.Token);
                 if (!sqlPage.Supported) sqlPage = null;
             }
@@ -141,7 +144,7 @@ public sealed class CollectionsCampaignAppService(
             var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             return new CollectionsCampaignContactDto(id, $"ext:Pact:{f.TenantId}", f.CompanyId, f.TenantId, f.FullName, f.Phone, f.Email,
                 f.UnitId, f.UnitCode, f.ProjectCode, f.Amount, sourceOptions.Currency, f.EarliestDue, selected.ToString(), cycle,
-                unitStatus, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), f.TowerNumber, f.TowerName);
+                unitStatus, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), f.TowerNumber, f.TowerName, f.DueAmount, f.OverdueAmount);
         }
 
         int count, ready, review;
@@ -167,7 +170,7 @@ public sealed class CollectionsCampaignAppService(
             List<CampaignUnitFacts> facts;
             try
             {
-                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId);
+                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal);
             }
             catch (OverflowException)
             {
@@ -187,24 +190,6 @@ public sealed class CollectionsCampaignAppService(
             ready = contacts.Count(x => x.Status == "Ready");
             review = contacts.Count(x => x.Status == "NeedsReview");
             items = forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList();
-        }
-        // Preview only (exports are unchanged): show what each listed unit owes in total and how much of it is Due + Overdue today (Dubai). One round trip for the page's units.
-        if (!forExport && items.Count > 0 && source is IPactUnitBalanceSource balances)
-        {
-            try
-            {
-                var found = await balances.ReadUnitBalancesAsync(items.Select(i => new PactUnitKey(i.CompanyId, i.TenantId, i.UnitId ?? 0, i.UnitCode)).ToList(), clock.BusinessDate, budget.Token);
-                items = items.Select(i => found.TryGetValue(new PactUnitKey(i.CompanyId, i.TenantId, i.UnitId ?? 0, i.UnitCode), out var b)
-                    ? i with { UnitTotalRemaining = b.TotalRemaining, UnitDueAndOverdue = b.DueAndOverdue } : i).ToList();
-            }
-            catch (PactReceivablesSourceException ex)
-            {
-                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, "The PACT receivables read timed out. Please retry.");
-            }
         }
         return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, readAtUtc,
             "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
@@ -246,14 +231,17 @@ public sealed class CollectionsCampaignAppService(
     /// must return the same units, flags, totals and order - see the equivalence tests) and the fallback for sources/snapshots without the SQL engine.
     /// </summary>
     internal List<CampaignUnitFacts> BuildFactsInMemory(IReadOnlyList<PactReceivableInstalment> items, DateOnly from, DateOnly to, decimal min,
-        CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId)
+        CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId, DateOnly? today = null, decimal? minTotal = null)
     {
         // Defensive: a legacy source may ignore the window.
         // Floating-point residue from the deployed procedures (e.g. 1E-12 on a settled instalment) is snapped to fils; a genuine
         // sub-fils amount stays as read so AmountPrecisionNeedsReview still fires. Rounding is never used to hide it.
         var rows = items
             .Select(r => MoneyNormalizer.Normalize(r.Amount, r.AmountIsFloatingPoint) is { IsResolved: true, Value: { } value } ? r with { Amount = value } : r)
-            .Where(r => r.Amount > 0 && r.Amount >= min && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to).ToList();
+            .Where(r => r.Amount > 0 && r.Amount >= min && DateOnly.FromDateTime(r.DueDate) >= from && DateOnly.FromDateTime(r.DueDate) <= to
+                && !r.UnitCode.Contains('*')    // a '*' in the unit code marks a cancelled apartment (e.g. 513*): excluded before any grouping
+                && r.UnitId is > 0 && r.UnitCode.Trim() is not ("" or "0"))   // units without a real number are never listed
+            .ToList();
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
@@ -270,6 +258,11 @@ public sealed class CollectionsCampaignAppService(
                 var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
                     new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
                 if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
+                // Due = due today, Overdue = due before it (the window never reaches past today). Nothing Due or Overdue: not listed; Minimum Total is on the unit's sum.
+                var dueAmount = today is { } t1 ? g.Where(r => DateOnly.FromDateTime(r.DueDate) == t1).Sum(r => r.Amount) : 0m;
+                var overdueAmount = today is { } t2 ? g.Where(r => DateOnly.FromDateTime(r.DueDate) < t2).Sum(r => r.Amount) : 0m;
+                if (today is not null && dueAmount + overdueAmount <= 0) return null;
+                if (minTotal is { } floor && dueAmount + overdueAmount <= floor) return null;
                 var phone = CollectionsContactNormalizer.NormalizePhone(first.Mobile);
                 var email = CollectionsContactNormalizer.NormalizeEmail(first.Email);
                 var flags = CollectionsCampaignFlags.None;
@@ -286,13 +279,13 @@ public sealed class CollectionsCampaignAppService(
                 if (selected != CollectionsCampaignStage.LegalReferral && phone.Length == 0 && email.Length == 0)
                     flags |= CollectionsCampaignFlags.NoValidContact;
                 return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
-                    amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName);
+                    amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount);
             }).OfType<CampaignUnitFacts>().ToList();
         if (companyId is { } company) facts = facts.Where(f => f.CompanyId == company).ToList();
         if (term is not null)
         {
             bool Match(string value) => value.Contains(term, StringComparison.OrdinalIgnoreCase);
-            facts = facts.Where(c => Match(c.FullName) || Match(c.TenantId) || Match(c.UnitCode) || Match(c.Phone) || Match(c.Email)
+            facts = facts.Where(c => Match(c.FullName) || Match(c.TenantId) || Match(c.UnitCode) || Match(c.Phone) || Match(c.Email) || Match(c.TowerNumber ?? "") || Match(c.TowerName ?? "")
                 || (phoneDigits is not null && c.Phone.Contains(phoneDigits, StringComparison.Ordinal))).ToList();
         }
         return facts.OrderBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
@@ -301,7 +294,7 @@ public sealed class CollectionsCampaignAppService(
 
     public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
         string? stage, string? mode, DateOnly? businessDate = null, int? companyId = null, string? search = null,
-        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
+        CancellationToken cancellationToken = default, DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minTotal = null)
     {
         // No source read for an unauthorized export, including malformed requests.
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanSendReminders)
@@ -309,7 +302,7 @@ public sealed class CollectionsCampaignAppService(
         if (mode is not ("review" or "genesys"))
             return CollectionsResult<CollectionsCampaignExportDto>.Fail(CollectionsOutcome.InvalidRequest, "Choose review or genesys export.");
         var result = await PreviewAsync(caller, stage, businessDate, companyId, search,
-            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId, minAmount: minAmount);
+            forExport: true, cancellationToken: cancellationToken, dateFrom: dateFrom, dateTo: dateTo, towerId: towerId, minTotal: minTotal);
         if (!result.IsSuccess) return CollectionsResult<CollectionsCampaignExportDto>.Fail(result.Outcome, result.Detail);
         var report = result.Value!;
         // Freshness requirement (both export modes): the snapshot of every company in scope must be loaded and no older than
@@ -334,7 +327,7 @@ public static class CollectionsCampaignCsv
     public static string Write(CollectionsCampaignPreviewDto report, bool review)
     {
         var text = new StringBuilder();
-        text.Append("RecordId,CustomerKey,CompanyId,TenantId,CustomerName,Phone,Email,UnitId,UnitCode,ProjectCode,Amount,Currency,DueDate,Stage,CycleKey,ReadAtUtc,Status,Reason,Use,VoiceEligible,SmsEligible,EmailEligible\r\n");
+        text.Append("RecordId,CustomerKey,CompanyId,TenantId,CustomerName,Phone,Email,UnitId,UnitCode,ProjectCode,Amount,Currency,DueDate,Stage,CycleKey,ReadAtUtc,Status,Reason,Use,VoiceEligible,SmsEligible,EmailEligible"  + "\r\n");
         foreach (var c in report.Items)
         {
             var cells = new[] { c.RecordId, c.CustomerKey, c.CompanyId.ToString(CultureInfo.InvariantCulture), c.TenantId,

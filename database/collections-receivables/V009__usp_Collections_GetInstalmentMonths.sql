@@ -75,7 +75,7 @@ BEGIN
        AND s.DueDate >= @FromDt AND s.DueDate < @ToExclusive
        AND (   (@PaymentFilter = 'outstanding' AND s.Amount > 0) OR (@PaymentFilter = 'unpaid' AND s.PaymentStatus = 'Unpaid')
             OR (@PaymentFilter = 'partial' AND s.PaymentStatus = 'PartiallyPaid') OR (@PaymentFilter = 'paid' AND s.PaymentStatus = 'FullyPaid') OR @PaymentFilter = 'all')
-       AND s.Amount >= @Min AND s.UnitId > 0
+       AND s.Amount >= @Min AND s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%'
        AND (@Like IS NULL OR s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
                           OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\'
                           OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%'))
