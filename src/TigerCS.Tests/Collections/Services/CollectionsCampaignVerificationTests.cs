@@ -135,7 +135,7 @@ public sealed class CollectionsCampaignVerificationTests
     [Fact]
     public async Task Preview_1Feb2027_RetainsDec2026AndOct2026Arrears_AndTheOct2026Referral()
     {
-        var h = new CollectionsCampaignAppServiceTests.Harness();
+        var h = new CollectionsCampaignAppServiceTests.Harness(new DateTime(2027, 2, 1, 8, 0, 0, DateTimeKind.Utc));   // the clock is the preview day
         h.Source.Items.AddRange([
             R(D(2025, 12, 31), 50000m, "D4-PRESTART", 104),
             R(D(2026, 12, 15), 900m, "D1-DEC2026", 101),
@@ -153,7 +153,7 @@ public sealed class CollectionsCampaignVerificationTests
     [Fact]
     public async Task Preview_1Jan2027_KeepsDecemberForTheLegalNotice_AndOctoberForTheOverdueReminder()
     {
-        var h = new CollectionsCampaignAppServiceTests.Harness();
+        var h = new CollectionsCampaignAppServiceTests.Harness(new DateTime(2027, 1, 1, 8, 0, 0, DateTimeKind.Utc));
         h.Source.Items.AddRange([
             R(D(2026, 12, 5), 3000m, "E1-DEC", 101),        // previous month: legal notice, not yet "overdue by a month"
             R(D(2026, 10, 10), 1000m, "E2-OCT", 102),       // overdue by more than a month, not older than 3 months
@@ -173,7 +173,7 @@ public sealed class CollectionsCampaignVerificationTests
     public async Task OneUnitIsOneContactPerStage_WithTheSumAndTheEarliestDueDate()
     {
         var h = new CollectionsCampaignAppServiceTests.Harness();
-        h.Source.Items.AddRange([R(D(2026, 10, 3), 300m, "3001"), R(D(2026, 10, 20), 200m, "3001")]);
+        h.Source.Items.AddRange([R(D(2026, 10, 3), 300m, "3001"), R(D(2026, 10, 12), 200m, "3001")]);
 
         var contact = Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items);
 
@@ -232,7 +232,7 @@ public sealed class CollectionsCampaignVerificationTests
         var h = new CollectionsCampaignAppServiceTests.Harness();
         h.Campaign.FinancialSourceValidated = true;
         h.Source.Items.Add(CollectionsCampaignAppServiceTests.Row() with { UnitId = null });
-        Assert.Contains("MissingUnitIdentity", Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items).Reason);
+        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items);          // no unit identity: not listed at all
         Assert.False((await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).IsSuccess);
 
         h.Source.Items.Clear();

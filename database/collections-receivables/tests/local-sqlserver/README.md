@@ -10,6 +10,7 @@ python3 sql.py 00_setup.sql                                  # databases + loopb
 python3 sql.py 01_fake_pact.sql PACTRPT                      # synthetic p4/p32AccountReceivables (+V2 companion shape)
 python3 sql.py 02_towers.sql TigerCsTicketing                # seed towers (119 deliberately missing)
 python3 sql.py 03_edge_cases.sql PACTRPT                     # optional: hand-written edge cases for the Campaigns equivalence tests (ambiguous, conflicting, ...)
+python3 sql.py 05_crm_owner_cases.sql TigerCsTicketing          # optional: CRM owners for the edge units (single / ambiguous / conflicting / completing); needs V010, and the Campaigns equivalence tests then exercise flags 128 and 256
 # deploy ../../V001..V007 (sql.py <file> TigerCsTicketing), then:
 python3 refresh.py                                           # one refresh; add ", @ProcedureSuffix=N'V2'" for the companion shape
 python3 bench_inst.py                                        # instalment-page procedure timings

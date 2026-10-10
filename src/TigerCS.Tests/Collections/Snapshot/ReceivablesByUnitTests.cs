@@ -60,7 +60,7 @@ public sealed class ReceivablesByUnitTests
     {
         var (service, source) = Build();
         for (var u = 1; u <= 5; u++) for (var m = 1; m <= 3; m++) source.Rows.Add(Row(4, "T" + u, u, "TP124-" + u, m, m == 1 ? 50 : 150 + u));   // the 50 balances are below the minimum
-        foreach (var min in new decimal?[] { 0m, 100m, 160m })
+        foreach (var min in new decimal?[] { 0m })   // the unit view has no per-instalment minimum (its minimum is on the unit total)
         {
             var byInstalment = (await Agent.List(service, view: "instalments", minAmount: min, pageSize: 100)).Value!;
             var byUnit = (await Agent.List(service, view: "units", minAmount: min, pageSize: 100)).Value!;
@@ -114,6 +114,65 @@ public sealed class ReceivablesByUnitTests
         Assert.Equal(units.Count, page.Totals.UnitCount);
         if (status == "overdue") Assert.Single(Assert.Single(units).Instalments);                                  // December is not due: only the 1 Sep instalment is listed
         Assert.Equal(units.Sum(u => u.RemainingTotal), page.Totals.RemainingTotal);                               // counts and totals agree with the filtered units
+    }
+
+    private static Task<CollectionsResult<TigerCS.Application.Modules.Collections.Dto.PactInstalmentsPageDto>> Units(PactInstalmentsAppService service,
+        DateOnly? from = null, DateOnly? to = null, decimal? minTotal = null, string? search = null, string? status = null, int pageSize = 25, int page = 1) =>
+        service.ListAsync(Agent, null, from ?? new DateOnly(2000, 1, 1), to ?? new DateOnly(2026, 10, 14), "outstanding", null, search, page, pageSize, default, "units", null, status, minTotal);
+
+    [Fact]
+    public async Task MinimumTotal_IsOnTheUnitsSum_StrictlyGreater_AndCountsPagesAndTotalsFollowIt()
+    {
+        var (service, source) = Build();   // today (Dubai) = 14 Oct 2026
+        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 1), 60, "A1"), OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 2), 60, "A2"),   // 120 from two small instalments
+            OnDay("B", 2, "TP124-2", new DateTime(2026, 10, 1), 100, "B1"),                                                                                   // exactly 100
+            OnDay("C", 3, "TP124-3", new DateTime(2026, 10, 1), 50, "C1"), OnDay("C", 3, "TP124-3", new DateTime(2026, 10, 3), 50, "C2"),                     // 50 + 50 = 100
+            OnDay("D", 4, "TP124-4", new DateTime(2026, 10, 1), 250, "D1")]);
+        var shown = (await Units(service, minTotal: 100m)).Value!;
+        Assert.Equal(["TP124-1", "TP124-4"], shown.Units!.Select(u => u.UnitCode).Order());                     // 120 shows; 100 (one instalment or two) does not
+        Assert.Equal((2, 3, 370m), (shown.Totals.UnitCount, shown.Totals.Count, shown.Totals.RemainingTotal)); // the counts and totals are those of the filtered units
+        Assert.Equal(["TP124-1", "TP124-2", "TP124-3", "TP124-4"], (await Units(service, minTotal: null)).Value!.Units!.Select(u => u.UnitCode).Order());   // cleared: every unit with something due
+        Assert.Equal(4, (await Units(service, minTotal: 99.99m)).Value!.Totals.UnitCount);
+        Assert.Empty((await Units(service, minTotal: 250m)).Value!.Units!);                                       // 250 is not greater than 250
+        var paged = (await Units(service, minTotal: 100m, pageSize: 1, page: 2)).Value!;                          // paging happens after the filter
+        Assert.Equal(("TP124-4", 2), (Assert.Single(paged.Units!).UnitCode, paged.Totals.UnitCount));
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await Units(service, minTotal: -1m)).Outcome);
+    }
+
+    [Fact]
+    public async Task EveryUnitsDetailsAddUpToItsTotal_AndTheStatusIsAgainstTodayWhateverMonthIsChosen()
+    {
+        var (service, source) = Build();
+        source.Rows.AddRange([OnDay("A", 1, "TP124-1", new DateTime(2026, 8, 10), 300, "V1"), OnDay("A", 1, "TP124-1", new DateTime(2026, 9, 10), 120, "V2"),
+            OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 14), 80, "V3"), OnDay("A", 1, "TP124-1", new DateTime(2026, 10, 20), 999, "V4"),     // 20 Oct is after today
+            OnDay("A", 2, "TP124-2", new DateTime(2026, 9, 11), 500, "V5")]);                                                                   // the same customer's other apartment
+        var all = (await Units(service, minTotal: null)).Value!;
+        var one = all.Units!.Single(u => u.UnitCode == "TP124-1");
+        Assert.Equal(["V1", "V2", "V3"], one.Instalments.Select(i => i.VoucherNumber));                         // oldest first; the future V4 is not there
+        Assert.Equal(500m, one.RemainingTotal); Assert.Equal(one.RemainingTotal, one.Instalments.Sum(i => i.RemainingAmount));
+        Assert.Equal(500m, all.Units!.Single(u => u.UnitCode == "TP124-2").RemainingTotal);                      // never mixed with TP124-1
+        Assert.Equal(all.Totals.RemainingTotal, all.Units!.Sum(u => u.RemainingTotal));
+        Assert.Equal(["Overdue", "Overdue", "Due"], one.Instalments.Select(i => i.Classification));
+
+        // A previous month: only that month's instalments, still Overdue (compared with today, not with the month); the current month stops at today and V3 is Due.
+        var september = (await Units(service, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), null)).Value!;
+        Assert.Equal(["V2", "V5"], september.Units!.SelectMany(u => u.Instalments).Select(i => i.VoucherNumber).Order());
+        Assert.Equal((620m, 2, 0), (september.Totals.OverdueRemaining, september.Totals.OverdueCount, september.Totals.DueCount));
+        var october = (await Units(service, new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), null)).Value!;     // the service caps To at today
+        var v3 = Assert.Single(Assert.Single(october.Units!).Instalments);
+        Assert.Equal(("V3", "Due", new DateOnly(2026, 10, 14)), (v3.VoucherNumber, v3.Classification, october.DateTo));
+    }
+
+    [Fact]
+    public async Task ACancelledApartment_IsExcludedByItsUnitCode_NotByTheCustomer()
+    {
+        var (service, source) = Build();
+        source.Rows.AddRange([OnDay("A", 1, "TP124-513*", new DateTime(2026, 9, 1), 900, "X1"), OnDay("A", 2, "TP124-514", new DateTime(2026, 9, 1), 400, "X2"),
+            OnDay("B", 3, "TP124-*9", new DateTime(2026, 9, 1), 700, "X3"), OnDay("C", 4, "TP124-515", new DateTime(2026, 9, 1), 200, "X4")]);
+        var page = (await Units(service, minTotal: null)).Value!;
+        Assert.Equal(["TP124-514", "TP124-515"], page.Units!.Select(u => u.UnitCode).Order());                   // the customer's other apartment stays
+        Assert.Equal((2, 2, 600m), (page.Totals.UnitCount, page.Totals.Count, page.Totals.RemainingTotal));      // the count and the totals never saw the cancelled ones
+        Assert.Empty((await Units(service, minTotal: null, search: "513")).Value!.Units!);
     }
 
     [Fact]

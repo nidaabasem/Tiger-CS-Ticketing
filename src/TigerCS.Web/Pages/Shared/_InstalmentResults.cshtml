@@ -3,7 +3,11 @@
 @model ReceivablesModel
 @* Results area of the Receivables page: returned as a fragment by ?handler=Results, or inline with ?render=full. *@
 @if (Model.LoadNotice is { } notice) { <div class="receivables-notice" role="status" data-load-notice>@notice</div> }
-@if (Model.Report is { } report)
+@if (Model.NothingDueYet)
+{
+    <div class="panel"><div class="empty-state"><p class="empty-state__title">Nothing is due in this month yet.</p><a class="btn" href="/Collections/Receivables">Clear filters</a></div></div>
+}
+else if (Model.Report is { } report)
 {
     var units = ReceivablesModel.Lines(report);
     <partial name="_LoadProblem" model="report.Snapshot" />
@@ -19,18 +23,18 @@
         {
             <div class="receivables-table-wrap">
                 <table class="receivables-table receivables-table--units">
-                    <thead><tr><th>Customer</th><th>Contact</th><th>Tower</th><th>Apartment</th><th class="num">Total (Due + Overdue)</th><th class="num">Due</th><th class="num">Overdue</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    <thead><tr><th>Customer</th><th>Contact</th><th>Tower</th><th>Apartment</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     @foreach (var unit in units)
                     {
                         <tbody class="unit-group" data-unit>
                         <tr data-unit-row>
-                            <td><strong>@unit.Customer</strong></td>
-                            <td>@unit.Phone<span class="receivables-meta">@unit.Email</span></td>
+                            <td><strong>@unit.Customer</strong>@foreach (var note in unit.Notes.Where(n => n.Contains("review"))) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }</td>
+                            <td>@unit.Phone<span class="receivables-meta">@unit.Email</span>@foreach (var note in unit.Notes.Where(n => !n.Contains("review"))) { <span class="receivables-meta receivables-meta--missing" data-unit-note>@note</span> }</td>
                             <td>@unit.Tower</td>
                             <td>@unit.Apartment</td>
-                            <td class="num"><span class="receivables-amount" data-unit-remaining>@ReceivablesModel.Money(unit.Total)</span></td>
                             <td class="num"><span class="receivables-amount" data-unit-due>@ReceivablesModel.MoneyOrDash(unit.Due)</span></td>
                             <td class="num"><span class="receivables-amount@(unit.Overdue > 0 ? " receivables-amount--overdue" : "")" data-unit-overdue>@ReceivablesModel.MoneyOrDash(unit.Overdue)</span></td>
+                            <td class="num"><span class="receivables-amount" data-unit-total>@ReceivablesModel.Money(unit.Total)</span></td>
                             <td><button type="button" class="btn btn-sm" data-unit-toggle aria-expanded="false" aria-controls="@unit.DetailsId" hidden>View Details</button></td>
                         </tr>
                         <tr class="unit-detail" id="@unit.DetailsId" data-unit-detail>

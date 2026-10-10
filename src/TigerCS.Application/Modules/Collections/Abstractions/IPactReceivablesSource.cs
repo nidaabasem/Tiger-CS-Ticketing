@@ -118,11 +118,11 @@ public interface IPactInstalmentSource
 /// <remarks>
 /// AsOf is the first day of the classification month, or - when <see cref="ClassifyByDay"/> is set (the By unit view) - TODAY (Dubai): Overdue = due before it,
 /// Due = due on it, Not yet due (Upcoming) = due after it. PaymentFilter is outstanding, unpaid, partial, paid or all. Status (By unit only) keeps the units that have
-/// at least one instalment of that class: overdue, due or upcoming (null = every unit).
+/// at least one instalment of that class: overdue or due (null = every unit). MinTotal (By unit): keep units whose summed remaining amount is GREATER than it (null = no minimum).
 /// </remarks>
 public sealed record PactInstalmentsRequest(
     DateOnly From, DateOnly To, DateOnly AsOf, decimal MinAmount, string PaymentFilter, string? Search, string? PhoneDigits,
-    int Page, int PageSize, int? CompanyId, int? TowerId, string? Status = null, bool ClassifyByDay = false);
+    int Page, int PageSize, int? CompanyId, int? TowerId, string? Status = null, bool ClassifyByDay = false, decimal? MinTotal = null);
 
 public sealed record PactInstalmentsPage(
     PactInstalmentTotalsDto Totals, IReadOnlyList<PactInstalmentRowDto> Rows, bool Unavailable, SnapshotStatusDto Snapshot, DateTime ReadAtUtc, double SqlMs);
@@ -141,17 +141,20 @@ public interface IPactCampaignSource
 /// The unit's rows are those inside [From, To] (due DAY) with remaining Amount &gt; 0 and &gt;= MinAmount. Stage rows are the ones whose due day is in
 /// [StageFrom, StageToExclusive) (StageFrom null = unbounded); a stage amount qualifies when its sum is &gt; Threshold. ContactRequired is false for the
 /// internal legal-referral stage. PhoneDigits are the digits of a phone-like search term, else null. Offset/Take page the ordered units
-/// (company, tenant, unit code, unit id).
+/// (company, tenant, unit code, unit id). Today (Dubai): units carry DueAmount (due on it) and OverdueAmount (due before it); a unit with neither is not a candidate,
+/// and MinTotal (null = none) keeps units whose DueAmount + OverdueAmount is greater than it. Units whose code contains '*' (cancelled) are never candidates.
 /// </remarks>
 public sealed record PactCampaignRequest(
     DateOnly From, DateOnly To, decimal MinAmount, DateOnly? StageFrom, DateOnly StageToExclusive, decimal Threshold, bool ContactRequired,
-    string? Search, string? PhoneDigits, int Offset, int Take, int? CompanyId, int? TowerId);
+    string? Search, string? PhoneDigits, int Offset, int Take, int? CompanyId, int? TowerId, DateOnly? Today = null, decimal? MinTotal = null);
 
 /// <summary>Unit-level facts of one campaign candidate. <c>Flags</c> is a <see cref="TigerCS.Domain.Modules.Collections.CollectionsCampaignFlags"/> mask;
-/// <c>Amount</c> is null when the unit's stage instalments are ambiguous.</summary>
+/// <c>Amount</c> is null when the unit's stage instalments are ambiguous. FullName / Phone / Email are the LINKED contact (CRM first, PACT completing, see
+/// <c>CollectionsContactLinker</c>); <c>CrmStatus</c> is 0 (CRM holds no eligible sale / not loaded), 1 (one customer) or 2 (several: review).</summary>
 public sealed record CampaignUnitFacts(
     int CompanyId, string TenantId, string FullName, string Phone, string Email, int? UnitId, string UnitCode, string ProjectCode,
-    decimal? Amount, DateOnly? EarliestDue, int Flags, string? TowerNumber, string? TowerName);
+    decimal? Amount, DateOnly? EarliestDue, int Flags, string? TowerNumber, string? TowerName, decimal DueAmount = 0m, decimal OverdueAmount = 0m,
+    int CrmStatus = 0, int? CrmCustomerId = null);
 
 /// <remarks>
 /// Supported = false: the data store could not use its campaign engine for the snapshot (the caller evaluates in memory). BadIdentityRows: rows without
@@ -167,18 +170,6 @@ public interface IPactInstalmentMonthSource
 {
     /// <summary>The request's window and filters, ignoring paging: one row per due-date month.</summary>
     Task<IReadOnlyList<PactInstalmentMonthDto>> ReadInstalmentMonthsAsync(PactInstalmentsRequest request, CancellationToken cancellationToken);
-}
-
-/// <summary>The unit identity used to look up a unit's balances (the same four parts as the By unit grouping).</summary>
-public sealed record PactUnitKey(int CompanyId, string TenantId, long UnitId, string UnitCode);
-
-/// <summary>Everything a unit still owes: <see cref="TotalRemaining"/> over all its unpaid instalments, and <see cref="DueAndOverdue"/> over those due today or earlier (Dubai date).</summary>
-public sealed record PactUnitBalance(decimal TotalRemaining, decimal DueAndOverdue);
-
-/// <summary>Balances of specific units (the Campaigns table shows them next to each unit). Units with no unpaid instalment are simply absent from the result.</summary>
-public interface IPactUnitBalanceSource
-{
-    Task<IReadOnlyDictionary<PactUnitKey, PactUnitBalance>> ReadUnitBalancesAsync(IReadOnlyList<PactUnitKey> units, DateOnly today, CancellationToken cancellationToken);
 }
 
 /// <summary>The Receivables "By unit" view: the instalment filters, grouped per unit (company + customer + unit) in the data store before paging.</summary>

@@ -222,7 +222,7 @@ public sealed class RealSqlSnapshotTests
             service.ListAsync(Caller, 5, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 31), "outstanding", 100m, null, page, size, default, view, month);
 
         var all = (await List("units", null)).Value!;
-        Assert.NotEmpty(all.Months!);
+        // The month cards were removed from the page; the overview is only read when asked for, so the card checks below run only when it is present.
         foreach (var unit in all.Units!)
         {
             Assert.Equal(unit.InstalmentCount, unit.Instalments.Count);
@@ -236,7 +236,7 @@ public sealed class RealSqlSnapshotTests
                 Assert.All(g.Where(i => i.RemainingAmount > 0), i => Assert.Equal(expected, i.Classification));
             }
         }
-        foreach (var card in all.Months!)
+        foreach (var card in all.Months ?? [])
         {
             var key = $"{card.Year}-{card.Month:00}";
             var byUnit = (await List("units", key)).Value!;

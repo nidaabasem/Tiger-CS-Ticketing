@@ -17,7 +17,7 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 /// </summary>
 public sealed class SnapshotPactReceivablesSource(
     IConfiguration configuration, ReceivablesSnapshotOptions snapshotOptions, PactReceivablesOptions pactOptions,
-    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactInstalmentMonthSource, IPactCampaignSource, IPactUnitBalanceSource
+    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactInstalmentMonthSource, IPactCampaignSource, IUnitReceivablesSource
 {
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
@@ -271,6 +271,8 @@ public sealed class SnapshotPactReceivablesSource(
         command.Parameters.Add("@Offset", SqlDbType.Int).Value = request.Offset;
         command.Parameters.Add("@Take", SqlDbType.Int).Value = request.Take;
         command.Parameters.Add("@NormVersion", SqlDbType.TinyInt).Value = CollectionsContactNormalizer.Version;
+        if (request.Today is { } today) command.Parameters.Add("@Today", SqlDbType.Date).Value = today.ToDateTime(TimeOnly.MinValue);
+        if (request.MinTotal is { } minTotal) command.Parameters.Add(new SqlParameter("@MinTotal", SqlDbType.Decimal) { Precision = 19, Scale = 4, Value = minTotal });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         var companies = new List<SnapshotCompanyRaw>();
@@ -311,7 +313,9 @@ public sealed class SnapshotPactReceivablesSource(
                 (int)reader.GetInt64(reader.GetOrdinal("UnitId")), reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("ProjectCode")),
                 reader.IsDBNull(amountOrdinal) ? null : reader.GetDecimal(amountOrdinal),
                 reader.IsDBNull(dueOrdinal) ? null : DateOnly.FromDateTime(reader.GetDateTime(dueOrdinal)),
-                reader.GetInt32(reader.GetOrdinal("Flags")), Text(reader, "TowerNumber"), Text(reader, "TowerName")));
+                reader.GetInt32(reader.GetOrdinal("Flags")), Text(reader, "TowerNumber"), Text(reader, "TowerName"),
+                request.Today is null ? 0m : reader.GetDecimal(reader.GetOrdinal("DueAmount")), request.Today is null ? 0m : reader.GetDecimal(reader.GetOrdinal("OverdueAmount")),
+                reader.GetInt32(reader.GetOrdinal("CrmStatus")), NullableInt(reader, "CrmCustomerId")));
         }
         await reader.NextResultAsync(cancellationToken);
         // 6 unmatched towers
@@ -418,7 +422,8 @@ public sealed class SnapshotPactReceivablesSource(
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var companies = new List<SnapshotCompanyRaw>();
         var unmatched = new List<UnmatchedTowerDto>();
-        var heads = new List<(int Company, string Tenant, long UnitId, string UnitCode, string Name, string? Tower, string? TowerName, int Count, decimal Remaining, DateOnly Oldest)>();
+        var heads = new List<(int Company, string Tenant, long UnitId, string UnitCode, string Name, string? Tower, string? TowerName, int Count, decimal Remaining, DateOnly Oldest,
+            int? CrmCustomers, int? CrmCustomerId, string? CrmName, string? CrmPhone, string? CrmEmail)>();
         var byUnit = new Dictionary<(int, string, long, string), List<PactInstalmentRowDto>>();
         var totals = new PactInstalmentTotalsDto(0, 0, 0, 0, 0, 0, 0, 0, 0);
         var unavailable = false;
@@ -442,6 +447,7 @@ public sealed class SnapshotPactReceivablesSource(
             // Day-based classification and the status filter exist from V008's day-based revision; they are only sent when asked for.
             if (request.ClassifyByDay) command.Parameters.Add("@ClassifyByDay", SqlDbType.Bit).Value = true;
             if (request.Status is not null) command.Parameters.Add("@StatusFilter", SqlDbType.VarChar, 10).Value = request.Status;
+            if (request.MinTotal is { } minTotal) command.Parameters.Add(new SqlParameter("@MinTotal", SqlDbType.Decimal) { Precision = 19, Scale = 4, Value = minTotal });
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
             if (!await reader.ReadAsync(cancellationToken) || !reader.GetBoolean(reader.GetOrdinal("ScopeValid")))
@@ -463,7 +469,8 @@ public sealed class SnapshotPactReceivablesSource(
                 heads.Add((reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), reader.GetInt64(reader.GetOrdinal("UnitId")),
                     reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("FullName")), Text(reader, "TowerNumber"), Text(reader, "TowerName"),
                     reader.GetInt32(reader.GetOrdinal("InstalmentCount")), reader.GetDecimal(reader.GetOrdinal("RemainingTotal")),
-                    DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("OldestDueDate")))));
+                    DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("OldestDueDate"))),
+                    NullableInt(reader, "CrmCustomers"), NullableInt(reader, "CrmCustomerId"), Text(reader, "CrmName"), Text(reader, "CrmPhone"), Text(reader, "CrmEmail")));
             await reader.NextResultAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -490,7 +497,8 @@ public sealed class SnapshotPactReceivablesSource(
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var status = ReceivablesSnapshotComposer.BuildStatus(request.From, request.To, companies, unmatched, now, snapshotOptions.MaxAgeMinutes);
         var units = heads.Select(h => new PactInstalmentUnitDto(h.Company, ReceivablesSnapshotStatusBuilder.CompanyName(h.Company), h.Tower, h.TowerName, (int)h.UnitId, h.UnitCode,
-            h.Tenant, h.Name, h.Count, h.Remaining, h.Oldest, byUnit.TryGetValue((h.Company, h.Tenant, h.UnitId, h.UnitCode), out var rows) ? rows : [])).ToList();
+            h.Tenant, h.Name, h.Count, h.Remaining, h.Oldest, byUnit.TryGetValue((h.Company, h.Tenant, h.UnitId, h.UnitCode), out var rows) ? rows : [],
+            h.CrmCustomers, h.CrmCustomerId, h.CrmName, h.CrmPhone, h.CrmEmail)).ToList();
         var sqlMs = timer.Elapsed.TotalMilliseconds;
         logger.LogInformation("Unit page read: page {Page}, {Units} units / {Total} instalments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, filter {Filter}, min {Min}).",
             request.Page, totals.UnitCount, totals.Count, sqlMs, request.From, request.To, request.PaymentFilter, request.MinAmount);
@@ -498,48 +506,56 @@ public sealed class SnapshotPactReceivablesSource(
     }
 
     /// <summary>
-    /// Balances of the given units (at most one page of them): one round trip over the CURRENT run of each company. Total = every unpaid instalment of the unit;
-    /// Due + Overdue = those due today or earlier. The unit key is compared binary-exactly like the By unit grouping, so units are never merged.
+    /// One unit by its normalised key (tower + unit code), read with ONE statement (dbo.usp_Collections_GetUnitReceivables): the PACT accounts that hold it (a missing PACT mobile
+    /// changes nothing), the unit's own unpaid instalments due today or earlier, and its CRM link. Nothing is looked up by phone number or name.
     /// </summary>
-    public async Task<IReadOnlyDictionary<PactUnitKey, PactUnitBalance>> ReadUnitBalancesAsync(IReadOnlyList<PactUnitKey> units, DateOnly today, CancellationToken cancellationToken)
+    public async Task<PactUnitReceivables> ReadUnitAsync(string unitKey, int? companyId, DateOnly today, CancellationToken cancellationToken)
     {
-        var result = new Dictionary<PactUnitKey, PactUnitBalance>();
-        if (units.Count == 0) return result;
         var connectionString = configuration.GetConnectionString(snapshotOptions.ConnectionStringName);
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
-        var json = System.Text.Json.JsonSerializer.Serialize(units.Distinct().Select(u => new { c = u.CompanyId, t = u.TenantId, u = u.UnitId, k = u.UnitCode }));
+        var companies = new List<SnapshotCompanyRaw>();
+        var identities = new List<PactUnitIdentity>();
+        var instalments = new List<PactUnitInstalment>();
+        var links = new Dictionary<int, CrmUnitLink>();
+        var crmLoaded = false;
         try
         {
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            await using var command = new SqlCommand(
-                """
-                SELECT k.CompanyId, k.TenantId, k.UnitId, k.UnitCode, SUM(s.Amount) AS Total,
-                       SUM(CASE WHEN s.DueDate < @Tomorrow THEN s.Amount ELSE 0 END) AS DueAndOverdue
-                  FROM OPENJSON(@Json) WITH (CompanyId int '$.c', TenantId nvarchar(100) '$.t', UnitId bigint '$.u', UnitCode nvarchar(200) '$.k') k
-                  JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = k.CompanyId AND st.CurrentRunId IS NOT NULL
-                  JOIN dbo.CollectionsReceivableSnapshot s ON s.CompanyId = st.CompanyId AND s.RunId = st.CurrentRunId
-                       AND s.TenantId = k.TenantId COLLATE DATABASE_DEFAULT AND s.UnitId = k.UnitId
-                 WHERE s.Amount > 0 AND s.TenantId COLLATE Latin1_General_BIN2 = k.TenantId COLLATE Latin1_General_BIN2
-                   AND s.UnitCode COLLATE Latin1_General_BIN2 = k.UnitCode COLLATE Latin1_General_BIN2
-                 GROUP BY k.CompanyId, k.TenantId, k.UnitId, k.UnitCode
-                 OPTION (RECOMPILE);
-                """, connection)
-            { CommandTimeout = Math.Clamp(snapshotOptions.ReadCommandTimeoutSeconds, 1, 600) };
-            command.Parameters.Add("@Json", SqlDbType.NVarChar, -1).Value = json;
-            command.Parameters.Add("@Tomorrow", SqlDbType.DateTime).Value = today.AddDays(1).ToDateTime(TimeOnly.MinValue);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                result[new PactUnitKey(reader.GetInt32(0), reader.GetString(1), reader.GetInt64(2), reader.GetString(3))] =
-                    new PactUnitBalance(reader.GetDecimal(4), reader.GetDecimal(5));
+            await using (var command = new SqlCommand("dbo.usp_Collections_GetUnitReceivables", connection)
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(snapshotOptions.ReadCommandTimeoutSeconds, 1, 600) })
+            {
+                command.Parameters.Add("@UnitKey", SqlDbType.NVarChar, 220).Value = unitKey;
+                command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = (object?)companyId ?? DBNull.Value;
+                command.Parameters.Add("@AsOfDate", SqlDbType.Date).Value = today.ToDateTime(TimeOnly.MinValue);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) companies.Add(ReadCompany(reader));
+                await reader.NextResultAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    identities.Add(new PactUnitIdentity(reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), (int)reader.GetInt64(reader.GetOrdinal("UnitId")),
+                        reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("Mobile")), reader.GetString(reader.GetOrdinal("Email")),
+                        Text(reader, "TowerNumber"), Text(reader, "TowerName"), reader.GetInt32(reader.GetOrdinal("AllRows")), reader.GetInt32(reader.GetOrdinal("OpenRows"))));
+                await reader.NextResultAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    instalments.Add(new PactUnitInstalment(reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), (int)reader.GetInt64(reader.GetOrdinal("UnitId")),
+                        reader.GetString(reader.GetOrdinal("VoucherNumber")), DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("DueDate"))), reader.GetDecimal(reader.GetOrdinal("RemainingAmount")),
+                        NullableDecimal(reader, "OriginalAmount"), NullableDecimal(reader, "PaidAmount"), reader.GetString(reader.GetOrdinal("PaymentStatus"))));
+                await reader.NextResultAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) links[reader.GetInt32(reader.GetOrdinal("CompanyId"))] = SqlCollectionsCrmOwnerStore.ReadLink(reader);
+            }
+            await using var state = new SqlCommand("dbo.usp_Collections_GetCrmOwnerState", connection) { CommandType = CommandType.StoredProcedure };
+            await using var stateReader = await state.ExecuteReaderAsync(cancellationToken);
+            crmLoaded = await stateReader.ReadAsync(cancellationToken) && stateReader.GetBoolean(0);
         }
         catch (SqlException ex)
         {
-            logger.LogWarning("Unit balance read failed (SQL error {SqlNumber}).", ex.Number);
+            logger.LogWarning("Unit receivables read failed (SQL error {SqlNumber}).", ex.Number);
             throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
         }
-        return result;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var status = ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], now, snapshotOptions.MaxAgeMinutes);
+        return new PactUnitReceivables(status, identities, instalments, links, crmLoaded, ReceivablesSnapshotComposer.ReadAt(status));
     }
 
     /// <summary>Month overview: one round trip to dbo.usp_Collections_GetInstalmentMonths (the same filters as the list, no paging, no month selection).</summary>
@@ -583,6 +599,7 @@ public sealed class SnapshotPactReceivablesSource(
         return months;
     }
 
+    private static int? NullableInt(SqlDataReader r, string name) { var i = r.GetOrdinal(name); return r.IsDBNull(i) ? null : Convert.ToInt32(r.GetValue(i), System.Globalization.CultureInfo.InvariantCulture); }
     private static decimal? NullableDecimal(SqlDataReader r, string name) { var i = r.GetOrdinal(name); return r.IsDBNull(i) ? null : r.GetDecimal(i); }
 
     private static SnapshotCompanyRaw ReadCompany(SqlDataReader reader) => new(
