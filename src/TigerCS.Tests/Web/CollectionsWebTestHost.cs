@@ -73,7 +73,7 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 var today = new DateOnly(2026, 10, 9);
                 if (q["view"] == "units" && q["status"] is { Length: > 0 } wanted)
                     rows = rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
-                        .Where(g => g.Any(r => wanted switch { "overdue" => r.DueDate < today, "due" => r.DueDate == today, "upcoming" => r.DueDate > today, _ => true }))
+                        .Where(g => g.Any(r => wanted switch { "overdue" => r.DueDate < today, "due" => r.DueDate == today, _ => true }))
                         .SelectMany(g => g).ToList();
                 if (!string.IsNullOrWhiteSpace(q["search"]))
                     rows = rows.Where(r => new[] { r.CustomerName, r.Mobile, r.Email, r.UnitCode, r.TowerNumber ?? "", r.TowerName ?? "" }.Any(v => v.Contains(q["search"]!, StringComparison.OrdinalIgnoreCase))).ToList();

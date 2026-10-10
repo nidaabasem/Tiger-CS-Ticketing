@@ -18,14 +18,14 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     /// <summary>Only used as the Campaigns default minimum amount; the Receivables page lists every unpaid instalment whatever its size.</summary>
     public const decimal DefaultMinAmount = 100m;
 
-    /// <summary>Every unpaid instalment of every unit: the widest dates the snapshot is loaded for (SourceFromDate / SourceThroughDate) and no minimum amount.</summary>
-    public static readonly DateOnly WindowFrom = new(2000, 1, 1), WindowTo = new(2099, 12, 31);
+    /// <summary>Every unpaid instalment due today or earlier, whatever its size: from the widest start the snapshot is loaded for through today (Dubai). Nothing due later is listed.</summary>
+    public static readonly DateOnly WindowFrom = new(2000, 1, 1);
 
     public static readonly IReadOnlyList<(string Value, string Label)> StatusOptions =
-        [("all", "All statuses"), ("overdue", "Overdue"), ("due", "Due"), ("upcoming", "Upcoming")];
+        [("all", "All statuses"), ("overdue", "Overdue"), ("due", "Due")];
 
     public int? TowerId { get; private set; }
-    /// <summary><c>all</c>, <c>overdue</c>, <c>due</c> or <c>upcoming</c>: the units that have an instalment with that status.</summary>
+    /// <summary><c>all</c>, <c>overdue</c> or <c>due</c>: the units that have an instalment with that status.</summary>
     public string Status { get; private set; } = "all";
     public string? Search { get; private set; }
     public int PageNumber { get; private set; } = 1;
@@ -76,7 +76,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     private async Task LoadReportAsync(CancellationToken cancellationToken)
     {
-        var result = await api.GetInstalmentsAsync(TowerId, WindowFrom, WindowTo, "outstanding", 0m, Search, PageNumber, cancellationToken, "units", null, Status == "all" ? null : Status);
+        var result = await api.GetInstalmentsAsync(TowerId, WindowFrom, CollectionsDisplay.DubaiToday(), "outstanding", 0m, Search, PageNumber, cancellationToken, "units", null, Status == "all" ? null : Status);
         Outcome = result.Outcome;
         Error = result.Detail;
         Report = result.IsSuccess ? result.Value : null;
@@ -108,17 +108,18 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     // ---- One unit row and its details. Every number on the row is derived from the very instalments the details list, so the two can never disagree. ----
 
-    public const string Overdue = "Overdue", Due = "Due", Upcoming = "Upcoming";
+    public const string Overdue = "Overdue", Due = "Due";
 
-    /// <summary>Overdue: due before today; Due: due today; Upcoming: due after today (today = the Dubai date of the report). Only instalments with a remaining amount are listed.</summary>
-    public static string Classify(DateOnly dueDate, DateOnly today) => dueDate < today ? Overdue : dueDate == today ? Due : Upcoming;
+    /// <summary>Overdue: due before today; Due: due today (today = the Dubai date of the report). Instalments due later are not part of this page.</summary>
+    public static string Classify(DateOnly dueDate, DateOnly today) => dueDate < today ? Overdue : Due;
 
     /// <summary>Whole days between the due date and today for an overdue instalment; null otherwise.</summary>
     public static int? DaysLate(DateOnly dueDate, DateOnly today) => dueDate < today ? today.DayNumber - dueDate.DayNumber : null;
 
     public sealed record InstalmentLine(int Number, string Description, DateOnly DueDate, decimal? Original, decimal? Paid, decimal Remaining, string Status, int? DaysLate);
 
-    public sealed record UnitLine(string Customer, string Phone, string Email, string Tower, string Apartment, decimal Remaining, decimal Due, decimal Overdue,
+    /// <summary><see cref="Total"/> = Due + Overdue = the sum of the listed instalments.
+public sealed record UnitLine(string Customer, string Phone, string Email, string Tower, string Apartment, decimal Total, decimal Due, decimal Overdue,
         IReadOnlyList<InstalmentLine> Instalments, string DetailsId);
 
     public static IReadOnlyList<UnitLine> Lines(PactInstalmentsPageDto report)
@@ -128,11 +129,12 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
         foreach (var unit in report.Units ?? [])
         {
             // Oldest first; a remaining balance is what makes an instalment unpaid.
-            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0).OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
+            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0 && i.DueDate <= today).OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
             var instalments = rows.Select((i, index) => new InstalmentLine(index + 1,
                 i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
                 Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();
             var tower = unit.TowerNumber is null ? "—" : string.IsNullOrWhiteSpace(unit.TowerName) ? unit.TowerNumber : $"{unit.TowerNumber} - {unit.TowerName}";
+            if (instalments.Count == 0) continue;   // nothing Due or Overdue: the unit is not listed
             lines.Add(new UnitLine(unit.CustomerName,
                 First(rows.Select(r => r.Mobile)), First(rows.Select(r => r.Email)), tower, unit.UnitCode,
                 instalments.Sum(i => i.Remaining), instalments.Where(i => i.Status == Due).Sum(i => i.Remaining), instalments.Where(i => i.Status == Overdue).Sum(i => i.Remaining),

@@ -19,7 +19,7 @@
         {
             <div class="receivables-table-wrap">
                 <table class="receivables-table receivables-table--units">
-                    <thead><tr><th>Customer</th><th>Contact</th><th>Tower</th><th>Apartment</th><th class="num">Total remaining</th><th class="num">Due</th><th class="num">Overdue</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    <thead><tr><th>Customer</th><th>Contact</th><th>Tower</th><th>Apartment</th><th class="num">Total (Due + Overdue)</th><th class="num">Due</th><th class="num">Overdue</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     @foreach (var unit in units)
                     {
                         <tbody class="unit-group" data-unit>
@@ -28,7 +28,7 @@
                             <td>@unit.Phone<span class="receivables-meta">@unit.Email</span></td>
                             <td>@unit.Tower</td>
                             <td>@unit.Apartment</td>
-                            <td class="num"><span class="receivables-amount" data-unit-remaining>@ReceivablesModel.Money(unit.Remaining)</span></td>
+                            <td class="num"><span class="receivables-amount" data-unit-remaining>@ReceivablesModel.Money(unit.Total)</span></td>
                             <td class="num"><span class="receivables-amount" data-unit-due>@ReceivablesModel.MoneyOrDash(unit.Due)</span></td>
                             <td class="num"><span class="receivables-amount@(unit.Overdue > 0 ? " receivables-amount--overdue" : "")" data-unit-overdue>@ReceivablesModel.MoneyOrDash(unit.Overdue)</span></td>
                             <td><button type="button" class="btn btn-sm" data-unit-toggle aria-expanded="false" aria-controls="@unit.DetailsId" hidden>View Details</button></td>

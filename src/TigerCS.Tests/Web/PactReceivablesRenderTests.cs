@@ -4,12 +4,13 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Receivables = TigerCsWeb::TigerCS.Web.Pages.Collections.ReceivablesModel;
+using Display = TigerCsWeb::TigerCS.Web.Pages.Collections.CollectionsDisplay;
 
 namespace TigerCS.Tests.Web;
 
 /// <summary>
-/// Receivables page: one row per unit, View Details with the unit's unpaid instalments, status by TODAY (Dubai: the fake API's business date is 2026-10-09),
-/// search + Tower + Status filters, and one short line when a company could not be loaded.
+/// Receivables page: one row per unit, View Details with the unit's unpaid instalments that are Due or Overdue (due today or earlier; Dubai: the fake API's
+/// business date is 2026-10-09), search + Tower + Status filters, and one short line when a company could not be loaded.
 /// </summary>
 public sealed class PactReceivablesRenderTests
 {
@@ -38,6 +39,7 @@ public sealed class PactReceivablesRenderTests
         Assert.Contains("name=\"search\"", html); Assert.Contains("Customer name, mobile, tower or apartment", html);
         Assert.Contains("<option value=\"7\" selected=\"selected\">124 - Tower 124</option>", html);
         Assert.Contains("name=\"status\"", html); Assert.Contains("<option value=\"overdue\" selected=\"selected\">Overdue</option>", html);
+        Assert.DoesNotContain("upcoming", html, StringComparison.OrdinalIgnoreCase);
         foreach (var gone in new[] { "name=\"month\"", "name=\"year\"", "name=\"dateFrom\"", "name=\"dateTo\"", "name=\"minAmount\"", "name=\"paymentStatus\"", "name=\"view\"", "data-last-six-months", "How Due / Overdue" })
             Assert.DoesNotContain(gone, html);
     }
@@ -46,7 +48,7 @@ public sealed class PactReceivablesRenderTests
     public async Task ACustomerWithTwoApartments_GetsTwoRows_WithSeparateTotals_AndAnApartmentWithManyInstalmentsOneRow()
     {
         var api = new FakeCollectionsApi();
-        // Apartment 1001: three instalments (overdue 5 Aug, due TODAY, upcoming 5 Nov); apartment 2002 of the SAME customer: one overdue instalment.
+        // Apartment 1001: overdue 5 Aug, due TODAY and a later 5 Nov instalment (not Due yet: never listed or counted); apartment 2002 of the SAME customer: one overdue instalment.
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 11, 5), 150m, "INV-5"));
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
         api.Rows.Add(FakeCollectionsApi.Unpaid(Today, 200m, "INV-3"));
@@ -59,11 +61,11 @@ public sealed class PactReceivablesRenderTests
         var rows = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => m.Value).ToList();
         Assert.Equal(2, rows.Count);                                                                   // one row per unit, not per instalment and not per customer
         var headers = Cells(Regex.Match(html, "<thead><tr>.*?</tr></thead>", RegexOptions.Singleline).Value.Replace("th", "td"));
-        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Total remaining", "Due", "Overdue", "Details"], headers);
+        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Total (Due + Overdue)", "Due", "Overdue", "Details"], headers);
 
-        // Apartment 1001: remaining 650 = overdue 300 + due 200 + upcoming 150 (upcoming is only part of the remaining total).
+        // Apartment 1001: total 500 = overdue 300 + due 200; the 150 due in November is not part of anything on this page.
         var first = Cells(rows.Single(r => r.Contains("TP124-1001")));
-        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-1001", "650.00", "200.00", "300.00", "View Details"], first);
+        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-1001", "500.00", "200.00", "300.00", "View Details"], first);
         // Apartment 2002 is NOT added to 1001: its own totals.
         var second = Cells(rows.Single(r => r.Contains("TP124-2002")));
         Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-2002", "80.00", "—", "80.00", "View Details"], second);
@@ -74,11 +76,11 @@ public sealed class PactReceivablesRenderTests
         var d1 = details.Single(d => d.Contains("INV-1"));
         Assert.DoesNotContain("INV-2", d1);                                                           // no instalment of another apartment
         var lines = Regex.Matches(d1, "<tr class=\"[^\"]*\" data-instalment-status=\"(\\w+)\">(.*?)</tr>", RegexOptions.Singleline).Select(m => (Status: m.Groups[1].Value, Cells: Cells(m.Value))).ToList();
-        Assert.Equal(["Overdue", "Due", "Upcoming"], lines.Select(l => l.Status));
+        Assert.Equal(["Overdue", "Due"], lines.Select(l => l.Status));
+        Assert.DoesNotContain("INV-5", html); Assert.DoesNotContain("Upcoming", html);
         Assert.Equal(["Voucher INV-1", "05 Aug 2026", "—", "—", "300.00", "Overdue", "65"], lines[0].Cells);          // 5 Aug -> 9 Oct = 65 days
         Assert.Equal(["Voucher INV-3", "09 Oct 2026", "—", "—", "200.00", "Due", "—"], lines[1].Cells);                // due today is not late
-        Assert.Equal(["Voucher INV-5", "05 Nov 2026", "—", "—", "150.00", "Upcoming", "—"], lines[2].Cells);
-        Assert.Equal(650m, lines.Sum(l => decimal.Parse(l.Cells[4])));                                  // details add up to the row's total remaining
+        Assert.Equal(500m, lines.Sum(l => decimal.Parse(l.Cells[4])));                                  // details add up to the row's total remaining
         Assert.Matches("instalment-row--overdue[^>]*data-instalment-status=\"Overdue\"", d1);          // overdue rows are the red ones
         Assert.DoesNotContain("instalment-row--overdue\" data-instalment-status=\"Due\"", d1);
         foreach (var column in new[] { ">Instalment<", ">Due date<", ">Original amount<", ">Paid<", ">Remaining<", ">Status<", ">Days late<" }) Assert.Contains(column, d1);
@@ -100,19 +102,30 @@ public sealed class PactReceivablesRenderTests
     [Theory]
     [InlineData("overdue")]
     [InlineData("due")]
-    [InlineData("upcoming")]
     public async Task TheStatusFilter_IsSentToTheApi_AndKeptInThePagingLinks(string status)
     {
         var api = new FakeCollectionsApi();
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
         api.Rows.Add(FakeCollectionsApi.Unpaid(Today, 200m, "INV-2", "TP124-2002", 102));
-        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 12, 1), 50m, "INV-3", "TP124-3003", 103));
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync($"/Collections/Receivables?handler=Results&status={status}&towerId=7&search=Example")).Content.ReadAsStringAsync();
         var call = Assert.Single(api.Calls("/receivables/instalments"));
         foreach (var expected in new[] { $"status={status}", "towerId=7", "search=Example", "view=units" }) Assert.Contains(expected, call);
         var units = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => Cells(m.Value)[3]).ToList();
-        Assert.Equal(status switch { "overdue" => "TP124-1001", "due" => "TP124-2002", _ => "TP124-3003" }, Assert.Single(units));
+        Assert.Equal(status == "overdue" ? "TP124-1001" : "TP124-2002", Assert.Single(units));
+    }
+
+    [Fact]
+    public async Task AUnitWithNothingDueTodayOrEarlier_IsNotListed_AndTheApiIsAskedOnlyUpToToday()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 10, 10), 500m, "INV-T", "TP124-3003", 103));   // due tomorrow
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2027, 1, 1), 900m, "INV-L", "TP124-3003", 103));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("data-unit-row", html); Assert.DoesNotContain("TP124-3003", html);
+        Assert.Contains($"dateTo={Display.DubaiToday():yyyy-MM-dd}", Assert.Single(api.Calls("/receivables/instalments")));
+        Assert.DoesNotContain("upcoming", Assert.Single(api.Calls("/receivables/instalments")));
     }
 
     [Fact]
@@ -138,7 +151,7 @@ public sealed class PactReceivablesRenderTests
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
-        foreach (var gone in new[] { "receivables-metrics", "month-card", "unit-months", "Data details", "snapshot-status", "receivables-help", "How Due", "Payment status", "Not yet due", "Fully paid" })
+        foreach (var gone in new[] { "receivables-metrics", "month-card", "unit-months", "Data details", "snapshot-status", "receivables-help", "How Due", "Payment status", "Not yet due", "Fully paid", "Upcoming" })
             Assert.DoesNotContain(gone, html);
         Assert.DoesNotContain("<html", html);                                                         // a fragment, not a page
     }
@@ -215,7 +228,6 @@ public sealed class PactReceivablesRenderTests
     [Theory]
     [InlineData("2026-10-08", "Overdue", 1)]
     [InlineData("2026-10-09", "Due", null)]
-    [InlineData("2026-10-10", "Upcoming", null)]
     public void TheStatusDependsOnlyOnTheDueDateAgainstToday(string due, string expected, int? daysLate)
     {
         var date = DateOnly.Parse(due);

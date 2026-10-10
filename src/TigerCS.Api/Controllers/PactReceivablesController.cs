@@ -60,7 +60,7 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     /// <param name="pageSize">1 to 100.</param>
     /// <param name="view"><c>instalments</c> (default): one row per instalment. <c>units</c>: one row per unit (company + customer + unit) with all its matching instalments, grouped in SQL before paging.</param>
     /// <param name="dueMonth">Optional <c>yyyy-MM</c>: narrow the list and its totals to instalments due in that month. The returned <c>months</c> overview ignores it and always covers every month of the other filters.</param>
-    /// <param name="status">With <c>view=units</c> only: <c>all</c> (default), <c>overdue</c>, <c>due</c> or <c>upcoming</c> - the units that have an instalment of that class. Unit views classify by today's Dubai date (Overdue: before today, Due: today, Upcoming: after today).</param>
+    /// <param name="status">With <c>view=units</c> only: <c>all</c> (default), <c>overdue</c> or <c>due</c> - the units that have an instalment of that class. The unit view lists only instalments due today or earlier (Dubai date; Overdue: before today, Due: today), so <c>dateTo</c> is capped at today.</param>
     /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet("/api/collections/receivables/instalments")]
     [ProducesResponseType<PactInstalmentsPageDto>(StatusCodes.Status200OK)]

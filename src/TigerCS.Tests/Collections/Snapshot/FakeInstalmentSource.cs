@@ -39,7 +39,7 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
         var all = ReadInstalmentsAsync(request with { Page = 1, PageSize = int.MaxValue / 2, Status = null }, cancellationToken).Result;
         if (all.Unavailable) return Task.FromResult(new PactInstalmentUnitsPage(all.Totals, [], true, all.Snapshot, all.ReadAtUtc, 0));
         // Status filter: the units that have at least one instalment of the class; the totals then cover exactly those units' instalments.
-        var wanted = request.Status switch { "overdue" => "Overdue", "due" => "Due", "upcoming" => "NotYetDue", _ => null };
+        var wanted = request.Status switch { "overdue" => "Overdue", "due" => "Due", _ => null };
         var kept = wanted is null ? all.Rows
             : all.Rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode)).Where(g => g.Any(r => r.Classification == wanted)).SelectMany(g => g).ToList();
         if (wanted is not null)

@@ -53,8 +53,8 @@ public sealed class PactInstalmentsAppService(
         if (!string.IsNullOrWhiteSpace(unitStatusFilter) && !string.Equals(unitStatusFilter, "all", StringComparison.OrdinalIgnoreCase))
         {
             unitStatus = unitStatusFilter.Trim().ToLowerInvariant();
-            if (unitStatus is not ("overdue" or "due" or "upcoming") || !byUnit)
-                return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "status must be all, overdue, due or upcoming, and needs view=units.");
+            if (unitStatus is not ("overdue" or "due") || !byUnit)
+                return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "status must be all, overdue or due, and needs view=units.");
         }
         if (byUnit && source is not IPactInstalmentUnitSource)
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The unit view needs the local receivables snapshot (Collections:ReceivablesSnapshot:UseLocalSnapshot).");
@@ -67,6 +67,9 @@ public sealed class PactInstalmentsAppService(
         // Default window: 1 January of the current year through the end of the current month. Both ends are editable; a month selector sets them to a calendar month.
         var from = dateFrom ?? DateOnly.FromDateTime(sourceOptions.StartDate);
         var to = dateTo ?? monthEnd;
+        // By unit lists only what is owed NOW: instalments due today or earlier (Due + Overdue). Anything due later is not part of this view,
+        // so a unit with nothing due today or before is not listed at all and every total is Due + Overdue.
+        if (byUnit && to > today) to = today;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "From date must not be after To date, and both must be within 2000-2100.");
         var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);

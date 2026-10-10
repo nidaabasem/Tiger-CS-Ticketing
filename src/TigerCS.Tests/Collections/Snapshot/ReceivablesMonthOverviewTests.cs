@@ -87,7 +87,7 @@ public sealed class ReceivablesMonthOverviewTests
     public async Task AllMonths_IsTheUnselectedList_AndBadSelectionsAreRefused()
     {
         var (service, _) = Build();
-        var none = (await List(service, "units")).Value!;
+        var none = (await List(service, "instalments")).Value!;
         Assert.Null(none.DueMonth);
         Assert.Equal(60, none.Totals.Count);
         Assert.Equal(CollectionsOutcome.InvalidRequest, (await List(service, "units", "2026-13")).Outcome);
