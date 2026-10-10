@@ -22,9 +22,9 @@ public sealed class CollectionsCrmOwnersOptions
     public int MaxPages { get; set; } = 500;
 
     /// <summary>
-    /// CRM Lead statuses that count as a sale: <b>4 = Contract</b> and <b>8 = Sold</b>, the values production CRM has been observed returning (see
-    /// CrmBuyerLookupAppServiceTests) - confirm them against CRM's own LeadStatus enum before relying on them. A cancelled lead is never listed by CRM and is
-    /// also refused here by its status NAME; its number is deliberately not hard-coded (the repository holds conflicting guesses).
+    /// FALLBACK ONLY. A sale counts when CRM's status NAME is Sold or Contract and not cancelled (<see cref="TigerCS.Domain.Modules.Collections.CrmSaleEligibility"/>); these numbers
+    /// (<b>4 = Contract</b>, <b>8 = Sold</b>, observed in production responses, NOT verified against CRM's own LeadStatus enum) are consulted only for a row that arrives with no status
+    /// name. A cancelled lead is refused by name; its number is deliberately not hard-coded.
     /// </summary>
     public List<int> EligibleLeadStatuses { get; set; } = [4, 8];
 

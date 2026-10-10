@@ -78,9 +78,11 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.Contains("name=\"phoneNumber\" value=\"971500000002\"", html, StringComparison.Ordinal);
         Assert.Contains("name=\"customerKey\" value=\"crm:9001\"", html, StringComparison.Ordinal);
         Assert.Contains("Show</button>", html, StringComparison.Ordinal);
-        Assert.Single(_api.Requests);
-        Assert.Contains("/api/collections/customer-lookup/payment-summary?", _api.Requests.Single(), StringComparison.Ordinal);
-        Assert.Contains("customerKey=crm%3A9001", _api.Requests.Single(), StringComparison.Ordinal);
+        // The unit-based lookup of the CRM customer (no profile read), then the verified EDSM lookup, and nothing else.
+        Assert.Equal(2, _api.Requests.Count);
+        Assert.StartsWith("/api/collections/customers/crm/9001/units?", _api.Requests[0], StringComparison.Ordinal);
+        Assert.Contains("/api/collections/customer-lookup/payment-summary?", _api.Requests[1], StringComparison.Ordinal);
+        Assert.Contains("customerKey=crm%3A9001", _api.Requests[1], StringComparison.Ordinal);
     }
 
     [Theory]
@@ -479,6 +481,136 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
         Assert.DoesNotContain("Reminder history", html, StringComparison.Ordinal);
     }
 
+    // ---- unit-based Payment tab (CRM -> PACT by company + tower + apartment) ----
+
+    private static LinkedUnitCandidateDto UnitCandidate(
+        string id = "crm:9090", string status = "Available", string? reason = null, string? detail = null, decimal? due = 300m, decimal? overdue = 700m, string unit = "909",
+        int? company = 4, string source = "Crm", string name = "Sreesaran Maru Sudhakar", string tenant = "T-909", string? contract = null,
+        IReadOnlyList<string>? review = null, IReadOnlyList<CollectionsUnitInstalmentDto>? instalments = null) =>
+        new(id, source, company, "140", "Al Ghaf Tower", "Al Ghaf Tower", unit, "TP140-" + unit, status == "MatchFailed" ? "MatchFailed" : "Linked", review ?? [],
+            new CollectionsUnitPartyDto(name, "+971501234567", "sree@example.test", "Crm", "Crm", "Crm"), 498397, 9090, 79, tenant, 1400909, contract, null,
+            status, reason, detail, due, overdue, due is null || overdue is null ? null : due + overdue,
+            instalments ?? (status == "Available" ? [new("Voucher V1", DateOnly.FromDateTime(Now).AddDays(-40), 700m, 0m, 700m, "Overdue", 40)] : []), DateOnly.FromDateTime(Now), "Fresh");
+
+    private static CustomerUnitLinkResultDto Link(params LinkedUnitCandidateDto[] units) =>
+        new("+971501234567", "Found", "NotSearched", units, units.Length > 1, units.Length == 1 ? units[0].SelectionId : null, []);
+
+    [Fact]
+    public async Task ReportedCase_CrmCustomerAbsentFromPact_ShowsTheUnitsFigures_NotTheGenericNoFiguresMessage()
+    {
+        // The EDSM route has no PACT tenant for a CRM-only customer (NotMapped), exactly as for the reported customer ...
+        _api.Mode = "nosource";
+        // ... but the unit-based lookup (CRM unit -> PACT by company + tower + apartment) has the figures.
+        _api.UnitLink = Link(UnitCandidate());
+
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+
+        Assert.Contains("data-payment-state=\"UnitSummary\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-unit-state=\"Available\"", html, StringComparison.Ordinal);
+        Assert.Contains("AED 1,000.00", html, StringComparison.Ordinal);            // Total = Due + Overdue
+        Assert.Contains("AED 700.00", html, StringComparison.Ordinal);
+        Assert.Contains("Sreesaran Maru Sudhakar", html, StringComparison.Ordinal);
+        Assert.Contains("971501234567", html, StringComparison.Ordinal);
+        Assert.Contains("sree@example.test", html, StringComparison.Ordinal);
+        Assert.Contains("Al Ghaf Tower", html, StringComparison.Ordinal);
+        Assert.Contains("Voucher V1", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("No payment figures for this customer", html, StringComparison.Ordinal);
+        // The unit route is what the tab asked first; the figures never came from a phone search.
+        Assert.StartsWith("/api/collections/customers/crm/9001/units", _api.Requests.First(r => r.Contains("/api/collections")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReportedCase_WithoutAVerifiedProjectMapping_SaysTheUnitCouldNotBeMatched_NotThatThereAreNoFigures()
+    {
+        _api.Mode = "nosource";
+        _api.UnitLink = Link(UnitCandidate(status: "MatchFailed", reason: "ProjectMappingMissing", due: null, overdue: null,
+            detail: "CRM project 79 (Al Ghaf Tower) has no verified mapping to a PACT tower."));
+
+        var html = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+
+        Assert.Contains("data-payment-state=\"UnitSummary\"", html, StringComparison.Ordinal);
+        Assert.Contains("data-unit-state=\"MatchFailed\"", html, StringComparison.Ordinal);
+        Assert.Contains("The unit could not be matched to one PACT record.", html, StringComparison.Ordinal);
+        Assert.Contains("The CRM project has no verified PACT tower mapping.", html, StringComparison.Ordinal);
+        Assert.Contains("Sreesaran Maru Sudhakar", html, StringComparison.Ordinal);   // the identity and unit are still shown
+        Assert.DoesNotContain("No payment figures for this customer", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("AED 0.00", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheFourFinancialStates_AreShownDistinctly_AndNeverAsZero()
+    {
+        _api.Mode = "nosource";
+        _api.UnitLink = Link(UnitCandidate(status: "NoDues", due: 0m, overdue: 0m, detail: "Nothing is due on or before today."));
+        var zero = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+        Assert.Contains("data-unit-state=\"NoDues\"", zero, StringComparison.Ordinal);
+        Assert.Contains("Confirmed: nothing is due.", zero, StringComparison.Ordinal);
+
+        _api.UnitLink = Link(UnitCandidate(status: "NoFinancialData", reason: "PactHoldsNoRecord", due: null, overdue: null, detail: "PACT holds no receivable record for this unit."));
+        var none = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+        Assert.Contains("data-unit-state=\"NoFinancialData\"", none, StringComparison.Ordinal);
+        Assert.Contains("No financial data available.", none, StringComparison.Ordinal);
+        Assert.Contains("This is not a zero balance.", none, StringComparison.Ordinal);
+        Assert.DoesNotContain("Confirmed: nothing is due", none, StringComparison.Ordinal);
+
+        _api.UnitLink = Link(UnitCandidate(status: "SourceError", reason: "PactUnavailable", due: null, overdue: null, detail: "The unit could not be read from the PACT receivables snapshot. Please retry."));
+        var error = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+        Assert.Contains("data-unit-state=\"SourceError\"", error, StringComparison.Ordinal);
+        Assert.Contains("data-payment-retry", error, StringComparison.Ordinal);
+        Assert.Contains("Do not quote a balance.", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Confirmed: nothing is due", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SeveralUnits_AreListedAndOneMustBeChosen_EachWithItsOwnAmounts()
+    {
+        _api.Mode = "nosource";
+        var first = UnitCandidate("crm:9090", unit: "909", due: 300m, overdue: 700m);
+        var second = UnitCandidate("crm:9091", unit: "101", due: 0m, overdue: 55m, tenant: "T-101", instalments: [new("Voucher V2", DateOnly.FromDateTime(Now).AddDays(-3), 55m, 0m, 55m, "Overdue", 3)]);
+        _api.UnitLink = Link(first, second);
+
+        var list = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment"));
+        Assert.Contains("data-unit-selection-required", list, StringComparison.Ordinal);
+        Assert.Contains("data-unit-link=\"crm:9090\"", list, StringComparison.Ordinal);
+        Assert.Contains("data-unit-link=\"crm:9091\"", list, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-unit-state=", list, StringComparison.Ordinal);       // no unit's detail before a choice
+
+        _api.UnitLink = Link(first, second) with { SelectedId = "crm:9091", SelectionRequired = false };
+        var chosen = await Ok(await Client().GetAsync("/Customers/crm:9001?tab=payment&account=crm%3A9091"));
+        Assert.Contains("Voucher V2", chosen, StringComparison.Ordinal);
+        Assert.Contains("AED 55.00", chosen, StringComparison.Ordinal);
+        Assert.DoesNotContain("Voucher V1", chosen, StringComparison.Ordinal);            // the other unit's instalments are not mixed in
+        Assert.Contains(_api.Requests, r => r.Contains("selection=crm%3A9091", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task APactCustomerFoundByPhoneOnLeasingCompany7_ShowsTheExactMissingSource_NotAGenericMessage()
+    {
+        _api.Mode = "nosource";                                                          // EDSM has no mapping for the Leasing tenant (company 7 is not an EDSM company)
+        var leasing = UnitCandidate("pact:7:3001:7001:LC-1", status: "NoFinancialData", reason: "LeasingReceivablesSourceMissing", due: null, overdue: null, company: 7,
+            source: "Leasing", name: "Fatima Noor", tenant: "3001", contract: "LC-1", detail: "No company-7 (Leasing) receivables source exists: the PACT receivables snapshot ... This is not a zero balance.");
+        _api.LookupLink = Link(leasing);
+
+        var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971500000002&customerKey=ext%3APact%3A3001"));
+
+        Assert.Contains("data-payment-state=\"UnitSummary\"", html, StringComparison.Ordinal);
+        Assert.Contains("No company-7 (Leasing) receivables source exists.", html, StringComparison.Ordinal);
+        Assert.Contains("PACT Leasing", html, StringComparison.Ordinal);
+        Assert.Contains("contract LC-1", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("No payment figures for this customer", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ThePaymentsBeforeTicketPage_UsesTheUnitLookup_ForACrmCustomer()
+    {
+        _api.UnitLink = Link(UnitCandidate());
+        var html = await Ok(await Client().GetAsync("/Customers/Payments?phoneNumber=971501234567&customerKey=crm%3A9001"));
+        Assert.Contains("data-unit-state=\"Available\"", html, StringComparison.Ordinal);
+        Assert.Contains("AED 1,000.00", html, StringComparison.Ordinal);
+        Assert.Contains("phone=971501234567", _api.Requests.First(r => r.Contains("/units")), StringComparison.Ordinal);
+        Assert.DoesNotContain(_api.Requests, r => r.Contains("customer-lookup/payment-summary", StringComparison.Ordinal));   // figures found: no phone-based EDSM search needed
+    }
+
     private sealed class TestAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
@@ -497,6 +629,12 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
     private sealed class FakeApi : HttpMessageHandler
     {
         public string Mode { get; set; } = "loaded";
+
+        /// <summary>The answer of GET /api/collections/customers/crm/9001/units; null = the route does not exist (404), so the per-account view is used as before.</summary>
+        public CustomerUnitLinkResultDto? UnitLink { get; set; }
+
+        /// <summary>The answer of GET /api/collections/customers/lookup (phone lookup incl. Leasing); null = 404.</summary>
+        public CustomerUnitLinkResultDto? LookupLink { get; set; }
         public bool CanSend { get; set; }
         public bool Stale { get; set; }
         public bool ChargesUnreported { get; set; }
@@ -620,6 +758,16 @@ public sealed class CustomerPaymentTabRenderTests : IDisposable
 
             if (path.StartsWith("/api/collections", StringComparison.Ordinal))
             {
+                if (path == "/api/collections/customers/crm/9001/units")
+                {
+                    return UnitLink is null ? Problem(HttpStatusCode.NotFound, "AccountNotFound") : Json(HttpStatusCode.OK, UnitLink);
+                }
+
+                if (path == "/api/collections/customers/lookup")
+                {
+                    return LookupLink is null ? Problem(HttpStatusCode.NotFound, "AccountNotFound") : Json(HttpStatusCode.OK, LookupLink);
+                }
+
                 if (request.Method == HttpMethod.Post)
                 {
                     LastPostBody = await request.Content!.ReadAsStringAsync(cancellationToken);

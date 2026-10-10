@@ -365,6 +365,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICollectionsCrmOwnerStore, SqlCollectionsCrmOwnerStore>();
         services.AddScoped<CollectionsCrmOwnersRefreshService>();
         services.AddScoped<CollectionsUnitLinkService>();
+        services.AddScoped<ICollectionsCrmProjectMap, SqlCollectionsCrmProjectMap>();
+        services.AddScoped<CustomerUnitLinkService>();
         services.AddScoped<CollectionsUnitPaymentSummaryAppService>();
         services.AddScoped<CollectionsLeasingSummaryAppService>();
         services.AddScoped<IReceivablesRefresher, SqlReceivablesRefresher>();

@@ -1140,14 +1140,14 @@ public sealed class NewTicketModel(
                         PreferredExternalUnitId: linkedUnit?.ExternalUnitId, LookupPhoneNumber: PhoneNumber));
                 LinkedPaymentPanel = await paymentPanelLoader.LoadAsync(
                     $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, LinkedPaymentAccount, null, false, cancellationToken,
-                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber));
+                    new PaymentPanelOptions(PaymentLinks("linkedPaymentAccount"), AllowSending: !readOnly, PreferredUnitNumber: CrmBuyerUnitNumber, PreferredCrmUnitId: CrmBuyerUnitId, CrmLookupPhone: PhoneNumber));
             }
             else
             {
                 PaymentPanel = await paymentPanelLoader.LoadAsync(
                     $"crm:{crmBuyerCustomerId}", crmBuyerCustomerId, PaymentAccount, null, false, cancellationToken,
                     new PaymentPanelOptions(PaymentLinks("paymentAccount"), AllowSending: !readOnly,
-                        PreferredUnitNumber: CrmBuyerUnitNumber, LookupPhoneNumber: PhoneNumber));
+                        PreferredUnitNumber: CrmBuyerUnitNumber, LookupPhoneNumber: PhoneNumber, PreferredCrmUnitId: CrmBuyerUnitId, CrmLookupPhone: PhoneNumber));
             }
             return;
         }
