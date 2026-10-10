@@ -2,7 +2,7 @@
 
 Run on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credentials, no destructive statements). **Execution order (dependencies, not file-name order):**
 `V001` -> `V002` -> `V003` -> `V004` -> `V005` -> `V006` -> **`V010`** -> `V007` -> `V008` -> `V009` -> **`V011`**
-(V010 needs V002/V003/V006; V007 and V008 read `fn_Collections_CrmUnitLinks` from V010; V011 needs V010. On an environment that already has V001-V010, only **V011** is new.)
+**Run-lifecycle fix: re-run `V004`, `V005` and `V006` (all `CREATE OR ALTER`, no table changes) BEFORE deploying the application that sends `@RunId`.** (V010 needs V002/V003/V006; V007 and V008 read `fn_Collections_CrmUnitLinks` from V010; V011 needs V010. On an environment that already has V001-V010, only **V011** is new.)
 
 | Script | Purpose |
 | --- | --- |
@@ -17,6 +17,8 @@ Run on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credentials, no d
 | `V009__usp_Collections_GetInstalmentMonths.sql` | Receivables month overview: per due-date month overdue count and remaining amount over the whole filtered set (before paging, no month selection). Procedure only. Also excludes cancelled units (`*`). |
 | `V010__create_crm_unit_owner_tables.sql` | CRM unit owners (bulk copy of Sold / Contract sales per tower+unit): `fn_CollectionsUnitKey`, `CollectionsCrmOwnerState`, `CollectionsCrmUnitOwner`, `fn_Collections_CrmUnitLinks`, and the procedures `usp_Collections_StoreCrmUnitOwners`, `_PublishCrmUnitOwners`, `_RecordCrmOwnerFailure`, `_GetCrmOwnerState`, `_GetCrmUnitLinks`, `_GetUnitReceivables` (unit-keyed Payment Summary read). **V007 and V008 now read `fn_Collections_CrmUnitLinks`, so deploy V010 BEFORE V007 and V008.** |
 | `V011__create_crm_project_map.sql` | CRM project -> PACT tower mapping: `dbo.CollectionsCrmProjectMap` (empty; **no mapping is invented**) and `usp_Collections_GetCrmProjectMap` (manual rows + project/code pairs of the current CRM owner feed). Needed by the unit-based Payment tab / phone lookup / New Ticket. Needs V010. |
+| `tools/diagnose_receivables_refresh.sql` | **Read-only** diagnostics of the refresh: server/database identity, linked-server configuration with its `modify_date`, company state, runs still `Running` with age, who holds the refresh lock. |
+| `tools/close_abandoned_receivables_runs.sql` | Scoped cleanup of abandoned `Running` rows of ONE company. **Dry run by default**, refuses to run while a refresh holds the lock, never touches finished rows or the published snapshot. |
 | `tools/crm_project_map_discovery.sql` | **Read-only** helper: the CRM projects seen on tickets (with/without a mapping) next to `CollectionsTowers`, to let a person verify and then INSERT one `CollectionsCrmProjectMap` row per project. Run on demand, not part of the deployment order. |
 | `tests/local-sqlserver/04_receivables_page_cases.sql` | Synthetic cases (tenants VER-01..07) for the Receivables / Campaigns day-based tests (`RealSqlReceivablesPageTests`); development servers only. |
 | `tests/probe_pact_result_shape.sql` | Read-only probe of the deployed PACT procedures' result shape (run after V001-V003, before enabling the job). |

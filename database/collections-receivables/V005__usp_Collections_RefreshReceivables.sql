@@ -25,6 +25,10 @@
     reviewed companion draft in docs/Collections/pact-sql, deployed separately) layouts 5-6 also carry PlanAmount / AllocatedAmount and the publish step
     stores a verified status. Note the companion changes the allocation arithmetic (it fixes defects D1-D5 of the source review): reconcile it first.
   * Overlap protection: a session-scoped application lock. A second concurrent call returns RunStatus = 'AlreadyRunning'.
+  * TERMINAL STATES: a client timeout / cancellation / application restart aborts this batch WITHOUT running the CATCH block below. The caller
+    therefore passes its own @RunId and, when the call did not return, asks dbo.usp_Collections_CloseReceivablesRun (V004) to close that run.
+    Whatever is left over (hard process kill) is closed here, under the lock, at the start of the next run: Run AND RunCompany rows, and the
+    company's last-attempt state. A Running row can only be live while this lock is held.
   * COVERAGE: @SourceFromDate/@SourceThroughDate is the due-date window requested from PACT. With @ExtendCoverage = 1 (default) the window used
     for each company is the UNION of the request and the coverage already published for that company, so the scheduled refresh keeps a range
     that was loaded on demand (the application's "Load missing data" action calls this procedure with the missing dates). Pass 0 to replace the
@@ -45,7 +49,8 @@ CREATE OR ALTER PROCEDURE dbo.usp_Collections_RefreshReceivables
     @ExtendCoverage     bit          = 1,          -- 1 = never shrink a company's stored coverage (see below)
     @ProcedureSuffix    nvarchar(16) = N'',        -- '' = the deployed p4/p32AccountReceivables; e.g. 'V2' = a companion procedure that also returns original + allocated amounts
     @RetainPaid         bit          = 1,          -- keep fully paid instalments (needed for the "Fully paid" and "All" views)
-    @StrictIdentity     bit          = 0           -- companion procedures only: 1 = fail instead of guessing an ambiguous voucher/unit
+    @StrictIdentity     bit          = 0,          -- companion procedures only: 1 = fail instead of guessing an ambiguous voucher/unit
+    @RunId              uniqueidentifier = NULL        -- caller-supplied id so the caller can close the run if this call never returns; NULL = generated here
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -72,12 +77,16 @@ BEGIN
         RETURN;
     END;
 
-    DECLARE @RunId uniqueidentifier = NEWID(), @now datetime2(3) = SYSUTCDATETIME();
+    DECLARE @now datetime2(3) = SYSUTCDATETIME();
+    SET @RunId = ISNULL(@RunId, NEWID());
     DECLARE @startDt datetime, @endDt datetime;
 
     BEGIN TRY
-        -- We hold the lock, so any 'Running' row belongs to a crashed earlier attempt.
-        UPDATE dbo.CollectionsReceivableRun SET Status = 'Abandoned', FinishedUtc = @now, Message = N'Superseded by a later refresh.' WHERE Status = 'Running';
+        -- We hold the lock, so any 'Running' row (run OR company) belongs to an earlier attempt whose session died: give it a terminal state
+        -- and record it as that company's last attempt (the earlier published snapshot stays untouched).
+        EXEC dbo.usp_Collections_CloseReceivablesRun @RunId = NULL, @ErrorNumber = -1,
+             @Message = N'The refresh was interrupted before it finished (timeout, cancellation or application restart); superseded by a later refresh.',
+             @RunStatus = 'Abandoned', @RequireIdle = 0;
         INSERT dbo.CollectionsReceivableRun (RunId, TriggerSource, RequestedCompanyId, StartedUtc, Status)
         VALUES (@RunId, @TriggerSource, @CompanyId, @now, 'Running');
 
@@ -166,10 +175,16 @@ BEGIN
          WHERE RunId = @RunId;
     END TRY
     BEGIN CATCH
-        DECLARE @fatal nvarchar(1000) = LEFT(ERROR_MESSAGE(), 1000);
+        DECLARE @fatal nvarchar(1000) = LEFT(ERROR_MESSAGE(), 1000), @fatalNo int = ERROR_NUMBER();
         IF CURSOR_STATUS('local', 'company_cursor') >= 0 CLOSE company_cursor;
         IF CURSOR_STATUS('local', 'company_cursor') >= -1 DEALLOCATE company_cursor;
-        UPDATE dbo.CollectionsReceivableRun SET Status = 'Failed', FinishedUtc = SYSUTCDATETIME(), Message = @fatal WHERE RunId = @RunId;
+        -- Company rows too: a company that was Running when the failure hit must not stay Running (it would read as "loading" forever).
+        BEGIN TRY
+            EXEC dbo.usp_Collections_CloseReceivablesRun @RunId = @RunId, @ErrorNumber = @fatalNo, @Message = @fatal, @RunStatus = 'Failed', @RequireIdle = 0;
+        END TRY
+        BEGIN CATCH
+            UPDATE dbo.CollectionsReceivableRun SET Status = 'Failed', FinishedUtc = SYSUTCDATETIME(), Message = @fatal WHERE RunId = @RunId AND Status = 'Running';
+        END CATCH;
         EXEC sys.sp_releaseapplock @Resource = N'Collections.ReceivablesRefresh', @LockOwner = N'Session';
         THROW;
     END CATCH;

@@ -91,6 +91,39 @@ public sealed class SqlScriptContractTests
     }
 
     [Fact]
+    public void EveryStartedRunReachesATerminalState_AndAnAbandonedRunIsNeverReadAsLoading()
+    {
+        var publish = Read("V004__usp_Collections_PublishReceivablesStaging.sql");
+        var close = publish[publish.IndexOf("CREATE OR ALTER PROCEDURE dbo.usp_Collections_CloseReceivablesRun", StringComparison.Ordinal)..publish.IndexOf("CREATE OR ALTER PROCEDURE dbo.usp_Collections_PublishReceivablesStaging", StringComparison.Ordinal)];
+        Assert.Contains("WHERE Status = 'Running' AND (@RunId IS NULL OR RunId = @RunId)", close);   // narrow: only unfinished rows, optionally one run
+        Assert.Contains("'StillRunning'", close);                                                    // never closes while a refresh holds the lock
+        Assert.Contains("st.LastAttemptUtc IS NULL OR st.LastAttemptUtc <= c.StartedUtc", close);   // an old orphan never overwrites a later attempt
+        Assert.DoesNotContain("CurrentRunId =", close);                                              // the published snapshot is never touched
+
+        var refresh = Read("V005__usp_Collections_RefreshReceivables.sql");
+        Assert.Contains("@RunId              uniqueidentifier = NULL", refresh);                      // caller-supplied id: the caller can close the run if the call never returns
+        Assert.Contains("EXEC dbo.usp_Collections_CloseReceivablesRun @RunId = NULL", refresh);       // recovery of run AND company rows under the lock
+        Assert.Contains("EXEC dbo.usp_Collections_CloseReceivablesRun @RunId = @RunId", refresh);     // the fatal path closes company rows too
+        Assert.DoesNotContain("SET Status = 'Abandoned', FinishedUtc = @now, Message = N'Superseded", refresh);   // the old run-only update left RunCompany 'Running' forever
+
+        var coverage = Read("V006__usp_Collections_GetReceivables.sql");
+        Assert.Contains("@RunLeaseMinutes", coverage);
+        Assert.DoesNotContain("DATEADD(HOUR, -3", coverage);                                         // a dead run no longer reads as "loading" for hours
+        Assert.Contains("own.RunId IS NULL OR own.Status = 'Running'", coverage);                     // a company that finished in that run is not "loading"
+    }
+
+    [Fact]
+    public void TheOperationalScripts_AreScopedAndDefaultToADryRun()
+    {
+        var cleanup = File.ReadAllText(Path.Combine(Dir(), "tools", "close_abandoned_receivables_runs.sql"));
+        Assert.Contains("DECLARE @Apply bit = 0", cleanup);
+        Assert.Contains("sp_getapplock", cleanup);                                                   // refuses to touch anything while a refresh is running
+        Assert.Contains("Status = 'Running'", cleanup);
+        var diagnose = File.ReadAllText(Path.Combine(Dir(), "tools", "diagnose_receivables_refresh.sql"));
+        Assert.DoesNotMatch(@"(?im)^\s*(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|KILL|EXEC\s+sp_serveroption)\b", System.Text.RegularExpressions.Regex.Replace(diagnose, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline));
+    }
+
+    [Fact]
     public void PublishValidatesBeforePublishingAndKeepsThePreviousSnapshotOnFailure()
     {
         var sql = Read("V004__usp_Collections_PublishReceivablesStaging.sql");

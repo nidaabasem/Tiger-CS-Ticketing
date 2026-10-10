@@ -672,9 +672,13 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
         if (companyId is not (null or 4 or 32)) throw new ArgumentOutOfRangeException(nameof(companyId));
         if (!await Gate.WaitAsync(0, cancellationToken))
             return new ReceivablesRefreshResult(null, "AlreadyRunning", "A refresh is already running in this process.", []);
+        // The id is ours so that a call that never returns (timeout, cancellation, restart) can still be closed: the procedure's own CATCH does not run then.
+        var runId = Guid.NewGuid();
+        string? connectionString = null;
+        var returned = false; int closeNumber = -1; string closeMessage = "The refresh did not finish.";
         try
         {
-            var connectionString = configuration.GetConnectionString(options.ConnectionStringName)
+            connectionString = configuration.GetConnectionString(options.ConnectionStringName)
                 ?? throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
@@ -693,11 +697,12 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
             command.Parameters.Add("@SourceMinAmount", SqlDbType.Int).Value = options.SourceMinAmount;
             command.Parameters.Add("@MaxRawRows", SqlDbType.Int).Value = options.MaxRawRows;
             command.Parameters.Add("@MaxShrinkPercent", SqlDbType.Int).Value = Math.Clamp(options.MaxShrinkPercent, 0, 100);
+            command.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = runId;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            Guid? runId = null; var status = "Failed"; string? message = null;
+            Guid? resultRunId = null; var status = "Failed"; string? message = null;
             if (await reader.ReadAsync(cancellationToken))
             {
-                runId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
+                resultRunId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
                 status = reader.GetString(1);
                 message = reader.IsDBNull(2) ? null : reader.GetString(2);
             }
@@ -708,6 +713,7 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
                         Nullable(reader, 2), Nullable(reader, 3), Nullable(reader, 4), Nullable(reader, 5), Nullable(reader, 6), Nullable(reader, 7),
                         reader.IsDBNull(8) ? null : reader.GetString(8), Nullable(reader, 9), Nullable(reader, 10), Nullable(reader, 11)));
             await reader.DisposeAsync();
+            returned = true;   // the procedure ran to its end: every run it started has its own terminal state
             if (companies.Any(x => x.Status == "Succeeded"))
             {
                 // Best effort: normalise the contact values the new run registered, so the first campaign preview does not have to.
@@ -715,14 +721,61 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
                 catch (Exception ex) when (ex is SqlException or InvalidOperationException)
                 { logger.LogWarning("Contact normalisation after the refresh was skipped ({ExceptionType}); it will run on the first campaign read.", ex.GetType().Name); }
             }
-            return new ReceivablesRefreshResult(runId, status, message, companies);
+            return new ReceivablesRefreshResult(resultRunId, status, message, companies);
         }
         catch (SqlException ex)
         {
+            closeNumber = ex.Number;
+            closeMessage = ex.Number == -2 ? "The refresh exceeded its command timeout and was stopped." : $"The refresh procedure failed (SQL error {ex.Number}).";
             logger.LogError("Receivables refresh procedure failed (SQL error {SqlNumber}).", ex.Number);
-            return new ReceivablesRefreshResult(null, "Failed", $"The refresh procedure failed (SQL error {ex.Number}).", []);
+            return new ReceivablesRefreshResult(null, "Failed", closeMessage, []);
         }
-        finally { Gate.Release(); }
+        catch (OperationCanceledException)
+        {
+            closeMessage = "The refresh was cancelled (application shutdown or job cancellation).";
+            throw;
+        }
+        catch (Exception ex)
+        {
+            closeMessage = $"The refresh stopped unexpectedly ({ex.GetType().Name}).";
+            throw;
+        }
+        finally
+        {
+            if (!returned && connectionString is not null) await CloseUnfinishedRunAsync(connectionString, runId, closeNumber, closeMessage);
+            Gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Gives the run this call started a terminal state (Run, RunCompany and the company's last attempt) when the call ended without a result.
+    /// Safe to call always: the procedure only touches rows still 'Running' and does nothing while a refresh still holds the application lock.
+    /// A timeout or cancellation does not stop a batch blocked in the linked-server call: its SQL session (and the lock) lives until the remote procedure
+    /// returns, so the procedure waits up to <see cref="CloseLockWaitSeconds"/> for it. Never throws; whatever it cannot close is closed by the next refresh under the lock.
+    /// </summary>
+    private const int CloseLockWaitSeconds = 120;
+
+    private async Task CloseUnfinishedRunAsync(string connectionString, Guid runId, int errorNumber, string message)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(CloseLockWaitSeconds + 30));
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cts.Token);
+            await using var command = new SqlCommand("dbo.usp_Collections_CloseReceivablesRun", connection)
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = CloseLockWaitSeconds + 20 };
+            command.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = runId;
+            command.Parameters.Add("@ErrorNumber", SqlDbType.Int).Value = errorNumber;
+            command.Parameters.Add("@Message", SqlDbType.NVarChar, 1000).Value = message;
+            command.Parameters.Add("@RequireIdle", SqlDbType.Bit).Value = true;
+            command.Parameters.Add("@LockWaitSeconds", SqlDbType.Int).Value = CloseLockWaitSeconds;
+            var outcome = command.Parameters.Add("@Outcome", SqlDbType.VarChar, 20); outcome.Direction = ParameterDirection.Output;
+            await command.ExecuteNonQueryAsync(cts.Token);
+            if (outcome.Value is "StillRunning")
+                logger.LogWarning("Receivables refresh {RunId} did not return and its SQL session (blocked in the PACT call) still holds the refresh lock after {Wait} s; the next refresh closes it once that session ends.", runId, CloseLockWaitSeconds);
+        }
+        catch (Exception ex) when (ex is SqlException or InvalidOperationException or OperationCanceledException)
+        { logger.LogWarning("Could not close the unfinished receivables refresh {RunId} ({ExceptionType}); the next refresh will.", runId, ex.GetType().Name); }
     }
 
     private static int? Nullable(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
