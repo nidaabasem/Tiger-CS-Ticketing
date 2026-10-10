@@ -60,6 +60,7 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     /// <param name="pageSize">1 to 100.</param>
     /// <param name="view"><c>instalments</c> (default): one row per instalment. <c>units</c>: one row per unit (company + customer + unit) with all its matching instalments, grouped in SQL before paging.</param>
     /// <param name="dueMonth">Optional <c>yyyy-MM</c>: narrow the list and its totals to instalments due in that month. The returned <c>months</c> overview ignores it and always covers every month of the other filters.</param>
+    /// <param name="status">With <c>view=units</c> only: <c>all</c> (default), <c>overdue</c> or <c>due</c> - the units that have an instalment of that class. The unit view lists only instalments due today or earlier (Dubai date; Overdue: before today, Due: today), so <c>dateTo</c> is capped at today.</param>
     /// <param name="cancellationToken">Request cancellation.</param>
     [HttpGet("/api/collections/receivables/instalments")]
     [ProducesResponseType<PactInstalmentsPageDto>(StatusCodes.Status200OK)]
@@ -67,11 +68,11 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Instalments([FromQuery] int? towerId, [FromQuery] DateOnly? dateFrom, [FromQuery] DateOnly? dateTo, [FromQuery] string? paymentStatus,
-        [FromQuery] decimal? minAmount, [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, [FromQuery] string? view = null, [FromQuery] string? dueMonth = null, CancellationToken cancellationToken = default)
+        [FromQuery] decimal? minAmount, [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, [FromQuery] string? view = null, [FromQuery] string? dueMonth = null, [FromQuery] string? status = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
-        var result = await instalments.ListAsync(caller, towerId, dateFrom, dateTo, paymentStatus, minAmount, search, page, pageSize, cancellationToken, view, dueMonth);
+        var result = await instalments.ListAsync(caller, towerId, dateFrom, dateTo, paymentStatus, minAmount, search, page, pageSize, cancellationToken, view, dueMonth, status);
         return result.IsSuccess ? Ok(result.Value) : Failure(result.Outcome, result.Detail);
     }
 
@@ -92,16 +93,17 @@ public sealed class PactReceivablesController(PactReceivableCustomersAppService 
     /// Starts a background load of an instalment due-date range the snapshot does not cover. Returns 202 immediately; 200 when
     /// nothing needs loading or a load is already running. Never blocks on PACT.
     /// </summary>
+    /// <param name="companyId">Optional 4 or 32: retry the refresh of that company only (over the standard window); the dates are then not used to decide whether to load.</param>
     [HttpPost("/api/collections/receivables/coverage/load")]
     [ProducesResponseType<ReceivablesRangeLoadDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ReceivablesRangeLoadDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> LoadCoverage([FromQuery] DateOnly dateFrom, [FromQuery] DateOnly dateTo, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> LoadCoverage([FromQuery] DateOnly dateFrom, [FromQuery] DateOnly dateTo, [FromQuery] int? companyId = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null) return Unauthorized();
-        var result = await service.RequestLoadAsync(caller, dateFrom, dateTo, cancellationToken);
+        var result = await service.RequestLoadAsync(caller, dateFrom, dateTo, cancellationToken, companyId);
         if (!result.IsSuccess) return Failure(result.Outcome, result.Detail);
         return result.Value!.Accepted ? Accepted(result.Value) : Ok(result.Value);
     }

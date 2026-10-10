@@ -10,7 +10,7 @@ namespace TigerCS.Tests.Collections.Snapshot;
 /// composition through <see cref="ReceivablesSnapshotComposer"/>). The T-SQL itself needs SQL Server; see
 /// database/collections-receivables/tests/smoke_snapshot_publish_and_read.sql.
 /// </summary>
-public sealed class FakeSnapshotSource(DateTime nowUtc) : IPactReceivablesSource
+public sealed class FakeSnapshotSource(DateTime nowUtc) : IPactReceivablesSource, IPactUnitBalanceSource
 {
     public List<PactReceivableInstalment> Rows { get; } = [];
     public List<CollectionsTowerDto> Towers { get; } = [];
@@ -33,6 +33,19 @@ public sealed class FakeSnapshotSource(DateTime nowUtc) : IPactReceivablesSource
 
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
+
+    public int BalanceReads { get; private set; }
+
+    /// <summary>Reference model of the unit balance read: every unpaid instalment of the unit (whatever the dates), and the part due today or earlier.</summary>
+    public Task<IReadOnlyDictionary<PactUnitKey, PactUnitBalance>> ReadUnitBalancesAsync(IReadOnlyList<PactUnitKey> units, DateOnly today, CancellationToken cancellationToken)
+    {
+        BalanceReads++;
+        var wanted = units.ToHashSet();
+        IReadOnlyDictionary<PactUnitKey, PactUnitBalance> result = Rows.Where(r => r.Amount > 0 && Companies.TryGetValue(r.CompanyId, out var c) && c.HasSnapshot)
+            .GroupBy(r => new PactUnitKey(r.CompanyId, r.TenantId.Trim(), r.UnitId ?? 0, r.UnitCode.Trim())).Where(g => wanted.Contains(g.Key))
+            .ToDictionary(g => g.Key, g => new PactUnitBalance(g.Sum(r => r.Amount), g.Where(r => DateOnly.FromDateTime(r.DueDate) <= today).Sum(r => r.Amount)));
+        return Task.FromResult(result);
+    }
 
     public Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
     {

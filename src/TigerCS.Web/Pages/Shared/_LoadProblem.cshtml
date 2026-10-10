@@ -1,0 +1,28 @@
+@using TigerCS.Application.Modules.Collections.Dto
+@using TigerCS.Web.Pages.Collections
+@model SnapshotStatusDto
+@* One short line when the receivables of a company could not be loaded, naming it, with Retry. Never shown for a complete, fresh load. *@
+@if (CollectionsDisplay.FailedCompanies(Model) is { } failed)
+{
+    var names = CollectionsDisplay.CompanyList(failed);
+    if (Model.LoadInProgress)
+    {
+        <div class="receivables-notice" role="status" data-load-running>Loading data for @names…</div>
+    }
+    else
+    {
+        var from = Model.RequestedFrom ?? CollectionsDisplay.DubaiToday();
+        var through = Model.RequestedThrough ?? from;
+        <div class="receivables-notice receivables-notice--warning load-problem" role="alert" data-load-problem>
+            <span>Could not load data for <strong>@names</strong>.</span>
+            <form method="post" asp-page-handler="LoadCoverage" class="snapshot-status__load" data-load-form>
+                <input type="hidden" name="dateFrom" value="@from.ToString("yyyy-MM-dd")" />
+                <input type="hidden" name="dateTo" value="@through.ToString("yyyy-MM-dd")" />
+                <input type="hidden" name="returnUrl" value="@(ViewContext.HttpContext.Request.Path + ViewContext.HttpContext.Request.QueryString)" />
+                @if (failed.Count == 1) { <input type="hidden" name="companyId" value="@failed[0].CompanyId" /> }
+                <button class="btn" type="submit" data-load-button>Retry</button>
+                <span class="receivables-loading" role="status" hidden>Retrying…</span>
+            </form>
+        </div>
+    }
+}

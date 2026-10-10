@@ -5,7 +5,8 @@ public sealed record CollectionsCampaignContactDto(
     string CustomerName, string Phone, string Email, int? UnitId, string UnitCode,
     string ProjectCode, decimal? Amount, string Currency, DateOnly? DueDate,
     string Stage, string CycleKey, string Status, string Reason,
-    string? TowerNumber = null, string? TowerName = null)
+    string? TowerNumber = null, string? TowerName = null,
+    decimal? UnitTotalRemaining = null, decimal? UnitDueAndOverdue = null)
 {
     public bool VoiceEligible => Status == "Ready" && Phone.Length > 0;
     public bool SmsEligible => Status == "Ready" && Phone.Length > 0;

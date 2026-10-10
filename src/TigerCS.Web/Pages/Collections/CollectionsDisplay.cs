@@ -12,23 +12,20 @@ public static class CollectionsDisplay
         ? value.AddHours(4).ToString("dd MMM yyyy HH:mm", CultureInfo.InvariantCulture) + " (Dubai)"
         : "never";
 
-    public static string FreshnessLabel(SnapshotCompanyStatusDto company) => company.Freshness switch
+    /// <summary>The companies whose data could not be loaded: never loaded, stale, last refresh failed, or part of the requested dates missing. Null when everything is loaded.</summary>
+    public static IReadOnlyList<SnapshotCompanyStatusDto>? FailedCompanies(SnapshotStatusDto? status)
     {
-        "Fresh" => "Fresh",
-        "Stale" => "Stale",
-        _ => "Not loaded"
-    };
+        if (status is null) return null;
+        var gaps = status.Gaps.Select(g => g.CompanyId).ToHashSet();
+        var failed = status.Companies.Where(c => !c.HasSnapshot || c.Freshness != "Fresh" || c.LastRefreshFailed || gaps.Contains(c.CompanyId)).ToList();
+        return failed.Count == 0 ? null : failed;
+    }
+
+    /// <summary>"Tiger Group Sharjah" / "Tiger Group Dubai and Tiger Group Sharjah".</summary>
+    public static string CompanyList(IEnumerable<SnapshotCompanyStatusDto> companies) => string.Join(" and ", companies.Select(c => c.CompanyName));
 
     /// <summary>Tower option label: number and name.</summary>
     public static string TowerLabel(CollectionsTowerDto tower) => $"{tower.TowerNumber} - {tower.TowerName}";
-
-    public static string UnmatchedReason(string reason) => reason switch
-    {
-        "NoMatchingTower" => "not in the tower list",
-        "InactiveTower" => "tower is inactive",
-        "NoTowerNumber" => "no tower number in the unit code",
-        _ => reason
-    };
 
     public static string Money(decimal amount) => amount.ToString("N2", CultureInfo.InvariantCulture);
 
