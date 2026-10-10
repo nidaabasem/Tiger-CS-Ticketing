@@ -84,7 +84,7 @@ public sealed class CampaignSqlEngineTests
         await Service(source).PreviewAsync(Manager, "OverdueReminder", new DateOnly(2026, 10, 14), 32, "  +97150000  ", 3, 10, false, default,
             new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31), 7, 250.5m);
         var r = source.Last!;
-        Assert.Equal((new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31), 250.5m, 32, 7), (r.From, r.To, r.MinAmount, r.CompanyId, r.TowerId));
+        Assert.Equal((new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31), 250.5m, 32, 7), (r.From, r.To, r.MinTotal, r.CompanyId, r.TowerId));
         Assert.Equal((20, 10), (r.Offset, r.Take));                                // page 3 of 10: paging is decided by the engine, after eligibility
         Assert.Equal(("+97150000", "97150000"), (r.Search, r.PhoneDigits));       // phone-like term: digits are searched in the normalised phone too
         foreach (var (term, digits) in new (string, string?)[] { ("Customer 12", null), ("abc123456", null), ("124", "124"), ("TP124-1001", null) })
@@ -264,7 +264,10 @@ public sealed class CampaignSqlEngineTests
         var sql = File.ReadAllText(Path.Combine(dir!.FullName, "database", "collections-receivables", "V007__usp_Collections_GetCampaignUnits.sql"));
         Assert.Contains("OFFSET @Offset ROWS FETCH NEXT @Take ROWS ONLY", sql);                   // paging in SQL ...
         Assert.Contains("WHERE g.StageRows > 0 AND (g.StageAmb = 1 OR g.StageAmt > @Threshold)", sql);  // ... after eligibility, which includes the threshold
-        Assert.Contains("s.Amount > 0 AND s.Amount >= @MinAmount", sql);                          // minimum: remaining >= value, inclusive
+        Assert.Contains("s.Amount > 0 AND s.Amount >= @MinAmount", sql);                          // the per-instalment filter exists but the application always sends 0
+        Assert.Contains("g.DueAmt + g.OverAmt > @MinTotal", sql);                                  // Minimum Total: the unit's Due + Overdue, strictly greater, before the counts and the paging
+        Assert.Contains("g.DueAmt + g.OverAmt > 0", sql);                                          // nothing Due or Overdue: not a candidate
+        Assert.Contains("ut.UnitCode NOT LIKE N'%*%'", sql);                                       // cancelled apartments are excluded before the aggregation
         Assert.Contains("st.CurrentRunId", sql);                                                   // only the published run is read (through #run)
         Assert.Contains("'LegacyRequired'", sql);                                                 // unprepared / ambiguous-text snapshots are never answered with an empty list
         Assert.DoesNotContain("NOLOCK", sql, StringComparison.OrdinalIgnoreCase);

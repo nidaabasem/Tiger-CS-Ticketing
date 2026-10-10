@@ -100,7 +100,7 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 var date = new DateOnly(2026, 10, 14);
                 return Json(new CollectionsCampaignPreviewDto(date, date, DateTime.UtcNow, "PACT", "CurrentMonthReminder", "2026-10:CurrentMonthReminder", [date], true, true, false, true,
                     NothingLoaded ? 0 : 1, 0, NothingLoaded ? 0 : 1, 1, 25,
-                    NothingLoaded ? [] : [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "", 101, "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NeedsReview", "SourceReconciliationRequired", "140", "Al Ghaf", 1800m, 650m)],
+                    NothingLoaded ? [] : [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "", 101, "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NeedsReview", "SourceReconciliationRequired", "140", "Al Ghaf", 0m, 650m)],
                     from, to, [], int.TryParse(q["towerId"], out var tower) ? tower : null, Snapshot(from, to),
                     decimal.Parse(q["minAmount"] ?? "100", System.Globalization.CultureInfo.InvariantCulture), new ServerTimingsDto(9, 2, 15)));
             }

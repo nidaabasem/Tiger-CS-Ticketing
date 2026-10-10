@@ -22,7 +22,7 @@
     };
     const queryFromForm = () => {
         const q = new URLSearchParams();
-        new FormData(form).forEach((value, key) => { if (String(value) !== '') q.append(key, String(value)); });   // disabled inputs are not part of FormData
+        new FormData(form).forEach((value, key) => { if (String(value) !== '' || key === 'minTotal') q.append(key, String(value)); });   // an EMPTY Minimum Total means "cleared" and must be sent   // disabled inputs are not part of FormData
         return q;
     };
     const resultsUrl = q => `${box.dataset.resultsUrl}?${q.toString()}${q.toString() ? '&' : ''}handler=Results`;
@@ -155,7 +155,11 @@
         [from, to].forEach(i => { i.dataset.auto = 'false'; });   // a chosen month is an explicit range: stage defaults must not override it
         polls = 0; load(queryFromForm(), true);
     }
-    if (month && year) {
+    if (month && year && (!from || !to)) {   // pages without date inputs (Receivables): choosing a month / year reloads the list
+        month.addEventListener('change', () => { if (month.value && !year.value) year.value = String(new Date().getFullYear()); if (!month.value) year.value = ''; polls = 0; load(queryFromForm(), true); });
+        year.addEventListener('change', () => { if (month.value) { polls = 0; load(queryFromForm(), true); } });
+    }
+    if (month && year && from && to) {
         month.addEventListener('change', applyMonth);
         year.addEventListener('change', () => { if (month.value) applyMonth(); });
         [from, to].forEach(i => i && i.addEventListener('input', () => { month.value = ''; year.value = ''; }));

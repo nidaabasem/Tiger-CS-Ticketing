@@ -3,6 +3,7 @@ using Hangfire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TigerCS.Application.Modules.Collections.Abstractions;
+using TigerCS.Application.Modules.Collections.Services;
 
 namespace TigerCS.Infrastructure.BackgroundJobs;
 
@@ -88,5 +89,19 @@ public sealed class InProcessReceivablesRangeLoader(IServiceScopeFactory scopes,
             catch (Exception ex) { logger.LogError(ex, "Receivables retry for company {CompanyId} failed.", companyId); }
         }, CancellationToken.None);
         return Task.FromResult(true);
+    }
+}
+
+/// <summary>Recurring reload of the bulk CRM owner feed (who holds an eligible sale of each unit). A failure keeps the previous data; the next tick retries.</summary>
+public sealed class CollectionsCrmOwnersRefreshJob(CollectionsCrmOwnersRefreshService service, ILogger<CollectionsCrmOwnersRefreshJob> logger)
+{
+    public const string RecurringJobId = "collections-crm-owners-refresh";
+
+    [AutomaticRetry(Attempts = 0)]
+    public async Task RunAsync(CancellationToken cancellationToken)
+    {
+        var result = await service.RefreshAsync(cancellationToken);
+        if (result.Succeeded) logger.LogInformation("CRM owners refreshed: {Stored} stored of {Fetched} fetched.", result.Stored, result.Fetched);
+        else throw new InvalidOperationException($"CRM owners refresh failed: {result.Message}");
     }
 }

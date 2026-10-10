@@ -40,6 +40,7 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<CollectionsReceivablesRefreshJob>();
         services.AddScoped<CollectionsReceivablesRangeLoadJob>();
         services.AddScoped<CollectionsReceivablesCompanyRetryJob>();
+        services.AddScoped<CollectionsCrmOwnersRefreshJob>();
         services.AddScoped<CollectionsReviewRefreshJob>();
         services.AddScoped<CollectionsDispatchJob>();
         services.AddScoped<CollectionsSuppressionJob>();
@@ -236,6 +237,19 @@ public static class BackgroundJobServiceCollectionExtensions
         {
             manager.Trigger(CollectionsReceivablesRefreshJob.RecurringJobId);
         }
+    }
+
+    /// <summary>Registers the recurring reload of the CRM owner feed while <c>CollectionsSource:CrmOwners:Enabled</c> is true; removes it otherwise.</summary>
+    public static void UseTigerCsRecurringCollectionsCrmOwnersRefresh(
+        this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, TigerCS.Application.Modules.Collections.CollectionsCrmOwnersOptions crmOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        if (!backgroundJobOptions.Enabled) return;
+        var manager = services.GetRequiredService<IRecurringJobManager>();
+        if (!crmOptions.Enabled) { manager.RemoveIfExists(CollectionsCrmOwnersRefreshJob.RecurringJobId); return; }
+        manager.AddOrUpdate<CollectionsCrmOwnersRefreshJob>(CollectionsCrmOwnersRefreshJob.RecurringJobId, job => job.RunAsync(CancellationToken.None),
+            string.IsNullOrWhiteSpace(crmOptions.RefreshCron) ? "15 * * * *" : crmOptions.RefreshCron);
+        if (crmOptions.RefreshOnStartup) manager.Trigger(CollectionsCrmOwnersRefreshJob.RecurringJobId);
     }
 
     /// <summary>

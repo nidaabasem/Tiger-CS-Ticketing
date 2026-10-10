@@ -29,7 +29,7 @@ public sealed class CollectionsCoverageRenderTests
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var campaigns = await (await client.GetAsync("/Collections/Campaigns?stage=CurrentMonthReminder&businessDate=2026-03-15&towerId=7")).Content.ReadAsStringAsync();
-        Assert.Contains("dateFrom=2025-09-15", campaigns); Assert.Contains("dateTo=2026-03-15", campaigns); Assert.Contains("businessDate=2026-03-15", campaigns); Assert.Contains("minAmount=100", campaigns);
+        Assert.Contains("dateFrom=2025-09-15", campaigns); Assert.Contains("dateTo=2026-03-15", campaigns); Assert.Contains("businessDate=2026-03-15", campaigns); Assert.Contains("minTotal=100", campaigns);
     }
 
     [Fact]

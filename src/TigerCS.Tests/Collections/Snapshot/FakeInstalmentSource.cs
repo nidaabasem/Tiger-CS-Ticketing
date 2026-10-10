@@ -47,6 +47,15 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
                 kept.Count(r => r.Classification == "Overdue"), kept.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount),
                 kept.Count(r => r.Classification == "Due"), kept.Where(r => r.Classification == "Due").Sum(r => r.RemainingAmount),
                 kept.Count(r => r.Classification == "NotYetDue"), kept.Where(r => r.Classification == "NotYetDue").Sum(r => r.RemainingAmount), all.Totals.FullyPaidCount) };
+        // Minimum Total: the unit's SUM must be GREATER than it (never single instalments).
+        if (request.MinTotal is { } floor)
+        {
+            kept = kept.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode)).Where(g => g.Sum(r => r.RemainingAmount) > floor).SelectMany(g => g).ToList();
+            all = all with { Totals = new PactInstalmentTotalsDto(kept.Count, kept.Sum(r => r.RemainingAmount),
+                kept.Count(r => r.Classification == "Overdue"), kept.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount),
+                kept.Count(r => r.Classification == "Due"), kept.Where(r => r.Classification == "Due").Sum(r => r.RemainingAmount),
+                kept.Count(r => r.Classification == "NotYetDue"), kept.Where(r => r.Classification == "NotYetDue").Sum(r => r.RemainingAmount), all.Totals.FullyPaidCount) };
+        }
         var units = kept.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
             .Select(g => new PactInstalmentUnitDto(g.Key.CompanyId, ReceivablesSnapshotStatusBuilder.CompanyName(g.Key.CompanyId), g.First().TowerNumber, g.First().TowerName, g.Key.UnitId ?? 0,
                 g.Key.UnitCode, g.Key.TenantId, g.First().CustomerName, g.Count(), g.Sum(r => r.RemainingAmount), g.Min(r => r.DueDate),
@@ -87,7 +96,7 @@ public sealed class FakeInstalmentSource(DateTime nowUtc) : IPactReceivablesSour
 
         var min = filter is "paid" or "all" ? 0m : request.MinAmount;
         var monthStart = request.AsOf; var nextMonth = request.ClassifyByDay ? monthStart.AddDays(1) : monthStart.AddMonths(1);
-        var rows = Rows.Where(r => loaded.Any(c => c.CompanyId == r.Company && c.HasSnapshot) && r.UnitId > 0 && r.UnitCode.Trim() is not ("" or "0"))
+        var rows = Rows.Where(r => loaded.Any(c => c.CompanyId == r.Company && c.HasSnapshot) && r.UnitId > 0 && r.UnitCode.Trim() is not ("" or "0") && !r.UnitCode.Contains('*'))
             .Where(r => towerNumber is null || CollectionsTowerNumber.Parse(r.UnitCode) == towerNumber)
             .Where(r => { var d = DateOnly.FromDateTime(r.Due); return d >= request.From && d <= request.To; })
             .Where(r => filter switch

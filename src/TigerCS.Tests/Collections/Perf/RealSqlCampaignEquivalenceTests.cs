@@ -48,8 +48,12 @@ public sealed class RealSqlCampaignEquivalenceTests
     {
         var options = new CollectionsOptions { Enabled = true };
         return new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true, LegalNoticeExportEnabled = legalNoticeRelease }, new PactReceivablesOptions { Enabled = true },
-            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(nowUtc)), source, NullLogger<CollectionsCampaignAppService>.Instance);
+            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(nowUtc)), source, NullLogger<CollectionsCampaignAppService>.Instance, CrmStore(), new CollectionsCrmOwnersOptions { Enabled = true });
     }
+
+    /// <summary>The CRM owners (V010) of the same database: both the SQL engine and the in-memory reference read them, so the two must still agree.</summary>
+    private static TigerCS.Infrastructure.Modules.Collections.SqlCollectionsCrmOwnerStore CrmStore() =>
+        new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:TigerCsDatabase"] = ConnectionString }).Build(), new ReceivablesSnapshotOptions());
 
     private static async Task<int?> TowerIdAsync(string number)
     {
@@ -162,7 +166,8 @@ public sealed class RealSqlCampaignEquivalenceTests
             foreach (var unit in page.Units) seen |= (CollectionsCampaignFlags)unit.Flags;
         }
         // The edge data (tests/local-sqlserver/03_edge_cases.sql) holds an example of every unit-level reason.
-        foreach (var flag in Enum.GetValues<CollectionsCampaignFlags>().Where(v => v != CollectionsCampaignFlags.None))
+        // MissingUnitIdentity can no longer be seen: units without a real number (blank / 0 / cancelled '*') are excluded before aggregation.
+        foreach (var flag in Enum.GetValues<CollectionsCampaignFlags>().Where(v => v != CollectionsCampaignFlags.None && v != CollectionsCampaignFlags.MissingUnitIdentity))
             Assert.True((seen & flag) != 0, $"no edge case exercised {flag}; load tests/local-sqlserver/03_edge_cases.sql and refresh the snapshot");
     }
 

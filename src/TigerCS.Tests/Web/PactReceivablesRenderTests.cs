@@ -27,7 +27,7 @@ public sealed class PactReceivablesRenderTests
     private static List<string> Cells(string row) => Regex.Matches(row, "<td[^>]*>(.*?)</td>", RegexOptions.Singleline).Select(m => Regex.Replace(m.Groups[1].Value, "<[^>]+>", " ")).Select(t => Regex.Replace(System.Net.WebUtility.HtmlDecode(t), @"\s+", " ").Trim()).ToList();
 
     [Fact]
-    public async Task InitialPage_HasOnlySearchTowerAndStatus_AndDoesNotWaitForTheData()
+    public async Task InitialPage_HasSearchTowerStatusMonthYearAndMinimumTotal_AndDoesNotWaitForTheData()
     {
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
@@ -40,7 +40,9 @@ public sealed class PactReceivablesRenderTests
         Assert.Contains("<option value=\"7\" selected=\"selected\">124 - Tower 124</option>", html);
         Assert.Contains("name=\"status\"", html); Assert.Contains("<option value=\"overdue\" selected=\"selected\">Overdue</option>", html);
         Assert.DoesNotContain("upcoming", html, StringComparison.OrdinalIgnoreCase);
-        foreach (var gone in new[] { "name=\"month\"", "name=\"year\"", "name=\"dateFrom\"", "name=\"dateTo\"", "name=\"minAmount\"", "name=\"paymentStatus\"", "name=\"view\"", "data-last-six-months", "How Due / Overdue" })
+        Assert.Contains("name=\"month\"", html); Assert.Contains("<option value=\"\">All months</option>", html); Assert.Contains("name=\"year\"", html);
+        Assert.Contains("Minimum Total (AED)", html); Assert.Matches("<input[^>]*name=\"minTotal\"[^>]*value=\"100\"", html);          // default 100
+        foreach (var gone in new[] { "name=\"dateFrom\"", "name=\"dateTo\"", "name=\"minAmount\"", "name=\"paymentStatus\"", "name=\"view\"", "data-last-six-months", "How Due / Overdue" })
             Assert.DoesNotContain(gone, html);
     }
 
@@ -57,18 +59,18 @@ public sealed class PactReceivablesRenderTests
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
 
         Assert.Contains("view=units", Assert.Single(api.Calls("/receivables/instalments")));
-        Assert.Contains("minAmount=0", Assert.Single(api.Calls("/receivables/instalments")));        // every unpaid instalment, whatever its size
+        Assert.DoesNotContain("minAmount", Assert.Single(api.Calls("/receivables/instalments")));    // no per-instalment minimum: only the unit total is filtered
         var rows = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => m.Value).ToList();
         Assert.Equal(2, rows.Count);                                                                   // one row per unit, not per instalment and not per customer
         var headers = Cells(Regex.Match(html, "<thead><tr>.*?</tr></thead>", RegexOptions.Singleline).Value.Replace("th", "td"));
-        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Total (Due + Overdue)", "Due", "Overdue", "Details"], headers);
+        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Due", "Overdue", "Total", "Details"], headers);
 
-        // Apartment 1001: total 500 = overdue 300 + due 200; the 150 due in November is not part of anything on this page.
+        // Apartment 1001: total 500 = due 200 + overdue 300; the 150 due in November is not part of anything on this page. Tower = the tower NAME.
         var first = Cells(rows.Single(r => r.Contains("TP124-1001")));
-        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-1001", "500.00", "200.00", "300.00", "View Details"], first);
+        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "Tower 124", "TP124-1001", "200.00", "300.00", "500.00", "View Details"], first);
         // Apartment 2002 is NOT added to 1001: its own totals.
         var second = Cells(rows.Single(r => r.Contains("TP124-2002")));
-        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-2002", "80.00", "—", "80.00", "View Details"], second);
+        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "Tower 124", "TP124-2002", "—", "80.00", "80.00", "View Details"], second);
 
         // The details of 1001: oldest first, statuses by date, days late only for overdue, and the sums equal the main row.
         var details = Regex.Matches(html, "<tr class=\"unit-detail\".*?</tbody>\\s*</table>", RegexOptions.Singleline).Select(m => m.Value).ToList();
@@ -113,6 +115,62 @@ public sealed class PactReceivablesRenderTests
         foreach (var expected in new[] { $"status={status}", "towerId=7", "search=Example", "view=units" }) Assert.Contains(expected, call);
         var units = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => Cells(m.Value)[3]).ToList();
         Assert.Equal(status == "overdue" ? "TP124-1001" : "TP124-2002", Assert.Single(units));
+    }
+
+    [Fact]
+    public async Task MinimumTotal_DefaultsTo100_CanBeChangedOrCleared_AndSurvivesPaging()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        await client.GetAsync("/Collections/Receivables?handler=Results");                                  // nothing typed: the default
+        await client.GetAsync("/Collections/Receivables?handler=Results&minTotal=250.5");                   // changed
+        await client.GetAsync("/Collections/Receivables?handler=Results&minTotal=");                        // cleared: every unit with a Due or Overdue amount
+        var calls = api.Calls("/receivables/instalments").ToList();
+        Assert.Contains("minTotal=100", calls[0]);
+        Assert.Contains("minTotal=250.5", calls[1]);
+        Assert.DoesNotContain("minTotal", calls[2]);
+        // The value is part of the form, of every paging link and of the no-JavaScript page.
+        var shell = await (await client.GetAsync("/Collections/Receivables?minTotal=250.5&month=9&year=2026&status=overdue&search=Example")).Content.ReadAsStringAsync();
+        Assert.Matches("<input[^>]*name=\"minTotal\"[^>]*value=\"250.5\"", shell);
+        var cleared = await (await client.GetAsync("/Collections/Receivables?minTotal=")).Content.ReadAsStringAsync();
+        Assert.Matches("<input[^>]*name=\"minTotal\"[^>]*value=\"\"", cleared);
+    }
+
+    [Fact]
+    public async Task PagingLinks_KeepTheTowerStatusSearchMonthYearAndMinimumTotal()
+    {
+        var api = new FakeCollectionsApi();
+        for (var n = 0; n < 30; n++) api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 9, 1 + n % 20), 300m, "INV-" + n, "TP124-" + (1000 + n), 200 + n, "Customer " + n, "T" + n));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&towerId=7&status=overdue&month=9&year=2026&minTotal=&search=Customer")).Content.ReadAsStringAsync();
+        var next = Regex.Match(html, "data-results-link href=\"([^\"]+)\"").Groups[1].Value;
+        if (next.Length > 0)
+            foreach (var kept in new[] { "towerId=7", "status=overdue", "month=9", "year=2026", "minTotal=&", "search=Customer" }) Assert.Contains(kept, System.Net.WebUtility.HtmlDecode(next) + "&");
+    }
+
+    [Fact]
+    public async Task MonthAndYear_FilterByDueDate_NeverPastToday()
+    {
+        var today = Display.DubaiToday();
+        var thisMonthStart = new DateOnly(today.Year, today.Month, 1);
+        var previous = thisMonthStart.AddMonths(-1);
+        var future = thisMonthStart.AddMonths(3);
+        var api = new FakeCollectionsApi();
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        async Task<string> Call(string query) { api.Requests.Clear(); return await (await client.GetAsync("/Collections/Receivables?handler=Results&" + query)).Content.ReadAsStringAsync(); }
+        string Dates() { var call = Assert.Single(api.Calls("/receivables/instalments")); return Regex.Match(call, "dateFrom=([\\d-]+)").Groups[1].Value + ".." + Regex.Match(call, "dateTo=([\\d-]+)").Groups[1].Value; }
+
+        await Call($"month={previous.Month}&year={previous.Year}");                                              // the previous month: all of it
+        Assert.Equal($"{previous:yyyy-MM-dd}..{thisMonthStart.AddDays(-1):yyyy-MM-dd}", Dates());
+        await Call($"month={today.Month}&year={today.Year}");                                                    // the current month stops at TODAY
+        Assert.Equal($"{thisMonthStart:yyyy-MM-dd}..{today:yyyy-MM-dd}", Dates());
+        await Call($"month={today.Month}");                                                                      // a month without a year = the current year
+        Assert.Equal($"{thisMonthStart:yyyy-MM-dd}..{today:yyyy-MM-dd}", Dates());
+        await Call("");                                                                                          // All months: everything due up to today
+        Assert.Equal($"2000-01-01..{today:yyyy-MM-dd}", Dates());
+        var html = await Call($"month={future.Month}&year={future.Year}");                                       // a future month: nothing is due yet, no data call
+        Assert.Empty(api.Calls("/receivables/instalments")); Assert.Contains("Nothing is due in this month yet.", html);
     }
 
     [Fact]

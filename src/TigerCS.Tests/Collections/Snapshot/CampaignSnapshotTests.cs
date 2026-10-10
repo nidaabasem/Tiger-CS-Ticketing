@@ -29,7 +29,7 @@ public sealed class CampaignSnapshotTests
         }
     }
 
-    private static PactReceivableInstalment Row(string tenant, string unit, int unitId, int company = 4, int day = 20, decimal amount = 500m) =>
+    private static PactReceivableInstalment Row(string tenant, string unit, int unitId, int company = 4, int day = 10, decimal amount = 500m) =>
         new(company, tenant, "Example Customer " + tenant, "971500003001", "x@example.test", unitId, unit, "", "INV-" + tenant, "", new DateTime(2026, 10, day), amount, "Installment");
 
     private static void Seed(Harness h)
@@ -52,22 +52,18 @@ public sealed class CampaignSnapshotTests
     }
 
     [Fact]
-    public async Task EachUnitShowsWhatItOwesInTotal_AndHowMuchOfItIsDueOrOverdueToday()
+    public async Task EachUnitShowsDueOverdueAndTotal_OfItsOwnInstalments_UpToToday()
     {
         var h = new Harness();
-        // Same customer, two apartments. Apartment 1: 14 Oct (due today), 20 Oct, 15 Dec. Apartment 2: 1 Sep (overdue) and 25 Oct.
-        h.Source.Rows.AddRange([Row("c1", "TP124-1", 1, day: 14, amount: 500m), Row("c1", "TP124-1", 1, day: 20, amount: 300m),
-            new(4, "c1", "Example Customer c1", "971500003001", "x@example.test", 1, "TP124-1", "", "INV-late", "", new DateTime(2026, 12, 15), 700m, "Installment"),
-            new(4, "c1", "Example Customer c1", "971500003001", "x@example.test", 2, "TP124-2", "", "INV-old", "", new DateTime(2026, 9, 1), 250m, "Installment"),
-            Row("c1", "TP124-2", 2, day: 25, amount: 100m)]);
-        var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new DateOnly(2026, 10, 14), dateFrom: new DateOnly(2026, 1, 1), dateTo: new DateOnly(2026, 10, 31))).Value!.Items;
+        // Same customer, two apartments. Apartment 1: 14 Oct (due today), 5 Oct (overdue), 20 Oct and 15 Dec (future: ignored). Apartment 2: 1 Oct (overdue) only.
+        h.Source.Rows.AddRange([Row("c1", "TP124-1", 1, day: 14, amount: 500m), Row("c1", "TP124-1", 1, day: 5, amount: 300m), Row("c1", "TP124-1", 1, day: 20, amount: 700m),
+            new(4, "c1", "Example Customer c1", "971500003001", "x@example.test", 1, "TP124-1", "", "INV-late", "", new DateTime(2026, 12, 15), 900m, "Installment"),
+            Row("c1", "TP124-2", 2, day: 1, amount: 250m)]);
+        var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new DateOnly(2026, 10, 14), minTotal: null)).Value!.Items;
         var one = items.Single(i => i.UnitCode == "TP124-1");
-        Assert.Equal((1500m, 500m), (one.UnitTotalRemaining, one.UnitDueAndOverdue));     // total includes the December instalment outside the dates; due today counts as Due
+        Assert.Equal((500m, 300m, 800m), (one.DueAmount, one.OverdueAmount, one.TotalAmount));      // Total = Due + Overdue; the future 700 and 900 are not in it
         var two = items.Single(i => i.UnitCode == "TP124-2");
-        Assert.Equal((350m, 250m), (two.UnitTotalRemaining, two.UnitDueAndOverdue));       // another apartment of the same customer is never added in
-        Assert.Equal(1, h.Source.BalanceReads);                                            // one round trip for the page, none for exports
-        await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", new DateOnly(2026, 10, 14));
-        Assert.Equal(1, h.Source.BalanceReads);
+        Assert.Equal((0m, 250m, 250m), (two.DueAmount, two.OverdueAmount, two.TotalAmount));        // another apartment of the same customer is never added in
     }
 
     [Fact]

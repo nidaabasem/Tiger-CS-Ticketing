@@ -296,6 +296,11 @@ using (var backgroundJobScope = app.Services.CreateScope())
         backgroundJobOptions,
         backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions>());
 
+    // CRM owners of each unit (bulk, local copy joined to the receivables) - registered only while CollectionsSource:CrmOwners:Enabled is true.
+    app.Services.UseTigerCsRecurringCollectionsCrmOwnersRefresh(
+        backgroundJobOptions,
+        backgroundJobScope.ServiceProvider.GetRequiredService<TigerCS.Application.Modules.Collections.CollectionsCrmOwnersOptions>());
+
     // Paid-after-upload suppression of Genesys contacts — registered only while upload and suppression are both enabled.
     app.Services.UseTigerCsRecurringGenesysSuppression(
         backgroundJobOptions,

@@ -23,7 +23,7 @@ public sealed class PactInstalmentsAppService(
     public async Task<CollectionsResult<PactInstalmentsPageDto>> ListAsync(
         CollectionsCaller caller, int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null, string? paymentStatus = null,
         decimal? minAmount = null, string? search = null, int page = 1, int pageSize = 25, CancellationToken cancellationToken = default,
-        string? view = null, string? dueMonth = null, string? unitStatusFilter = null)
+        string? view = null, string? dueMonth = null, string? unitStatusFilter = null, decimal? minTotal = null)
     {
         var total = Stopwatch.StartNew();
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
@@ -32,7 +32,7 @@ public sealed class PactInstalmentsAppService(
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled);
         if (!CollectionsPaymentFilters.TryParse(paymentStatus, out var filter)
             || page < 1 || pageSize is < 1 or > 100 || (long)(page - 1) * pageSize > int.MaxValue || search?.Length > 200
-            || towerId is <= 0 || minAmount < 0 || minAmount > sourceOptions.MaxMinOutstandingAmount)
+            || towerId is <= 0 || minAmount < 0 || minAmount > sourceOptions.MaxMinOutstandingAmount || minTotal < 0 || minTotal > sourceOptions.MaxMinOutstandingAmount)
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "Choose a tower, a payment status (outstanding, unpaid, partial, paid or all), a minimum amount of 0 or more, page >= 1 and pageSize 1-100; search is limited to 200 characters.");
         // A selected due month (yyyy-MM, from a month card) narrows the list and its totals to that month; the month overview itself always covers the whole filtered window.
@@ -72,7 +72,9 @@ public sealed class PactInstalmentsAppService(
         if (byUnit && to > today) to = today;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "From date must not be after To date, and both must be within 2000-2100.");
-        var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
+        // By unit: no per-instalment minimum at all; the minimum applies to each UNIT's total (minTotal, strictly greater; null = every unit).
+        var min = byUnit ? 0m : decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
+        var unitMinTotal = byUnit && minTotal is { } floorTotal ? decimal.Round(floorTotal, 4) : (decimal?)null;
         var minApplies = CollectionsPaymentFilters.MinimumApplies(filter);
 
         var term = search?.Trim();
@@ -92,7 +94,7 @@ public sealed class PactInstalmentsAppService(
         {
             // By unit classifies every instalment against TODAY (Overdue: before today, Due: today, Upcoming: after today); the other view keeps the month rule.
             var overview = new PactInstalmentsRequest(from, to, byUnit ? today : monthStart, min, CollectionsPaymentFilters.ToWire(filter),
-                string.IsNullOrEmpty(term) ? null : term, digits, 1, pageSize, null, towerId, unitStatus, byUnit);
+                string.IsNullOrEmpty(term) ? null : term, digits, 1, pageSize, null, towerId, unitStatus, byUnit, unitMinTotal);
             // The list (and its totals) use the window narrowed to the selected month; Overdue is still "due before the current month" for every row.
             var request = overview;
             if (monthFrom is { } mf && monthTo is { } mt)

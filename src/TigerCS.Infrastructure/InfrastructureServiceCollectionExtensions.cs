@@ -359,6 +359,14 @@ public static class InfrastructureServiceCollectionExtensions
             ? sp.GetRequiredService<SnapshotPactReceivablesSource>()
             : sp.GetRequiredService<PactSqlReceivablesSource>());
         services.AddScoped<ICollectionsTowerCatalog, SqlCollectionsTowerCatalog>();
+        // CRM owners of each unit (bulk, local): loaded in the background, joined in SQL / read in bulk. Disabled until CRM publishes GetUnitOwners.
+        services.Configure<CollectionsCrmOwnersOptions>(configuration.GetSection(CollectionsCrmOwnersOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<CollectionsCrmOwnersOptions>>().Value);
+        services.AddScoped<ICollectionsCrmOwnerStore, SqlCollectionsCrmOwnerStore>();
+        services.AddScoped<CollectionsCrmOwnersRefreshService>();
+        services.AddScoped<CollectionsUnitLinkService>();
+        services.AddScoped<CollectionsUnitPaymentSummaryAppService>();
+        services.AddScoped<CollectionsLeasingSummaryAppService>();
         services.AddScoped<IReceivablesRefresher, SqlReceivablesRefresher>();
         // Hangfire replaces this in AddTigerCsBackgroundJobs when BackgroundJobs:Enabled is true.
         services.TryAddScoped<IReceivablesRangeLoader, InProcessReceivablesRangeLoader>();

@@ -55,8 +55,9 @@ public sealed class CollectionsCampaignAppServiceTests
         public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
         public CollectionsCaller Agent { get; } = new(Guid.NewGuid(), [Roles.CsAgent], []);
         public CollectionsCampaignAppService Service { get; }
-        public Harness() => Service = new(Options, Campaign, Sql,
-            new(Options, new FakeDepartmentRepository()), new(Options, new FakeTimeProvider(Now)),
+        /// <summary>The clock is today (Dubai): nothing due after it is ever listed. <paramref name="now"/> moves it (e.g. to the preview date of a later cycle).</summary>
+        public Harness(DateTime? now = null) => Service = new(Options, Campaign, Sql,
+            new(Options, new FakeDepartmentRepository()), new(Options, new FakeTimeProvider(now ?? Now)),
             Source, NullLogger<CollectionsCampaignAppService>.Instance);
     }
 
@@ -116,8 +117,9 @@ public sealed class CollectionsCampaignAppServiceTests
     public async Task InvalidUnitCannotEnterAGenesysCampaign(int unit)
     {
         var h = new Harness(); h.Campaign.FinancialSourceValidated = true; h.Source.Items.Add(Row(unit: unit));
-        Assert.Contains("MissingUnitIdentity", Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items).Reason);
-        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Outcome);
+        // A unit without a real number is not listed at all (excluded before grouping), so it can never reach any export.
+        Assert.Empty((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys")).Outcome);   // nothing to send
     }
 
     [Fact]
@@ -201,17 +203,21 @@ public sealed class CollectionsCampaignAppServiceTests
     {
         var h = new Harness();
         var report = (await h.Service.PreviewAsync(h.Manager, stage, new(y, m, d))).Value!;
-        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), new(toY, toM, toD), null), h.Source.LastRequest);
-        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(new DateOnly(toY, toM, toD), report.DateTo);
+        // The stage default end never goes past TODAY (14 Oct 2026, Dubai): later instalments are not listed.
+        var expectedTo = new DateOnly(toY, toM, toD) > new DateOnly(2026, 10, 14) ? new DateOnly(2026, 10, 14) : new DateOnly(toY, toM, toD);
+        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), expectedTo, null), h.Source.LastRequest);
+        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(expectedTo, report.DateTo);
         Assert.Equal(new DateOnly(y, m, d), report.BusinessDate);
     }
 
     [Fact]
-    public async Task CurrentMonthDefaultKeepsUpcomingInstalments_OverdueDefaultNeverReadsThem()
+    public async Task CurrentMonthDefault_DoesNotReadLaterInstalments_AndOverdueDefaultNeverReadsThem()
     {
-        var h = new Harness(); h.Source.Items.Add(Row(day: 25));
+        var h = new Harness(); h.Source.Items.Add(Row(day: 25));   // due after today (14 Oct): never listed
         var current = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!;
-        Assert.Single(current.Items); Assert.Empty(current.RangeNotes!);
+        Assert.Empty(current.Items);
+        h.Source.Items.Add(Row(tenant: "3002", day: 10));
+        Assert.Equal("3002", Assert.Single((await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8))).Value!.Items).TenantId);
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
         Assert.Empty(overdue.Items);
     }
@@ -219,7 +225,7 @@ public sealed class CollectionsCampaignAppServiceTests
     [Fact]
     public async Task EditedDatesOverrideTheStageDefaults_WithoutChangingEligibility()
     {
-        var h = new Harness(); h.Source.Items.AddRange([Row(day: 25), Row(tenant: "3002", day: 5)]);
+        var h = new Harness(); h.Source.Items.AddRange([Row(day: 12), Row(tenant: "3002", day: 5)]);
         var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8),
             dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 8))).Value!;
         Assert.Equal("3002", Assert.Single(report.Items).TenantId);
@@ -233,10 +239,9 @@ public sealed class CollectionsCampaignAppServiceTests
         h.Source.Items.AddRange([Row(), Row(tenant: "3002", company: 32), Row(tenant: "3003") with { DueDate = new(2026, 3, 1) }]);
         var report = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 8), 4,
             dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 31))).Value!;
-        Assert.Equal(new PactReceivablesRequest(new(2026, 10, 1), new(2026, 10, 31), 4), h.Source.LastRequest);
+        Assert.Equal(new PactReceivablesRequest(new(2026, 10, 1), new(2026, 10, 14), 4), h.Source.LastRequest);   // To is capped at today
         Assert.Equal("3001", Assert.Single(report.Items).TenantId);
         Assert.Equal(new DateOnly(2026, 10, 8), report.BusinessDate);
-        Assert.Empty(report.RangeNotes!);
     }
 
     [Fact]

@@ -19,17 +19,17 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
 
     public Task<ApiResult<CollectionsCampaignPreviewDto>> GetCampaignPreviewAsync(string stage, DateOnly? businessDate,
         int? companyId, string? search, int page, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null) =>
-        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minAmount)}&page={Id(page)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minTotal = null) =>
+        GetAsync<CollectionsCampaignPreviewDto>($"{Base}/campaigns/preview?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minTotal)}&page={Id(page)}", cancellationToken);
 
     public Task<ApiResult<CollectionsCampaignExportDto>> GetCampaignExportAsync(string stage, string mode,
         DateOnly? businessDate, int? companyId, string? search, CancellationToken cancellationToken,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null) =>
-        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minAmount)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minTotal = null) =>
+        GetAsync<CollectionsCampaignExportDto>($"{Base}/campaigns/export?{CampaignQuery(stage, businessDate, companyId, search, dateFrom, dateTo, towerId, minTotal)}&mode={Uri.EscapeDataString(mode)}", cancellationToken);
 
     /// <summary>Instalment-level list from the local snapshot (the Receivables page).</summary>
     public Task<ApiResult<PactInstalmentsPageDto>> GetInstalmentsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, string? paymentStatus, decimal? minAmount,
-        string? search, int page, CancellationToken cancellationToken, string? view = null, string? dueMonth = null, string? status = null)
+        string? search, int page, CancellationToken cancellationToken, string? view = null, string? dueMonth = null, string? status = null, decimal? minTotal = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         if (!string.IsNullOrWhiteSpace(view)) query["view"] = view;
@@ -40,6 +40,7 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (!string.IsNullOrWhiteSpace(paymentStatus)) query["paymentStatus"] = paymentStatus;
         if (minAmount is { } minimum) query["minAmount"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
+        if (minTotal is { } total) query["minTotal"] = total.ToString("0.####", CultureInfo.InvariantCulture);
         if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
         query["page"] = Id(page);
         query["pageSize"] = "25";
@@ -113,11 +114,11 @@ public sealed class CollectionsApiClient(HttpClient httpClient, ILogger<Collecti
         PostAsync<ReconcileBatchRequest, DispatchDto>($"{ReviewBase}/dispatches/{dispatchId:D}/batches/{batchId.ToString(CultureInfo.InvariantCulture)}/reconcile", request, cancellationToken);
 
     private static string CampaignQuery(string stage, DateOnly? businessDate, int? companyId, string? search,
-        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minAmount = null)
+        DateOnly? dateFrom = null, DateOnly? dateTo = null, int? towerId = null, decimal? minTotal = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
         query["stage"] = stage;
-        if (minAmount is { } minimum) query["minAmount"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
+        if (minTotal is { } minimum) query["minTotal"] = minimum.ToString("0.####", CultureInfo.InvariantCulture);
         if (towerId is { } tower) query["towerId"] = Id(tower);
         if (dateFrom is { } from) query["dateFrom"] = from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (dateTo is { } to) query["dateTo"] = to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

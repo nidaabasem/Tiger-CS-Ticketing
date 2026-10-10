@@ -2,7 +2,11 @@
 @using TigerCS.Web.Services.Api
 @model CampaignsModel
 @if (Model.LoadNotice is { } notice) { <div class="receivables-notice" role="status" data-load-notice>@notice</div> }
-@if (Model.Report is { } report)
+@if (Model.NothingDueYet)
+{
+    <div class="panel"><div class="empty-state"><p class="empty-state__title">Nothing is due in this period yet.</p></div></div>
+}
+else if (Model.Report is { } report)
 {
     <div hidden data-effective-filters data-from="@report.DateFrom?.ToString("yyyy-MM-dd")" data-to="@report.DateTo?.ToString("yyyy-MM-dd")"></div>
     <div class="panel">
@@ -18,22 +22,23 @@
         }
         <div class="table-scroll">
             <table class="table receivables-table campaigns-table">
-                <thead><tr><th>Customer</th><th>Mobile</th><th>Email</th><th>Tower</th><th>Apartment</th><th class="num">Total remaining</th><th class="num">Due + Overdue</th></tr></thead>
+                <thead><tr><th>Customer</th><th>Mobile</th><th>Email</th><th>Tower</th><th>Apartment</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th></tr></thead>
                 <tbody>
                 @foreach (var row in report.Items)
                 {
                     <tr>
-                        <td><strong>@row.CustomerName</strong></td>
-                        <td>@(row.Phone.Length > 0 ? row.Phone : "—")</td>
-                        <td>@(row.Email.Length > 0 ? row.Email : "—")</td>
-                        <td>@(row.TowerNumber is null ? (row.ProjectCode.Length > 0 ? row.ProjectCode : "—") : string.IsNullOrWhiteSpace(row.TowerName) ? row.TowerNumber : $"{row.TowerNumber} - {row.TowerName}")</td>
+                        <td><strong>@row.CustomerName</strong>@foreach (var note in CampaignsModel.ReviewNotes(row)) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }</td>
+                        <td>@(row.Phone.Length > 0 ? row.Phone : "—")@if (row.Phone.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No mobile: voice / SMS not possible</span> }</td>
+                        <td>@(row.Email.Length > 0 ? row.Email : "—")@if (row.Email.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No email: email not possible</span> }</td>
+                        <td>@(!string.IsNullOrWhiteSpace(row.TowerName) ? row.TowerName : row.TowerNumber ?? (row.ProjectCode.Length > 0 ? row.ProjectCode : "—"))</td>
                         <td>@row.UnitCode</td>
-                        <td class="num" data-unit-remaining>@CampaignsModel.Money(row.UnitTotalRemaining)</td>
-                        <td class="num" data-unit-due-overdue>@(row.UnitDueAndOverdue is > 0 ? CampaignsModel.Money(row.UnitDueAndOverdue) : "—")</td>
+                        <td class="num" data-unit-due>@CampaignsModel.MoneyOrDash(row.DueAmount)</td>
+                        <td class="num" data-unit-overdue>@CampaignsModel.MoneyOrDash(row.OverdueAmount)</td>
+                        <td class="num" data-unit-total>@CampaignsModel.MoneyOrDash(row.TotalAmount)</td>
                     </tr>
                 }
                 @if (report.TotalCount == 0)
-                { <tr><td colspan="7">@(CollectionsDisplay.FailedCompanies(report.Snapshot) is null ? "No units qualify for these filters." : "No units to show yet.")</td></tr> }
+                { <tr><td colspan="8">@(CollectionsDisplay.FailedCompanies(report.Snapshot) is null ? "No units qualify for these filters." : "No units to show yet.")</td></tr> }
                 </tbody>
             </table>
         </div>

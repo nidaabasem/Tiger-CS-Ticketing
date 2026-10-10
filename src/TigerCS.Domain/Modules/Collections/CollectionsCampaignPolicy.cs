@@ -21,7 +21,11 @@ public enum CollectionsCampaignFlags
     ConflictingContactDetails = 8,
     UnitAllocationNeedsReview = 16,
     ContradictoryPaymentStatus = 32,
-    NoValidContact = 64
+    NoValidContact = 64,
+    /// <summary>More than one distinct CRM customer holds an eligible (Sold / Contract, not cancelled) sale of the unit: the customer cannot be chosen automatically.</summary>
+    CrmCustomerAmbiguous = 128,
+    /// <summary>CRM and PACT give different phone numbers (or, without a phone to confirm, different e-mails) for the unit: two people are never merged.</summary>
+    ContactSourceConflict = 256
 }
 
 public sealed record CampaignInstalment(DateOnly DueDate, decimal RemainingAmount);

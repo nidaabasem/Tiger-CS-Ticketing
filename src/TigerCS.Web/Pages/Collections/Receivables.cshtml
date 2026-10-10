@@ -31,6 +31,24 @@
                 }
             </select>
         </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableMonth">Month</label>
+            <select class="field-select" id="receivableMonth" name="month" data-month-select>
+                <option value="">All months</option>
+                @for (var m = 1; m <= 12; m++) { <option value="@m" selected="@(Model.Month == m)">@ReceivablesModel.MonthNames[m - 1]</option> }
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableYear">Year</label>
+            <select class="field-select" id="receivableYear" name="year" data-year-select>
+                <option value="">—</option>
+                @foreach (var y in Model.YearOptions()) { <option value="@y" selected="@(Model.Year == y)">@y</option> }
+            </select>
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="receivableMin">Minimum Total (AED)</label>
+            <input class="field-input" type="number" id="receivableMin" name="minTotal" min="0" step="any" inputmode="decimal" value="@Model.MinTotalText" data-min-total />
+        </div>
         <div class="filter-bar__submit">
             <button class="btn btn-gold" type="submit">Apply</button>
             <a class="btn btn-ghost" href="/Collections/Receivables">Clear</a>
