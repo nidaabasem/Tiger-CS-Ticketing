@@ -66,10 +66,10 @@
     };
     if (status) { applyAvailability(null); status.addEventListener('change', applyMinState); applyMinState(); }
 
-    // By unit: instalments are expanded in place. Without JavaScript the detail rows simply stay visible (the toggle buttons are hidden until this runs).
+    // By unit: the unit's unpaid instalments are expanded in place (View Details). Without JavaScript the detail rows simply stay visible (the toggle buttons are hidden until this runs).
     const setUnitOpen = (unit, open) => {
         const detail = unit.querySelector('[data-unit-detail]'), button = unit.querySelector('[data-unit-toggle]');
-        detail.hidden = !open; button.setAttribute('aria-expanded', String(open)); button.textContent = open ? 'Hide instalments' : 'Show instalments';
+        detail.hidden = !open; button.setAttribute('aria-expanded', String(open)); button.textContent = open ? 'Hide Details' : 'View Details';
     };
     const collapseUnits = () => box.querySelectorAll('[data-unit]').forEach(u => { u.querySelector('[data-unit-toggle]').hidden = false; setUnitOpen(u, false); });
 

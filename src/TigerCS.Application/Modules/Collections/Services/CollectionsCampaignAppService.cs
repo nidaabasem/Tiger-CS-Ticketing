@@ -188,6 +188,24 @@ public sealed class CollectionsCampaignAppService(
             review = contacts.Count(x => x.Status == "NeedsReview");
             items = forExport ? contacts : contacts.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         }
+        // Preview only (exports are unchanged): show what each listed unit owes in total and how much of it is Due + Overdue today (Dubai). One round trip for the page's units.
+        if (!forExport && items.Count > 0 && source is IPactUnitBalanceSource balances)
+        {
+            try
+            {
+                var found = await balances.ReadUnitBalancesAsync(items.Select(i => new PactUnitKey(i.CompanyId, i.TenantId, i.UnitId ?? 0, i.UnitCode)).ToList(), clock.BusinessDate, budget.Token);
+                items = items.Select(i => found.TryGetValue(new PactUnitKey(i.CompanyId, i.TenantId, i.UnitId ?? 0, i.UnitCode), out var b)
+                    ? i with { UnitTotalRemaining = b.TotalRemaining, UnitDueAndOverdue = b.DueAndOverdue } : i).ToList();
+            }
+            catch (PactReceivablesSourceException ex)
+            {
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, ex.Message);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, "The PACT receivables read timed out. Please retry.");
+            }
+        }
         return CollectionsResult<CollectionsCampaignPreviewDto>.Ok(new(date, clock.BusinessDate, readAtUtc,
             "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
             campaignOptions.FinancialSourceValidated, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,

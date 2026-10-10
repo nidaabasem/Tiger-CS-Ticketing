@@ -72,6 +72,8 @@ public sealed class CoverageRangeTests
     {
         public List<(DateOnly, DateOnly)> Requests { get; } = [];
         public Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken) { Requests.Add((from, through)); return Task.FromResult(starts); }
+        public List<int> CompanyRequests { get; } = [];
+        public Task<bool> EnqueueCompanyRefreshAsync(int companyId, CancellationToken cancellationToken) { CompanyRequests.Add(companyId); return Task.FromResult(starts); }
     }
 
     private sealed class Harness
@@ -210,5 +212,33 @@ public sealed class CoverageRangeTests
         h.Source.Companies[32] = Covered(32, "2026-01-01", "2099-12-31");
         Assert.True((await h.Receivables.RequestLoadAsync(h.Manager, From, To)).Value!.AlreadyRunning);
         Assert.Empty(h.Loader.Requests);
+    }
+
+    [Fact]
+    public async Task Retry_OfOneCompany_RefreshesOnlyThatCompany_EvenWhenItsDatesLookCovered()
+    {
+        var h = new Harness();   // Sharjah loaded a while ago and its latest refresh failed: the range is "covered" but not ready
+        h.Source.Companies[32] = FakeSnapshotSource.Failed(32, Now.AddHours(-5), Now.AddMinutes(-2));
+        var result = (await h.Receivables.RequestLoadAsync(h.Manager, From, To, default, 32)).Value!;
+        Assert.True(result.Accepted);
+        Assert.Equal([32], h.Loader.CompanyRequests);
+        Assert.Empty(h.Loader.Requests);                                                   // not a range load of both companies
+
+        // A fresh company is retried too (the user asked); only a running load stops it.
+        var fresh = new Harness();
+        Assert.True((await fresh.Receivables.RequestLoadAsync(fresh.Manager, From, To, default, 4)).Value!.Accepted);
+        var running = new Harness();
+        running.Source.Companies[32] = FakeSnapshotSource.Healthy(32, Now.AddHours(-5)) with { RefreshInProgress = true };
+        Assert.True((await running.Receivables.RequestLoadAsync(running.Manager, From, To, default, 32)).Value!.AlreadyRunning);
+        Assert.Empty(running.Loader.CompanyRequests);
+    }
+
+    [Fact]
+    public async Task Retry_RefusesAnUnknownCompany_AndReportingUsers()
+    {
+        var h = new Harness();
+        Assert.Equal(CollectionsOutcome.InvalidRequest, (await h.Receivables.RequestLoadAsync(h.Manager, From, To, default, 7)).Outcome);
+        Assert.Equal(CollectionsOutcome.Forbidden, (await h.Receivables.RequestLoadAsync(new CollectionsCaller(Guid.NewGuid(), [Roles.ReportingUser], []), From, To, default, 32)).Outcome);
+        Assert.Empty(h.Loader.CompanyRequests);
     }
 }

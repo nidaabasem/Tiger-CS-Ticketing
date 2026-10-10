@@ -4,32 +4,29 @@ using System.Web;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Collections.Dto;
-using TigerCS.Domain.Modules.Collections;
 using TigerCS.Web.Services.Api;
 
 namespace TigerCS.Web.Pages.Collections;
 
 /// <summary>
-/// Instalment-level Receivables. The page itself (filters + an empty results area) renders immediately and never waits for data; the results are
-/// fetched from the local snapshot by <see cref="OnGetResultsAsync"/> (HTML fragment, called by receivables.js) so only the results area shows loading.
+/// Receivables: one row per unit (company + customer + unit) with everything the unit has not paid yet; View Details opens that unit's unpaid instalments.
+/// The page itself (filters + an empty results area) renders immediately and never waits for data; the results are fetched from the local snapshot by
+/// <see cref="OnGetResultsAsync"/> (HTML fragment, called by receivables.js) so only the results area shows loading.
 /// </summary>
 public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 {
-    /// <summary>Same as Collections:... PactReceivables:DefaultMinOutstandingAmount on the API; the form always sends the value explicitly.</summary>
+    /// <summary>Only used as the Campaigns default minimum amount; the Receivables page lists every unpaid instalment whatever its size.</summary>
     public const decimal DefaultMinAmount = 100m;
 
-    /// <summary>"units" (default): one row per unit with expandable instalments; "instalments": one row per instalment. Kept through filtering and paging.</summary>
-    public string View { get; private set; } = "units";
-    public bool ByUnit => View == "units";
+    /// <summary>Every unpaid instalment due today or earlier, whatever its size: from the widest start the snapshot is loaded for through today (Dubai). Nothing due later is listed.</summary>
+    public static readonly DateOnly WindowFrom = new(2000, 1, 1);
+
+    public static readonly IReadOnlyList<(string Value, string Label)> StatusOptions =
+        [("all", "All statuses"), ("overdue", "Overdue"), ("due", "Due")];
+
     public int? TowerId { get; private set; }
-    public DateOnly? DateFrom { get; private set; }
-    public DateOnly? DateTo { get; private set; }
-    /// <summary>The month chosen on a month card (<c>yyyy-MM</c>), or null for "All months". It only narrows the list and totals; Overdue is unchanged.</summary>
-    public string? DueMonth { get; private set; }
-    public int? Month { get; private set; }
-    public int? Year { get; private set; }
-    public string PaymentStatus { get; private set; } = "outstanding";
-    public decimal MinAmount { get; private set; } = DefaultMinAmount;
+    /// <summary><c>all</c>, <c>overdue</c> or <c>due</c>: the units that have an instalment with that status.</summary>
+    public string Status { get; private set; } = "all";
     public string? Search { get; private set; }
     public int PageNumber { get; private set; } = 1;
     public IReadOnlyList<CollectionsTowerDto> Towers { get; private set; } = [];
@@ -39,30 +36,14 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     public string? LoadNotice { get; private set; }
     public PactInstalmentsPageDto? Report { get; private set; }
     public bool RenderFull { get; private set; }
-    public int ListCount => Report is null ? 0 : ByUnit ? Report.Totals.UnitCount : Report.Totals.Count;
-    public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(ListCount / (double)Report.PageSize));
-    public bool MinApplies => CollectionsPaymentFilters.TryParse(PaymentStatus, out var f) && CollectionsPaymentFilters.MinimumApplies(f);
-    public string MinAmountText => MinAmount.ToString("0.####", CultureInfo.InvariantCulture);
-
-    public static readonly IReadOnlyList<(string Value, string Label)> PaymentOptions =
-    [
-        ("outstanding", "Outstanding (unpaid + partially paid)"), ("unpaid", "Unpaid"), ("partial", "Partially paid"), ("paid", "Fully paid"), ("all", "All")
-    ];
+    public int UnitCount => Report?.Totals.UnitCount ?? 0;
+    public int TotalPages => Report is null ? 1 : Math.Max(1, (int)Math.Ceiling(UnitCount / (double)Report.PageSize));
 
     public static readonly string[] MonthNames = CultureInfo.InvariantCulture.DateTimeFormat.MonthNames.Take(12).ToArray();
 
-    public IEnumerable<int> YearOptions()
+    public async Task OnGetAsync(int? towerId, string? status, string? search, int page = 1, string? render = null, string? load = null, CancellationToken cancellationToken = default)
     {
-        var current = CollectionsDisplay.DubaiToday().Year;
-        var first = Math.Min(2020, Year ?? 2020);
-        var last = Math.Max(current + 2, Year ?? 0);
-        return Enumerable.Range(first, last - first + 1);
-    }
-
-    public async Task OnGetAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount,
-        string? search, int page = 1, string? render = null, string? load = null, string? view = null, string? dueMonth = null, CancellationToken cancellationToken = default)
-    {
-        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view, dueMonth);
+        Bind(towerId, status, search, page, load);
         RenderFull = render == "full";
         // The shell never waits for data. The tower list is a small local read; results arrive through the Results handler (or render=full without JavaScript).
         var towers = await api.GetTowersAsync(cancellationToken);
@@ -72,131 +53,100 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     }
 
     /// <summary>The results area only (HTML fragment).</summary>
-    public async Task<IActionResult> OnGetResultsAsync(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount,
-        string? search, int page = 1, string? load = null, string? view = null, string? dueMonth = null, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> OnGetResultsAsync(int? towerId, string? status, string? search, int page = 1, string? load = null, CancellationToken cancellationToken = default)
     {
         var timer = Stopwatch.StartNew();
-        Bind(towerId, dateFrom, dateTo, month, year, paymentStatus, minAmount, search, page, load, view, dueMonth);
-        var apiTimer = Stopwatch.StartNew();
+        Bind(towerId, status, search, page, load);
         await LoadReportAsync(cancellationToken);
-        var apiMs = apiTimer.Elapsed.TotalMilliseconds;
         Response.Headers.CacheControl = "no-store";
         var t = Report?.Timings;
         Response.Headers["Server-Timing"] = string.Create(CultureInfo.InvariantCulture,
-            $"web;dur={timer.Elapsed.TotalMilliseconds:F0}, api;dur={apiMs:F0}, sql;dur={t?.SourceMs ?? 0:F0}, map;dur={t?.MapMs ?? 0:F0}");
+            $"web;dur={timer.Elapsed.TotalMilliseconds:F0}, sql;dur={t?.SourceMs ?? 0:F0}, map;dur={t?.MapMs ?? 0:F0}");
         return Partial("_InstalmentResults", this);
     }
 
-    private void Bind(int? towerId, DateOnly? dateFrom, DateOnly? dateTo, int? month, int? year, string? paymentStatus, decimal? minAmount, string? search, int page, string? load, string? view, string? dueMonth)
+    private void Bind(int? towerId, string? status, string? search, int page, string? load)
     {
-        DueMonth = dueMonth is { Length: 7 } && DateOnly.TryParseExact(dueMonth + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _) ? dueMonth : null;
-        View = string.Equals(view, "instalments", StringComparison.OrdinalIgnoreCase) ? "instalments" : "units";
         TowerId = towerId;
-        PaymentStatus = CollectionsPaymentFilters.TryParse(paymentStatus, out var filter) ? CollectionsPaymentFilters.ToWire(filter) : "outstanding";
-        MinAmount = minAmount is >= 0 ? minAmount.Value : DefaultMinAmount;
+        Status = StatusOptions.Any(o => o.Value == status?.Trim().ToLowerInvariant()) ? status!.Trim().ToLowerInvariant() : "all";
         Search = search?.Trim();
         PageNumber = Math.Max(1, page);
         LoadNotice = CollectionsDisplay.NoticeText(load) is { Length: > 0 } text ? text : null;
-        // A chosen Month + Year define the range (first to last day of that month); otherwise the From / To dates are used as typed.
-        if (month is >= 1 and <= 12 && year is >= 2000 and <= 2100)
-        {
-            (var first, var last) = CollectionsDateRanges.Month(year.Value, month.Value);
-            DateFrom = first; DateTo = last;
-        }
-        else { DateFrom = dateFrom; DateTo = dateTo; }
-        SyncMonthYear();
-    }
-
-    private void SyncMonthYear()
-    {
-        if (DateFrom is { } f && DateTo is { } t && CollectionsDateRanges.TryAsCalendarMonth(f, t, out var y, out var m)) { Year = y; Month = m; }
-        else { Year = null; Month = null; }
     }
 
     private async Task LoadReportAsync(CancellationToken cancellationToken)
     {
-        var result = await api.GetInstalmentsAsync(TowerId, DateFrom, DateTo, PaymentStatus, MinApplies ? MinAmount : null, Search, PageNumber, cancellationToken, View, DueMonth);
+        var result = await api.GetInstalmentsAsync(TowerId, WindowFrom, CollectionsDisplay.DubaiToday(), "outstanding", 0m, Search, PageNumber, cancellationToken, "units", null, Status == "all" ? null : Status);
         Outcome = result.Outcome;
         Error = result.Detail;
         Report = result.IsSuccess ? result.Value : null;
-        if (Report is not null)
-        {
-            // Show the effective window (the API default when none was typed) in the inputs.
-            DateFrom ??= Report.DateFrom; DateTo ??= Report.DateTo;
-            SyncMonthYear();
-        }
     }
 
     /// <summary>Query string of the current filters (page 1 unless given); the same names the form submits.</summary>
-    public string Query(int? page = null, DateOnly? from = null, DateOnly? to = null, bool keepMonth = true)
+    public string Query(int? page = null)
     {
         var query = HttpUtility.ParseQueryString(string.Empty);
-        query["view"] = View;
         if (TowerId is { } tower) query["towerId"] = tower.ToString(CultureInfo.InvariantCulture);
-        if ((from ?? DateFrom) is { } f) query["dateFrom"] = f.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        if ((to ?? DateTo) is { } t) query["dateTo"] = t.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        query["paymentStatus"] = PaymentStatus;
-        query["minAmount"] = MinAmountText;
+        if (Status != "all") query["status"] = Status;
         if (!string.IsNullOrWhiteSpace(Search)) query["search"] = Search;
-        if (keepMonth && DueMonth is not null) query["dueMonth"] = DueMonth;
         if (page is > 1) query["page"] = page.Value.ToString(CultureInfo.InvariantCulture);
         return query.ToString()!;
     }
 
-    /// <summary>Link of a month card: the same filters, that month selected, back to page 1. A null month is "All months".</summary>
-    public string MonthUrl(int? year, int? month)
+    public string PageUrl(int page) => Query(page) is { Length: > 0 } query ? $"/Collections/Receivables?{query}&render=full" : "/Collections/Receivables?render=full";
+
+    /// <summary>"1 unit" / "25 units".</summary>
+    public static string Plural(int count, string one, string many) => count == 1 ? $"1 {one}" : $"{count:N0} {many}";
+
+    /// <summary>Starts the background load (no-JavaScript fallback; receivables.js posts the same form with fetch). With a company: only that company is retried.</summary>
+    public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, int? companyId = null, CancellationToken cancellationToken = default)
     {
-        var query = HttpUtility.ParseQueryString(Query(null, keepMonth: false));
-        if (year is { } y && month is { } m) query["dueMonth"] = $"{y:0000}-{m:00}";
-        return $"/Collections/Receivables?{query}&render=full";
-    }
-
-    public bool IsSelected(int year, int month) => DueMonth == $"{year:0000}-{month:00}";
-
-    public string PageUrl(int page) => $"/Collections/Receivables?{Query(page)}&render=full";
-    public string ResultsUrl(int page) => $"/Collections/Receivables?{Query(page)}&handler=Results";
-
-    /// <summary>Starts the background load of the missing range (no-JavaScript fallback; receivables.js posts the same form with fetch).</summary>
-    public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, CancellationToken cancellationToken = default)
-    {
-        var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken);
+        var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken, companyId);
         var target = !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl) ? returnUrl : "/Collections/Receivables";
         return LocalRedirect(CollectionsDisplay.WithNotice(target, CollectionsDisplay.NoticeCode(result)));
     }
 
-    /// <summary>"Last 6 months": six calendar months before the preview date (today, Dubai) through the preview date.</summary>
-    public string LastSixMonthsUrl()
+    // ---- One unit row and its details. Every number on the row is derived from the very instalments the details list, so the two can never disagree. ----
+
+    public const string Overdue = "Overdue", Due = "Due";
+
+    /// <summary>Overdue: due before today; Due: due today (today = the Dubai date of the report). Instalments due later are not part of this page.</summary>
+    public static string Classify(DateOnly dueDate, DateOnly today) => dueDate < today ? Overdue : Due;
+
+    /// <summary>Whole days between the due date and today for an overdue instalment; null otherwise.</summary>
+    public static int? DaysLate(DateOnly dueDate, DateOnly today) => dueDate < today ? today.DayNumber - dueDate.DayNumber : null;
+
+    public sealed record InstalmentLine(int Number, string Description, DateOnly DueDate, decimal? Original, decimal? Paid, decimal Remaining, string Status, int? DaysLate);
+
+    /// <summary><see cref="Total"/> = Due + Overdue = the sum of the listed instalments.
+public sealed record UnitLine(string Customer, string Phone, string Email, string Tower, string Apartment, decimal Total, decimal Due, decimal Overdue,
+        IReadOnlyList<InstalmentLine> Instalments, string DetailsId);
+
+    public static IReadOnlyList<UnitLine> Lines(PactInstalmentsPageDto report)
     {
-        var (from, to) = CollectionsDateRanges.LastSixMonths(Report?.BusinessDate ?? CollectionsDisplay.DubaiToday());
-        return $"/Collections/Receivables?{Query(null, from, to)}";
+        var today = report.BusinessDate;
+        var lines = new List<UnitLine>();
+        foreach (var unit in report.Units ?? [])
+        {
+            // Oldest first; a remaining balance is what makes an instalment unpaid.
+            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0 && i.DueDate <= today).OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
+            var instalments = rows.Select((i, index) => new InstalmentLine(index + 1,
+                i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
+                Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();
+            var tower = unit.TowerNumber is null ? "—" : string.IsNullOrWhiteSpace(unit.TowerName) ? unit.TowerNumber : $"{unit.TowerNumber} - {unit.TowerName}";
+            if (instalments.Count == 0) continue;   // nothing Due or Overdue: the unit is not listed
+            lines.Add(new UnitLine(unit.CustomerName,
+                First(rows.Select(r => r.Mobile)), First(rows.Select(r => r.Email)), tower, unit.UnitCode,
+                instalments.Sum(i => i.Remaining), instalments.Where(i => i.Status == Due).Sum(i => i.Remaining), instalments.Where(i => i.Status == Overdue).Sum(i => i.Remaining),
+                instalments, $"unit-{unit.CompanyId}-{unit.UnitId}-{Math.Abs(string.GetHashCode(unit.TenantId + "|" + unit.UnitCode, StringComparison.Ordinal))}"));
+        }
+        return lines;
     }
 
-    /// <summary>Classification of a whole unit's instalments for the summary line of the By unit view.</summary>
-    public static string Plural(int count, string one, string many) => count == 1 ? $"1 {one}" : $"{count:N0} {many}";
-
-    /// <summary>One month of a unit with unpaid instalments: the sum of that month's remaining amounts and its Due / Overdue / Not yet due classification.</summary>
-    public sealed record UnitMonth(int Year, int Month, decimal Remaining, int Count, string Classification);
-
-    /// <summary>The months in which the unit still has a remaining balance, from ITS listed instalments (the same rows the expansion shows, so the two always agree).
-    /// The classification is the date rule of the business month (all instalments of a month share it): before it = Overdue, in it = Due, after it = Not yet due.</summary>
-    public static IReadOnlyList<UnitMonth> UnitMonths(PactInstalmentUnitDto unit) => unit.Instalments
-        .Where(i => i.RemainingAmount > 0)
-        .GroupBy(i => (i.DueDate.Year, i.DueDate.Month))
-        .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
-        .Select(g => new UnitMonth(g.Key.Year, g.Key.Month, g.Sum(i => i.RemainingAmount), g.Count(), g.First().Classification))
-        .ToList();
-
-    public static string MonthLabel(int year, int month) => new DateTime(year, month, 1).ToString("MMM yyyy", CultureInfo.InvariantCulture);
+    private static string First(IEnumerable<string> values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? "—";
 
     public static string Money(decimal? amount) => amount is { } value ? value.ToString("N2", CultureInfo.InvariantCulture) : "—";
 
-    public static string StatusLabel(string status) => status switch
-    {
-        "Unpaid" => "Unpaid", "PartiallyPaid" => "Partially paid", "FullyPaid" => "Fully paid", _ => "Needs verification"
-    };
-
-    public static string ClassificationLabel(string classification) => classification switch
-    {
-        "Overdue" => "Overdue", "Due" => "Due", "NotYetDue" => "Not yet due", _ => "—"
-    };
+    /// <summary>A zero amount in the Due / Overdue columns reads as a dash.</summary>
+    public static string MoneyOrDash(decimal amount) => amount > 0 ? Money(amount) : "—";
 }

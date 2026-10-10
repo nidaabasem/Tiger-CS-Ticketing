@@ -53,3 +53,11 @@
 .receivables-metrics--five .panel strong { font-size: 1.15rem; }
 .receivables-table--units td:nth-child(2) { white-space: nowrap; }
 .receivables-amount--overdue { color: var(--color-danger, #b3261e); }
+
+/* Receivables / Campaigns: short load problem line, red overdue instalments, campaign table */
+.load-problem { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; }
+.load-problem .snapshot-status__load { margin-top: 0; }
+.instalment-row--overdue > td { color: var(--color-danger, #b3261e); background: #fdf1f0; }
+.instalment-row--overdue .receivables-amount { color: inherit; }
+.receivables-table--units td.num, .campaigns-table td.num, .campaigns-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.campaign-actions { display: flex; gap: .5rem; margin-bottom: .6rem; }

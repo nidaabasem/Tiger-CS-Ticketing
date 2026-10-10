@@ -16,23 +16,18 @@ public sealed class CollectionsCoverageRenderTests
         var api = new FakeCollectionsApi { Covered = false };
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&dateFrom=2025-09-15&dateTo=2026-03-15")).Content.ReadAsStringAsync();
-        Assert.Contains("data-coverage-gap", html);
-        Assert.Contains("Additional data needs loading", html);
-        Assert.Contains("missing instalments are not zero receivables", html);
-        Assert.Contains("15 Sep 2025 to 31 Dec 2025", html);
-        Assert.Contains("data-load-button", html); Assert.Contains("Load missing data", html);
+        Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html);
+        Assert.Contains("data-load-button", html); Assert.Contains(">Retry<", html);
         Assert.Contains("__RequestVerificationToken", html);
-        Assert.Contains("(incomplete: dates not fully loaded)", html);
+        Assert.DoesNotContain("data-coverage-gap", html);
+        Assert.DoesNotContain("No units match these filters.", html);       // a gap is reported, never shown as an empty result
     }
 
     [Fact]
-    public async Task LastSixMonthsShortcut_IsALinkWithTheExplicitRange_OnBothPages()
+    public async Task LastSixMonthsShortcut_IsALinkWithTheExplicitRange_OnCampaigns()
     {
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var from = Display.DubaiToday().AddMonths(-6).ToString("yyyy-MM-dd"); var to = Display.DubaiToday().ToString("yyyy-MM-dd");
-        var receivables = await (await client.GetAsync("/Collections/Receivables?towerId=7")).Content.ReadAsStringAsync();
-        Assert.Contains("data-last-six-months", receivables); Assert.Contains($"dateFrom={from}", receivables); Assert.Contains($"dateTo={to}", receivables);
         var campaigns = await (await client.GetAsync("/Collections/Campaigns?stage=CurrentMonthReminder&businessDate=2026-03-15&towerId=7")).Content.ReadAsStringAsync();
         Assert.Contains("dateFrom=2025-09-15", campaigns); Assert.Contains("dateTo=2026-03-15", campaigns); Assert.Contains("businessDate=2026-03-15", campaigns); Assert.Contains("minAmount=100", campaigns);
     }

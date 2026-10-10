@@ -2,6 +2,7 @@ extern alias TigerCsWeb;
 
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace TigerCS.Tests.Web;
 
@@ -22,7 +23,8 @@ public sealed class CollectionsCampaignRenderTests
         Assert.Contains("Minimum outstanding amount (AED)", html); Assert.Contains("value=\"100\"", html);
         Assert.DoesNotContain("name=\"companyId\"", html);
         Assert.Contains("/js/collections-campaign-dates.js", html);
-        Assert.Contains("fully paid instalments are never reminder candidates", html);
+        Assert.DoesNotContain("page-subtitle", html);                                // no explanatory text on the page
+        Assert.DoesNotContain("fully paid instalments are never reminder candidates", html);
     }
 
     [Fact]
@@ -34,19 +36,23 @@ public sealed class CollectionsCampaignRenderTests
         var call = Assert.Single(api.Calls("/campaigns/preview"));
         foreach (var expected in new[] { "stage=CurrentMonthReminder", "towerId=7", "businessDate=2026-10-14", "dateFrom=2026-10-01", "dateTo=2026-10-31", "minAmount=250.5", "search=3001" }) Assert.Contains(expected, call);
         Assert.DoesNotContain("companyId", call);
-        Assert.Contains("Earliest unpaid due date", html);
-        Assert.DoesNotContain(">Earliest qualifying due date<", html);
-        Assert.Contains("Campaign Customer", html); Assert.Contains("Export review CSV", html);
+        // Exactly the requested columns, in order.
+        var headers = Regex.Matches(Regex.Match(html, "<thead>.*?</thead>", RegexOptions.Singleline).Value, "<th(?:\\s[^>]*)?>(.*?)</th>").Select(m => m.Groups[1].Value).ToList();
+        Assert.Equal(["Customer", "Mobile", "Email", "Tower", "Apartment", "Total remaining", "Due + Overdue"], headers);
+        var cells = Regex.Matches(Regex.Match(html, "<tbody>.*?</tbody>", RegexOptions.Singleline).Value, "<td[^>]*>(.*?)</td>", RegexOptions.Singleline)
+            .Select(m => System.Net.WebUtility.HtmlDecode(Regex.Replace(m.Groups[1].Value, "<[^>]+>", "")).Trim()).ToList();
+        Assert.Equal(["Campaign Customer", "+971500003001", "—", "140 - Al Ghaf", "TP140-101", "1,800.00", "650.00"], cells);   // no email -> a dash; Due + Overdue of the unit
+        Assert.Contains("Export review CSV", html);
         Assert.DoesNotContain("Export Genesys CSV", html);
-        Assert.Contains("Financial source reconciliation required", html);
+        foreach (var gone in new[] { "Earliest unpaid due date", "Qualifying balance", "Needs review", "Financial source reconciliation", "Data details", "Scheduled:", "Data refreshed", "campaign-summary", "Source:", "Preview only" })
+            Assert.DoesNotContain(gone, html);
         // Export links carry exactly the previewed filters (incl. the minimum), so the file matches the list.
         Assert.Contains("handler=Export", html); Assert.Contains("minAmount=250.5", html); Assert.Contains("towerId=7", html); Assert.Contains("dateFrom=2026-10-01", html);
-        Assert.Contains("Tower 140 - Al Ghaf", html);
     }
 
     [Theory]
     [InlineData(HttpStatusCode.Forbidden, "does not have permission")]
-    [InlineData(HttpStatusCode.ServiceUnavailable, "not an empty result")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "campaign source is unavailable")]
     public async Task Errors_AreExplicit(HttpStatusCode status, string text)
     {
         var api = new FakeCollectionsApi { Status = status };
@@ -88,34 +94,52 @@ public sealed class CollectionsCampaignRenderTests
     }
 
     [Fact]
-    public async Task StaleSnapshot_ShowsTheWarningAndWithholdsBothExportLinks()
+    public async Task StaleSnapshot_ShowsOneShortLine_AndWithholdsBothExportLinks()
     {
         var api = new FakeCollectionsApi { Stale = true };
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&towerId=7&businessDate=2026-10-14")).Content.ReadAsStringAsync();
-        Assert.Contains("data-snapshot-warning", html); Assert.Contains("data-export-blocked", html); Assert.Contains("Export is disabled", html);
-        Assert.DoesNotContain("Export review CSV", html); Assert.DoesNotContain("Export Genesys CSV", html);
-        Assert.Contains("This data is stale", html);
+        Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html);
+        Assert.Contains(">Retry<", html);
+        Assert.DoesNotContain("Export review CSV", html); Assert.DoesNotContain("Export Genesys CSV", html);   // an export of old data stays blocked
+        foreach (var gone in new[] { "Export is disabled", "This data is stale", "data-snapshot-warning", "data-export-blocked", "Data details" }) Assert.DoesNotContain(gone, html);
     }
 
     [Fact]
-    public async Task CoverageGap_ShowsTheBannerAndLoadAction_AndBlocksExport()
+    public async Task CoverageGap_ShowsOneShortLine_AndBlocksExport()
     {
         var api = new FakeCollectionsApi { Covered = false };
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&businessDate=2026-03-15&dateFrom=2025-09-15&dateTo=2026-03-15")).Content.ReadAsStringAsync();
-        Assert.Contains("data-coverage-gap", html); Assert.Contains("Load missing data", html); Assert.Contains("data-export-blocked", html);
+        Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html); Assert.Contains("data-load-button", html);
         Assert.DoesNotContain("Export review CSV", html);
+        Assert.DoesNotContain("data-coverage-gap", html); Assert.DoesNotContain("Load missing data", html);
     }
 
     [Fact]
-    public async Task BeforeTheFirstSnapshot_ThePageStillRendersWithALoadDataAction()
+    public async Task BeforeTheFirstSnapshot_ThePageStillRenders_WithTheShortLineAndRetry()
     {
         var api = new FakeCollectionsApi { NothingLoaded = true };
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&dateFrom=2026-01-01&dateTo=2026-10-31")).Content.ReadAsStringAsync();
-        Assert.Contains("No receivables data has been loaded yet.", html); Assert.Contains(">Load data<", html); Assert.Contains("data-export-blocked", html);
-        Assert.Contains("not \"no units\"", html.Replace("&quot;", "\""));
-        Assert.DoesNotContain("No units qualify for this stage", html);
+        Assert.Contains("Could not load data for <strong>Tiger Group Dubai</strong>.", html); Assert.Contains(">Retry<", html);
+        Assert.DoesNotContain("Export review CSV", html);
+        Assert.DoesNotContain("No receivables data has been loaded yet.", html);
+    }
+
+    [Fact]
+    public async Task WhenSharjahFails_TheLineNamesOnlySharjah_RetryReloadsIt_AndTheDubaiRowsStillShow()
+    {
+        var api = new FakeCollectionsApi { SharjahFailed = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Campaigns?handler=Results&stage=CurrentMonthReminder&businessDate=2026-10-14")).Content.ReadAsStringAsync();
+        var line = Regex.Match(html, "load-problem.*?</form>", RegexOptions.Singleline).Value;
+        Assert.Contains("Could not load data for <strong>Tiger Group Sharjah</strong>.", line);
+        Assert.DoesNotContain("Dubai", line);
+        Assert.Contains("name=\"companyId\" value=\"32\"", line); Assert.Contains(">Retry<", line);
+        Assert.Single(Regex.Matches(html, "data-load-problem"));
+        Assert.Contains("Campaign Customer", html);
+        Assert.DoesNotContain("Export review CSV", html);                          // incomplete data is never exported
+        foreach (var gone in new[] { "Export is disabled", "Data details", "error 7399", "consecutive" }) Assert.DoesNotContain(gone, html);
     }
 }

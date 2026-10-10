@@ -131,9 +131,9 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         ? CollectionsCampaignPolicy.DefaultDateTo(stage, BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday())
         : BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();
 
-    public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> OnPostLoadCoverageAsync(DateOnly dateFrom, DateOnly dateTo, string? returnUrl, int? companyId = null, CancellationToken cancellationToken = default)
     {
-        var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken);
+        var result = await api.RequestCoverageLoadAsync(dateFrom, dateTo, cancellationToken, companyId);
         var target = !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl) ? returnUrl : "/Collections/Campaigns";
         return LocalRedirect(CollectionsDisplay.WithNotice(target, CollectionsDisplay.NoticeCode(result)));
     }
@@ -171,23 +171,5 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
 
     public string ResultsUrl(int page = 1) => PageUrl(page).Replace("render=full", "handler=Results");
 
-    public static string Reason(string reason) => string.Join("; ", reason.Split(';').Select(r => r switch
-    {
-        "AmbiguousInstalments" => "Several instalments share a due date; amount needs review",
-        "MissingUnitIdentity" => "Unit identity needs review",
-        "ConflictingContactDetails" => "Customer contact details conflict",
-        "UnitAllocationNeedsReview" => "Instalments appear under several units; allocation needs review",
-        "ContradictoryPaymentStatus" => "Paid status conflicts with a remaining balance",
-        "CurrencyNeedsReview" => "Currency must be AED",
-        "AmountPrecisionNeedsReview" => "Amount precision needs review before quoting AED",
-        "CoverageIncomplete" => "The selected dates are not fully loaded; load the missing data",
-        "StaleSource" => "Receivables data is stale or not fully loaded",
-        "SourceReconciliationRequired" => "Financial source reconciliation required",
-        "NoValidContact" => "No valid phone or email",
-        "OutsideSchedule" => "Preview date is outside today's scheduled campaign",
-        "LegalNoticeReleaseRequired" => "Legal notice export is not enabled",
-        "InternalLegalReferralOnly" => "Internal Legal review only",
-        "Qualifies" => "Qualifies for this stage",
-        _ => r
-    }));
+    public static string Money(decimal? amount) => amount is { } value ? value.ToString("N2", CultureInfo.InvariantCulture) : "—";
 }

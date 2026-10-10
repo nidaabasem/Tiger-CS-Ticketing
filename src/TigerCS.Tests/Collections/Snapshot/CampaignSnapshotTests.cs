@@ -52,6 +52,25 @@ public sealed class CampaignSnapshotTests
     }
 
     [Fact]
+    public async Task EachUnitShowsWhatItOwesInTotal_AndHowMuchOfItIsDueOrOverdueToday()
+    {
+        var h = new Harness();
+        // Same customer, two apartments. Apartment 1: 14 Oct (due today), 20 Oct, 15 Dec. Apartment 2: 1 Sep (overdue) and 25 Oct.
+        h.Source.Rows.AddRange([Row("c1", "TP124-1", 1, day: 14, amount: 500m), Row("c1", "TP124-1", 1, day: 20, amount: 300m),
+            new(4, "c1", "Example Customer c1", "971500003001", "x@example.test", 1, "TP124-1", "", "INV-late", "", new DateTime(2026, 12, 15), 700m, "Installment"),
+            new(4, "c1", "Example Customer c1", "971500003001", "x@example.test", 2, "TP124-2", "", "INV-old", "", new DateTime(2026, 9, 1), 250m, "Installment"),
+            Row("c1", "TP124-2", 2, day: 25, amount: 100m)]);
+        var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new DateOnly(2026, 10, 14), dateFrom: new DateOnly(2026, 1, 1), dateTo: new DateOnly(2026, 10, 31))).Value!.Items;
+        var one = items.Single(i => i.UnitCode == "TP124-1");
+        Assert.Equal((1500m, 500m), (one.UnitTotalRemaining, one.UnitDueAndOverdue));     // total includes the December instalment outside the dates; due today counts as Due
+        var two = items.Single(i => i.UnitCode == "TP124-2");
+        Assert.Equal((350m, 250m), (two.UnitTotalRemaining, two.UnitDueAndOverdue));       // another apartment of the same customer is never added in
+        Assert.Equal(1, h.Source.BalanceReads);                                            // one round trip for the page, none for exports
+        await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "review", new DateOnly(2026, 10, 14));
+        Assert.Equal(1, h.Source.BalanceReads);
+    }
+
+    [Fact]
     public async Task UnknownTowerIsRejected_NotTreatedAsNoMatches()
     {
         var h = new Harness(); Seed(h);

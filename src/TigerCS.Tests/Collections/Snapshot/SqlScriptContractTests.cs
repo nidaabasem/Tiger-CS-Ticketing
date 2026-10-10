@@ -23,6 +23,19 @@ public sealed class SqlScriptContractTests
             Directory.GetFiles(Dir(), "V*.sql").Select(f => Path.GetFileName(f)!).Order().ToArray());
 
     [Fact]
+    public void TheUnitProcedure_ClassifiesByDay_FiltersByStatus_AndNeverListsUnitZero()
+    {
+        var sql = Read("V008__usp_Collections_GetInstalmentUnitsPage.sql");
+        Assert.Contains("@ClassifyByDay bit           = 0", sql);                                  // optional: older callers keep the month rule
+        Assert.Contains("CASE WHEN @ClassifyByDay = 1 THEN @AsOfDate ELSE DATEFROMPARTS", sql);   // Overdue = before the day, Due = the day ...
+        Assert.Contains("CASE WHEN @ClassifyByDay = 1 THEN DATEADD(DAY, 1, @AsOfDate)", sql);     // ... Upcoming = after it
+        Assert.Contains("@StatusFilter  varchar(10)   = NULL", sql);
+        foreach (var filter in new[] { "DELETE FROM #u WHERE OverCnt = 0", "DELETE FROM #u WHERE DueCnt = 0", "DELETE FROM #u WHERE NotCnt = 0" }) Assert.Contains(filter, sql);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sql, @"s\.UnitId > 0 AND LTRIM\(RTRIM\(s\.UnitCode\)\) NOT IN \(N'', N'0'\)").Count);   // the grouping and the listed instalments agree
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sql, @"s\.TowerNumber LIKE @Like").Count);                                          // search by tower in both places
+    }
+
+    [Fact]
     public void TowerTableScriptIsNonDestructive()
     {
         var sql = Read("V001__reconcile_CollectionsTowers.sql");

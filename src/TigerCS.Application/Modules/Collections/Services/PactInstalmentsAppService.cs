@@ -23,7 +23,7 @@ public sealed class PactInstalmentsAppService(
     public async Task<CollectionsResult<PactInstalmentsPageDto>> ListAsync(
         CollectionsCaller caller, int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null, string? paymentStatus = null,
         decimal? minAmount = null, string? search = null, int page = 1, int pageSize = 25, CancellationToken cancellationToken = default,
-        string? view = null, string? dueMonth = null)
+        string? view = null, string? dueMonth = null, string? unitStatusFilter = null)
     {
         var total = Stopwatch.StartNew();
         if (!(await authorization.ResolveAsync(caller, cancellationToken)).CanReadFinancials)
@@ -48,6 +48,14 @@ public sealed class PactInstalmentsAppService(
         var byUnit = string.Equals(view, "units", StringComparison.OrdinalIgnoreCase);
         if (!byUnit && !string.IsNullOrWhiteSpace(view) && !string.Equals(view, "instalments", StringComparison.OrdinalIgnoreCase))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "view must be units or instalments.");
+        // By unit only: keep the units that have an Overdue / Due / Upcoming instalment (classified by TODAY, Dubai).
+        string? unitStatus = null;
+        if (!string.IsNullOrWhiteSpace(unitStatusFilter) && !string.Equals(unitStatusFilter, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            unitStatus = unitStatusFilter.Trim().ToLowerInvariant();
+            if (unitStatus is not ("overdue" or "due") || !byUnit)
+                return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "status must be all, overdue or due, and needs view=units.");
+        }
         if (byUnit && source is not IPactInstalmentUnitSource)
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.Disabled, "The unit view needs the local receivables snapshot (Collections:ReceivablesSnapshot:UseLocalSnapshot).");
         if (source is not IPactInstalmentSource instalments)
@@ -59,6 +67,9 @@ public sealed class PactInstalmentsAppService(
         // Default window: 1 January of the current year through the end of the current month. Both ends are editable; a month selector sets them to a calendar month.
         var from = dateFrom ?? DateOnly.FromDateTime(sourceOptions.StartDate);
         var to = dateTo ?? monthEnd;
+        // By unit lists only what is owed NOW: instalments due today or earlier (Due + Overdue). Anything due later is not part of this view,
+        // so a unit with nothing due today or before is not listed at all and every total is Due + Overdue.
+        if (byUnit && to > today) to = today;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "From date must not be after To date, and both must be within 2000-2100.");
         var min = decimal.Round(minAmount ?? sourceOptions.DefaultMinOutstandingAmount, 4);
@@ -79,8 +90,9 @@ public sealed class PactInstalmentsAppService(
         IReadOnlyList<PactInstalmentMonthDto>? months = null;
         try
         {
-            var overview = new PactInstalmentsRequest(from, to, monthStart, min, CollectionsPaymentFilters.ToWire(filter),
-                string.IsNullOrEmpty(term) ? null : term, digits, 1, pageSize, null, towerId);
+            // By unit classifies every instalment against TODAY (Overdue: before today, Due: today, Upcoming: after today); the other view keeps the month rule.
+            var overview = new PactInstalmentsRequest(from, to, byUnit ? today : monthStart, min, CollectionsPaymentFilters.ToWire(filter),
+                string.IsNullOrEmpty(term) ? null : term, digits, 1, pageSize, null, towerId, unitStatus, byUnit);
             // The list (and its totals) use the window narrowed to the selected month; Overdue is still "due before the current month" for every row.
             var request = overview;
             if (monthFrom is { } mf && monthTo is { } mt)
@@ -92,7 +104,7 @@ public sealed class PactInstalmentsAppService(
                 request = overview with { From = narrowedFrom, To = narrowedTo, Page = page };
             }
             else request = overview with { Page = page };
-            if (source is IPactInstalmentMonthSource monthSource)
+            if (!byUnit && source is IPactInstalmentMonthSource monthSource)
                 months = await monthSource.ReadInstalmentMonthsAsync(overview, budget.Token);
             if (byUnit)
             {

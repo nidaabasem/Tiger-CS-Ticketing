@@ -14,7 +14,6 @@
         <div>
             <p class="receivables-eyebrow">Collections</p>
             <h1 class="page-title">Collections Campaigns</h1>
-            <p class="page-subtitle">Review payment reminders per apartment and prepare a contact list for Genesys. Only instalments with an unpaid balance are ever considered; fully paid instalments are never reminder candidates.</p>
         </div>
         <div class="page-header__actions"><a class="btn btn-primary" href="/Collections/Review">Review &amp; approve</a> <a class="btn" href="/Collections/Receivables">Due &amp; Overdue Customers</a></div>
     </div>
@@ -62,8 +61,7 @@
         </div>
         <div class="field-group">
             <label class="field-label" for="campaignMin">Minimum outstanding amount (AED)</label>
-            <input class="field-input" type="number" id="campaignMin" name="minAmount" min="0" step="any" inputmode="decimal" value="@Model.MinAmountText" data-min-amount aria-describedby="campaignMinHelp" />
-            <span class="receivables-meta" id="campaignMinHelp">An instalment counts only if its remaining unpaid amount is at least this value (&ge;).</span>
+            <input class="field-input" type="number" id="campaignMin" name="minAmount" min="0" step="any" inputmode="decimal" value="@Model.MinAmountText" data-min-amount />
         </div>
         <div class="field-group filter-bar__search">
             <label class="field-label" for="campaignSearch">Customer or unit</label>
@@ -71,7 +69,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Preview list</button>
         <span class="receivables-loading" role="status" hidden>Loading campaign list…</span>
-        <span class="receivables-timeout" role="alert" hidden>The list is taking too long. The request was stopped; retry or choose one tower.</span>
+        <span class="receivables-timeout" role="alert" hidden>The list is taking too long. Retry or choose one tower.</span>
     </form>
     <div class="receivables-results" data-results data-results-url="/Collections/Campaigns" aria-live="polite">
         @if (Model.RenderFull) { <partial name="_CampaignResults" model="Model" /> }

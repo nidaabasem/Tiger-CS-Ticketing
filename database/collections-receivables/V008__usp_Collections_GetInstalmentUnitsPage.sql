@@ -13,6 +13,11 @@
     5 instalments  every matching instalment of exactly those units (same columns as the instalment view), ordered unit, due date, voucher
     6 unmatched    usp_Collections_GetUnmatchedTowers
   Sum of InstalmentCount over all units = Totals.TotalInstalments; RemainingTotal likewise: both views always agree.
+
+  Day-based revision (Receivables page): @ClassifyByDay = 1 classifies by the DAY of @AsOfDate (pass today, Dubai): Overdue = due before it, Due = due on it,
+  Not yet due (shown as Upcoming) = due after it. The default (0) keeps the month rule (@AsOfDate's calendar month) for older callers.
+  @StatusFilter (overdue | due | upcoming) keeps the units that have at least one instalment of that class; the listed instalments of a kept unit are still ALL of its
+  matching instalments. Rows with UnitID <= 0 or a blank / "0" unit code are never listed. The search also matches tower number, project code and tower name.
   Idempotent (CREATE OR ALTER); no table changes; needs V002-V006 (the snapshot tables and usp_Collections_GetCoverage / GetUnmatchedTowers).
 */
 CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetInstalmentUnitsPage
@@ -26,7 +31,9 @@ CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetInstalmentUnitsPage
     @Search        nvarchar(200) = NULL,
     @PhoneDigits   nvarchar(200) = NULL,
     @PageNumber    int           = 1,
-    @PageSize      int           = 25
+    @PageSize      int           = 25,
+    @ClassifyByDay bit           = 0,
+    @StatusFilter  varchar(10)   = NULL             -- NULL | overdue | due | upcoming (needs @ClassifyByDay for the day rule)
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -35,6 +42,7 @@ BEGIN
     IF @FromDate > @ToDate THROW 50032, N'@FromDate must not be after @ToDate.', 1;
     IF @MinAmount < 0 THROW 50033, N'@MinAmount must not be negative.', 1;
     IF @PageNumber < 1 OR @PageSize < 1 OR @PageSize > 100 THROW 50034, N'Invalid page.', 1;
+    IF @StatusFilter IS NOT NULL AND @StatusFilter NOT IN ('overdue', 'due', 'upcoming') THROW 50035, N'Unknown status filter.', 1;
 
     DECLARE @TowerFound bit = 0, @TowerCompany int, @TowerNumber nvarchar(20), @TowerName nvarchar(400);
     IF @TowerId IS NOT NULL
@@ -61,8 +69,9 @@ BEGIN
     IF @PaymentFilter IN ('unpaid', 'partial') AND EXISTS (SELECT 1 FROM dbo.CollectionsReceivableCompanyState WHERE (@Scope IS NULL OR CompanyId = @Scope) AND CurrentRunId IS NOT NULL AND BreakdownAvailable = 0)
         SET @Unavailable = 1;
 
-    DECLARE @MonthStart date = DATEFROMPARTS(YEAR(@AsOfDate), MONTH(@AsOfDate), 1);
-    DECLARE @NextMonthStart date = DATEADD(MONTH, 1, @MonthStart);
+    -- "Month" boundaries of the classification: the calendar month of @AsOfDate, or - day-based - exactly the day @AsOfDate.
+    DECLARE @MonthStart date = CASE WHEN @ClassifyByDay = 1 THEN @AsOfDate ELSE DATEFROMPARTS(YEAR(@AsOfDate), MONTH(@AsOfDate), 1) END;
+    DECLARE @NextMonthStart date = CASE WHEN @ClassifyByDay = 1 THEN DATEADD(DAY, 1, @AsOfDate) ELSE DATEADD(MONTH, 1, @MonthStart) END;
     DECLARE @MonthStartDt datetime = CAST(@MonthStart AS datetime), @NextMonthDt datetime = CAST(@NextMonthStart AS datetime);
     DECLARE @ToExclusive datetime = DATEADD(DAY, 1, CAST(@ToDate AS datetime));
     DECLARE @FromDt datetime = CAST(@FromDate AS datetime);
@@ -104,12 +113,19 @@ BEGIN
        AND s.DueDate >= @FromDt AND s.DueDate < @ToExclusive
        AND (   (@PaymentFilter = 'outstanding' AND s.Amount > 0) OR (@PaymentFilter = 'unpaid' AND s.PaymentStatus = 'Unpaid')
             OR (@PaymentFilter = 'partial' AND s.PaymentStatus = 'PartiallyPaid') OR (@PaymentFilter = 'paid' AND s.PaymentStatus = 'FullyPaid') OR @PaymentFilter = 'all')
-       AND s.Amount >= @Min AND s.UnitId > 0
+       AND s.Amount >= @Min AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0')
        AND (@Like IS NULL OR s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
-                          OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\'
+                          OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\' OR s.TowerNumber LIKE @Like ESCAPE N'\' OR s.ProjectCode LIKE @Like ESCAPE N'\'
+                          OR EXISTS (SELECT 1 FROM dbo.CollectionsTowers tq WHERE tq.CompanyId = s.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) = s.TowerNumber
+                                      AND CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\')
                           OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%'))
      GROUP BY s.CompanyId, s.TenantId COLLATE Latin1_General_BIN2, s.UnitId, s.UnitCode COLLATE Latin1_General_BIN2
     OPTION (RECOMPILE);
+
+    -- 1b. Status filter: keep the units that have at least one instalment of the chosen class (totals, paging and counts below then agree with it).
+    IF @StatusFilter = 'overdue'  DELETE FROM #u WHERE OverCnt = 0;
+    IF @StatusFilter = 'due'      DELETE FROM #u WHERE DueCnt = 0;
+    IF @StatusFilter = 'upcoming' DELETE FROM #u WHERE NotCnt = 0;
 
     -- 2. Totals over the whole filtered set (all pages).
     SELECT ISNULL(SUM(Cnt), 0) AS TotalInstalments, ISNULL(SUM(Rem), 0) AS RemainingTotal,
@@ -146,9 +162,11 @@ BEGIN
        AND s.DueDate >= @FromDt AND s.DueDate < @ToExclusive
        AND (   (@PaymentFilter = 'outstanding' AND s.Amount > 0) OR (@PaymentFilter = 'unpaid' AND s.PaymentStatus = 'Unpaid')
             OR (@PaymentFilter = 'partial' AND s.PaymentStatus = 'PartiallyPaid') OR (@PaymentFilter = 'paid' AND s.PaymentStatus = 'FullyPaid') OR @PaymentFilter = 'all')
-       AND s.Amount >= @Min AND s.UnitId > 0
+       AND s.Amount >= @Min AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0')
        AND (@Like IS NULL OR s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
-                          OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\'
+                          OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\' OR s.TowerNumber LIKE @Like ESCAPE N'\' OR s.ProjectCode LIKE @Like ESCAPE N'\'
+                          OR EXISTS (SELECT 1 FROM dbo.CollectionsTowers tq WHERE tq.CompanyId = s.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) = s.TowerNumber
+                                      AND CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\')
                           OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%'))
      ORDER BY p.Oldest, p.CompanyId, p.TenantId, p.UnitCode, p.UnitId, s.DueDate, s.VoucherNumber COLLATE Latin1_General_BIN2, s.SnapshotRowId
      OPTION (RECOMPILE);

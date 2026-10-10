@@ -2,7 +2,7 @@
 @model TigerCS.Web.Pages.Collections.ReceivablesModel
 @using TigerCS.Web.Pages.Collections
 @{
-    ViewData["Title"] = "Due & Overdue Customers";
+    ViewData["Title"] = "Receivables";
     ViewData["ActiveNav"] = "collections";
     Layout = "_Layout";
 }
@@ -11,67 +11,25 @@
     <div class="page-header">
         <div>
             <p class="receivables-eyebrow">Collections</p>
-            <h1 class="page-title">Due &amp; Overdue Customers</h1>
-            <p class="page-subtitle">PACT instalments by tower, month or date range and payment status, from a local copy that is refreshed in the background.</p>
+            <h1 class="page-title">Receivables</h1>
         </div>
         <div class="page-header__actions"><a class="btn" href="/Collections/Campaigns">Campaigns</a></div>
     </div>
 
     <form class="filter-bar" method="get" action="/Collections/Receivables" data-receivables-filter data-results-form>
-        <div class="field-group view-toggle" role="radiogroup" aria-label="View">
-            <span class="field-label">View</span>
-            <div class="view-toggle__options">
-                <label><input type="radio" name="view" value="units" checked="@Model.ByUnit" data-view-radio /> By unit</label>
-                <label><input type="radio" name="view" value="instalments" checked="@(!Model.ByUnit)" data-view-radio /> By instalment</label>
-            </div>
-        </div>
         <div class="field-group filter-bar__search">
-            <label class="field-label" for="receivableSearch">Customer, unit or voucher</label>
-            <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Name, phone, customer ID, unit or voucher…" />
+            <label class="field-label" for="receivableSearch">Search</label>
+            <input class="field-input" type="search" id="receivableSearch" name="search" maxlength="200" value="@Model.Search" placeholder="Customer name, mobile, tower or apartment" />
         </div>
         <partial name="_TowerPicker" model="@(new TowerPickerModel("receivableTower", Model.Towers, Model.TowerId, Model.TowersFailed))" />
         <div class="field-group">
-            <label class="field-label" for="receivableMonth">Month</label>
-            <select class="field-select" id="receivableMonth" name="month" data-month-select>
-                <option value="">Custom range</option>
-                @for (var m = 1; m <= 12; m++) { <option value="@m" selected="@(Model.Month == m)">@ReceivablesModel.MonthNames[m - 1]</option> }
-            </select>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="receivableYear">Year</label>
-            <select class="field-select" id="receivableYear" name="year" data-year-select>
-                <option value="">—</option>
-                @foreach (var y in Model.YearOptions()) { <option value="@y" selected="@(Model.Year == y)">@y</option> }
-            </select>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="receivableFrom">From (instalment due)</label>
-            <input class="field-input" type="date" id="receivableFrom" name="dateFrom" min="2000-01-01" max="2100-12-31" value="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-date-from />
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="receivableTo">To (instalment due, inclusive)</label>
-            <input class="field-input" type="date" id="receivableTo" name="dateTo" min="2000-01-01" max="2100-12-31" value="@Model.DateTo?.ToString("yyyy-MM-dd")" data-date-to />
-        </div>
-        <div class="field-group receivables-shortcuts">
-            <span class="field-label">Quick range</span>
-            <a class="btn btn-sm" href="@Model.LastSixMonthsUrl()" data-last-six-months>Last 6 months</a>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="receivableStatus">Payment status</label>
-            <select class="field-select" id="receivableStatus" name="paymentStatus" data-payment-status>
-                @foreach (var (value, label) in ReceivablesModel.PaymentOptions)
+            <label class="field-label" for="receivableStatus">Status</label>
+            <select class="field-select" id="receivableStatus" name="status">
+                @foreach (var (value, label) in ReceivablesModel.StatusOptions)
                 {
-                    <option value="@value" selected="@(Model.PaymentStatus == value)" data-needs="@(value is "unpaid" or "partial" ? "breakdown" : value is "paid" or "all" ? "paid" : "")">@label</option>
+                    <option value="@value" selected="@(Model.Status == value)">@label</option>
                 }
             </select>
-        </div>
-        <div class="field-group">
-            <label class="field-label" for="receivableMin">Minimum outstanding amount (AED)</label>
-            <input class="field-input" type="number" id="receivableMin" name="minAmount" min="0" step="any" inputmode="decimal" value="@Model.MinAmountText" disabled="@(!Model.MinApplies)" data-min-amount aria-describedby="receivableMinHelp" />
-            <span class="receivables-meta" id="receivableMinHelp" data-min-help>
-                @if (Model.MinApplies) { <text>Shows instalments whose remaining unpaid amount is at least this value (&ge;).</text> }
-                else { <text>Not applied to Fully paid and All, so paid instalments are never hidden.</text> }
-            </span>
         </div>
         <div class="filter-bar__submit">
             <button class="btn btn-gold" type="submit">Apply</button>

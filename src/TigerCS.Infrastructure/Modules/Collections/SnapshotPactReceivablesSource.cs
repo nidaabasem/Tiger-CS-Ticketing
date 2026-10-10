@@ -17,7 +17,7 @@ namespace TigerCS.Infrastructure.Modules.Collections;
 /// </summary>
 public sealed class SnapshotPactReceivablesSource(
     IConfiguration configuration, ReceivablesSnapshotOptions snapshotOptions, PactReceivablesOptions pactOptions,
-    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactInstalmentMonthSource, IPactCampaignSource
+    TimeProvider timeProvider, ILogger<SnapshotPactReceivablesSource> logger) : IPactReceivablesSource, IPactReceivablesPageSource, IPactInstalmentSource, IPactInstalmentUnitSource, IPactInstalmentMonthSource, IPactCampaignSource, IPactUnitBalanceSource
 {
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
@@ -439,6 +439,9 @@ public sealed class SnapshotPactReceivablesSource(
             command.Parameters.Add("@PhoneDigits", SqlDbType.NVarChar, 200).Value = (object?)request.PhoneDigits ?? DBNull.Value;
             command.Parameters.Add("@PageNumber", SqlDbType.Int).Value = request.Page;
             command.Parameters.Add("@PageSize", SqlDbType.Int).Value = request.PageSize;
+            // Day-based classification and the status filter exist from V008's day-based revision; they are only sent when asked for.
+            if (request.ClassifyByDay) command.Parameters.Add("@ClassifyByDay", SqlDbType.Bit).Value = true;
+            if (request.Status is not null) command.Parameters.Add("@StatusFilter", SqlDbType.VarChar, 10).Value = request.Status;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
             if (!await reader.ReadAsync(cancellationToken) || !reader.GetBoolean(reader.GetOrdinal("ScopeValid")))
@@ -492,6 +495,51 @@ public sealed class SnapshotPactReceivablesSource(
         logger.LogInformation("Unit page read: page {Page}, {Units} units / {Total} instalments in {SqlMs:F0} ms (window {From:yyyy-MM-dd}..{To:yyyy-MM-dd}, filter {Filter}, min {Min}).",
             request.Page, totals.UnitCount, totals.Count, sqlMs, request.From, request.To, request.PaymentFilter, request.MinAmount);
         return new PactInstalmentUnitsPage(totals, units, unavailable, status, ReceivablesSnapshotComposer.ReadAt(status), sqlMs);
+    }
+
+    /// <summary>
+    /// Balances of the given units (at most one page of them): one round trip over the CURRENT run of each company. Total = every unpaid instalment of the unit;
+    /// Due + Overdue = those due today or earlier. The unit key is compared binary-exactly like the By unit grouping, so units are never merged.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<PactUnitKey, PactUnitBalance>> ReadUnitBalancesAsync(IReadOnlyList<PactUnitKey> units, DateOnly today, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<PactUnitKey, PactUnitBalance>();
+        if (units.Count == 0) return result;
+        var connectionString = configuration.GetConnectionString(snapshotOptions.ConnectionStringName);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
+        var json = System.Text.Json.JsonSerializer.Serialize(units.Distinct().Select(u => new { c = u.CompanyId, t = u.TenantId, u = u.UnitId, k = u.UnitCode }));
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand(
+                """
+                SELECT k.CompanyId, k.TenantId, k.UnitId, k.UnitCode, SUM(s.Amount) AS Total,
+                       SUM(CASE WHEN s.DueDate < @Tomorrow THEN s.Amount ELSE 0 END) AS DueAndOverdue
+                  FROM OPENJSON(@Json) WITH (CompanyId int '$.c', TenantId nvarchar(100) '$.t', UnitId bigint '$.u', UnitCode nvarchar(200) '$.k') k
+                  JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = k.CompanyId AND st.CurrentRunId IS NOT NULL
+                  JOIN dbo.CollectionsReceivableSnapshot s ON s.CompanyId = st.CompanyId AND s.RunId = st.CurrentRunId
+                       AND s.TenantId = k.TenantId COLLATE DATABASE_DEFAULT AND s.UnitId = k.UnitId
+                 WHERE s.Amount > 0 AND s.TenantId COLLATE Latin1_General_BIN2 = k.TenantId COLLATE Latin1_General_BIN2
+                   AND s.UnitCode COLLATE Latin1_General_BIN2 = k.UnitCode COLLATE Latin1_General_BIN2
+                 GROUP BY k.CompanyId, k.TenantId, k.UnitId, k.UnitCode
+                 OPTION (RECOMPILE);
+                """, connection)
+            { CommandTimeout = Math.Clamp(snapshotOptions.ReadCommandTimeoutSeconds, 1, 600) };
+            command.Parameters.Add("@Json", SqlDbType.NVarChar, -1).Value = json;
+            command.Parameters.Add("@Tomorrow", SqlDbType.DateTime).Value = today.AddDays(1).ToDateTime(TimeOnly.MinValue);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                result[new PactUnitKey(reader.GetInt32(0), reader.GetString(1), reader.GetInt64(2), reader.GetString(3))] =
+                    new PactUnitBalance(reader.GetDecimal(4), reader.GetDecimal(5));
+        }
+        catch (SqlException ex)
+        {
+            logger.LogWarning("Unit balance read failed (SQL error {SqlNumber}).", ex.Number);
+            throw new PactReceivablesSourceException("The local receivables snapshot could not be read.");
+        }
+        return result;
     }
 
     /// <summary>Month overview: one round trip to dbo.usp_Collections_GetInstalmentMonths (the same filters as the list, no paging, no month selection).</summary>

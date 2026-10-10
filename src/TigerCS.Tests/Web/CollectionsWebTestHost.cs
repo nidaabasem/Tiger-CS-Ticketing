@@ -27,6 +27,8 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
     public bool Stale { get; set; }
     public bool PaidRetained { get; set; } = true;
     public bool Breakdown { get; set; }
+    /// <summary>Tiger Group Sharjah (company 32) never loaded: its latest refresh failed, so the Dubai rows are served without it.</summary>
+    public bool SharjahFailed { get; set; }
     public List<string> Requests { get; } = [];
     public List<PactInstalmentRowDto> Rows { get; } = [];
 
@@ -41,7 +43,9 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 new DateOnly(2026, 1, 1), new DateOnly(2099, 12, 31), 0, 0m, 0, 0m, 0, 0, Stale ? "Stale" : "Fresh", Stale ? 300 : 5, Loading, null, null, PaidRetained, Breakdown, Breakdown ? 0 : 3);
         var gaps = NothingLoaded ? [new CoverageGapDto(4, "Tiger Group Dubai", from, through)]
             : Covered ? [] : (IReadOnlyList<CoverageGapDto>)[new CoverageGapDto(4, "Tiger Group Dubai", from, new DateOnly(2025, 12, 31))];
-        return new SnapshotStatusDto([company], [], 90, from, through, gaps);
+        if (!SharjahFailed) return new SnapshotStatusDto([company], [], 90, from, through, gaps);
+        var sharjah = new SnapshotCompanyStatusDto(32, "Tiger Group Sharjah", false, null, now.AddMinutes(-2), "Failed", 7399, 3, 0, null, null, 0, 0m, 0, 0m, 0, 0, "Missing", null, Loading);
+        return new SnapshotStatusDto([company, sharjah], [], 90, from, through, [.. gaps, new CoverageGapDto(32, "Tiger Group Sharjah", from, through)]);
     }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -65,6 +69,14 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                     g.Sum(r => r.RemainingAmount), g.Count(r => r.Classification == "Overdue"), g.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount))).ToList();
                 var dueMonth = q["dueMonth"];
                 var rows = dueMonth is null ? all : all.Where(r => r.DueDate.ToString("yyyy-MM") == dueMonth).ToList();
+                // Unit view only: the units having an instalment of the chosen status (today = 2026-10-09, Dubai), with ALL of their instalments.
+                var today = new DateOnly(2026, 10, 9);
+                if (q["view"] == "units" && q["status"] is { Length: > 0 } wanted)
+                    rows = rows.GroupBy(r => (r.CompanyId, r.TenantId, r.UnitId, r.UnitCode))
+                        .Where(g => g.Any(r => wanted switch { "overdue" => r.DueDate < today, "due" => r.DueDate == today, _ => true }))
+                        .SelectMany(g => g).ToList();
+                if (!string.IsNullOrWhiteSpace(q["search"]))
+                    rows = rows.Where(r => new[] { r.CustomerName, r.Mobile, r.Email, r.UnitCode, r.TowerNumber ?? "", r.TowerName ?? "" }.Any(v => v.Contains(q["search"]!, StringComparison.OrdinalIgnoreCase))).ToList();
                 var totals = new PactInstalmentTotalsDto(rows.Count, rows.Sum(r => r.RemainingAmount), rows.Count(r => r.Classification == "Overdue"), rows.Where(r => r.Classification == "Overdue").Sum(r => r.RemainingAmount),
                     rows.Count(r => r.Classification == "Due"), rows.Where(r => r.Classification == "Due").Sum(r => r.RemainingAmount), 0, 0m, rows.Count(r => r.PaymentStatus == "FullyPaid"));
                 var snapshot = Snapshot(from, to);
@@ -88,7 +100,7 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
                 var date = new DateOnly(2026, 10, 14);
                 return Json(new CollectionsCampaignPreviewDto(date, date, DateTime.UtcNow, "PACT", "CurrentMonthReminder", "2026-10:CurrentMonthReminder", [date], true, true, false, true,
                     NothingLoaded ? 0 : 1, 0, NothingLoaded ? 0 : 1, 1, 25,
-                    NothingLoaded ? [] : [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "", 101, "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NeedsReview", "SourceReconciliationRequired", "140", "Al Ghaf")],
+                    NothingLoaded ? [] : [new("ID", "ext:Pact:3001", 4, "3001", "Campaign Customer", "+971500003001", "", 101, "TP140-101", "TP140", 500m, "AED", date, "CurrentMonthReminder", "2026-10:CurrentMonthReminder", "NeedsReview", "SourceReconciliationRequired", "140", "Al Ghaf", 1800m, 650m)],
                     from, to, [], int.TryParse(q["towerId"], out var tower) ? tower : null, Snapshot(from, to),
                     decimal.Parse(q["minAmount"] ?? "100", System.Globalization.CultureInfo.InvariantCulture), new ServerTimingsDto(9, 2, 15)));
             }
@@ -100,6 +112,10 @@ internal sealed class FakeCollectionsApi : HttpMessageHandler
 
     public static PactInstalmentRowDto Row(string status, string classification, decimal remaining, decimal? original = null, decimal? paid = null, string voucher = "INV-1", string unit = "TP124-1001") =>
         new(4, "Tiger Group Dubai", "124", "Tower 124", 101, unit, "3001", "Example Customer", "+971500003001", "x@example.test", voucher, "", new DateOnly(2026, 9, 15), original, paid, remaining, status, classification, "Installment");
+
+    /// <summary>An unpaid instalment of the unit <paramref name="unit"/> (its own UnitId) due on <paramref name="due"/>.</summary>
+    public static PactInstalmentRowDto Unpaid(DateOnly due, decimal remaining, string voucher, string unit = "TP124-1001", int unitId = 101, string customer = "Example Customer", string tenant = "3001") =>
+        new(4, "Tiger Group Dubai", "124", "Tower 124", unitId, unit, tenant, customer, "+971500003001", "x@example.test", voucher, "", due, null, null, remaining, "Unknown", "Overdue", "Installment");
 }
 
 internal static class CollectionsWebHost

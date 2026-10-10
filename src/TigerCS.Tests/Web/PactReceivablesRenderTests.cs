@@ -1,158 +1,220 @@
 extern alias TigerCsWeb;
 
 using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Receivables = TigerCsWeb::TigerCS.Web.Pages.Collections.ReceivablesModel;
 using Display = TigerCsWeb::TigerCS.Web.Pages.Collections.CollectionsDisplay;
 
 namespace TigerCS.Tests.Web;
 
-/// <summary>Receivables page: the shell never waits for data; results arrive as a fragment; filters, columns and states.</summary>
+/// <summary>
+/// Receivables page: one row per unit, View Details with the unit's unpaid instalments that are Due or Overdue (due today or earlier; Dubai: the fake API's
+/// business date is 2026-10-09), search + Tower + Status filters, and one short line when a company could not be loaded.
+/// </summary>
 public sealed class PactReceivablesRenderTests
 {
+    private static readonly DateOnly Today = new(2026, 10, 9);
+
+    private static string Between(string html, string start, string end)
+    {
+        var from = html.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, $"'{start}' not found");
+        var to = html.IndexOf(end, from, StringComparison.Ordinal);
+        return html[from..(to < 0 ? html.Length : to)];
+    }
+
+    private static List<string> Cells(string row) => Regex.Matches(row, "<td[^>]*>(.*?)</td>", RegexOptions.Singleline).Select(m => Regex.Replace(m.Groups[1].Value, "<[^>]+>", " ")).Select(t => Regex.Replace(System.Net.WebUtility.HtmlDecode(t), @"\s+", " ").Trim()).ToList();
+
     [Fact]
-    public async Task InitialPage_RendersFiltersAndALoadingResultsArea_WithoutWaitingForTheInstalmentData()
+    public async Task InitialPage_HasOnlySearchTowerAndStatus_AndDoesNotWaitForTheData()
     {
         var api = new FakeCollectionsApi();
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var response = await client.GetAsync("/Collections/Receivables?towerId=7");
+        var response = await client.GetAsync("/Collections/Receivables?towerId=7&status=overdue");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var html = await response.Content.ReadAsStringAsync();
-        Assert.Empty(api.Calls("/receivables/instalments"));                        // the shell made no data call
-        Assert.Contains("data-results-loading", html);                              // loading is shown in the results area only
-        Assert.Contains("/js/receivables.js", html);
-        // Filters: tower picker, Month + Year, From + To, Last 6 months, Payment status, Minimum outstanding amount (default 100).
+        Assert.Empty(api.Calls("/receivables/instalments"));                         // the shell made no data call
+        Assert.Contains("data-results-loading", html);
+        Assert.Contains("name=\"search\"", html); Assert.Contains("Customer name, mobile, tower or apartment", html);
         Assert.Contains("<option value=\"7\" selected=\"selected\">124 - Tower 124</option>", html);
-        Assert.Contains("name=\"month\"", html); Assert.Contains("name=\"year\"", html);
-        Assert.Contains("name=\"dateFrom\"", html); Assert.Contains("name=\"dateTo\"", html);
-        Assert.Contains("data-last-six-months", html);
-        Assert.Contains("name=\"paymentStatus\"", html);
-        Assert.Contains("Outstanding (unpaid", html);
-        Assert.Contains("Minimum outstanding amount (AED)", html);
-        Assert.Contains("name=\"minAmount\"", html); Assert.Contains("value=\"100\"", html);
-        Assert.DoesNotContain("name=\"companyId\"", html);
+        Assert.Contains("name=\"status\"", html); Assert.Contains("<option value=\"overdue\" selected=\"selected\">Overdue</option>", html);
+        Assert.DoesNotContain("upcoming", html, StringComparison.OrdinalIgnoreCase);
+        foreach (var gone in new[] { "name=\"month\"", "name=\"year\"", "name=\"dateFrom\"", "name=\"dateTo\"", "name=\"minAmount\"", "name=\"paymentStatus\"", "name=\"view\"", "data-last-six-months", "How Due / Overdue" })
+            Assert.DoesNotContain(gone, html);
     }
 
     [Fact]
-    public async Task ResultsFragment_ShowsInstalmentColumns_WithPaymentStatusSeparateFromDueOverdue_AndSendsTheFilters()
-    {
-        var api = new FakeCollectionsApi { Breakdown = true };
-        api.Rows.Add(FakeCollectionsApi.Row("PartiallyPaid", "Overdue", 600m, 1000m, 400m, "INV-7"));
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 250m, 250m, 0m, "INV-8"));
-        api.Rows.Add(FakeCollectionsApi.Row("Unknown", "Overdue", 90m, null, null, "INV-9"));
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var response = await client.GetAsync("/Collections/Receivables?handler=Results&view=instalments&towerId=7&dateFrom=2026-01-01&dateTo=2026-10-31&paymentStatus=outstanding&minAmount=100&search=3001");
-        var html = await response.Content.ReadAsStringAsync();
-        Assert.Contains("web;dur=", response.Headers.GetValues("Server-Timing").Single());
-        Assert.Contains("sql;dur=12", response.Headers.GetValues("Server-Timing").Single());
-        Assert.True(response.Headers.CacheControl!.NoStore);
-        var call = Assert.Single(api.Calls("/receivables/instalments"));
-        foreach (var expected in new[] { "towerId=7", "dateFrom=2026-01-01", "dateTo=2026-10-31", "paymentStatus=outstanding", "minAmount=100", "search=3001" }) Assert.Contains(expected, call);
-        Assert.DoesNotContain("<html", html);                                        // a fragment, not a page
-        foreach (var column in new[] { ">Tower<", ">Unit<", ">Customer<", ">Voucher<", ">Due date<", "Original instalment", ">Paid<", ">Remaining<", ">Payment status<", "Due / Overdue" }) Assert.Contains(column, html);
-        Assert.Contains("data-payment-status-label=\"PartiallyPaid\"", html);
-        Assert.Contains("data-classification=\"Overdue\"", html);                    // partially paid AND overdue in the same row
-        Assert.Contains("Partially paid", html);
-        Assert.Contains("1,000.00", html); Assert.Contains("400.00", html); Assert.Contains("600.00", html);
-        Assert.Contains("Needs verification", html);                                 // unknown status is never guessed
-        Assert.Contains("Not provided by the source", html);                         // unknown original / paid amounts are not invented
-        Assert.Contains("data-payment-views", html);
-    }
-
-    [Theory]
-    [InlineData("paid")]
-    [InlineData("all")]
-    public async Task FullyPaidAndAll_DoNotSendTheMinimum_AndTheFieldIsDisabledWithAnExplanation(string status)
+    public async Task ACustomerWithTwoApartments_GetsTwoRows_WithSeparateTotals_AndAnApartmentWithManyInstalmentsOneRow()
     {
         var api = new FakeCollectionsApi();
-        api.Rows.Add(FakeCollectionsApi.Row("FullyPaid", "NotApplicable", 0m, 500m, 500m));
+        // Apartment 1001: overdue 5 Aug, due TODAY and a later 5 Nov instalment (not Due yet: never listed or counted); apartment 2002 of the SAME customer: one overdue instalment.
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 11, 5), 150m, "INV-5"));
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        api.Rows.Add(FakeCollectionsApi.Unpaid(Today, 200m, "INV-3"));
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 9, 20), 80m, "INV-2", "TP124-2002", 102));
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var shell = await (await client.GetAsync($"/Collections/Receivables?paymentStatus={status}&minAmount=1000")).Content.ReadAsStringAsync();
-        Assert.Matches("<input[^>]*name=\"minAmount\"[^>]*disabled", shell);
-        Assert.Contains("Not applied to Fully paid and All, so paid instalments are never hidden.", shell);
-        await client.GetAsync($"/Collections/Receivables?handler=Results&paymentStatus={status}&minAmount=1000");
-        var call = Assert.Single(api.Calls("/receivables/instalments"));
-        Assert.Contains($"paymentStatus={status}", call);
-        Assert.DoesNotContain("minAmount", call);                                     // the API/SQL ignore it too: a paid row can never be hidden by it
-    }
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
 
-    [Theory]
-    [InlineData(2026, 2, "2026-02-01", "2026-02-28")]
-    [InlineData(2028, 2, "2028-02-01", "2028-02-29")]       // leap February
-    [InlineData(2026, 12, "2026-12-01", "2026-12-31")]
-    [InlineData(2027, 1, "2027-01-01", "2027-01-31")]       // year change
-    [InlineData(2026, 4, "2026-04-01", "2026-04-30")]
-    public async Task MonthAndYear_SetFromAndToToTheFirstAndLastDay(int year, int month, string from, string to)
-    {
-        var api = new FakeCollectionsApi();
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var shell = await (await client.GetAsync($"/Collections/Receivables?month={month}&year={year}")).Content.ReadAsStringAsync();
-        Assert.Contains($"value=\"{from}\"", shell); Assert.Contains($"value=\"{to}\"", shell);
-        Assert.Matches($"<option value=\"{month}\" selected", shell); Assert.Matches($"<option value=\"{year}\" selected", shell);
-        await client.GetAsync($"/Collections/Receivables?handler=Results&month={month}&year={year}");
-        var call = Assert.Single(api.Calls("/receivables/instalments"));
-        Assert.Contains($"dateFrom={from}", call); Assert.Contains($"dateTo={to}", call);
-    }
-
-    [Fact]
-    public async Task ACustomRange_KeepsTheMonthSelectorsOnCustom_AndLastSixMonthsIsStillOffered()
-    {
-        var api = new FakeCollectionsApi();
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync("/Collections/Receivables?dateFrom=2025-09-15&dateTo=2026-03-15")).Content.ReadAsStringAsync();
-        Assert.DoesNotContain("<option value=\"9\" selected", html);
-        Assert.Contains("value=\"2025-09-15\"", html); Assert.Contains("value=\"2026-03-15\"", html);
-        Assert.Contains("data-last-six-months", html);
-        var expectedFrom = Display.DubaiToday().AddMonths(-6).ToString("yyyy-MM-dd");
-        Assert.Contains($"dateFrom={expectedFrom}", html);
-    }
-
-    [Fact]
-    public async Task ByUnit_IsTheDefaultView_OneRowPerUnit_WithItsInstalmentsExpandable_AndTheViewSurvivesFiltersAndPaging()
-    {
-        var api = new FakeCollectionsApi();
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 300m, 300m, 0m, "INV-1"));
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-2"));
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 150m, 150m, 0m, "INV-3", "TP124-2002"));
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-
-        var shell = await (await client.GetAsync("/Collections/Receivables")).Content.ReadAsStringAsync();
-        Assert.Contains("name=\"view\" value=\"units\" checked", shell);                        // By unit is the default ...
-        Assert.Contains("name=\"view\" value=\"instalments\"", shell);                         // ... By instalment stays available
-
-        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&search=Example")).Content.ReadAsStringAsync();
         Assert.Contains("view=units", Assert.Single(api.Calls("/receivables/instalments")));
-        foreach (var column in new[] { ">Tower<", ">Unit<", ">Customer<", ">Total remaining<", ">Overdue<", ">Due<", ">Not yet due<" }) Assert.Contains(column, html);
-        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "data-unit-row").Count);        // two units, not three instalments
-        Assert.Contains("data-unit-toggle", html);                                                          // expandable ...
-        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(html, "data-unit-detail").Count);      // ... with its instalments inside the unit
-        Assert.Contains("INV-1", html); Assert.Contains("INV-2", html); Assert.Contains("INV-3", html);
-        Assert.Contains("500.00", html);                                                                    // 300 + 200: the unit's total remaining
-        Assert.Contains("2 units", html); Assert.Contains("3 instalments", html);
-        Assert.Contains("data-unit-month=\"2026-09\"", html);                                              // the months with unpaid instalments sit in the unit row ...
-        Assert.Contains(">Overdue</span>", html);                                                           // ... each with its Due / Overdue label
+        Assert.Contains("minAmount=0", Assert.Single(api.Calls("/receivables/instalments")));        // every unpaid instalment, whatever its size
+        var rows = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => m.Value).ToList();
+        Assert.Equal(2, rows.Count);                                                                   // one row per unit, not per instalment and not per customer
+        var headers = Cells(Regex.Match(html, "<thead><tr>.*?</tr></thead>", RegexOptions.Singleline).Value.Replace("th", "td"));
+        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Total (Due + Overdue)", "Due", "Overdue", "Details"], headers);
 
-        // By instalment is the unchanged one-row-per-instalment table, and the chosen view is part of every link.
-        var flat = await (await client.GetAsync("/Collections/Receivables?handler=Results&view=instalments")).Content.ReadAsStringAsync();
-        Assert.DoesNotContain("data-unit-row", flat);
-        Assert.Contains("3 instalments", flat);
-        var full = await (await client.GetAsync("/Collections/Receivables?render=full&view=instalments")).Content.ReadAsStringAsync();
-        Assert.Contains("name=\"view\" value=\"instalments\" checked", full);
+        // Apartment 1001: total 500 = overdue 300 + due 200; the 150 due in November is not part of anything on this page.
+        var first = Cells(rows.Single(r => r.Contains("TP124-1001")));
+        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-1001", "500.00", "200.00", "300.00", "View Details"], first);
+        // Apartment 2002 is NOT added to 1001: its own totals.
+        var second = Cells(rows.Single(r => r.Contains("TP124-2002")));
+        Assert.Equal(["Example Customer", "+971500003001 x@example.test", "124 - Tower 124", "TP124-2002", "80.00", "—", "80.00", "View Details"], second);
+
+        // The details of 1001: oldest first, statuses by date, days late only for overdue, and the sums equal the main row.
+        var details = Regex.Matches(html, "<tr class=\"unit-detail\".*?</tbody>\\s*</table>", RegexOptions.Singleline).Select(m => m.Value).ToList();
+        Assert.Equal(2, details.Count);
+        var d1 = details.Single(d => d.Contains("INV-1"));
+        Assert.DoesNotContain("INV-2", d1);                                                           // no instalment of another apartment
+        var lines = Regex.Matches(d1, "<tr class=\"[^\"]*\" data-instalment-status=\"(\\w+)\">(.*?)</tr>", RegexOptions.Singleline).Select(m => (Status: m.Groups[1].Value, Cells: Cells(m.Value))).ToList();
+        Assert.Equal(["Overdue", "Due"], lines.Select(l => l.Status));
+        Assert.DoesNotContain("INV-5", html); Assert.DoesNotContain("Upcoming", html);
+        Assert.Equal(["Voucher INV-1", "05 Aug 2026", "—", "—", "300.00", "Overdue", "65"], lines[0].Cells);          // 5 Aug -> 9 Oct = 65 days
+        Assert.Equal(["Voucher INV-3", "09 Oct 2026", "—", "—", "200.00", "Due", "—"], lines[1].Cells);                // due today is not late
+        Assert.Equal(500m, lines.Sum(l => decimal.Parse(l.Cells[4])));                                  // details add up to the row's total remaining
+        Assert.Matches("instalment-row--overdue[^>]*data-instalment-status=\"Overdue\"", d1);          // overdue rows are the red ones
+        Assert.DoesNotContain("instalment-row--overdue\" data-instalment-status=\"Due\"", d1);
+        foreach (var column in new[] { ">Instalment<", ">Due date<", ">Original amount<", ">Paid<", ">Remaining<", ">Status<", ">Days late<" }) Assert.Contains(column, d1);
+    }
+
+    [Fact]
+    public async Task OriginalAndPaid_AreShownWhenTheSourceProvidesThem_AndNeverInvented()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 9, 1), 600m, "INV-7") with { OriginalAmount = 1000m, PaidAmount = 400m });
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 10, 1), 90m, "INV-8"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        var lines = Regex.Matches(html, "data-instalment-status=\"\\w+\">(.*?)</tr>", RegexOptions.Singleline).Select(m => Cells("<tr>" + m.Value)).ToList();
+        Assert.Equal(["Voucher INV-7", "01 Sep 2026", "1,000.00", "400.00", "600.00", "Overdue", "38"], lines[0]);
+        Assert.Equal(["Voucher INV-8", "01 Oct 2026", "—", "—", "90.00", "Overdue", "8"], lines[1]);
+    }
+
+    [Theory]
+    [InlineData("overdue")]
+    [InlineData("due")]
+    public async Task TheStatusFilter_IsSentToTheApi_AndKeptInThePagingLinks(string status)
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        api.Rows.Add(FakeCollectionsApi.Unpaid(Today, 200m, "INV-2", "TP124-2002", 102));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync($"/Collections/Receivables?handler=Results&status={status}&towerId=7&search=Example")).Content.ReadAsStringAsync();
+        var call = Assert.Single(api.Calls("/receivables/instalments"));
+        foreach (var expected in new[] { $"status={status}", "towerId=7", "search=Example", "view=units" }) Assert.Contains(expected, call);
+        var units = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => Cells(m.Value)[3]).ToList();
+        Assert.Equal(status == "overdue" ? "TP124-1001" : "TP124-2002", Assert.Single(units));
+    }
+
+    [Fact]
+    public async Task AUnitWithNothingDueTodayOrEarlier_IsNotListed_AndTheApiIsAskedOnlyUpToToday()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 10, 10), 500m, "INV-T", "TP124-3003", 103));   // due tomorrow
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2027, 1, 1), 900m, "INV-L", "TP124-3003", 103));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("data-unit-row", html); Assert.DoesNotContain("TP124-3003", html);
+        Assert.Contains($"dateTo={Display.DubaiToday():yyyy-MM-dd}", Assert.Single(api.Calls("/receivables/instalments")));
+        Assert.DoesNotContain("upcoming", Assert.Single(api.Calls("/receivables/instalments")));
+    }
+
+    [Fact]
+    public async Task Search_FindsByCustomerMobileTowerAndApartment_AndAllIsSentWithoutAStatus()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        foreach (var term in new[] { "Example", "500003001", "Tower 124", "TP124-1001" })
+        {
+            var html = await (await client.GetAsync($"/Collections/Receivables?handler=Results&status=all&search={Uri.EscapeDataString(term)}")).Content.ReadAsStringAsync();
+            Assert.Contains("data-unit-row", html);
+        }
+        Assert.DoesNotContain("status=", string.Concat(api.Calls("/receivables/instalments")));
+        var none = await (await client.GetAsync("/Collections/Receivables?handler=Results&search=NoSuchCustomer")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("data-unit-row", none); Assert.Contains("No units match these filters.", none);
+    }
+
+    [Fact]
+    public async Task NoExplanations_NoMonthCards_NoDiagnostics()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        foreach (var gone in new[] { "receivables-metrics", "month-card", "unit-months", "Data details", "snapshot-status", "receivables-help", "How Due", "Payment status", "Not yet due", "Fully paid", "Upcoming" })
+            Assert.DoesNotContain(gone, html);
+        Assert.DoesNotContain("<html", html);                                                         // a fragment, not a page
+    }
+
+    [Fact]
+    public async Task WhenSharjahCouldNotBeLoaded_OneShortLineNamesIt_WithRetryForThatCompany_AndDubaiRowsStillShow()
+    {
+        var api = new FakeCollectionsApi { SharjahFailed = true };
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        var problem = Between(html, "<div class=\"receivables-notice receivables-notice--warning load-problem\"", "</form>");
+        Assert.Contains("Could not load data for <strong>Tiger Group Sharjah</strong>.", problem);
+        Assert.DoesNotContain("Dubai", problem);                                                      // only the failing company is named
+        Assert.Contains("name=\"companyId\" value=\"32\"", problem);                                  // Retry reloads Sharjah only
+        Assert.Contains(">Retry<", problem); Assert.Contains("data-load-button", problem);
+        Assert.Single(Regex.Matches(html, "data-load-problem"));                               // one message, not one per gap
+        Assert.Contains("data-unit-row", html);
+        foreach (var gone in new[] { "Data details", "error 7399", "consecutive", "Last refresh attempt", "Export is disabled", "snapshot-status__table" }) Assert.DoesNotContain(gone, html);
+    }
+
+    [Fact]
+    public async Task WhileTheRetryRuns_TheLineSaysSoAndThePageKeepsPolling()
+    {
+        var api = new FakeCollectionsApi { SharjahFailed = true, Loading = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.Contains("data-load-running", html); Assert.DoesNotContain("data-load-button", html);
+    }
+
+    [Fact]
+    public async Task Retry_PostsTheCompanyToTheApi_AndComesBackToTheSameFilters()
+    {
+        var api = new FakeCollectionsApi { SharjahFailed = true };
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var page = await (await client.GetAsync("/Collections/Receivables?render=full&status=overdue")).Content.ReadAsStringAsync();
+        var token = Regex.Match(page, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value;
+        Assert.True(token.Length > 20);
+        var post = await client.PostAsync("/Collections/Receivables?handler=LoadCoverage", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["dateFrom"] = "2000-01-01", ["dateTo"] = "2099-12-31", ["companyId"] = "32", ["returnUrl"] = "/Collections/Receivables?status=overdue", ["__RequestVerificationToken"] = token
+        }));
+        Assert.Equal(HttpStatusCode.Redirect, post.StatusCode);
+        Assert.Equal("/Collections/Receivables?status=overdue&load=started", post.Headers.Location!.OriginalString);
+        Assert.Contains("POST /api/collections/receivables/coverage/load?dateFrom=2000-01-01&dateTo=2099-12-31&companyId=32", api.Requests);
     }
 
     [Fact]
     public async Task RenderFull_IsTheNoJavaScriptFallback_AndIncludesTheResults()
     {
         var api = new FakeCollectionsApi();
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 300m, 300m, 0m));
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Receivables?render=full")).Content.ReadAsStringAsync();
         Assert.Contains("Example Customer", html);
         Assert.DoesNotContain("data-results-loading", html);
+        Assert.Contains("data-unit-toggle", html);                                                    // View Details is the button of every row
+        Assert.Contains("View Details", html);
     }
 
     [Theory]
     [InlineData(HttpStatusCode.Forbidden, "does not have permission")]
-    [InlineData(HttpStatusCode.ServiceUnavailable, "not an empty result")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "could not be loaded")]
     public async Task Errors_AreExplicitInTheResultsArea_NeverAnEmptyList(HttpStatusCode status, string text)
     {
         var api = new FakeCollectionsApi { Status = status };
@@ -160,70 +222,16 @@ public sealed class PactReceivablesRenderTests
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
         Assert.Contains(text, html);
         Assert.DoesNotContain("receivables-table", html);
-        Assert.DoesNotContain("No instalments match", html);
+        Assert.DoesNotContain("No units match", html);
     }
 
-    [Fact]
-    public async Task BeforeTheFirstSnapshot_ThePageRendersWithItsFiltersAndAWorkingLoadDataAction()
+    [Theory]
+    [InlineData("2026-10-08", "Overdue", 1)]
+    [InlineData("2026-10-09", "Due", null)]
+    public void TheStatusDependsOnlyOnTheDueDateAgainstToday(string due, string expected, int? daysLate)
     {
-        var api = new FakeCollectionsApi { NothingLoaded = true, PaidRetained = false };
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var shell = await client.GetAsync("/Collections/Receivables");
-        Assert.Equal(HttpStatusCode.OK, shell.StatusCode);
-        Assert.Contains("name=\"paymentStatus\"", await shell.Content.ReadAsStringAsync());
-        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&dateFrom=2026-01-01&dateTo=2026-10-31")).Content.ReadAsStringAsync();
-        Assert.Contains("No receivables data has been loaded yet.", html);
-        Assert.Contains("data-load-button", html); Assert.Contains(">Load data<", html);
-        Assert.Contains("data-nothing-loaded=\"true\"", html);
-        Assert.Contains("data-paid=\"false\"", html);                                   // Fully paid / All stay disabled against a dataset that holds no paid rows
-        Assert.DoesNotContain("No instalments match", html);
-        Assert.Contains("not \"no instalments\"", html);
-    }
-
-    [Fact]
-    public async Task PaymentViewAvailability_FollowsTheLoadedData()
-    {
-        var api = new FakeCollectionsApi { Breakdown = false, PaidRetained = true };
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
-        Assert.Contains("data-breakdown=\"false\"", html);                               // Unpaid / Partially paid cannot be told apart by the deployed procedures
-        Assert.Contains("data-paid=\"true\"", html);
-    }
-
-    [Fact]
-    public async Task UnitRows_ShowMonthlyAmountsWithBusinessLabels_ThatAddUpToTheUnitTotal_AndMatchTheExpansion()
-    {
-        var api = new FakeCollectionsApi();
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 300m, 300m, 0m, "INV-1") with { DueDate = new DateOnly(2026, 8, 5) });
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 120m, 120m, 0m, "INV-2") with { DueDate = new DateOnly(2026, 9, 5) });
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Overdue", 80m, 80m, 0m, "INV-3") with { DueDate = new DateOnly(2026, 9, 20) });
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-4") with { DueDate = new DateOnly(2026, 10, 5) });
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "NotYetDue", 150m, 150m, 0m, "INV-5") with { DueDate = new DateOnly(2026, 11, 5) });
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
-
-        var row = System.Text.RegularExpressions.Regex.Match(html, "<tr data-unit-row>.*?</tr>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
-        var months = System.Text.RegularExpressions.Regex.Matches(row, "data-unit-month=\"(\\d{4}-\\d{2})\" data-month-remaining=\"([\\d.]+)\" data-classification=\"(\\w+)\"")
-            .Select(m => (Month: m.Groups[1].Value, Amount: decimal.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture), Label: m.Groups[3].Value)).ToList();
-        Assert.Equal([("2026-08", 300m, "Overdue"), ("2026-09", 200m, "Overdue"), ("2026-10", 200m, "Due"), ("2026-11", 150m, "NotYetDue")], months);
-        Assert.Equal(850m, months.Sum(m => m.Amount));                                       // the months add up to the unit's total remaining ...
-        Assert.Contains("850.00", row);                                                      // ... which the row shows
-        var detail = System.Text.RegularExpressions.Regex.Match(html, "<tr class=\"unit-detail\".*?</tr>\\s*</tbody>", System.Text.RegularExpressions.RegexOptions.Singleline).Value;
-        Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(detail, "data-payment-status-label").Count);   // the expansion lists every instalment of the unit
-        Assert.DoesNotContain("month-card", html);                                           // no month cards: the months live in the unit row
-        string ClassTotal(string cls) => System.Text.RegularExpressions.Regex.Match(row, "data-unit-class=\"" + cls + "\">.*?data-class-total>([\\d,.]+)<", System.Text.RegularExpressions.RegexOptions.Singleline).Groups[1].Value;
-        Assert.Equal("500.00", ClassTotal("Overdue")); Assert.Equal("200.00", ClassTotal("Due")); Assert.Equal("150.00", ClassTotal("NotYetDue"));
-        Assert.Contains("Aug 2026", row); Assert.Contains("Sep 2026", row);                  // months include the year
-    }
-
-    [Fact]
-    public async Task DiagnosticsAreCollapsed_ButStillThere()
-    {
-        var api = new FakeCollectionsApi();
-        api.Rows.Add(FakeCollectionsApi.Row("Unpaid", "Due", 200m, 200m, 0m, "INV-4") with { DueDate = new DateOnly(2026, 10, 5) });
-        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
-        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
-        Assert.Contains("<details class=\"snapshot-status__details\"", html);                // loading diagnostics are collapsed ...
-        Assert.Contains("snapshot-status__table", html);                                     // ... but still there
+        var date = DateOnly.Parse(due);
+        Assert.Equal(expected, Receivables.Classify(date, Today));
+        Assert.Equal(daysLate, Receivables.DaysLate(date, Today));
     }
 }
