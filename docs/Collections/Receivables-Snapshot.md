@@ -324,3 +324,18 @@ the Load/progress flow, API authorization and parameter pass-through, static con
 * The companion `V2` procedures against real data, and whether their corrected allocation matches the business's expectation (until then Unpaid/Partially paid stay disabled and positive balances read "Needs verification").
 * Production-scale latency: the numbers above are a 4-vCPU sandbox with synthetic data; CPU, IO, memory and the real data distribution will differ. Re-run the harness against a copy of the production snapshot.
 * Real counts of excluded UnitID 0 / blank-identity rows and the unmatched-tower list (e.g. tower 119).
+
+## Run lifecycle and "Loading data for ..." (troubleshooting)
+
+* **Every started run reaches a terminal state.** A client timeout, a cancelled Hangfire job or an application restart aborts the T-SQL batch of
+  `usp_Collections_RefreshReceivables` *without* running its `CATCH`, so nothing inside SQL can record that failure. Therefore: the application passes its own
+  `@RunId` and, if the call did not return, calls `usp_Collections_CloseReceivablesRun` (it only touches rows still `Running` and does nothing while a
+  refresh holds the lock); whatever remains (process killed) is closed under the lock at the start of the next refresh (Run **and** RunCompany rows, and the
+  company's last-attempt state, so `CompanyState` stops showing an older failure).
+* **"Loading" only while a run of that company is genuinely recent and unfinished**: `usp_Collections_GetCoverage` counts a `Running` run for at most
+  `@RunLeaseMinutes` (default 40, must exceed `RefreshCommandTimeoutSeconds`/60) and ignores a company that already finished in that run. A failed company
+  therefore shows "Could not load data for ..." with Retry, even while the other company loads.
+* **Retry** is never blocked by stale rows: the refresh takes the application lock without waiting, recovers leftovers, then runs. Only a live refresh returns `AlreadyRunning`.
+* Diagnose with `database/collections-receivables/tools/diagnose_receivables_refresh.sql` (read-only). Clean up old rows of one company with
+  `tools/close_abandoned_receivables_runs.sql` (dry run by default).
+* Linked-server provider/MSDTC settings are deliberately **not** changed by this fix; compare `sys.servers.modify_date` with `LastAttemptUtc` before concluding anything from an old recorded error.

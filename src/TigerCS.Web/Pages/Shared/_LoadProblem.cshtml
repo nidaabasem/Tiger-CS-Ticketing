@@ -4,13 +4,17 @@
 @* One short line when the receivables of a company could not be loaded, naming it, with Retry. Never shown for a complete, fresh load. *@
 @if (CollectionsDisplay.FailedCompanies(Model) is { } failed)
 {
-    var names = CollectionsDisplay.CompanyList(failed);
-    if (Model.LoadInProgress)
+    // Per company: one that is really being loaded now shows progress; one that is not (failed, stale or not loaded) always gets Retry,
+    // even while the other company is loading. A finished or abandoned run never counts as "loading" (see usp_Collections_GetCoverage).
+    var loading = failed.Where(c => c.RefreshInProgress).ToList();
+    var problem = failed.Where(c => !c.RefreshInProgress).ToList();
+    if (loading.Count > 0)
     {
-        <div class="receivables-notice" role="status" data-load-running>Loading data for @names…</div>
+        <div class="receivables-notice" role="status" data-load-running>Loading data for @CollectionsDisplay.CompanyList(loading)…</div>
     }
-    else
+    if (problem.Count > 0)
     {
+        var names = CollectionsDisplay.CompanyList(problem);
         var from = Model.RequestedFrom ?? CollectionsDisplay.DubaiToday();
         var through = Model.RequestedThrough ?? from;
         <div class="receivables-notice receivables-notice--warning load-problem" role="alert" data-load-problem>
@@ -19,7 +23,7 @@
                 <input type="hidden" name="dateFrom" value="@from.ToString("yyyy-MM-dd")" />
                 <input type="hidden" name="dateTo" value="@through.ToString("yyyy-MM-dd")" />
                 <input type="hidden" name="returnUrl" value="@(ViewContext.HttpContext.Request.Path + ViewContext.HttpContext.Request.QueryString)" />
-                @if (failed.Count == 1) { <input type="hidden" name="companyId" value="@failed[0].CompanyId" /> }
+                @if (problem.Count == 1) { <input type="hidden" name="companyId" value="@problem[0].CompanyId" /> }
                 <button class="btn" type="submit" data-load-button>Retry</button>
                 <span class="receivables-loading" role="status" hidden>Retrying…</span>
             </form>
