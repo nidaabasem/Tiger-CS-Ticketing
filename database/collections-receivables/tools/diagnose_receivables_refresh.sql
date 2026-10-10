@@ -14,7 +14,7 @@ SELECT @@SERVERNAME AS ServerName, SERVERPROPERTY('InstanceName') AS InstanceNam
 
 -- 2. Linked server(s) as configured NOW. modify_date vs LastAttemptUtc of section 3: an error recorded before modify_date describes the OLD
 --    configuration (e.g. provider MSOLEDBSQL) and says nothing about the current one (SQLNCLI).
-SELECT s.name, s.product, s.provider, s.data_source, s.is_data_access_enabled AS DataAccess, s.is_rpc_out_enabled AS RpcOut,
+SELECT s.server_id, s.name, s.product, s.provider, s.data_source, s.is_data_access_enabled AS DataAccess, s.is_rpc_out_enabled AS RpcOut,
        s.is_remote_proc_transaction_promotion_enabled AS RemoteProcTransactionPromotion, s.connect_timeout AS ConnectTimeoutS, s.query_timeout AS QueryTimeoutS, s.modify_date
   FROM sys.servers s WHERE s.is_linked = 1 AND (s.name = N'10.10.10.94' OR s.data_source = N'10.10.10.94');
 SELECT name, value_in_use FROM sys.configurations WHERE name IN (N'remote query timeout (s)', N'remote proc trans');
@@ -24,9 +24,14 @@ SELECT CompanyId, CurrentRunId, LastAttemptRunId, LastAttemptUtc, LastAttemptSta
        LastSuccessUtc, ConsecutiveFailures, SnapshotRowCount, CoverageFromDate, CoverageThroughDate
   FROM dbo.CollectionsReceivableCompanyState ORDER BY CompanyId;
 
--- 4. Runs and companies still marked Running, with age. A call that is really alive is younger than the app's command timeout (default 30 min).
-SELECT r.RunId, r.TriggerSource, r.RequestedCompanyId, r.StartedUtc, r.FinishedUtc, r.Status AS RunStatus, rc.CompanyId, rc.Status AS CompanyStatus,
-       DATEDIFF(MINUTE, rc.StartedUtc, SYSUTCDATETIME()) AS CompanyAgeMinutes, rc.RawRows, rc.PublishedRows, rc.ErrorNumber
+-- 4. Runs and companies still marked Running, with age and the verdict of BOTH loading rules for each company:
+--    OldRule = the previous usp_Collections_GetCoverage (any Running run started < 3 h ago);
+--    NewRule = the current one (started < 40 min ago AND this company's own row of the run not finished).
+--    A page that says "Loading data for ..." is explained by exactly the rows with OldRule/NewRule = 1 (ages are in UTC minutes).
+SELECT r.RunId, r.TriggerSource, r.RequestedCompanyId, r.StartedUtc, DATEDIFF(MINUTE, r.StartedUtc, SYSUTCDATETIME()) AS RunAgeMinutes, r.FinishedUtc, r.Status AS RunStatus,
+       rc.CompanyId, rc.Status AS CompanyStatus, rc.RawRows, rc.PublishedRows, rc.ErrorNumber,
+       CAST(CASE WHEN r.Status = 'Running' AND r.StartedUtc > DATEADD(HOUR, -3, SYSUTCDATETIME()) THEN 1 ELSE 0 END AS bit) AS OldRule,
+       CAST(CASE WHEN r.Status = 'Running' AND r.StartedUtc > DATEADD(MINUTE, -40, SYSUTCDATETIME()) AND (rc.RunId IS NULL OR rc.Status = 'Running') THEN 1 ELSE 0 END AS bit) AS NewRule
   FROM dbo.CollectionsReceivableRun r
   LEFT JOIN dbo.CollectionsReceivableRunCompany rc ON rc.RunId = r.RunId
  WHERE r.Status = 'Running' OR rc.Status = 'Running' OR r.StartedUtc > DATEADD(DAY, -2, SYSUTCDATETIME())
@@ -60,8 +65,18 @@ BEGIN CATCH
     SELECT N'sp_testlinkedserver failed' AS LinkedServerTest, ERROR_NUMBER() AS ErrorNumber, ERROR_MESSAGE() AS ErrorMessage;
 END CATCH;
 
+-- 8. Which application hosts run Hangfire against this database (BackgroundJobs:Enabled=true), and is the refresh job registered? Only the API host
+--    registers jobs; the Web host never does. Server ids read <machine>:<pid>:<guid>. Empty/failed = Hangfire never ran against this database.
+BEGIN TRY
+    EXEC sys.sp_executesql N'SELECT Id AS HangfireServerId, StartedAt, LastHeartbeat, DATEDIFF(MINUTE, LastHeartbeat, SYSUTCDATETIME()) AS HeartbeatAgeMinutes FROM HangfireSla.[Server] ORDER BY LastHeartbeat DESC';
+    EXEC sys.sp_executesql N'SELECT [Key], Field, LEFT(Value, 120) AS Value FROM HangfireSla.[Hash] WHERE [Key] = N''recurring-job:collections-receivables-refresh'' AND Field IN (N''Cron'', N''LastExecution'', N''NextExecution'', N''LastJobId'')';
+END TRY
+BEGIN CATCH
+    SELECT N'Section 8: no Hangfire tables (HangfireSla) readable' AS Note, ERROR_NUMBER() AS ErrorNumber;
+END CATCH;
+
 /*
-  8. (Manual, not run here) Time ONE company over a narrow window to separate "unreachable" from "slow", in SSMS, outside any transaction:
+  9. (Manual, not run here) Time ONE company over a narrow window to separate "unreachable" from "slow", in SSMS, outside any transaction:
          SET REMOTE_PROC_TRANSACTIONS OFF;
          DECLARE @t datetime2 = SYSUTCDATETIME();
          INSERT INTO #t EXEC [10.10.10.94].[PACTRPT].[dbo].[p32AccountReceivables] @StartDate = '20260101', @EndDate = '20260131 23:59:59.997', @MinAmount = 0;

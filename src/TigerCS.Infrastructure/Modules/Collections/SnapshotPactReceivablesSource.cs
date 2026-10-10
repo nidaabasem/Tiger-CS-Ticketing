@@ -750,25 +750,29 @@ public sealed class SqlReceivablesRefresher(IConfiguration configuration, Receiv
     /// <summary>
     /// Gives the run this call started a terminal state (Run, RunCompany and the company's last attempt) when the call ended without a result.
     /// Safe to call always: the procedure only touches rows still 'Running' and does nothing while a refresh still holds the application lock.
-    /// Never throws; whatever it cannot close is closed by the next refresh under the lock.
+    /// A timeout or cancellation does not stop a batch blocked in the linked-server call: its SQL session (and the lock) lives until the remote procedure
+    /// returns, so the procedure waits up to <see cref="CloseLockWaitSeconds"/> for it. Never throws; whatever it cannot close is closed by the next refresh under the lock.
     /// </summary>
+    private const int CloseLockWaitSeconds = 120;
+
     private async Task CloseUnfinishedRunAsync(string connectionString, Guid runId, int errorNumber, string message)
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(CloseLockWaitSeconds + 30));
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync(cts.Token);
             await using var command = new SqlCommand("dbo.usp_Collections_CloseReceivablesRun", connection)
-            { CommandType = CommandType.StoredProcedure, CommandTimeout = 30 };
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = CloseLockWaitSeconds + 20 };
             command.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = runId;
             command.Parameters.Add("@ErrorNumber", SqlDbType.Int).Value = errorNumber;
             command.Parameters.Add("@Message", SqlDbType.NVarChar, 1000).Value = message;
             command.Parameters.Add("@RequireIdle", SqlDbType.Bit).Value = true;
+            command.Parameters.Add("@LockWaitSeconds", SqlDbType.Int).Value = CloseLockWaitSeconds;
             var outcome = command.Parameters.Add("@Outcome", SqlDbType.VarChar, 20); outcome.Direction = ParameterDirection.Output;
             await command.ExecuteNonQueryAsync(cts.Token);
             if (outcome.Value is "StillRunning")
-                logger.LogWarning("Receivables refresh {RunId} did not return but its SQL session still holds the refresh lock; it will be closed by the next refresh once the session ends.", runId);
+                logger.LogWarning("Receivables refresh {RunId} did not return and its SQL session (blocked in the PACT call) still holds the refresh lock after {Wait} s; the next refresh closes it once that session ends.", runId, CloseLockWaitSeconds);
         }
         catch (Exception ex) when (ex is SqlException or InvalidOperationException or OperationCanceledException)
         { logger.LogWarning("Could not close the unfinished receivables refresh {RunId} ({ExceptionType}); the next refresh will.", runId, ex.GetType().Name); }

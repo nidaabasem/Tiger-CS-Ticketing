@@ -61,8 +61,10 @@ GO
   CompanyState keeps showing the previous failure. Idempotent and narrow:
     * @RunId given  -> only that run (and its company rows); NULL -> every run / company row still marked Running.
     * Only rows with Status = 'Running' are touched; terminal rows are never rewritten.
-    * @RequireIdle = 1 (callers outside the refresh) first takes the refresh application lock with no wait. If a refresh still holds it,
-      something IS running: nothing is changed and @Outcome = 'StillRunning'. The refresh procedure calls this with 0 because it holds the lock itself.
+    * @RequireIdle = 1 (callers outside the refresh) first takes the refresh application lock, waiting up to @LockWaitSeconds. If a refresh still holds
+      it, something IS running: nothing is changed and @Outcome = 'StillRunning'. The refresh procedure calls this with 0 because it holds the lock itself.
+      Why a wait: a client timeout / cancellation does NOT stop a batch that is blocked inside the linked-server call - the session (and the lock) lives
+      until the remote procedure returns (measured on SQL Server 2022), so the caller's first attempt usually finds the lock still held.
     * CompanyState is updated only when the closed attempt is newer than the state's last attempt, so an old orphan never overwrites a later result.
   The earlier published snapshot (CurrentRunId, coverage, LastSuccessUtc) is never touched.
 */
@@ -72,6 +74,7 @@ CREATE OR ALTER PROCEDURE dbo.usp_Collections_CloseReceivablesRun
     @Message         nvarchar(1000)   = N'The refresh was interrupted before it finished (timeout, cancellation or application restart).',
     @RunStatus       varchar(20)      = 'Failed',      -- 'Failed' | 'Abandoned'
     @RequireIdle     bit              = 1,
+    @LockWaitSeconds int              = 0,             -- 0 = do not wait; the application passes 120
     @ClosedRuns      int              = NULL OUTPUT,
     @ClosedCompanies int              = NULL OUTPUT,
     @Outcome         varchar(20)      = NULL OUTPUT    -- 'Closed' | 'StillRunning'
@@ -81,10 +84,10 @@ BEGIN
     SELECT @ClosedRuns = 0, @ClosedCompanies = 0, @Outcome = 'Closed';
     IF @RunStatus NOT IN ('Failed', 'Abandoned') THROW 50040, N'@RunStatus must be Failed or Abandoned.', 1;
 
-    DECLARE @lock int, @now datetime2(3) = SYSUTCDATETIME(), @msg nvarchar(1000) = LEFT(@Message, 1000), @takenHere bit = 0;
+    DECLARE @lock int, @now datetime2(3) = SYSUTCDATETIME(), @msg nvarchar(1000) = LEFT(@Message, 1000), @takenHere bit = 0, @lockMs int = 1000 * CASE WHEN @LockWaitSeconds < 0 THEN 0 WHEN @LockWaitSeconds > 600 THEN 600 ELSE @LockWaitSeconds END;
     IF @RequireIdle = 1
     BEGIN
-        EXEC @lock = sys.sp_getapplock @Resource = N'Collections.ReceivablesRefresh', @LockMode = N'Exclusive', @LockOwner = N'Session', @LockTimeout = 0;
+        EXEC @lock = sys.sp_getapplock @Resource = N'Collections.ReceivablesRefresh', @LockMode = N'Exclusive', @LockOwner = N'Session', @LockTimeout = @lockMs;
         IF @lock < 0 BEGIN SET @Outcome = 'StillRunning'; RETURN; END;
         SET @takenHere = 1;
     END;

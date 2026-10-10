@@ -332,6 +332,12 @@ the Load/progress flow, API authorization and parameter pass-through, static con
   `@RunId` and, if the call did not return, calls `usp_Collections_CloseReceivablesRun` (it only touches rows still `Running` and does nothing while a
   refresh holds the lock); whatever remains (process killed) is closed under the lock at the start of the next refresh (Run **and** RunCompany rows, and the
   company's last-attempt state, so `CompanyState` stops showing an older failure).
+* **A timeout or cancellation does not stop a batch that is blocked inside the linked-server call** (measured on SQL Server 2022): the SQL session, and with it
+  the refresh lock, lives until the remote procedure returns. The application's close therefore waits up to 120 s for the lock; if the remote call is still
+  blocked, the rows stay `Running` (and a Retry returns `AlreadyRunning`) until that session ends. `diagnose_receivables_refresh.sql` section 5 shows the
+  holding session; ending a hung session (`KILL <spid>`) is a DBA decision and is never done by the application or these scripts.
+* On IIS in-process hosting an idle-timeout or recycle stops the process (and its Hangfire server) and cancels running jobs; `RefreshOnStartup` then starts a
+  refresh at the next cold start. Prefer `AlwaysRunning` / no idle timeout for the API pool.
 * **"Loading" only while a run of that company is genuinely recent and unfinished**: `usp_Collections_GetCoverage` counts a `Running` run for at most
   `@RunLeaseMinutes` (default 40, must exceed `RefreshCommandTimeoutSeconds`/60) and ignores a company that already finished in that run. A failed company
   therefore shows "Could not load data for ..." with Retry, even while the other company loads.
