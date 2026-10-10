@@ -176,5 +176,13 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
 
     public string ResultsUrl(int page = 1) => PageUrl(page).Replace("render=full", "handler=Results");
 
+    /// <summary>Short review notes of a unit's CRM / PACT linking (the reasons the unit cannot be trusted as one customer).</summary>
+    public static IEnumerable<string> ReviewNotes(CollectionsCampaignContactDto row)
+    {
+        if (row.Reason.Contains("CrmCustomerAmbiguous", StringComparison.Ordinal)) yield return "Several CRM customers: needs review";
+        if (row.Reason.Contains("ContactSourceConflict", StringComparison.Ordinal)) yield return "CRM and PACT contacts differ: needs review";
+        if (row.Reason.Contains("NoValidContact", StringComparison.Ordinal)) yield return "No mobile or email: cannot be sent";
+    }
+
     public static string MoneyOrDash(decimal amount) => amount > 0 ? amount.ToString("N2", CultureInfo.InvariantCulture) : "—";
 }

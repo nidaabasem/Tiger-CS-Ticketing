@@ -42,7 +42,7 @@ public sealed class CollectionsCampaignRenderTests
         Assert.Equal(["Customer", "Mobile", "Email", "Tower", "Apartment", "Due", "Overdue", "Total"], headers);
         var cells = Regex.Matches(Regex.Match(html, "<tbody>.*?</tbody>", RegexOptions.Singleline).Value, "<td[^>]*>(.*?)</td>", RegexOptions.Singleline)
             .Select(m => System.Net.WebUtility.HtmlDecode(Regex.Replace(m.Groups[1].Value, "<[^>]+>", "")).Trim()).ToList();
-        Assert.Equal(["Campaign Customer", "+971500003001", "—", "Al Ghaf", "TP140-101", "—", "650.00", "650.00"], cells);   // no email -> a dash; zero Due -> a dash; Total = Due + Overdue
+        Assert.Equal(["Campaign Customer", "+971500003001", "— No email: email not possible", "Al Ghaf", "TP140-101", "—", "650.00", "650.00"], cells);   // no email -> a dash and the short reason; zero Due -> a dash; Total = Due + Overdue
         Assert.Contains("Export review CSV", html);
         Assert.DoesNotContain("Export Genesys CSV", html);
         foreach (var gone in new[] { "Earliest unpaid due date", "Qualifying balance", "Needs review", "Financial source reconciliation", "Data details", "Scheduled:", "Data refreshed", "campaign-summary", "Source:", "Preview only" })

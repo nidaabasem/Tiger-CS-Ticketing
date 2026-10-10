@@ -48,8 +48,12 @@ public sealed class RealSqlCampaignEquivalenceTests
     {
         var options = new CollectionsOptions { Enabled = true };
         return new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true, LegalNoticeExportEnabled = legalNoticeRelease }, new PactReceivablesOptions { Enabled = true },
-            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(nowUtc)), source, NullLogger<CollectionsCampaignAppService>.Instance);
+            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(nowUtc)), source, NullLogger<CollectionsCampaignAppService>.Instance, CrmStore(), new CollectionsCrmOwnersOptions { Enabled = true });
     }
+
+    /// <summary>The CRM owners (V010) of the same database: both the SQL engine and the in-memory reference read them, so the two must still agree.</summary>
+    private static TigerCS.Infrastructure.Modules.Collections.SqlCollectionsCrmOwnerStore CrmStore() =>
+        new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:TigerCsDatabase"] = ConnectionString }).Build(), new ReceivablesSnapshotOptions());
 
     private static async Task<int?> TowerIdAsync(string number)
     {

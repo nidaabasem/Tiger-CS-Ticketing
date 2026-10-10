@@ -27,9 +27,9 @@ else if (Model.Report is { } report)
                 @foreach (var row in report.Items)
                 {
                     <tr>
-                        <td><strong>@row.CustomerName</strong></td>
-                        <td>@(row.Phone.Length > 0 ? row.Phone : "—")</td>
-                        <td>@(row.Email.Length > 0 ? row.Email : "—")</td>
+                        <td><strong>@row.CustomerName</strong>@foreach (var note in CampaignsModel.ReviewNotes(row)) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }</td>
+                        <td>@(row.Phone.Length > 0 ? row.Phone : "—")@if (row.Phone.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No mobile: voice / SMS not possible</span> }</td>
+                        <td>@(row.Email.Length > 0 ? row.Email : "—")@if (row.Email.Length == 0) { <span class="receivables-meta receivables-meta--missing" data-unit-note>No email: email not possible</span> }</td>
                         <td>@(!string.IsNullOrWhiteSpace(row.TowerName) ? row.TowerName : row.TowerNumber ?? (row.ProjectCode.Length > 0 ? row.ProjectCode : "—"))</td>
                         <td>@row.UnitCode</td>
                         <td class="num" data-unit-due>@CampaignsModel.MoneyOrDash(row.DueAmount)</td>

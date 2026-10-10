@@ -6,7 +6,7 @@ public sealed record CollectionsCampaignContactDto(
     string ProjectCode, decimal? Amount, string Currency, DateOnly? DueDate,
     string Stage, string CycleKey, string Status, string Reason,
     string? TowerNumber = null, string? TowerName = null,
-    decimal DueAmount = 0m, decimal OverdueAmount = 0m)
+    decimal DueAmount = 0m, decimal OverdueAmount = 0m, int? CrmCustomerId = null)
 {
     /// <summary>Due + Overdue of the unit (instalments due today or earlier that are still unpaid).</summary>
     public decimal TotalAmount => DueAmount + OverdueAmount;

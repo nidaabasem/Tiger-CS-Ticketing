@@ -16,7 +16,7 @@ namespace TigerCS.Application.Modules.Collections.Services;
 public sealed class CollectionsCampaignAppService(
     CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
     CollectionsAuthorizationService authorization, CollectionsClock clock, IPactReceivablesSource source,
-    ILogger<CollectionsCampaignAppService> logger)
+    ILogger<CollectionsCampaignAppService> logger, ICollectionsCrmOwnerStore? crmOwners = null, CollectionsCrmOwnersOptions? crmOptions = null)
 {
     public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
         CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
@@ -144,7 +144,7 @@ public sealed class CollectionsCampaignAppService(
             var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             return new CollectionsCampaignContactDto(id, $"ext:Pact:{f.TenantId}", f.CompanyId, f.TenantId, f.FullName, f.Phone, f.Email,
                 f.UnitId, f.UnitCode, f.ProjectCode, f.Amount, sourceOptions.Currency, f.EarliestDue, selected.ToString(), cycle,
-                unitStatus, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), f.TowerNumber, f.TowerName, f.DueAmount, f.OverdueAmount);
+                unitStatus, string.Join(";", reasons.Count == 0 ? ["Qualifies"] : reasons), f.TowerNumber, f.TowerName, f.DueAmount, f.OverdueAmount, f.CrmCustomerId);
         }
 
         int count, ready, review;
@@ -168,9 +168,22 @@ public sealed class CollectionsCampaignAppService(
         else
         {
             List<CampaignUnitFacts> facts;
+            IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? links = null;
             try
             {
-                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal);
+                // ONE bulk read of the CRM links of every unit in the window (never a request per unit).
+                if (crmOwners is not null && crmOptions?.Enabled == true)
+                {
+                    var keys = snapshot!.Items.Select(r => (r.CompanyId, Key: CollectionsUnitKey.Normalize(r.UnitCode))).Where(k => k.Key is not null)
+                        .Select(k => (k.CompanyId, k.Key!)).Distinct().ToList();
+                    try { links = await crmOwners.GetLinksAsync(keys, budget.Token); }
+                    catch (Exception ex) when (ex is DbException or InvalidOperationException)
+                    {
+                        // CRM only enriches: if its local copy cannot be read the list still works on PACT's own contact data (the failure is logged, not hidden).
+                        logger.LogWarning("CRM owner links could not be read ({ExceptionType}); PACT contact data is used.", ex.GetType().Name);
+                    }
+                }
+                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal, links);
             }
             catch (OverflowException)
             {
@@ -181,6 +194,10 @@ public sealed class CollectionsCampaignAppService(
             {
                 return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable,
                     "PACT returned a receivable without a valid company/customer identity.");
+            }
+            catch (Exception ex) when (ex is DbException)
+            {
+                return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.FinanceUnavailable, "The CRM owner data could not be read.");
             }
             if (forExport && facts.Count > exportLimit)
                 return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
@@ -216,6 +233,8 @@ public sealed class CollectionsCampaignAppService(
         if (coverageIncomplete) reasons.Add("CoverageIncomplete");
         if (!campaignOptions.FinancialSourceValidated) reasons.Add("SourceReconciliationRequired");
         if (Has(CollectionsCampaignFlags.NoValidContact)) reasons.Add("NoValidContact");
+        if (Has(CollectionsCampaignFlags.CrmCustomerAmbiguous)) reasons.Add("CrmCustomerAmbiguous");
+        if (Has(CollectionsCampaignFlags.ContactSourceConflict)) reasons.Add("ContactSourceConflict");
         var status = reasons.Count > 0 ? "NeedsReview" : "Ready";
         if (reasons.Count == 0 && (date != clock.BusinessDate || !dates.Contains(date)))
         { status = "PreviewOnly"; reasons.Add("OutsideSchedule"); }
@@ -231,7 +250,8 @@ public sealed class CollectionsCampaignAppService(
     /// must return the same units, flags, totals and order - see the equivalence tests) and the fallback for sources/snapshots without the SQL engine.
     /// </summary>
     internal List<CampaignUnitFacts> BuildFactsInMemory(IReadOnlyList<PactReceivableInstalment> items, DateOnly from, DateOnly to, decimal min,
-        CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId, DateOnly? today = null, decimal? minTotal = null)
+        CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId, DateOnly? today = null, decimal? minTotal = null,
+        IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? crmLinks = null)
     {
         // Defensive: a legacy source may ignore the window.
         // Floating-point residue from the deployed procedures (e.g. 1E-12 on a settled instalment) is snapped to fils; a genuine
@@ -263,8 +283,14 @@ public sealed class CollectionsCampaignAppService(
                 var overdueAmount = today is { } t2 ? g.Where(r => DateOnly.FromDateTime(r.DueDate) < t2).Sum(r => r.Amount) : 0m;
                 if (today is not null && dueAmount + overdueAmount <= 0) return null;
                 if (minTotal is { } floor && dueAmount + overdueAmount <= floor) return null;
-                var phone = CollectionsContactNormalizer.NormalizePhone(first.Mobile);
-                var email = CollectionsContactNormalizer.NormalizeEmail(first.Email);
+                // CRM first, PACT completing; several CRM customers or conflicting people are flagged, never merged (CollectionsContactLinker).
+                var unitKey = CollectionsUnitKey.Normalize(g.Key.Code);
+                var link = unitKey is not null && crmLinks is not null && crmLinks.TryGetValue((g.Key.CompanyId, unitKey), out var found) ? found : null;
+                var linked = CollectionsContactLinker.Link(
+                    new SourceContact(first.FullName.Trim(), CollectionsContactNormalizer.NormalizePhone(first.Mobile), CollectionsContactNormalizer.NormalizeEmail(first.Email)),
+                    link?.Contact ?? SourceContact.Empty, link?.Status ?? CrmLinkStatus.None);
+                var phone = linked.Phone;
+                var email = linked.Email;
                 var flags = CollectionsCampaignFlags.None;
                 if (amount.Reason != "Qualifies") flags |= CollectionsCampaignFlags.AmbiguousInstalments;
                 if (amount.Amount is { } value && value != decimal.Round(value, 2)) flags |= CollectionsCampaignFlags.AmountPrecisionNeedsReview;
@@ -276,10 +302,10 @@ public sealed class CollectionsCampaignAppService(
                 if (ambiguousTenants.Contains((g.Key.CompanyId, g.Key.Tenant))) flags |= CollectionsCampaignFlags.UnitAllocationNeedsReview;
                 if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase)))
                     flags |= CollectionsCampaignFlags.ContradictoryPaymentStatus;
-                if (selected != CollectionsCampaignStage.LegalReferral && phone.Length == 0 && email.Length == 0)
-                    flags |= CollectionsCampaignFlags.NoValidContact;
-                return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
-                    amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount);
+                flags |= CollectionsContactLinker.Flags(linked, selected != CollectionsCampaignStage.LegalReferral);
+                return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, linked.NameSource == "Crm" ? linked.Name : first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
+                    amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount,
+                    link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null);
             }).OfType<CampaignUnitFacts>().ToList();
         if (companyId is { } company) facts = facts.Where(f => f.CompanyId == company).ToList();
         if (term is not null)

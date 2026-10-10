@@ -4,6 +4,7 @@ using System.Web;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Web.Services.Api;
 
 namespace TigerCS.Web.Pages.Collections;
@@ -160,7 +161,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
 
     /// <summary><see cref="Total"/> = Due + Overdue = the sum of the listed instalments.
 public sealed record UnitLine(string Customer, string Phone, string Email, string Tower, string Apartment, decimal Total, decimal Due, decimal Overdue,
-        IReadOnlyList<InstalmentLine> Instalments, string DetailsId);
+        IReadOnlyList<InstalmentLine> Instalments, string DetailsId, IReadOnlyList<string> Notes);
 
     public static IReadOnlyList<UnitLine> Lines(PactInstalmentsPageDto report)
     {
@@ -175,15 +176,26 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
                 Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();
             var tower = !string.IsNullOrWhiteSpace(unit.TowerName) ? unit.TowerName : unit.TowerNumber ?? "—";
             if (instalments.Count == 0) continue;   // nothing Due or Overdue: the unit is not listed
-            lines.Add(new UnitLine(unit.CustomerName,
-                First(rows.Select(r => r.Mobile)), First(rows.Select(r => r.Email)), tower, unit.UnitCode,
+            // CRM first, PACT completing, nobody merged on conflict (CollectionsContactLinker): the same rule SQL applies to Campaigns and the Payment Summary uses.
+            var crmStatus = unit.CrmCustomers is null ? CrmLinkStatus.None : unit.CrmCustomers > 1 ? CrmLinkStatus.Ambiguous : CrmLinkStatus.Single;
+            var linked = CollectionsContactLinker.Link(
+                new SourceContact(unit.CustomerName.Trim(), CollectionsContactNormalizer.NormalizePhone(First(rows.Select(r => r.Mobile), "")), CollectionsContactNormalizer.NormalizeEmail(First(rows.Select(r => r.Email), ""))),
+                new SourceContact(unit.CrmName?.Trim() ?? "", unit.CrmPhone ?? "", unit.CrmEmail ?? ""), crmStatus);
+            var notes = new List<string>();
+            if (linked.CrmCustomerAmbiguous) notes.Add("Several CRM customers: needs review");
+            if (linked.SourceConflict) notes.Add("CRM and PACT contacts differ: needs review");
+            if (!linked.HasContact) notes.Add("No mobile or email: cannot be contacted");
+            else if (linked.Phone.Length == 0) notes.Add("No mobile");
+            else if (linked.Email.Length == 0) notes.Add("No email");
+            lines.Add(new UnitLine(linked.Name.Length > 0 ? linked.Name : unit.CustomerName,
+                linked.Phone.Length > 0 ? linked.Phone : "—", linked.Email.Length > 0 ? linked.Email : "—", tower, unit.UnitCode,
                 instalments.Sum(i => i.Remaining), instalments.Where(i => i.Status == Due).Sum(i => i.Remaining), instalments.Where(i => i.Status == Overdue).Sum(i => i.Remaining),
-                instalments, $"unit-{unit.CompanyId}-{unit.UnitId}-{Math.Abs(string.GetHashCode(unit.TenantId + "|" + unit.UnitCode, StringComparison.Ordinal))}"));
+                instalments, $"unit-{unit.CompanyId}-{unit.UnitId}-{Math.Abs(string.GetHashCode(unit.TenantId + "|" + unit.UnitCode, StringComparison.Ordinal))}", notes));
         }
         return lines;
     }
 
-    private static string First(IEnumerable<string> values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? "—";
+    private static string First(IEnumerable<string> values, string fallback = "—") => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? fallback;
 
     public static string Money(decimal? amount) => amount is { } value ? value.ToString("N2", CultureInfo.InvariantCulture) : "—";
 

@@ -140,10 +140,14 @@ BEGIN
     -- 3. The requested page of units, oldest due date first (then company, customer, unit: a total order, so pages never overlap or skip).
     SELECT p.CompanyId, p.TenantId COLLATE DATABASE_DEFAULT AS TenantId, p.UnitId, p.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode,
            r.FullName, r.TowerNumber, CONVERT(nvarchar(400), tw.TowerName) AS TowerName,
-           p.Cnt AS InstalmentCount, p.Rem AS RemainingTotal, p.Oldest AS OldestDueDate
+           p.Cnt AS InstalmentCount, p.Rem AS RemainingTotal, p.Oldest AS OldestDueDate,
+           -- The CRM side of the unit (V010; NULL = CRM holds no eligible sale or is not loaded): customers = 1 -> that customer's contact, > 1 -> ambiguous, nobody chosen.
+           l.Customers AS CrmCustomers, CASE WHEN l.Customers = 1 THEN l.CustomerId END AS CrmCustomerId, CASE WHEN l.Customers = 1 THEN l.FullName END AS CrmName,
+           CASE WHEN l.Customers = 1 THEN l.PhoneNorm END AS CrmPhone, CASE WHEN l.Customers = 1 THEN l.EmailNorm END AS CrmEmail
       FROM (SELECT * FROM #u ORDER BY Oldest, CompanyId, TenantId, UnitCode, UnitId
              OFFSET (@PageNumber - 1) * @PageSize ROWS FETCH NEXT @PageSize ROWS ONLY) p
       JOIN dbo.CollectionsReceivableSnapshot r ON r.SnapshotRowId = p.FirstId
+      LEFT JOIN dbo.fn_Collections_CrmUnitLinks() l ON l.CompanyId = p.CompanyId AND l.UnitKey = dbo.fn_CollectionsUnitKey(p.UnitCode) COLLATE Latin1_General_BIN2
       OUTER APPLY (SELECT TOP (1) t.TowerName FROM dbo.CollectionsTowers t
                     WHERE t.CompanyId = r.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) = r.TowerNumber
                     ORDER BY CASE WHEN t.IsActive = 1 THEN 0 ELSE 1 END, t.TowerId) tw

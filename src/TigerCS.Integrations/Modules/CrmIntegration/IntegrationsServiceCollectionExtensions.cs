@@ -141,6 +141,7 @@ public static class IntegrationsServiceCollectionExtensions
         services.AddScoped<IDocumentDeliveryChannelSender, EmailDocumentDeliveryChannelSender>();
 
         AddCrmBuyerLookupGateway(services);
+        AddCrmUnitOwnersGateway(services);
         AddPactGateway(services, configuration);
         AddEdsmCollections(services, configuration);
         AddGenesysOutbound(services, configuration);
@@ -177,6 +178,17 @@ public static class IntegrationsServiceCollectionExtensions
     /// turns that into an <c>Unavailable</c> outcome on first use instead.
     /// </para>
     /// </summary>
+    /// <summary>The bulk owner feed of Collections (<c>GET /TicketingSystem/GetUnitOwners</c>); a typed client like the buyer lookup, base address read lazily from <c>Crm:BaseUrl</c>.</summary>
+    private static void AddCrmUnitOwnersGateway(IServiceCollection services)
+    {
+        services.AddHttpClient<TigerCS.Application.Modules.Collections.Abstractions.ICrmUnitOwnersGateway, CrmUnitOwnersHttpGateway>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<CrmGatewayOptions>>().Value;
+            if (!string.IsNullOrWhiteSpace(options.BaseUrl)) client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(120);   // one page of a few thousand rows
+        });
+    }
+
     private static void AddCrmBuyerLookupGateway(IServiceCollection services)
     {
         services.AddHttpClient<ICrmBuyerLookupGateway, CrmBuyerHttpGateway>((sp, client) =>

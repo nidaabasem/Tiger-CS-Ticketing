@@ -28,8 +28,8 @@ else if (Model.Report is { } report)
                     {
                         <tbody class="unit-group" data-unit>
                         <tr data-unit-row>
-                            <td><strong>@unit.Customer</strong></td>
-                            <td>@unit.Phone<span class="receivables-meta">@unit.Email</span></td>
+                            <td><strong>@unit.Customer</strong>@foreach (var note in unit.Notes.Where(n => n.Contains("review"))) { <span class="receivables-meta receivables-meta--review" data-unit-note>@note</span> }</td>
+                            <td>@unit.Phone<span class="receivables-meta">@unit.Email</span>@foreach (var note in unit.Notes.Where(n => !n.Contains("review"))) { <span class="receivables-meta receivables-meta--missing" data-unit-note>@note</span> }</td>
                             <td>@unit.Tower</td>
                             <td>@unit.Apartment</td>
                             <td class="num"><span class="receivables-amount" data-unit-due>@ReceivablesModel.MoneyOrDash(unit.Due)</span></td>

@@ -115,6 +115,10 @@ BEGIN
         DueAmt decimal(19,4) NOT NULL, OverAmt decimal(19,4) NOT NULL,
         CodeSeq int NOT NULL, UnitId bigint NOT NULL, Variants bit NOT NULL, BadCode bit NOT NULL, PhoneId int NULL, EmailId int NULL, PhoneOk bit NULL, EmailOk bit NULL,
         PhoneVer tinyint NULL, EmailVer tinyint NULL, Conflict int NOT NULL DEFAULT 0, UnitAlloc int NOT NULL DEFAULT 0, Flags int NULL,
+        -- CRM overlay (V010): 0 = CRM holds no eligible sale / is not loaded, 1 = exactly one customer, 2 = several customers (nobody chosen)
+        CrmStatus tinyint NOT NULL DEFAULT 0, CrmCustomerId int NULL, CrmName nvarchar(400) NULL, CrmPhone nvarchar(50) NULL, CrmEmail nvarchar(320) NULL,
+        PactName nvarchar(400) NULL, PactPhone nvarchar(50) NULL, PactEmail nvarchar(320) NULL, SrcConflict bit NOT NULL DEFAULT 0,
+        EffName nvarchar(400) NULL, EffPhone nvarchar(50) NULL, EffEmail nvarchar(320) NULL,
         PRIMARY KEY (CompanyId, UnitSeq)
     );
     CREATE TABLE #vo (CompanyId int NOT NULL, UnitSeq int NOT NULL, FullName nvarchar(400) NOT NULL, ProjectCode nvarchar(200) NOT NULL, TowerNumber nvarchar(20) NULL,
@@ -252,6 +256,28 @@ BEGIN
                     OR EXISTS (SELECT 1 FROM #mg g WHERE g.CompanyId = a.CompanyId AND g.TenantSeq = a.TenantSeq GROUP BY g.CodeSeq HAVING COUNT(*) > 1);
             END;
 
+            -- CRM first (V010), PACT completes: the unit's contact is CRM's when exactly one eligible customer holds the unit, PACT supplies what CRM lacks, several customers
+            -- are never merged (CRM unused, flag 128) and two people are never mixed (phone / e-mail disagree: CRM alone, flag 256). Mirrors CollectionsContactLinker.
+            UPDATE a SET CrmStatus = CASE WHEN l.UnitKey IS NULL THEN 0 WHEN l.Customers > 1 THEN 2 ELSE 1 END,
+                         CrmCustomerId = CASE WHEN l.Customers = 1 THEN l.CustomerId END,
+                         CrmName = CASE WHEN l.Customers = 1 THEN l.FullName ELSE N'' END, CrmPhone = CASE WHEN l.Customers = 1 THEN l.PhoneNorm ELSE N'' END,
+                         CrmEmail = CASE WHEN l.Customers = 1 THEN l.EmailNorm ELSE N'' END,
+                         PactName = ISNULL(vo.FullName, d.FullName), PactPhone = ISNULL(pn.Norm, N''), PactEmail = ISNULL(en.Norm, N'')
+              FROM #a a
+              JOIN #run r ON r.CompanyId = a.CompanyId
+              JOIN dbo.CollectionsReceivableUnitText d ON d.CompanyId = a.CompanyId AND d.RunId = r.RunId AND d.UnitSeq = a.UnitSeq
+              LEFT JOIN #vo vo ON vo.CompanyId = a.CompanyId AND vo.UnitSeq = a.UnitSeq
+              LEFT JOIN dbo.CollectionsContactNorm pn ON pn.ContactId = a.PhoneId
+              LEFT JOIN dbo.CollectionsContactNorm en ON en.ContactId = a.EmailId
+              LEFT JOIN dbo.fn_Collections_CrmUnitLinks() l ON l.CompanyId = a.CompanyId AND l.UnitKey = dbo.fn_CollectionsUnitKey(d.UnitCode) COLLATE Latin1_General_BIN2;
+            UPDATE #a SET SrcConflict = CASE WHEN CrmStatus = 1
+                   AND ((CrmPhone <> N'' AND PactPhone <> N'' AND CrmPhone COLLATE Latin1_General_BIN2 <> PactPhone COLLATE Latin1_General_BIN2)
+                     OR (CrmEmail <> N'' AND PactEmail <> N'' AND CrmEmail COLLATE Latin1_General_BIN2 <> PactEmail COLLATE Latin1_General_BIN2
+                         AND NOT (CrmPhone <> N'' AND CrmPhone COLLATE Latin1_General_BIN2 = PactPhone COLLATE Latin1_General_BIN2))) THEN 1 ELSE 0 END;
+            UPDATE #a SET EffName  = CASE WHEN CrmStatus = 1 THEN CASE WHEN CrmName  <> N'' THEN CrmName  WHEN SrcConflict = 1 THEN N'' ELSE PactName  END ELSE PactName  END,
+                          EffPhone = CASE WHEN CrmStatus = 1 THEN CASE WHEN CrmPhone <> N'' THEN CrmPhone WHEN SrcConflict = 1 THEN N'' ELSE PactPhone END ELSE PactPhone END,
+                          EffEmail = CASE WHEN CrmStatus = 1 THEN CASE WHEN CrmEmail <> N'' THEN CrmEmail WHEN SrcConflict = 1 THEN N'' ELSE PactEmail END ELSE PactEmail END;
+
             UPDATE #a SET Flags =
                    (CASE WHEN StageAmb = 1 THEN 1 ELSE 0 END)
                  | (CASE WHEN StageAmb = 0 AND StageAmt % 0.01 <> 0 THEN 2 ELSE 0 END)
@@ -259,21 +285,22 @@ BEGIN
                  | (CASE WHEN Conflict = 1 THEN 8 ELSE 0 END)
                  | (CASE WHEN UnitAlloc = 1 THEN 16 ELSE 0 END)
                  | (CASE WHEN Contra = 1 THEN 32 ELSE 0 END)
-                 | (CASE WHEN @ContactRequired = 1 AND ISNULL(PhoneOk, 0) = 0 AND ISNULL(EmailOk, 0) = 0 THEN 64 ELSE 0 END);
+                 | (CASE WHEN @ContactRequired = 1 AND EffPhone = N'' AND EffEmail = N'' THEN 64 ELSE 0 END)
+                 | (CASE WHEN CrmStatus = 2 THEN 128 ELSE 0 END)
+                 | (CASE WHEN SrcConflict = 1 THEN 256 ELSE 0 END);
 
             IF @Like IS NOT NULL
                 DELETE a FROM #a a
                   JOIN #run r ON r.CompanyId = a.CompanyId
                   JOIN dbo.CollectionsReceivableUnitText d ON d.CompanyId = a.CompanyId AND d.RunId = r.RunId AND d.UnitSeq = a.UnitSeq
                   LEFT JOIN #vo vo ON vo.CompanyId = a.CompanyId AND vo.UnitSeq = a.UnitSeq
-                  LEFT JOIN dbo.CollectionsContactNorm pn ON pn.ContactId = a.PhoneId
-                  LEFT JOIN dbo.CollectionsContactNorm en ON en.ContactId = a.EmailId
-                 WHERE NOT (   ISNULL(vo.FullName, d.FullName) LIKE @Like ESCAPE N'\' OR d.TenantId COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\'
-                            OR d.UnitCode COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR ISNULL(pn.Norm, N'') LIKE @Like ESCAPE N'\' OR ISNULL(en.Norm, N'') LIKE @Like ESCAPE N'\'
+                 WHERE NOT (   a.EffName LIKE @Like ESCAPE N'\' OR d.TenantId COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\'
+                            OR d.UnitCode COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR a.EffPhone LIKE @Like ESCAPE N'\'
+                            OR a.EffEmail LIKE @Like ESCAPE N'\'
                             OR ISNULL(vo.TowerNumber, d.TowerNumber) LIKE @Like ESCAPE N'\'
                             OR EXISTS (SELECT 1 FROM dbo.CollectionsTowers tq WHERE tq.CompanyId = a.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) = ISNULL(vo.TowerNumber, d.TowerNumber)
                                         AND CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\')
-                            OR (@PhoneDigits IS NOT NULL AND ISNULL(pn.Norm, N'') LIKE N'%' + @PhoneDigits + N'%'));
+                            OR (@PhoneDigits IS NOT NULL AND (a.EffPhone LIKE N'%' + @PhoneDigits + N'%')));
         END;
     END;
 
@@ -285,8 +312,8 @@ BEGIN
                ISNULL(SUM(CASE WHEN Flags <> 0 THEN 1 ELSE 0 END), 0) AS ReviewUnits
           FROM #a;
 
-        SELECT p.CompanyId, d.TenantId COLLATE DATABASE_DEFAULT AS TenantId, ISNULL(vo.FullName, d.FullName) AS FullName, ISNULL(pn.Norm, N'') AS Phone,
-               ISNULL(en.Norm, N'') AS Email, p.UnitId, d.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, ISNULL(vo.ProjectCode, d.ProjectCode) AS ProjectCode,
+        SELECT p.CompanyId, d.TenantId COLLATE DATABASE_DEFAULT AS TenantId, ISNULL(NULLIF(p.EffName, N''), ISNULL(vo.FullName, d.FullName)) AS FullName, ISNULL(p.EffPhone, N'') AS Phone,
+               ISNULL(p.EffEmail, N'') AS Email, CAST(p.CrmStatus AS int) AS CrmStatus, p.CrmCustomerId, p.UnitId, d.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, ISNULL(vo.ProjectCode, d.ProjectCode) AS ProjectCode,
                CASE WHEN p.StageAmb = 1 THEN CAST(NULL AS decimal(19,4)) ELSE p.StageAmt END AS Amount, p.StageMin AS EarliestDue, p.Flags, p.DueAmt AS DueAmount, p.OverAmt AS OverdueAmount,
                CASE WHEN vo.UnitSeq IS NULL THEN d.TowerNumber ELSE vo.TowerNumber END AS TowerNumber, CONVERT(nvarchar(400), tw.TowerName) AS TowerName
           FROM (SELECT * FROM #a ORDER BY CompanyId, UnitSeq OFFSET @Offset ROWS FETCH NEXT @Take ROWS ONLY) p

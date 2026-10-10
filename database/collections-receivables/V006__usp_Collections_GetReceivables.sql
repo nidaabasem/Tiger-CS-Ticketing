@@ -146,7 +146,7 @@ BEGIN
      WHERE (@Scope IS NULL OR st.CompanyId = @Scope) AND st.CurrentRunId IS NOT NULL
        AND (@TowerId IS NULL OR s.TowerNumber = @TowerNumber)
        AND s.DueDate >= @FromDt AND s.DueDate < @ToExclusive
-       AND s.Amount > 0 AND s.Amount >= @MinAmount AND s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%'
+       AND s.Amount > 0 AND s.Amount >= @MinAmount AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.UnitCode NOT LIKE N'%*%'
        AND (   @ReceivableClass = 'Any'
             OR (@ReceivableClass = 'DueOrOverdue' AND s.DueDate < @NextMonthStart)
             OR (@ReceivableClass = 'Due'          AND s.DueDate >= @MonthStart AND s.DueDate < @NextMonthStart)
@@ -239,7 +239,7 @@ BEGIN
              WHERE (@Scope IS NULL OR st.CompanyId = @Scope) AND st.CurrentRunId IS NOT NULL
                AND (@TowerId IS NULL OR s.TowerNumber = @TowerNumber)
                AND s.DueDate >= @FromDt AND s.DueDate < @UpperDt
-               AND s.Amount > 0 AND s.Amount >= @MinAmount AND s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%'
+               AND s.Amount > 0 AND s.Amount >= @MinAmount AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.UnitCode NOT LIKE N'%*%'
              GROUP BY s.CompanyId, s.TenantId COLLATE Latin1_General_BIN2, s.UnitId, s.UnitCode COLLATE Latin1_General_BIN2,   -- an apartment is the exact (binary) tenant / code, as in the application
                       CASE WHEN s.DueDate < @MonthStartDt THEN 1 ELSE 0 END, CAST(s.DueDate AS date)) d
      GROUP BY d.CompanyId, d.TenantId, d.UnitId, d.UnitCode
@@ -372,7 +372,7 @@ BEGIN
        AND s.DueDate >= @FromDt AND s.DueDate < @ToExclusive
        AND (   (@PaymentFilter = 'outstanding' AND s.Amount > 0) OR (@PaymentFilter = 'unpaid' AND s.PaymentStatus = 'Unpaid')
             OR (@PaymentFilter = 'partial' AND s.PaymentStatus = 'PartiallyPaid') OR (@PaymentFilter = 'paid' AND s.PaymentStatus = 'FullyPaid') OR @PaymentFilter = 'all')
-       AND s.Amount >= @Min AND s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%'
+       AND s.Amount >= @Min AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.UnitCode NOT LIKE N'%*%'
        AND (@Like IS NULL OR s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
                           OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\'
                           OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%'))
@@ -392,7 +392,7 @@ BEGIN
        AND s.DueDate >= @FromDt AND s.DueDate < @ToExclusive
        AND (   (@PaymentFilter = 'outstanding' AND s.Amount > 0) OR (@PaymentFilter = 'unpaid' AND s.PaymentStatus = 'Unpaid')
             OR (@PaymentFilter = 'partial' AND s.PaymentStatus = 'PartiallyPaid') OR (@PaymentFilter = 'paid' AND s.PaymentStatus = 'FullyPaid') OR @PaymentFilter = 'all')
-       AND s.Amount >= @Min AND s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%'
+       AND s.Amount >= @Min AND s.UnitId > 0 AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.UnitCode NOT LIKE N'%*%'
        AND (@Like IS NULL OR s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
                           OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\'
                           OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%'))
