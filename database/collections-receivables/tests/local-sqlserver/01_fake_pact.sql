@@ -50,6 +50,9 @@ BEGIN
   IF @Shape = 1
     SELECT CompanyID, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status
       FROM #res WHERE DueDate BETWEEN @StartDate AND @EndDate AND Amount >= @MinAmount ORDER BY DueDate DESC;
+  ELSE IF @Shape = 3   -- no ProjectCode, with Status (12 columns): same count as shape 2, different meaning
+    SELECT CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status
+      FROM #res WHERE DueDate BETWEEN @StartDate AND @EndDate AND Amount >= @MinAmount ORDER BY DueDate DESC;
   ELSE
     SELECT CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount
       FROM #res WHERE DueDate BETWEEN @StartDate AND @EndDate AND Amount >= @MinAmount ORDER BY DueDate DESC;
