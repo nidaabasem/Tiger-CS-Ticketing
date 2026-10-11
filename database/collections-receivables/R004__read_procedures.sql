@@ -64,6 +64,12 @@ BEGIN
         SET @Like = N'%' + REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@Search)), N'\', N'\\'), N'%', N'\%'), N'_', N'\_'), N'[', N'\[') + N'%';
     DECLARE @Last date = CASE WHEN @ToDate IS NULL OR @ToDate > @Today THEN @Today ELSE @ToDate END;   -- nothing due after today is ever read
 
+    -- Towers whose NAME matches the search (a handful of rows), so the payment scan below does a keyed lookup instead of a correlated subquery per payment.
+    DECLARE @TowerHits TABLE (CompanyId int NOT NULL, TowerNumber nvarchar(20) NOT NULL, PRIMARY KEY (CompanyId, TowerNumber));
+    IF @Like IS NOT NULL
+        INSERT @TowerHits SELECT DISTINCT tq.CompanyId, LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) FROM dbo.CollectionsTowers tq
+         WHERE CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\';
+
     -- 1. The payments in play (everything except search and Minimum Total), narrow.
     CREATE TABLE #l
     (
@@ -73,10 +79,9 @@ BEGIN
     INSERT #l (LineId, CompanyId, RunId, TenantId, UnitId, UnitCode, DueDate, Amount, Hit)
     SELECT s.LineId, s.CompanyId, s.RunId, s.TenantId, s.UnitId, s.UnitCode, s.DueDate, s.Amount,
            CASE WHEN @Like IS NULL THEN 1
-                WHEN s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
-                  OR s.UnitCode LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\' OR s.TowerNumber LIKE @Like ESCAPE N'\' OR s.ProjectCode LIKE @Like ESCAPE N'\'
-                  OR EXISTS (SELECT 1 FROM dbo.CollectionsTowers tq WHERE tq.CompanyId = s.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), tq.TowerNumber))) = s.TowerNumber
-                              AND CONVERT(nvarchar(400), tq.TowerName) LIKE @Like ESCAPE N'\')
+                WHEN s.FullName LIKE @Like ESCAPE N'\' OR s.TenantId COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR s.Email LIKE @Like ESCAPE N'\' OR s.Mobile LIKE @Like ESCAPE N'\'
+                  OR s.UnitCode COLLATE DATABASE_DEFAULT LIKE @Like ESCAPE N'\' OR s.VoucherNumber LIKE @Like ESCAPE N'\' OR s.TowerNumber LIKE @Like ESCAPE N'\' OR s.ProjectCode LIKE @Like ESCAPE N'\'
+                  OR EXISTS (SELECT 1 FROM @TowerHits h WHERE h.CompanyId = s.CompanyId AND h.TowerNumber = s.TowerNumber)
                   OR (@PhoneDigits IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(s.Mobile, N' ', N''), N'+', N''), N'-', N''), N'(', N''), N')', N'') LIKE N'%' + @PhoneDigits + N'%')
                 THEN 1 ELSE 0 END
       FROM dbo.CollectionsRcvCompany c

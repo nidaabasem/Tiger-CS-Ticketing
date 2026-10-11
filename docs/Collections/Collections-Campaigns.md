@@ -1,16 +1,10 @@
 # Collections campaigns preview and CSV export
 
-> **Update:** campaigns read the local receivables snapshot (see [Receivables-Snapshot.md](Receivables-Snapshot.md)). The company selector is
-> replaced by a searchable **Tower** filter (`towerId`); stage rules, the preview date and the From/To defaults are unchanged. Exports (review and
-> Genesys) are refused unless every company in scope has a successful refresh no older than `Collections:ReceivablesSnapshot:MaxAgeMinutes` (90).
-> A **Minimum outstanding amount (AED)** filter (default 100, remaining unpaid amount >= value) applies to the preview and both exports; fully paid instalments are never candidates; the date column is
-> **Earliest unpaid due date**. Month/Year selectors set the From/To dates. Details: Receivables-Snapshot.md sections 4b-4c.
->
-> **Performance:** the preview and both exports are evaluated in SQL (`usp_Collections_GetCampaignUnits`): instalment filtering, per-unit aggregation, the stage amount rule, every review flag, search, totals and paging
-> run on the server, so only the requested page (or the bounded export) reaches the application and the counts/eligibility stay exact over the whole result set. A snapshot the engine cannot use
-> falls back to the earlier in-memory evaluation, which is also the reference the SQL engine is tested against. Details and measurements: Receivables-Snapshot.md section 4d.
->
-> The review, approval and Genesys upload workflow is described in [Collections-Review-And-Genesys-Dispatch.md](Collections-Review-And-Genesys-Dispatch.md). This page covers the original preview and CSV export.
+> **Current behaviour (rebuilt snapshot):** campaigns read the local receivables snapshot refreshed from PACT every two hours (see [Receivables-Snapshot.md](Receivables-Snapshot.md)). The stage rules, the preview date
+> and the From/To defaults are unchanged. Each row is one apartment of a customer with **Due** (today), **Overdue** (before today) and **Total** (= Due + Overdue); nothing due after today is listed.
+> **Minimum Total (AED)** (default 100, clearable) is applied to the apartment's summed Due + Overdue, strictly greater, before the count, the paging and both exports. Units without a mobile or e-mail are still
+> listed (with a reason). Order: newest payment first, then company / customer / unit. Exports (review and Genesys) are refused unless every company in scope has a successful refresh no older than
+> `Collections:ReceivablesSnapshot:MaxAgeMinutes` (180). The stage evaluation runs in the application on the payment rows `usp_CollectionsRcv_GetLines` returns (the SQL campaign engine of the previous pipeline was retired).
 
 Collections staff can preview one communication stage per apartment at `/Collections/Campaigns`, reached from
 `/Collections/Receivables` through the Campaigns link. The page uses the direct PACT receivables source for companies 4 and 32.

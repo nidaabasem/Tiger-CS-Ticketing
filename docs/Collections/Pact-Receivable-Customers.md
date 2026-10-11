@@ -2,7 +2,7 @@
 
 > **Update:** the page now reads a **local snapshot** refreshed by a background job and is filtered by **Tower + From + To** (no company
 > selector; `towerId`, `dateFrom`, `dateTo` on the API). The direct-read description below remains valid for the monthly Due/Overdue
-> rules and for the legacy `UseLocalSnapshot=false` mode. See [Receivables-Snapshot.md](Receivables-Snapshot.md).
+> rules. (The direct-PACT `UseLocalSnapshot=false` mode was removed with the rebuilt snapshot.) See [Receivables-Snapshot.md](Receivables-Snapshot.md).
 
 TigerCS lists PACT apartments with a positive outstanding instalment that is Due in, or OverDue before, a selected reporting month, even if they have no TigerCS ticket or customer-directory record. The supplied report procedures cover company **4 (Dubai)** and **32 (Sharjah)** only. This feature adds no Genesys route, reminder send, next-payment calculation, database migration or background job.
 

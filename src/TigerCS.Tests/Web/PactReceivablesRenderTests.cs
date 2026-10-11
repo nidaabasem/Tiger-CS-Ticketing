@@ -306,4 +306,40 @@ public sealed class PactReceivablesRenderTests
         Assert.Equal(expected, Receivables.Classify(date, Today));
         Assert.Equal(daysLate, Receivables.DaysLate(date, Today));
     }
+
+    [Fact]
+    public async Task TheStatusFilter_DefaultsToDuePlusOverdue_AndOffersEachStateAlone()
+    {
+        var api = new FakeCollectionsApi();
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables")).Content.ReadAsStringAsync();
+        var select = Between(html, "id=\"receivableStatus\"", "</select>");
+        Assert.Equal(["Due + Overdue", "Due", "Overdue"], Regex.Matches(select, "<option[^>]*>(.*?)</option>").Select(m => WebUtility.HtmlDecode(m.Groups[1].Value)));
+        Assert.Matches("<option value=\"all\" selected=\"selected\">Due (\\+|&#x2B;) Overdue</option>", select);          // the default shows everything due up to today
+    }
+
+    [Fact]
+    public async Task TheResults_SayWhenTheDataWasLastUpdated_InDubaiTime()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+        Assert.Matches(@"data-updated>Updated \d{2} \w{3} \d{4} \d{2}:\d{2} \(Dubai\)<", html);
+    }
+
+    [Fact]
+    public async Task WhenNothingHasBeenLoaded_ThePageSaysLoadingOrFailed_AndShowsNoTableAndNoZero()
+    {
+        foreach (var loading in new[] { true, false })
+        {
+            var api = new FakeCollectionsApi { NothingLoaded = true, Loading = loading };
+            using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+            var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
+            Assert.Contains(loading ? "data-load-running" : "data-load-problem", html);          // a clear Loading or could-not-load state, with Retry in the second case
+            Assert.DoesNotContain("receivables-table", html);                                    // never an empty table that reads as "no receivables"
+            Assert.DoesNotContain("No units", html); Assert.DoesNotContain("0.00", html);
+            if (!loading) Assert.Contains("Retry", html);
+        }
+    }
 }

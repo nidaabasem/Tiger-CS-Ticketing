@@ -11,6 +11,8 @@ else if (Model.Report is { } report)
 {
     var units = ReceivablesModel.Lines(report);
     <partial name="_LoadProblem" model="report.Snapshot" />
+    @* Nothing has ever been loaded for the companies in scope: say so (Loading / could not load, above) and show NO table - an empty table would read as "zero receivables". *@
+    if (report.Snapshot.NothingLoaded) { return; }
     <div class="panel">
         @if (report.Snapshot.OldestSuccessUtc is { } updated) { <p class="receivables-meta" data-updated>Updated @CollectionsDisplay.DubaiTime(updated)</p> }
         @if (units.Count == 0)

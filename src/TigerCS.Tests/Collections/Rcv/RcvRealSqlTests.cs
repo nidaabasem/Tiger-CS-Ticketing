@@ -5,7 +5,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Modules.Collections;
+using TigerCS.Tests.IdentityAndAccess.Fakes;
+using TigerCS.Tests.Notifications.Fakes;
 
 namespace TigerCS.Tests.Collections.Rcv;
 
@@ -220,6 +224,8 @@ public sealed class RcvRealSqlTests
         Assert.Equal(["4:D5:TP105-501"], (await Page(minTotal: null, search: "Dalia")).Units.Select(Key));
         Assert.Equal(["4:D2:TP102-201"], (await Page(minTotal: null, search: "971500000002")).Units.Select(Key));
         Assert.Equal(["4:D3:TP103-514"], (await Page(minTotal: null, search: "TP103-514")).Units.Select(Key));
+        Assert.Equal(["4:D3:TP103-514"], (await Page(minTotal: null, search: "tp103-514")).Units.Select(Key));        // the apartment code is stored exactly but searched case-insensitively
+        Assert.Equal(["4:D5:TP105-501"], (await Page(minTotal: null, search: "d5")).Units.Select(Key));             // by customer id, any case
         Assert.Equal(["4:D3:TP103-514"], (await Page(minTotal: null, search: "Tower 103")).Units.Select(Key));      // the tower NAME of dbo.CollectionsTowers
         Assert.Equal(["32:S2:TP127-301"], (await Page(minTotal: null, search: "Faradis")).Units.Select(Key));
         var sameCode = await Page(minTotal: null, search: "TP101-101");
@@ -257,6 +263,108 @@ public sealed class RcvRealSqlTests
         var dubaiOnly = await Source().ReadUnitAsync("TP101-101", 4, Today, default);
         Assert.Equal([4], dubaiOnly.Identities.Select(i => i.CompanyId));
         Assert.Empty((await Source().ReadUnitAsync("TP103-513*", null, Today, default)).Identities);       // a cancelled apartment has no summary
+    }
+
+    private static CollectionsCampaignAppService CampaignService(RcvReceivablesSource source)
+    {
+        var options = new CollectionsOptions { Enabled = true };
+        return new(options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
+            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(new DateTime(2026, 10, 11, 5, 0, 0, DateTimeKind.Utc))), source, NullLogger<CollectionsCampaignAppService>.Instance);
+    }
+
+    [Fact]
+    public async Task Campaigns_ListTheSameUnitsWithTheSameAmounts_KeepContactlessUnits_AndOrderNewestFirst()
+    {
+        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
+        await Seed();
+        var service = CampaignService(Source());
+        var manager = new CollectionsCaller(Guid.NewGuid(), [Roles.CsManager], []);
+        var from = new DateOnly(2000, 1, 1);
+        // Current-month stage (1-31 Oct, nothing after today): D1's apartment A (60 on 1 Oct, 60 overdue from September), Sharjah's contactless TP127-301 (250, 5 Oct).
+        var current = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 100m)).Value!;
+        Assert.Equal(["TP127-301", "TP101-101"], current.Items.Select(i => i.UnitCode));                    // newest payment first (5 Oct, then 1 Oct)
+        var contactless = current.Items[0];
+        Assert.Equal((32, "", ""), (contactless.CompanyId, contactless.Phone, contactless.Email));          // no mobile and no e-mail: the receivable is still listed ...
+        Assert.Contains("NoValidContact", contactless.Reason);                                               // ... and the reason says why it cannot be sent
+        Assert.Equal((0m, 250m, 250m), (contactless.DueAmount, contactless.OverdueAmount, contactless.TotalAmount));
+        var a = current.Items[1];
+        Assert.Equal((4, "Dina One", 0m, 120m, 120m), (a.CompanyId, a.CustomerName, a.DueAmount, a.OverdueAmount, a.TotalAmount));
+        // The Receivables page shows the same apartment with the same figures.
+        var page = (await Page(minTotal: 100m)).Units.Single(u => u.CompanyId == 4 && u.UnitCode == "TP101-101");
+        Assert.Equal(a.TotalAmount, page.RemainingTotal);
+        // Minimum Total: strictly greater, cleared = everything due or overdue (in the stage).
+        Assert.Equal(["TP127-301", "TP101-101"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 119.99m)).Value!.Items.Select(i => i.UnitCode));
+        Assert.Equal(["4:TP101-102", "32:TP140-302", "32:TP127-301", "4:TP101-101"],                          // minimum 40: Sharjah's own 40 (TP101-101) is not GREATER than 40; two units due today lead
+            (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 40m)).Value!.Items.Select(i => $"{i.CompanyId}:{i.UnitCode}"));
+        Assert.Equal(["TP127-301"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 120m)).Value!.Items.Select(i => i.UnitCode));   // 120 is not greater than 120
+        var cleared = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: null)).Value!;
+        Assert.Equal(5, cleared.TotalCount);                                                                  // A, B, TP101-101 of Sharjah, TP127-301, TP140-302
+        // The overdue stage reaches the previous YEAR (the window starts in 2000) and still counts D2's 50 from September in its Total.
+        var overdue = (await service.PreviewAsync(manager, "OverdueReminder", dateFrom: from, minTotal: null)).Value!;
+        Assert.Equal(["TP102-201", "TP103-514"], overdue.Items.Select(i => i.UnitCode));
+        Assert.Equal((350m, 350m), (overdue.Items[0].OverdueAmount, overdue.Items[0].TotalAmount));
+        Assert.DoesNotContain(overdue.Items, i => i.UnitCode.Contains('*') || i.TenantId == "D4");           // cancelled / invalid units never reach a campaign
+        // The review export is exactly the previewed rows.
+        var export = (await service.ExportAsync(manager, "CurrentMonthReminder", "review", dateFrom: from, minTotal: 100m)).Value!;
+        Assert.Equal(current.TotalCount, export.RowCount);
+    }
+
+    [Fact]
+    public async Task TheApartmentListApi_StillWorksOnTheNewSource_AndOnlyListsWhatIsOwed()
+    {
+        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
+        await Seed();
+        var options = new CollectionsOptions { Enabled = true };
+        var service = new PactReceivableCustomersAppService(options, new PactReceivablesOptions { Enabled = true, DefaultMinOutstandingAmount = 0m },
+            new(options, new FakeDepartmentRepository()), new(options, new FakeTimeProvider(new DateTime(2026, 10, 11, 5, 0, 0, DateTimeKind.Utc))), Source(), NullLogger<PactReceivableCustomersAppService>.Instance);
+        var report = (await service.ListAsync(new CollectionsCaller(Guid.NewGuid(), [Roles.CsAgent], []), dateFrom: new DateOnly(2000, 1, 1), minAmount: 0m, pageSize: 100)).Value!;
+        Assert.DoesNotContain(report.Items, c => c.UnitCode.Contains('*') || c.TenantId == "D4");
+        Assert.Contains(report.Items, c => c.TenantId == "D5" && c.UnitCode == "TP105-501");
+    }
+
+    [Fact]
+    public async Task TheCrmContact_IsPreferred_AndAnAmbiguousCrmUnitIsFlagged_WithoutHidingTheReceivable()
+    {
+        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
+        await Seed();
+        var run = Guid.NewGuid();
+        await Exec($"INSERT dbo.CollectionsCrmUnitOwner (RunId, UnitKey, CompanyId, ProjectCode, UnitNumber, LeadId, LeadStatus, CrmCustomerId, CrmUnitId, ProjectId, FullName, Mobile, Email, PhoneNorm, EmailNorm) VALUES " +
+                   $"('{run}', N'TP101-101', 4, N'P', N'101', 1, 4, 501, 1, 1, N'Dina CRM', N'0500000001', N'', N'+971500000001', N'dina.crm@example.test'), " +
+                   $"('{run}', N'TP102-201', 4, N'P', N'201', 2, 4, 601, 2, 1, N'Dani A', N'', N'', N'', N''), ('{run}', N'TP102-201', 4, N'P', N'201', 3, 4, 602, 3, 1, N'Dani B', N'', N'', N'', N''); " +
+                   $"UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = '{run}', LastSuccessUtc = SYSUTCDATETIME(), LastAttemptStatus = 'Succeeded' WHERE Id = 1;");
+        try
+        {
+            var page = await Page(minTotal: null);
+            var single = page.Units.Single(u => u.CompanyId == 4 && u.UnitCode == "TP101-101");
+            Assert.Equal((1, "Dina CRM", "dina.crm@example.test"), (single.CrmCustomers, single.CrmName, single.CrmEmail));      // CRM first (PACT completes what CRM lacks, in the page model)
+            var ambiguous = page.Units.Single(u => u.UnitCode == "TP102-201");
+            Assert.Equal(2, ambiguous.CrmCustomers);                                                          // two CRM customers: flagged, nobody chosen, the amount is still listed
+            Assert.Equal(350m, ambiguous.RemainingTotal);
+            Assert.Null(ambiguous.CrmName);
+            Assert.Null(page.Units.Single(u => u.UnitCode == "TP105-501").CrmCustomers);                      // a unit CRM does not hold keeps its PACT contact
+            // The Sharjah apartment with the same unit CODE is not linked to Dubai's CRM owner.
+            Assert.Null(page.Units.Single(u => u.CompanyId == 32 && u.UnitCode == "TP101-101").CrmCustomers);
+        }
+        finally { await Exec("UPDATE dbo.CollectionsCrmOwnerState SET CurrentRunId = NULL WHERE Id = 1; DELETE FROM dbo.CollectionsCrmUnitOwner;"); }
+    }
+
+    [Fact]
+    public async Task Leasing_Company7_IsNeverLoadedNorRead_ItStaysAPaymentSummaryByPhoneFeature()
+    {
+        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
+        await Seed();
+        await using (var connection = new SqlConnection(ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var refresh = new SqlCommand("EXEC dbo.usp_CollectionsRcv_Refresh @CompanyId = 7", connection);
+            var error = await Assert.ThrowsAsync<SqlException>(() => refresh.ExecuteNonQueryAsync());
+            Assert.Equal(50001, error.Number);
+        }
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => Refresher().RefreshAsync("Test", 7, default));
+        await Assert.ThrowsAsync<PactReceivablesSourceException>(() => Source().ReadAsync(new PactReceivablesRequest(null, Today, 7), default));
+        await Assert.ThrowsAsync<PactReceivablesSourceException>(() => Source().ReadInstalmentUnitsAsync(new PactInstalmentsRequest(new DateOnly(2000, 1, 1), Today, Today, 0m, "outstanding", null, null, 1, 25, 7, null), default));
+        await Assert.ThrowsAnyAsync<SqlException>(() => Exec("INSERT dbo.CollectionsRcvCompany (CompanyId) VALUES (7)"));          // the tables themselves only know companies 4 and 32
+        Assert.Equal(0, await Scalar<int>("SELECT COUNT(*) FROM dbo.CollectionsRcvLine WHERE CompanyId NOT IN (4, 32)"));
     }
 
     // ---- 4. state, failure and isolation ----
