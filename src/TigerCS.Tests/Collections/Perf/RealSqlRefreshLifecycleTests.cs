@@ -87,4 +87,53 @@ public sealed class RealSqlRefreshLifecycleTests
         Assert.Equal("Succeeded", again.Status);
         Assert.Equal(0, (await Observe()).Running);
     }
+
+    /// <summary>
+    /// Sharjah's procedure returns 12 columns WITHOUT ProjectCode (the docs: "absent in p32"); Dubai's returns 13. With no remembered layout the refresh starts with layout 1.
+    /// Measured on SQL Server 2022: a wrong layout of an INSERT ... EXEC through a linked server inside TRY terminates the session (no CATCH), which used to leave
+    /// the run 'Running' with no error and no counts. The run must now end Failed, and once the layout is remembered both companies load, units without a mobile or
+    /// e-mail keep their financial rows, and no row crosses companies.
+    /// </summary>
+    [Fact]
+    public async Task SharjahWithADifferentLayout_FailsCleanlyUntilPinned_ThenBothCompaniesLoad_AndContactlessRowsAreKept()
+    {
+        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
+        await Exec("DELETE PACTRPT.dbo.FakeEdgeRows WHERE TenantID LIKE 'DIAG-%'");
+        await Exec("""
+            UPDATE PACTRPT.dbo.FakeConfig SET Shape = 3 WHERE CompanyId = 32;
+            UPDATE PACTRPT.dbo.FakeConfig SET Shape = 1 WHERE CompanyId = 4;
+            UPDATE dbo.CollectionsReceivableCompanyState SET ShapeVariant = NULL WHERE CompanyId = 32;
+            INSERT PACTRPT.dbo.FakeEdgeRows (CompanyId, ProjectCode, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, DueDate, Amount, Status)
+            VALUES (32, '', 'TP140-1807', 'DIAG-01', N'Diag One', '', '', 7000001, 'D1-A', '20260915', 450, 'Installment'),
+                   (32, '', 'TP140-3207', 'DIAG-02', N'Diag Two', '', '', 7000002, 'D2-A', '20260920', 700, 'Installment')
+            """);
+        try
+        {
+            var first = await Refresher().RefreshAsync("layout-unpinned", null, CancellationToken.None);
+            Assert.NotEqual("Succeeded", first.Status);
+            Assert.Equal(0, (await Observe()).Running);                                    // nothing left 'Running'
+            Assert.Equal("Failed", (await Observe()).State);                               // and the company says so
+
+            await Exec("UPDATE dbo.CollectionsReceivableCompanyState SET ShapeVariant = 3 WHERE CompanyId = 32");
+            var second = await Refresher().RefreshAsync("layout-pinned", null, CancellationToken.None);
+            Assert.Equal("Succeeded", second.Status);
+            Assert.Equal([4, 32], second.Companies.Where(c => c.Status == "Succeeded").Select(c => c.CompanyId).Order().ToArray());
+            Assert.Equal(0, (await Observe()).Running);
+
+            const string current = "FROM dbo.CollectionsReceivableSnapshot s JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = s.CompanyId AND st.CurrentRunId = s.RunId";
+            Assert.Equal(2, await Scalar<int>($"SELECT COUNT(*) {current} WHERE s.CompanyId = 32 AND s.UnitCode IN (N'TP140-1807', N'TP140-3207') AND s.Mobile = N'' AND s.Email = N''"));
+            Assert.Equal(0, await Scalar<int>($"SELECT COUNT(*) {current} WHERE s.CompanyId = 4 AND s.UnitCode IN (N'TP140-1807', N'TP140-3207')"));
+            Assert.True(await Scalar<int>($"SELECT COUNT(*) {current} WHERE s.CompanyId = 4") > 0);
+            Assert.Equal(1, await Scalar<int>("SELECT CAST(ShapeVariant AS int) FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = 4"));
+        }
+        finally
+        {
+            await Exec("""
+                DELETE PACTRPT.dbo.FakeEdgeRows WHERE TenantID LIKE 'DIAG-%';
+                UPDATE PACTRPT.dbo.FakeConfig SET Shape = 1 WHERE CompanyId = 32;
+                UPDATE dbo.CollectionsReceivableCompanyState SET ShapeVariant = 1 WHERE CompanyId = 32
+                """);
+            await WaitForLockRelease();
+        }
+    }
 }

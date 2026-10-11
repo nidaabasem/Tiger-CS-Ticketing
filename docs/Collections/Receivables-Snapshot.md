@@ -345,3 +345,12 @@ the Load/progress flow, API authorization and parameter pass-through, static con
 * Diagnose with `database/collections-receivables/tools/diagnose_receivables_refresh.sql` (read-only). Clean up old rows of one company with
   `tools/close_abandoned_receivables_runs.sql` (dry run by default).
 * Linked-server provider/MSDTC settings are deliberately **not** changed by this fix; compare `sys.servers.modify_date` with `LastAttemptUtc` before concluding anything from an old recorded error.
+
+## Result layout of the PACT procedures (Sharjah vs Dubai)
+
+`INSERT ... EXEC` maps the remote columns **by position**, so the refresh must know the procedure's layout. It tries the layout remembered in
+`CollectionsReceivableCompanyState.ShapeVariant` first and, when none is remembered, starts with layout 1 (13 columns incl. `ProjectCode`). Dubai's `p4AccountReceivables`
+matches layout 1; `p32AccountReceivables` is documented without `ProjectCode`. Measured on SQL Server 2022: a wrong layout through a linked server inside TRY/CATCH
+ended the session without a CATCH (run left `Running`, no error, no counts). Run `tools/test_snapshot_fetch_path.sql` to see the real layout and the real outcome of the
+refresh statement, then pin it with `tools/set_receivables_shape_variant.sql`. The test window is diagnostic only; the refresh window (2000-01-01..2099-12-31),
+`SourceMinAmount = 0`, both companies and the contact handling (empty mobile / e-mail never exclude a financial row) are unchanged.
