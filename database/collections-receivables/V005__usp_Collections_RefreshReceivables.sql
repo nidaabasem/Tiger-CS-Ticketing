@@ -16,7 +16,7 @@
   * @StartDate/@EndDate only filter the instalment DueDate inside PACT; the ledger/allocation arithmetic is unaffected by them
     (Receivables-Source-Review.md section 1), so a wide window never truncates historical accounting.
   * The result-set SHAPE of the deployed procedures must be confirmed (run tests/probe_pact_result_shape.sql). Four column-list
-    variants are tried (remembered variant first); a shape mismatch (error 213) falls through to the next one:
+    variants are tried (remembered variant first; none remembered: 3 for company 32, 1 for company 4 - see the SET @pref comment); a shape mismatch (error 213) falls through to the next one:
         1 CompanyID,ProjectCode,UnitCode,TenantID,FullName,Mobile,Email,UnitID,VoucherNumber,ChequeNumber,DueDate,Amount,Status
         2 same without Status        3 same without ProjectCode        4 without ProjectCode and Status
     Every variant must already be in the procedure's column ORDER; an unknown order fails with a clear message and publishes nothing.
@@ -104,7 +104,11 @@ BEGIN
 
             SET @proc = CONCAT(QUOTENAME(@LinkedServer), N'.', QUOTENAME(@RemoteDatabase), N'.', QUOTENAME(N'dbo'), N'.',
                                QUOTENAME(CONCAT(N'p', @c, N'AccountReceivables', @ProcedureSuffix)));
-            SELECT @pref = ISNULL(ShapeVariant, 1),
+            -- Layout to try FIRST when none is remembered. Verified on the live procedures (SSMS, 2026-10-11): p4AccountReceivables returns layout 1 (with
+            -- ProjectCode and Status), p32AccountReceivables returns layout 3 (12 columns, NO ProjectCode, with Status). INSERT ... EXEC maps by position and a
+            -- wrong guess through a linked server can end the session without a CATCH, so Sharjah must not start with layout 1. A remembered layout always wins.
+            SET @pref = CASE WHEN @c = 32 THEN 3 ELSE 1 END;
+            SELECT @pref = ISNULL(ShapeVariant, @pref),
                    @cFrom = CASE WHEN @ExtendCoverage = 1 AND CoverageFromDate    IS NOT NULL AND CoverageFromDate    < @SourceFromDate    THEN CoverageFromDate    ELSE @SourceFromDate    END,
                    @cThrough = CASE WHEN @ExtendCoverage = 1 AND CoverageThroughDate IS NOT NULL AND CoverageThroughDate > @SourceThroughDate THEN CoverageThroughDate ELSE @SourceThroughDate END
               FROM dbo.CollectionsReceivableCompanyState WHERE CompanyId = @c;

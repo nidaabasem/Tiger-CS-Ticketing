@@ -113,6 +113,38 @@ public sealed class SqlScriptContractTests
     }
 
     [Fact]
+    public void WithNoRememberedLayout_SharjahStartsWithLayout3_DubaiWithLayout1_AndARememberedLayoutAlwaysWins()
+    {
+        var refresh = Read("V005__usp_Collections_RefreshReceivables.sql");
+        Assert.Contains("SET @pref = CASE WHEN @c = 32 THEN 3 ELSE 1 END;", refresh);                  // live layouts: p4 = 1 (13 columns), p32 = 3 (12 columns, no ProjectCode)
+        Assert.Contains("SELECT @pref = ISNULL(ShapeVariant, @pref),", refresh);                      // remembered layout first
+        Assert.Contains("WHEN 3 THEN N'CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status'", refresh);
+        Assert.Contains("(VALUES (4), (32)) v (CompanyId)", refresh);                                  // both companies still processed, ids unchanged
+    }
+
+    [Fact]
+    public void TheFetchPathTest_WritesOnlyToATempTable_UsesTheRefreshStatementShape_AndNeverWrapsTheInsertExecInTry()
+    {
+        var script = File.ReadAllText(Path.Combine(Dir(), "tools", "test_snapshot_fetch_path.sql"));
+        var code = System.Text.RegularExpressions.Regex.Replace(script, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        code = System.Text.RegularExpressions.Regex.Replace(code, @"(?m)--.*$", "");
+        Assert.DoesNotMatch(@"(?i)\b(UPDATE|DELETE|MERGE|ALTER|DROP\s+(?!TABLE\s+#))\b", code);                     // nothing persistent is changed
+        Assert.DoesNotMatch(@"(?i)INSERT\s+(INTO\s+)?dbo\.", code);
+        Assert.DoesNotMatch(@"(?i)sp_serveroption|sp_addlinkedserver|MSDTC", code);                                    // no linked-server / MSDTC change
+        Assert.DoesNotContain("BEGIN TRY", code);                                                                      // a mismatch inside TRY ended the session (measured)
+        Assert.Contains("DATEADD(MILLISECOND, -3, DATEADD(DAY, 1, CAST(@Through AS datetime)))", code);              // the refresh's EndDate
+        Assert.Contains("N'@StartDate datetime, @EndDate datetime, @MinAmount int'", code);                            // the refresh's typed parameters
+        Assert.Contains("SET REMOTE_PROC_TRANSACTIONS OFF", code);
+        Assert.Contains("INSERT INTO #stage", code);
+
+        var pin = File.ReadAllText(Path.Combine(Dir(), "tools", "set_receivables_shape_variant.sql"));
+        Assert.Contains("DECLARE @Apply bit = 0", pin);
+        Assert.Contains("sp_getapplock", pin);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(pin, @"UPDATE dbo\."));
+        Assert.Contains("UPDATE dbo.CollectionsReceivableCompanyState SET ShapeVariant = @ShapeVariant WHERE CompanyId = @CompanyId", pin);
+    }
+
+    [Fact]
     public void TheOperationalScripts_AreScopedAndDefaultToADryRun()
     {
         var cleanup = File.ReadAllText(Path.Combine(Dir(), "tools", "close_abandoned_receivables_runs.sql"));
