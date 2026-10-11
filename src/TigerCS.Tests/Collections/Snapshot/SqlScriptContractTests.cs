@@ -113,6 +113,16 @@ public sealed class SqlScriptContractTests
     }
 
     [Fact]
+    public void WithNoRememberedLayout_SharjahStartsWithLayout3_DubaiWithLayout1_AndARememberedLayoutAlwaysWins()
+    {
+        var refresh = Read("V005__usp_Collections_RefreshReceivables.sql");
+        Assert.Contains("SET @pref = CASE WHEN @c = 32 THEN 3 ELSE 1 END;", refresh);                  // live layouts: p4 = 1 (13 columns), p32 = 3 (12 columns, no ProjectCode)
+        Assert.Contains("SELECT @pref = ISNULL(ShapeVariant, @pref),", refresh);                      // remembered layout first
+        Assert.Contains("WHEN 3 THEN N'CompanyID, UnitCode, TenantID, FullName, Mobile, Email, UnitID, VoucherNumber, ChequeNumber, DueDate, Amount, Status'", refresh);
+        Assert.Contains("(VALUES (4), (32)) v (CompanyId)", refresh);                                  // both companies still processed, ids unchanged
+    }
+
+    [Fact]
     public void TheFetchPathTest_WritesOnlyToATempTable_UsesTheRefreshStatementShape_AndNeverWrapsTheInsertExecInTry()
     {
         var script = File.ReadAllText(Path.Combine(Dir(), "tools", "test_snapshot_fetch_path.sql"));
