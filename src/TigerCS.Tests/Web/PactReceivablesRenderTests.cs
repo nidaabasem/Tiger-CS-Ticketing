@@ -63,7 +63,7 @@ public sealed class PactReceivablesRenderTests
         var rows = Regex.Matches(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Select(m => m.Value).ToList();
         Assert.Equal(2, rows.Count);                                                                   // one row per unit, not per instalment and not per customer
         var headers = Cells(Regex.Match(html, "<thead><tr>.*?</tr></thead>", RegexOptions.Singleline).Value.Replace("th", "td"));
-        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Due", "Overdue", "Total", "Details"], headers);
+        Assert.Equal(["Customer", "Contact", "Tower", "Apartment", "Due", "Overdue", "Total", "View Details"], headers);
 
         // Apartment 1001: total 500 = due 200 + overdue 300; the 150 due in November is not part of anything on this page. Tower = the tower NAME.
         var first = Cells(rows.Single(r => r.Contains("TP124-1001")));
@@ -72,16 +72,16 @@ public sealed class PactReceivablesRenderTests
         var second = Cells(rows.Single(r => r.Contains("TP124-2002")));
         Assert.Equal(["Example Customer", "+971500003001 x@example.test", "Tower 124", "TP124-2002", "—", "80.00", "80.00", "View Details"], second);
 
-        // The details of 1001: oldest first, statuses by date, days late only for overdue, and the sums equal the main row.
+        // The details of 1001: newest due date first, statuses by date, days late only for overdue, and the sums equal the main row.
         var details = Regex.Matches(html, "<tr class=\"unit-detail\".*?</tbody>\\s*</table>", RegexOptions.Singleline).Select(m => m.Value).ToList();
         Assert.Equal(2, details.Count);
         var d1 = details.Single(d => d.Contains("INV-1"));
         Assert.DoesNotContain("INV-2", d1);                                                           // no instalment of another apartment
         var lines = Regex.Matches(d1, "<tr class=\"[^\"]*\" data-instalment-status=\"(\\w+)\">(.*?)</tr>", RegexOptions.Singleline).Select(m => (Status: m.Groups[1].Value, Cells: Cells(m.Value))).ToList();
-        Assert.Equal(["Overdue", "Due"], lines.Select(l => l.Status));
+        Assert.Equal(["Due", "Overdue"], lines.Select(l => l.Status));
         Assert.DoesNotContain("INV-5", html); Assert.DoesNotContain("Upcoming", html);
-        Assert.Equal(["Voucher INV-1", "05 Aug 2026", "—", "—", "300.00", "Overdue", "65"], lines[0].Cells);          // 5 Aug -> 9 Oct = 65 days
-        Assert.Equal(["Voucher INV-3", "09 Oct 2026", "—", "—", "200.00", "Due", "—"], lines[1].Cells);                // due today is not late
+        Assert.Equal(["Voucher INV-3", "09 Oct 2026", "—", "—", "200.00", "Due", "—"], lines[0].Cells);                // due today is not late
+        Assert.Equal(["Voucher INV-1", "05 Aug 2026", "—", "—", "300.00", "Overdue", "65"], lines[1].Cells);          // 5 Aug -> 9 Oct = 65 days
         Assert.Equal(500m, lines.Sum(l => decimal.Parse(l.Cells[4])));                                  // details add up to the row's total remaining
         Assert.Matches("instalment-row--overdue[^>]*data-instalment-status=\"Overdue\"", d1);          // overdue rows are the red ones
         Assert.DoesNotContain("instalment-row--overdue\" data-instalment-status=\"Due\"", d1);
@@ -97,8 +97,8 @@ public sealed class PactReceivablesRenderTests
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
         var lines = Regex.Matches(html, "data-instalment-status=\"\\w+\">(.*?)</tr>", RegexOptions.Singleline).Select(m => Cells("<tr>" + m.Value)).ToList();
-        Assert.Equal(["Voucher INV-7", "01 Sep 2026", "1,000.00", "400.00", "600.00", "Overdue", "38"], lines[0]);
-        Assert.Equal(["Voucher INV-8", "01 Oct 2026", "—", "—", "90.00", "Overdue", "8"], lines[1]);
+        Assert.Equal(["Voucher INV-8", "01 Oct 2026", "—", "—", "90.00", "Overdue", "8"], lines[0]);                   // newest due date first
+        Assert.Equal(["Voucher INV-7", "01 Sep 2026", "1,000.00", "400.00", "600.00", "Overdue", "38"], lines[1]);
     }
 
     [Theory]

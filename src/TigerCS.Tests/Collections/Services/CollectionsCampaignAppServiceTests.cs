@@ -105,7 +105,7 @@ public sealed class CollectionsCampaignAppServiceTests
         h.Source.Items.AddRange([Row(amount: 100m), Row(day: 12, amount: 200m, unit: 202), Row(amount: 300m, company: 32)]);
         var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder")).Value!.Items;
         Assert.Equal(3, items.Count); Assert.Equal(3, items.Select(c => c.RecordId).Distinct().Count());
-        Assert.Equal(new decimal?[] { 100m, 200m, 300m }, items.Select(c => c.Amount));
+        Assert.Equal(new decimal?[] { 200m, 100m, 300m }, items.Select(c => c.Amount));   // newest payment first (the unit due on the 12th), then company / customer / unit
         var again = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new(2026, 10, 15))).Value!.Items;
         Assert.Equal(items.Select(c => c.RecordId), again.Select(c => c.RecordId));
         Assert.All(again, c => Assert.Equal("PreviewOnly", c.Status));

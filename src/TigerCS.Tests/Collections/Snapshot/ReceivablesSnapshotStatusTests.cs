@@ -99,6 +99,15 @@ public sealed class ReceivablesSnapshotStatusTests
         Assert.False(ReceivablesSnapshotComposer.Compose(From, Through, [early], [], [], Now, 90).Snapshot!.RangeCovered);
     }
 
+    [Theory]
+    [InlineData("Failed", true)]
+    [InlineData("Abandoned", true)]      // a timeout / cancellation / restart is a failed attempt: the page offers Retry
+    [InlineData("Running", false)]       // loading, not failed
+    [InlineData("Succeeded", false)]
+    [InlineData("Never", false)]
+    public void AnAbandonedAttemptCountsAsAFailedRefresh_ARunningOneDoesNot(string lastStatus, bool failed) =>
+        Assert.Equal(failed, ReceivablesSnapshotStatusBuilder.Company(FakeSnapshotSource.Healthy(4, Now.AddMinutes(-5)) with { LastAttemptStatus = lastStatus }, Now, 180).LastRefreshFailed);
+
     private sealed class Refresher(ReceivablesRefreshResult result) : IReceivablesRefresher
     {
         public Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken, DateOnly? fromDate = null, DateOnly? throughDate = null) => Task.FromResult(result);
@@ -106,7 +115,7 @@ public sealed class ReceivablesSnapshotStatusTests
 
     private static Task Run(string status, params ReceivablesRefreshCompanyResult[] companies) =>
         new CollectionsReceivablesRefreshJob(new Refresher(new ReceivablesRefreshResult(Guid.NewGuid(), status, "m", companies)), NullLogger<CollectionsReceivablesRefreshJob>.Instance)
-            .RunAsync(CancellationToken.None);
+            .RunAsync(4, CancellationToken.None);
 
     [Fact]
     public async Task Job_SucceedsSilently_AndTreatsAnOverlapAsASkipNotAnError()
@@ -124,15 +133,23 @@ public sealed class ReceivablesSnapshotStatusTests
             new ReceivablesRefreshCompanyResult(32, "Failed", null, null, null, null, null, 7416, "x")));
 
     [Fact]
-    public void ServicesDefaultToAThirtyMinuteRefreshAndANinetyMinuteExportLimit()
+    public void ServicesDefaultToATwoHourRefresh_InDubai_AndAFreshnessLimitThatOutlivesOneRefresh()
     {
         var options = new TigerCS.Application.Modules.Collections.ReceivablesSnapshotOptions();
-        Assert.Equal("*/30 * * * *", options.RefreshCron);
-        Assert.Equal(90, options.MaxAgeMinutes);
-        Assert.Equal(0, options.SourceMinAmount);          // never the diagnostic 100
+        Assert.Equal("0 */2 * * *", options.RefreshCron);
+        Assert.Equal("Asia/Dubai", options.RefreshTimeZoneId);
+        // 120 minutes between refreshes + the 30 minute command timeout of a slow one + slack: a snapshot is never "stale" before its next normal refresh.
+        Assert.Equal(180, options.MaxAgeMinutes);
+        Assert.True(options.MaxAgeMinutes >= 120 + options.RefreshCommandTimeoutSeconds / 60);
+        // StaleAfterMinutes (60) judges LIVE reads. Figures read from the 2-hourly snapshot (the Review workflow) use the snapshot's own limit instead - never stricter than it.
+        Assert.Equal(60, new TigerCS.Application.Modules.Collections.CollectionsOptions().StaleAfterMinutes);
+        var clock = new TigerCS.Application.Modules.Collections.Services.CollectionsClock(new TigerCS.Application.Modules.Collections.CollectionsOptions(), new TigerCS.Tests.Notifications.Fakes.FakeTimeProvider(Now));
+        Assert.True(clock.IsStale(Now.AddMinutes(-90)));                         // a live read of 90 minutes ago is stale ...
+        Assert.False(clock.IsStale(Now.AddMinutes(-170), options.MaxAgeMinutes)); // ... a snapshot copy of 170 minutes ago (due for refresh within the hour) is not
+        Assert.True(clock.IsStale(Now.AddMinutes(-181), options.MaxAgeMinutes));
+        Assert.Equal(0, options.SourceMinAmount);          // never the diagnostic 100: the Minimum Total of the pages is not sent to PACT
         Assert.Equal(new DateTime(2000, 1, 1), options.SourceFromDate);
-        Assert.True(options.RetainPaidInstalments);                    // "Fully paid" / "All" need paid rows in the snapshot
-        Assert.Equal("", options.SourceProcedureSuffix);               // the deployed procedures are used unless a companion is configured
+        Assert.Equal(new DateTime(2099, 12, 31), options.SourceThroughDate);   // the permanent history window, not a test window
         Assert.Equal(100m, new PactReceivablesOptions().DefaultMinOutstandingAmount);
     }
 }

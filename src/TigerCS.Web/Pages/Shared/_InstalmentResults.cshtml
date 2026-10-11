@@ -12,6 +12,7 @@ else if (Model.Report is { } report)
     var units = ReceivablesModel.Lines(report);
     <partial name="_LoadProblem" model="report.Snapshot" />
     <div class="panel">
+        @if (report.Snapshot.OldestSuccessUtc is { } updated) { <p class="receivables-meta" data-updated>Updated @CollectionsDisplay.DubaiTime(updated)</p> }
         @if (units.Count == 0)
         {
             <div class="empty-state">
@@ -23,7 +24,7 @@ else if (Model.Report is { } report)
         {
             <div class="receivables-table-wrap">
                 <table class="receivables-table receivables-table--units">
-                    <thead><tr><th>Customer</th><th>Contact</th><th>Tower</th><th>Apartment</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    <thead><tr><th>Customer</th><th>Contact</th><th>Tower</th><th>Apartment</th><th class="num">Due</th><th class="num">Overdue</th><th class="num">Total</th><th>View Details</th></tr></thead>
                     @foreach (var unit in units)
                     {
                         <tbody class="unit-group" data-unit>

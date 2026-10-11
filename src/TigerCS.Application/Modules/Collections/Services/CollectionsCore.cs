@@ -114,6 +114,13 @@ public sealed class CollectionsClock(CollectionsOptions options, TimeProvider ti
 
     public bool IsStale(DateTime asOfUtc) => UtcNow - asOfUtc > TimeSpan.FromMinutes(Math.Max(1, options.StaleAfterMinutes));
 
+    /// <summary>
+    /// Staleness of a figure that was read from the LOCAL receivables snapshot: never stricter than that snapshot's own freshness limit. The snapshot refreshes every two hours,
+    /// so judging it by <see cref="CollectionsOptions.StaleAfterMinutes"/> (live reads, 60 minutes) would call it stale for half of every cycle.
+    /// </summary>
+    public bool IsStale(DateTime asOfUtc, int snapshotMaxAgeMinutes) =>
+        UtcNow - asOfUtc > TimeSpan.FromMinutes(Math.Max(1, Math.Max(options.StaleAfterMinutes, snapshotMaxAgeMinutes)));
+
     public ReminderRuleSettings Rules => options.Rules.ToSettings();
 }
 

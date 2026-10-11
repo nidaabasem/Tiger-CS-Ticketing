@@ -12,8 +12,8 @@
     dbo.fn_Collections_CrmUnitLinks          inline TVF per (company, unit key) of the CURRENT run: distinct customers (1 = Single, > 1 = Ambiguous) and, for one customer, its contact
     dbo.usp_Collections_StoreCrmUnitOwners / usp_Collections_PublishCrmUnitOwners / usp_Collections_RecordCrmOwnerFailure
     dbo.usp_Collections_GetCrmUnitLinks      bulk link read for a JSON list of (company, unit key)
-    dbo.usp_Collections_GetUnitReceivables   Payment Summary: one unit's PACT identities and unpaid instalments due today or earlier + its CRM link, by unit key
-  Idempotent (CREATE OR ALTER / IF NOT EXISTS). Needs V002, V003, V006.
+  Idempotent (CREATE OR ALTER / IF NOT EXISTS). Needs V001 and V003 only. (The unit-keyed Payment Summary read moved to dbo.usp_CollectionsRcv_GetUnit, R004; an older
+  copy of dbo.usp_Collections_GetUnitReceivables left on a server by the previous pipeline is dropped by migration/M03.)
 */
 CREATE OR ALTER FUNCTION dbo.fn_CollectionsUnitKey (@UnitCode nvarchar(200))
 RETURNS nvarchar(220)
@@ -155,51 +155,5 @@ BEGIN
     SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm
       FROM OPENJSON(@Json) WITH (CompanyId int '$.c', UnitKey nvarchar(220) '$.k') k
       JOIN dbo.fn_Collections_CrmUnitLinks() l ON l.CompanyId = k.CompanyId AND l.UnitKey = k.UnitKey COLLATE Latin1_General_BIN2;
-END;
-GO
-
-/*
-  Payment Summary by unit. @UnitKey is the normalised key (TP140-101); @CompanyId narrows to one company (NULL = every company that holds the unit).
-    1 coverage        usp_Collections_GetCoverage (freshness of the PACT snapshot)
-    2 identities      per (company, tenant, unit): the PACT customer of the unit (name / mobile / e-mail as PACT holds them - mobile may be empty), tower, and how many rows exist
-    3 instalments     the unit's unpaid instalments due on or before @AsOfDate (Overdue < it, Due = it), oldest first, with the breakdown PACT returned
-    4 crm             the CRM link of the unit (usp_Collections_GetCrmUnitLinks shape), all companies
-  Rows with UnitID <= 0 or a cancelled ('*') / blank / 0 code never match.
-*/
-CREATE OR ALTER PROCEDURE dbo.usp_Collections_GetUnitReceivables @UnitKey nvarchar(220), @CompanyId int = NULL, @AsOfDate date
-AS
-BEGIN
-    SET NOCOUNT ON;
-    IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50031, N'Company must be 4, 32 or NULL.', 1;
-    DECLARE @Bare nvarchar(220) = SUBSTRING(@UnitKey, 3, 220), @Tomorrow datetime = CAST(DATEADD(DAY, 1, @AsOfDate) AS datetime);
-    EXEC dbo.usp_Collections_GetCoverage @CompanyId;
-
-    SELECT u.CompanyId, u.UnitSeq, u.TenantId COLLATE DATABASE_DEFAULT AS TenantId, u.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, r.UnitId, r.FullName, r.Mobile, r.Email, r.TowerNumber,
-           CONVERT(nvarchar(400), tw.TowerName) AS TowerName, a.AllRows, a.OpenRows
-      INTO #id
-      FROM dbo.CollectionsReceivableCompanyState st
-      JOIN dbo.CollectionsReceivableUnitText u ON u.CompanyId = st.CompanyId AND u.RunId = st.CurrentRunId
-      CROSS APPLY (SELECT TOP (1) s.* FROM dbo.CollectionsReceivableSnapshot s
-                    WHERE s.CompanyId = u.CompanyId AND s.RunId = u.RunId AND s.UnitSeq = u.UnitSeq ORDER BY s.DueDate, s.SnapshotRowId) r
-      CROSS APPLY (SELECT COUNT(*) AS AllRows, SUM(CASE WHEN s.Amount > 0 THEN 1 ELSE 0 END) AS OpenRows FROM dbo.CollectionsReceivableSnapshot s
-                    WHERE s.CompanyId = u.CompanyId AND s.RunId = u.RunId AND s.UnitSeq = u.UnitSeq) a
-      OUTER APPLY (SELECT TOP (1) t.TowerName FROM dbo.CollectionsTowers t WHERE t.CompanyId = r.CompanyId AND LTRIM(RTRIM(CONVERT(nvarchar(20), t.TowerNumber))) = r.TowerNumber
-                    ORDER BY CASE WHEN t.IsActive = 1 THEN 0 ELSE 1 END, t.TowerId) tw
-     WHERE (@CompanyId IS NULL OR st.CompanyId = @CompanyId) AND st.CurrentRunId IS NOT NULL
-       AND UPPER(LTRIM(RTRIM(u.UnitCode))) COLLATE Latin1_General_BIN2 IN (@UnitKey COLLATE Latin1_General_BIN2, @Bare COLLATE Latin1_General_BIN2)
-       AND r.UnitId > 0 AND u.UnitCode NOT LIKE N'%*%' AND LTRIM(RTRIM(u.UnitCode)) NOT IN (N'', N'0')
-    OPTION (RECOMPILE);
-    SELECT CompanyId, UnitSeq, TenantId, UnitCode, UnitId, FullName, Mobile, Email, TowerNumber, TowerName, AllRows, OpenRows FROM #id ORDER BY CompanyId, TenantId, UnitSeq;
-
-    SELECT i.CompanyId, i.TenantId, i.UnitId, s.VoucherNumber, s.ChequeNumber, s.DueDate, s.Amount AS RemainingAmount, s.OriginalAmount, s.PaidAmount, s.PaymentStatus, s.SourceStatus
-      FROM #id i
-      JOIN dbo.CollectionsReceivableCompanyState st ON st.CompanyId = i.CompanyId
-      JOIN dbo.CollectionsReceivableSnapshot s ON s.CompanyId = i.CompanyId AND s.RunId = st.CurrentRunId AND s.UnitSeq = i.UnitSeq
-     WHERE s.Amount > 0 AND s.DueDate < @Tomorrow
-     ORDER BY i.CompanyId, i.UnitSeq, s.DueDate, s.VoucherNumber COLLATE Latin1_General_BIN2, s.SnapshotRowId;
-
-    SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm
-      FROM dbo.fn_Collections_CrmUnitLinks() l
-     WHERE l.UnitKey = @UnitKey COLLATE Latin1_General_BIN2 AND (@CompanyId IS NULL OR l.CompanyId = @CompanyId);
 END;
 GO

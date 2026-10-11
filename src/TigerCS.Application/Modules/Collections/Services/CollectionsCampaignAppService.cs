@@ -305,7 +305,8 @@ public sealed class CollectionsCampaignAppService(
                 flags |= CollectionsContactLinker.Flags(linked, selected != CollectionsCampaignStage.LegalReferral);
                 return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, linked.NameSource == "Crm" ? linked.Name : first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
                     amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount,
-                    link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null);
+                    link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null,
+                    g.Max(r => DateOnly.FromDateTime(r.DueDate)));
             }).OfType<CampaignUnitFacts>().ToList();
         if (companyId is { } company) facts = facts.Where(f => f.CompanyId == company).ToList();
         if (term is not null)
@@ -314,7 +315,8 @@ public sealed class CollectionsCampaignAppService(
             facts = facts.Where(c => Match(c.FullName) || Match(c.TenantId) || Match(c.UnitCode) || Match(c.Phone) || Match(c.Email) || Match(c.TowerNumber ?? "") || Match(c.TowerName ?? "")
                 || (phoneDigits is not null && c.Phone.Contains(phoneDigits, StringComparison.Ordinal))).ToList();
         }
-        return facts.OrderBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
+        // Newest payment first (the same order as the Receivables page and the exports), then a fixed order so pages never overlap or skip.
+        return facts.OrderByDescending(c => c.LatestDue).ThenBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
             .ThenBy(c => c.UnitCode, StringComparer.Ordinal).ThenBy(c => c.UnitId).ToList();
     }
 

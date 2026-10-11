@@ -38,7 +38,6 @@ public static class BackgroundJobServiceCollectionExtensions
         services.AddScoped<OutboxDispatchJob>();
         services.AddScoped<CollectionsReminderScheduleJob>();
         services.AddScoped<CollectionsReceivablesRefreshJob>();
-        services.AddScoped<CollectionsReceivablesRangeLoadJob>();
         services.AddScoped<CollectionsReceivablesCompanyRetryJob>();
         services.AddScoped<CollectionsCrmOwnersRefreshJob>();
         services.AddScoped<CollectionsReviewRefreshJob>();
@@ -205,10 +204,10 @@ public static class BackgroundJobServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the recurring PACT receivables snapshot refresh (a Hangfire job, because SQL Server Agent is not available).
-    /// Removed when disabled. With <c>RefreshOnStartup</c> one run is triggered immediately so a fresh deployment does not wait
-    /// for the first cron tick. A no-op when <c>BackgroundJobs:Enabled</c> is false: the snapshot then never refreshes and
-    /// the pages show it as stale / not loaded.
+    /// Registers the recurring PACT receivables snapshot refresh: ONE Hangfire job per company (Dubai 4, Sharjah 32; SQL Server Agent is not used), evaluated in
+    /// <see cref="ReceivablesSnapshotOptions.RefreshTimeZoneId"/> (default <c>0 */2 * * *</c> in Asia/Dubai = every two hours). The single recurring job of the previous pipeline is
+    /// always removed. With <c>RefreshOnStartup</c> one run per company is triggered immediately so a fresh deployment does not wait for the first cron tick. A no-op when
+    /// <c>BackgroundJobs:Enabled</c> is false: the snapshot then never refreshes and the pages show it as stale / not loaded (see docs/Collections/Receivables-Snapshot.md).
     /// </summary>
     public static void UseTigerCsRecurringCollectionsReceivablesRefresh(
         this IServiceProvider services, BackgroundJobOptions backgroundJobOptions, ReceivablesSnapshotOptions snapshotOptions)
@@ -223,19 +222,23 @@ public static class BackgroundJobServiceCollectionExtensions
         }
 
         var manager = services.GetRequiredService<IRecurringJobManager>();
-        if (!snapshotOptions.UseLocalSnapshot || !snapshotOptions.RefreshEnabled)
+        manager.RemoveIfExists(CollectionsReceivablesRefreshJob.LegacyRecurringJobId);   // the previous pipeline's schedule must not run any more
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(snapshotOptions.RefreshTimeZoneId) ? "Asia/Dubai" : snapshotOptions.RefreshTimeZoneId);
+        var cron = string.IsNullOrWhiteSpace(snapshotOptions.RefreshCron) ? "0 */2 * * *" : snapshotOptions.RefreshCron;
+        foreach (var company in new[] { 4, 32 })
         {
-            manager.RemoveIfExists(CollectionsReceivablesRefreshJob.RecurringJobId);
-            return;
-        }
-
-        manager.AddOrUpdate<CollectionsReceivablesRefreshJob>(
-            CollectionsReceivablesRefreshJob.RecurringJobId,
-            job => job.RunAsync(CancellationToken.None),
-            string.IsNullOrWhiteSpace(snapshotOptions.RefreshCron) ? "*/30 * * * *" : snapshotOptions.RefreshCron);
-        if (snapshotOptions.RefreshOnStartup)
-        {
-            manager.Trigger(CollectionsReceivablesRefreshJob.RecurringJobId);
+            var id = CollectionsReceivablesRefreshJob.RecurringJobId(company);
+            if (!snapshotOptions.RefreshEnabled)
+            {
+                manager.RemoveIfExists(id);
+                continue;
+            }
+            var companyId = company;
+            manager.AddOrUpdate<CollectionsReceivablesRefreshJob>(id, job => job.RunAsync(companyId, CancellationToken.None), cron, new RecurringJobOptions { TimeZone = timeZone });
+            if (snapshotOptions.RefreshOnStartup)
+            {
+                manager.Trigger(id);
+            }
         }
     }
 

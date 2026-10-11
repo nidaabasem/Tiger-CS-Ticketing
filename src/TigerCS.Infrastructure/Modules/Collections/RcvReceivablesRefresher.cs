@@ -1,0 +1,151 @@
+using System.Collections.Concurrent;
+using System.Data;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using TigerCS.Application.Modules.Collections;
+using TigerCS.Application.Modules.Collections.Abstractions;
+
+namespace TigerCS.Infrastructure.Modules.Collections;
+
+/// <summary>
+/// Refreshes the local receivables snapshot: ONE call of <c>dbo.usp_CollectionsRcv_Refresh</c> per company (PACT -> temp table -> validated publish, all inside SQL), so a slow, hung or failed
+/// company never blocks, rolls back or marks the other one. A company is never refreshed twice at the same time: an in-process gate here and the company's application lock in SQL.
+/// A refresh whose call does not return (timeout, cancellation, restart) is closed through <c>usp_CollectionsRcv_ReapDeadRuns</c> once its SQL session is gone; whatever it cannot close
+/// (the session is still executing the PACT call) stays honestly "loading" until that session ends, and is closed by the next status read or refresh.
+/// </summary>
+public sealed class RcvReceivablesRefresher(IConfiguration configuration, ReceivablesSnapshotOptions options, ILogger<RcvReceivablesRefresher> logger) : IReceivablesRefresher
+{
+    private static readonly ConcurrentDictionary<int, SemaphoreSlim> Gates = new();
+    private static readonly int[] Companies = [4, 32];
+
+    /// <remarks>
+    /// <paramref name="fromDate"/> / <paramref name="throughDate"/> are ignored: the snapshot always holds the whole configured window, so there is nothing to "load" for a range.
+    /// <paramref name="companyId"/> null refreshes Dubai then Sharjah, each independently (the scheduler runs one job per company instead, in parallel).
+    /// </remarks>
+    public async Task<ReceivablesRefreshResult> RefreshAsync(string triggerSource, int? companyId, CancellationToken cancellationToken,
+        DateOnly? fromDate = null, DateOnly? throughDate = null)
+    {
+        if (companyId is not (null or 4 or 32)) throw new ArgumentOutOfRangeException(nameof(companyId));
+        var results = new List<ReceivablesRefreshCompanyResult>();
+        Guid? firstRun = null;
+        foreach (var company in Companies.Where(c => companyId is null || c == companyId))
+        {
+            var (runId, result) = await RefreshCompanyAsync(triggerSource, company, cancellationToken);
+            firstRun ??= runId;
+            results.Add(result);
+        }
+        var ok = results.Count(r => r.Status == "Succeeded");
+        var failed = results.Count(r => r.Status == "Failed");
+        var status = failed == 0 ? (ok > 0 ? "Succeeded" : "AlreadyRunning") : ok > 0 ? "PartialFailure" : "Failed";
+        var message = status switch
+        {
+            "AlreadyRunning" => "A refresh of this company is already running; this call did nothing.",
+            "Succeeded" => null,
+            _ => string.Join(" ", results.Where(r => r.Status == "Failed").Select(r => $"Company {r.CompanyId}: {r.ErrorMessage}"))
+        };
+        return new ReceivablesRefreshResult(firstRun, status, message, results);
+    }
+
+    private async Task<(Guid? RunId, ReceivablesRefreshCompanyResult Result)> RefreshCompanyAsync(string triggerSource, int company, CancellationToken cancellationToken)
+    {
+        var gate = Gates.GetOrAdd(company, _ => new SemaphoreSlim(1, 1));
+        if (!await gate.WaitAsync(0, cancellationToken))
+            return (null, new ReceivablesRefreshCompanyResult(company, "AlreadyRunning", null, null, null, null, null, null, "A refresh of this company is already running in this process."));
+        var runId = Guid.NewGuid();   // ours, so an attempt whose call never returns can still be found
+        string? connectionString = null;
+        SqlConnection? connection = null;
+        var returned = false; int closeNumber = -1; string closeMessage = "The refresh did not finish.";
+        try
+        {
+            connectionString = configuration.GetConnectionString(options.ConnectionStringName)
+                ?? throw new PactReceivablesSourceException("The receivables snapshot connection is not configured.");
+            connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("dbo.usp_CollectionsRcv_Refresh", connection)
+            { CommandType = CommandType.StoredProcedure, CommandTimeout = Math.Clamp(options.RefreshCommandTimeoutSeconds, 5, 7200) };
+            command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = company;
+            command.Parameters.Add("@TriggerSource", SqlDbType.NVarChar, 50).Value = triggerSource.Length > 50 ? triggerSource[..50] : triggerSource;
+            command.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = runId;
+            command.Parameters.Add("@SourceFromDate", SqlDbType.Date).Value = options.SourceFromDate.Date;
+            command.Parameters.Add("@SourceThroughDate", SqlDbType.Date).Value = options.SourceThroughDate.Date;
+            command.Parameters.Add("@SourceMinAmount", SqlDbType.Int).Value = options.SourceMinAmount;
+            command.Parameters.Add("@MaxRawRows", SqlDbType.Int).Value = options.MaxRawRows;
+            command.Parameters.Add("@MaxShrinkPercent", SqlDbType.Int).Value = Math.Clamp(options.MaxShrinkPercent, 0, 100);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            ReceivablesRefreshCompanyResult? result = null; Guid? resultRun = null;
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                resultRun = reader.IsDBNull(reader.GetOrdinal("RunId")) ? null : reader.GetGuid(reader.GetOrdinal("RunId"));
+                result = new ReceivablesRefreshCompanyResult(company, reader.GetString(reader.GetOrdinal("Status")), Int(reader, "RawRows"), Int(reader, "PublishedRows"),
+                    Int(reader, "ExcludedSettledRows"), SumOf(Int(reader, "ExcludedInvalidRows"), Int(reader, "ExcludedCancelledRows")), null, Int(reader, "ErrorNumber"),
+                    reader.IsDBNull(reader.GetOrdinal("ErrorMessage")) ? null : reader.GetString(reader.GetOrdinal("ErrorMessage")),
+                    Int(reader, "FetchMs"), null, Int(reader, "PublishMs"));
+            }
+            returned = true;   // the procedure ran to its end: the attempt has its own terminal state
+            return (resultRun ?? runId, result ?? new ReceivablesRefreshCompanyResult(company, "Failed", null, null, null, null, null, null, "The refresh procedure returned no result."));
+        }
+        catch (SqlException ex)
+        {
+            closeNumber = ex.Number;
+            closeMessage = ex.Number == -2
+                ? $"The refresh exceeded its {options.RefreshCommandTimeoutSeconds} s command timeout and was stopped."
+                : $"The refresh procedure failed (SQL error {ex.Number}).";
+            logger.LogError("Receivables refresh of company {CompanyId} failed (SQL error {SqlNumber}).", company, ex.Number);
+            return (runId, new ReceivablesRefreshCompanyResult(company, "Failed", null, null, null, null, null, ex.Number, closeMessage));
+        }
+        catch (OperationCanceledException)
+        {
+            closeMessage = "The refresh was cancelled (application shutdown or job cancellation).";
+            throw;
+        }
+        catch (Exception ex)
+        {
+            closeMessage = $"The refresh stopped unexpectedly ({ex.GetType().Name}).";
+            throw;
+        }
+        finally
+        {
+            if (connection is not null)
+            {
+                // A batch that did not return must not go back to the pool with its session (and the company's application lock) attached: closing the connection ends it.
+                if (!returned) SqlConnection.ClearPool(connection);
+                await connection.DisposeAsync();
+            }
+            if (!returned && connectionString is not null) await ReapAsync(connectionString, company, runId, closeNumber, closeMessage);
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Gives the attempt this call started a terminal state when the call ended without a result. Does nothing while the attempt's SQL session still holds the company's lock
+    /// (the session is still inside the PACT call): it is then genuinely still running, and the next status read / refresh closes it once the session ends. Never throws.
+    /// </summary>
+    private async Task ReapAsync(string connectionString, int company, Guid runId, int errorNumber, string message)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cts.Token);
+            await using (var note = new SqlCommand("dbo.usp_CollectionsRcv_NoteClientAbort", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 30 })
+            {
+                note.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = runId;
+                note.Parameters.Add("@ErrorNumber", SqlDbType.Int).Value = errorNumber;
+                note.Parameters.Add("@Message", SqlDbType.NVarChar, 1000).Value = message;
+                await note.ExecuteNonQueryAsync(cts.Token);
+            }
+            await using var command = new SqlCommand("dbo.usp_CollectionsRcv_ReapDeadRuns", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 30 };
+            command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = company;
+            command.Parameters.Add("@ErrorNumber", SqlDbType.Int).Value = errorNumber;
+            command.Parameters.Add("@Message", SqlDbType.NVarChar, 1000).Value = message;
+            command.Parameters.Add("@Status", SqlDbType.VarChar, 12).Value = "Failed";
+            await command.ExecuteNonQueryAsync(cts.Token);
+        }
+        catch (Exception ex) when (ex is SqlException or InvalidOperationException or OperationCanceledException)
+        { logger.LogWarning("Could not close the unfinished receivables refresh of company {CompanyId} ({ExceptionType}); the next status read or refresh will.", company, ex.GetType().Name); }
+    }
+
+    private static int? Int(SqlDataReader r, string name) { var i = r.GetOrdinal(name); return r.IsDBNull(i) ? null : Convert.ToInt32(r.GetValue(i), System.Globalization.CultureInfo.InvariantCulture); }
+    private static int? SumOf(int? a, int? b) => a is null && b is null ? null : (a ?? 0) + (b ?? 0);
+}
