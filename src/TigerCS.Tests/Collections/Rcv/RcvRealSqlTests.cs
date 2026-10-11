@@ -19,7 +19,8 @@ namespace TigerCS.Tests.Collections.Rcv;
 /// database (never in CI, never a production server); otherwise they return immediately. Each test starts from an empty snapshot and its own PACT rows (fake PACT: FakeEdgeRows).
 /// They prove the SQL; they cannot reproduce the production linked server (provider, MSDTC) or the real PACT volumes.
 /// </summary>
-public sealed class RcvRealSqlTests
+[Collection("RcvRealSql")]
+public sealed partial class RcvRealSqlTests
 {
     private static readonly string? ConnectionString = Environment.GetEnvironmentVariable("TIGERCS_PERF_SQL");
     private static readonly DateOnly Today = new(2026, 10, 11);   // the Dubai "today" every read in this class uses
@@ -249,6 +250,28 @@ public sealed class RcvRealSqlTests
         var sharjah = await Source().ReadAsync(new PactReceivablesRequest(null, Today, 32), default);
         Assert.All(sharjah.Items, r => Assert.Equal(32, r.CompanyId));
         Assert.Single(sharjah.Snapshot!.Companies);
+    }
+
+    [Fact]
+    public async Task TheWindowRead_AppliesNoMonthClassification_DueIsTodayAndOverdueIsBeforeToday()
+    {
+        if (string.IsNullOrWhiteSpace(ConnectionString)) return;
+        await Seed();
+        var any = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today), default);
+        // The old month classification (Class / AsOfDate: "Due" = anything in the as-of month) must not filter anything any more: the same rows come back whatever they ask for.
+        foreach (var cls in new[] { PactReceivableClass.Due, PactReceivableClass.Overdue, PactReceivableClass.DueOrOverdue })
+        {
+            var read = await Source().ReadAsync(new PactReceivablesRequest(new DateOnly(2000, 1, 1), Today, Class: cls, AsOfDate: new DateOnly(2026, 9, 1)), default);
+            Assert.Equal(any.Items.Count, read.Items.Count);
+        }
+        // What the callers in scope do with those rows: Campaigns classify by the Dubai DAY - 1 Oct is Overdue even though it is in the current month; Due is only what is due TODAY.
+        var service = CampaignService(Source());
+        var manager = new CollectionsCaller(Guid.NewGuid(), [Roles.CsManager], []);
+        var report = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: new DateOnly(2000, 1, 1), minTotal: null)).Value!;
+        var a = report.Items.Single(i => i.CompanyId == 4 && i.UnitCode == "TP101-101");
+        Assert.Equal((0m, 120m), (a.DueAmount, a.OverdueAmount));                                          // 15 Sep and 1 Oct: both before today (11 Oct)
+        var b = report.Items.Single(i => i.CompanyId == 4 && i.UnitCode == "TP101-102");
+        Assert.Equal((100m, 0m), (b.DueAmount, b.OverdueAmount));                                          // due exactly today
     }
 
     [Fact]

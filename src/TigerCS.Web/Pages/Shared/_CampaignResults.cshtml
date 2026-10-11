@@ -8,7 +8,7 @@
 }
 else if (Model.Report is { } report)
 {
-    <div hidden data-effective-filters data-from="@report.DateFrom?.ToString("yyyy-MM-dd")" data-to="@report.DateTo?.ToString("yyyy-MM-dd")"></div>
+    <div hidden data-effective-filters data-from="@Model.DateFrom?.ToString("yyyy-MM-dd")" data-to="@report.DateTo?.ToString("yyyy-MM-dd")"></div>
     if (report.Snapshot is { NothingLoaded: true } nothing) { <div class="panel"><partial name="_LoadProblem" model="nothing" /></div> return; }
     <div class="panel">
         @if (report.Snapshot is { } snapshot) { <partial name="_LoadProblem" model="snapshot" /> }

@@ -15,6 +15,7 @@ namespace TigerCS.Tests.Collections.Rcv;
 /// Timings of the page and campaign reads over an already loaded, full-volume snapshot (the local fake PACT at ~300 k / ~144 k rows). Runs only when TIGERCS_PERF_SQL points at that database AND
 /// TIGERCS_PERF_TIMINGS is set; writes a small table to the file named by TIGERCS_PERF_TIMINGS. Not an assertion of a production number: the server, PACT and volumes differ.
 /// </summary>
+[Collection("RcvRealSql")]
 public sealed class RcvFullVolumeTimings
 {
     [Fact]

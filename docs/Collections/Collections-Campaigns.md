@@ -1,7 +1,7 @@
 # Collections campaigns preview and CSV export
 
-> **Current behaviour (rebuilt snapshot):** campaigns read the local receivables snapshot refreshed from PACT every two hours (see [Receivables-Snapshot.md](Receivables-Snapshot.md)). The stage rules, the preview date
-> and the From/To defaults are unchanged. Each row is one apartment of a customer with **Due** (today), **Overdue** (before today) and **Total** (= Due + Overdue); nothing due after today is listed.
+> **Current behaviour (rebuilt snapshot):** campaigns read the local receivables snapshot refreshed from PACT every two hours (see [Receivables-Snapshot.md](Receivables-Snapshot.md)). The stage rules and the preview date
+> are unchanged; *All months* (no From date) READS the whole history up to today, while which units are eligible and their stage amount still come from the configured start date (or the explicit From) - the two scopes are separate. Each row is one apartment of a customer with **Due** (today), **Overdue** (before today) and **Total** (= Due + Overdue); nothing due after today is listed.
 > **Minimum Total (AED)** (default 100, clearable) is applied to the apartment's summed Due + Overdue, strictly greater, before the count, the paging and both exports. Units without a mobile or e-mail are still
 > listed (with a reason). Order: newest payment first, then company / customer / unit. Exports (review and Genesys) are refused unless every company in scope has a successful refresh no older than
 > `Collections:ReceivablesSnapshot:MaxAgeMinutes` (180). The stage evaluation runs in the application on the payment rows `usp_CollectionsRcv_GetLines` returns (the SQL campaign engine of the previous pipeline was retired).

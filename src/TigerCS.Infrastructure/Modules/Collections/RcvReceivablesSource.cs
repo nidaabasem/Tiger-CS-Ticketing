@@ -22,7 +22,11 @@ public sealed class RcvReceivablesSource(
     public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) =>
         ReadAsync(new PactReceivablesRequest(null, throughDate), cancellationToken);
 
-    /// <summary>Payment rows of a due-date window (Campaigns, Review): <c>dbo.usp_CollectionsRcv_GetLines</c>.</summary>
+    /// <summary>
+    /// Payment rows of a due-date window [FromDate, ThroughDate] (Campaigns, Review, the legacy customers API): <c>dbo.usp_CollectionsRcv_GetLines</c>. It is a plain window read: it applies NO
+    /// Due / Overdue classification of its own (<see cref="PactReceivablesRequest.Class"/> and <see cref="PactReceivablesRequest.AsOfDate"/> are ignored). Every caller classifies the rows itself -
+    /// Campaigns by the Dubai DAY (Due = today, Overdue = before today); the legacy <c>/api/collections/receivables</c> list keeps its documented EDSM month rule inside its own service.
+    /// </summary>
     public async Task<PactReceivablesSnapshot> ReadAsync(PactReceivablesRequest request, CancellationToken cancellationToken)
     {
         if (pactOptions.ApplyLegacyExclusions)
@@ -49,21 +53,9 @@ public sealed class RcvReceivablesSource(
             await ReadScopeAsync(reader, cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) companies.Add(ReadCompany(reader));
             await reader.NextResultAsync(cancellationToken);
-            var asOf = request.AsOfDate ?? request.ThroughDate;
-            var monthStart = new DateOnly(asOf.Year, asOf.Month, 1);
-            var nextMonth = monthStart.AddMonths(1);
             while (await reader.ReadAsync(cancellationToken))
             {
                 var due = DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("DueDate")));
-                // The legacy month classification of the instalments API; Campaigns and Review ask for Any.
-                var keep = request.Class switch
-                {
-                    PactReceivableClass.Overdue => due < monthStart,
-                    PactReceivableClass.Due => due >= monthStart && due < nextMonth,
-                    PactReceivableClass.DueOrOverdue => due < nextMonth,
-                    _ => true
-                };
-                if (!keep) continue;
                 rows.Add(new PactReceivableInstalment(
                     reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")),
                     reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("Mobile")), reader.GetString(reader.GetOrdinal("Email")),

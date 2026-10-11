@@ -174,12 +174,14 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
             var instalments = rows.Select((i, index) => new InstalmentLine(index + 1,
                 i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
                 Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();
+            // PACT's contact for the apartment is taken from its EARLIEST payment (then smallest voucher): the same representative row Campaigns use, though the details list newest first.
+            var contactRows = rows.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList();
             var tower = !string.IsNullOrWhiteSpace(unit.TowerName) ? unit.TowerName : unit.TowerNumber ?? "—";
             if (instalments.Count == 0) continue;   // nothing Due or Overdue: the unit is not listed
             // CRM first, PACT completing, nobody merged on conflict (CollectionsContactLinker): the same rule SQL applies to Campaigns and the Payment Summary uses.
             var crmStatus = unit.CrmCustomers is null ? CrmLinkStatus.None : unit.CrmCustomers > 1 ? CrmLinkStatus.Ambiguous : CrmLinkStatus.Single;
             var linked = CollectionsContactLinker.Link(
-                new SourceContact(unit.CustomerName.Trim(), CollectionsContactNormalizer.NormalizePhone(First(rows.Select(r => r.Mobile), "")), CollectionsContactNormalizer.NormalizeEmail(First(rows.Select(r => r.Email), ""))),
+                new SourceContact(unit.CustomerName.Trim(), CollectionsContactNormalizer.NormalizePhone(First(contactRows.Select(r => r.Mobile), "")), CollectionsContactNormalizer.NormalizeEmail(First(contactRows.Select(r => r.Email), ""))),
                 new SourceContact(unit.CrmName?.Trim() ?? "", unit.CrmPhone ?? "", unit.CrmEmail ?? ""), crmStatus);
             var notes = new List<string>();
             if (linked.CrmCustomerAmbiguous) notes.Add("Several CRM customers: needs review");

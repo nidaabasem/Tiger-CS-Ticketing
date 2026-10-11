@@ -18,6 +18,9 @@ public sealed class CollectionsCampaignAppService(
     CollectionsAuthorizationService authorization, CollectionsClock clock, IPactReceivablesSource source,
     ILogger<CollectionsCampaignAppService> logger, ICollectionsCrmOwnerStore? crmOwners = null, CollectionsCrmOwnersOptions? crmOptions = null)
 {
+    /// <summary>First day the receivables history is read from when the user gives no From date (the snapshot window starts here).</summary>
+    public static readonly DateOnly HistoryStart = new(2000, 1, 1);
+
     public async Task<CollectionsResult<CollectionsCampaignPreviewDto>> PreviewAsync(
         CollectionsCaller caller, string? stage, DateOnly? businessDate = null, int? companyId = null,
         string? search = null, int page = 1, int pageSize = 25, bool forExport = false,
@@ -48,15 +51,19 @@ public sealed class CollectionsCampaignAppService(
         // the window only limits which instalments are read.
         var to = dateTo ?? CollectionsCampaignPolicy.DefaultDateTo(selected, date);
         if (to > today) to = today;   // future instalments are not part of any list, total or export
-        // Lower bound = the configured receivables StartDate (not 1 January of the preview year): overdue and legal
-        // stages look back months, so a calendar-year floor would silently empty them from January onwards.
+        // TWO scopes, deliberately separate:
+        //  * ELIGIBILITY scope (stage policy, unchanged): instalments from the explicit From, else the configured receivables StartDate (not 1 January of the preview year:
+        //    overdue and legal stages look back months). It decides WHICH units are candidates, their stage amount, flags and review reasons.
+        //  * READ scope (what the list shows): the explicit From, else the whole history (2000-01-01) - "All months" reaches previous years up to today, like Receivables.
+        //    It only feeds the Due / Overdue / Total columns, the Minimum Total and the ordering; widening it never makes a unit eligible or changes a stage amount.
         var configuredStart = DateOnly.FromDateTime(sourceOptions.StartDate);
         if (dateFrom is null && configuredStart > to)
-            // No calendar-year fallback: instalments before the configured start date are out of scope, so a window that ends
-            // before it has nothing to read.
+            // No calendar-year fallback: instalments before the configured start date are out of the stage policy, so a window that ends
+            // before it has nothing eligible.
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 $"The window ends before the configured receivables start date ({configuredStart:yyyy-MM-dd}); nothing earlier is in scope. Choose a later preview date, or set From date explicitly.");
-        var from = dateFrom ?? configuredStart;
+        var eligibleFrom = dateFrom ?? configuredStart;
+        var from = dateFrom ?? HistoryStart;
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<CollectionsCampaignPreviewDto>.Fail(CollectionsOutcome.InvalidRequest,
                 "From date must not be after To date (instalments due after today are not listed), and both must be within 2000-2100.");
@@ -183,7 +190,7 @@ public sealed class CollectionsCampaignAppService(
                         logger.LogWarning("CRM owner links could not be read ({ExceptionType}); PACT contact data is used.", ex.GetType().Name);
                     }
                 }
-                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal, links);
+                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal, links, eligibleFrom);
             }
             catch (OverflowException)
             {
@@ -212,7 +219,7 @@ public sealed class CollectionsCampaignAppService(
             "PACT receivables (companies 4 and 32)", selected.ToString(), cycle, dates, dates.Contains(date),
             campaignOptions.FinancialSourceValidated, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,
             count, ready, review, page, pageSize, items,
-            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, from, to), towerId, snapshotStatus, min,
+            from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, eligibleFrom, to), towerId, snapshotStatus, min,
             new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds)));
     }
 
@@ -251,8 +258,11 @@ public sealed class CollectionsCampaignAppService(
     /// </summary>
     internal List<CampaignUnitFacts> BuildFactsInMemory(IReadOnlyList<PactReceivableInstalment> items, DateOnly from, DateOnly to, decimal min,
         CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId, DateOnly? today = null, decimal? minTotal = null,
-        IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? crmLinks = null)
+        IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? crmLinks = null, DateOnly? eligibleFrom = null)
     {
+        // READ scope = [from, to]; ELIGIBILITY scope = [eligibleFrom ?? from, to]. A unit is a candidate, and its stage amount and unit-level flags are decided, ONLY from its
+        // eligibility rows - exactly as before the read scope was widened; the read scope adds nothing but the Due / Overdue / Total figures and the ordering date.
+        var eligibleStart = eligibleFrom ?? from;
         // Defensive: a legacy source may ignore the window.
         // Floating-point residue from the deployed procedures (e.g. 1E-12 on a settled instalment) is snapped to fils; a genuine
         // sub-fils amount stays as read so AmountPrecisionNeedsReview still fires. Rounding is never used to hide it.
@@ -265,22 +275,25 @@ public sealed class CollectionsCampaignAppService(
         if (rows.Any(r => r.CompanyId is not (4 or 32) || string.IsNullOrWhiteSpace(r.TenantId)))
             throw new InvalidDataException("PACT returned a receivable without a valid company/customer identity.");
         // The originals can repeat one instalment under different apartments of the same tenant.
-        var ambiguousTenants = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
+        var eligibleRows = rows.Where(r => DateOnly.FromDateTime(r.DueDate) >= eligibleStart).ToList();
+        var ambiguousTenants = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim()))
             .Where(g => g.GroupBy(r => DateOnly.FromDateTime(r.DueDate))
                 .Any(d => d.Select(r => (r.UnitId, Code: r.UnitCode.Trim())).Distinct().Count() > 1)
                 || g.GroupBy(r => r.UnitId).Any(u => u.Select(r => r.UnitCode.Trim()).Distinct().Count() > 1)
                 || g.GroupBy(r => r.UnitCode.Trim()).Any(u => u.Select(r => r.UnitId).Distinct().Count() > 1))
             .Select(g => g.Key).ToHashSet();
-        var facts = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim()))
+        var readGroups = rows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim())).ToDictionary(g => g.Key, g => g.ToList());
+        var facts = eligibleRows.GroupBy(r => (r.CompanyId, Tenant: r.TenantId.Trim(), r.UnitId, Code: r.UnitCode.Trim()))
             .Select(g =>
             {
                 var first = g.First();
+                var all = readGroups[g.Key];   // the unit's rows over the whole read scope (a superset of g)
                 var amount = CollectionsCampaignPolicy.Evaluate(g.Select(r =>
                     new CampaignInstalment(DateOnly.FromDateTime(r.DueDate), r.Amount)), selected, date);
                 if (amount.Reason is "NoQualifyingBalance" or "BelowThreshold") return null;
                 // Due = due today, Overdue = due before it (the window never reaches past today). Nothing Due or Overdue: not listed; Minimum Total is on the unit's sum.
-                var dueAmount = today is { } t1 ? g.Where(r => DateOnly.FromDateTime(r.DueDate) == t1).Sum(r => r.Amount) : 0m;
-                var overdueAmount = today is { } t2 ? g.Where(r => DateOnly.FromDateTime(r.DueDate) < t2).Sum(r => r.Amount) : 0m;
+                var dueAmount = today is { } t1 ? all.Where(r => DateOnly.FromDateTime(r.DueDate) == t1).Sum(r => r.Amount) : 0m;
+                var overdueAmount = today is { } t2 ? all.Where(r => DateOnly.FromDateTime(r.DueDate) < t2).Sum(r => r.Amount) : 0m;
                 if (today is not null && dueAmount + overdueAmount <= 0) return null;
                 if (minTotal is { } floor && dueAmount + overdueAmount <= floor) return null;
                 // CRM first, PACT completing; several CRM customers or conflicting people are flagged, never merged (CollectionsContactLinker).
@@ -306,7 +319,7 @@ public sealed class CollectionsCampaignAppService(
                 return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, linked.NameSource == "Crm" ? linked.Name : first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
                     amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount,
                     link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null,
-                    g.Max(r => DateOnly.FromDateTime(r.DueDate)));
+                    all.Max(r => DateOnly.FromDateTime(r.DueDate)));
             }).OfType<CampaignUnitFacts>().ToList();
         if (companyId is { } company) facts = facts.Where(f => f.CompanyId == company).ToList();
         if (term is not null)

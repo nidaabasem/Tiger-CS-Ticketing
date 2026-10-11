@@ -198,15 +198,16 @@ public sealed class CollectionsCampaignAppServiceTests
     [InlineData("FollowUpReminder", 2028, 2, 3, 2028, 2, 29)]        // leap February
     [InlineData("CurrentMonthReminder", 2026, 12, 31, 2026, 12, 31)] // year end
     [InlineData("OverdueReminder", 2027, 1, 1, 2027, 1, 1)]          // From is the configured StartDate, NOT the preview year: Dec 2026 arrears must stay reachable in 2027
-    public async Task DefaultWindowDependsOnTheStage_FromIsTheConfiguredReceivablesStartDate(
+    public async Task DefaultWindowDependsOnTheStage_TheReadStartsAtTheHistory_TheEligibilityAtTheConfiguredStartDate(
         string stage, int y, int m, int d, int toY, int toM, int toD)
     {
         var h = new Harness();
         var report = (await h.Service.PreviewAsync(h.Manager, stage, new(y, m, d))).Value!;
         // The stage default end never goes past TODAY (14 Oct 2026, Dubai): later instalments are not listed.
         var expectedTo = new DateOnly(toY, toM, toD) > new DateOnly(2026, 10, 14) ? new DateOnly(2026, 10, 14) : new DateOnly(toY, toM, toD);
-        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), expectedTo, null), h.Source.LastRequest);
-        Assert.Equal(new DateOnly(2026, 1, 1), report.DateFrom); Assert.Equal(expectedTo, report.DateTo);
+        // READ scope: the whole history (All months). The stage ELIGIBILITY still starts at the configured StartDate (2026-01-01): see CampaignReadScopeTests and the Verification tests.
+        Assert.Equal(new PactReceivablesRequest(new(2000, 1, 1), expectedTo, null), h.Source.LastRequest);
+        Assert.Equal(new DateOnly(2000, 1, 1), report.DateFrom); Assert.Equal(expectedTo, report.DateTo);
         Assert.Equal(new DateOnly(y, m, d), report.BusinessDate);
     }
 

@@ -40,19 +40,20 @@ public sealed class CollectionsCampaignVerificationTests
         h.Source.Items.AddRange([R(D(2026, 2, 5), 900m, "BEFORE"), R(D(2026, 3, 5), 900m, "AFTER"), R(D(2026, 10, 10), 500m, "CURRENT", unit: 202)]);
 
         var overdue = (await h.Service.PreviewAsync(h.Manager, "OverdueReminder", new(2026, 10, 8))).Value!;
-        Assert.Equal("AFTER", Assert.Single(overdue.Items).TenantId);
-        Assert.Equal(new DateOnly(2026, 3, 1), overdue.DateFrom);
-        Assert.Equal(new DateOnly(2026, 3, 1), h.Source.LastRequest!.FromDate);
+        Assert.Equal("AFTER", Assert.Single(overdue.Items).TenantId);                                  // the configured start date is still the ELIGIBILITY lower bound ...
+        Assert.Equal(new DateOnly(2000, 1, 1), overdue.DateFrom);                                      // ... while the READ (All months) reaches the whole history
+        Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);
 
         var review = (await h.Service.ExportAsync(h.Manager, "OverdueReminder", "review", new(2026, 10, 8))).Value!;
         Assert.DoesNotContain("BEFORE", review.Csv);
         Assert.Contains("AFTER", review.Csv);
-        Assert.Equal(new DateOnly(2026, 3, 1), h.Source.LastRequest!.FromDate);
+        Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);
 
         // Today in the test clock is 14 Oct 2026 = the CurrentMonthReminder day.
         var genesys = await h.Service.ExportAsync(h.Manager, "CurrentMonthReminder", "genesys");
         Assert.True(genesys.IsSuccess, genesys.Detail);
-        Assert.Equal(new DateOnly(2026, 3, 1), h.Source.LastRequest!.FromDate);
+        Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);
+        Assert.DoesNotContain("BEFORE", genesys.Value!.Csv);
     }
 
     [Fact]
@@ -129,7 +130,7 @@ public sealed class CollectionsCampaignVerificationTests
         Assert.Equal(["T2-OLD-LEGAL", "T4-AUG"], await Tenants(h, "OverdueReminder", new(2026, 10, 8)));
         Assert.Equal(["T3-LASTMONTH"], await Tenants(h, "LegalNotice", new(2026, 10, 8)));
         Assert.Equal(["T2-OLD-LEGAL"], await Tenants(h, "LegalReferral", new(2026, 10, 8)));
-        Assert.Equal(new DateOnly(2026, 1, 1), h.Source.LastRequest!.FromDate);
+        Assert.Equal(new DateOnly(2000, 1, 1), h.Source.LastRequest!.FromDate);                      // read scope; T1-PRESTART is still not eligible (asserted above)
     }
 
     [Fact]
@@ -147,7 +148,7 @@ public sealed class CollectionsCampaignVerificationTests
         Assert.Equal(["D1-DEC2026", "D2-OCT2026"], await Tenants(h, "OverdueReminder", new(2027, 2, 1)));
         Assert.Equal(["D2-OCT2026"], await Tenants(h, "LegalReferral", new(2027, 2, 1)));
         Assert.Equal(["D3-JAN2027"], await Tenants(h, "LegalNotice", new(2027, 2, 1)));
-        Assert.Equal(new PactReceivablesRequest(new(2026, 1, 1), new(2027, 2, 1), null), h.Source.LastRequest);
+        Assert.Equal(new PactReceivablesRequest(new(2000, 1, 1), new(2027, 2, 1), null), h.Source.LastRequest);   // read scope: the whole history; D4-PRESTART is not eligible (asserted above)
     }
 
     [Fact]

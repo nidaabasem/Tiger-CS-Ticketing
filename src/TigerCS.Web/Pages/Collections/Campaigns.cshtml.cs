@@ -81,9 +81,9 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
         Report = result.IsSuccess ? result.Value : null;
         Error = result.Detail;
         BusinessDate ??= Report?.BusinessDate;
-        // The inputs show the effective window. Unedited defaults follow stage / preview-date changes in the browser
-        // (collections-campaign-dates.js, same rules as CollectionsCampaignPolicy.DefaultDateTo); an edited date is kept.
-        DateFrom ??= Report?.DateFrom;
+        // To shows the effective end. From stays EMPTY unless the user chose it: empty = All months = the whole history up to today (the read scope); the stage
+        // eligibility scope is unchanged. Writing the effective 2000-01-01 back into the input would turn the next page / export request into an explicit From
+        // and widen the stage eligibility, so it is never done. Unedited To follows stage / preview-date changes in the browser (collections-campaign-dates.js).
         DateTo ??= Report?.DateTo;
         SyncMonthYear();
     }
@@ -130,8 +130,9 @@ public sealed class CampaignsModel(CollectionsApiClient api, Microsoft.Extension
     public DateOnly ConfiguredStart => DateTime.TryParse(configuration["CollectionsSource:PactReceivables:StartDate"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
         ? DateOnly.FromDateTime(d) : DateOnly.FromDateTime(new TigerCS.Application.Modules.Collections.PactReceivablesOptions().StartDate);
 
-    /// <summary>Defaults the browser re-derives for UNEDITED dates: the configured start date; month end for current-month/follow-up, else the preview date.</summary>
-    public DateOnly DefaultFrom => ConfiguredStart;
+    /// <summary>Defaults the browser re-derives for UNEDITED dates: From is empty (All months = the whole history); To is the month end for current-month/follow-up, else the preview date.
+    /// The configured start date (<see cref="ConfiguredStart"/>) only bounds which units are ELIGIBLE for a stage; it is not shown as the From date.</summary>
+    public DateOnly? DefaultFrom => null;
     public DateOnly DefaultTo => CollectionsEnums.TryParse<CollectionsCampaignStage>(Stage, out var stage)
         ? CollectionsCampaignPolicy.DefaultDateTo(stage, BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday())
         : BusinessDate ?? Report?.BusinessDate ?? CollectionsDisplay.DubaiToday();
