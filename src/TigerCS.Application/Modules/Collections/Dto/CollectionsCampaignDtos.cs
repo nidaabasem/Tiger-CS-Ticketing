@@ -22,7 +22,16 @@ public sealed record CollectionsCampaignPreviewDto(
     bool CanExportReview, int TotalCount, int ReadyCount, int ReviewCount, int Page, int PageSize,
     IReadOnlyList<CollectionsCampaignContactDto> Items,
     DateOnly? DateFrom = null, DateOnly? DateTo = null, IReadOnlyList<string>? RangeNotes = null,
-    int? TowerId = null, SnapshotStatusDto? Snapshot = null, decimal MinAmount = 0m, ServerTimingsDto? Timings = null);
+    int? TowerId = null, SnapshotStatusDto? Snapshot = null, decimal MinAmount = 0m, ServerTimingsDto? Timings = null, CrmContactStatusDto? Crm = null);
+
+/// <summary>
+/// The state of the CRM contact data behind a list. <c>State</c>: Disabled (CRM linking is switched off: PACT contacts only), Ready, NotLoaded, Stale or ReadFailed. A <c>Blocks</c> state is a CRM
+/// SERVICE problem: the contacts are unconfirmed (every unit needs review and no Genesys list can be exported), which is different from a unit for which CRM simply holds no mobile.
+/// </summary>
+public sealed record CrmContactStatusDto(string State, bool Blocks, string? Message, DateTime? LastSuccessUtc, bool LastRefreshFailed = false)
+{
+    public static CrmContactStatusDto From(Services.CrmAvailability a) => new(a.State.ToString(), a.Blocks, a.Message, a.LastSuccessUtc, a.LastRefreshFailed);
+}
 
 /// <summary>Internal API transport; the Web serves Csv as a UTF-8 downloadable file.</summary>
 public sealed record CollectionsCampaignExportDto(string FileName, string Csv, int RowCount);

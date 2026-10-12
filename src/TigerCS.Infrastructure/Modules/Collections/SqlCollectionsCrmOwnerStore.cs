@@ -19,7 +19,7 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
     private string ConnectionString => configuration.GetConnectionString(options.ConnectionStringName)
         ?? throw new InvalidOperationException("The receivables snapshot connection is not configured.");
 
-    public async Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken)
+    public async Task<int> ReplaceAsync(IReadOnlyList<CrmOwnerRow> rows, CancellationToken cancellationToken, string? note = null)
     {
         var run = Guid.NewGuid();
         await using var connection = new SqlConnection(ConnectionString);
@@ -29,7 +29,7 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
             var json = JsonSerializer.Serialize(rows.Skip(offset).Take(Chunk).Select(r => new
             {
                 unitKey = r.UnitKey, projectCode = r.ProjectCode, unitNumber = r.UnitNumber, leadId = r.LeadId, leadStatus = r.LeadStatus, customerId = r.CustomerId,
-                unitId = r.UnitId, projectId = r.ProjectId, fullName = r.FullName, mobile = r.Mobile, email = r.Email, phoneNorm = r.PhoneNorm, emailNorm = r.EmailNorm
+                unitId = r.UnitId, projectId = r.ProjectId, fullName = r.FullName, mobile = r.Mobile, email = r.Email, phoneNorm = r.PhoneNorm, emailNorm = r.EmailNorm, projectName = r.ProjectName
             }));
             await using var store = new SqlCommand("dbo.usp_Collections_StoreCrmUnitOwners", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
             store.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = run;
@@ -39,7 +39,17 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
         await using var publish = new SqlCommand("dbo.usp_Collections_PublishCrmUnitOwners", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
         publish.Parameters.Add("@RunId", SqlDbType.UniqueIdentifier).Value = run;
         publish.Parameters.Add("@ExpectedRows", SqlDbType.Int).Value = rows.Count;
+        publish.Parameters.Add("@Note", SqlDbType.NVarChar, 1000).Value = (object?)(note is { Length: > 1000 } ? note[..1000] : note) ?? DBNull.Value;
         return Convert.ToInt32(await publish.ExecuteScalarAsync(cancellationToken) ?? 0, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public async Task<(int Resolved, int Ambiguous)> ResolveCompaniesAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("dbo.usp_Collections_ResolveCrmOwnerCompanies", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? (reader.GetInt32(0), reader.GetInt32(1)) : (0, 0);
     }
 
     public async Task RecordFailureAsync(string message, CancellationToken cancellationToken)
@@ -59,7 +69,8 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return new(false, null, null, null, null, 0, 0);
         return new(reader.GetBoolean(0), reader.IsDBNull(1) ? null : DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), reader.IsDBNull(2) ? null : DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
-            reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt32(5), reader.GetInt32(6));
+            reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt32(5), reader.GetInt32(6),
+            reader.FieldCount > 7 ? reader.GetInt32(7) : 0, reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetString(8) : null);
     }
 
     public async Task<IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>> GetLinksAsync(
@@ -83,8 +94,11 @@ public sealed class SqlCollectionsCrmOwnerStore(IConfiguration configuration, Re
     public static CrmUnitLink ReadLink(SqlDataReader reader)
     {
         var customers = reader.GetInt32(reader.GetOrdinal("Customers"));
-        return new(customers > 1 ? CrmLinkStatus.Ambiguous : CrmLinkStatus.Single, customers,
+        // CompanyAmbiguous: the CRM sale exists but both companies hold the same unit key, so it is tied to neither (V012). Absent column = a server not yet upgraded to V012.
+        var companyAmbiguous = false;
+        try { var o = reader.GetOrdinal("CompanyAmbiguous"); companyAmbiguous = !reader.IsDBNull(o) && reader.GetBoolean(o); } catch (IndexOutOfRangeException) { }
+        return new(customers > 1 ? CrmLinkStatus.Ambiguous : companyAmbiguous ? CrmLinkStatus.CompanyAmbiguous : CrmLinkStatus.Single, customers,
             customers > 1 ? 0 : reader.GetInt32(reader.GetOrdinal("CustomerId")), reader.GetInt32(reader.GetOrdinal("CrmUnitId")), reader.GetInt32(reader.GetOrdinal("LeadId")),
-            customers > 1 ? SourceContact.Empty : new SourceContact(reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("PhoneNorm")), reader.GetString(reader.GetOrdinal("EmailNorm"))));
+            customers > 1 || companyAmbiguous ? SourceContact.Empty : new SourceContact(reader.GetString(reader.GetOrdinal("FullName")), reader.GetString(reader.GetOrdinal("PhoneNorm")), reader.GetString(reader.GetOrdinal("EmailNorm"))));
     }
 }

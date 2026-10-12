@@ -141,7 +141,8 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(new[] { "4:D1:TP101-101", "4:D5:TP105-501", "4:D2:TP102-201", "4:D3:TP103-514", "32:S2:TP127-301" }.Order(), keys.Order());
         Assert.DoesNotContain("4:D1:TP101-102", keys);                                     // 100 is not greater than 100
         Assert.DoesNotContain(keys, k => k.Contains('*') || k.Contains("D4"));              // cancelled and invalid units never appear
-        Assert.Equal(page.Units.Select(u => u.LatestDueDate).OrderByDescending(d => d), page.Units.Select(u => u.LatestDueDate));   // apartments: newest payment first
+        // Apartments: the newest TOWER first (tower number as an integer, descending), then the apartment inside its tower - never by payment date.
+        Assert.Equal(["32:S2:TP127-301", "4:D5:TP105-501", "4:D3:TP103-514", "4:D2:TP102-201", "4:D1:TP101-101"], keys);
         var a = page.Units.Single(u => u.UnitCode == "TP101-101" && u.CompanyId == 4);
         Assert.Equal(120m, a.RemainingTotal);                                              // 60 + 60: two small payments make one apartment above 100
         Assert.Equal(["A2", "A1"], a.Instalments.Select(i => i.VoucherNumber));            // details newest first
@@ -352,7 +353,7 @@ public sealed partial class RcvRealSqlTests
     }
 
     [SqlFact]
-    public async Task Campaigns_ListTheSameUnitsWithTheSameAmounts_KeepContactlessUnits_AndOrderNewestFirst()
+    public async Task Campaigns_ListTheSameUnitsWithTheSameAmounts_KeepContactlessUnits_AndOrderNewestTowerFirst()
     {
         await Seed();
         var service = CampaignService(Source());
@@ -360,7 +361,7 @@ public sealed partial class RcvRealSqlTests
         var from = new DateOnly(2000, 1, 1);
         // Current-month stage (1-31 Oct, the whole month): D1's apartment A (60 on 1 Oct, 60 overdue from September), Sharjah's contactless TP127-301 (250, 5 Oct).
         var current = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 100m)).Value!;
-        Assert.Equal(["TP127-301", "TP101-101"], current.Items.Select(i => i.UnitCode));                    // newest payment first (5 Oct, then 1 Oct)
+        Assert.Equal(["TP127-301", "TP101-101"], current.Items.Select(i => i.UnitCode));                    // newest tower first (127, then 101)
         var contactless = current.Items[0];
         Assert.Equal((32, "", ""), (contactless.CompanyId, contactless.Phone, contactless.Email));          // no mobile and no e-mail: the receivable is still listed ...
         Assert.Contains("NoValidContact", contactless.Reason);                                               // ... and the reason says why it cannot be sent
@@ -372,15 +373,15 @@ public sealed partial class RcvRealSqlTests
         Assert.Equal(a.TotalAmount, page.RemainingTotal);
         // Minimum Total: strictly greater, cleared = everything due or overdue (in the stage).
         Assert.Equal(["TP127-301", "TP101-101"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 119.99m)).Value!.Items.Select(i => i.UnitCode));
-        Assert.Equal(["4:TP101-102", "32:TP140-302", "32:TP127-301", "4:TP101-101"],                          // minimum 40: Sharjah's own 40 (TP101-101) is not GREATER than 40; two units due today lead
+        Assert.Equal(["32:TP140-302", "32:TP127-301", "4:TP101-101", "4:TP101-102"],                          // minimum 40: Sharjah's own 40 (TP101-101) is not GREATER than 40; newest tower first, then the units of tower 101 by number
             (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 40m)).Value!.Items.Select(i => $"{i.CompanyId}:{i.UnitCode}"));
         Assert.Equal(["TP127-301"], (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: 120m)).Value!.Items.Select(i => i.UnitCode));   // 120 is not greater than 120
         var cleared = (await service.PreviewAsync(manager, "CurrentMonthReminder", dateFrom: from, minTotal: null)).Value!;
         Assert.Equal(5, cleared.TotalCount);                                                                  // A, B, TP101-101 of Sharjah, TP127-301, TP140-302
         // The overdue stage reaches the previous YEAR (the window starts in 2000) and still counts D2's 50 from September in its Total.
         var overdue = (await service.PreviewAsync(manager, "OverdueReminder", dateFrom: from, minTotal: null)).Value!;
-        Assert.Equal(["TP102-201", "TP103-514"], overdue.Items.Select(i => i.UnitCode));
-        Assert.Equal((350m, 350m), (overdue.Items[0].OverdueAmount, overdue.Items[0].TotalAmount));
+        Assert.Equal(["TP103-514", "TP102-201"], overdue.Items.Select(i => i.UnitCode));                    // newest tower first (103, then 102)
+        Assert.Equal((350m, 350m), (overdue.Items[1].OverdueAmount, overdue.Items[1].TotalAmount));
         Assert.DoesNotContain(overdue.Items, i => i.UnitCode.Contains('*') || i.TenantId == "D4");           // cancelled / invalid units never reach a campaign
         // The review export is exactly the previewed rows.
         var export = (await service.ExportAsync(manager, "CurrentMonthReminder", "review", dateFrom: from, minTotal: 100m)).Value!;

@@ -241,23 +241,45 @@ public sealed class CustomerUnitLinkServiceTests
     }
 
     [Fact]
-    public async Task AmbiguousCompanyMapping_IsAReviewState_NoCompanyIsChosen()
+    public async Task TowerInBothCompanies_IsResolvedByTheCompanyThatHoldsTheExactUnit_AndStaysAmbiguousWhenBothDo()
     {
         var r = new Rig();
         r.Towers.Towers.Add(new(9, "140", "Al Ghaf Tower (Co 32)", 32, true));   // tower 140 now exists in both companies
         r.Map.Rows.Add(new(79, "TP140", null, "Manual"));
         CrmReturns(r, Buyer(1, "Owner", PhoneE164, null, CrmUnit(11, "909")));
-        r.Pact4("140", 909, "T1", 500m);
+        r.Pact4("140", 909, "T1", 500m);                                        // only company 4's PACT account holds TP140-909
 
+        // The tower number alone cannot decide, the EXACT unit can: company 4 holds it, company 32 does not.
         var unit = Assert.Single((await r.ForCrm(1)).Candidates);
-        Assert.Equal(("MatchFailed", "CompanyMappingAmbiguous"), (unit.FinancialStatus, unit.FinancialReason));
-        Assert.Null(unit.CompanyId); Assert.Null(unit.Total);
-        Assert.Empty(r.Units.Reads);
+        Assert.Equal((4, "Available", "Linked"), (unit.CompanyId, unit.FinancialStatus, unit.LinkStatus));
+        Assert.Equal([("TP140-909", (int?)null), ("TP140-909", (int?)4)], r.Units.Reads);   // one probe of both companies, then the read of the company that holds it
+
+        // Both companies hold the very same unit code: nobody is chosen.
+        r.Units.Reads.Clear();
+        r.Pact4("140", 909, "T2", 800m, company: 32);
+        var ambiguous = Assert.Single((await r.ForCrm(1)).Candidates);
+        Assert.Equal(("MatchFailed", "CompanyMappingAmbiguous"), (ambiguous.FinancialStatus, ambiguous.FinancialReason));
+        Assert.Null(ambiguous.CompanyId); Assert.Null(ambiguous.Total);
+        Assert.Equal([("TP140-909", (int?)null)], r.Units.Reads);
 
         // The mapping itself naming the company resolves it - and only that company is read.
+        r.Units.Reads.Clear();
         r.Map.Rows.Clear(); r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
         var resolved = Assert.Single((await r.ForCrm(1)).Candidates);
         Assert.Equal((4, "Available"), (resolved.CompanyId, resolved.FinancialStatus));
+        Assert.Equal([("TP140-909", (int?)4)], r.Units.Reads);
+    }
+
+    [Fact]
+    public async Task TowerInBothCompanies_HeldByNeither_IsStillAReviewState()
+    {
+        var r = new Rig();
+        r.Towers.Towers.Add(new(9, "140", "Al Ghaf Tower (Co 32)", 32, true));
+        r.Map.Rows.Add(new(79, "TP140", null, "Manual"));
+        CrmReturns(r, Buyer(1, "Owner", PhoneE164, null, CrmUnit(11, "909")));
+        var unit = Assert.Single((await r.ForCrm(1)).Candidates);
+        Assert.Equal(("MatchFailed", "CompanyMappingAmbiguous"), (unit.FinancialStatus, unit.FinancialReason));
+        Assert.Contains("neither company holds", unit.FinancialDetail);
     }
 
     [Fact]

@@ -12,7 +12,7 @@ using TigerCS.Tests.Notifications.Fakes;
 namespace TigerCS.Tests.Collections.Crm;
 
 /// <summary>Unit/customer linking through the Campaign / Receivables in-memory path, the CRM owner refresh and the unit Payment Summary composition.</summary>
-public sealed class CollectionsCrmLinkingTests
+public sealed partial class CollectionsCrmLinkingTests
 {
     private static readonly DateTime Now = new(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc);
 
@@ -25,13 +25,14 @@ public sealed class CollectionsCrmLinkingTests
         public CollectionsCrmOwnersOptions Crm { get; } = new() { Enabled = true };
         public CollectionsCaller Manager { get; } = new(Guid.NewGuid(), [Roles.CsManager], []);
         public CollectionsCampaignAppService Service { get; }
-        public Rig() => Service = new(Options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, Sql, new(Options, new FakeDepartmentRepository()),
-            new(Options, new FakeTimeProvider(Now)), Source, NullLogger<CollectionsCampaignAppService>.Instance, Store, Crm);
+        public Rig() { Store.LastSuccessUtc = Now.AddMinutes(-30); Service = new(Options, new CollectionsCampaignOptions { FinancialSourceValidated = true }, Sql, new(Options, new FakeDepartmentRepository()),
+            new(Options, new FakeTimeProvider(Now)), Source, NullLogger<CollectionsCampaignAppService>.Instance, Links); }
+        public CollectionsUnitLinkService Links => new(Store, Crm, new FakeTimeProvider(Now), NullLogger<CollectionsUnitLinkService>.Instance);
 
         public void Owners(params CrmUnitOwnerDto[] owners)
         {
             var refresh = new CollectionsCrmOwnersRefreshService(Crm, new FakeCrmUnitOwnersGateway { Owners = { } }, Store, NullLogger<CollectionsCrmOwnersRefreshService>.Instance);
-            Store.ReplaceAsync(owners.Select(o => refresh.ToRow(o)).OfType<CrmOwnerRow>().ToList(), default).GetAwaiter().GetResult();
+            Store.ReplaceAsync(owners.Select(o => refresh.ToRow(o)).OfType<CrmOwnerRow>().ToList(), default, null).GetAwaiter().GetResult();
         }
 
         public async Task<IReadOnlyList<CollectionsCampaignContactDto>> Units() => (await Service.PreviewAsync(Manager, "CurrentMonthReminder")).Value!.Items;

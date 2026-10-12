@@ -48,16 +48,16 @@ public sealed class CampaignMinimumAndPaidTests
             Row("B", 2, new(2026, 10, 3), 70m), Row("B", 2, new(2026, 10, 6), 50m), Row("C", 3, new(2026, 10, 10), 500m)]);
         var service = Service(source, 100m);
         var preview = (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: 100m)).Value!;
-        Assert.Equal(["C", "B"], preview.Items.Select(i => i.TenantId));                          // newest payment first (C 10 Oct, B 6 Oct)
+        Assert.Equal(["B", "C"], preview.Items.Select(i => i.TenantId));                          // one tower (TP124): unit 2 before unit 3, not by payment date
         Assert.Equal(2, preview.TotalCount);                                                   // the count follows the filter
         Assert.Equal(0m, source.Last!.MinAmount);                                              // never applied to single instalments
         foreach (var mode in new[] { "review", "genesys" })
         {
             var file = (await service.ExportAsync(Manager, "CurrentMonthReminder", mode, minTotal: 100m)).Value!;
             Assert.Equal(preview.TotalCount, file.RowCount);
-            Assert.Equal(["C", "B"], Tenants(file.Csv));
+            Assert.Equal(["B", "C"], Tenants(file.Csv));
         }
-        Assert.Equal(["C", "B", "A"], (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items.Select(i => i.TenantId));   // cleared
+        Assert.Equal(["A", "B", "C"], (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: null)).Value!.Items.Select(i => i.TenantId));   // cleared
         Assert.Equal(0, (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: 1000m)).Value!.TotalCount);
         Assert.Equal(CollectionsOutcome.InvalidRequest, (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: -1m)).Outcome);
         Assert.Equal(CollectionsOutcome.InvalidRequest, (await service.ExportAsync(Manager, "CurrentMonthReminder", "review", minTotal: -1m)).Outcome);

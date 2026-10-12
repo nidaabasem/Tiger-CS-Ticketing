@@ -16,7 +16,7 @@ namespace TigerCS.Application.Modules.Collections.Services;
 public sealed class CollectionsCampaignAppService(
     CollectionsOptions options, CollectionsCampaignOptions campaignOptions, PactReceivablesOptions sourceOptions,
     CollectionsAuthorizationService authorization, CollectionsClock clock, IPactReceivablesSource source,
-    ILogger<CollectionsCampaignAppService> logger, ICollectionsCrmOwnerStore? crmOwners = null, CollectionsCrmOwnersOptions? crmOptions = null)
+    ILogger<CollectionsCampaignAppService> logger, CollectionsUnitLinkService? links = null)
 {
     /// <summary>First day the receivables history is read from when the user gives no From date (the snapshot window starts here).</summary>
     public static readonly DateOnly HistoryStart = new(2000, 1, 1);
@@ -130,6 +130,14 @@ public sealed class CollectionsCampaignAppService(
 
         var sourceMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         var snapshotStatus = sqlPage?.Snapshot ?? snapshot!.Snapshot;
+        // The CRM side of the contacts. ONE bulk read for the whole result (never a request per unit); when CRM linking is switched on but unusable, every unit says so
+        // (CrmUnavailable) instead of looking like a unit CRM simply holds no mobile for.
+        var crmSet = CrmLinkSet.None;
+        if (links is not null)
+            crmSet = sqlPage is not null
+                ? new CrmLinkSet(await links.GetAvailabilityAsync(budget.Token), CrmLinkSet.None.Links)
+                : await links.GetLinksAsync(snapshot!.Items.Select(r => (r.CompanyId, r.UnitCode)), budget.Token);
+        var crmUnavailableFlag = crmSet.Availability.Blocks ? CollectionsCampaignFlags.CrmUnavailable : CollectionsCampaignFlags.None;
         var readAtUtc = sqlPage?.ReadAtUtc ?? snapshot!.ReadAtUtc;
         logger.LogInformation("Campaign preview {Stage} ({Scope}, {From:yyyy-MM-dd}..{To:yyyy-MM-dd}) read {Rows} {What} in {ElapsedMs} ms ({Engine}).",
             selected, scope, from, to, sqlPage?.Units.Count ?? snapshot!.Items.Count, sqlPage is null ? "source rows" : "units", sourceMs, sqlPage is null ? "in memory" : "sql");
@@ -144,7 +152,7 @@ public sealed class CollectionsCampaignAppService(
         var coverageIncomplete = snapshotStatus is { RangeCovered: false };
         CollectionsCampaignContactDto ToContact(CampaignUnitFacts f)
         {
-            var (unitStatus, reasons) = Compose(f.Flags, fresh, coverageIncomplete, selected, date, dates);
+            var (unitStatus, reasons) = Compose(f.Flags | (int)crmUnavailableFlag, fresh, coverageIncomplete, selected, date, dates);
             var identity = $"{f.CompanyId}:{f.TenantId}:{f.UnitId}:{f.UnitCode}:{cycle}";
             var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             return new CollectionsCampaignContactDto(id, $"ext:Pact:{f.TenantId}", f.CompanyId, f.TenantId, f.FullName, f.Phone, f.Email,
@@ -164,7 +172,7 @@ public sealed class CollectionsCampaignAppService(
                     "The export exceeds the row limit. Filter by company or customer; no partial file was created.");
             // Every unit-level reason makes a unit NeedsReview whatever the global gates are; a unit without one gets the status a hypothetical clean
             // unit would get, so Ready / NeedsReview counts are exact over the whole filtered set without materialising it.
-            var cleanStatus = Compose(0, fresh, coverageIncomplete, selected, date, dates).Status;
+            var cleanStatus = Compose((int)crmUnavailableFlag, fresh, coverageIncomplete, selected, date, dates).Status;
             count = sqlPage.Total;
             ready = cleanStatus == "Ready" ? sqlPage.Clean : 0;
             review = sqlPage.Review + (cleanStatus == "NeedsReview" ? sqlPage.Clean : 0);
@@ -173,22 +181,9 @@ public sealed class CollectionsCampaignAppService(
         else
         {
             List<CampaignUnitFacts> facts;
-            IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? links = null;
             try
             {
-                // ONE bulk read of the CRM links of every unit in the window (never a request per unit).
-                if (crmOwners is not null && crmOptions?.Enabled == true)
-                {
-                    var keys = snapshot!.Items.Select(r => (r.CompanyId, Key: CollectionsUnitKey.Normalize(r.UnitCode))).Where(k => k.Key is not null)
-                        .Select(k => (k.CompanyId, k.Key!)).Distinct().ToList();
-                    try { links = await crmOwners.GetLinksAsync(keys, budget.Token); }
-                    catch (Exception ex) when (ex is DbException or InvalidOperationException)
-                    {
-                        // CRM only enriches: if its local copy cannot be read the list still works on PACT's own contact data (the failure is logged, not hidden).
-                        logger.LogWarning("CRM owner links could not be read ({ExceptionType}); PACT contact data is used.", ex.GetType().Name);
-                    }
-                }
-                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal, links, eligibleFrom);
+                facts = BuildFactsInMemory(snapshot!.Items, from, to, min, selected, date, term, phoneDigits, companyId, today, unitMinTotal, crmSet.Links, eligibleFrom, crmSet.Availability.Blocks);
             }
             catch (OverflowException)
             {
@@ -218,7 +213,7 @@ public sealed class CollectionsCampaignAppService(
             campaignOptions.FinancialSourceValidated, sqlPage is null && snapshot!.LegacyExclusionsApplied, permissions.CanSendReminders,
             count, ready, review, page, pageSize, items,
             from, to, CollectionsCampaignPolicy.RangeNotes(selected, date, eligibleFrom, to), towerId, snapshotStatus, min,
-            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds)));
+            new ServerTimingsDto(sourceMs, total.Elapsed.TotalMilliseconds - sourceMs, total.Elapsed.TotalMilliseconds), CrmContactStatusDto.From(crmSet.Availability)));
     }
 
     /// <summary>Review reasons and status of a candidate from its unit-level flags and the global (source / schedule / release) gates. Order is part of the contract.</summary>
@@ -240,6 +235,8 @@ public sealed class CollectionsCampaignAppService(
         if (Has(CollectionsCampaignFlags.NoValidContact)) reasons.Add("NoValidContact");
         if (Has(CollectionsCampaignFlags.CrmCustomerAmbiguous)) reasons.Add("CrmCustomerAmbiguous");
         if (Has(CollectionsCampaignFlags.ContactSourceConflict)) reasons.Add("ContactSourceConflict");
+        if (Has(CollectionsCampaignFlags.CrmCompanyAmbiguous)) reasons.Add("CrmCompanyAmbiguous");
+        if (Has(CollectionsCampaignFlags.CrmUnavailable)) reasons.Add("CrmUnavailable");
         var status = reasons.Count > 0 ? "NeedsReview" : "Ready";
         if (reasons.Count == 0 && (date != clock.BusinessDate || !dates.Contains(date)))
         { status = "PreviewOnly"; reasons.Add("OutsideSchedule"); }
@@ -256,7 +253,7 @@ public sealed class CollectionsCampaignAppService(
     /// </summary>
     internal List<CampaignUnitFacts> BuildFactsInMemory(IReadOnlyList<PactReceivableInstalment> items, DateOnly from, DateOnly to, decimal min,
         CollectionsCampaignStage selected, DateOnly date, string? term, string? phoneDigits, int? companyId, DateOnly? today = null, decimal? minTotal = null,
-        IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? crmLinks = null, DateOnly? eligibleFrom = null)
+        IReadOnlyDictionary<(int CompanyId, string UnitKey), CrmUnitLink>? crmLinks = null, DateOnly? eligibleFrom = null, bool crmUnavailable = false)
     {
         // READ scope = [from, to]; ELIGIBILITY scope = [eligibleFrom ?? from, to]. A unit is a candidate, and its stage amount and unit-level flags are decided, ONLY from its
         // eligibility rows - exactly as before the read scope was widened; the read scope adds nothing but the Due / Overdue / Total figures and the ordering date.
@@ -318,9 +315,10 @@ public sealed class CollectionsCampaignAppService(
                 if (g.Any(r => string.Equals(r.SourceStatus?.Trim(), "Paid", StringComparison.OrdinalIgnoreCase)))
                     flags |= CollectionsCampaignFlags.ContradictoryPaymentStatus;
                 flags |= CollectionsContactLinker.Flags(linked, selected != CollectionsCampaignStage.LegalReferral);
+                if (crmUnavailable) flags |= CollectionsCampaignFlags.CrmUnavailable;
                 return new CampaignUnitFacts(first.CompanyId, g.Key.Tenant, linked.NameSource == "Crm" ? linked.Name : first.FullName, phone, email, first.UnitId, g.Key.Code, first.ProjectCode,
                     amount.Amount, amount.EarliestDueDate, (int)flags, first.TowerNumber, first.TowerName, dueAmount, overdueAmount,
-                    link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null,
+                    link?.Status switch { CrmLinkStatus.Single => 1, CrmLinkStatus.Ambiguous => 2, CrmLinkStatus.CompanyAmbiguous => 3, _ => 0 }, link?.Status == CrmLinkStatus.Single ? link.CustomerId : null,
                     all.Max(r => DateOnly.FromDateTime(r.DueDate)));
             }).OfType<CampaignUnitFacts>().ToList();
         if (companyId is { } company) facts = facts.Where(f => f.CompanyId == company).ToList();
@@ -330,9 +328,9 @@ public sealed class CollectionsCampaignAppService(
             facts = facts.Where(c => Match(c.FullName) || Match(c.TenantId) || Match(c.UnitCode) || Match(c.Phone) || Match(c.Email) || Match(c.TowerNumber ?? "") || Match(c.TowerName ?? "")
                 || (phoneDigits is not null && c.Phone.Contains(phoneDigits, StringComparison.Ordinal))).ToList();
         }
-        // Newest payment first (the same order as the Receivables page and the exports), then a fixed order so pages never overlap or skip.
-        return facts.OrderByDescending(c => c.LatestDue).ThenBy(c => c.CompanyId).ThenBy(c => c.TenantId, StringComparer.Ordinal)
-            .ThenBy(c => c.UnitCode, StringComparer.Ordinal).ThenBy(c => c.UnitId).ToList();
+        // Newest tower first (the tower NUMBER, descending: TP140, TP132 ... TP119), then the units of a tower in a fixed order; computed over the WHOLE result before it is paged
+        // or exported, so every page and the files follow one order and no page repeats or skips a unit. Identical to the Receivables page (CollectionsTowerOrder).
+        return facts.OrderBy(c => c, CollectionsTowerOrderComparer.Instance).ToList();
     }
 
     public async Task<CollectionsResult<CollectionsCampaignExportDto>> ExportAsync(CollectionsCaller caller,
@@ -370,7 +368,7 @@ public static class CollectionsCampaignCsv
     public static string Write(CollectionsCampaignPreviewDto report, bool review)
     {
         var text = new StringBuilder();
-        text.Append("RecordId,CustomerKey,CompanyId,TenantId,CustomerName,Phone,Email,UnitId,UnitCode,ProjectCode,Amount,Currency,DueDate,Stage,CycleKey,ReadAtUtc,Status,Reason,Use,VoiceEligible,SmsEligible,EmailEligible"  + "\r\n");
+        text.Append("RecordId,CustomerKey,CompanyId,TenantId,CustomerName,Phone,Email,UnitId,UnitCode,ProjectCode,Amount,Currency,DueDate,Stage,CycleKey,ReadAtUtc,Status,Reason,Use,VoiceEligible,SmsEligible,EmailEligible" + (review ? ",TowerNumber,TowerName" : "") + "\r\n");
         foreach (var c in report.Items)
         {
             var cells = new[] { c.RecordId, c.CustomerKey, c.CompanyId.ToString(CultureInfo.InvariantCulture), c.TenantId,
@@ -380,6 +378,8 @@ public static class CollectionsCampaignCsv
                 report.ReadAtUtc.ToString("O", CultureInfo.InvariantCulture), c.Status, c.Reason,
                 review ? "InternalReviewOnly" : "GenesysCampaign", !review && c.VoiceEligible ? "true" : "false",
                 !review && c.SmsEligible ? "true" : "false", !review && c.EmailEligible ? "true" : "false" };
+            // The internal review file also names the tower (the number and the name from the same source as the pages); the Genesys file keeps its established columns.
+            if (review) cells = [.. cells, c.TowerNumber ?? "", CollectionsTowerName.IsUsable(c.TowerName, c.TowerNumber) ? c.TowerName! : ""];
             text.Append(string.Join(',', cells.Select((v, index) => Cell(v, review, isPhone: index == 5)))).Append("\r\n");
         }
         return text.ToString();
@@ -392,5 +392,19 @@ public static class CollectionsCampaignCsv
         if (trimmed.Length > 0 && trimmed[0] is '=' or '+' or '-' or '@'
             && (review || !isPhone || !(trimmed.StartsWith('+') && trimmed[1..].All(char.IsAsciiDigit)))) value = "'" + value;
         return "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+    }
+}
+
+/// <summary>The Campaigns order: <see cref="CollectionsTowerOrder"/> over the unit code, company, customer and unit id.</summary>
+internal sealed class CollectionsTowerOrderComparer : IComparer<CampaignUnitFacts>
+{
+    public static readonly CollectionsTowerOrderComparer Instance = new();
+    public int Compare(CampaignUnitFacts? a, CampaignUnitFacts? b)
+    {
+        if (ReferenceEquals(a, b)) return 0;
+        if (a is null) return -1;
+        if (b is null) return 1;
+        return CollectionsTowerOrder.Compare(CollectionsTowerNumber.Parse(a.UnitCode), a.UnitCode, a.CompanyId, a.TenantId, a.UnitId ?? 0,
+            CollectionsTowerNumber.Parse(b.UnitCode), b.UnitCode, b.CompanyId, b.TenantId, b.UnitId ?? 0);
     }
 }

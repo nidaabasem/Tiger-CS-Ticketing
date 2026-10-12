@@ -1,0 +1,7 @@
+@using TigerCS.Application.Modules.Collections.Dto
+@model CrmContactStatusDto?
+@* A CRM SERVICE problem is reported here and never read as "CRM has no mobile for these customers". Disabled / healthy: nothing is shown. *@
+@if (Model is { Message: { Length: > 0 } message })
+{
+    <div class="receivables-notice@(Model.Blocks ? " receivables-notice--warning" : "")" role="@(Model.Blocks ? "alert" : "status")" data-crm-notice data-crm-state="@Model.State">@message</div>
+}

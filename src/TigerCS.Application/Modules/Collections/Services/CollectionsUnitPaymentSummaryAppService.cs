@@ -16,7 +16,7 @@ public sealed record KnownCrmCustomer(int CustomerId, int? CrmUnitId, SourceCont
 /// </summary>
 public sealed class CollectionsUnitPaymentSummaryAppService(
     CollectionsOptions options, PactReceivablesOptions sourceOptions, ReceivablesSnapshotOptions snapshotOptions, CollectionsAuthorizationService authorization, CollectionsClock clock,
-    IPactReceivablesSource source, ILogger<CollectionsUnitPaymentSummaryAppService> logger)
+    IPactReceivablesSource source, ILogger<CollectionsUnitPaymentSummaryAppService> logger, CollectionsUnitLinkService? links = null)
 {
     public async Task<CollectionsResult<CollectionsUnitPaymentSummaryDto>> GetAsync(
         CollectionsCaller caller, string? unitCode, int? companyId = null, CancellationToken cancellationToken = default)
@@ -37,7 +37,8 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
             logger.LogWarning("Unit summary read failed ({ExceptionType}).", ex.GetType().Name);
             return CollectionsResult<CollectionsUnitPaymentSummaryDto>.Fail(CollectionsOutcome.FinanceUnavailable, "The unit could not be read. Please retry.");
         }
-        return CollectionsResult<CollectionsUnitPaymentSummaryDto>.Ok(Compose(key, today, data, snapshotOptions.MaxAgeMinutes));
+        var availability = links is null ? null : await links.GetAvailabilityAsync(cancellationToken);
+        return CollectionsResult<CollectionsUnitPaymentSummaryDto>.Ok(Compose(key, today, data, snapshotOptions.MaxAgeMinutes, availability: availability));
     }
 
     /// <summary>Pure composition of the unit summary from the one bulk read (unit-tested without a database).</summary>
@@ -50,8 +51,9 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
     /// holds the unit, the result is flagged <c>CrmOwnershipConflict</c> / <c>CrmCustomerAmbiguous</c> instead of choosing.
     /// </param>
     /// <param name="tenantId">When the caller selected one PACT tenant (a contract found by phone), only that tenant's account of the unit is used.</param>
+    /// <param name="availability">The state of the CRM owner data; when it cannot be used the unit is flagged <c>CrmUnavailable</c> (its CRM contact is unconfirmed) instead of reading as "CRM has nothing".</param>
     public static CollectionsUnitPaymentSummaryDto Compose(
-        string key, DateOnly today, PactUnitReceivables data, int maxAgeMinutes, KnownCrmCustomer? knownCrm = null, string? tenantId = null)
+        string key, DateOnly today, PactUnitReceivables data, int maxAgeMinutes, KnownCrmCustomer? knownCrm = null, string? tenantId = null, CrmAvailability? availability = null)
     {
         if (tenantId is not null)
             data = data with
@@ -82,6 +84,9 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
         // CRM first, PACT completes what CRM lacks; several customers / two different people are flagged, never merged.
         var linked = CollectionsContactLinker.Link(pact, crm?.Contact ?? SourceContact.Empty, status);
         if (linked.CrmCustomerAmbiguous && !reasons.Contains("CrmCustomerAmbiguous")) reasons.Add("CrmCustomerAmbiguous");
+        if (linked.CrmCompanyAmbiguous) reasons.Add("CrmCompanyAmbiguous");
+        // CRM linking is on but its data cannot be used: the contact is PACT-only and UNCONFIRMED - a service problem, not "CRM has no value".
+        if (availability is { Blocks: true } && knownCrm is null) reasons.Add("CrmUnavailable");
         if (linked.SourceConflict) reasons.Add("ContactSourceConflict");
 
         var (financial, detail, due, overdue, total, instalments, reason) = Financials(oneAccount, data, today, maxAgeMinutes, accounts.Count > 1);
@@ -91,7 +96,7 @@ public sealed class CollectionsUnitPaymentSummaryAppService(
         return new(key, oneAccount?.UnitCode ?? key, oneAccount?.CompanyId ?? companyId, oneAccount?.TowerNumber ?? CollectionsTowerNumber.Parse(key), oneAccount?.TowerName,
             linkStatus, reasons,
             new CollectionsUnitPartyDto(linked.Name, linked.Phone, linked.Email, linked.NameSource, linked.PhoneSource, linked.EmailSource),
-            status switch { CrmLinkStatus.Single => "Single", CrmLinkStatus.Ambiguous => "Ambiguous", CrmLinkStatus.None when data.CrmLoaded => "None", _ => "Unavailable" },
+            status switch { CrmLinkStatus.Single => "Single", CrmLinkStatus.Ambiguous => "Ambiguous", CrmLinkStatus.CompanyAmbiguous => "CompanyAmbiguous", CrmLinkStatus.None when data.CrmLoaded && availability is not { Blocks: true } => "None", _ => "Unavailable" },
             status == CrmLinkStatus.Single ? crm!.CustomerId : null, status == CrmLinkStatus.Single ? crm!.CrmUnitId : null, oneAccount?.TenantId, oneAccount?.UnitId,
             financial, detail, due, overdue, total, instalments, today, companyStatus?.LastSuccessUtc, companyStatus?.Freshness ?? "Missing", reason, payments);
     }

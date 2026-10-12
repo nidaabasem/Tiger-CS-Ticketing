@@ -18,7 +18,8 @@ public sealed class PactInstalmentsAppService(
     CollectionsAuthorizationService authorization,
     CollectionsClock clock,
     IPactReceivablesSource source,
-    ILogger<PactInstalmentsAppService> logger)
+    ILogger<PactInstalmentsAppService> logger,
+    CollectionsUnitLinkService? links = null)
 {
     public async Task<CollectionsResult<PactInstalmentsPageDto>> ListAsync(
         CollectionsCaller caller, int? towerId = null, DateOnly? dateFrom = null, DateOnly? dateTo = null, string? paymentStatus = null,
@@ -138,6 +139,8 @@ public sealed class PactInstalmentsAppService(
         }
 
         var status = result.Snapshot;
+        // The CRM side of the units' contacts (the by-unit page links them): a CRM service problem is reported, never shown as units without a CRM mobile.
+        var crm = byUnit && links is not null ? CrmContactStatusDto.From(await links.GetAvailabilityAsync(cancellationToken)) : null;
         var views = new PaymentViewAvailabilityDto(true, status.BreakdownAvailable, status.BreakdownAvailable, status.PaidRetained, status.PaidRetained, status.UnclassifiedRows);
         if (result.Unavailable)
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, filter is CollectionsPaymentFilter.FullyPaid or CollectionsPaymentFilter.All
@@ -156,6 +159,6 @@ public sealed class PactInstalmentsAppService(
         return CollectionsResult<PactInstalmentsPageDto>.Ok(new PactInstalmentsPageDto(today, monthStart, monthEnd, from, to, towerId,
             CollectionsPaymentFilters.ToWire(filter), min, minApplies, sourceOptions.Currency, result.Totals, page, pageSize, result.Rows, status, views, notes,
             result.ReadAtUtc, new ServerTimingsDto(result.SqlMs, total.Elapsed.TotalMilliseconds - result.SqlMs, total.Elapsed.TotalMilliseconds),
-            byUnit ? "units" : "instalments", units, months, string.IsNullOrWhiteSpace(dueMonth) ? null : dueMonth));
+            byUnit ? "units" : "instalments", units, months, string.IsNullOrWhiteSpace(dueMonth) ? null : dueMonth, crm));
     }
 }

@@ -36,6 +36,8 @@ public sealed class RcvReceivablesRefresher(IConfiguration configuration, Receiv
             results.Add(result);
         }
         var ok = results.Count(r => r.Status == "Succeeded");
+        // A newly published snapshot may hold units whose CRM owners were still without a company (a tower number that exists in both companies): tie them now.
+        if (ok > 0) await ResolveCrmOwnerCompaniesAsync(cancellationToken);
         var failed = results.Count(r => r.Status == "Failed");
         var status = failed == 0 ? (ok > 0 ? "Succeeded" : "AlreadyRunning") : ok > 0 ? "PartialFailure" : "Failed";
         var message = status switch
@@ -45,6 +47,27 @@ public sealed class RcvReceivablesRefresher(IConfiguration configuration, Receiv
             _ => string.Join(" ", results.Where(r => r.Status == "Failed").Select(r => $"Company {r.CompanyId}: {r.ErrorMessage}"))
         };
         return new ReceivablesRefreshResult(firstRun, status, message, results);
+    }
+
+    /// <summary>
+    /// Best effort and never throws: ties each CRM owner that is still without a company to the one company whose snapshot holds its EXACT unit
+    /// (<c>dbo.usp_Collections_ResolveCrmOwnerCompanies</c>, V012). A unit held by both companies stays untied and is reported as ambiguous.
+    /// </summary>
+    private async Task ResolveCrmOwnerCompaniesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var connectionString = configuration.GetConnectionString(options.ConnectionStringName);
+            if (string.IsNullOrWhiteSpace(connectionString)) return;
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("dbo.usp_Collections_ResolveCrmOwnerCompanies", connection) { CommandType = CommandType.StoredProcedure, CommandTimeout = 300 };
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+                logger.LogInformation("CRM owners tied to a company from the receivables snapshot: {Resolved} resolved, {Ambiguous} held by both companies.", reader.GetInt32(0), reader.GetInt32(1));
+        }
+        catch (Exception ex) when (ex is SqlException or InvalidOperationException)
+        { logger.LogWarning("CRM owners could not be tied to companies after the refresh ({ExceptionType}).", ex.GetType().Name); }
     }
 
     private async Task<(Guid? RunId, ReceivablesRefreshCompanyResult Result)> RefreshCompanyAsync(string triggerSource, int company, CancellationToken cancellationToken)

@@ -20,7 +20,8 @@ A page shorter than `pageSize` ends the load.
 ## What CRM must guarantee
 | Field | Requirement |
 |---|---|
-| `projectCode` + `unitNumber` | Joined as `projectCode-unitNumber` they equal PACT's unit code (`TP140-101`). **Confirm the CRM project column that holds `TP###`.** |
+| `projectCode` + `unitNumber` | Joined as `projectCode-unitNumber` they equal PACT's unit code (`TP140-101`). **Confirm the CRM project column that holds `TP###`.** A row sent without a `projectCode` is completed from the verified `dbo.CollectionsCrmProjectMap` only when it has exactly ONE code for that project; otherwise it is counted as `NoProjectCode` (state `LastNote`). |
+| `projectName` | The tower's name as CRM calls it (e.g. *Blue Wave*). It is the SOURCE of the tower name shown by Receivables / Campaigns / the picker when `CollectionsTowers` has no real name (V012 `fn_Collections_TowerNames`). Two different names for one company's tower = no name. |
 | `leadStatus` | Only Sold / Contract leads. Observed: 4 = Contract, 8 = Sold (**confirm against CRM's enum**; configurable in `EligibleLeadStatuses`). |
 | `leadStatusName` | Sent so a cancelled lead is refused by name too (`cancel`). Cancelled leads should not be sent at all. |
 | `customerType` | 1 = buyer. Tenants/representatives are ignored by Ticketing. |
@@ -31,7 +32,8 @@ A page shorter than `pageSize` ends the load.
 * Background job `collections-crm-owners-refresh` (`CollectionsSource:CrmOwners:RefreshCron`, default hourly) pages the endpoint and publishes a complete run into `CollectionsCrmUnitOwner` (V010) atomically. A failed or empty load keeps the previous data and is recorded (`GET /api/collections/crm-owners/status`).
 * Pages read the local copy with ONE set-based query (`fn_Collections_CrmUnitLinks`); nothing calls CRM or PACT per row.
 * Settings: `Crm:BaseUrl`, `Crm:SecretKey`, `CollectionsSource:CrmOwners:*` (disabled by default).
-* The company of a CRM row is resolved through `CollectionsTowers`; a tower that belongs to both companies stays unlinked until CRM/PACT tells which (visible as `UnlinkedRows` in the status).
+* The company of a CRM row (V012): the verified project map, else the tower when `CollectionsTowers` has it in exactly one company, else the ONE company whose PACT snapshot holds the exact unit code; a unit code held by both companies is `Ambiguous` (tied to neither, flagged for review). `UnlinkedRows` / `AmbiguousRows` / `LastNote` (rows not stored, by reason) are in `GET /api/collections/crm-owners/status`.
+* Freshness: `CollectionsSource:CrmOwners:MaxAgeMinutes` (default 360). Older data, a never-loaded feed or an unreadable store is reported on the pages and blocks Genesys exports; it is never shown as "CRM has no value".
 
 ## Contact precedence
 CRM value first; PACT fills a missing name / mobile / email, never replacing a valid value with an empty one. Different normalised phones (or different e-mails when phones cannot confirm the same person) = `ContactSourceConflict` (256): CRM alone is shown and the unit is marked for review; two people are never merged. Several CRM customers = `CrmCustomerAmbiguous` (128).

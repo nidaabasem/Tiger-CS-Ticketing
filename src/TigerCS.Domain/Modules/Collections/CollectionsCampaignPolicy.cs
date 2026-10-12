@@ -25,7 +25,11 @@ public enum CollectionsCampaignFlags
     /// <summary>More than one distinct CRM customer holds an eligible (Sold / Contract, not cancelled) sale of the unit: the customer cannot be chosen automatically.</summary>
     CrmCustomerAmbiguous = 128,
     /// <summary>CRM and PACT give different phone numbers (or, without a phone to confirm, different e-mails) for the unit: two people are never merged.</summary>
-    ContactSourceConflict = 256
+    ContactSourceConflict = 256,
+    /// <summary>The CRM sale of the unit cannot be tied to one company (both companies hold the same unit key): nobody is chosen and the unit needs review.</summary>
+    CrmCompanyAmbiguous = 512,
+    /// <summary>CRM contact data is enabled but could not be used (never loaded, stale, or unreadable): the contact may be incomplete, so the unit is not treated as ready. This is NOT "CRM holds no value".</summary>
+    CrmUnavailable = 1024
 }
 
 public sealed record CampaignInstalment(DateOnly DueDate, decimal RemainingAmount);

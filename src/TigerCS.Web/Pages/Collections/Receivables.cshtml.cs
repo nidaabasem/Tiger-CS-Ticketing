@@ -176,17 +176,20 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
                 Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();
             // PACT's contact for the apartment is taken from its EARLIEST payment (then smallest voucher): the same representative row Campaigns use, though the details list newest first.
             var contactRows = rows.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList();
-            var tower = !string.IsNullOrWhiteSpace(unit.TowerName) ? unit.TowerName : unit.TowerNumber ?? "—";
+            var tower = CollectionsDisplay.TowerCell(unit.TowerName, unit.TowerNumber);
             if (instalments.Count == 0) continue;   // nothing Due or Overdue: the unit is not listed
             // CRM first, PACT completing, nobody merged on conflict (CollectionsContactLinker): the same rule SQL applies to Campaigns and the Payment Summary uses.
-            var crmStatus = unit.CrmCustomers is null ? CrmLinkStatus.None : unit.CrmCustomers > 1 ? CrmLinkStatus.Ambiguous : CrmLinkStatus.Single;
+            var crmStatus = unit.CrmCustomers is null ? CrmLinkStatus.None : unit.CrmCustomers > 1 ? CrmLinkStatus.Ambiguous : unit.CrmCompanyAmbiguous ? CrmLinkStatus.CompanyAmbiguous : CrmLinkStatus.Single;
             var linked = CollectionsContactLinker.Link(
                 new SourceContact(unit.CustomerName.Trim(), CollectionsContactNormalizer.NormalizePhone(First(contactRows.Select(r => r.Mobile), "")), CollectionsContactNormalizer.NormalizeEmail(First(contactRows.Select(r => r.Email), ""))),
                 new SourceContact(unit.CrmName?.Trim() ?? "", unit.CrmPhone ?? "", unit.CrmEmail ?? ""), crmStatus);
             var notes = new List<string>();
             if (linked.CrmCustomerAmbiguous) notes.Add("Several CRM customers: needs review");
+            if (linked.CrmCompanyAmbiguous) notes.Add("CRM sale cannot be tied to one company: needs review");
             if (linked.SourceConflict) notes.Add("CRM and PACT contacts differ: needs review");
-            if (!linked.HasContact) notes.Add("No mobile or email: cannot be contacted");
+            // A CRM SERVICE problem is not "CRM has no value": when CRM linking is on but unusable, the contact below is PACT-only and unconfirmed.
+            if (report.Crm is { Blocks: true }) notes.Add("CRM unavailable: contact unconfirmed, needs review");
+            else if (!linked.HasContact) notes.Add("No mobile or email in CRM or PACT: cannot be contacted");
             else if (linked.Phone.Length == 0) notes.Add("No mobile");
             else if (linked.Email.Length == 0) notes.Add("No email");
             lines.Add(new UnitLine(linked.Name.Length > 0 ? linked.Name : unit.CustomerName,

@@ -21,7 +21,7 @@ public sealed record PactInstalmentTotalsDto(
 public sealed record PactInstalmentUnitDto(
     int CompanyId, string CompanyName, string? TowerNumber, string? TowerName, int UnitId, string UnitCode, string TenantId, string CustomerName,
     int InstalmentCount, decimal RemainingTotal, DateOnly LatestDueDate, IReadOnlyList<PactInstalmentRowDto> Instalments,
-    int? CrmCustomers = null, int? CrmCustomerId = null, string? CrmName = null, string? CrmPhone = null, string? CrmEmail = null);
+    int? CrmCustomers = null, int? CrmCustomerId = null, string? CrmName = null, string? CrmPhone = null, string? CrmEmail = null, bool CrmCompanyAmbiguous = false);
 
 /// <summary>
 /// One due-date month of the month overview, over the whole filtered set (before paging, ignoring the month selection). Overdue uses the business-date rule
@@ -38,4 +38,4 @@ public sealed record PactInstalmentsPageDto(
     PactInstalmentTotalsDto Totals, int Page, int PageSize, IReadOnlyList<PactInstalmentRowDto> Items,
     SnapshotStatusDto Snapshot, PaymentViewAvailabilityDto Views, IReadOnlyList<string> Notes, DateTime ReadAtUtc, ServerTimingsDto? Timings = null,
     string View = "instalments", IReadOnlyList<PactInstalmentUnitDto>? Units = null,
-    IReadOnlyList<PactInstalmentMonthDto>? Months = null, string? DueMonth = null);
+    IReadOnlyList<PactInstalmentMonthDto>? Months = null, string? DueMonth = null, CrmContactStatusDto? Crm = null);

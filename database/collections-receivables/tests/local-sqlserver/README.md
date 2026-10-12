@@ -9,7 +9,7 @@ export LOCALSQL_PASSWORD='<sa password of the throw-away instance>'     # host/u
 python3 sql.py 00_setup.sql                                  # databases + loopback linked server
 python3 sql.py 01_fake_pact.sql PACTRPT                      # synthetic p4/p32AccountReceivables (FakeConfig: volume, delay, shape; FakeEdgeRows: hand-written rows)
 python3 sql.py 02_towers.sql TigerCsTicketing                # seed towers
-# deploy ../../V001 V003 V010 V011 and ../../R001..R004 with:  python3 sql.py <file> TigerCsTicketing
+# deploy ../../V001 V003 V010 V011 R001, then V012, then R002 R003 R004 with:  python3 sql.py <file> TigerCsTicketing
 export TIGERCS_PERF_SQL='Server=localhost;Database=TigerCsTicketing;User Id=sa;Password=...;TrustServerCertificate=True;Encrypt=False'
 dotnet test src/TigerCS.Tests --filter "FullyQualifiedName~Rcv"        # without TIGERCS_PERF_SQL these tests return immediately
 ```
