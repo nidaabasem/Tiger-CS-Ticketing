@@ -35,7 +35,7 @@ public sealed class ReceivablesModel(CollectionsApiClient api) : PageModel
     public static readonly DateOnly WindowFrom = new(2000, 1, 1);
 
     public static readonly IReadOnlyList<(string Value, string Label)> StatusOptions =
-        [("all", "All statuses"), ("overdue", "Overdue"), ("due", "Due")];
+        [("all", "Due + Overdue"), ("due", "Due"), ("overdue", "Overdue")];
 
     public int? TowerId { get; private set; }
     /// <summary>Month and year of the instalments' DUE date; both empty = All months (everything due today or earlier).</summary>
@@ -169,17 +169,19 @@ public sealed record UnitLine(string Customer, string Phone, string Email, strin
         var lines = new List<UnitLine>();
         foreach (var unit in report.Units ?? [])
         {
-            // Oldest first; a remaining balance is what makes an instalment unpaid.
-            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0 && i.DueDate <= today).OrderBy(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
+            // Newest due date first; a remaining balance is what makes an instalment unpaid.
+            var rows = unit.Instalments.Where(i => i.RemainingAmount > 0 && i.DueDate <= today).OrderByDescending(i => i.DueDate).ThenBy(i => i.VoucherNumber, StringComparer.Ordinal).ToList();
             var instalments = rows.Select((i, index) => new InstalmentLine(index + 1,
                 i.VoucherNumber.Length > 0 ? $"Voucher {i.VoucherNumber}" : $"Instalment {index + 1}", i.DueDate, i.OriginalAmount, i.PaidAmount, i.RemainingAmount,
                 Classify(i.DueDate, today), DaysLate(i.DueDate, today))).ToList();
+            // PACT's contact for the apartment is taken from its EARLIEST payment (then smallest voucher): the same representative row Campaigns use, though the details list newest first.
+            var contactRows = rows.OrderBy(r => r.DueDate).ThenBy(r => r.VoucherNumber, StringComparer.Ordinal).ToList();
             var tower = !string.IsNullOrWhiteSpace(unit.TowerName) ? unit.TowerName : unit.TowerNumber ?? "—";
             if (instalments.Count == 0) continue;   // nothing Due or Overdue: the unit is not listed
             // CRM first, PACT completing, nobody merged on conflict (CollectionsContactLinker): the same rule SQL applies to Campaigns and the Payment Summary uses.
             var crmStatus = unit.CrmCustomers is null ? CrmLinkStatus.None : unit.CrmCustomers > 1 ? CrmLinkStatus.Ambiguous : CrmLinkStatus.Single;
             var linked = CollectionsContactLinker.Link(
-                new SourceContact(unit.CustomerName.Trim(), CollectionsContactNormalizer.NormalizePhone(First(rows.Select(r => r.Mobile), "")), CollectionsContactNormalizer.NormalizeEmail(First(rows.Select(r => r.Email), ""))),
+                new SourceContact(unit.CustomerName.Trim(), CollectionsContactNormalizer.NormalizePhone(First(contactRows.Select(r => r.Mobile), "")), CollectionsContactNormalizer.NormalizeEmail(First(contactRows.Select(r => r.Email), ""))),
                 new SourceContact(unit.CrmName?.Trim() ?? "", unit.CrmPhone ?? "", unit.CrmEmail ?? ""), crmStatus);
             var notes = new List<string>();
             if (linked.CrmCustomerAmbiguous) notes.Add("Several CRM customers: needs review");

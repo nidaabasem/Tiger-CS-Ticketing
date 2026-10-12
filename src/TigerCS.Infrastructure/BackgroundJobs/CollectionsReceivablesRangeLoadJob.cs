@@ -1,4 +1,3 @@
-using System.Globalization;
 using Hangfire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -6,20 +5,6 @@ using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Services;
 
 namespace TigerCS.Infrastructure.BackgroundJobs;
-
-/// <summary>One-off background load of a due-date range the snapshot does not cover (dates travel as ISO strings: Hangfire-safe).</summary>
-public sealed class CollectionsReceivablesRangeLoadJob(IReceivablesRefresher refresher, ILogger<CollectionsReceivablesRangeLoadJob> logger)
-{
-    [AutomaticRetry(Attempts = 0)]
-    public async Task RunAsync(string from, string through, CancellationToken cancellationToken)
-    {
-        var result = await refresher.RefreshAsync("RangeLoad", null, cancellationToken,
-            DateOnly.ParseExact(from, "yyyy-MM-dd", CultureInfo.InvariantCulture), DateOnly.ParseExact(through, "yyyy-MM-dd", CultureInfo.InvariantCulture));
-        logger.LogInformation("Receivables range load {From}..{Through}: {Status}.", from, through, result.Status);
-        if (result.Status is "PartialFailure" or "Failed")
-            throw new InvalidOperationException($"Receivables range load {from}..{through} {result.Status}; the previous snapshot is unchanged for failed companies.");
-    }
-}
 
 /// <summary>Retry of ONE company (4 or 32) over the standard window, e.g. after its scheduled refresh failed.</summary>
 public sealed class CollectionsReceivablesCompanyRetryJob(IReceivablesRefresher refresher, ILogger<CollectionsReceivablesCompanyRetryJob> logger)
@@ -29,20 +14,21 @@ public sealed class CollectionsReceivablesCompanyRetryJob(IReceivablesRefresher 
     {
         var result = await refresher.RefreshAsync("Retry", companyId, cancellationToken);
         logger.LogInformation("Receivables retry for company {CompanyId}: {Status}.", companyId, result.Status);
-        foreach (var company in result.Companies.Where(c => c.Status != "Succeeded"))
+        foreach (var company in result.Companies.Where(c => c.Status == "Failed"))
             logger.LogWarning("Receivables retry company {CompanyId} FAILED (error {ErrorNumber}): {ErrorMessage}", company.CompanyId, company.ErrorNumber, company.ErrorMessage);
         if (result.Status is "PartialFailure" or "Failed")
             throw new InvalidOperationException($"Receivables retry for company {companyId} {result.Status}; the previous snapshot is unchanged.");
     }
 }
 
-/// <summary>Runs the load as a Hangfire background job (BackgroundJobs:Enabled).</summary>
+/// <summary>Runs a manual refresh as a Hangfire background job (BackgroundJobs:Enabled).</summary>
 public sealed class HangfireReceivablesRangeLoader(IBackgroundJobClient client) : IReceivablesRangeLoader
 {
+    // The snapshot always holds the whole configured window, so "load a range" simply means "refresh both companies".
     public Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken)
     {
-        client.Enqueue<CollectionsReceivablesRangeLoadJob>(job => job.RunAsync(
-            from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), through.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), CancellationToken.None));
+        client.Enqueue<CollectionsReceivablesCompanyRetryJob>(job => job.RunAsync(4, CancellationToken.None));
+        client.Enqueue<CollectionsReceivablesCompanyRetryJob>(job => job.RunAsync(32, CancellationToken.None));
         return Task.FromResult(true);
     }
 
@@ -54,24 +40,15 @@ public sealed class HangfireReceivablesRangeLoader(IBackgroundJobClient client) 
 }
 
 /// <summary>
-/// Fallback when Hangfire is disabled: runs the same load on a background task of this process (not tied to the request). The
-/// refresh procedure's application lock still prevents overlap; a restart abandons a running load (the next one supersedes it).
+/// Fallback when Hangfire is disabled: runs the same refresh on a background task of this process (not tied to the request). The company's application lock still prevents overlap;
+/// a restart abandons a running refresh (the next one supersedes it). Note that nothing is SCHEDULED without Hangfire - see docs/Collections/Receivables-Snapshot.md.
 /// </summary>
 public sealed class InProcessReceivablesRangeLoader(IServiceScopeFactory scopes, ILogger<InProcessReceivablesRangeLoader> logger) : IReceivablesRangeLoader
 {
-    public Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken)
+    public async Task<bool> EnqueueAsync(DateOnly from, DateOnly through, CancellationToken cancellationToken)
     {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await using var scope = scopes.CreateAsyncScope();
-                var result = await scope.ServiceProvider.GetRequiredService<IReceivablesRefresher>().RefreshAsync("RangeLoad", null, CancellationToken.None, from, through);
-                logger.LogInformation("Receivables range load {From:yyyy-MM-dd}..{Through:yyyy-MM-dd}: {Status}.", from, through, result.Status);
-            }
-            catch (Exception ex) { logger.LogError(ex, "Receivables range load failed."); }
-        }, CancellationToken.None);
-        return Task.FromResult(true);
+        await EnqueueCompanyRefreshAsync(4, cancellationToken);
+        return await EnqueueCompanyRefreshAsync(32, cancellationToken);
     }
 
     public Task<bool> EnqueueCompanyRefreshAsync(int companyId, CancellationToken cancellationToken)
@@ -83,7 +60,7 @@ public sealed class InProcessReceivablesRangeLoader(IServiceScopeFactory scopes,
                 await using var scope = scopes.CreateAsyncScope();
                 var result = await scope.ServiceProvider.GetRequiredService<IReceivablesRefresher>().RefreshAsync("Retry", companyId, CancellationToken.None);
                 logger.LogInformation("Receivables retry for company {CompanyId}: {Status}.", companyId, result.Status);
-                foreach (var company in result.Companies.Where(c => c.Status != "Succeeded"))
+                foreach (var company in result.Companies.Where(c => c.Status == "Failed"))
                     logger.LogWarning("Receivables retry company {CompanyId} FAILED (error {ErrorNumber}): {ErrorMessage}", company.CompanyId, company.ErrorNumber, company.ErrorMessage);
             }
             catch (Exception ex) { logger.LogError(ex, "Receivables retry for company {CompanyId} failed.", companyId); }

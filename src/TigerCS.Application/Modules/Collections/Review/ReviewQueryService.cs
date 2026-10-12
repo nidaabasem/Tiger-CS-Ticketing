@@ -12,7 +12,7 @@ namespace TigerCS.Application.Modules.Collections.Review;
 /// </summary>
 public sealed class ReviewQueryService(
     CollectionsOptions options, CollectionsReviewOptions reviewOptions, CollectionsAuthorizationService authorization,
-    CollectionsClock clock, IReviewStore store)
+    CollectionsClock clock, IReviewStore store, ReceivablesSnapshotOptions? snapshotOptions = null)
 {
     public const string UnpaidOrPartial = "UnpaidOrPartial";
     public const string ModeSelectedKeys = "SelectedKeys";
@@ -179,8 +179,9 @@ public sealed class ReviewQueryService(
             shared.Records, shared.Numbers, page, size, contacts, notices);
     }
 
+    /// <summary>A review run is built from the local receivables snapshot, so it is stale when that snapshot is: the snapshot's own limit (<see cref="ReceivablesSnapshotOptions.MaxAgeMinutes"/>) applies.</summary>
     public bool IsStale(CollectionsReviewRun run) =>
-        run.SourceReadAtUtc is not { } read || clock.IsStale(read);
+        run.SourceReadAtUtc is not { } read || (snapshotOptions is null ? clock.IsStale(read) : clock.IsStale(read, snapshotOptions.MaxAgeMinutes));
 
     public ReviewRunDto ToDto(CollectionsReviewRun r) => new(r.CollectionsReviewRunId, r.Status.ToString(), r.Phase, r.ProgressPercent,
         r.AsOfDate, r.CompanyId, r.DueFrom, r.DueTo, r.Source, r.SourceProcedureSuffix, r.SourceReconciled, r.RequestedAtUtc,

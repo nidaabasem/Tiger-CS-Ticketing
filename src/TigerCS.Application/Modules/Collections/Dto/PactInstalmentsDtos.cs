@@ -20,7 +20,7 @@ public sealed record PactInstalmentTotalsDto(
 /// </summary>
 public sealed record PactInstalmentUnitDto(
     int CompanyId, string CompanyName, string? TowerNumber, string? TowerName, int UnitId, string UnitCode, string TenantId, string CustomerName,
-    int InstalmentCount, decimal RemainingTotal, DateOnly OldestDueDate, IReadOnlyList<PactInstalmentRowDto> Instalments,
+    int InstalmentCount, decimal RemainingTotal, DateOnly LatestDueDate, IReadOnlyList<PactInstalmentRowDto> Instalments,
     int? CrmCustomers = null, int? CrmCustomerId = null, string? CrmName = null, string? CrmPhone = null, string? CrmEmail = null);
 
 /// <summary>

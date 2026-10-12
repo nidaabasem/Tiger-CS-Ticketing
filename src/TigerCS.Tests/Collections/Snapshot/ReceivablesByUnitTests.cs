@@ -88,7 +88,7 @@ public sealed class ReceivablesByUnitTests
         Assert.Equal((210m, 120m, 0m), (page.Totals.OverdueRemaining, page.Totals.DueRemaining, page.Totals.NotYetDueRemaining));
         Assert.Equal(new DateOnly(2026, 10, 14), page.DateTo);
         var unit = Assert.Single(page.Units!);
-        Assert.Equal(["Overdue", "Overdue", "Due"], unit.Instalments.Select(i => i.Classification));
+        Assert.Equal(["Due", "Overdue", "Overdue"], unit.Instalments.Select(i => i.Classification));      // newest due date first
         Assert.Equal(unit.RemainingTotal, unit.Instalments.Sum(i => i.RemainingAmount));          // the row and its instalments are the same rows
         Assert.True(source.LastRequest!.ClassifyByDay);
         Assert.Equal(new DateOnly(2026, 10, 14), source.LastRequest.AsOf);
@@ -148,11 +148,11 @@ public sealed class ReceivablesByUnitTests
             OnDay("A", 2, "TP124-2", new DateTime(2026, 9, 11), 500, "V5")]);                                                                   // the same customer's other apartment
         var all = (await Units(service, minTotal: null)).Value!;
         var one = all.Units!.Single(u => u.UnitCode == "TP124-1");
-        Assert.Equal(["V1", "V2", "V3"], one.Instalments.Select(i => i.VoucherNumber));                         // oldest first; the future V4 is not there
+        Assert.Equal(["V3", "V2", "V1"], one.Instalments.Select(i => i.VoucherNumber));                         // newest first; the future V4 is not there
         Assert.Equal(500m, one.RemainingTotal); Assert.Equal(one.RemainingTotal, one.Instalments.Sum(i => i.RemainingAmount));
         Assert.Equal(500m, all.Units!.Single(u => u.UnitCode == "TP124-2").RemainingTotal);                      // never mixed with TP124-1
         Assert.Equal(all.Totals.RemainingTotal, all.Units!.Sum(u => u.RemainingTotal));
-        Assert.Equal(["Overdue", "Overdue", "Due"], one.Instalments.Select(i => i.Classification));
+        Assert.Equal(["Due", "Overdue", "Overdue"], one.Instalments.Select(i => i.Classification));
 
         // A previous month: only that month's instalments, still Overdue (compared with today, not with the month); the current month stops at today and V3 is Due.
         var september = (await Units(service, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), null)).Value!;

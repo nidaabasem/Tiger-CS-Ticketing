@@ -273,7 +273,8 @@ using (var backgroundJobScope = app.Services.CreateScope())
     {
         app.Logger.LogWarning(
             "BackgroundJobs:Enabled is false: Hangfire is not running, so chatbot customer-inactivity tickets will NOT be closed "
-            + "automatically (timers are still recorded and are honoured once the jobs are enabled).");
+            + "automatically (timers are still recorded and are honoured once the jobs are enabled), and the Collections receivables snapshot will NOT "
+            + "refresh every two hours: the pages show it as stale or not loaded until a Retry runs a refresh in this process.");
     }
 
     // ADR-0013/ADR-0015 — the recurring Outbox dispatcher. Registered

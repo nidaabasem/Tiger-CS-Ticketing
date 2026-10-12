@@ -1,29 +1,32 @@
-# Collections receivables snapshot - SQL deployment (TigerCsTicketing)
+# Collections receivables snapshot - SQL (TigerCsTicketing)
 
-Run on `10.10.10.117` / `TigerCsTicketing` (all idempotent, no credentials, no destructive statements). **Execution order (dependencies, not file-name order):**
-`V001` -> `V002` -> `V003` -> `V004` -> `V005` -> `V006` -> **`V010`** -> `V007` -> `V008` -> `V009` -> **`V011`**
-**Run-lifecycle fix: re-run `V004`, `V005` and `V006` (all `CREATE OR ALTER`, no table changes) BEFORE deploying the application that sends `@RunId`.** (V010 needs V002/V003/V006; V007 and V008 read `fn_Collections_CrmUnitLinks` from V010; V011 needs V010. On an environment that already has V001-V010, only **V011** is new.)
+Run on `10.10.10.117` / `TigerCsTicketing`. Everything is idempotent (`CREATE OR ALTER`, `IF NOT EXISTS`), contains no credentials and nothing destructive except the clearly named, dry-run-by-default `migration/M02`, `M03`, `M90`.
+Full design, semantics, schedule, deployment order and verification: [`docs/Collections/Receivables-Snapshot.md`](../../docs/Collections/Receivables-Snapshot.md).
+
+## Execution order (before the application is deployed)
+
+`V001` -> `V003` -> `V010` -> `V011` -> **`R001` -> `R002` -> `R003` -> `R004`** -> `migration/M01` (backup) ... deploy the application ... verify ... `migration/M02` (cleanup).
+(V001, V003, V010, V011 are usually already deployed; re-running them is harmless. V010 no longer needs the old snapshot objects.)
 
 | Script | Purpose |
 | --- | --- |
-| `V001__reconcile_CollectionsTowers.sql` | Reconcile the manually created `dbo.CollectionsTowers` (report only; creates an empty table only if missing; lookup index). |
-| `V002__create_receivables_snapshot_tables.sql` | Run / company-state / snapshot / staging tables, the campaign engine's unit tables, narrow campaign index and contact dictionary. |
+| `V001__reconcile_CollectionsTowers.sql` | Reconcile the manually created `dbo.CollectionsTowers` (report only; creates an empty table only if missing). |
 | `V003__fn_CollectionsTowerNumber.sql` | Tower number from a unit code. |
-| `V004__usp_Collections_PublishReceivablesStaging.sql` | Validate staged rows and publish (or record the failure and keep the previous snapshot); also prepares each run for the campaign engine (unit keys, unit tables, contact registry). |
-| `V005__usp_Collections_RefreshReceivables.sql` | `INSERT ... EXEC` the PACT procedures through `[10.10.10.94]`, per company, overlap-safe. |
-| `V006__usp_Collections_GetReceivables.sql` | Local read procedures (tower, due-date window, Due/Overdue) and the tower list; cancelled units (`*` in the unit code) are excluded. |
-| `V007__usp_Collections_GetCampaignUnits.sql` | Campaigns preview/export in SQL (filtering, per-unit aggregation, stage rule, review flags, search, totals, paging) + the contact-normalisation procedures. **Day-based revision:** optional `@Today` / `@MinTotal` parameters (per-unit DueAmount / OverdueAmount, nothing Due or Overdue = not listed, Minimum Total = unit Due + Overdue strictly greater), cancelled units (`*` in the unit code) and blank / `0` unit codes are excluded before aggregation, search also matches tower. Safe to run before the application update (new parameters are optional). |
-| `V008__usp_Collections_GetInstalmentUnitsPage.sql` | Receivables unit table: the instalment filters, grouped per unit in SQL before paging; classifies Overdue / Due / Upcoming by the DAY (`@ClassifyByDay`, today in Dubai), optional `@StatusFilter`, never lists UnitID 0 or unit code `0`, search also matches tower; `@MinTotal` = Minimum Total on the unit's summed remaining amount (strictly greater); a `*` in the unit code (cancelled apartment) is excluded; the `upcoming` status was removed. **Re-run this script before deploying the application version that sends those parameters.** Procedure only; no table changes. |
-| `V009__usp_Collections_GetInstalmentMonths.sql` | Receivables month overview: per due-date month overdue count and remaining amount over the whole filtered set (before paging, no month selection). Procedure only. Also excludes cancelled units (`*`). |
-| `V010__create_crm_unit_owner_tables.sql` | CRM unit owners (bulk copy of Sold / Contract sales per tower+unit): `fn_CollectionsUnitKey`, `CollectionsCrmOwnerState`, `CollectionsCrmUnitOwner`, `fn_Collections_CrmUnitLinks`, and the procedures `usp_Collections_StoreCrmUnitOwners`, `_PublishCrmUnitOwners`, `_RecordCrmOwnerFailure`, `_GetCrmOwnerState`, `_GetCrmUnitLinks`, `_GetUnitReceivables` (unit-keyed Payment Summary read). **V007 and V008 now read `fn_Collections_CrmUnitLinks`, so deploy V010 BEFORE V007 and V008.** |
-| `V011__create_crm_project_map.sql` | CRM project -> PACT tower mapping: `dbo.CollectionsCrmProjectMap` (empty; **no mapping is invented**) and `usp_Collections_GetCrmProjectMap` (manual rows + project/code pairs of the current CRM owner feed). Needed by the unit-based Payment tab / phone lookup / New Ticket. Needs V010. |
-| `tools/test_snapshot_fetch_path.sql` | Targeted test of the snapshot fetch path for one company over a small diagnostic window (default 2026-09-01..2026-10-11): the refresh's own `INSERT ... EXEC` statement, typed parameters, `REMOTE_PROC_TRANSACTIONS OFF`, into a **temp** table. Run section by section. Changes nothing persistent. |
-| `tools/set_receivables_shape_variant.sql` | Remember the PACT result layout that worked for ONE company (dry run by default; touches only `CompanyState.ShapeVariant`). |
-| `tools/diagnose_receivables_refresh.sql` | **Read-only** diagnostics of the refresh: server/database identity, linked-server configuration with its `modify_date`, company state, runs still `Running` with age, who holds the refresh lock. |
-| `tools/close_abandoned_receivables_runs.sql` | Scoped cleanup of abandoned `Running` rows of ONE company. **Dry run by default**, refuses to run while a refresh holds the lock, never touches finished rows or the published snapshot. |
-| `tools/crm_project_map_discovery.sql` | **Read-only** helper: the CRM projects seen on tickets (with/without a mapping) next to `CollectionsTowers`, to let a person verify and then INSERT one `CollectionsCrmProjectMap` row per project. Run on demand, not part of the deployment order. |
-| `tests/local-sqlserver/04_receivables_page_cases.sql` | Synthetic cases (tenants VER-01..07) for the Receivables / Campaigns day-based tests (`RealSqlReceivablesPageTests`); development servers only. |
-| `tests/probe_pact_result_shape.sql` | Read-only probe of the deployed PACT procedures' result shape (run after V001-V003, before enabling the job). |
-| `tests/smoke_snapshot_publish_and_read.sql` | Rolled-back smoke test of publish validation and the read procedure (development copy). |
-
-Full design, semantics, scheduling and configuration: [`docs/Collections/Receivables-Snapshot.md`](../../docs/Collections/Receivables-Snapshot.md).
+| `V010__create_crm_unit_owner_tables.sql` | CRM unit owners (Sold / Contract sales per tower + unit), `fn_CollectionsUnitKey`, `fn_Collections_CrmUnitLinks` and its load procedures. |
+| `V011__create_crm_project_map.sql` | CRM project -> PACT tower mapping (`dbo.CollectionsCrmProjectMap`, empty; **no mapping is invented**). |
+| `R001__create_tables.sql` | **New snapshot:** `CollectionsRcvRun`, `CollectionsRcvCompany`, `CollectionsRcvLine`. |
+| `R002__usp_CollectionsRcv_Refresh.sql` | `usp_CollectionsRcv_Refresh @CompanyId` (PACT -> temp table -> validated atomic publish, per-company lock), `usp_CollectionsRcv_ReapDeadRuns`, `usp_CollectionsRcv_NoteClientAbort`. |
+| `R003__usp_CollectionsRcv_GetStatus.sql` | Per-company state for the pages (closes orphaned attempts first; `IsLoading` is true only while that company's refresh really runs). |
+| `R004__read_procedures.sql` | `usp_CollectionsRcv_GetUnits` (Receivables), `_GetLines` (Campaigns / Review), `_GetUnit` (Payment Summary by unit key), `_GetTowers`. |
+| `migration/M01__backup_legacy_snapshot.sql` | Copies the 9 old tables (named in the script) into `dbo.Bak_<table>_<tag>` and verifies the row counts. |
+| `migration/M02__cleanup_legacy_snapshot.sql` | **Dry run by default.** One transaction that holds the old pipeline's lock and both new company locks from the first check to the commit; refuses unless both new copies are published, Succeeded, complete and fresh and the backups match; then empties those 9 old tables. |
+| `migration/M03__drop_legacy_objects_OPTIONAL.sql` | Optional, later: drops the old (empty) tables and procedures. Dry run by default. |
+| `migration/M90__rollback_restore_legacy.sql` | Rollback: restores the 9 tables from the backups and removes the new Hangfire entries. |
+| `tools/test_pact_fetch.sql` | Fetch of one company from PACT into a **temp table** with its fixed layout (diagnostic window or the full 2000-2099 window); rows, time, foreign-company check. Changes nothing persistent. |
+| `tools/diagnose_receivables_refresh.sql` | **Read-only**: linked-server configuration, company state, last attempts, whether a refresh really runs (lock probe), published volume. |
+| `tools/verify_snapshot.sql` | **Read-only** checklist (every row must say `OK`): both companies published, fresh, nothing stuck, exclusions, jobs. |
+| `tools/verify_samples.sql` | **Read-only**: independent recount per company, last run counts, sample apartments with the exact values the page must show, the recurring jobs (cron, time zone, next run in Dubai time). |
+| `tools/verify_details_total.sql` | **Read-only**: through the real read procedure, every checked apartment's Total = Due + Overdue = the sum of its details, order, no future payments, no other company. |
+| `tools/crm_project_map_discovery.sql` | **Read-only** helper for the CRM project -> tower map. |
+| `legacy/` | The previous pipeline's scripts, kept for the rollback and for reference (not deployed any more). |
+| `tests/local-sqlserver/` | Local harness: fake PACT with the verified layouts + a loopback linked server, for `RcvRealSqlTests`. Development servers only. |

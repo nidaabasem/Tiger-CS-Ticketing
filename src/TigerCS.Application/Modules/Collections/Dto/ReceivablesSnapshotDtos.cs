@@ -17,8 +17,8 @@ public sealed record SnapshotCompanyStatusDto(
     int ContradictoryStatusRows, int UnknownStatusRows, string Freshness, int? AgeMinutes, bool RefreshInProgress = false, DateTime? RefreshStartedUtc = null, string? RunCompanyStatus = null,
     bool PaidRetained = false, bool BreakdownAvailable = false, int UnclassifiedRows = 0)
 {
-    /// <summary>The newest refresh attempt failed; the previous snapshot (if any) is still being served.</summary>
-    public bool LastRefreshFailed => LastAttemptStatus == "Failed";
+    /// <summary>The newest refresh attempt failed or was abandoned (timeout, cancellation, restart); the previous snapshot (if any) is still being served.</summary>
+    public bool LastRefreshFailed => LastAttemptStatus is "Failed" or "Abandoned";
 }
 
 /// <summary>Receivables with no active tower row: reported, never dropped, never given an invented tower name.</summary>
