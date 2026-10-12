@@ -1,0 +1,149 @@
+@using TigerCS.Web.Models
+@using TigerCS.Application.Modules.CrmDocuments.Dto
+@model CustomerDocumentsPanel
+@{
+    var panel = Model;
+    var data = panel.Data;
+    var warnIcon = "M12 9v4M12 17h.01M10.3 3.9 2.5 18a1.6 1.6 0 0 0 1.4 2.4h16.2a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z";
+}
+
+<div class="documents-tab" data-documents-state="@panel.State" data-documents-unit="@(panel.RequestedLeadId?.ToString() ?? "")">
+    @if (!string.IsNullOrEmpty(panel.Notice))
+    {
+        <div class="alert @(panel.NoticeIsError ? "alert-error" : "alert-success")" role="@(panel.NoticeIsError ? "alert" : "status")" data-documents-notice>
+            <span>@panel.Notice</span>
+        </div>
+    }
+
+    @if (data is { Units.Count: > 1 } && panel.State is DocumentsPanelState.Loaded or DocumentsPanelState.UnitSelectionRequired)
+    {
+        <form class="payment-toolbar__selector" method="get" action="/Customers/@Uri.EscapeDataString(panel.CustomerKey)" data-documents-selector>
+            <input type="hidden" name="tab" value="@CustomerProfileTabs.Documents" />
+            <div class="field-group">
+                <label class="field-label" for="documentsUnit">Unit</label>
+                <select class="field-select" id="documentsUnit" name="unit">
+                    @if (data.SelectedLeadId is null)
+                    {
+                        <option value="" selected>Select a unit…</option>
+                    }
+                    @foreach (var unit in data.Units)
+                    {
+                        <option value="@unit.LeadId" selected="@(unit.LeadId == data.SelectedLeadId)">@CustomerDocumentsPanel.UnitLabel(unit)</option>
+                    }
+                </select>
+            </div>
+            <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+        </form>
+    }
+
+    @switch (panel.State)
+    {
+        case DocumentsPanelState.Deferred:
+            <div class="payment-loading" role="status" aria-live="polite">
+                <span class="payment-spinner" aria-hidden="true"></span>
+                <span>Loading documents…</span>
+                <a class="link-muted" href="@panel.TabHref(panel.RequestedLeadId)" data-documents-fallback>Load documents</a>
+            </div>
+            break;
+
+        case DocumentsPanelState.NotCrmCustomer:
+        case DocumentsPanelState.NoUnits:
+        case DocumentsPanelState.CustomerNotResolved:
+            <div class="empty-state"><p>@panel.Message</p></div>
+            break;
+
+        case DocumentsPanelState.UnitSelectionRequired:
+            <p class="panel-intro" data-documents-select-unit>@panel.Message</p>
+            break;
+
+        case DocumentsPanelState.Forbidden:
+        case DocumentsPanelState.NotFound:
+            <div class="error-state">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" /></svg>
+                <p>@panel.Message</p>
+            </div>
+            break;
+
+        case DocumentsPanelState.Unavailable:
+        case DocumentsPanelState.Rejected:
+        case DocumentsPanelState.Error:
+            <div class="alert alert-error payment-alert-action" role="alert" data-documents-error>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="@warnIcon" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                <span><strong>Documents could not be retrieved.</strong> @(panel.Message ?? "Try again shortly.") No documents are shown.</span>
+                <a class="btn btn-sm" href="@panel.TabHref(panel.RequestedLeadId)" data-documents-retry>Retry</a>
+            </div>
+            break;
+
+        case DocumentsPanelState.Loaded:
+            var send = data!.Send;
+            var unitLine = data.Units.FirstOrDefault(u => u.LeadId == data.SelectedLeadId);
+            <div class="payment-toolbar__meta">
+                @if (unitLine is not null)
+                {
+                    <span>Unit <strong>@CustomerDocumentsPanel.UnitLabel(unitLine)</strong></span>
+                }
+                @if (send.MaskedDestination is { } masked)
+                {
+                    <span>Sent to the email CRM holds: <strong>@masked</strong></span>
+                }
+            </div>
+
+            @if (!panel.CanSend)
+            {
+                <div class="alert alert-info" role="status"><span>Your role is read-only, so documents can be opened but not sent to the customer.</span></div>
+            }
+            else if (!send.Available)
+            {
+                <div class="alert alert-info" role="status" data-documents-send-unavailable><span><strong>Send to customer is unavailable.</strong> @send.UnavailableReason</span></div>
+            }
+
+            @foreach (var group in data.Groups)
+            {
+                <section class="documents-group" data-documents-group="@group.DocumentType">
+                    <h3 class="payment-section-title">@group.Label <span class="id-fallback">CRM type @group.CrmAttachmentType</span></h3>
+                    @if (group.Status != "Ok")
+                    {
+                        <div class="alert alert-error" role="alert" data-documents-group-error><span>@group.Label could not be retrieved. @group.Message</span></div>
+                    }
+                    else if (group.Documents.Count == 0)
+                    {
+                        <div class="empty-state empty-state--compact" data-documents-empty><p>No @group.Label.ToLowerInvariant() on record for this unit.</p></div>
+                    }
+                    else
+                    {
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr><th>Name</th><th>Type</th><th class="col-actions">File</th><th class="col-actions">Send</th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var document in group.Documents)
+                                    {
+                                        <tr data-document-row="@document.RecordId">
+                                            <td class="cell-primary">@document.Name</td>
+                                            <td>@group.Label</td>
+                                            <td class="col-actions">
+                                                <a class="btn btn-sm" href="@panel.FileHref(group, document, false)" target="_blank" rel="noopener" data-document-open>Open</a>
+                                                <a class="btn btn-sm" href="@panel.FileHref(group, document, true)" data-document-download>Download</a>
+                                            </td>
+                                            <td class="col-actions">
+                                                <form method="post" asp-page="/CustomerProfile" asp-page-handler="SendDocument" asp-route-customerKey="@panel.CustomerKey" data-document-send-form>
+                                                    <input type="hidden" name="unit" value="@data.SelectedLeadId" />
+                                                    <input type="hidden" name="type" value="@group.DocumentType" />
+                                                    <input type="hidden" name="record" value="@document.RecordId" />
+                                                    <input type="hidden" name="documentName" value="@document.Name" />
+                                                    <input type="hidden" name="idempotencyKey" value="@Guid.NewGuid().ToString("N")" />
+                                                    <button type="submit" class="btn btn-sm btn-gold" disabled="@(!send.Available || !panel.CanSend)" title="@(panel.CanSend && send.Available ? "Email this document to the customer as an attachment" : send.UnavailableReason)" data-document-send>Send to customer</button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </section>
+            }
+            break;
+    }
+</div>

@@ -174,6 +174,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<CrmDocumentOptions>>().Value);
         services.AddScoped<ICrmDocumentDeliveryRepository, CrmDocumentDeliveryRepository>();
         services.AddScoped<CrmDocumentCopyAppService>();
+        services.AddScoped<CustomerDocumentsAppService>();
         services.AddScoped<ICustomerOtpChallengeRepository, CustomerOtpChallengeRepository>();
         services.AddSingleton<IOtpCodeGenerator, RandomOtpCodeGenerator>();
         services.AddScoped<CrmBuyerVerificationCache>();

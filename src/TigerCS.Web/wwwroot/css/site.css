@@ -634,7 +634,8 @@ textarea.form-control { min-height: 96px; resize: vertical; padding: var(--space
 #tab-approvals:checked ~ .tabs-body #panel-approvals,
 #tab-attachments:checked ~ .tabs-body #panel-attachments,
 #tab-interactions:checked ~ .tabs-body #panel-interactions,
-#tab-payment:checked ~ .tabs-body #panel-payment { display: block; }
+#tab-payment:checked ~ .tabs-body #panel-payment,
+#tab-documents:checked ~ .tabs-body #panel-documents { display: block; }
 .tab-count {
   display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 17px; padding: 0 5px; margin-left: 4px;
   border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: var(--text-2xs); font-weight: 700;
@@ -1910,6 +1911,14 @@ a.badge:hover { text-decoration: underline; }
 /* Read-only notice on a Published/Historical version. */
 .alert-info { background: var(--color-ink-tint); color: var(--color-ink); border: 1px solid var(--color-ink-line); }
 .alert-lock svg { color: var(--color-ink); }
+
+/* ---- Customer Profile · Documents tab --------------------------------- */
+
+.documents-tab { display: flex; flex-direction: column; gap: var(--space-4); }
+.documents-tab[aria-busy='true'] { opacity: .55; pointer-events: none; }
+.documents-group { display: flex; flex-direction: column; gap: var(--space-2); }
+.documents-group .col-actions { white-space: nowrap; }
+.documents-group .col-actions form { display: inline; }
 
 /* ---- Customer Profile · Payment tab ----------------------------------- */
 

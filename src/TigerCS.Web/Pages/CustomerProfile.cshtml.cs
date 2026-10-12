@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TigerCS.Application.Modules.Collections.Dto;
+using TigerCS.Application.Modules.CrmDocuments.Dto;
 using TigerCS.Application.Modules.Ticketing.Dto;
 using TigerCS.Domain.Modules.Ticketing;
 using TigerCS.Web.Models;
@@ -26,7 +27,9 @@ public sealed class CustomerProfileModel(
     TicketsApiClient ticketsApiClient,
     TicketNameResolver nameResolver,
     CollectionsApiClient collectionsApiClient,
-    CustomerPaymentPanelLoader paymentPanelLoader) : PageModel
+    CustomerPaymentPanelLoader paymentPanelLoader,
+    CustomerDocumentsApiClient documentsApiClient,
+    CustomerDocumentsPanelLoader documentsPanelLoader) : PageModel
 {
     public const string PaymentTab = "payment";
 
@@ -45,6 +48,21 @@ public sealed class CustomerProfileModel(
 
     [TempData]
     public bool PaymentNoticeIsError { get; set; }
+
+    /// <summary>
+    /// The Documents tab. Deferred (fetched when the tab is opened, via <see cref="OnGetDocumentsPanelAsync"/>) unless the
+    /// page was asked for with <c>?tab=documents</c> — the no-JavaScript path, the unit selector and the return from
+    /// Send to customer — when it is rendered here.
+    /// </summary>
+    public CustomerDocumentsPanel DocumentsPanel { get; private set; } = CustomerDocumentsPanelLoader.Deferred(string.Empty, null);
+
+    public bool DocumentsTabActive { get; private set; }
+
+    [TempData]
+    public string? DocumentsNotice { get; set; }
+
+    [TempData]
+    public bool DocumentsNoticeIsError { get; set; }
 
     public string CustomerKey { get; private set; } = string.Empty;
     public ApiOutcome Outcome { get; private set; }
@@ -102,7 +120,7 @@ public sealed class CustomerProfileModel(
     public string NewTicketHref =>
         PrimaryPhone is { } phone ? $"/NewTicket?phoneNumber={Uri.EscapeDataString(phone)}" : "/NewTicket";
 
-    public async Task<IActionResult> OnGetAsync(string customerKey, long? fromTicket, string? tab, string? account, CancellationToken cancellationToken)
+    public async Task<IActionResult> OnGetAsync(string customerKey, long? fromTicket, string? tab, string? account, int? unit, CancellationToken cancellationToken)
     {
         CustomerKey = customerKey;
         Viewer = CurrentUser.FromPrincipal(User);
@@ -135,7 +153,78 @@ public sealed class CustomerProfileModel(
             ? await paymentPanelLoader.LoadAsync(customerKey, CrmCustomerIdOf(Profile), account, PaymentNotice, PaymentNoticeIsError, cancellationToken)
             : new CustomerPaymentPanel { CustomerKey = customerKey, CrmCustomerId = CrmCustomerIdOf(Profile), State = CustomerPaymentPanel.HasPaymentSource(customerKey, CrmCustomerIdOf(Profile)) ? PaymentPanelState.Deferred : PaymentPanelState.NotCrmCustomer };
 
+        DocumentsTabActive = string.Equals(tab, CustomerProfileTabs.Documents, StringComparison.OrdinalIgnoreCase);
+        DocumentsPanel = DocumentsTabActive
+            ? await documentsPanelLoader.LoadAsync(customerKey, unit, DocumentsNotice, DocumentsNoticeIsError, cancellationToken)
+            : CustomerDocumentsPanelLoader.Deferred(customerKey, unit);
+        DocumentsPanel.CanSend = !TigerCS.Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(Viewer?.Roles ?? []);
+
         return Page();
+    }
+
+    /// <summary>
+    /// The Documents tab's content alone, fetched by site.js when the tab is opened and again when the unit changes.
+    /// Nothing about the customer or unit is trusted from here: the Api checks both against CRM on every call.
+    /// </summary>
+    public async Task<IActionResult> OnGetDocumentsPanelAsync(string customerKey, int? unit, CancellationToken cancellationToken)
+    {
+        var panel = await documentsPanelLoader.LoadAsync(customerKey, unit, null, false, cancellationToken);
+        panel.CanSend = !TigerCS.Domain.Modules.IdentityAndAccess.Roles.IsReadOnlyCaller(CurrentUser.FromPrincipal(User)?.Roles ?? []);
+        return Partial("_CustomerDocumentsTab", panel);
+    }
+
+    /// <summary>
+    /// Open / Download. The Api fetches the file from CRM with the server-side credential after re-checking that the customer is
+    /// visible to this agent, the unit is the customer's and CRM lists the record; this only relays the bytes. A failure is a
+    /// small plain-text page (the link opens in a new tab), never a blank file.
+    /// </summary>
+    public async Task<IActionResult> OnGetDocumentFileAsync(
+        string customerKey, int? unit, string? type, string? record, bool download, CancellationToken cancellationToken)
+    {
+        if (unit is not { } leadId || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(record))
+        {
+            return FileFailure(StatusCodes.Status400BadRequest, "The document link is incomplete.");
+        }
+
+        var result = await documentsApiClient.GetFileAsync(customerKey, leadId, type, record, download, cancellationToken);
+        if (!result.IsSuccess || result.Value is not { } file)
+        {
+            return result.Outcome switch
+            {
+                ApiOutcome.Forbidden => FileFailure(StatusCodes.Status403Forbidden, "You don't have access to this document, or it is not one of this customer's documents."),
+                ApiOutcome.Unauthorized => FileFailure(StatusCodes.Status401Unauthorized, "Your session is no longer valid. Sign in again."),
+                ApiOutcome.NotFound => FileFailure(StatusCodes.Status404NotFound, "This document is no longer available."),
+                ApiOutcome.ValidationError => FileFailure(StatusCodes.Status400BadRequest, "The document link is not valid."),
+                ApiOutcome.BadGateway => FileFailure(StatusCodes.Status502BadGateway, "CRM refused to give the file. " + result.Detail),
+                _ => FileFailure(StatusCodes.Status503ServiceUnavailable, "The document could not be retrieved right now. Try again shortly.")
+            };
+        }
+
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        var disposition = new System.Net.Http.Headers.ContentDispositionHeaderValue(download ? "attachment" : "inline") { FileNameStar = file.FileName };
+        Response.Headers.ContentDisposition = disposition.ToString();
+        return File(file.Bytes, file.ContentType);
+    }
+
+    private ContentResult FileFailure(int status, string message) =>
+        new() { StatusCode = status, ContentType = "text/plain; charset=utf-8", Content = message };
+
+    /// <summary>
+    /// Send to customer. The Api re-checks ownership, takes the destination from CRM (nothing here names an address),
+    /// and reports what the delivery service did. The form's own Idempotency-Key makes a double submit send once. The
+    /// answer is relayed in words that match the evidence — accepted by the mail server is not delivered.
+    /// </summary>
+    public async Task<IActionResult> OnPostSendDocumentAsync(
+        string customerKey, int? unit, string? type, string? record, string? documentName, string? idempotencyKey, CancellationToken cancellationToken)
+    {
+        var name = string.IsNullOrWhiteSpace(documentName) ? "The document" : documentName.Trim();
+        var result = await documentsApiClient.SendAsync(
+            customerKey, new CustomerDocumentSendRequestDto(unit, type, record),
+            string.IsNullOrWhiteSpace(idempotencyKey) ? Guid.NewGuid().ToString("N") : idempotencyKey.Trim(), cancellationToken);
+
+        (DocumentsNotice, DocumentsNoticeIsError) = CustomerDocumentsPanel.SendNotice(result, name);
+        return RedirectToPage(null, null, new { customerKey, tab = CustomerProfileTabs.Documents, unit }, "documents");
     }
 
     /// <summary>

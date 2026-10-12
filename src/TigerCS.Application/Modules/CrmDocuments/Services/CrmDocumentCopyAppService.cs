@@ -230,11 +230,112 @@ public sealed partial class CrmDocumentCopyAppService(
 
         var customerId = boundCustomerId;
 
+        // ---- 5-9. Select the record, claim the send, fetch, deliver, record ----
+        return await DeliverAsync(
+            callerEmployeeId, key, sessionId, type, requestedRecordId, channel, existing, now,
+            new DeliveryTarget(
+                customerId, lead.LeadId, lead.UnitNumber, buyer.Customer.Email,
+                buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, $"VerificationSessionId={sessionId}"),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// The agent desk's "Send to customer": the same delivery core as the chatbot (record chosen only from CRM's own
+    /// listing for this customer and lead, idempotency claim, server-side download, one email attachment to CRM's address
+    /// for the customer, audit) — but the proof of who the customer is comes from the signed-in agent's access to that
+    /// customer, established by <see cref="CustomerDocumentsAppService"/>, instead of a customer OTP.
+    ///
+    /// <para>
+    /// The agent cannot choose the destination: it is CRM's email for the customer. The delivery record's session column
+    /// holds a stable surrogate for (customer, lead) — there is no verification session on this path — so the existing
+    /// "same document, recently sent" suppression also stops two agents emailing the same file twice.
+    /// </para>
+    /// </summary>
+    /// <remarks>The caller MUST have established that <paramref name="recipient"/> is a customer/lead the agent may act for.</remarks>
+    public async Task<CrmDocumentCopyResult> SendToCustomerAsync(
+        Guid callerEmployeeId, AgentDocumentRecipient recipient, CrmDocumentType type, string? recordId, string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(recipient);
+
+        if (!options.Enabled)
+        {
+            return Fail(CrmDocumentCopyStatus.Disabled, CrmDocumentCodes.DocumentCopyDisabled,
+                "Sending document copies is switched off (CrmDocuments:Enabled).");
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey) || !IdempotencyKeyPattern().IsMatch(idempotencyKey.Trim()))
+        {
+            return Invalid("An Idempotency-Key header of 1–128 letters, digits and . _ : - is required, and must be reused on a retry.");
+        }
+
+        if (string.IsNullOrWhiteSpace(recordId))
+        {
+            return Invalid("recordId is required — the agent sends one specific listed document.");
+        }
+
+        const DocumentDeliveryChannel channel = DocumentDeliveryChannel.Email;
+        if (channelSenders.All(s => s.Channel != channel))
+        {
+            return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.DeliveryChannelNotIntegrated,
+                "No Email delivery integration is registered.", documentType: type.ToString(), channel: channel.ToString(), retryable: false);
+        }
+
+        var key = idempotencyKey.Trim();
+        var requestedRecordId = recordId.Trim();
+        var context = AgentContextId(recipient.CustomerId, recipient.LeadId);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var staleAfter = TimeSpan.FromMinutes(Math.Max(1, options.InProgressStaleAfterMinutes));
+
+        var existing = await deliveryRepository.GetByKeyAsync(callerEmployeeId, key, cancellationToken);
+        if (existing is not null)
+        {
+            var replay = ReplayOrNull(existing, context, type, requestedRecordId, channel, now, staleAfter);
+            if (replay is not null)
+            {
+                return replay;
+            }
+        }
+
+        return await DeliverAsync(
+            callerEmployeeId, key, context, type, requestedRecordId, channel, existing, now,
+            new DeliveryTarget(
+                recipient.CustomerId, recipient.LeadId, recipient.UnitNumber, recipient.Email, recipient.DisplayName,
+                $"Origin=AgentDesk;DeliveryContext={context}"),
+            cancellationToken);
+    }
+
+    /// <summary>A stable id for "an agent sending to this customer's lead": SHA-256 of the pair, folded into a Guid. Not a verification session.</summary>
+    internal static Guid AgentContextId(int customerId, int leadId) =>
+        new(SHA256.HashData(Encoding.UTF8.GetBytes($"agent-desk|{customerId}|{leadId}"))[..16]);
+
+    /// <summary>
+    /// Where a document copy goes and what it is about, once ownership has been established by whichever door the
+    /// request came through (a verified chatbot session, or a signed-in agent on a customer the agent may see).
+    /// </summary>
+    /// <param name="CustomerId">CRM's customer id.</param>
+    /// <param name="LeadId">CRM's lead id: the unit.</param>
+    /// <param name="UnitNumber">Shown in a selection list.</param>
+    /// <param name="DisplayName">The greeting name.</param>
+    /// <param name="Email">CRM's email for this customer — never anything the caller supplied.</param>
+    /// <param name="AuditContext">Written into the audit entry: which proof the send rode on.</param>
+    private sealed record DeliveryTarget(int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName, string AuditContext);
+
+    /// <summary>
+    /// Steps shared by every door: only a record CRM lists for this customer and lead is selected; the send is claimed
+    /// under the caller's idempotency key before anything is fetched; the file is fetched with the server-side CRM
+    /// credential; exactly one email goes out; the outcome is recorded and audited.
+    /// </summary>
+    private async Task<CrmDocumentCopyResult> DeliverAsync(
+        Guid callerEmployeeId, string key, Guid sessionId, CrmDocumentType type, string? requestedRecordId,
+        DocumentDeliveryChannel channel, CrmDocumentDeliveryRequest? existing, DateTime now, DeliveryTarget target,
+        CancellationToken cancellationToken)
+    {
         // ---- 5. Which document? Only ones CRM lists for this customer and lead. ----
         CrmDocumentListing listing;
         try
         {
-            listing = await documentGateway.ListAsync(type, customerId, lead.LeadId, cancellationToken);
+            listing = await documentGateway.ListAsync(type, target.CustomerId, target.LeadId, cancellationToken);
         }
         catch (CrmDocumentSourceException ex)
         {
@@ -267,7 +368,7 @@ public sealed partial class CrmDocumentCopyAppService(
                 CrmDocumentCopyStatus.SelectionRequired, CrmDocumentCodes.SelectionRequired,
                 $"More than one {Describe(type)} matches. Ask the customer which one, then call again with its recordId.",
                 DocumentType: type.ToString(), ChoiceKind: "Document",
-                Choices: records.Select(r => new CrmDocumentChoice(r.RecordId, r.Label, lead.UnitNumber, null)).ToList());
+                Choices: records.Select(r => new CrmDocumentChoice(r.RecordId, r.Label, target.UnitNumber, null)).ToList());
         }
         else
         {
@@ -284,7 +385,7 @@ public sealed partial class CrmDocumentCopyAppService(
         }
 
         // ---- Where does it go? CRM's email for this customer — never the caller's. ----
-        var destination = buyer.Customer.Email?.Trim();
+        var destination = target.Email?.Trim();
         if (string.IsNullOrEmpty(destination) || !EmailPattern().IsMatch(destination))
         {
             return Fail(CrmDocumentCopyStatus.DeliveryFailed, CrmDocumentCodes.DeliveryDestinationUnavailable,
@@ -376,7 +477,7 @@ public sealed partial class CrmDocumentCopyAppService(
         {
             delivery = await sender.SendAsync(
                 new DocumentDeliveryMessage(
-                    destination, buyer.Customer.FullNameEnglish ?? contact.DisplayName ?? string.Empty, type, content.FileName, content.ContentType,
+                    destination, target.DisplayName, type, content.FileName, content.ContentType,
                     content.Bytes, Guid.NewGuid()),
                 cancellationToken);
         }
@@ -403,7 +504,7 @@ public sealed partial class CrmDocumentCopyAppService(
         await auditWriter.WriteAsync(
             callerEmployeeId, "CrmDocumentCopySent", AuditEntityType, claim.CrmDocumentDeliveryRequestId.ToString(),
             beforeValue: null,
-            afterValue: $"DocumentType={type};CrmCustomerId={customerId};CrmLeadId={lead.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked};VerificationSessionId={sessionId}",
+            afterValue: $"DocumentType={type};CrmCustomerId={target.CustomerId};CrmLeadId={target.LeadId};RecordId={selected.RecordId};Channel={channel};Destination={masked};{target.AuditContext}",
             Guid.NewGuid(), cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -539,6 +640,8 @@ public sealed partial class CrmDocumentCopyAppService(
         CrmDocumentType.RegistrationReceipt => "registration receipt",
         _ => "contract"
     };
+
+    internal static bool IsEmailAddress(string? email) => !string.IsNullOrEmpty(email) && EmailPattern().IsMatch(email);
 
     internal static string MaskEmail(string email)
     {

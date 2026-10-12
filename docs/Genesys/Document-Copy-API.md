@@ -8,6 +8,8 @@
 > It ships `CrmDocuments:Enabled=false`, and **a Production host refuses to start with it enabled** unless
 > `CrmDocuments:AllowInProduction=true` is also set — a decision to take only after UAT passes.
 
+> The agent-facing **Customer Details → Documents** tab reuses this service's delivery core: see [`../Customer-Details-Documents-Tab.md`](../Customer-Details-Documents-Tab.md).
+
 Scope: a CRM **Buyer** (found by `GetBuyerByPhone`) asking for a Contract, Reservation Form, Unit Layout or Registration Receipt
 **of the unit they verified for**. Tenants, representatives, and "Owner" semantics are out of scope (§Not in this phase).
 

@@ -160,3 +160,8 @@ public static class CrmDocumentCodes
     public const string IdempotencyKeyReused = "IDEMPOTENCY_KEY_REUSED";
     public const string RequestInProgress = "REQUEST_IN_PROGRESS";
 }
+
+/// <summary>
+/// Who an agent-initiated copy is for, resolved server-side from CRM (never typed by the agent). The address is CRM's.
+/// </summary>
+public sealed record AgentDocumentRecipient(int CustomerId, int LeadId, string? UnitNumber, string? Email, string DisplayName);
