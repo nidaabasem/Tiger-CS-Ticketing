@@ -59,9 +59,20 @@ public sealed partial class CustomerUnitLinkServiceTests
         public Dictionary<(string Key, int Company), CrmUnitLink> CrmLinks { get; } = [];
         public List<(string Key, int? Company)> Reads { get; } = [];
         public bool Throw { get; set; }
+        /// <summary>Directory-only units: PACT knows them (fully paid, nothing open) but they have no open instalments.</summary>
+        public List<PactDirectoryUnit> PaidUnits { get; } = [];
+        public bool DirectoryComplete { get; set; }
         public int[] LoadedCompanies { get; set; } = [4, 32];
 
         public Task<PactReceivablesSnapshot> ReadAsync(DateOnly throughDate, CancellationToken cancellationToken) => Task.FromResult(new PactReceivablesSnapshot([], Now, false));
+
+        public Task<PactAccountDirectory> ReadAccountDirectoryAsync(string unitKey, int? companyId, CancellationToken cancellationToken)
+        {
+            var all = Identities.Select(i => new PactDirectoryUnit(i.CompanyId, i.TenantId, i.UnitId, i.UnitCode, Math.Max(i.OpenRows, 1), 0, CollectionsUnitKey.Normalize(i.UnitCode) is { } k && !CollectionsUnitKey.IsListable(k))).Concat(PaidUnits).ToList();
+            var matches = all.Where(u => !u.IsCancelled && CollectionsUnitKey.Normalize(u.UnitCode) == unitKey && (companyId is null || u.CompanyId == companyId)).ToList();
+            var account = all.Where(u => matches.Any(m => m.CompanyId == u.CompanyId && m.TenantId == u.TenantId)).ToList();
+            return Task.FromResult(new PactAccountDirectory(matches, account, DirectoryComplete, "Test directory", Now));
+        }
 
         public Task<PactUnitReceivables> ReadUnitAsync(string unitKey, int? companyId, DateOnly today, CancellationToken cancellationToken)
         {
@@ -71,8 +82,7 @@ public sealed partial class CustomerUnitLinkServiceTests
             var instalments = Instalments.Where(n => ids.Any(i => i.CompanyId == n.CompanyId && i.TenantId == n.TenantId && i.UnitId == n.UnitId) && n.RemainingAmount > 0).ToList();   // like the real read: future instalments too
             var links = CrmLinks.Where(l => l.Key.Key == unitKey && (companyId is null || l.Key.Company == companyId)).ToDictionary(l => l.Key.Company, l => l.Value);
             var snapshot = new SnapshotStatusDto(LoadedCompanies.Select(c => new SnapshotCompanyStatusDto(c, "Co" + c, true, Now, Now, "Succeeded", null, 0, 10, null, null, 0, 0, 0, 0, 0, 0, "Fresh", 1)).ToList(), [], 120);
-            var tenantUnits = Identities.Where(o => ids.Any(i => i.CompanyId == o.CompanyId && i.TenantId == o.TenantId)).Select(o => new PactTenantUnit(o.CompanyId, o.TenantId, o.UnitId, o.UnitCode)).ToList();
-            return Task.FromResult(new PactUnitReceivables(snapshot, ids, instalments, links, true, Now, tenantUnits));
+            return Task.FromResult(new PactUnitReceivables(snapshot, ids, instalments, links, true, Now));
         }
     }
 

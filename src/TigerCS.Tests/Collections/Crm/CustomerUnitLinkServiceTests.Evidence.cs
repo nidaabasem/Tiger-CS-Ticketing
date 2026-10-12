@@ -168,14 +168,14 @@ public sealed partial class CustomerUnitLinkServiceTests
     }
 
     [Fact]
-    public async Task FullService_AUnitWithNoPactMobile_GetsItsStatementThroughItsUnitCode_EvenWhenPactsContractListIsDown()
+    public async Task FullService_AFullyPaidUnit_WithNoPactMobile_GetsItsStatement_EvenWhenPactsContractListIsDown()
     {
         var r = new Rig();
         r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
         CrmReturns(r, Buyer(498397, "Sreesaran Maru Sudhakar", PhoneE164, "s@example.test", CrmUnit(9090, "909")));
-        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "Al Ghaf Tower", 3, 3));   // tenant 3001: the fixture's EDSM account; PACT holds no mobile
-        r.Units.Instalments.Add(new(4, "3001", 41230, "V1", new(2026, 9, 1), 700m, 700m, 0m, "Installment"));
-        r.Pact.Result = PactCustomerLookupResult.Unavailable();       // PACT's contract list is down: it is optional, the statement must not depend on it
+        r.Units.DirectoryComplete = true;
+        r.Units.PaidUnits.Add(new(4, "3001", 41230, "TP140-909", 0, 5));          // fully paid: no open instalment, so the open-balance snapshot has nothing for it; tenant 3001 is the fixture's EDSM account
+        r.Pact.Result = PactCustomerLookupResult.Unavailable();                    // PACT's contract list is down: it is optional
         var (service, edsm) = WithStatements(r);
 
         var result = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!;
@@ -185,7 +185,45 @@ public sealed partial class CustomerUnitLinkServiceTests
         Assert.Equal((4, "3001", "TP140-909"), (statement.CompanyId, statement.TenantId, statement.UnitKey));
         Assert.Equal((1250000m, 812500m, 62500m, 375000m), (statement.Total!.Value, statement.Paid!.Value, statement.Due!.Value, statement.Outstanding!.Value));
         Assert.Equal([(4, "3001")], edsm.Summaries);
-        Assert.Contains(statement.Notes, n => n.Contains("receivables snapshot"));   // unconfirmed by the contract list, and the statement says so
+    }
+
+    [Fact]
+    public async Task FullService_AnAccountWithAFullyPaidSibling_ShowsNoStatement_NotTheAccountTotal()
+    {
+        var r = new Rig();
+        r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
+        CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909")));
+        r.Units.DirectoryComplete = true;
+        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "T", 3, 3));      // the selected unit still owes money ...
+        r.Units.PaidUnits.Add(new(4, "3001", 41231, "TP140-101", 0, 4));                                          // ... its sibling is fully paid, but its payments are inside EDSM's Paid / Total
+        r.Units.Instalments.Add(new(4, "3001", 41230, "V1", new(2026, 9, 1), 700m, 700m, 0m, "Installment"));
+        var (service, edsm) = WithStatements(r);
+
+        var result = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!;
+
+        var s = result.Statement!;
+        Assert.Equal("NotExclusive", s.Status);
+        Assert.Contains("TP140-101 (fully paid)", s.OtherUnits);
+        Assert.Null(s.Total); Assert.Null(s.Paid);
+        Assert.Empty(edsm.Summaries);                                                // the account was never asked: nothing of it can reach the screen
+    }
+
+    [Fact]
+    public async Task FullService_WithoutCompleteScopeEvidence_NoAmountIsShown_AndTheMissingQueryIsNamed()
+    {
+        var r = new Rig();
+        r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
+        CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909")));
+        r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "T", 3, 3));      // directory NOT accepted as complete (default), contract list down
+        r.Pact.Result = PactCustomerLookupResult.Unavailable();
+        var (service, edsm) = WithStatements(r);
+
+        var s = (await service.FindForCrmCustomerAsync(r.Manager, 498397, [Phone], null)).Value!.Statement!;
+
+        Assert.Equal("ScopeUnproven", s.Status);
+        Assert.Contains("What is missing", s.Detail);
+        Assert.Null(s.Total);
+        Assert.Empty(edsm.Summaries);
     }
 
     [Fact]
@@ -194,6 +232,7 @@ public sealed partial class CustomerUnitLinkServiceTests
         var r = new Rig();
         r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
         CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909"), CrmUnit(1010, "101")));
+        r.Units.DirectoryComplete = true;
         r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "T", 3, 3));
         r.Units.Identities.Add(new(4, "4444", 41231, "TP140-101", "Pact Holder", "", "", "140", "T", 3, 3));      // another account
         var (service, edsm) = WithStatements(r);
@@ -216,6 +255,7 @@ public sealed partial class CustomerUnitLinkServiceTests
         var r = new Rig();
         r.Map.Rows.Add(new(79, "TP140", 4, "Manual"));
         CrmReturns(r, Buyer(498397, "Owner", PhoneE164, null, CrmUnit(9090, "909"), CrmUnit(1010, "101")));
+        r.Units.DirectoryComplete = true;
         r.Units.Identities.Add(new(4, "3001", 41230, "TP140-909", "Pact Holder", "", "", "140", "T", 3, 3));
         r.Units.Identities.Add(new(4, "3001", 41231, "TP140-101", "Pact Holder", "", "", "140", "T", 3, 3));      // same tenant
         var (service, edsm) = WithStatements(r);

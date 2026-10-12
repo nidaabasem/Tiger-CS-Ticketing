@@ -43,19 +43,19 @@ public sealed class CollectionsUnitStatementService(
         if (!CollectionsUnitKey.IsListable(request.UnitKey))
             return UnitPaymentStatementDto.Withheld("UnitNotResolved", "A unit code containing * is cancelled in PACT: no payment statement is shown for it.", request.UnitKey, request.CompanyId);
 
-        // 1. The account comes from the unit itself: the exact unit code in the existing PACT unit data gives CompanyId, TenantId and UnitId. No customer phone is needed.
-        PactUnitReceivables? unitRead = null;
+        // 1. The account comes from the unit itself: the exact unit code in the PACT unit/account DIRECTORY (fully paid units included) gives CompanyId, TenantId and UnitId. No phone is needed.
+        PactAccountDirectory? directory = null;
         if (receivables is IUnitReceivablesSource unitSource)
         {
-            try { unitRead = await unitSource.ReadUnitAsync(request.UnitKey, request.CompanyId, clock.BusinessDate, cancellationToken); }
+            try { directory = await unitSource.ReadAccountDirectoryAsync(request.UnitKey, request.CompanyId, cancellationToken); }
             catch (PactReceivablesSourceException ex)
             {
-                logger.LogWarning("The PACT unit data could not be read for the statement ({Message}).", ex.Message);
-                return UnitPaymentStatementDto.Withheld("SourceUnavailable", "The PACT unit data could not be read, so the unit's account cannot be identified.", request.UnitKey, request.CompanyId);
+                logger.LogWarning("The PACT unit/account directory could not be read for the statement ({Message}).", ex.Message);
+                return UnitPaymentStatementDto.Withheld("SourceUnavailable", "The PACT unit/account directory could not be read, so the unit's account cannot be identified.", request.UnitKey, request.CompanyId);
             }
         }
 
-        // 2. Optional enrichment, never a gate: the customer's PACT contract list (when a phone is known) can reveal other units of the same account, including units with nothing open.
+        // 2. Optional extra proof, never a gate: the customer's PACT contract list (when a phone is known) lists every unit / contract of the tenant, including ones the directory does not hold.
         PactContractDiscoveryResult? found = null;
         if (request.Phones.Count > 0)
         {
@@ -64,12 +64,12 @@ public sealed class CollectionsUnitStatementService(
             { logger.LogWarning("PACT contract discovery failed ({ExceptionType}); the statement continues on the unit data alone.", ex.GetType().Name); }
         }
 
-        var scope = unitRead is { Identities.Count: > 0 }
-            ? ResolveFromUnit(unitRead, found, request, clock.BusinessDate)
+        var scope = directory is { Matches.Count: > 0 }
+            ? ResolveFromDirectory(directory, found, request, clock.BusinessDate)
             : found is { Customers.Count: > 0 } ? Resolve(found, request, clock.BusinessDate)
             : new Scope(null, UnitPaymentStatementDto.Withheld("UnitNotFound",
-                $"The PACT receivables snapshot holds no open balance for unit {request.UnitKey}, so its account (company / tenant) cannot be identified from unit data" + (request.Phones.Count == 0 ? ", and no customer phone is known to look the unit up in PACT's contract list." : ", and PACT's contract list for the customer's phone does not hold it either.")
-                + " No amount is shown.", request.UnitKey, request.CompanyId));
+                $"The PACT unit/account directory (receivables procedure, settled instalments included) holds no unit {request.UnitKey}" + (request.Phones.Count == 0 ? ", and no customer phone is known to look it up in PACT's contract list." : ", and PACT's contract list for the customer's phone does not hold it either.")
+                + " Units that have no payment-plan / ledger row are not in the directory. " + MissingSource + " No amount is shown.", request.UnitKey, request.CompanyId));
         if (scope.Withheld is { } withheld) return withheld;
         var s = scope.Account!;
 
@@ -91,24 +91,27 @@ public sealed class CollectionsUnitStatementService(
         return Compose(request.UnitKey, s, read, edsm.SourceName, edsmOptions.Currency, clock.UtcNow);
     }
 
+    /// <summary>The exact missing source, named once so every refusal says the same thing.</summary>
+    public const string MissingSource = "What is missing: a PACT query that lists EVERY unit / contract of a (CompanyId, TenantId) account, fully paid ones included, without needing the customer's mobile (for example a tenant-to-units procedure next to p4tenantStat / p32tenantStat, or an EDSM route taking tenantID + companyID). PACT's v1/contracts/{mobile} needs a mobile, and the receivables procedures omit units without a payment plan.";
+
     /// <summary>
-    /// Pure decision from the unit's own PACT data (unit-tested): the identity (CompanyId, TenantId, UnitId) of the exact unit code, then whether the (company, tenant) account holds ONLY this unit.
-    /// Source limitation, stated: EDSM returns one statement per (company, tenant) with no unit parameter, so an account that also covers another unit cannot be split and no amount is shown.
-    /// The snapshot lists units with an open balance only; a fully paid sibling is visible only when the customer's contract list is available, so without it the statement carries a note.
+    /// Pure decision from PACT's unit/account directory (unit-tested): the identity (CompanyId, TenantId, UnitId) of the exact unit code - fully paid units included - then whether the account is PROVEN to hold
+    /// ONLY this unit. EDSM returns one statement per (company, tenant) with no unit parameter, so paid siblings feed Paid and Total just like open ones. Scope is proven only by COMPLETE evidence: the directory
+    /// when its source is accepted as complete, or the customer's contract list when PACT answered for every phone. Anything else withholds the statement - an account total is never shown as one unit's amounts.
     /// </summary>
-    public static Scope ResolveFromUnit(PactUnitReceivables read, PactContractDiscoveryResult? found, UnitStatementRequest request, DateOnly today)
+    public static Scope ResolveFromDirectory(PactAccountDirectory directory, PactContractDiscoveryResult? found, UnitStatementRequest request, DateOnly today)
     {
         UnitPaymentStatementDto Fail(string status, string detail, int? company = null, string? tenant = null, IReadOnlyList<string>? others = null) =>
             UnitPaymentStatementDto.Withheld(status, detail, request.UnitKey, company ?? request.CompanyId, tenant, others);
 
-        var ids = read.Identities.Where(i => CollectionsUnitKey.Normalize(i.UnitCode) == request.UnitKey && CollectionsUnitKey.IsListable(i.UnitCode)).ToList();
+        var ids = directory.Matches.Where(i => !i.IsCancelled && CollectionsUnitKey.Normalize(i.UnitCode) == request.UnitKey && CollectionsUnitKey.IsListable(i.UnitCode)).ToList();
         if (request.PactTenantId is { Length: > 0 } expected)
         {
             ids = ids.Where(i => string.Equals(i.TenantId, expected, StringComparison.Ordinal)).ToList();
             if (ids.Count == 0)
                 return new(null, Fail("IdentityMismatch", $"PACT's data for unit {request.UnitKey} belongs to a different tenant than the one the receivables snapshot holds for it, so no amount is shown."));
         }
-        if (ids.Count == 0) return new(null, Fail("UnitNotFound", $"PACT holds no open balance for unit {request.UnitKey}, so its account cannot be identified. No amount is shown."));
+        if (ids.Count == 0) return new(null, Fail("UnitNotFound", $"PACT's unit/account directory holds no unit {request.UnitKey}, so its account cannot be identified. No amount is shown."));
         var accounts = ids.Select(i => (i.CompanyId, i.TenantId)).Distinct().ToList();
         if (accounts.Count > 1)
             return new(null, Fail("Ambiguous", $"{accounts.Count} PACT accounts hold unit {request.UnitKey} ({string.Join(", ", accounts.Select(a => $"company {a.CompanyId} / tenant {a.TenantId}"))}); none is chosen. No amount is shown."));
@@ -121,22 +124,25 @@ public sealed class CollectionsUnitStatementService(
         if (EdsmCompanies.Find(company) is not { } edsmCompany)
             return new(null, Fail("CompanyNotSupported", $"The PACT payment source has no statement for company {company}. No amount is shown.", company, tenant));
 
-        // The account's other units known to the snapshot (open balance) ...
-        var others = (read.TenantUnits ?? []).Where(u => u.CompanyId == company && string.Equals(u.TenantId, tenant, StringComparison.Ordinal) && u.UnitId != unitIds[0])
-            .Select(u => CollectionsUnitKey.Normalize(u.UnitCode) ?? u.UnitCode).ToList();
-        // ... and, when the customer's contract list was obtained, every other unit / contract of the tenant (including ones with nothing open).
+        // Every OTHER unit of the account the sources know - open, fully paid or cancelled - feeds EDSM's per-account Paid / Due / Outstanding / Total.
+        var others = directory.AccountUnits.Where(u => u.CompanyId == company && string.Equals(u.TenantId, tenant, StringComparison.Ordinal) && u.UnitId != unitIds[0])
+            .Select(u => (CollectionsUnitKey.Normalize(u.UnitCode) ?? u.UnitCode) + (u.IsCancelled ? " (cancelled)" : u.OpenRows == 0 ? " (fully paid)" : "")).ToList();
         var contractList = found?.Customers.Where(c => string.Equals(c.Customer.PactCustomerId, tenant, StringComparison.Ordinal)).SelectMany(c => c.Customer.Contracts)
             .Where(c => c.CompanyId == company || c.CompanyId is null).DistinctBy(c => (c.CompanyId, c.ContractNumber, c.ExternalUnitId, c.UnitCode)).ToList() ?? [];
         others.AddRange(contractList.Where(c => CollectionsUnitKey.Normalize(c.UnitCode) != request.UnitKey).Select(c => CollectionsUnitKey.Normalize(c.UnitCode) ?? $"(contract {c.ContractNumber ?? c.ExternalUnitId} without a unit code)"));
         others = others.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
         if (others.Count > 0)
             return new(null, Fail("NotExclusive",
-                $"Source limitation: PACT's payment statement (EDSM payment-summary / payment-transactions) is kept per customer account (company {company}, tenant {tenant}) and has no unit parameter. This account also covers {string.Join(", ", others)}, so its amounts cannot be separated per unit. No amount is shown for {request.UnitKey}.", company, tenant, others));
+                $"Source limitation: PACT's payment statement (EDSM payment-summary / payment-transactions) is kept per customer account (company {company}, tenant {tenant}) and has no unit parameter, so open AND fully paid units all feed its Paid / Total. This account also covers {string.Join(", ", others)}; its amounts cannot be separated per unit. No amount is shown for {request.UnitKey}.", company, tenant, others));
 
-        var proof = found is { Complete: true } && contractList.Count > 0 ? "ContractList" : "SnapshotOnly";
-        var mobile = ids.Select(i => CollectionsContactNormalizer.NormalizePhone(i.Mobile)).FirstOrDefault(m => m.Length > 0) ?? "";
+        // No other unit is known. That proves exclusivity only if the evidence is COMPLETE.
+        var contractProof = found is { Complete: true } && contractList.Count > 0;
+        if (!directory.IsComplete && !contractProof)
+            return new(null, Fail("ScopeUnproven",
+                $"The account (company {company}, tenant {tenant}) was identified for unit {request.UnitKey}, but nothing proves it holds no other unit: the unit/account directory is not accepted as complete ({directory.Source}) and PACT's contract list was not available for this customer. EDSM would return the whole account, so no amount is shown. {MissingSource}", company, tenant));
+
         var unitContract = new PactContractDto(unitIds[0].ToString(CultureInfo.InvariantCulture), null, CollectionsTowerOrder.UnitRest(request.UnitKey), null, null, company, null, request.UnitKey);
-        return new(new ProvenAccount(company, tenant, CustomerPhoneNumber.WithoutPlus(mobile), [unitContract], proof) { UnitId = unitIds[0], Model = edsmCompany.Model }, null);
+        return new(new ProvenAccount(company, tenant, "", [unitContract], contractProof ? "ContractList" : "UnitDirectory") { UnitId = unitIds[0], Model = edsmCompany.Model }, null);
     }
 
     /// <summary>The account the statement is read for: proven to belong to this unit alone.</summary>
@@ -223,8 +229,8 @@ public sealed class CollectionsUnitStatementService(
             .SelectMany(l => l.Items.Select(i => new StatementRowDto(i.Date, i.DateRaw, l.TransactionType, i.Amount, i.FormattedRaw, i.ChequeNumber, i.PaymentType)))
             .OrderBy(r => r.Date is null).ThenBy(r => r.Date).ThenBy(r => Array.IndexOf(order, r.Status)).ToList();
         var notes = read.Notes.ToList();
-        if (account.Proof == "SnapshotOnly")
-            notes.Add("This statement is PACT's account statement (company " + account.CompanyId + ", tenant " + account.TenantId + "). The account holds no other unit with an open balance in the receivables snapshot; a unit with nothing open is not in the snapshot and the customer's PACT contract list was not available to confirm it.");
+        if (account.Proof == "UnitDirectory")
+            notes.Add("This is PACT's account statement (company " + account.CompanyId + ", tenant " + account.TenantId + "). The account holds no other unit in PACT's unit/account directory (open and fully paid units); the directory source was accepted as complete by configuration (ReceivablesSnapshot:AccountDirectoryComplete) and has not been compared with EDSM live by this release.");
         var missing = read.Transactions.Where(l => l.Status != "Available").Select(l => l.TransactionType).ToList();
         if (read.Transactions.Count == 0) notes.Add("Payment rows were not requested from the source.");
         foreach (var m in missing) notes.Add($"{m} payments could not be read from the source, so the payment list is incomplete.");

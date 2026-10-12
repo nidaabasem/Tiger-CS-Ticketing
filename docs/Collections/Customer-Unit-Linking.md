@@ -107,6 +107,8 @@ Excluded before matching, aggregation and paging in SQL (`R002` refresh, `R004` 
 
 ## Round 3: unit-based statement, contact trace, and what is still outstanding
 
+> **Superseded by Round 4 below:** points 1 and 3 of this section (identity from the open-balance snapshot, exclusivity from open siblings) were insufficient - fully paid units and paid siblings were invisible. Round 4 replaces them with the unit/account directory and a complete-evidence rule.
+
 ### Code completed (tested with fakes and a throw-away SQL Server; NOT verified against real CRM / PACT)
 1. **Account from the unit, no phone gate.** `CollectionsUnitStatementService` reads the exact unit code from the existing PACT unit data (`usp_CollectionsRcv_GetUnit`) and takes **CompanyId, TenantId and UnitId** from that match. PACT's mobile is not needed: EDSM's `Mobile` parameter is required by the route but, for owned companies and Paid/Due/Outstanding, unused (contract section 5.2), so a unit with no PACT/CRM mobile sends `0` (`MobileNotUsed`; a rented company without a mobile is refused). `contracts/{mobile}` is now optional extra proof: when a phone is known it can reveal other units of the account (including fully paid ones); when PACT is down the statement still works and says it was confirmed from the snapshot only.
 2. **Statement** = EDSM payment-summary (Due, Outstanding, Paid, Fines, Total as the source states them) + payment-transactions (every Paid / Due / Outstanding row: Date, Status, Amount, Cheque Number), same field meanings as before.
@@ -129,3 +131,14 @@ Excluded before matching, aggregation and paging in SQL (`R002` refresh, `R004` 
 3. If a unit-level payment statement is required for customers whose tenant covers several units: a PACT/EDSM route or procedure that takes a unit or contract id (the CRM "Pact Payment" source, if it has one - its controller action / query is not in this repository).
 
 Asterisk-marked PACT units remain excluded everywhere.
+
+
+## Round 4: payment works for fully paid units; scope must be PROVEN
+
+* **Identity from a unit/account directory, not the open-balance snapshot.** `usp_CollectionsRcv_Refresh` now also publishes `CollectionsRcvAccountUnit`: every (tenant, unit) PACT's receivables procedure returned, **settled (fully paid) units and cancelled `*` codes included**. `usp_CollectionsRcv_GetUnitAccounts` returns the exact unit's (CompanyId, TenantId, UnitId) and every other unit of the same account. A fully paid unit with no PACT mobile is resolved from it (tested on real SQL and end to end).
+* **Exclusivity needs COMPLETE evidence.** EDSM's Paid / Due / Outstanding / Total cover the whole (company, tenant) account, so a fully paid sibling contributes to Paid and Total. Any other unit in the directory (open, fully paid or cancelled) or in PACT's contract list withholds the statement. When no other unit is known the statement is shown **only if** the evidence is complete: PACT's contract list answered for every phone, or the directory source is accepted as complete via `ReceivablesSnapshot:AccountDirectoryComplete` (**default false**; switch on only after `tools/verify_account_directory.sql` samples match PACT's contract list). Otherwise the status is `ScopeUnproven` and the refusal names the missing query.
+* **Exact missing source.** A PACT query that lists every unit/contract of a (CompanyId, TenantId) account, fully paid ones included, without the customer's mobile - e.g. a tenant-to-units procedure next to `p4tenantStat`/`p32tenantStat`, or an EDSM route taking `tenantID` + `companyID`. `v1/contracts/{mobile}` needs a mobile; the receivables procedures omit units without a payment plan / ledger row.
+* **Production consequence until that is resolved:** with the default configuration a statement appears only when a phone is known and PACT's contract list answers completely and shows the account holds just that unit; otherwise the page says `ScopeUnproven` instead of showing an account total as the unit's.
+* `Mobile=0` for EDSM payment-transactions of owned companies remains **explicitly unverified** against real EDSM.
+* Deploy: re-run `R001` (new table) -> `R002` -> `R004`; the directory fills at the next refresh of each company. `R004` no longer returns the open-only tenant-unit list added in the previous round.
+* Minimal CRM schema for `GetUnitOwners`: `CRM-GetUnitOwners-Schema-Requirements.md`.

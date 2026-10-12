@@ -428,20 +428,37 @@ public sealed partial class RcvRealSqlTests
     }
 
     [SqlFact]
-    public async Task TheUnitRead_ListsTheOtherUnitsOfTheSameAccount_NeverAStarredOne_AndNeverAnotherTenant()
+    public async Task TheUnitAccountDirectory_HoldsFullyPaidUnits_TheOtherUnitsOfEachAccount_AndFlagsCancelledOnes_NeverMatchingThem()
     {
         await Seed();
+        // A unit with NOTHING open (only a settled instalment) and a fully paid sibling on D2's account: the open-balance snapshot knows neither.
+        await Pact(4, "TP106-601", "D6", "Dora Six", "", "", 6011, "K1", "2026-01-01", 0, "Paid");
+        await Pact(4, "TP102-202", "D2", "Dani Two", "+971500000002", "dani@example.test", 2022, "C9", "2026-01-01", 0, "Paid");
+        Assert.Equal("Succeeded", (await Refresher().RefreshAsync("Test", 4, default)).Status);
         var source = Source();
-        var d1 = await source.ReadUnitAsync("TP101-101", 4, Today, default);
-        Assert.Equal([(4, "D1", 1011), (4, "D1", 1012)], d1.TenantUnits!.Select(u => (u.CompanyId, u.TenantId, u.UnitId)).OrderBy(u => u.UnitId));      // D1's second apartment is what a per-account statement would mix in
-        var d2 = await source.ReadUnitAsync("TP102-201", 4, Today, default);
-        Assert.Equal([2021], d2.TenantUnits!.Select(u => u.UnitId));
-        var d3 = await source.ReadUnitAsync("TP103-514", 4, Today, default);
-        Assert.Equal([3140], d3.TenantUnits!.Select(u => u.UnitId));                                  // the cancelled 513*, 5**15 and **516 of the same tenant are not units of the account
-        Assert.Equal((4, "D1", 1011), (d1.Identities.Single().CompanyId, d1.Identities.Single().TenantId, d1.Identities.Single().UnitId));
-        Assert.Empty((await source.ReadUnitAsync("TP103-513*", null, Today, default)).Identities);
-        Assert.Empty((await source.ReadUnitAsync("TP103-5**15", null, Today, default)).Identities);
-        Assert.Empty((await source.ReadUnitAsync("**TP103-516", null, Today, default)).Identities);
+
+        var paid = await source.ReadAccountDirectoryAsync("TP106-601", 4, default);
+        Assert.Equal([(4, "D6", 6011, 0)], paid.Matches.Select(u => (u.CompanyId, u.TenantId, u.UnitId, u.OpenRows)));       // resolved although nothing is open
+        Assert.Empty((await source.ReadUnitAsync("TP106-601", 4, Today, default)).Identities);                                // the open-balance read cannot see it
+        Assert.False(paid.IsComplete);                                                                                        // not accepted as complete unless configured
+
+        var d2 = await source.ReadAccountDirectoryAsync("TP102-201", 4, default);
+        Assert.Equal([2021, 2022], d2.AccountUnits.Select(u => u.UnitId).OrderBy(x => x));                                    // the fully paid sibling is visible
+        Assert.Equal(0, d2.AccountUnits.Single(u => u.UnitId == 2022).OpenRows);
+
+        var d1 = await source.ReadAccountDirectoryAsync("TP101-101", 4, default);
+        Assert.Equal([1011, 1012], d1.AccountUnits.Select(u => u.UnitId).OrderBy(x => x));
+
+        var d3 = await source.ReadAccountDirectoryAsync("TP103-514", 4, default);
+        Assert.Equal([3140], d3.Matches.Select(u => u.UnitId));
+        Assert.Equal(4, d3.AccountUnits.Count);                                                                               // 514 plus the three cancelled codes of the same tenant ...
+        Assert.Equal(3, d3.AccountUnits.Count(u => u.IsCancelled));                                                           // ... flagged, so they withhold a statement instead of being ignored
+
+        foreach (var starred in new[] { "TP103-513*", "TP103-5**15", "**TP103-516" })
+            Assert.Empty((await source.ReadAccountDirectoryAsync(starred, null, default)).Matches);                           // the mark is never removed to match an active unit
+        Assert.DoesNotContain((await source.ReadAccountDirectoryAsync("TP101-101", 32, default)).AccountUnits, u => u.TenantId == "D1");   // another company's tenant is never mixed in
+        Assert.True(new RcvReceivablesSource(Config(), new ReceivablesSnapshotOptions { AccountDirectoryComplete = true }, new PactReceivablesOptions { Enabled = true }, TimeProvider.System, NullLogger<RcvReceivablesSource>.Instance)
+            .ReadAccountDirectoryAsync("TP106-601", 4, default).Result.IsComplete);
     }
 
     [SqlFact]

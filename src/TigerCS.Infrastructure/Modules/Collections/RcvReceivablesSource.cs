@@ -167,7 +167,6 @@ public sealed class RcvReceivablesSource(
         var identities = new List<PactUnitIdentity>();
         var instalments = new List<PactUnitInstalment>();
         var links = new Dictionary<int, CrmUnitLink>();
-        var tenantUnits = new List<PactTenantUnit>();
         var crmLoaded = false;
         try
         {
@@ -191,9 +190,6 @@ public sealed class RcvReceivablesSource(
                         null, null, "Unknown"));
                 await reader.NextResultAsync(cancellationToken);
                 while (await reader.ReadAsync(cancellationToken)) links[reader.GetInt32(reader.GetOrdinal("CompanyId"))] = SqlCollectionsCrmOwnerStore.ReadLink(reader);
-                await reader.NextResultAsync(cancellationToken);
-                while (await reader.ReadAsync(cancellationToken))
-                    tenantUnits.Add(new PactTenantUnit(reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), (int)reader.GetInt64(reader.GetOrdinal("UnitId")), reader.GetString(reader.GetOrdinal("UnitCode"))));
             }
             await using var state = Procedure(connection, "dbo.usp_Collections_GetCrmOwnerState");
             await using var stateReader = await state.ExecuteReaderAsync(cancellationToken);
@@ -206,7 +202,36 @@ public sealed class RcvReceivablesSource(
         }
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var status = ReceivablesSnapshotComposer.BuildStatus(today, today, companies, [], now, options.MaxAgeMinutes);
-        return new PactUnitReceivables(status, identities, instalments, links, crmLoaded, ReceivablesSnapshotComposer.ReadAt(status), tenantUnits);
+        return new PactUnitReceivables(status, identities, instalments, links, crmLoaded, ReceivablesSnapshotComposer.ReadAt(status));
+    }
+
+    /// <summary>The unit/account directory entry (<c>usp_CollectionsRcv_GetUnitAccounts</c>): fully paid units included, other units of the same tenant account included. Complete only when the operator switched <c>AccountDirectoryComplete</c> on.</summary>
+    public async Task<PactAccountDirectory> ReadAccountDirectoryAsync(string unitKey, int? companyId, CancellationToken cancellationToken)
+    {
+        var matches = new List<PactDirectoryUnit>();
+        var account = new List<PactDirectoryUnit>();
+        DateTime? asOf = null;
+        static PactDirectoryUnit Read(SqlDataReader reader) => new(reader.GetInt32(reader.GetOrdinal("CompanyId")), reader.GetString(reader.GetOrdinal("TenantId")), (int)reader.GetInt64(reader.GetOrdinal("UnitId")),
+            reader.GetString(reader.GetOrdinal("UnitCode")), reader.GetInt32(reader.GetOrdinal("OpenRows")), reader.GetInt32(reader.GetOrdinal("SettledRows")), reader.GetBoolean(reader.GetOrdinal("IsCancelled")));
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken);
+            await using var command = Procedure(connection, "dbo.usp_CollectionsRcv_GetUnitAccounts");
+            command.Parameters.Add("@UnitKey", SqlDbType.NVarChar, 220).Value = unitKey;
+            command.Parameters.Add("@CompanyId", SqlDbType.Int).Value = (object?)companyId ?? DBNull.Value;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) matches.Add(Read(reader));
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) account.Add(Read(reader));
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) if (!reader.IsDBNull(1)) asOf = asOf is null || reader.GetDateTime(1) < asOf ? DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc) : asOf;
+        }
+        catch (SqlException ex)
+        {
+            logger.LogWarning("Unit/account directory read failed (SQL error {SqlNumber}).", ex.Number);
+            throw new PactReceivablesSourceException("The PACT unit/account directory could not be read.");
+        }
+        return new PactAccountDirectory(matches, account, options.AccountDirectoryComplete, "PACT receivables procedure (p4/p32AccountReceivables), settled instalments included", asOf);
     }
 
     private async Task<SqlConnection> OpenAsync(CancellationToken cancellationToken)

@@ -243,7 +243,6 @@ GO
     2 identities    per (company, tenant, unit): the PACT customer of the unit (name / mobile / e-mail as PACT holds them - mobile may be empty), tower, payment count
     3 instalments   ALL the unit's unpaid payments, future months included, newest first. The application classifies them with the one month rule (CollectionsDueMonth: Overdue < first day of the month of @AsOfDate, Due inside it, later = Not yet due) - @AsOfDate is only that reference date
     4 crm           the CRM link of the unit (usp_Collections_GetCrmUnitLinks shape), all companies
-    5 tenant units  the units (with an open balance) of the same (company, tenant) accounts
   Rows with UnitID <= 0 or a cancelled ('*') / blank / 0 code never match.
 */
 CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetUnit
@@ -291,15 +290,40 @@ BEGIN
     SELECT l.CompanyId, l.UnitKey, l.Customers, l.CustomerId, l.CrmUnitId, l.LeadId, l.FullName, l.PhoneNorm, l.EmailNorm, l.CompanyAmbiguous
       FROM dbo.fn_Collections_CrmUnitLinks() l
      WHERE l.UnitKey = @UnitKey COLLATE Latin1_General_BIN2 AND (@CompanyId IS NULL OR l.CompanyId = @CompanyId);
+END;
+GO
 
-    -- 5 tenant units  every OTHER unit with an open balance under the same (company, tenant) as the matched unit(s): EDSM's payment statement is per (company, tenant), so the application
-    --                 withholds the statement of a unit whose account also covers one of these. A unit with nothing open is not in the snapshot and cannot be listed here.
-    IF @Only IS NULL
-    SELECT DISTINCT s.CompanyId, s.TenantId COLLATE DATABASE_DEFAULT AS TenantId, s.UnitId, s.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode
-      FROM (SELECT DISTINCT CompanyId, RunId, TenantId FROM #k) k
-      JOIN dbo.CollectionsRcvLine s ON s.CompanyId = k.CompanyId AND s.RunId = k.RunId AND s.TenantId = k.TenantId
-     WHERE s.UnitId > 0 AND s.UnitCode NOT LIKE N'%*%' AND LTRIM(RTRIM(s.UnitCode)) NOT IN (N'', N'0') AND s.Amount > 0
-     ORDER BY s.CompanyId, TenantId, s.UnitId;
+/*
+  usp_CollectionsRcv_GetUnitAccounts - the unit/account DIRECTORY entry of a unit key, fully paid units included (CollectionsRcvAccountUnit of the CURRENT run of each company):
+    1 the matching (company, tenant, unit id, unit code) rows of the unit key (cancelled '*' codes never match, the mark is never removed)
+    2 EVERY unit of the same (company, tenant) accounts (settled and cancelled ones included, flagged), so an account that also covers a fully paid sibling is visible
+    3 the as-of time of the directory per company
+  The directory holds what PACT's receivables procedure returned; it is not proven to be every unit of the tenant (see the table's comment).
+*/
+CREATE OR ALTER PROCEDURE dbo.usp_CollectionsRcv_GetUnitAccounts
+    @UnitKey   nvarchar(220),
+    @CompanyId int = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF @CompanyId IS NOT NULL AND @CompanyId NOT IN (4, 32) THROW 50031, N'Company must be 4, 32 or NULL.', 1;
+    DECLARE @Bare nvarchar(220) = SUBSTRING(@UnitKey, 3, 220);
+    SELECT a.RunId, a.CompanyId, a.TenantId, a.UnitId, a.UnitCode, a.OpenRows, a.SettledRows
+      INTO #m
+      FROM dbo.CollectionsRcvCompany c
+      JOIN dbo.CollectionsRcvAccountUnit a ON a.CompanyId = c.CompanyId AND a.RunId = c.CurrentRunId
+     WHERE c.CurrentRunId IS NOT NULL AND (@CompanyId IS NULL OR c.CompanyId = @CompanyId)
+       AND UPPER(LTRIM(RTRIM(a.UnitCode))) COLLATE Latin1_General_BIN2 IN (@UnitKey COLLATE Latin1_General_BIN2, @Bare COLLATE Latin1_General_BIN2)
+       AND a.IsCancelled = 0 AND a.UnitCode NOT LIKE N'%*%' AND a.UnitId > 0;
+
+    SELECT m.CompanyId, m.TenantId COLLATE DATABASE_DEFAULT AS TenantId, m.UnitId, m.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, m.OpenRows, m.SettledRows, CAST(0 AS bit) AS IsCancelled FROM #m m ORDER BY m.CompanyId, m.TenantId, m.UnitId;
+
+    SELECT a.CompanyId, a.TenantId COLLATE DATABASE_DEFAULT AS TenantId, a.UnitId, a.UnitCode COLLATE DATABASE_DEFAULT AS UnitCode, a.OpenRows, a.SettledRows, a.IsCancelled
+      FROM (SELECT DISTINCT CompanyId, RunId, TenantId FROM #m) k
+      JOIN dbo.CollectionsRcvAccountUnit a ON a.CompanyId = k.CompanyId AND a.RunId = k.RunId AND a.TenantId = k.TenantId
+     ORDER BY a.CompanyId, a.TenantId, a.UnitId;
+
+    SELECT c.CompanyId, c.LastSuccessUtc FROM dbo.CollectionsRcvCompany c WHERE c.CurrentRunId IS NOT NULL AND (@CompanyId IS NULL OR c.CompanyId = @CompanyId);
 END;
 GO
 
