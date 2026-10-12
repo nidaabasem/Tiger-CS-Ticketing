@@ -24,12 +24,16 @@ internal sealed class PublishedLinesOracle(string connectionString, IPactReceiva
         var rows = new List<PactReceivableInstalment>();
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        string? towerNumber = null;
+        // A tower belongs to ONE company (the same tower number can exist in both, e.g. 127 = "Tower 127" in Dubai and "Faradis" in Sharjah): selecting it scopes the read to that company.
+        string? towerNumber = null; int? towerCompany = null;
         if (request.TowerId is { } towerId)
         {
-            await using var tower = new SqlCommand("SELECT LTRIM(RTRIM(CONVERT(nvarchar(20), TowerNumber))) FROM dbo.CollectionsTowers WHERE TowerId = @id", connection);
+            await using var tower = new SqlCommand("SELECT CompanyId, LTRIM(RTRIM(CONVERT(nvarchar(20), TowerNumber))) FROM dbo.CollectionsTowers WHERE TowerId = @id", connection);
             tower.Parameters.AddWithValue("@id", towerId);
-            towerNumber = await tower.ExecuteScalarAsync(cancellationToken) as string;
+            await using var towerReader = await tower.ExecuteReaderAsync(cancellationToken);
+            if (!await towerReader.ReadAsync(cancellationToken)) throw new PactReceivablesScopeException("The selected tower is not available.");
+            (towerCompany, towerNumber) = (towerReader.GetInt32(0), towerReader.GetString(1));
+            if (request.CompanyId is { } requested && requested != towerCompany) throw new PactReceivablesScopeException("The selected tower is not available.");
         }
         await using var command = new SqlCommand(
             "SELECT l.CompanyId, l.TenantId, l.FullName, l.Mobile, l.Email, l.UnitId, l.UnitCode, l.ProjectCode, l.VoucherNumber, l.ChequeNumber, l.DueDate, l.Amount, l.SourceStatus, l.TowerNumber, " +
@@ -43,7 +47,7 @@ internal sealed class PublishedLinesOracle(string connectionString, IPactReceiva
             var company = reader.GetInt32(0); var unitCode = reader.GetString(6); var unitId = reader.GetInt64(5);
             var due = DateOnly.FromDateTime(reader.GetDateTime(10)); var amount = reader.GetDecimal(11);
             var tn = reader.IsDBNull(13) ? null : reader.GetString(13);
-            if ((request.CompanyId is { } c && c != company) || (towerNumber is not null && tn != towerNumber)
+            if ((request.CompanyId is { } c && c != company) || (towerCompany is { } tc && tc != company) || (towerNumber is not null && tn != towerNumber)
                 || due < from || due > request.ThroughDate || amount <= 0 || amount < request.MinAmount
                 || unitId <= 0 || unitCode.Trim() is "" or "0" || unitCode.Contains('*')) continue;
             rows.Add(new PactReceivableInstalment(company, reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), (int)unitId, unitCode, reader.GetString(7),

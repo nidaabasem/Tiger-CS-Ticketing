@@ -7,6 +7,7 @@ using TigerCS.Application.Modules.Collections;
 using TigerCS.Application.Modules.Collections.Abstractions;
 using TigerCS.Application.Modules.Collections.Dto;
 using TigerCS.Application.Modules.Collections.Services;
+using TigerCS.Domain.Modules.Collections;
 using TigerCS.Domain.Modules.IdentityAndAccess;
 using TigerCS.Infrastructure.Modules.Collections;
 using TigerCS.Tests.IdentityAndAccess.Fakes;
@@ -94,11 +95,17 @@ public sealed class CampaignParityTests
     private static RcvReceivablesSource NewSource() =>
         new(Config(), new ReceivablesSnapshotOptions { MaxAgeMinutes = 1_000_000 }, new PactReceivablesOptions { Enabled = true, MaxSourceRows = 1_000_000 }, TimeProvider.System, NullLogger<RcvReceivablesSource>.Instance);
 
+    /// <summary>
+    /// The tower id of a tower NUMBER. The same number can exist in both companies (127 = "Tower 127" in Dubai, "Faradis" in Sharjah), so the lookup is deterministic: "127" is the Sharjah tower
+    /// (company 32, the one holding the generated Tower-127 payments), "127@4" names the company explicitly.
+    /// </summary>
     private static async Task<int?> TowerIdAsync(string number)
     {
+        var parts = number.Split('@');
         await using var connection = new SqlConnection(ConnectionString); await connection.OpenAsync();
-        await using var command = new SqlCommand("SELECT TOP (1) TowerId FROM dbo.CollectionsTowers WHERE LTRIM(RTRIM(CONVERT(nvarchar(20), TowerNumber))) = @n AND IsActive = 1", connection);
-        command.Parameters.AddWithValue("@n", number);
+        await using var command = new SqlCommand("SELECT TOP (1) TowerId FROM dbo.CollectionsTowers WHERE LTRIM(RTRIM(CONVERT(nvarchar(20), TowerNumber))) = @n AND IsActive = 1 AND (@c IS NULL OR CompanyId = @c) ORDER BY CompanyId DESC, TowerId", connection);
+        command.Parameters.AddWithValue("@n", parts[0]);
+        command.Parameters.AddWithValue("@c", parts.Length > 1 ? int.Parse(parts[1]) : DBNull.Value);
         return await command.ExecuteScalarAsync() is int id ? id : null;
     }
 
@@ -126,6 +133,7 @@ public sealed class CampaignParityTests
             yield return [stage, null, 32, null, null, 100m, null, false];
             yield return [stage, "103", null, null, null, 100m, null, true];
             yield return [stage, "127", null, null, null, 0m, null, false];
+            yield return [stage, "127@4", null, null, null, 0m, null, false];
             yield return [stage, null, null, "2026-03-01", "2026-03-31", 100m, null, false];
             yield return [stage, null, null, "2025-04-09", "2026-10-31", 99.99m, null, false];
             yield return [stage, null, null, null, null, 100m, "EDGE", false];
@@ -261,12 +269,13 @@ public sealed class CampaignParityTests
         var result = await AllPages(service, "OverdueReminder", date, null, null, new DateOnly(2026, 1, 1), null, null, 0m);
         var sequence = result.Order.Select(id => result.Items[id]).ToList();
         Assert.True(sequence.Count > 100, "needs more than one page");
-        // The facts carry the newest payment date through the Due / Overdue columns only; rebuild the key from the database: newest matching due date per unit.
+        // The facts carry the newest payment date through the Due / Overdue columns only; rebuild the key from the database: newest matching due date per unit over the READ window
+        // (explicit From 2026-01-01 .. the end of the current Dubai month, which is where the default To now ends - not the preview date).
         var newest = new Dictionary<(int, string, int, string), DateOnly>();
         await using var connection = new SqlConnection(ConnectionString); await connection.OpenAsync();
         await using var command = new SqlCommand("SELECT l.CompanyId, l.TenantId, l.UnitId, l.UnitCode, MAX(l.DueDate) FROM dbo.CollectionsRcvLine l JOIN dbo.CollectionsRcvCompany c ON c.CompanyId = l.CompanyId AND c.CurrentRunId = l.RunId " +
             "WHERE l.DueDate >= '20260101' AND l.DueDate <= @t GROUP BY l.CompanyId, l.TenantId, l.UnitId, l.UnitCode", connection);
-        command.Parameters.AddWithValue("@t", date.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@t", CollectionsDueMonth.MonthEnd(date).ToDateTime(TimeOnly.MinValue));
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) newest[(reader.GetInt32(0), reader.GetString(1).Trim(), (int)reader.GetInt64(2), reader.GetString(3).Trim())] = DateOnly.FromDateTime(reader.GetDateTime(4));
         var keys = sequence.Select(i => (Latest: newest[(i.CompanyId, i.TenantId, i.UnitId ?? 0, i.UnitCode)], i.CompanyId, i.TenantId, i.UnitCode, UnitId: i.UnitId ?? 0)).ToList();
