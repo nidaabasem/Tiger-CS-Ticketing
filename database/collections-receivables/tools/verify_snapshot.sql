@@ -20,6 +20,7 @@ INSERT @r SELECT N'two-hourly recurring jobs registered (Hangfire)', CASE WHEN C
   FROM HangfireSla.[Set] WHERE [Key] = N'recurring-jobs' AND [Value] IN (N'collections-receivables-refresh-4', N'collections-receivables-refresh-32');
 SELECT * FROM @r;
 SELECT c.CompanyId, c.PublishedRows, c.LastSuccessUtc, COUNT(DISTINCT CONCAT(l.TenantId, N'|', l.UnitId, N'|', l.UnitCode)) AS Apartments, SUM(l.Amount) AS RemainingTotal,
-       SUM(CASE WHEN l.DueDate = CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date) THEN l.Amount ELSE 0 END) AS DueToday,
-       SUM(CASE WHEN l.DueDate < CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date) THEN l.Amount ELSE 0 END) AS Overdue
+       SUM(CASE WHEN l.DueDate >= DATEFROMPARTS(YEAR(CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date)), MONTH(CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date)), 1)
+                 AND l.DueDate < DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date)), MONTH(CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date)), 1)) THEN l.Amount ELSE 0 END) AS DueThisMonth,
+       SUM(CASE WHEN l.DueDate < DATEFROMPARTS(YEAR(CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date)), MONTH(CAST(SWITCHOFFSET(SYSDATETIMEOFFSET(), '+04:00') AS date)), 1) THEN l.Amount ELSE 0 END) AS Overdue
   FROM dbo.CollectionsRcvCompany c LEFT JOIN dbo.CollectionsRcvLine l ON l.CompanyId = c.CompanyId AND l.RunId = c.CurrentRunId GROUP BY c.CompanyId, c.PublishedRows, c.LastSuccessUtc ORDER BY c.CompanyId;

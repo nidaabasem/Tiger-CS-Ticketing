@@ -52,18 +52,19 @@ public sealed class CampaignSnapshotTests
     }
 
     [Fact]
-    public async Task EachUnitShowsDueOverdueAndTotal_OfItsOwnInstalments_UpToToday()
+    public async Task EachUnitShowsDueOverdueAndTotal_OfItsOwnInstalments_ThroughTheEndOfTheCurrentMonth()
     {
         var h = new Harness();
-        // Same customer, two apartments. Apartment 1: 14 Oct (due today), 5 Oct (overdue), 20 Oct and 15 Dec (future: ignored). Apartment 2: 1 Oct (overdue) only.
+        // Same customer, two apartments, today = 14 Oct. Apartment 1: 5, 14 and 20 Oct (all inside the current month: Due, even the coming 20th) and 15 Dec (a later month: ignored).
+        // Apartment 2: 1 Oct (the first day of the month: Due) only. (Overdue = before the first of the month is covered by DueMonthRuleTests.)
         h.Source.Rows.AddRange([Row("c1", "TP124-1", 1, day: 14, amount: 500m), Row("c1", "TP124-1", 1, day: 5, amount: 300m), Row("c1", "TP124-1", 1, day: 20, amount: 700m),
             new(4, "c1", "Example Customer c1", "971500003001", "x@example.test", 1, "TP124-1", "", "INV-late", "", new DateTime(2026, 12, 15), 900m, "Installment"),
             Row("c1", "TP124-2", 2, day: 1, amount: 250m)]);
         var items = (await h.Service.PreviewAsync(h.Manager, "CurrentMonthReminder", new DateOnly(2026, 10, 14), minTotal: null)).Value!.Items;
         var one = items.Single(i => i.UnitCode == "TP124-1");
-        Assert.Equal((500m, 300m, 800m), (one.DueAmount, one.OverdueAmount, one.TotalAmount));      // Total = Due + Overdue; the future 700 and 900 are not in it
+        Assert.Equal((1500m, 0m, 1500m), (one.DueAmount, one.OverdueAmount, one.TotalAmount));      // Total = Due + Overdue = 500 + 300 + 700; the December 900 is in neither
         var two = items.Single(i => i.UnitCode == "TP124-2");
-        Assert.Equal((0m, 250m, 250m), (two.DueAmount, two.OverdueAmount, two.TotalAmount));        // another apartment of the same customer is never added in
+        Assert.Equal((250m, 0m, 250m), (two.DueAmount, two.OverdueAmount, two.TotalAmount));        // another apartment of the same customer is never added in
     }
 
     [Fact]

@@ -48,7 +48,7 @@ public sealed class PactInstalmentsAppService(
         var byUnit = string.Equals(view, "units", StringComparison.OrdinalIgnoreCase);
         if (!byUnit && !string.IsNullOrWhiteSpace(view) && !string.Equals(view, "instalments", StringComparison.OrdinalIgnoreCase))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "view must be units or instalments.");
-        // By unit only: keep the units that have an Overdue / Due / Upcoming instalment (classified by TODAY, Dubai).
+        // By unit only: keep the units that have an Overdue / Due instalment (classified against the current month, Dubai).
         string? unitStatus = null;
         if (!string.IsNullOrWhiteSpace(unitStatusFilter) && !string.Equals(unitStatusFilter, "all", StringComparison.OrdinalIgnoreCase))
         {
@@ -68,9 +68,10 @@ public sealed class PactInstalmentsAppService(
         // Default window: 1 January of the current year through the end of the current month. Both ends are editable; a month selector sets them to a calendar month.
         var from = dateFrom ?? DateOnly.FromDateTime(sourceOptions.StartDate);
         var to = dateTo ?? monthEnd;
-        // By unit lists only what is owed NOW: instalments due today or earlier (Due + Overdue). Anything due later is not part of this view,
-        // so a unit with nothing due today or before is not listed at all and every total is Due + Overdue.
-        if (byUnit && to > today) to = today;
+        // By unit lists only what is owed THIS MONTH or before (CollectionsDueMonth): Overdue = due before the first of the current month, Due = due anywhere inside it
+        // (including the days still to come). Anything due from the next month on is not part of this view, so a unit with nothing in that range is not listed at all
+        // and every total is Due + Overdue. A Month/Year filter only narrows the window; it never moves the month the classification is made against.
+        if (byUnit) to = CollectionsDueMonth.ClampTo(to, today);
         if (!CollectionsDateRanges.IsSupported(from, to))
             return CollectionsResult<PactInstalmentsPageDto>.Fail(CollectionsOutcome.InvalidRequest, "From date must not be after To date, and both must be within 2000-2100.");
         // By unit: no per-instalment minimum at all; the minimum applies to each UNIT's total (minTotal, strictly greater; null = every unit).
@@ -93,7 +94,7 @@ public sealed class PactInstalmentsAppService(
         IReadOnlyList<PactInstalmentMonthDto>? months = null;
         try
         {
-            // By unit classifies every instalment against TODAY (Overdue: before today, Due: today, Upcoming: after today); the other view keeps the month rule.
+            // By unit classifies every instalment against the current Dubai MONTH of today (Overdue: before its first day, Due: inside it); the other view keeps the month rule.
             var overview = new PactInstalmentsRequest(from, to, byUnit ? today : monthStart, min, CollectionsPaymentFilters.ToWire(filter),
                 string.IsNullOrEmpty(term) ? null : term, digits, 1, pageSize, null, towerId, unitStatus, byUnit, unitMinTotal);
             // The list (and its totals) use the window narrowed to the selected month; Overdue is still "due before the current month" for every row.

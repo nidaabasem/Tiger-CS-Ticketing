@@ -9,7 +9,7 @@ using Display = TigerCsWeb::TigerCS.Web.Pages.Collections.CollectionsDisplay;
 namespace TigerCS.Tests.Web;
 
 /// <summary>
-/// Receivables page: one row per unit, View Details with the unit's unpaid instalments that are Due or Overdue (due today or earlier; Dubai: the fake API's
+/// Receivables page: one row per unit, View Details with the unit's unpaid instalments that are Due or Overdue (due before the end of the current month; Dubai: the fake API's
 /// business date is 2026-10-09), search + Tower + Status filters, and one short line when a company could not be loaded.
 /// </summary>
 public sealed class PactReceivablesRenderTests
@@ -50,7 +50,7 @@ public sealed class PactReceivablesRenderTests
     public async Task ACustomerWithTwoApartments_GetsTwoRows_WithSeparateTotals_AndAnApartmentWithManyInstalmentsOneRow()
     {
         var api = new FakeCollectionsApi();
-        // Apartment 1001: overdue 5 Aug, due TODAY and a later 5 Nov instalment (not Due yet: never listed or counted); apartment 2002 of the SAME customer: one overdue instalment.
+        // Apartment 1001: overdue 5 Aug, due TODAY and a later 5 Nov instalment (next month: in neither Due nor Overdue, never listed or counted); apartment 2002 of the SAME customer: one overdue instalment.
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 11, 5), 150m, "INV-5"));
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 8, 5), 300m, "INV-1"));
         api.Rows.Add(FakeCollectionsApi.Unpaid(Today, 200m, "INV-3"));
@@ -97,7 +97,7 @@ public sealed class PactReceivablesRenderTests
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
         var lines = Regex.Matches(html, "data-instalment-status=\"\\w+\">(.*?)</tr>", RegexOptions.Singleline).Select(m => Cells("<tr>" + m.Value)).ToList();
-        Assert.Equal(["Voucher INV-8", "01 Oct 2026", "—", "—", "90.00", "Overdue", "8"], lines[0]);                   // newest due date first
+        Assert.Equal(["Voucher INV-8", "01 Oct 2026", "—", "—", "90.00", "Due", "8"], lines[0]);                   // newest due date first
         Assert.Equal(["Voucher INV-7", "01 Sep 2026", "1,000.00", "400.00", "600.00", "Overdue", "38"], lines[1]);
     }
 
@@ -150,7 +150,7 @@ public sealed class PactReceivablesRenderTests
     }
 
     [Fact]
-    public async Task MonthAndYear_FilterByDueDate_NeverPastToday()
+    public async Task MonthAndYear_FilterByDueDate_NeverPastTheEndOfTheCurrentMonth()
     {
         var today = Display.DubaiToday();
         var thisMonthStart = new DateOnly(today.Year, today.Month, 1);
@@ -163,27 +163,47 @@ public sealed class PactReceivablesRenderTests
 
         await Call($"month={previous.Month}&year={previous.Year}");                                              // the previous month: all of it
         Assert.Equal($"{previous:yyyy-MM-dd}..{thisMonthStart.AddDays(-1):yyyy-MM-dd}", Dates());
-        await Call($"month={today.Month}&year={today.Year}");                                                    // the current month stops at TODAY
-        Assert.Equal($"{thisMonthStart:yyyy-MM-dd}..{today:yyyy-MM-dd}", Dates());
+        var thisMonthEnd = thisMonthStart.AddMonths(1).AddDays(-1);
+        await Call($"month={today.Month}&year={today.Year}");                                                    // the current month: ALL of it, the days still to come included
+        Assert.Equal($"{thisMonthStart:yyyy-MM-dd}..{thisMonthEnd:yyyy-MM-dd}", Dates());
         await Call($"month={today.Month}");                                                                      // a month without a year = the current year
-        Assert.Equal($"{thisMonthStart:yyyy-MM-dd}..{today:yyyy-MM-dd}", Dates());
-        await Call("");                                                                                          // All months: everything due up to today
-        Assert.Equal($"2000-01-01..{today:yyyy-MM-dd}", Dates());
-        var html = await Call($"month={future.Month}&year={future.Year}");                                       // a future month: nothing is due yet, no data call
+        Assert.Equal($"{thisMonthStart:yyyy-MM-dd}..{thisMonthEnd:yyyy-MM-dd}", Dates());
+        await Call("");                                                                                          // All months: the history plus the whole current month
+        Assert.Equal($"2000-01-01..{thisMonthEnd:yyyy-MM-dd}", Dates());
+        var next = thisMonthStart.AddMonths(1);
+        var html = await Call($"month={next.Month}&year={next.Year}");                                           // the next month: neither Due nor Overdue, no data call
+        Assert.Empty(api.Calls("/receivables/instalments")); Assert.Contains("Nothing is due in this month yet.", html);
+        html = await Call($"month={future.Month}&year={future.Year}");                                           // a later month: the same
         Assert.Empty(api.Calls("/receivables/instalments")); Assert.Contains("Nothing is due in this month yet.", html);
     }
 
     [Fact]
-    public async Task AUnitWithNothingDueTodayOrEarlier_IsNotListed_AndTheApiIsAskedOnlyUpToToday()
+    public async Task AUnitWithNothingDueThisMonthOrEarlier_IsNotListed_AndTheApiIsAskedOnlyUpToTheEndOfTheMonth()
     {
         var api = new FakeCollectionsApi();
-        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 10, 10), 500m, "INV-T", "TP124-3003", 103));   // due tomorrow
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 11, 1), 500m, "INV-N", "TP124-3003", 103));   // the first day of next month: neither Due nor Overdue
         api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2027, 1, 1), 900m, "INV-L", "TP124-3003", 103));
         using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
         var html = await (await client.GetAsync("/Collections/Receivables?handler=Results")).Content.ReadAsStringAsync();
         Assert.DoesNotContain("data-unit-row", html); Assert.DoesNotContain("TP124-3003", html);
-        Assert.Contains($"dateTo={Display.DubaiToday():yyyy-MM-dd}", Assert.Single(api.Calls("/receivables/instalments")));
+        var today = Display.DubaiToday();
+        Assert.Contains($"dateTo={new DateOnly(today.Year, today.Month, 1).AddMonths(1).AddDays(-1):yyyy-MM-dd}", Assert.Single(api.Calls("/receivables/instalments")));
         Assert.DoesNotContain("upcoming", Assert.Single(api.Calls("/receivables/instalments")));
+    }
+
+    [Fact]
+    public async Task AComingDayOfTheCurrentMonth_IsDue_AndCountsInTheRowAndItsDetails()
+    {
+        var api = new FakeCollectionsApi();
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 10, 31), 250m, "INV-E", "TP124-3004", 104));   // the last day of the month, still to come (today is 9 Oct)
+        api.Rows.Add(FakeCollectionsApi.Unpaid(new DateOnly(2026, 9, 30), 40m, "INV-S", "TP124-3004", 104));    // the last day of the previous month: Overdue
+        using var factory = CollectionsWebHost.Factory(api); using var client = factory.CreateClient();
+        var html = await (await client.GetAsync("/Collections/Receivables?handler=Results&minTotal=")).Content.ReadAsStringAsync();
+        var row = Cells(Regex.Match(html, "<tr data-unit-row>.*?</tr>", RegexOptions.Singleline).Value);
+        Assert.Equal(["250.00", "40.00", "290.00"], row.Skip(4).Take(3));                                         // Due, Overdue, Total
+        var lines = Regex.Matches(html, "<tr class=\"[^\"]*\" data-instalment-status=\"(\\w+)\">(.*?)</tr>", RegexOptions.Singleline).Select(m => (Status: m.Groups[1].Value, Cells: Cells(m.Value))).ToList();
+        Assert.Equal(["Due", "Overdue"], lines.Select(l => l.Status));
+        Assert.Equal(["Voucher INV-E", "31 Oct 2026", "—", "—", "250.00", "Due", "—"], lines[0].Cells);          // a coming day: due, not late
     }
 
     [Fact]
@@ -298,9 +318,12 @@ public sealed class PactReceivablesRenderTests
     }
 
     [Theory]
-    [InlineData("2026-10-08", "Overdue", 1)]
+    [InlineData("2026-09-30", "Overdue", 9)]    // the day before the month starts
+    [InlineData("2026-10-01", "Due", 8)]        // the first day of the month
+    [InlineData("2026-10-08", "Due", 1)]        // earlier this month: Due, and already late by a day
     [InlineData("2026-10-09", "Due", null)]
-    public void TheStatusDependsOnlyOnTheDueDateAgainstToday(string due, string expected, int? daysLate)
+    [InlineData("2026-10-31", "Due", null)]     // the last day of the month, still to come
+    public void TheStatusDependsOnlyOnTheDueDateAgainstTheCurrentMonth(string due, string expected, int? daysLate)
     {
         var date = DateOnly.Parse(due);
         Assert.Equal(expected, Receivables.Classify(date, Today));
@@ -315,7 +338,7 @@ public sealed class PactReceivablesRenderTests
         var html = await (await client.GetAsync("/Collections/Receivables")).Content.ReadAsStringAsync();
         var select = Between(html, "id=\"receivableStatus\"", "</select>");
         Assert.Equal(["Due + Overdue", "Due", "Overdue"], Regex.Matches(select, "<option[^>]*>(.*?)</option>").Select(m => WebUtility.HtmlDecode(m.Groups[1].Value)));
-        Assert.Matches("<option value=\"all\" selected=\"selected\">Due (\\+|&#x2B;) Overdue</option>", select);          // the default shows everything due up to today
+        Assert.Matches("<option value=\"all\" selected=\"selected\">Due (\\+|&#x2B;) Overdue</option>", select);          // the default shows everything due before the end of the current month
     }
 
     [Fact]

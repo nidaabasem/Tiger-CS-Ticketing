@@ -94,7 +94,7 @@ public sealed class CollectionsCrmLinkingTests
         r.Source.Items.AddRange([Row("T1", 101, amount: 300m), Row("T1", 102, amount: 700m)]);
         r.Owners(Owner(1, "TP140", "101"), Owner(1, "TP140", "102"));
         var units = (await r.Units()).OrderBy(u => u.UnitCode).ToList();
-        Assert.Equal([300m, 700m], units.Select(u => u.OverdueAmount));
+        Assert.Equal([300m, 700m], units.Select(u => u.DueAmount));   // 10 Oct is inside the current month: Due
         Assert.All(units, u => Assert.Equal(1, u.CrmCustomerId));
     }
 

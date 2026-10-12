@@ -79,35 +79,41 @@ public sealed class CampaignMinimumAndPaidTests
     }
 
     [Fact]
-    public async Task FutureInstalments_NeverEnterTheListTheTotalsOrTheExport()
+    public async Task InstalmentsFromNextMonthOn_NeverEnterTheListTheTotalsOrTheExport_ButTheRestOfThisMonthDoes()
     {
-        // Today is 14 Oct 2026 (Dubai). 20 Oct is in the future: only the 10 Oct instalment (Overdue) and the one due today count.
-        var source = new RawSource([Row("A", 1, new(2026, 10, 10), 300m), Row("A", 1, new(2026, 10, 14), 200m), Row("A", 1, new(2026, 10, 20), 900m),
-            Row("F", 2, new(2026, 10, 25), 900m)]);                                               // only a future instalment: not listed at all
+        // Today is 14 Oct 2026 (Dubai). Due = anywhere in October (even the coming 20th and 25th); Overdue = before 1 Oct; 1 Nov and later is in neither.
+        var source = new RawSource([Row("A", 1, new(2026, 9, 20), 100m), Row("A", 1, new(2026, 10, 10), 300m), Row("A", 1, new(2026, 10, 14), 200m), Row("A", 1, new(2026, 10, 20), 900m),
+            Row("A", 1, new(2026, 11, 1), 5000m),
+            Row("F", 2, new(2026, 10, 25), 900m),                                                 // only a coming day of this month: listed, Due
+            Row("G", 3, new(2026, 11, 1), 700m)]);                                                // only next month: not listed at all
         var service = Service(source, 0m);
         var preview = (await service.PreviewAsync(Manager, "CurrentMonthReminder", minTotal: null)).Value!;
-        var item = Assert.Single(preview.Items);
-        Assert.Equal((200m, 300m, 500m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
-        Assert.Equal(new DateOnly(2026, 10, 14), source.Last!.ThroughDate);                       // the source is never even asked for later dates
+        Assert.Equal(["F", "A"], preview.Items.Select(i => i.TenantId));                          // newest payment first (25 Oct, then 20 Oct)
+        var a = preview.Items.Single(i => i.TenantId == "A");
+        Assert.Equal((1400m, 100m, 1500m), (a.DueAmount, a.OverdueAmount, a.TotalAmount));        // 300 + 200 + 900 are Due, the September 100 is Overdue, the 5000 of 1 Nov is in neither
+        var f = preview.Items.Single(i => i.TenantId == "F");
+        Assert.Equal((900m, 0m, 900m), (f.DueAmount, f.OverdueAmount, f.TotalAmount));
+        Assert.Equal(new DateOnly(2026, 10, 31), source.Last!.ThroughDate);                       // the source is never asked beyond the end of the current month
         var csv = (await service.ExportAsync(Manager, "CurrentMonthReminder", "review", minTotal: null)).Value!.Csv;
-        Assert.DoesNotContain("900", csv);                                                       // the future instalments are not in the file either
-        Assert.Contains("\"500.00\"", csv);                                                      // the exported amount is the stage amount of the same (past + today) instalments
+        Assert.DoesNotContain("\"5000.00\"", csv); Assert.DoesNotContain("\"700.00\"", csv);                   // next month's instalments are not in the file either
+        Assert.Contains("\"1400.00\"", csv);                                                    // the exported amount is the stage amount of the same October instalments
     }
 
     [Fact]
-    public async Task TheMonthWindow_NarrowsTheUnitsAmounts_ToThatMonthsInstalments_UpToToday()
+    public async Task TheMonthWindow_NarrowsTheUnitsAmounts_ToThatMonthsInstalments_AndNeverMovesTheReferenceMonth()
     {
-        // Same unit: 3 Oct and 12 Oct are in October; 20 Oct is after today. Selecting October gives the same Due/Overdue as All months for this stage; another month is empty.
+        // Same unit: 3 and 12 Oct are before/at today, 20 Oct is a coming day, 15 Sep is last month. Selecting October gives Due = all three October payments; the
+        // classification month is still the current one whatever window is chosen.
         var source = new RawSource([Row("A", 1, new(2026, 10, 3), 100m), Row("A", 1, new(2026, 10, 12), 150m), Row("A", 1, new(2026, 10, 20), 400m), Row("A", 1, new(2026, 9, 15), 70m)]);
         var service = Service(source, 0m);
         var october = (await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 10, 1), dateTo: new(2026, 10, 31), minTotal: null)).Value!;
         var item = Assert.Single(october.Items);
-        Assert.Equal((0m, 250m, 250m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
-        Assert.Equal(new DateOnly(2026, 10, 14), october.DateTo);                                 // capped at today (14 Oct), the preview shows the window it really used
+        Assert.Equal((650m, 0m, 650m), (item.DueAmount, item.OverdueAmount, item.TotalAmount));
+        Assert.Equal(new DateOnly(2026, 10, 31), october.DateTo);                                 // the whole month, the preview shows the window it really used
         var september = (await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 9, 1), dateTo: new(2026, 9, 30), minTotal: null)).Value!;
         Assert.Empty(september.Items);                                                            // the stage's own eligibility (this month's instalments) is unchanged
-        var future = await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 11, 1), dateTo: new(2026, 11, 30), minTotal: null);
-        Assert.Equal(CollectionsOutcome.InvalidRequest, future.Outcome);                          // nothing is listed after today
+        var next = await service.PreviewAsync(Manager, "CurrentMonthReminder", dateFrom: new(2026, 11, 1), dateTo: new(2026, 11, 30), minTotal: null);
+        Assert.Equal(CollectionsOutcome.InvalidRequest, next.Outcome);                            // next month is neither Due nor Overdue: nothing is listed
     }
 
     [Fact]

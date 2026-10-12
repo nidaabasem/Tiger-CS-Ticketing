@@ -8,7 +8,7 @@ public sealed record CollectionsCampaignContactDto(
     string? TowerNumber = null, string? TowerName = null,
     decimal DueAmount = 0m, decimal OverdueAmount = 0m, int? CrmCustomerId = null)
 {
-    /// <summary>Due + Overdue of the unit (instalments due today or earlier that are still unpaid).</summary>
+    /// <summary>Due + Overdue of the unit (remaining amounts of unpaid or partly paid instalments due before the end of the current Dubai month).</summary>
     public decimal TotalAmount => DueAmount + OverdueAmount;
     public bool VoiceEligible => Status == "Ready" && Phone.Length > 0;
     public bool SmsEligible => Status == "Ready" && Phone.Length > 0;
