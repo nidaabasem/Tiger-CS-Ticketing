@@ -56,7 +56,7 @@ SELECT l.CompanyId,
  WHERE l.Amount > 0 AND l.UnitId > 0 AND LTRIM(RTRIM(l.UnitCode)) NOT IN (N'', N'0') AND l.UnitCode NOT LIKE N'%*%'
  GROUP BY l.CompanyId ORDER BY l.CompanyId;
 
--- 3. one unit: the Payment Summary read (result set 3 = its instalments up to the end of this month) next to the recount; its Due / Overdue must equal the Receivables row of the same unit
+-- 3. one unit: the Payment Summary read (result set 3 = ALL its unpaid instalments, future ones too; the application classifies them) next to the recount; its Due / Overdue must equal the Receivables row of the same unit
 IF @UnitKey IS NOT NULL
 BEGIN
     SELECT l.CompanyId, l.UnitCode, l.VoucherNumber, l.DueDate, l.Amount AS RemainingAmount,
